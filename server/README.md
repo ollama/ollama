@@ -18,6 +18,12 @@ pip install llama-cpp-python
 pip install -r requirements.txt
 ```
 
+## Building
+
+```bash
+python3 build.py
+```
+
 ## Running
 
 Put your model in `models/` and run:
