@@ -4,7 +4,6 @@
 
 ```
 brew install npm
-brew install go
 ```
 
 ## Develop
