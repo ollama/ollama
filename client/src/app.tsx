@@ -1,4 +1,3 @@
-'use client'
 import { useState } from 'react'
 
 const API_URL = 'http://127.0.0.1:8080'
@@ -35,9 +34,10 @@ async function completion(prompt: string, callback: (res: string) => void) {
       break
     }
 
-    const t = Buffer.from(value).toString('utf8')
-    if (t.startsWith('data: ')) {
-      const message = JSON.parse(t.substring(6))
+    let decoder = new TextDecoder()
+    let str = decoder.decode(value)
+    if (str.startsWith('data: ')) {
+      const message = JSON.parse(str.substring(6))
       callback(message.content)
       if (message.stop) {
         break
@@ -48,12 +48,12 @@ async function completion(prompt: string, callback: (res: string) => void) {
   return
 }
 
-export default function Home() {
+export default function () {
   const [prompt, setPrompt] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
 
   return (
-    <div className='flex min-h-screen flex-1 flex-col justify-between'>
+    <div className='flex min-h-screen flex-1 flex-col justify-between bg-white'>
       <header className='drag sticky top-0 z-50 flex w-full flex-row items-center border-b border-black/5 bg-gray-50/75 p-3 backdrop-blur-md'>
         <div className='mx-auto w-full max-w-xl leading-none'>
           <h1 className='text-sm font-medium'>LLaMa</h1>
@@ -63,8 +63,8 @@ export default function Home() {
       <section className='mx-auto mb-10 w-full max-w-xl flex-1 break-words'>
         {messages.map((m, i) => (
           <div className='my-4 flex gap-4' key={i}>
-            <div className='flex-none pr-2 text-lg'>{m.sender === 'human' ? '👩' : '🤖'}</div>
-            <div className='flex-1 text-gray-900'>
+            <div className='flex-none pr-1 text-lg'>{m.sender === 'human' ? '👩' : '🤖'}</div>
+            <div className='flex-1 text-gray-800'>
               {m.content}
               {m.sender === 'bot' && <span className='relative -top-[3px] left-1 text-[10px] text-blue-600'>⬤</span>}
             </div>
