@@ -11,9 +11,11 @@ const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
-    titleBarStyle: 'hidden',
-    trafficLightPosition: { x: 20, y: 18 },
-    vibrancy: 'titlebar',
+    minWidth: 400,
+    minHeight: 300,
+    titleBarStyle: 'hiddenInset',
+    // trafficLightPosition: { x: 20, y: 18 },
+    // vibrancy: 'titlebar',
     transparent: true,
   })
 
