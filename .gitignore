@@ -3,3 +3,4 @@
 *.spec
 */build
 */dist
+client/resources/server

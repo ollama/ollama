@@ -2,7 +2,7 @@ import json
 import os
 from llama_cpp import Llama
 from flask import Flask, Response, stream_with_context, request
-from flask_cors import CORS, cross_origin
+from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)  # enable CORS for all routes
