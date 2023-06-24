@@ -15,6 +15,7 @@ Get the dependencies:
 
 ```bash
 pip install llama-cpp-python
+pip install pyinstaller
 pip install -r requirements.txt
 ```
 
