@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-const API_URL = 'http://127.0.0.1:8080'
+const API_URL = 'http://127.0.0.1:5000'
 
 type Message = {
   sender: string
@@ -8,16 +8,18 @@ type Message = {
 }
 
 async function completion(prompt: string, callback: (res: string) => void) {
-  const result = await fetch(`${API_URL}/completion`, {
+  const result = await fetch(`${API_URL}/generate`, {
     method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
-      prompt: prompt,
-      temperature: 0.2,
-      top_k: 40,
-      top_p: 0.9,
-      n_predict: 256,
-      stop: ['\n### Human:'], // stop completion after generating this
-      stream: true,
+      prompt: `A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.
+
+      ### Human: Hello, Assistant.
+      ### Assistant: Hello. How may I help you today?
+      ### Human: ${prompt}`,
+      model: 'ggml-model-q4_0',
     }),
   })
 
@@ -36,12 +38,17 @@ async function completion(prompt: string, callback: (res: string) => void) {
 
     let decoder = new TextDecoder()
     let str = decoder.decode(value)
-    if (str.startsWith('data: ')) {
-      const message = JSON.parse(str.substring(6))
-      callback(message.content)
-      if (message.stop) {
+    let re = /}{/g
+    str = '[' + str.replace(re, '},{') + ']'
+    let messages = JSON.parse(str)
+
+    for (const message of messages) {
+      const choice = message.choices[0]
+      if (choice.finish_reason === 'stop') {
         break
       }
+
+      callback(choice.text)
     }
   }
 
@@ -63,10 +70,20 @@ export default function () {
       <section className='mx-auto mb-10 w-full max-w-xl flex-1 break-words'>
         {messages.map((m, i) => (
           <div className='my-4 flex gap-4' key={i}>
-            <div className='flex-none pr-1 text-lg'>{m.sender === 'human' ? '👩' : '🤖'}</div>
+            <div className='flex-none pr-1 text-lg'>
+              {m.sender === 'human' ? (
+                <div className='bg-neutral-200 text-neutral-700 text-sm h-6 w-6 rounded-md flex items-center justify-center mt-px'>
+                  H
+                </div>
+              ) : (
+                <div className='bg-blue-600 text-white text-sm h-6 w-6 rounded-md flex items-center justify-center mt-0.5'>
+                  L
+                </div>
+              )}
+            </div>
             <div className='flex-1 text-gray-800'>
               {m.content}
-              {m.sender === 'bot' && <span className='relative -top-[3px] left-1 text-[10px] text-blue-600'>⬤</span>}
+              {m.sender === 'bot' && <span className='relative -top-[3px] left-1 text-[10px]'>⬤</span>}
             </div>
           </div>
         ))}

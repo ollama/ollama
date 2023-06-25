@@ -12,6 +12,7 @@ import { rendererConfig } from './webpack.renderer.config'
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    icon: './images/icon',
   },
   rebuildConfig: {},
   makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin']), new MakerRpm({}), new MakerDeb({})],
