@@ -39,11 +39,13 @@ Get the dependencies:
 pip install -r requirements.txt
 ```
 
+Then build a binary for your current platform:
+
 ```bash
 python3 build.py
 ```
 
-Then to build the app:
+### Building the app
 
 ```
 cd desktop
