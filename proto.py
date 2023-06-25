@@ -18,11 +18,11 @@ def load():
 
     if not model:
         return Response("Model is required", status=400)
-    if not os.path.exists(f"../models/{model}.bin"):
+    if not os.path.exists(f"./models/{model}.bin"):
         return {"error": "The model does not exist."}, 400
 
     if model not in llms:
-        llms[model] = Llama(model_path=f"../models/{model}.bin")
+        llms[model] = Llama(model_path=f"./models/{model}.bin")
 
     return Response(status=204)
 
@@ -34,7 +34,7 @@ def unload():
 
     if not model:
         return Response("Model is required", status=400)
-    if not os.path.exists(f"../models/{model}.bin"):
+    if not os.path.exists(f"./models/{model}.bin"):
         return {"error": "The model does not exist."}, 400
 
     llms.pop(model, None)
@@ -57,7 +57,7 @@ def generate():
 
     if model not in llms:
         # auto load
-        llms[model] = Llama(model_path=f"../models/{model}.bin")
+        llms[model] = Llama(model_path=f"./models/{model}.bin")
 
     def stream_response():
         stream = llms[model](
