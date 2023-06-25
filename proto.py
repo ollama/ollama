@@ -52,7 +52,7 @@ def generate():
         return Response("Model is required", status=400)
     if not prompt:
         return Response("Prompt is required", status=400)
-    if not os.path.exists(f"../models/{model}.bin"):
+    if not os.path.exists(f"./models/{model}.bin"):
         return {"error": "The model does not exist."}, 400
 
     if model not in llms:
@@ -74,6 +74,6 @@ def generate():
         stream_with_context(stream_response()), mimetype="text/event-stream"
     )
 
-
 if __name__ == "__main__":
     app.run(debug=True, threaded=True, port=5001)
+    app.run()
