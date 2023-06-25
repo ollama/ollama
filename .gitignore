@@ -1,2 +1,7 @@
 .DS_Store
 .vscode
+.env
+.venv
+*.spec
+build
+dist
