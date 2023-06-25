@@ -21,24 +21,32 @@ const createWindow = (): void => {
     minWidth: 400,
     minHeight: 300,
     titleBarStyle: 'hiddenInset',
-    // trafficLightPosition: { x: 20, y: 18 },
-    // vibrancy: 'titlebar',
     transparent: true,
-  })
-
-  // Start the executable
-  let pyExecutable = path.join(__dirname, '../renderer/resources/server')
-  console.log(`Starting ${pyExecutable}`)
-  let pyProcess = spawn(pyExecutable)
-  pyProcess.stdout.on('data', data => {
-    console.log(`server: ${data}`)
-  })
-  pyProcess.stderr.on('data', data => {
-    console.error(`server: ${data}`)
   })
 
   // and load the index.html of the app.
   mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
+}
+
+// if the app is packaged then run the server
+if (app.isPackaged) {
+  const resources = process.resourcesPath
+  console.log(resources)
+
+  // Start the executable
+  const exec = path.join(resources, 'server')
+  console.log(`Starting ${exec}`)
+  const proc = spawn(exec)
+  proc.stdout.on('data', data => {
+    console.log(`server: ${data}`)
+  })
+  proc.stderr.on('data', data => {
+    console.error(`server: ${data}`)
+  })
+
+  process.on('exit', () => {
+    proc.kill()
+  })
 }
 
 // This method will be called when Electron has finished

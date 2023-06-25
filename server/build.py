@@ -1,6 +1,5 @@
 import site
 import os
-import shutil
 from PyInstaller.__main__ import run as pyi_run
 
 # the llama_cpp directory is not included if not explicitly added
@@ -13,10 +12,9 @@ args = [
     site_packages_dir,
     "--add-data",
     f"{llama_cpp_dir}{os.pathsep}llama_cpp",
-    "--onefile",
+    "--onefile"
 ]
 
 # generate the .spec file and run PyInstaller
 pyi_run(args)
 
-shutil.copy2("dist/server", "../client/resources/server")
