@@ -74,6 +74,12 @@ def generate():
         stream_with_context(stream_response()), mimetype="text/event-stream"
     )
 
+@app.route("/models", methods=["GET"])
+def models():
+    all_files = os.listdir("./models")
+    bin_files = [file.replace(".bin", "") for file in all_files if file.endswith(".bin")]
+    return Response(json.dumps(bin_files), mimetype="application/json")
+
 if __name__ == "__main__":
     app.run(debug=True, threaded=True, port=5001)
     app.run()
