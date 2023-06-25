@@ -54,7 +54,13 @@ npm run package
 
 ## API
 
+### `GET /models`
+
+Returns a list of available models
+
 ### `POST /generate`
+
+Generates completions as a series of JSON objects
 
 model: `string` - The name of the model to use in the `models` folder.
 prompt: `string` - The prompt to use.
