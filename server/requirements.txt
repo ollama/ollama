@@ -1,3 +1,5 @@
 Flask==2.3.2
 flask_cors==3.0.10
 llama-cpp-python==0.1.65
+pyinstaller==5.13.0
+pyinstaller-hooks-contrib==2023.3
