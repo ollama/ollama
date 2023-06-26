@@ -14,11 +14,7 @@ async function completion(prompt: string, callback: (res: string) => void) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      prompt: `A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.
-
-      ### Human: Hello, Assistant.
-      ### Assistant: Hello. How may I help you today?
-      ### Human: ${prompt}`,
+      prompt: prompt,
       model: 'ggml-model-q4_0',
     }),
   })
