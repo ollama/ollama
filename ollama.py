@@ -17,16 +17,16 @@ lock = threading.Lock()
 
 def load(model):
     with lock:
-        if not os.path.exists(f"./models/{model}.bin"):
+        if not os.path.exists(f"{model}"):
             return {"error": "The model does not exist."}
         if model not in llms:
-            llms[model] = Llama(model_path=f"./models/{model}.bin")
+            llms[model] = Llama(model_path=f"{model}")
     return None
 
 
 def unload(model):
     with lock:
-        if not os.path.exists(f"./models/{model}.bin"):
+        if not os.path.exists(f"{model}"):
             return {"error": "The model does not exist."}
         llms.pop(model, None)
     return None
@@ -89,7 +89,7 @@ def generate_route_handler():
         return Response("Model is required", status=400)
     if not prompt:
         return Response("Prompt is required", status=400)
-    if not os.path.exists(f"./models/{model}.bin"):
+    if not os.path.exists(f"{model}"):
         return {"error": "The model does not exist."}, 400
     return Response(
         stream_with_context(query(model, prompt)), mimetype="text/event-stream"
