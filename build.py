@@ -7,7 +7,7 @@ site_packages_dir = site.getsitepackages()[0]
 llama_cpp_dir = os.path.join(site_packages_dir, "llama_cpp")
 
 args = [
-    "proto.py",
+    "ollama.py",
     "--paths",
     site_packages_dir,
     "--add-data",

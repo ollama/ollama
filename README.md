@@ -1,4 +1,4 @@
-# proto
+# ollama
 
 🙊
 
@@ -13,7 +13,7 @@ pip install -r requirements.txt
 Put your model in `models/` and run:
 
 ```
-python3 proto.py serve
+python3 ollama.py serve
 ```
 
 To run the app:

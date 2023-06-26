@@ -1,8 +1,8 @@
 {
-  "name": "client",
-  "productName": "client",
-  "version": "1.0.0",
-  "description": "Proto",
+  "name": "olama",
+  "productName": "ollama",
+  "version": "0.0.1",
+  "description": "Ollama",
   "main": ".webpack/main",
   "scripts": {
     "start": "electron-forge start",
