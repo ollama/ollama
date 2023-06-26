@@ -5,6 +5,7 @@ import click
 from llama_cpp import Llama
 from flask import Flask, Response, stream_with_context, request
 from flask_cors import CORS
+from template import template
 
 app = Flask(__name__)
 CORS(app)  # enable CORS for all routes
@@ -124,6 +125,7 @@ def generate(model, prompt):
     if prompt == "":
         prompt = input("Prompt: ")
     output = ""
+    prompt = template(model, prompt)
     for generated in query(model, prompt):
         generated_json = json.loads(generated)
         text = generated_json["choices"][0]["text"]
