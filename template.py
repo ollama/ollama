@@ -1,45 +1,8 @@
 from difflib import SequenceMatcher
+import json
 
-model_prompts = {
-    "alpaca": """Below is an instruction that describes a task. Write a response that appropriately completes the request.
-
-### Instruction:
-{prompt}
-
-### Response:
-
-""",
-    "oasst": "<|prompter|>{prompt}<|endoftext|><|assistant|>",
-    "vicuna": """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-
-USER: {prompt}
-ASSISTANT:""",
-    "hermes": """### Instruction:
-{prompt}
-
-### Response:
-""",
-    "gpt4": """### Instruction:
-{prompt}
-
-### Response:
-""",
-    "qlora": """### Human: {prompt}
-### Assistant:""",
-    "tulu": """<|user|>
-{prompt}
-<|assistant|>
-(include newline)""",
-    "wizardlm-7b": """{prompt}
-
-### Response:""",
-    "wizardlm-13b": """{prompt}
-
-### Response:""",
-    "wizardlm-30b": """{prompt}
-
-### Response:""",
-}
+with open("model_prompts.json", "r") as f:
+    model_prompts = json.load(f)
 
 
 def template(model, prompt):

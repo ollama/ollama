@@ -1,0 +1,12 @@
+{
+    "alpaca": "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{prompt}\n\n### Response:\n\n",
+    "oasst": "{prompt}",
+    "vicuna": "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.\n\nUSER: {prompt}\nASSISTANT:",
+    "hermes": "### Instruction:\n{prompt}\n\n### Response:\n",
+    "gpt4": "### Instruction:\n{prompt}\n\n### Response:\n",
+    "qlora": "### Human: {prompt}\n### Assistant:",
+    "tulu": "\n{prompt}\n\n(include newline)",
+    "wizardlm-7b": "{prompt}\n\n### Response:",
+    "wizardlm-13b": "{prompt}\n\n### Response:",
+    "wizardlm-30b": "{prompt}\n\n### Response:"
+}
