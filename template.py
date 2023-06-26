@@ -53,5 +53,5 @@ def template(model, prompt):
             max_ratio = ratio
             closest_key = key
     # Return the value of the closest match
-    p = model_prompts.get(closest_key)  # .format(placeholder=prompt)
+    p = model_prompts.get(closest_key)  # TODO: provide a better default template
     return p.format(prompt=prompt)
