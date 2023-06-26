@@ -13,7 +13,7 @@ pip install -r requirements.txt
 Put your model in `models/` and run:
 
 ```
-python proto.py
+python3 proto.py serve
 ```
 
 To run the app:

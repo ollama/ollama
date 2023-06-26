@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+import click
 from llama_cpp import Llama
 from flask import Flask, Response, stream_with_context, request
 from flask_cors import CORS
@@ -100,6 +101,21 @@ def models_route_handler():
     return Response(json.dumps(bin_files), mimetype="application/json")
 
 
+@click.group(invoke_without_command=True)
+@click.pass_context
+def cli(ctx):
+    # allows the script to respond to command line input when executed directly
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@cli.command()
+@click.option("--port", default=5000, help="Port to run the server on")
+@click.option("--debug", default=False, help="Enable debug mode")
+def serve(port, debug):
+    print("Serving on http://localhost:{port}")
+    app.run(host="0.0.0.0", port=port, debug=debug)
+
+
 if __name__ == "__main__":
-    app.run(debug=True, threaded=True, port=5001)
-    app.run()
+    cli()
