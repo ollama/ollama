@@ -3,9 +3,9 @@ import json
 import sys
 from contextlib import contextmanager
 from llama_cpp import Llama as LLM
-from template import template
 
 import ollama.model
+import ollama.prompt
 
 
 @contextmanager
@@ -21,7 +21,7 @@ def suppress_stderr():
 def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
     llm = load(model, models_home=models_home, llms=llms)
 
-    prompt = template(model, prompt)
+    prompt = ollama.prompt.template(model, prompt)
 
     if "max_tokens" not in kwargs:
         kwargs.update({"max_tokens": 16384})
@@ -43,12 +43,9 @@ def load(model, models_home=".", llms={}):
             name: path for name, path in ollama.model.models(models_home)
         }.get(model, None)
 
-        if model_path is None:
+        if not model_path:
             # try loading this as a path to a model, rather than a model name
-            if os.path.isfile(model):
-                model_path = model
-            else:
-                raise ValueError("Model not found")
+            model_path = model
 
         # suppress LLM's output
         with suppress_stderr():

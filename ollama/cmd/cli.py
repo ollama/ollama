@@ -52,6 +52,9 @@ def generate(*args, **kwargs):
         if len(choices) > 0:
             print(choices[0].get("text", ""), end="")
 
+    # end with a new line
+    print()
+
 
 def add(model, models_home):
     os.rename(model, Path(models_home) / Path(model).name)
