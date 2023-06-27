@@ -7,7 +7,7 @@ model_prompts = {
     "oasst": "{prompt}",
     "orca": "### System:\nYou are an AI assistant that follows instruction extremely well. Help as much as you can.\n\n### User:\n{prompt}\n\n### Response:",
     "qlora": "### Human: {prompt}\n### Assistant:",
-    "tulu": "\n{prompt}\n\n(include newline)",
+    "tulu": "\n{prompt}\n\n",
     "vicuna": "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.\n\nUSER: {prompt}\nASSISTANT:",
     "wizardlm": "{prompt}\n\n### Response:",
 }
