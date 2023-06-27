@@ -3,7 +3,7 @@ import path from 'path'
 import os from 'os'
 import { dialog, getCurrentWindow } from '@electron/remote'
 
-const API_URL = 'http://127.0.0.1:5001'
+const API_URL = 'http://127.0.0.1:7734'
 
 type Message = {
   sender: 'bot' | 'human'
