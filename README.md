@@ -1,22 +1,28 @@
 # Ollama
 
-- Run models easily
-- Download, manage and import models
+![header](https://github.com/jmorganca/ollama/assets/251292/98204129-c676-4ab5-be98-bcc45ba8e9e7)
 
-## Install
+The easiest way to run download and run ai models.
+
+## Download
+
+- [macOS](https://ollama.ai/download/darwin) (Apple Silicon)
+- macOS (Intel – Coming soon)
+- Windows (Coming soon)
+- Linux (Coming soon)
+
+## Python SDK
 
 ```
 pip install ollama
 ```
 
-## Example quickstart
+### Python SDK quickstart
 
 ```python
 import ollama
 ollama.generate("./llama-7b-ggml.bin", "hi")
 ```
-
-## Reference
 
 ### `ollama.generate(model, message)`
 
