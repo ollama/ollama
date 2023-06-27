@@ -77,7 +77,7 @@ ollama.search("llama-7b")
 In the future, there will be an `ollama` CLI for running models on servers, in containers or for local development environments.
 
 ```
-ollama generaate huggingface.co/thebloke/llama-7b-ggml
+ollama generate huggingface.co/thebloke/llama-7b-ggml "hi"
 > Downloading [================>          ] 66.67% (2/3) 30.2MB/s
 ```
 
