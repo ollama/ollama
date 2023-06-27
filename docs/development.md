@@ -20,6 +20,7 @@ python3 ollama.py serve
 
 Install dependencies:
 ```
+cd desktop
 npm install
 ```
 
