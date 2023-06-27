@@ -1,6 +1,7 @@
 import os
 import json
 import sys
+import shutil
 from contextlib import contextmanager
 from llama_cpp import Llama as LLM
 from template import template
@@ -61,3 +62,9 @@ def load(model, models_home=".", llms={}):
 def unload(model, llms={}):
     if model in llms:
         llms.pop(model)
+
+
+def add(file, models_home=".", *args, **kwargs):
+    if not os.path.exists(file):
+        raise ValueError("Model file {model} not found")
+    shutil.move(file, models_home)

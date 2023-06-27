@@ -23,8 +23,8 @@ def main():
     generate_parser.set_defaults(fn=generate)
 
     add_parser = subparsers.add_parser("add")
-    add_parser.add_argument("model_file")
-    generate_parser.set_defaults(fn=add)
+    add_parser.add_argument("file")
+    add_parser.set_defaults(fn=add)
 
     args = parser.parse_args()
     args = vars(args)
@@ -48,4 +48,4 @@ def generate(*args, **kwargs):
 
 
 def add(*args, **kwargs):
-    model.add(*args, **kwargs)
+    engine.add(*args, **kwargs)

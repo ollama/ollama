@@ -50,6 +50,14 @@ models = ollama.models()
 
 Serve the ollama http server
 
+### `ollama.add(filepath)`
+
+Add a model by importing from a file
+
+```python
+ollama.add("./path/to/model")
+```
+
 ## Cooming Soon
 
 ### `ollama.pull(model)`
@@ -58,14 +66,6 @@ Download a model
 
 ```python
 ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
-```
-
-### `ollama.import(filename)`
-
-Import a model from a file
-
-```python
-ollama.import("./path/to/model")
 ```
 
 ### `ollama.search("query")`
