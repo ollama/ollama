@@ -31,7 +31,7 @@ ollama.generate("./llama-7b-ggml.bin", "hi")
 Load a model for generation
 
 ```python
-ollama.load("model name")
+ollama.load("model")
 ```
 
 ### `ollama.models()`
@@ -48,7 +48,7 @@ Serve the ollama http server
 
 ## Cooming Soon
 
-### `ollama.pull("model")`
+### `ollama.pull(model)`
 
 Download a model
 
@@ -56,7 +56,7 @@ Download a model
 ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
 ```
 
-### `ollama.import("file")`
+### `ollama.import(filename)`
 
 Import a model from a file
 
