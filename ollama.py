@@ -2,7 +2,6 @@ import json
 import os
 import threading
 import click
-from transformers import AutoModel
 from tqdm import tqdm
 from pathlib import Path
 from llama_cpp import Llama
@@ -160,7 +159,7 @@ def cli(ctx):
 
 
 @cli.command()
-@click.option("--port", default=5000, help="Port to run the server on")
+@click.option("--port", default=7734, help="Port to run the server on")
 @click.option("--debug", default=False, help="Enable debug mode")
 def serve(port, debug):
     print("Serving on http://localhost:{port}")
@@ -194,11 +193,6 @@ def generate_cli(model, prompt):
         text = generated_json["choices"][0]["text"]
         output += text
         print(f"\r{output}", end="", flush=True)
-
-
-def download_model(model_name):
-    dir = models_directory()
-    AutoModel.from_pretrained(model_name, cache_dir=dir)
 
 
 @cli.command(name="models")
