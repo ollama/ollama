@@ -1,25 +1,30 @@
 import { useState } from 'react'
+import path from 'path'
+import os from 'os'
+import { dialog, getCurrentWindow } from '@electron/remote'
 
 const API_URL = 'http://127.0.0.1:5001'
 
 type Message = {
-  sender: string
+  sender: 'bot' | 'human'
   content: string
 }
 
-async function completion(prompt: string, callback: (res: string) => void) {
+const userInfo = os.userInfo()
+
+async function generate(prompt: string, model: string, callback: (res: string) => void) {
   const result = await fetch(`${API_URL}/generate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      prompt: prompt,
-      model: 'ggml-model-q4_0',
+      prompt,
+      model,
     }),
   })
 
-  if (!result.ok || !result.body) {
+  if (!result.ok) {
     return
   }
 
@@ -54,71 +59,99 @@ async function completion(prompt: string, callback: (res: string) => void) {
 export default function () {
   const [prompt, setPrompt] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
+  const [model, setModel] = useState('')
+  const [generating, setGenerating] = useState(false)
 
   return (
     <div className='flex min-h-screen flex-1 flex-col justify-between bg-white'>
-      <header className='drag sticky top-0 z-50 flex w-full flex-row items-center border-b border-black/5 bg-gray-50/75 p-3 backdrop-blur-md'>
+      <header className='drag sticky top-0 z-50 flex h-14 w-full flex-row items-center border-b border-black/10 bg-white/75 backdrop-blur-md'>
         <div className='mx-auto w-full max-w-xl leading-none'>
-          <h1 className='text-sm font-medium'>LLaMa</h1>
-          <h2 className='text-xs text-black/50'>Meta Platforms, Inc.</h2>
+          <h1 className='text-sm font-medium'>{path.basename(model).replace('.bin', '')}</h1>
         </div>
       </header>
-      <section className='mx-auto mb-10 w-full max-w-xl flex-1 break-words'>
-        {messages.map((m, i) => (
-          <div className='my-4 flex gap-4' key={i}>
-            <div className='flex-none pr-1 text-lg'>
-              {m.sender === 'human' ? (
-                <div className='bg-neutral-200 text-neutral-700 text-sm h-6 w-6 rounded-md flex items-center justify-center mt-px'>
-                  H
-                </div>
-              ) : (
-                <div className='bg-blue-600 text-white text-sm h-6 w-6 rounded-md flex items-center justify-center mt-0.5'>
-                  L
-                </div>
-              )}
+      {model ? (
+        <section className='mx-auto mb-10 w-full max-w-xl flex-1 break-words'>
+          {messages.map((m, i) => (
+            <div className='my-4 flex gap-4' key={i}>
+              <div className='flex-none pr-1 text-lg'>
+                {m.sender === 'human' ? (
+                  <div className='mt-px flex h-6 w-6 items-center justify-center rounded-md bg-neutral-200 text-sm text-neutral-700'>
+                    {userInfo.username[0].toUpperCase()}
+                  </div>
+                ) : (
+                  <div className='mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-sm text-white'>
+                    {path.basename(model)[0].toUpperCase()}
+                  </div>
+                )}
+              </div>
+              <div className='flex-1 text-gray-800'>
+                {m.content}
+                {m.sender === 'bot' && generating && (
+                  <span className='blink relative -top-[3px] left-1 text-[10px]'>█</span>
+                )}
+              </div>
             </div>
-            <div className='flex-1 text-gray-800'>
-              {m.content}
-              {m.sender === 'bot' && <span className='relative -top-[3px] left-1 text-[10px]'>⬤</span>}
-            </div>
-          </div>
-        ))}
-      </section>
+          ))}
+        </section>
+      ) : (
+        <section className='flex flex-1 select-none flex-col items-center justify-center pb-20'>
+          <h2 className='text-3xl font-light text-neutral-400'>No model selected</h2>
+          <button
+            onClick={async () => {
+              const res = await dialog.showOpenDialog(getCurrentWindow(), {
+                properties: ['openFile', 'multiSelections'],
+              })
+              if (res.canceled) {
+                return
+              }
+
+              setModel(res.filePaths[0])
+            }}
+            className='rounded-dm my-8 rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:brightness-110'
+          >
+            Open file...
+          </button>
+        </section>
+      )}
       <div className='sticky bottom-0 bg-gradient-to-b from-transparent to-white'>
-        <textarea
-          autoFocus
-          rows={1}
-          value={prompt}
-          placeholder='Send a message...'
-          onChange={e => setPrompt(e.target.value)}
-          className='mx-auto my-4 block w-full max-w-xl resize-none rounded-xl border border-gray-200 px-5 py-3.5 text-[15px] shadow-lg shadow-black/5 focus:outline-none'
-          onKeyDownCapture={async e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault() // Prevents the newline character from being inserted
-              // Perform your desired action here, such as submitting the form or handling the entered text
+        {model && (
+          <textarea
+            autoFocus
+            rows={1}
+            value={prompt}
+            placeholder='Send a message...'
+            onChange={e => setPrompt(e.target.value)}
+            className='mx-auto my-4 block w-full max-w-xl resize-none rounded-xl border border-gray-200 px-5 py-3.5 text-[15px] shadow-lg shadow-black/5 focus:outline-none'
+            onKeyDownCapture={async e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
 
-              await setMessages(messages => {
-                return [...messages, { sender: 'human', content: prompt }]
-              })
+                if (generating) {
+                  return
+                }
 
-              const index = messages.length + 1
-              completion(prompt, res => {
-                setMessages(messages => {
-                  let message = messages[index]
-                  if (!message) {
-                    message = { sender: 'bot', content: '' }
-                  }
+                if (!prompt) {
+                  return
+                }
 
-                  message.content = message.content + res
-
-                  return [...messages.slice(0, index), message]
+                await setMessages(messages => {
+                  return [...messages, { sender: 'human', content: prompt }, { sender: 'bot', content: '' }]
                 })
-              })
 
-              setPrompt('')
-            }
-          }}
-        ></textarea>
+                setPrompt('')
+
+                setGenerating(true)
+                await generate(prompt, model, res => {
+                  setMessages(messages => {
+                    let last = messages[messages.length - 1]
+                    return [...messages.slice(0, messages.length - 1), { ...last, content: last.content + res }]
+                  })
+                })
+                setGenerating(false)
+              }
+            }}
+          ></textarea>
+        )}
       </div>
     </div>
   )

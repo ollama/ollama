@@ -13,7 +13,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: './images/icon',
-    extraResource: ['../server/dist/server'],
+    extraResource: ['../dist/ollama'],
   },
   rebuildConfig: {},
   makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin']), new MakerRpm({}), new MakerDeb({})],
@@ -24,6 +24,7 @@ const config: ForgeConfig = {
       devContentSecurityPolicy: `default-src * 'unsafe-eval' 'unsafe-inline'`,
       renderer: {
         config: rendererConfig,
+        nodeIntegration: true,
         entryPoints: [
           {
             html: './src/index.html',
