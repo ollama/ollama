@@ -43,9 +43,9 @@ if (app.isPackaged) {
   console.log(resources)
 
   // Start the executable
-  const exec = path.join(resources, 'serve', '--port', '7734')
+  const exec = path.join(resources, 'ollama', 'ollama')
   console.log(`Starting ${exec}`)
-  const proc = spawn(exec)
+  const proc = spawn(exec, ['serve', '--port', '7734'])
   proc.stdout.on('data', data => {
     console.log(`server: ${data}`)
   })

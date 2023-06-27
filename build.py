@@ -11,8 +11,7 @@ args = [
     "--paths",
     site_packages_dir,
     "--add-data",
-    f"{llama_cpp_dir}{os.pathsep}llama_cpp",
-    "--onefile"
+    f"{llama_cpp_dir}{os.pathsep}llama_cpp"
 ]
 
 # generate the .spec file and run PyInstaller

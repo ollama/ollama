@@ -1,6 +1,6 @@
 # Desktop
 
-The Ollama desktop app
+The Ollama desktop experience
 
 ## Running
 

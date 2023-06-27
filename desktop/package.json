@@ -7,8 +7,10 @@
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
+    "package:sign": "SIGN=1 electron-forge package",
     "make": "electron-forge make",
-    "publish": "electron-forge publish",
+    "make:sign": "SIGN=1 electron-forge package",
+    "publish": "SIGN=1 electron-forge publish",
     "lint": "eslint --ext .ts,.tsx ."
   },
   "keywords": [],
@@ -27,6 +29,7 @@
     "@electron-forge/maker-zip": "^6.2.1",
     "@electron-forge/plugin-auto-unpack-natives": "^6.2.1",
     "@electron-forge/plugin-webpack": "^6.2.1",
+    "@electron-forge/publisher-github": "^6.2.1",
     "@types/chmodr": "^1.0.0",
     "@types/react": "^18.2.14",
     "@types/react-dom": "^18.2.6",
