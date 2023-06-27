@@ -1,7 +1,7 @@
 from difflib import SequenceMatcher
 import json
 
-with open("model_prompts.json", "r") as f:
+with open("./model_prompts.json", "r") as f:
     model_prompts = json.load(f)
 
 

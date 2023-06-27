@@ -86,7 +86,6 @@ def unload(model):
 def generate(model, prompt):
     # auto load
     error = load(model)
-    print(error)
     if error is not None:
         return error
     generated = llms[model](
