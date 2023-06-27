@@ -80,3 +80,7 @@ In the future, there will be an easy CLI for running models
 ollama run huggingface.co/thebloke/llama-7b-ggml
 > Downloading [================>          ] 66.67% (2/3) 30.2MB/s
 ```
+
+## Documentation
+
+- [Development](docs/development.md)
