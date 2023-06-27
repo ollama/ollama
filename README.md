@@ -18,7 +18,15 @@ ollama.generate("./llama-7b-ggml.bin", "hi")
 
 ## Reference
 
-### `ollama.load`
+### `ollama.generate(model, message)`
+
+Generate a completion
+
+```python
+ollama.generate("./llama-7b-ggml.bin", "hi")
+```
+
+### `ollama.load(model)`
 
 Load a model for generation
 
@@ -26,15 +34,7 @@ Load a model for generation
 ollama.load("model name")
 ```
 
-### `ollama.generate("message")`
-
-Generate a completion
-
-```python
-ollama.generate(model, "hi")
-```
-
-### `ollama.models`
+### `ollama.models()`
 
 List available local models
 
@@ -42,13 +42,13 @@ List available local models
 models = ollama.models()
 ```
 
-### `ollama.serve`
+### `ollama.serve()`
 
 Serve the ollama http server
 
-## Cooing Soon
+## Cooming Soon
 
-### `ollama.pull`
+### `ollama.pull("model")`
 
 Download a model
 
@@ -56,7 +56,7 @@ Download a model
 ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
 ```
 
-### `ollama.import`
+### `ollama.import("file")`
 
 Import a model from a file
 
@@ -64,7 +64,7 @@ Import a model from a file
 ollama.import("./path/to/model")
 ```
 
-### `ollama.search`
+### `ollama.search("query")`
 
 Search for compatible models that Ollama can run
 
@@ -74,7 +74,7 @@ ollama.search("llama-7b")
 
 ## Future CLI
 
-In the future, there will be an easy CLI for testing out models
+In the future, there will be an easy CLI for running models
 
 ```
 ollama run huggingface.co/thebloke/llama-7b-ggml
