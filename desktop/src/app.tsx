@@ -86,7 +86,7 @@ export default function () {
               </div>
               <div className='flex-1 text-gray-800'>
                 {m.content}
-                {m.sender === 'bot' && generating && (
+                {m.sender === 'bot' && generating && i === messages.length - 1 && (
                   <span className='blink relative -top-[3px] left-1 text-[10px]'>█</span>
                 )}
               </div>
