@@ -13,10 +13,7 @@ pip install ollama
 
 ```python
 import ollama
-model_name = "huggingface.co/thebloke/llama-7b-ggml"
-model = ollama.pull(model_name)
-ollama.load(model)
-ollama.generate(model_name, "hi")
+ollama.generate("./llama-7b-ggml.bin", "hi")
 ```
 
 ## Reference
