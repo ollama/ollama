@@ -1,8 +1,6 @@
 # Ollama
 
-![header](https://github.com/jmorganca/ollama/assets/251292/98204129-c676-4ab5-be98-bcc45ba8e9e7)
-
-The easiest way to run download and run ai models.
+The easiest way to run ai models.
 
 ## Download
 
