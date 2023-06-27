@@ -14,14 +14,6 @@ Put your model in `models/` and run:
 python3 ollama.py serve
 ```
 
-To run the app:
-
-```
-cd desktop
-npm install
-npm start
-```
-
 ## Building
 
 If using Apple silicon, you need a Python version that supports arm64:
