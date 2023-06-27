@@ -1,66 +1,82 @@
-# ollama
+# Ollama
 
-🙊
+- Run models, fast
+- Download, manage and import models
 
-## Running
-
-Install dependencies:
-
-```
-pip install -r requirements.txt
-```
-
-Put your model in `models/` and run:
+## Install
 
 ```
-python3 ollama.py serve
+pip install ollama
 ```
 
-To run the app:
+## Example quickstart
 
-```
-cd desktop
-npm install
-npm start
-```
-
-## Building
-
-If using Apple silicon, you need a Python version that supports arm64:
-
-```bash
-wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh
-bash Miniforge3-MacOSX-arm64.sh
+```python
+import ollama
+model_name = "huggingface.co/thebloke/llama-7b-ggml"
+model = ollama.pull(model_name)
+ollama.load(model)
+ollama.generate(model_name, "hi")
 ```
 
-Get the dependencies:
+## Reference
 
-```bash
-pip install -r requirements.txt
+### `ollama.load`
+
+Load a model from a path or a docker image
+
+```python
+ollama.load("model name")
 ```
 
-Then build a binary for your current platform:
+### `ollama.generate("message")`
 
-```bash
-python3 build.py
+Generate a completion
+
+```python
+ollama.generate(model, "hi")
 ```
 
-### Building the app
+### `ollama.models`
+
+List models
 
 ```
-cd desktop
-npm run package
+models = ollama.models()
 ```
 
-## API
+### `ollama.serve`
 
-### `GET /models`
+Serve the ollama http server
 
-Returns a list of available models
+## Cooing Soon
 
-### `POST /generate`
+### `ollama.pull`
 
-Generates completions as a series of JSON objects
+Examples:
 
-model: `string` - The name of the model to use in the `models` folder.
-prompt: `string` - The prompt to use.
+```python
+ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
+```
+
+### `ollama.import`
+
+Import an existing model into the model store
+
+```python
+ollama.import("./path/to/model")
+```
+
+### `ollama.search`
+
+Search for compatible models that Ollama can run
+
+```python
+ollama.search("llama-7b")
+```
+
+## Future CLI
+
+```
+ollama run huggingface.co/thebloke/llama-7b-ggml
+```
