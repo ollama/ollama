@@ -10,7 +10,7 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Put your model in `models/` and run:
+Run a server:
 
 ```
 python3 ollama.py serve
@@ -19,16 +19,17 @@ python3 ollama.py serve
 **Start frontend service:**
 
 Install dependencies:
+
 ```
 cd desktop
 npm install
 ```
 
-Run the UI: 
+Run the UI:
+
 ```
 npm start
 ```
-
 
 ## Building
 
@@ -56,4 +57,12 @@ python3 build.py
 ```
 cd desktop
 npm run package
+```
+
+## Update requirements.txt
+
+In the root directory, run:
+
+```
+pipreqs . --force
 ```
