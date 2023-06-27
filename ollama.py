@@ -132,6 +132,7 @@ def generate_route_handler():
     data = request.get_json()
     model = data.get("model")
     prompt = data.get("prompt")
+    prompt = template(model, prompt)
     if not model:
         return Response("Model is required", status=400)
     if not prompt:

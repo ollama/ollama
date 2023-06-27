@@ -2,7 +2,6 @@ from difflib import SequenceMatcher
 
 model_prompts = {
     "alpaca": "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{prompt}\n\n### Response:\n\n",
-    "ggml": "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.\n\n### Human: Hello, Assistant.\n### Assistant: Hello. How may I help you today?\n### Human: ${prompt}",
     "gpt4": "### Instruction:\n{prompt}\n\n### Response:\n",
     "hermes": "### Instruction:\n{prompt}\n\n### Response:\n",
     "oasst": "{prompt}",
