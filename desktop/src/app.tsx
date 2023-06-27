@@ -39,7 +39,8 @@ async function generate(prompt: string, model: string, callback: (res: string) =
 
     let decoder = new TextDecoder()
     let str = decoder.decode(value)
-    let re = /}{/g
+
+    let re = /}\s*{/g
     str = '[' + str.replace(re, '},{') + ']'
     let messages = JSON.parse(str)
 
