@@ -1,6 +1,6 @@
 # Ollama
 
-- Run models, fast
+- Run models easily
 - Download, manage and import models
 
 ## Install
@@ -23,7 +23,7 @@ ollama.generate(model_name, "hi")
 
 ### `ollama.load`
 
-Load a model from a path or a docker image
+Load a model for generation
 
 ```python
 ollama.load("model name")
@@ -39,7 +39,7 @@ ollama.generate(model, "hi")
 
 ### `ollama.models`
 
-List models
+List available local models
 
 ```
 models = ollama.models()
@@ -53,7 +53,7 @@ Serve the ollama http server
 
 ### `ollama.pull`
 
-Examples:
+Download a model
 
 ```python
 ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
@@ -61,7 +61,7 @@ ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
 
 ### `ollama.import`
 
-Import an existing model into the model store
+Import a model from a file
 
 ```python
 ollama.import("./path/to/model")
@@ -77,6 +77,9 @@ ollama.search("llama-7b")
 
 ## Future CLI
 
+In the future, there will be an easy CLI for testing out models
+
 ```
 ollama run huggingface.co/thebloke/llama-7b-ggml
+> Downloading [================>          ] 66.67% (2/3) 30.2MB/s
 ```
