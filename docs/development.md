@@ -2,6 +2,7 @@
 
 ## Running
 
+**Start backend service:**
 Install dependencies:
 
 ```
@@ -13,6 +14,19 @@ Put your model in `models/` and run:
 ```
 python3 ollama.py serve
 ```
+
+**Start frontend service:**
+
+Install dependencies:
+```
+npm install
+```
+
+Run the UI: 
+```
+npm start
+```
+
 
 ## Building
 
