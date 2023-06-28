@@ -93,8 +93,6 @@ Unload a model
 ollama.unload("model")
 ```
 
-## Cooming Soon
-
 ### `ollama.pull(model)`
 
 Download a model
@@ -102,6 +100,8 @@ Download a model
 ```python
 ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
 ```
+
+## Cooming Soon
 
 ### `ollama.search("query")`
 

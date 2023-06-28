@@ -27,6 +27,10 @@ def main():
     add_parser.add_argument("model")
     add_parser.set_defaults(fn=add)
 
+    pull_parser = subparsers.add_parser("pull")
+    pull_parser.add_argument("remote")
+    pull_parser.set_defaults(fn=pull)
+
     args = parser.parse_args()
     args = vars(args)
 
@@ -55,3 +59,7 @@ def generate(*args, **kwargs):
 
 def add(model, models_home):
     os.rename(model, Path(models_home) / Path(model).name)
+
+
+def pull(*args, **kwargs):
+    model.pull(*args, **kwargs)
