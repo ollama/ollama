@@ -1,5 +1,7 @@
 # Development
 
+ollama is built and run using [Poetry](https://python-poetry.org/).
+
 ## Running
 
 **Start backend service:**
@@ -7,13 +9,13 @@
 Install dependencies:
 
 ```
-pip install -r requirements.txt
+poetry install --extras server
 ```
 
 Run a server:
 
 ```
-python3 ollama.py serve
+poetry run ollama serve
 ```
 
 **Start frontend service:**
@@ -43,13 +45,13 @@ bash Miniforge3-MacOSX-arm64.sh
 Get the dependencies:
 
 ```bash
-pip install -r requirements.txt
+poetry install --extras server
 ```
 
 Then build a binary for your current platform:
 
 ```bash
-python3 build.py
+poetry build
 ```
 
 ### Building the app
