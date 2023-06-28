@@ -20,6 +20,15 @@ Run ai models locally.
 pip install ollama
 ```
 
+## Install From Source
+
+```
+git clone git@github.com:jmorganca/ollama ollama
+cd ollama
+pip install -r requirements.txt
+pip install -e .
+```
+
 ## Quickstart
 
 ```

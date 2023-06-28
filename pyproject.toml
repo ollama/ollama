@@ -2,7 +2,7 @@
 name = "ollama"
 version = "0.0.2"
 description = "Run ai models locally"
-authors = ["Ollama team"]
+authors = ["ollama team"]
 readme = "README.md"
 packages = [{include = "ollama"}]
 scripts = {ollama = "ollama.cmd.cli:main"}
