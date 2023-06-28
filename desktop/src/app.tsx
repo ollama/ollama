@@ -46,11 +46,12 @@ async function generate(prompt: string, model: string, callback: (res: string) =
 
     for (const message of messages) {
       const choice = message.choices[0]
+
+      callback(choice.text)
+
       if (choice.finish_reason === 'stop') {
         break
       }
-
-      callback(choice.text)
     }
   }
 
