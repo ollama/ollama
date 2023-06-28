@@ -101,7 +101,7 @@ Download a model
 ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
 ```
 
-## Cooming Soon
+## Coming Soon
 
 ### `ollama.search("query")`
 
