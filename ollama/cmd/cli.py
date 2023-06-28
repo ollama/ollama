@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 from argparse import ArgumentParser
@@ -15,7 +16,7 @@ def main():
     server.set_parser(subparsers.add_parser("serve"))
 
     list_parser = subparsers.add_parser("list")
-    list_parser.set_defaults(fn=list)
+    list_parser.set_defaults(fn=list_models)
 
     generate_parser = subparsers.add_parser("generate")
     generate_parser.add_argument("model")
@@ -23,17 +24,22 @@ def main():
     generate_parser.set_defaults(fn=generate)
 
     add_parser = subparsers.add_parser("add")
-    add_parser.add_argument("file")
+    add_parser.add_argument("model")
     add_parser.set_defaults(fn=add)
 
     args = parser.parse_args()
     args = vars(args)
 
-    fn = args.pop("fn")
-    fn(**args)
+    try:
+        fn = args.pop("fn")
+        fn(**args)
+    except KeyError:
+        parser.print_help()
+    except Exception as e:
+        print(e)
 
 
-def list(*args, **kwargs):
+def list_models(*args, **kwargs):
     for m in model.models(*args, **kwargs):
         print(m)
 
@@ -47,5 +53,5 @@ def generate(*args, **kwargs):
             print(choices[0].get("text", ""), end="")
 
 
-def add(*args, **kwargs):
-    engine.add(*args, **kwargs)
+def add(model, models_home):
+    os.rename(model, Path(models_home) / Path(model).name)

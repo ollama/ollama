@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "ollama"
+version = "0.0.1"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "ollama"}]
+scripts = {ollama = "ollama.cmd.cli:main"}
+
+[tool.poetry.dependencies]
+python = "^3.11"
+llama-cpp-python = "^0.1.66"
+
+aiohttp = {version = "^3.8.4", optional = true}
+aiohttp-cors = {version = "^0.7.0", optional = true}
+
+[tool.poetry.extras]
+server = ["aiohttp", "aiohttp_cors"]
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+flake8 = "^6.0.0"
+
+[tool.poetry.group.lsp]
+optional = true
+
+[tool.poetry.group.lsp.dependencies]
+pyright = "^1.1.316"
+python-lsp-server = "^1.7.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
