@@ -24,6 +24,7 @@ def main():
     generate_parser.set_defaults(fn=generate)
 
     add_parser = subparsers.add_parser("add")
+    add_parser.add_argument("--link", action="store_true")
     add_parser.add_argument("model")
     add_parser.set_defaults(fn=add)
 
@@ -57,8 +58,9 @@ def generate(*args, **kwargs):
             print(choices[0].get("text", ""), end="")
 
 
-def add(model, models_home):
-    os.rename(model, Path(models_home) / Path(model).name)
+def add(model, models_home, link=False):
+    fn = os.symlink if link else os.rename
+    fn(model, Path(models_home) / Path(model).name)
 
 
 def pull(*args, **kwargs):
