@@ -39,13 +39,6 @@ Then build a binary for your current platform:
 poetry build
 ```
 
-### Building the app
-
-```
-cd desktop
-npm run package
-```
-
 ## Update requirements.txt
 
 In the root directory, run:
