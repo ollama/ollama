@@ -49,12 +49,10 @@ def pull(remote, models_home=".", *args, **kwargs):
         if file_info.get("type") == "file" and file_info.get("path").endswith(".bin"):
             f_path = file_info.get("path")
             download_url = f"https://huggingface.co/{model}/resolve/{branch}/{f_path}"
-            local_filename = os.path.join(
-                models_home, os.path.basename(file_info.get("path"))
-            )
+            local_filename = os.path.join(models_home, os.path.basename(model)) + ".bin"
 
             if os.path.exists(local_filename):
-                # TODO: check if the file is the same
+                # TODO: check if the file is the same SHA
                 break
 
             response = requests.get(download_url, stream=True)
