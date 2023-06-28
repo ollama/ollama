@@ -69,6 +69,7 @@ def generate_oneshot(*args, **kwargs):
         if len(choices) > 0:
             print(choices[0].get("text", ""), end="", flush=True)
 
+    # end with a new line
     print()
 
 

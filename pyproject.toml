@@ -10,6 +10,7 @@ scripts = {ollama = "ollama.cmd.cli:main"}
 [tool.poetry.dependencies]
 python = "^3.11"
 llama-cpp-python = "^0.1.66"
+jinja2 = "^3.1.2"
 
 aiohttp = {version = "^3.8.4", optional = true}
 aiohttp-cors = {version = "^0.7.0", optional = true}
