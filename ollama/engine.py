@@ -27,7 +27,7 @@ def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
         kwargs.update({"max_tokens": 16384})
 
     if "stop" not in kwargs:
-        kwargs.update({"stop": ["Q:", "\n"]})
+        kwargs.update({"stop": ["Q:"]})
 
     if "stream" not in kwargs:
         kwargs.update({"stream": True})
