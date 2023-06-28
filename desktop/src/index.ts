@@ -84,6 +84,7 @@ app.on('activate', () => {
 // code. You can also put them in separate files and import them here.
 autoUpdater.setFeedURL({ url: `https://updates.ollama.ai/update/${process.platform}/${app.getVersion()}` })
 
+autoUpdater.checkForUpdates()
 setInterval(() => {
   autoUpdater.checkForUpdates()
 }, 60000)
