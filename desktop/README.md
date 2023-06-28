@@ -14,7 +14,7 @@ The Ollama desktop experience. This is an experimental, easy-to-use app for runn
 In the background run the ollama server `ollama.py` server:
 
 ```
-python ../ollama.py serve --port 7734
+poetry -C .. run ollama serve
 ```
 
 Then run the desktop app with `npm start`:
