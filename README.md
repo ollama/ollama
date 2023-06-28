@@ -57,13 +57,17 @@ ollama.generate("./llama-7b-ggml.bin", "hi")
 
 List available local models
 
-```
+```python
 models = ollama.models()
 ```
 
 ### `ollama.serve()`
 
 Serve the ollama http server
+
+```
+ollama.serve()
+```
 
 ### `ollama.add(filepath)`
 
