@@ -45,30 +45,43 @@ def pull(remote, models_home=".", *args, **kwargs):
 
     json_response = response.json()
 
+    # get the last bin file we find, this is probably the most up to date
+    download_url = None
     for file_info in json_response:
         if file_info.get("type") == "file" and file_info.get("path").endswith(".bin"):
             f_path = file_info.get("path")
             download_url = f"https://huggingface.co/{model}/resolve/{branch}/{f_path}"
-            local_filename = os.path.join(models_home, os.path.basename(model)) + ".bin"
 
-            if os.path.exists(local_filename):
-                # TODO: check if the file is the same SHA
-                break
+    if download_url is None:
+        raise Exception("No model found")
 
-            response = requests.get(download_url, stream=True)
-            response.raise_for_status()  # Raises stored HTTPError, if one occurred
+    local_filename = os.path.join(models_home, os.path.basename(model)) + ".bin"
 
-            total_size = int(response.headers.get("content-length", 0))
+    # Check if file already exists
+    if os.path.exists(local_filename):
+        # TODO: check if the file is the same SHA
+        first_byte = os.path.getsize(local_filename)
+    else:
+        first_byte = 0
 
-            with open(local_filename, "wb") as file, tqdm(
-                desc=local_filename,
-                total=total_size,
-                unit="iB",
-                unit_scale=True,
-                unit_divisor=1024,
-            ) as bar:
-                for data in response.iter_content(chunk_size=1024):
-                    size = file.write(data)
-                    bar.update(size)
+    # If file size is non-zero, resume download
+    if first_byte != 0:
+        header = {"Range": f"bytes={first_byte}-"}
+    else:
+        header = {}
 
-            break  # Stop after downloading the first .bin file
+    response = requests.get(download_url, headers=header, stream=True)
+    response.raise_for_status()  # Raises stored HTTPError, if one occurred
+
+    total_size = int(response.headers.get("content-length", 0))
+
+    with open(local_filename, "ab" if first_byte else "wb") as file, tqdm(
+        total=total_size,
+        unit="iB",
+        unit_scale=True,
+        unit_divisor=1024,
+        initial=first_byte,
+    ) as bar:
+        for data in response.iter_content(chunk_size=1024):
+            size = file.write(data)
+            bar.update(size)
