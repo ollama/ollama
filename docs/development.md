@@ -18,21 +18,6 @@ Run a server:
 poetry run ollama serve
 ```
 
-**Start frontend service:**
-
-Install dependencies:
-
-```
-cd desktop
-npm install
-```
-
-Run the UI:
-
-```
-npm start
-```
-
 ## Building
 
 If using Apple silicon, you need a Python version that supports arm64:
