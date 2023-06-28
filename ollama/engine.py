@@ -4,8 +4,8 @@ from os import path
 from contextlib import contextmanager
 from llama_cpp import Llama as LLM
 
-import ollama.model
 import ollama.prompt
+from ollama.model import models_home
 
 
 @contextmanager
@@ -18,10 +18,7 @@ def suppress_stderr():
     os.dup2(stderr, sys.stderr.fileno())
 
 
-def generate(model, prompt, llms={}, *args, **kwargs):
-    llm = load(model, llms=llms)
-
-    prompt = ollama.prompt.template(model, prompt)
+def generate(model_name, prompt, models={}, *args, **kwargs):
     if "max_tokens" not in kwargs:
         kwargs.update({"max_tokens": 16384})
 
@@ -31,34 +28,32 @@ def generate(model, prompt, llms={}, *args, **kwargs):
     if "stream" not in kwargs:
         kwargs.update({"stream": True})
 
-    for output in llm(prompt, *args, **kwargs):
+    prompt = ollama.prompt.template(model_name, prompt)
+
+    model = load(model_name, models=models)
+    for output in model.create_completion(prompt, *args, **kwargs):
         yield output
 
 
-def load(model, llms={}):
-    llm = llms.get(model, None)
-    if not llm:
-        stored_model_path = path.join(ollama.model.models_home, model) + ".bin"
-        if path.exists(stored_model_path):
-            model_path = stored_model_path
-        else:
-            # try loading this as a path to a model, rather than a model name
-            model_path = path.abspath(model)
-
+def load(model_name, models={}):
+    model = models.get(model_name, None)
+    if not model:
+        model_path = path.expanduser(model_name)
         if not path.exists(model_path):
-            raise Exception(f"Model not found: {model}")
+            model_path = path.join(models_home, model_name + ".bin")
 
         try:
             # suppress LLM's output
             with suppress_stderr():
-                llm = LLM(model_path, verbose=False)
-                llms.update({model: llm})
-        except Exception as e:
+                model = LLM(model_path, verbose=False)
+                models.update({model_name: model})
+        except Exception:
             # e is sent to devnull, so create a generic exception
             raise Exception(f"Failed to load model: {model}")
-    return llm
+
+    return model
 
 
-def unload(model, llms={}):
-    if model in llms:
-        llms.pop(model)
+def unload(model_name, models={}):
+    if model_name in models:
+        models.pop(model_name)
