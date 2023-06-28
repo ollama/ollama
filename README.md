@@ -1,21 +1,44 @@
 # Ollama
 
-The easiest way to run ai models.
+Run ai models locally.
 
-## Download
+_Note: this project is a work in progress. The features below are still in development_
 
-- [macOS](https://ollama.ai/download/darwin_arm64) (Apple Silicon)
-- macOS (Intel – Coming soon)
-- Windows (Coming soon)
-- Linux (Coming soon)
+**Features**
 
-## Python SDK
+- Run models locally on macOS (Windows, Linux and other platforms coming soon)
+- Ollama uses the fastest loader available for your platform and model (e.g. llama.cpp, core ml and other loaders coming soon)
+- Import models from local files
+- Find and download models on Hugging Face and other sources (coming soon)
+- Support for running and switching between multiple models at a time (coming soon)
+- Native desktop experience (coming soon)
+- Built-in memory (coming soon)
+
+## Install
 
 ```
 pip install ollama
 ```
 
-### Python SDK quickstart
+## Quickstart
+
+```
+% ollama run huggingface.co/TheBloke/orca_mini_3B-GGML
+Pulling huggingface.co/TheBloke/orca_mini_3B-GGML...
+Downloading [================>          ] 66.67% (2/3) 30.2MB/s
+
+...
+...
+...
+
+> Hello
+
+Hello, how may I help you?
+```
+
+## Python SDK
+
+### Example
 
 ```python
 import ollama
@@ -28,14 +51,6 @@ Generate a completion
 
 ```python
 ollama.generate("./llama-7b-ggml.bin", "hi")
-```
-
-### `ollama.load(model)`
-
-Load a model for generation
-
-```python
-ollama.load("model")
 ```
 
 ### `ollama.models()`
@@ -58,6 +73,22 @@ Add a model by importing from a file
 ollama.add("./path/to/model")
 ```
 
+### `ollama.load(model)`
+
+Manually a model for generation
+
+```python
+ollama.load("model")
+```
+
+### `ollama.unload(model)`
+
+Unload a model
+
+```python
+ollama.unload("model")
+```
+
 ## Cooming Soon
 
 ### `ollama.pull(model)`
@@ -74,15 +105,6 @@ Search for compatible models that Ollama can run
 
 ```python
 ollama.search("llama-7b")
-```
-
-## Future CLI
-
-In the future, there will be an `ollama` CLI for running models on servers, in containers or for local development environments.
-
-```
-ollama generate huggingface.co/thebloke/llama-7b-ggml "hi"
-> Downloading [================>          ] 66.67% (2/3) 30.2MB/s
 ```
 
 ## Documentation
