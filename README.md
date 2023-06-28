@@ -2,7 +2,7 @@
 
 Run ai models locally.
 
-_Note: this project is a work in progress. The features below are still in development_
+> _Note: this project is a work in progress. The features below are still in development_
 
 **Features**
 
