@@ -7,7 +7,7 @@ _Note: this project is a work in progress. The features below are still in devel
 **Features**
 
 - Run models locally on macOS (Windows, Linux and other platforms coming soon)
-- Ollama uses the fastest loader available for your platform and model (e.g. llama.cpp, core ml and other loaders coming soon)
+- Ollama uses the fastest loader available for your platform and model (e.g. llama.cpp, Core ML and other loaders coming soon)
 - Import models from local files
 - Find and download models on Hugging Face and other sources (coming soon)
 - Support for running and switching between multiple models at a time (coming soon)
@@ -42,7 +42,7 @@ Hello, how may I help you?
 
 ```python
 import ollama
-ollama.generate("./llama-7b-ggml.bin", "hi")
+ollama.generate("orca-mini-3b", "hi")
 ```
 
 ### `ollama.generate(model, message)`
