@@ -4,7 +4,7 @@ The easiest way to run ai models.
 
 ## Download
 
-- [macOS](https://ollama.ai/download/darwin) (Apple Silicon)
+- [macOS](https://ollama.ai/download/darwin_arm64) (Apple Silicon)
 - macOS (Intel – Coming soon)
 - Windows (Coming soon)
 - Linux (Coming soon)
