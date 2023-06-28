@@ -1,4 +1,4 @@
-import { app, BrowserWindow, autoUpdater } from 'electron'
+import { app, BrowserWindow, autoUpdater, dialog } from 'electron'
 import { spawn } from 'child_process'
 import * as path from 'path'
 
@@ -87,3 +87,17 @@ autoUpdater.setFeedURL({ url: `https://updates.ollama.ai/update/${process.platfo
 setInterval(() => {
   autoUpdater.checkForUpdates()
 }, 60000)
+
+autoUpdater.on('update-downloaded', (event, releaseNotes, releaseName) => {
+  dialog
+    .showMessageBox({
+      type: 'info',
+      buttons: ['Restart Now', 'Later'],
+      title: 'New update available',
+      message: process.platform === 'win32' ? releaseNotes : releaseName,
+      detail: 'A new version of Ollama is available. Restart to apply the update.',
+    })
+    .then(returnValue => {
+      if (returnValue.response === 0) autoUpdater.quitAndInstall()
+    })
+})
