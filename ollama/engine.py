@@ -1,5 +1,6 @@
-from os import path, dup, dup2, devnull
+import os
 import sys
+from os import path
 from contextlib import contextmanager
 from llama_cpp import Llama as LLM
 
@@ -9,12 +10,12 @@ import ollama.prompt
 
 @contextmanager
 def suppress_stderr():
-    stderr = dup(sys.stderr.fileno())
-    with open(devnull, "w") as devnull:
-        dup2(devnull.fileno(), sys.stderr.fileno())
+    stderr = os.dup(sys.stderr.fileno())
+    with open(os.devnull, "w") as devnull:
+        os.dup2(devnull.fileno(), sys.stderr.fileno())
         yield
 
-    dup2(stderr, sys.stderr.fileno())
+    os.dup2(stderr, sys.stderr.fileno())
 
 
 def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
