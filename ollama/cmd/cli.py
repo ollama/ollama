@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 from pathlib import Path
 from argparse import ArgumentParser
 
@@ -67,7 +66,6 @@ def generate_oneshot(*args, **kwargs):
     print(flush=True)
 
     for output in engine.generate(*args, **kwargs):
-        output = json.loads(output)
         choices = output.get("choices", [])
         if len(choices) > 0:
             print(choices[0].get("text", ""), end="", flush=True)

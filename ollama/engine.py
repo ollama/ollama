@@ -33,7 +33,7 @@ def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
         kwargs.update({"stream": True})
 
     for output in llm(prompt, *args, **kwargs):
-        yield json.dumps(output)
+        yield output
 
 
 def load(model, models_home=".", llms={}):

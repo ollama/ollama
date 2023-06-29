@@ -1,5 +1,6 @@
-from aiohttp import web
+import json
 import aiohttp_cors
+from aiohttp import web
 
 from ollama import engine
 
@@ -89,7 +90,8 @@ async def generate(request):
     }
 
     for output in engine.generate(model, prompt, **kwargs):
-        await response.write(output.encode("utf-8"))
+        output = json.dumps(output).encode('utf-8')
+        await response.write(output)
         await response.write(b"\n")
 
     return response
