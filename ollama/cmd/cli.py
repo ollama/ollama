@@ -2,6 +2,7 @@ import os
 import sys
 from pathlib import Path
 from argparse import ArgumentParser
+from yaspin import yaspin
 
 from ollama import model, engine
 from ollama.cmd import server
@@ -75,9 +76,16 @@ def generate(*args, **kwargs):
 def generate_oneshot(*args, **kwargs):
     print(flush=True)
 
+    spinner = yaspin()
+    spinner.start()
+    spinner_running = True
     for output in engine.generate(*args, **kwargs):
         choices = output.get("choices", [])
         if len(choices) > 0:
+            if spinner_running:
+                spinner.stop()
+                spinner_running = False
+                print("\r", end="")  # move cursor back to beginning of line again
             print(choices[0].get("text", ""), end="", flush=True)
 
     # end with a new line

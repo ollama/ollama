@@ -16,6 +16,7 @@ jinja2 = "^3.1.2"
 requests = "^2.31.0"
 tqdm = "^4.65.0"
 validators = "^0.20.0"
+yaspin = "^2.3.0"
 
 [build-system]
 requires = ["poetry-core"]
