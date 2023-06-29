@@ -1,4 +1,4 @@
-from os import path
+import os
 from difflib import SequenceMatcher
 from jinja2 import Environment, PackageLoader
 
@@ -9,8 +9,8 @@ def template(model, prompt):
 
     environment = Environment(loader=PackageLoader(__name__, 'templates'))
     for template in environment.list_templates():
-        base, _ = path.splitext(template)
-        ratio = SequenceMatcher(None, model.lower(), base).ratio()
+        base, _ = os.path.splitext(template)
+        ratio = SequenceMatcher(None, os.path.basename(model.lower()), base).ratio()
         if ratio > best_ratio:
             best_ratio = ratio
             best_template = template

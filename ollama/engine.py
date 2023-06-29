@@ -22,7 +22,6 @@ def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
     llm = load(model, models_home=models_home, llms=llms)
 
     prompt = ollama.prompt.template(model, prompt)
-
     if "max_tokens" not in kwargs:
         kwargs.update({"max_tokens": 16384})
 
@@ -39,11 +38,10 @@ def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
 def load(model, models_home=".", llms={}):
     llm = llms.get(model, None)
     if not llm:
-        model_path = {
-            name: path for name, path in ollama.model.models(models_home)
-        }.get(model, None)
-
-        if not model_path:
+        stored_model_path = os.path.join(models_home, model, ".bin")
+        if os.path.exists(stored_model_path):
+            model_path = stored_model_path
+        else:
             # try loading this as a path to a model, rather than a model name
             model_path = os.path.abspath(model)
 
