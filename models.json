@@ -1,14 +1,14 @@
 [
   {
-    "name": "orca-3b",
+    "name": "orca-mini-3b",
     "url": "huggingface.co/TheBloke/orca_mini_3B-GGML"
   },
   {
-    "name": "orca-7b",
+    "name": "orca-mini-7b",
     "url": "huggingface.co/TheBloke/orca_mini_7B-GGML"
   },
   {
-    "name": "orca-13b",
+    "name": "orca-mini-13b",
     "url": "huggingface.co/TheBloke/orca_mini_13B-GGML"
   }
 ]
