@@ -1,0 +1,4 @@
+Below is an instruction that describes a task. Write a response that appropriately completes the request. Be concise. Once the request is completed, include no other text.
+### Instruction:
+{{ prompt }}
+### Response:

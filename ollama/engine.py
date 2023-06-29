@@ -2,58 +2,120 @@ import os
 import sys
 from os import path
 from contextlib import contextmanager
-from llama_cpp import Llama as LLM
+from fuzzywuzzy import process
+from llama_cpp import Llama
+from ctransformers import AutoModelForCausalLM
 
 import ollama.prompt
 from ollama.model import models_home
 
 
 @contextmanager
-def suppress_stderr():
-    stderr = os.dup(sys.stderr.fileno())
+def suppress(file):
+    original = os.dup(file.fileno())
     with open(os.devnull, "w") as devnull:
-        os.dup2(devnull.fileno(), sys.stderr.fileno())
+        os.dup2(devnull.fileno(), file.fileno())
         yield
 
-    os.dup2(stderr, sys.stderr.fileno())
+    os.dup2(original, file.fileno())
 
 
 def generate(model_name, prompt, models={}, *args, **kwargs):
-    if "max_tokens" not in kwargs:
-        kwargs.update({"max_tokens": 16384})
-
-    if "stop" not in kwargs:
-        kwargs.update({"stop": ["Q:"]})
-
-    if "stream" not in kwargs:
-        kwargs.update({"stream": True})
-
-    prompt = ollama.prompt.template(model_name, prompt)
-
     model = load(model_name, models=models)
-    for output in model.create_completion(prompt, *args, **kwargs):
-        yield output
+    inputs = ollama.prompt.template(model_name, prompt)
+    return model.generate(inputs, *args, **kwargs)
 
 
 def load(model_name, models={}):
-    model = models.get(model_name, None)
-    if not model:
+    if not models.get(model_name, None):
         model_path = path.expanduser(model_name)
         if not path.exists(model_path):
             model_path = path.join(models_home, model_name + ".bin")
 
-        try:
-            # suppress LLM's output
-            with suppress_stderr():
-                model = LLM(model_path, verbose=False)
-                models.update({model_name: model})
-        except Exception:
-            # e is sent to devnull, so create a generic exception
-            raise Exception(f"Failed to load model: {model}")
+        runners = {
+            model_type: cls
+            for cls in [LlamaCppRunner, CtransformerRunner]
+            for model_type in cls.model_types()
+        }
 
-    return model
+        best_match, _ = process.extractOne(model_path, runners.keys())
+        model = runners.get(best_match, LlamaCppRunner)
+
+        models.update({model_name: model(model_path, best_match)})
+
+    return models.get(model_name)
 
 
 def unload(model_name, models={}):
     if model_name in models:
         models.pop(model_name)
+
+
+class LlamaCppRunner:
+
+    def __init__(self, model_path, model_type):
+        try:
+            with suppress(sys.stderr), suppress(sys.stdout):
+                self.model = Llama(model_path,
+                                   verbose=False,
+                                   n_gpu_layers=1,
+                                   seed=-1)
+        except Exception:
+            raise Exception("Failed to load model", model_path, model_type)
+
+    @staticmethod
+    def model_types():
+        return [
+            'llama',
+            'orca',
+            'vicuna',
+            'ultralm',
+        ]
+
+    def generate(self, prompt, *args, **kwargs):
+        if "max_tokens" not in kwargs:
+            kwargs.update({"max_tokens": 512})
+
+        if "stop" not in kwargs:
+            kwargs.update({"stop": ["Q:"]})
+
+        if "stream" not in kwargs:
+            kwargs.update({"stream": True})
+
+        with suppress(sys.stderr):
+            for output in self.model(prompt, *args, **kwargs):
+                yield output
+
+
+class CtransformerRunner:
+
+    def __init__(self, model_path, model_type):
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path, model_type=model_type, local_files_only=True)
+
+    @staticmethod
+    def model_types():
+        return [
+            'falcon',
+            'mpt',
+            'starcoder',
+        ]
+
+    def generate(self, prompt, *args, **kwargs):
+        if "max_new_tokens" not in kwargs:
+            kwargs.update({"max_new_tokens": 512})
+
+        if "stop" not in kwargs:
+            kwargs.update({"stop": ["User"]})
+
+        if "stream" not in kwargs:
+            kwargs.update({"stream": True})
+
+        for output in self.model(prompt, *args, **kwargs):
+            yield {
+                'choices': [
+                    {
+                        'text': output,
+                    },
+                ],
+            }
