@@ -33,6 +33,7 @@ def main():
 
     pull_parser = subparsers.add_parser("run")
     pull_parser.add_argument("model")
+    pull_parser.add_argument("prompt", nargs="?")
     pull_parser.set_defaults(fn=run)
 
     args = parser.parse_args()
