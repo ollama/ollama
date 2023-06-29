@@ -90,7 +90,7 @@ def download_file(download_url, models_home, location, file_size):
     response = requests.get(download_url, headers=header, stream=True)
     response.raise_for_status()
 
-    total_size = int(response.headers.get('content-length', 0))
+    total_size = int(response.headers.get('content-length', 0)) + first_byte
 
     with open(local_filename, 'ab' if first_byte else 'wb') as file, tqdm(
         total=total_size,
