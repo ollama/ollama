@@ -1,5 +1,6 @@
 import os
 import requests
+import validators
 from urllib.parse import urlsplit, urlunsplit
 from tqdm import tqdm
 
@@ -12,33 +13,36 @@ def models(models_home=".", *args, **kwargs):
                 yield base, os.path.join(root, file)
 
 
-def pull(remote, models_home=".", *args, **kwargs):
-    if not (remote.startswith("http://") or remote.startswith("https://")):
-        remote = f"https://{remote}"
+def pull(model, models_home=".", *args, **kwargs):
+    url = model
+    if not (url.startswith("http://") or url.startswith("https://")):
+        url = f"https://{url}"
 
-    parts = urlsplit(remote)
+    parts = urlsplit(url)
     path_parts = parts.path.split("/tree/")
 
     if len(path_parts) == 1:
-        model = path_parts[0]
+        url = path_parts[0]
         branch = "main"
     else:
-        model, branch = path_parts
+        url, branch = path_parts
 
-    model = model.strip("/")
+    url = url.strip("/")
 
     # Reconstruct the URL
     new_url = urlunsplit(
         (
             "https",
             parts.netloc,
-            f"/api/models/{model}/tree/{branch}",
+            f"/api/models/{url}/tree/{branch}",
             parts.query,
             parts.fragment,
         )
     )
 
-    print(f"Pulling {parts.netloc}/{model}...")
+    if not validators.url(new_url):
+        # this may just be a local model location
+        return model
 
     response = requests.get(new_url)
     response.raise_for_status()  # Raises stored HTTPError, if one occurred
@@ -47,22 +51,28 @@ def pull(remote, models_home=".", *args, **kwargs):
 
     # get the last bin file we find, this is probably the most up to date
     download_url = None
+    file_size = 0
     for file_info in json_response:
         if file_info.get("type") == "file" and file_info.get("path").endswith(".bin"):
             f_path = file_info.get("path")
-            download_url = f"https://huggingface.co/{model}/resolve/{branch}/{f_path}"
+            download_url = f"https://huggingface.co/{url}/resolve/{branch}/{f_path}"
+            file_size = file_info.get("size")
 
     if download_url is None:
         raise Exception("No model found")
 
-    local_filename = os.path.join(models_home, os.path.basename(model)) + ".bin"
+    local_filename = os.path.join(models_home, os.path.basename(url)) + ".bin"
 
     # Check if file already exists
+    first_byte = 0
     if os.path.exists(local_filename):
         # TODO: check if the file is the same SHA
         first_byte = os.path.getsize(local_filename)
-    else:
-        first_byte = 0
+
+    if first_byte >= file_size:
+        return local_filename
+
+    print(f"Pulling {parts.netloc}/{model}...")
 
     # If file size is non-zero, resume download
     if first_byte != 0:
@@ -87,3 +97,5 @@ def pull(remote, models_home=".", *args, **kwargs):
         for data in response.iter_content(chunk_size=1024):
             size = file.write(data)
             bar.update(size)
+
+    return local_filename

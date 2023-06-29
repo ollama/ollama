@@ -29,8 +29,12 @@ def main():
     add_parser.set_defaults(fn=add)
 
     pull_parser = subparsers.add_parser("pull")
-    pull_parser.add_argument("remote")
+    pull_parser.add_argument("model")
     pull_parser.set_defaults(fn=pull)
+
+    pull_parser = subparsers.add_parser("run")
+    pull_parser.add_argument("model")
+    pull_parser.set_defaults(fn=run)
 
     args = parser.parse_args()
     args = vars(args)
@@ -52,8 +56,8 @@ def list_models(*args, **kwargs):
 
 
 def generate(*args, **kwargs):
-    if prompt := kwargs.get('prompt'):
-        print('>>>', prompt, flush=True)
+    if prompt := kwargs.get("prompt"):
+        print(">>>", prompt, flush=True)
         generate_oneshot(*args, **kwargs)
         return
 
@@ -79,7 +83,7 @@ def generate_oneshot(*args, **kwargs):
 
 def generate_interactive(*args, **kwargs):
     while True:
-        print('>>> ', end='', flush=True)
+        print(">>> ", end="", flush=True)
         line = next(sys.stdin)
         if not line:
             return
@@ -90,7 +94,7 @@ def generate_interactive(*args, **kwargs):
 
 def generate_batch(*args, **kwargs):
     for line in sys.stdin:
-        print('>>> ', line, end='', flush=True)
+        print(">>> ", line, end="", flush=True)
         kwargs.update({"prompt": line})
         generate_oneshot(*args, **kwargs)
 
@@ -101,3 +105,10 @@ def add(model, models_home):
 
 def pull(*args, **kwargs):
     model.pull(*args, **kwargs)
+
+
+def run(*args, **kwargs):
+    name = model.pull(*args, **kwargs)
+    kwargs.update({"model": name})
+    print(f"Running {name}...")
+    generate(*args, **kwargs)
