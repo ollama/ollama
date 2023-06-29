@@ -79,14 +79,18 @@ def generate_oneshot(*args, **kwargs):
     spinner = yaspin()
     spinner.start()
     spinner_running = True
-    for output in engine.generate(*args, **kwargs):
-        choices = output.get("choices", [])
-        if len(choices) > 0:
-            if spinner_running:
-                spinner.stop()
-                spinner_running = False
-                print("\r", end="")  # move cursor back to beginning of line again
-            print(choices[0].get("text", ""), end="", flush=True)
+    try:
+        for output in engine.generate(*args, **kwargs):
+            choices = output.get("choices", [])
+            if len(choices) > 0:
+                if spinner_running:
+                    spinner.stop()
+                    spinner_running = False
+                    print("\r", end="")  # move cursor back to beginning of line again
+                print(choices[0].get("text", ""), end="", flush=True)
+    except Exception:
+        spinner.stop()
+        raise
 
     # end with a new line
     print(flush=True)

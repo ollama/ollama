@@ -1,5 +1,4 @@
-import os
-import json
+from os import path, dup, dup2, devnull
 import sys
 from contextlib import contextmanager
 from llama_cpp import Llama as LLM
@@ -10,12 +9,12 @@ import ollama.prompt
 
 @contextmanager
 def suppress_stderr():
-    stderr = os.dup(sys.stderr.fileno())
-    with open(os.devnull, "w") as devnull:
-        os.dup2(devnull.fileno(), sys.stderr.fileno())
+    stderr = dup(sys.stderr.fileno())
+    with open(devnull, "w") as devnull:
+        dup2(devnull.fileno(), sys.stderr.fileno())
         yield
 
-    os.dup2(stderr, sys.stderr.fileno())
+    dup2(stderr, sys.stderr.fileno())
 
 
 def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
@@ -38,12 +37,15 @@ def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
 def load(model, models_home=".", llms={}):
     llm = llms.get(model, None)
     if not llm:
-        stored_model_path = os.path.join(models_home, model, ".bin")
-        if os.path.exists(stored_model_path):
+        stored_model_path = path.join(models_home, model) + ".bin"
+        if path.exists(stored_model_path):
             model_path = stored_model_path
         else:
             # try loading this as a path to a model, rather than a model name
-            model_path = os.path.abspath(model)
+            model_path = path.abspath(model)
+
+        if not path.exists(model_path):
+            raise Exception(f"Model not found: {model}")
 
         try:
             # suppress LLM's output
