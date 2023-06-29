@@ -55,22 +55,6 @@ List available local models
 models = ollama.models()
 ```
 
-### `ollama.serve()`
-
-Serve the ollama http server
-
-```
-ollama.serve()
-```
-
-### `ollama.add(filepath)`
-
-Add a model by importing from a file
-
-```python
-ollama.add("./path/to/model")
-```
-
 ### `ollama.load(model)`
 
 Manually a model for generation
