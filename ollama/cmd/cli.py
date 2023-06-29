@@ -11,6 +11,11 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--models-home", default=Path.home() / ".ollama" / "models")
 
+    # create models home if it doesn't exist
+    models_home = parser.parse_known_args()[0].models_home
+    if not models_home.exists():
+        os.makedirs(models_home)
+
     subparsers = parser.add_subparsers()
 
     server.set_parser(subparsers.add_parser("serve"))
