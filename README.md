@@ -1,18 +1,8 @@
 # Ollama
 
-Run ai models locally.
+Ollama is a tool for running any large language model on any machine. It's designed to be easy to use and fast, supporting the largest number of models possible by using the fastest loader available for your platform and model.
 
-> _Note: this project is a work in progress. The features below are still in development_
-
-**Features**
-
-- Run models locally on macOS (Windows, Linux and other platforms coming soon)
-- Ollama uses the fastest loader available for your platform and model (e.g. llama.cpp, Core ML and other loaders coming soon)
-- Import models from local files
-- Find and download models on Hugging Face and other sources (coming soon)
-- Support for running and switching between multiple models at a time (coming soon)
-- Native desktop experience (coming soon)
-- Built-in memory (coming soon)
+> _Note: this project is a work in progress._
 
 ## Install
 
@@ -22,18 +12,22 @@ pip install ollama
 
 ## Quickstart
 
+To run a model, use `ollama run`:
+
 ```
-% ollama run huggingface.co/TheBloke/orca_mini_3B-GGML
-Pulling huggingface.co/TheBloke/orca_mini_3B-GGML...
-Downloading [================           ] 66.67% 11.8MiB/s
+ollama run orca-mini-3b
+```
 
-...
-...
-...
+You can also run models from hugging face:
 
-> Hello
+```
+ollama run huggingface.co/TheBloke/orca_mini_3B-GGML
+```
 
-Hello, how may I help you?
+Or directly via downloaded model files:
+
+```
+ollama run ~/Downloads/orca-mini-13b.ggmlv3.q4_0.bin
 ```
 
 ## Python SDK
