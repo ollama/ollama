@@ -45,11 +45,14 @@ def load(model, models_home=".", llms={}):
             # try loading this as a path to a model, rather than a model name
             model_path = os.path.abspath(model)
 
-        # suppress LLM's output
-        with suppress_stderr():
-            llm = LLM(model_path, verbose=False)
-            llms.update({model: llm})
-
+        try:
+            # suppress LLM's output
+            with suppress_stderr():
+                llm = LLM(model_path, verbose=False)
+                llms.update({model: llm})
+        except Exception as e:
+            # e is sent to devnull, so create a generic exception
+            raise Exception(f"Failed to load model: {model}")
     return llm
 
 
