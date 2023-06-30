@@ -2,7 +2,7 @@
 
 Ollama is a tool for running any large language model on any machine. It's designed to be easy to use and fast, supporting the largest number of models possible by using the fastest loader available for your platform and model.
 
-> _Note: this project is a work in progress._
+> _Note: this project is a work in progress. Certain models that can be run with `ollama` are intended for research and/or non-commercial use only._
 
 ## Install
 
