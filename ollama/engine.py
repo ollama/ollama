@@ -1,6 +1,7 @@
 import os
 import sys
 from os import path
+from pathlib import Path
 from contextlib import contextmanager
 from fuzzywuzzy import process
 from llama_cpp import Llama
@@ -30,7 +31,7 @@ def load(model_name, models={}):
     if not models.get(model_name, None):
         model_path = path.expanduser(model_name)
         if not path.exists(model_path):
-            model_path = MODELS_CACHE_PATH / model_name + ".bin"
+            model_path = str(MODELS_CACHE_PATH / (model_name + ".bin"))
 
         runners = {
             model_type: cls
@@ -52,14 +53,10 @@ def unload(model_name, models={}):
 
 
 class LlamaCppRunner:
-
     def __init__(self, model_path, model_type):
         try:
             with suppress(sys.stderr), suppress(sys.stdout):
-                self.model = Llama(model_path,
-                                   verbose=False,
-                                   n_gpu_layers=1,
-                                   seed=-1)
+                self.model = Llama(model_path, verbose=False, n_gpu_layers=1, seed=-1)
         except Exception:
             raise Exception("Failed to load model", model_path, model_type)
 
@@ -88,10 +85,10 @@ class LlamaCppRunner:
 
 
 class CtransformerRunner:
-
     def __init__(self, model_path, model_type):
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_path, model_type=model_type, local_files_only=True)
+            model_path, model_type=model_type, local_files_only=True
+        )
 
     @staticmethod
     def model_types():

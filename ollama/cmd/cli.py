@@ -37,20 +37,24 @@ def main():
         title='commands',
     )
 
-    server.set_parser(
-        subparsers.add_parser(
-            "serve",
-            description="Start a persistent server to interact with models via the API.",
-            help="Start a persistent server to interact with models via the API.",
-        )
-    )
-
     list_parser = subparsers.add_parser(
         "models",
         description="List all available models stored locally.",
         help="List all available models stored locally.",
     )
     list_parser.set_defaults(fn=list_models)
+
+    search_parser = subparsers.add_parser(
+        "search",
+        description="Search for compatible models that Ollama can run.",
+        help="Search for compatible models that Ollama can run. Usage: search [model]",
+    )
+    search_parser.add_argument(
+        "query",
+        nargs="?",
+        help="Optional name of the model to search for.",
+    )
+    search_parser.set_defaults(fn=search)
 
     pull_parser = subparsers.add_parser(
         "pull",
@@ -72,6 +76,14 @@ def main():
         help="Optional prompt for the model, interactive mode enabled when not specified.",
     )
     run_parser.set_defaults(fn=run)
+
+    server.set_parser(
+        subparsers.add_parser(
+            "serve",
+            description="Start a persistent server to interact with models via the API.",
+            help="Start a persistent server to interact with models via the API.",
+        )
+    )
 
     args = parser.parse_args()
     args = vars(args)
@@ -144,6 +156,22 @@ def generate_batch(*args, **kwargs):
         print(">>> ", line, end="", flush=True)
         kwargs.update({"prompt": line})
         generate_oneshot(*args, **kwargs)
+
+
+def search(*args, **kwargs):
+    try:
+        model_names = model.search_directory(*args, **kwargs)
+        if len(model_names) == 0:
+            print("No models found.")
+            return
+        elif len(model_names) == 1:
+            print(f"Found {len(model_names)} available model:")
+        else:
+            print(f"Found {len(model_names)} available models:")
+        for model_name in model_names:
+            print(model_name.lower())
+    except Exception as e:
+        print("Failed to fetch available models, check your network connection")
 
 
 def pull(*args, **kwargs):

@@ -18,13 +18,26 @@ def models(*args, **kwargs):
                 yield base
 
 
+# search the directory and return all models which contain the search term as a substring,
+# or all models if no search term is provided
+def search_directory(query):
+    response = requests.get(MODELS_MANIFEST)
+    response.raise_for_status()
+    directory = response.json()
+    model_names = []
+    for model_info in directory:
+        if not query or query.lower() in model_info.get('name', '').lower():
+            model_names.append(model_info.get('name'))
+    return model_names
+
+
 # get the url of the model from our curated directory
 def get_url_from_directory(model):
     response = requests.get(MODELS_MANIFEST)
     response.raise_for_status()
     directory = response.json()
     for model_info in directory:
-        if model_info.get('name') == model:
+        if model_info.get('name').lower() == model.lower():
             return model_info.get('url')
     return model
 
@@ -42,7 +55,6 @@ def download_from_repo(url, file_name):
     location = location.strip('/')
     if file_name == '':
         file_name = path.basename(location).lower()
-
     download_url = urlunsplit(
         (
             'https',
@@ -78,7 +90,7 @@ def find_bin_file(json_response, location, branch):
 
 
 def download_file(download_url, file_name, file_size):
-    local_filename = MODELS_CACHE_PATH / file_name + '.bin'
+    local_filename = MODELS_CACHE_PATH / str(file_name + '.bin')
 
     first_byte = path.getsize(local_filename) if path.exists(local_filename) else 0
 
@@ -111,7 +123,8 @@ def download_file(download_url, file_name, file_size):
 
 
 def pull(model_name, *args, **kwargs):
-    if path.exists(model_name):
+    maybe_existing_model_location = MODELS_CACHE_PATH / str(model_name + '.bin')
+    if path.exists(model_name) or path.exists(maybe_existing_model_location):
         # a file on the filesystem is being specified
         return model_name
     # check the remote model location and see if it needs to be downloaded
@@ -120,7 +133,6 @@ def pull(model_name, *args, **kwargs):
     if not validators.url(url) and not url.startswith('huggingface.co'):
         url = get_url_from_directory(model_name)
         file_name = model_name
-
     if not (url.startswith('http://') or url.startswith('https://')):
         url = f'https://{url}'
 
