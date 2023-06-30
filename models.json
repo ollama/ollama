@@ -1,6 +1,6 @@
 [
   {
-    "name": "orca_mini_3B",
+    "name": "orca_mini_3b",
     "display_name": "Orca Mini 3B",
     "url": "huggingface.co/TheBloke/orca_mini_3B-GGML",
     "short_description": "Follow instructions. Great small model that runs fast even without GPU support.",
@@ -11,7 +11,7 @@
     "license": "CC-BY-SA-4.0"
   },
   {
-    "name": "orca_mini_7B", 
+    "name": "orca_mini_7b", 
     "display_name": "Orca Mini 7B",
     "url": "huggingface.co/TheBloke/orca_mini_7B-GGML",
     "short_description": "Follow instructions",
@@ -22,7 +22,7 @@
     "license": "CC-BY-SA-4.0"
   },
   {
-    "name": "orca_mini_13B",
+    "name": "orca_mini_13b",
     "display_name": "Orca Mini 13B",
     "url": "huggingface.co/TheBloke/orca_mini_13B-GGML",
     "short_description": "Follow instructions",
@@ -33,7 +33,7 @@
     "license": "CC-BY-SA-4.0"
   },
   {
-    "name": "replit-code-v1-3b", 
+    "name": "replit_code_3b", 
     "display_name": "Replit Code V1 3B", 
     "url": "https://huggingface.co/nomic-ai/ggml-replit-code-v1-3b", 
     "short_description": "Code Completion",
@@ -44,7 +44,7 @@
     "license": "CC-BY-SA-4.0"
   }, 
   {
-    "name": "Nous-Hermes-13B", 
+    "name": "nous_hermes_13b", 
     "display_name": "Nous Hermes 13B", 
     "url": "https://huggingface.co/TheBloke/Nous-Hermes-13B-GGML",
     "short_description": "Currently one of the best 13B general model.",
@@ -55,7 +55,7 @@
     "license": "GPL"
   }, 
   {
-    "name": "Wizard-Vicuna-13B-Uncensored", 
+    "name": "wizard_vicuna_13b_uncensored", 
     "display_name": "Wizard Vicuna 13B Uncensored", 
     "url": "https://huggingface.co/TheBloke/Wizard-Vicuna-13B-Uncensored-GGML", 
     "short_description": "An uncensored model with no guardrails.",
