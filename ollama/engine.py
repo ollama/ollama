@@ -2,63 +2,120 @@ import os
 import sys
 from os import path
 from contextlib import contextmanager
-from llama_cpp import Llama as LLM
+from fuzzywuzzy import process
+from llama_cpp import Llama
+from ctransformers import AutoModelForCausalLM
 
-import ollama.model
 import ollama.prompt
+from ollama.model import MODELS_CACHE_PATH
 
 
 @contextmanager
-def suppress_stderr():
-    stderr = os.dup(sys.stderr.fileno())
+def suppress(file):
+    original = os.dup(file.fileno())
     with open(os.devnull, "w") as devnull:
-        os.dup2(devnull.fileno(), sys.stderr.fileno())
+        os.dup2(devnull.fileno(), file.fileno())
         yield
 
-    os.dup2(stderr, sys.stderr.fileno())
+    os.dup2(original, file.fileno())
 
 
-def generate(model, prompt, llms={}, *args, **kwargs):
-    llm = load(model, llms=llms)
-
-    prompt = ollama.prompt.template(model, prompt)
-    if "max_tokens" not in kwargs:
-        kwargs.update({"max_tokens": 16384})
-
-    if "stop" not in kwargs:
-        kwargs.update({"stop": ["Q:"]})
-
-    if "stream" not in kwargs:
-        kwargs.update({"stream": True})
-
-    for output in llm(prompt, *args, **kwargs):
-        yield output
+def generate(model_name, prompt, models={}, *args, **kwargs):
+    model = load(model_name, models=models)
+    inputs = ollama.prompt.template(model_name, prompt)
+    return model.generate(inputs, *args, **kwargs)
 
 
-def load(model, llms={}):
-    llm = llms.get(model, None)
-    if not llm:
-        stored_model_path = path.join(ollama.model.models_home, model) + ".bin"
-        if path.exists(stored_model_path):
-            model_path = stored_model_path
-        else:
-            # try loading this as a path to a model, rather than a model name
-            model_path = path.abspath(model)
-
+def load(model_name, models={}):
+    if not models.get(model_name, None):
+        model_path = path.expanduser(model_name)
         if not path.exists(model_path):
-            raise Exception(f"Model not found: {model}")
+            model_path = path.join(MODELS_CACHE_PATH, model_name + ".bin")
 
+        runners = {
+            model_type: cls
+            for cls in [LlamaCppRunner, CtransformerRunner]
+            for model_type in cls.model_types()
+        }
+
+        best_match, _ = process.extractOne(model_path, runners.keys())
+        model = runners.get(best_match, LlamaCppRunner)
+
+        models.update({model_name: model(model_path, best_match)})
+
+    return models.get(model_name)
+
+
+def unload(model_name, models={}):
+    if model_name in models:
+        models.pop(model_name)
+
+
+class LlamaCppRunner:
+
+    def __init__(self, model_path, model_type):
         try:
-            # suppress LLM's output
-            with suppress_stderr():
-                llm = LLM(model_path, verbose=False)
-                llms.update({model: llm})
-        except Exception as e:
-            # e is sent to devnull, so create a generic exception
-            raise Exception(f"Failed to load model: {model}")
-    return llm
+            with suppress(sys.stderr), suppress(sys.stdout):
+                self.model = Llama(model_path,
+                                   verbose=False,
+                                   n_gpu_layers=1,
+                                   seed=-1)
+        except Exception:
+            raise Exception("Failed to load model", model_path, model_type)
+
+    @staticmethod
+    def model_types():
+        return [
+            'llama',
+            'orca',
+            'vicuna',
+            'ultralm',
+        ]
+
+    def generate(self, prompt, *args, **kwargs):
+        if "max_tokens" not in kwargs:
+            kwargs.update({"max_tokens": 512})
+
+        if "stop" not in kwargs:
+            kwargs.update({"stop": ["Q:"]})
+
+        if "stream" not in kwargs:
+            kwargs.update({"stream": True})
+
+        with suppress(sys.stderr):
+            for output in self.model(prompt, *args, **kwargs):
+                yield output
 
 
-def unload(model, llms={}):
-    if model in llms:
-        llms.pop(model)
+class CtransformerRunner:
+
+    def __init__(self, model_path, model_type):
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path, model_type=model_type, local_files_only=True)
+
+    @staticmethod
+    def model_types():
+        return [
+            'falcon',
+            'mpt',
+            'starcoder',
+        ]
+
+    def generate(self, prompt, *args, **kwargs):
+        if "max_new_tokens" not in kwargs:
+            kwargs.update({"max_new_tokens": 512})
+
+        if "stop" not in kwargs:
+            kwargs.update({"stop": ["User"]})
+
+        if "stream" not in kwargs:
+            kwargs.update({"stream": True})
+
+        for output in self.model(prompt, *args, **kwargs):
+            yield {
+                'choices': [
+                    {
+                        'text': output,
+                    },
+                ],
+            }

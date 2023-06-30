@@ -9,7 +9,6 @@ scripts = {ollama = "ollama.cmd.cli:main"}
 
 [tool.poetry.dependencies]
 python = "^3.8"
-llama-cpp-python = "^0.1.66"
 aiohttp = "^3.8.4"
 aiohttp-cors = "^0.7.0"
 jinja2 = "^3.1.2"
@@ -17,6 +16,9 @@ requests = "^2.31.0"
 tqdm = "^4.65.0"
 validators = "^0.20.0"
 yaspin = "^2.3.0"
+llama-cpp-python = "^0.1.67"
+ctransformers = "^0.2.10"
+fuzzywuzzy = {extras = ["speedup"], version = "^0.18.0"}
 
 [build-system]
 requires = ["poetry-core"]

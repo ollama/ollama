@@ -1,0 +1,2 @@
+USER: {{ prompt }}
+ASSISTANT:

@@ -38,7 +38,7 @@ def serve(*args, **kwargs):
 
     app.update(
         {
-            "llms": {},
+            "models": {},
         }
     )
 
@@ -47,32 +47,32 @@ def serve(*args, **kwargs):
 
 async def load(request):
     body = await request.json()
-    model = body.get("model")
-    if not model:
+    name = body.get("model")
+    if not name:
         raise web.HTTPBadRequest()
 
     kwargs = {
-        "llms": request.app.get("llms"),
+        "models": request.app.get("models"),
     }
 
-    engine.load(model, **kwargs)
+    engine.load(name, **kwargs)
     return web.Response()
 
 
 async def unload(request):
     body = await request.json()
-    model = body.get("model")
-    if not model:
+    name = body.get("model")
+    if not name:
         raise web.HTTPBadRequest()
 
-    engine.unload(model, llms=request.app.get("llms"))
+    engine.unload(name, models=request.app.get("models"))
     return web.Response()
 
 
 async def generate(request):
     body = await request.json()
-    model = body.get("model")
-    if not model:
+    name = body.get("model")
+    if not name:
         raise web.HTTPBadRequest()
 
     prompt = body.get("prompt")
@@ -83,10 +83,10 @@ async def generate(request):
     await response.prepare(request)
 
     kwargs = {
-        "llms": request.app.get("llms"),
+        "models": request.app.get("models"),
     }
 
-    for output in engine.generate(model, prompt, **kwargs):
+    for output in engine.generate(name, prompt, **kwargs):
         output = json.dumps(output).encode('utf-8')
         await response.write(output)
         await response.write(b"\n")

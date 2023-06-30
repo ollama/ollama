@@ -31,7 +31,7 @@ def main():
     )
 
     # create models home if it doesn't exist
-    os.makedirs(model.models_home, exist_ok=True)
+    os.makedirs(model.MODELS_CACHE_PATH, exist_ok=True)
 
     subparsers = parser.add_subparsers(
         title='commands',
@@ -111,7 +111,7 @@ def generate_oneshot(*args, **kwargs):
     spinner.start()
     spinner_running = True
     try:
-        for output in engine.generate(*args, **kwargs):
+        for output in engine.generate(model_name=kwargs.pop('model'), *args, **kwargs):
             choices = output.get("choices", [])
             if len(choices) > 0:
                 if spinner_running:
@@ -147,7 +147,7 @@ def generate_batch(*args, **kwargs):
 
 
 def pull(*args, **kwargs):
-    model.pull(*args, **kwargs)
+    model.pull(model_name=kwargs.pop('model'), *args, **kwargs)
 
 
 def run(*args, **kwargs):
