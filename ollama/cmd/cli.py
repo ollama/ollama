@@ -151,7 +151,7 @@ def pull(*args, **kwargs):
 
 
 def run(*args, **kwargs):
-    name = model.pull(*args, **kwargs)
+    name = model.pull(model_name=kwargs.pop('model'), *args, **kwargs)
     kwargs.update({"model": name})
     print(f"Running {name}...")
     generate(*args, **kwargs)
