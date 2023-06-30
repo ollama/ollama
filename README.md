@@ -87,7 +87,7 @@ Download a model
 ollama.pull("huggingface.co/thebloke/llama-7b-ggml")
 ```
 
-### `ollama.search("query")`
+### `ollama.search(query)`
 
 Search for compatible models that Ollama can run
 
