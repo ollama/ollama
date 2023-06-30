@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 
 MODELS_MANIFEST = 'https://ollama.ai/api/models'
-MODELS_CACHE_PATH = path.join(Path.home(), '.ollama', 'models')
+MODELS_CACHE_PATH = Path.home() / '.ollama' / 'models'
 
 
 def models(*args, **kwargs):
@@ -78,7 +78,7 @@ def find_bin_file(json_response, location, branch):
 
 
 def download_file(download_url, file_name, file_size):
-    local_filename = path.join(MODELS_CACHE_PATH, file_name) + '.bin'
+    local_filename = MODELS_CACHE_PATH / file_name + '.bin'
 
     first_byte = path.getsize(local_filename) if path.exists(local_filename) else 0
 

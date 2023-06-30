@@ -30,7 +30,7 @@ def load(model_name, models={}):
     if not models.get(model_name, None):
         model_path = path.expanduser(model_name)
         if not path.exists(model_path):
-            model_path = path.join(MODELS_CACHE_PATH, model_name + ".bin")
+            model_path = MODELS_CACHE_PATH / model_name + ".bin"
 
         runners = {
             model_type: cls
