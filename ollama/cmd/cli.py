@@ -1,6 +1,5 @@
 import os
 import sys
-from pathlib import Path
 from argparse import ArgumentParser
 from yaspin import yaspin
 
@@ -10,12 +9,9 @@ from ollama.cmd import server
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--models-home", default=Path.home() / ".ollama" / "models")
 
     # create models home if it doesn't exist
-    models_home = parser.parse_known_args()[0].models_home
-    if not models_home.exists():
-        os.makedirs(models_home)
+    os.makedirs(model.models_home, exist_ok=True)
 
     subparsers = parser.add_subparsers()
 

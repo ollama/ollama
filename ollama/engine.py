@@ -18,8 +18,8 @@ def suppress_stderr():
     os.dup2(stderr, sys.stderr.fileno())
 
 
-def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
-    llm = load(model, models_home=models_home, llms=llms)
+def generate(model, prompt, llms={}, *args, **kwargs):
+    llm = load(model, llms=llms)
 
     prompt = ollama.prompt.template(model, prompt)
     if "max_tokens" not in kwargs:
@@ -35,10 +35,10 @@ def generate(model, prompt, models_home=".", llms={}, *args, **kwargs):
         yield output
 
 
-def load(model, models_home=".", llms={}):
+def load(model, llms={}):
     llm = llms.get(model, None)
     if not llm:
-        stored_model_path = path.join(models_home, model) + ".bin"
+        stored_model_path = path.join(ollama.model.models_home, model) + ".bin"
         if path.exists(stored_model_path):
             model_path = stored_model_path
         else:

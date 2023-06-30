@@ -1,14 +1,16 @@
 import requests
 import validators
+from pathlib import Path
 from os import path, walk
 from urllib.parse import urlsplit, urlunsplit
 from tqdm import tqdm
 
 
 models_endpoint_url = 'https://ollama.ai/api/models'
+models_home = path.join(Path.home(), '.ollama', 'models')
 
 
-def models(models_home='.', *args, **kwargs):
+def models(*args, **kwargs):
     for _, _, files in walk(models_home):
         for file in files:
             base, ext = path.splitext(file)
@@ -27,7 +29,7 @@ def get_url_from_directory(model):
     return model
 
 
-def download_from_repo(url, file_name, models_home='.'):
+def download_from_repo(url, file_name):
     parts = urlsplit(url)
     path_parts = parts.path.split('/tree/')
 
@@ -55,7 +57,7 @@ def download_from_repo(url, file_name, models_home='.'):
     json_response = response.json()
 
     download_url, file_size = find_bin_file(json_response, location, branch)
-    return download_file(download_url, models_home, file_name, file_size)
+    return download_file(download_url, file_name, file_size)
 
 
 def find_bin_file(json_response, location, branch):
@@ -75,7 +77,7 @@ def find_bin_file(json_response, location, branch):
     return download_url, file_size
 
 
-def download_file(download_url, models_home, file_name, file_size):
+def download_file(download_url, file_name, file_size):
     local_filename = path.join(models_home, file_name) + '.bin'
 
     first_byte = path.getsize(local_filename) if path.exists(local_filename) else 0
@@ -108,7 +110,7 @@ def download_file(download_url, models_home, file_name, file_size):
     return local_filename
 
 
-def pull(model, models_home='.', *args, **kwargs):
+def pull(model, *args, **kwargs):
     if path.exists(model):
         # a file on the filesystem is being specified
         return model
@@ -128,6 +130,6 @@ def pull(model, models_home='.', *args, **kwargs):
             return model
         raise Exception(f'Unknown model {model}')
 
-    local_filename = download_from_repo(url, file_name, models_home)
+    local_filename = download_from_repo(url, file_name)
 
     return local_filename

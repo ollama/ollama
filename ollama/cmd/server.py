@@ -11,7 +11,7 @@ def set_parser(parser):
     parser.set_defaults(fn=serve)
 
 
-def serve(models_home=".", *args, **kwargs):
+def serve(*args, **kwargs):
     app = web.Application()
 
     cors = aiohttp_cors.setup(
@@ -39,7 +39,6 @@ def serve(models_home=".", *args, **kwargs):
     app.update(
         {
             "llms": {},
-            "models_home": models_home,
         }
     )
 
@@ -54,7 +53,6 @@ async def load(request):
 
     kwargs = {
         "llms": request.app.get("llms"),
-        "models_home": request.app.get("models_home"),
     }
 
     engine.load(model, **kwargs)
@@ -86,7 +84,6 @@ async def generate(request):
 
     kwargs = {
         "llms": request.app.get("llms"),
-        "models_home": request.app.get("models_home"),
     }
 
     for output in engine.generate(model, prompt, **kwargs):
