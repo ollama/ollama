@@ -10,6 +10,10 @@ Ollama is a tool for running any large language model on any machine. It's desig
 pip install ollama
 ```
 
+```
+docker run ollama/ollama
+```
+
 ## Quickstart
 
 To run a model, use `ollama run`:
