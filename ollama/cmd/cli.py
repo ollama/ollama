@@ -31,7 +31,7 @@ def main():
     )
 
     # create models home if it doesn't exist
-    os.makedirs(model.models_home, exist_ok=True)
+    os.makedirs(model.MODELS_CACHE_PATH, exist_ok=True)
 
     subparsers = parser.add_subparsers(
         title='commands',

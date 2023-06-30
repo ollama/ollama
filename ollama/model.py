@@ -6,12 +6,12 @@ from urllib.parse import urlsplit, urlunsplit
 from tqdm import tqdm
 
 
-models_endpoint_url = 'https://ollama.ai/api/models'
-models_home = path.join(Path.home(), '.ollama', 'models')
+MODELS_MANIFEST = 'https://ollama.ai/api/models'
+MODELS_CACHE_PATH = path.join(Path.home(), '.ollama', 'models')
 
 
 def models(*args, **kwargs):
-    for _, _, files in walk(models_home):
+    for _, _, files in walk(MODELS_CACHE_PATH):
         for file in files:
             base, ext = path.splitext(file)
             if ext == '.bin':
@@ -20,7 +20,7 @@ def models(*args, **kwargs):
 
 # get the url of the model from our curated directory
 def get_url_from_directory(model):
-    response = requests.get(models_endpoint_url)
+    response = requests.get(MODELS_MANIFEST)
     response.raise_for_status()
     directory = response.json()
     for model_info in directory:
@@ -78,7 +78,7 @@ def find_bin_file(json_response, location, branch):
 
 
 def download_file(download_url, file_name, file_size):
-    local_filename = path.join(models_home, file_name) + '.bin'
+    local_filename = path.join(MODELS_CACHE_PATH, file_name) + '.bin'
 
     first_byte = path.getsize(local_filename) if path.exists(local_filename) else 0
 
@@ -125,7 +125,7 @@ def pull(model, *args, **kwargs):
         url = f'https://{url}'
 
     if not validators.url(url):
-        if model in models(models_home):
+        if model in models(MODELS_CACHE_PATH):
             # the model is already downloaded, and specified by name
             return model
         raise Exception(f'Unknown model {model}')

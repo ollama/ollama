@@ -7,7 +7,7 @@ from llama_cpp import Llama
 from ctransformers import AutoModelForCausalLM
 
 import ollama.prompt
-from ollama.model import models_home
+from ollama.model import MODELS_CACHE_PATH
 
 
 @contextmanager
@@ -30,7 +30,7 @@ def load(model_name, models={}):
     if not models.get(model_name, None):
         model_path = path.expanduser(model_name)
         if not path.exists(model_path):
-            model_path = path.join(models_home, model_name + ".bin")
+            model_path = path.join(MODELS_CACHE_PATH, model_name + ".bin")
 
         runners = {
             model_type: cls
