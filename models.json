@@ -8,9 +8,8 @@
     "published_by": "TheBloke",
     "original_author": "psmathur",
     "original_url": "https://huggingface.co/psmathur/orca_mini_3b",
-    "license:" "CC-BY-SA-4.0"
+    "license": "CC-BY-SA-4.0"
   },
-
   {
     "name": "orca_mini_7B", 
     "display_name": "Orca Mini 7B",
@@ -20,7 +19,7 @@
     "published_by": "TheBloke",
     "original_author": "psmathur",
     "original_url": "https://huggingface.co/psmathur/orca_mini_7b",
-    "license:" "CC-BY-SA-4.0"
+    "license": "CC-BY-SA-4.0"
   },
   {
     "name": "orca_mini_13B",
@@ -31,9 +30,8 @@
     "published_by": "TheBloke",
     "original_author": "psmathur",
     "original_url": "https://huggingface.co/psmathur/orca_mini_13b",
-    "license:" "CC-BY-SA-4.0"
+    "license": "CC-BY-SA-4.0"
   },
-
   {
     "name": "replit-code-v1-3b", 
     "display_name": "Replit Code V1 3B", 
@@ -43,9 +41,8 @@
     "published_by": "Nomic AI", 
     "original_author": "Replit, Inc.",
     "original_url": "https://huggingface.co/replit/replit-code-v1-3b",
-    "license:" "CC-BY-SA-4.0"
+    "license": "CC-BY-SA-4.0"
   }, 
-
   {
     "name": "Nous-Hermes-13B", 
     "display_name": "Nous Hermes 13B", 
@@ -55,9 +52,8 @@
     "published_by": "TheBloke",
     "original_author": "NousResearch",
     "original_url": "https://huggingface.co/NousResearch/Nous-Hermes-13b",
-    "license:" "GPL"
+    "license": "GPL"
   }, 
-
   {
     "name": "Wizard-Vicuna-13B-Uncensored", 
     "display_name": "Wizard Vicuna 13B Uncensored", 
