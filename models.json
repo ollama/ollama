@@ -1,14 +1,72 @@
 [
   {
-    "name": "orca-mini-3b",
-    "url": "huggingface.co/TheBloke/orca_mini_3B-GGML"
+    "name": "orca_mini_3B",
+    "display_name": "Orca Mini 3B",
+    "url": "huggingface.co/TheBloke/orca_mini_3B-GGML",
+    "short_description": "Follow instructions. Great small model that runs fast even without GPU support.",
+    "description": "An OpenLLaMa-3B model trained on explain tuned datasets, created using Instructions and Input from WizardLM, Alpaca & Dolly-V2 datasets and applying Orca Research Paper dataset construction approaches.",
+    "published_by": "TheBloke",
+    "original_author": "psmathur",
+    "original_url": "https://huggingface.co/psmathur/orca_mini_3b",
+    "license:" "CC-BY-SA-4.0"
+  },
+
+  {
+    "name": "orca_mini_7B", 
+    "display_name": "Orca Mini 7B",
+    "url": "huggingface.co/TheBloke/orca_mini_7B-GGML",
+    "short_description": "Follow instructions",
+    "description": "An OpenLLaMa-7B model trained on explain tuned datasets, created using Instructions and Input from WizardLM, Alpaca & Dolly-V2 datasets and applying Orca Research Paper dataset construction approaches.",
+    "published_by": "TheBloke",
+    "original_author": "psmathur",
+    "original_url": "https://huggingface.co/psmathur/orca_mini_7b",
+    "license:" "CC-BY-SA-4.0"
   },
   {
-    "name": "orca-mini-7b",
-    "url": "huggingface.co/TheBloke/orca_mini_7B-GGML"
+    "name": "orca_mini_13B",
+    "display_name": "Orca Mini 13B",
+    "url": "huggingface.co/TheBloke/orca_mini_13B-GGML",
+    "short_description": "Follow instructions",
+    "description": "An OpenLLaMa-7B model trained on explain tuned datasets, created using Instructions and Input from WizardLM, Alpaca & Dolly-V2 datasets and applying Orca Research Paper dataset construction approaches.",
+    "published_by": "TheBloke",
+    "original_author": "psmathur",
+    "original_url": "https://huggingface.co/psmathur/orca_mini_13b",
+    "license:" "CC-BY-SA-4.0"
   },
+
   {
-    "name": "orca-mini-13b",
-    "url": "huggingface.co/TheBloke/orca_mini_13B-GGML"
+    "name": "replit-code-v1-3b", 
+    "display_name": "Replit Code V1 3B", 
+    "url": "https://huggingface.co/nomic-ai/ggml-replit-code-v1-3b", 
+    "short_description": "Code Completion",
+    "description": "This model focuses on code completion. The training mixture includes 20 different languages, listed here in descending order of number of tokens: Markdown, Java, JavaScript, Python, TypeScript, PHP, SQL, JSX, reStructuredText, Rust, C, CSS, Go, C++, HTML, Vue, Ruby, Jupyter Notebook, R, and Shell. This model binary is converted by Nomic AI with the original Replit model code before it was refactored to use MPT configurations.",
+    "published_by": "Nomic AI", 
+    "original_author": "Replit, Inc.",
+    "original_url": "https://huggingface.co/replit/replit-code-v1-3b",
+    "license:" "CC-BY-SA-4.0"
+  }, 
+
+  {
+    "name": "Nous-Hermes-13B", 
+    "display_name": "Nous Hermes 13B", 
+    "url": "https://huggingface.co/TheBloke/Nous-Hermes-13B-GGML",
+    "short_description": "Currently one of the best 13B general model.",
+    "description": "It is suitable for a wide range of language tasks, from generating creative text to understanding and following complex instructions. This model was fine-tuned by Nous Research, with Teknium and Karan4D leading the fine tuning process and dataset curation, Redmond AI sponsoring the compute, and several other contributors. The result is an enhanced Llama 13b model that rivals GPT-3.5-turbo in performance across a variety of tasks. \n \n This model stands out for its long responses, low hallucination rate, and absence of OpenAI censorship mechanisms. The fine-tuning process was performed with a 2000 sequence length on an 8x a100 80GB DGX machine for over 50 hours.",
+    "published_by": "TheBloke",
+    "original_author": "NousResearch",
+    "original_url": "https://huggingface.co/NousResearch/Nous-Hermes-13b",
+    "license:" "GPL"
+  }, 
+
+  {
+    "name": "Wizard-Vicuna-13B-Uncensored", 
+    "display_name": "Wizard Vicuna 13B Uncensored", 
+    "url": "https://huggingface.co/TheBloke/Wizard-Vicuna-13B-Uncensored-GGML", 
+    "short_description": "An uncensored model with no guardrails.",
+    "description": "This model is trained with a subset of the dataset - responses that contained alignment / moralizing were removed. The intent is to train a WizardLM that doesn't have alignment built-in, so that alignment (of any sort) can be added separately with for example with a RLHF LoRA.",
+    "published_by":"TheBloke" ,
+    "original_author": "ehartford", 
+    "original_url": "https://huggingface.co/ehartford/Wizard-Vicuna-13B-Uncensored", 
+    "license:": "GPL"
   }
 ]
