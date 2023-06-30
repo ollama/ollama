@@ -176,6 +176,7 @@ def search(*args, **kwargs):
 
 def pull(*args, **kwargs):
     model.pull(model_name=kwargs.pop('model'), *args, **kwargs)
+    print("Up to date.")
 
 
 def run(*args, **kwargs):
