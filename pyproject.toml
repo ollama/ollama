@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ollama"
-version = "0.0.8"
+version = "0.0.9"
 description = "Run ai models locally"
 authors = ["ollama team"]
 readme = "README.md"
