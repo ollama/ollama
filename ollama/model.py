@@ -41,7 +41,7 @@ def download_from_repo(url, file_name):
 
     location = location.strip('/')
     if file_name == '':
-        file_name = path.basename(location)
+        file_name = path.basename(location).lower()
 
     download_url = urlunsplit(
         (
