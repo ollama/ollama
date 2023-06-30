@@ -17,13 +17,8 @@ def main():
 
     server.set_parser(subparsers.add_parser("serve"))
 
-    list_parser = subparsers.add_parser("list")
+    list_parser = subparsers.add_parser("models")
     list_parser.set_defaults(fn=list_models)
-
-    generate_parser = subparsers.add_parser("generate")
-    generate_parser.add_argument("model")
-    generate_parser.add_argument("prompt", nargs="?")
-    generate_parser.set_defaults(fn=generate)
 
     pull_parser = subparsers.add_parser("pull")
     pull_parser.add_argument("model")
