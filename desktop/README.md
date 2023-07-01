@@ -1,10 +1,12 @@
 # Desktop
 
-The Ollama desktop experience. This is an experimental, easy-to-use app for running models with [`ollama`](https://github.com/jmorganca/ollama).
+_Note: the Ollama desktop app is a work in progress and is not ready yet for general use._
 
-## Running
+This app builds upon Ollama to provide a desktop experience for running models.
 
-In the background run the ollama server `ollama.py` server:
+## Developing
+
+In the background run the ollama server `ollama.py`:
 
 ```
 poetry -C .. run ollama serve
