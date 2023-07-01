@@ -16,9 +16,14 @@ requests = "^2.31.0"
 tqdm = "^4.65.0"
 validators = "^0.20.0"
 yaspin = "^2.3.0"
-llama-cpp-python = "^0.1.67"
 ctransformers = "^0.2.10"
 fuzzywuzzy = {extras = ["speedup"], version = "^0.18.0"}
+
+# required by llama-cpp-python
+llama-cpp-python = {version = "^0.1.67", optional = true}
+typing-extensions = "^4.6.3"
+numpy = "^1.24.4"
+diskcache = "^5.6.1"
 
 [build-system]
 requires = ["poetry-core"]

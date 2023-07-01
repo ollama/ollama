@@ -637,7 +637,7 @@ rapidfuzz = ">=2.3.0,<4.0.0"
 name = "llama-cpp-python"
 version = "0.1.67"
 description = "A Python wrapper for llama.cpp"
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "llama_cpp_python-0.1.67.tar.gz", hash = "sha256:33bdcd42b30df3c21d56ce094132e1cdc0da0f8a27109f8eaf698addad02fd20"},
@@ -1211,4 +1211,4 @@ termcolor = ">=2.2,<3.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.8"
-content-hash = "bd4b373e3903bd26b983163f3cc527a6f768f4280201fcbca4d4dc05dea66912"
+content-hash = "59f5dc1f3dbe73040cedac8d9484482f86f9ea8ae3793191de15014c0033debc"

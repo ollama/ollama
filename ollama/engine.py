@@ -1,14 +1,13 @@
 import os
 import sys
 from os import path
-from pathlib import Path
 from contextlib import contextmanager
 from fuzzywuzzy import process
-from llama_cpp import Llama
 from ctransformers import AutoModelForCausalLM
 
 import ollama.prompt
 from ollama.model import MODELS_CACHE_PATH
+from ollama.platform import Llama
 
 
 @contextmanager
