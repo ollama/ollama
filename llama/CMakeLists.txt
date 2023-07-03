@@ -23,5 +23,6 @@ target_include_directories(binding PRIVATE ${llama_cpp_SOURCE_DIR})
 target_include_directories(binding PRIVATE ${llama_cpp_SOURCE_DIR}/examples)
 target_link_libraries(binding llama ggml_static)
 
+configure_file(${llama_cpp_SOURCE_DIR}/ggml-metal.metal ${CMAKE_CURRENT_BINARY_DIR}/ggml-metal.metal COPYONLY)
 configure_file(${llama_cpp_BINARY_DIR}/libllama.a ${CMAKE_CURRENT_BINARY_DIR}/libllama.a COPYONLY)
 configure_file(${llama_cpp_BINARY_DIR}/libggml_static.a ${CMAKE_CURRENT_BINARY_DIR}/libggml_static.a COPYONLY)

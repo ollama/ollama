@@ -59,7 +59,7 @@ func NewCLI() *cobra.Command {
 
 	rootCmd := &cobra.Command{
 		Use:   "ollama",
-		Short: "Run any large language model on any machine.",
+		Short: "Large language model runner",
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
@@ -88,14 +88,13 @@ func NewCLI() *cobra.Command {
 		},
 	}
 
-/*
 	runCmd := &cobra.Command{
 		Use: "run",
 		Short: "Run a model and submit prompts.",
-		RunE: func(cmd *cobra.Command. args []string) error {
+		RunE: func(cmd *cobra.Command,args []string) error {
+			return nil
 		},
 	}
-*/
 
 	serveCmd := &cobra.Command{
 		Use:     "serve",
@@ -132,6 +131,7 @@ func NewCLI() *cobra.Command {
 	rootCmd.AddCommand(
 		modelsCmd,
 		serveCmd,
+		runCmd,
 	)
 
 	return rootCmd
