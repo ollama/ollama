@@ -1,6 +1,6 @@
 # Ollama
 
-A fast runtime for large language models, powered by [llama.cpp](https://github.com/ggerganov/llama.cpp).
+An easy, fast runtime for large language models, powered by `llama.cpp`.
 
 > _Note: this project is a work in progress. Certain models that can be run with `ollama` are intended for research and/or non-commercial use only._
 
@@ -36,6 +36,13 @@ Or directly via downloaded model files:
 
 ```
 ollama run ~/Downloads/orca-mini-13b.ggmlv3.q4_0.bin
+```
+
+## Building
+
+```
+go generate ./...
+go build .
 ```
 
 ## Documentation
