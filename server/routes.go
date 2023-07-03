@@ -36,6 +36,8 @@ func Serve(ln net.Listener) error {
 	})
 
 	r.POST("/api/generate", func(c *gin.Context) {
+		// TODO: set prompt from template
+
 		var req api.GenerateRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
@@ -64,13 +66,10 @@ func Serve(ln net.Listener) error {
 			return true
 		})
 
-/*
-                embeds, err := l.Embeddings(text)
-                if err != nil {
-                        fmt.Printf("Embeddings: error %s \n", err.Error())
-                }
-*/
-		
+		// embeds, err := l.Embeddings(text)
+		// if err != nil {
+		//         fmt.Printf("Embeddings: error %s \n", err.Error())
+		// }
 	})
 
 	log.Printf("Listening on %s", ln.Addr())
