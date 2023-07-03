@@ -1,6 +1,6 @@
 # Ollama
 
-Ollama is a tool for running large language models. It's designed to be easy to use and fast.
+A fast runtime for large language models, powered by [llama.cpp](https://github.com/ggerganov/llama.cpp).
 
 > _Note: this project is a work in progress. Certain models that can be run with `ollama` are intended for research and/or non-commercial use only._
 
