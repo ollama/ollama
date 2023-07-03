@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/ollama/ollama/cmd"
+	"github.com/jmorganca/ollama/cmd"
 )
 
 func main() {

@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/ollama/ollama/signature"
+	"github.com/jmorganca/ollama/signature"
 )
 
 type Client struct {

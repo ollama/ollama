@@ -9,9 +9,9 @@ import (
 	"runtime"
 
 	"github.com/gin-gonic/gin"
-	llama "github.com/go-skynet/go-llama.cpp"
+	llama "github.com/jmorganca/ollama/llama"
 
-	"github.com/ollama/ollama/api"
+	"github.com/jmorganca/ollama/api"
 )
 
 func Serve(ln net.Listener) error {

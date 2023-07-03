@@ -9,13 +9,19 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(llama_cpp)
 
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    set(LLAMA_METAL ON)
+    add_compile_definitions(GGML_USE_METAL)
+endif()
+
 project(binding)
 
-set(LLAMA_METAL ON CACHE BOOL "Enable Llama Metal by default on macOS")
-
-add_library(binding binding.cpp ${llama_cpp_SOURCE_DIR}/examples/common.cpp)
+add_library(binding ${CMAKE_CURRENT_SOURCE_DIR}/binding/binding.cpp ${llama_cpp_SOURCE_DIR}/examples/common.cpp)
 target_compile_features(binding PRIVATE cxx_std_11)
 target_include_directories(binding PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(binding PRIVATE ${llama_cpp_SOURCE_DIR})
 target_include_directories(binding PRIVATE ${llama_cpp_SOURCE_DIR}/examples)
 target_link_libraries(binding llama ggml_static)
+
+configure_file(${llama_cpp_BINARY_DIR}/libllama.a ${CMAKE_CURRENT_BINARY_DIR}/libllama.a COPYONLY)
+configure_file(${llama_cpp_BINARY_DIR}/libggml_static.a ${CMAKE_CURRENT_BINARY_DIR}/libggml_static.a COPYONLY)
