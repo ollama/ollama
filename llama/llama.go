@@ -24,9 +24,9 @@
 //go:generate cmake --build build
 package llama
 
-// #cgo LDFLAGS: -Lbuild -lbinding -lllama -lggml_static -lstdc++
+// #cgo LDFLAGS: -Lbuild -lbinding -lllama -lm -lggml_static -lstdc++
+// #cgo CXXFLAGS: -std=c++11
 // #cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
-// #cgo darwin CXXFLAGS: -std=c++11
 // #include "binding/binding.h"
 import "C"
 import (
