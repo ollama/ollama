@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -13,8 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/server"
+	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/server"
 )
 
 func NewAPIClient(cmd *cobra.Command) (*api.Client, error) {
@@ -36,7 +35,7 @@ func NewAPIClient(cmd *cobra.Command) (*api.Client, error) {
 
 	if k != "" {
 		fn := path.Join(home, ".ollama/keys/", k)
-		rawKey, err = ioutil.ReadFile(fn)
+		rawKey, err = os.ReadFile(fn)
 		if err != nil {
 			return nil, err
 		}
@@ -59,7 +58,7 @@ func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	rootCmd := &cobra.Command{
-		Use:   "gollama",
+		Use:   "ollama",
 		Short: "Run any large language model on any machine.",
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
