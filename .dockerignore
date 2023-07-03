@@ -1,0 +1,7 @@
+build
+llama/build
+.venv
+.vscode
+ollama
+app
+web
