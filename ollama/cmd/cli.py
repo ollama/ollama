@@ -175,12 +175,18 @@ def search(*args, **kwargs):
 
 
 def pull(*args, **kwargs):
-    model.pull(model_name=kwargs.pop('model'), *args, **kwargs)
-    print("Up to date.")
+    try:
+        model.pull(model_name=kwargs.pop('model'), *args, **kwargs)
+        print("Up to date.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 
 def run(*args, **kwargs):
-    name = model.pull(model_name=kwargs.pop('model'), *args, **kwargs)
-    kwargs.update({"model": name})
-    print(f"Running {name}...")
-    generate(*args, **kwargs)
+    try:
+        name = model.pull(model_name=kwargs.pop('model'), *args, **kwargs)
+        kwargs.update({"model": name})
+        print(f"Running {name}...")
+        generate(*args, **kwargs)
+    except Exception as e:
+        print(f"An error occurred: {e}")

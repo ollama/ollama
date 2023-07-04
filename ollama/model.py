@@ -123,16 +123,26 @@ def download_file(download_url, file_name, file_size):
 
 
 def pull(model_name, *args, **kwargs):
-    maybe_existing_model_location = MODELS_CACHE_PATH / str(model_name + '.bin')
-    if path.exists(model_name) or path.exists(maybe_existing_model_location):
-        # a file on the filesystem is being specified
-        return model_name
     # check the remote model location and see if it needs to be downloaded
     url = model_name
     file_name = ""
     if not validators.url(url) and not url.startswith('huggingface.co'):
-        url = get_url_from_directory(model_name)
-        file_name = model_name
+        try:
+            url = get_url_from_directory(model_name)
+        except Exception as e:
+            # may not have been able to check remote directory, return now
+            return model_name
+        if url is model_name:
+            # this is not a model from our directory, so can't check remote
+            maybe_existing_model_location = MODELS_CACHE_PATH / str(model_name + '.bin')
+            if path.exists(model_name) or path.exists(maybe_existing_model_location):
+                # a file on the filesystem is being specified
+                return model_name
+            raise Exception("unknown model")
+        else:
+            # this is a model from our directory, check remote
+            file_name = model_name
+
     if not (url.startswith('http://') or url.startswith('https://')):
         url = f'https://{url}'
 
