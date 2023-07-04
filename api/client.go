@@ -1,14 +1,13 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/jmorganca/ollama/signature"
 )
 
 type Client struct {
@@ -36,7 +35,7 @@ func checkError(resp *http.Response, body []byte) error {
 	return apiError
 }
 
-func (c *Client) do(ctx context.Context, method string, path string, stream bool, reqData any, respData any) error {
+func (c *Client) stream(ctx context.Context, method string, path string, reqData any, callback func (data []byte)) error {
 	var reqBody io.Reader
 	var data []byte
 	var err error
@@ -55,17 +54,50 @@ func (c *Client) do(ctx context.Context, method string, path string, stream bool
 		return err
 	}
 
-	if c.PrivateKey != nil {
-		s := signature.SignatureData{
-			Method: method,
-			Path:   url,
-			Data:   data,
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	for k, v := range c.Headers {
+		req.Header[k] = v
+	}
+
+	res, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	reader := bufio.NewReader(res.Body)
+
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			break
 		}
-		authHeader, err := signature.SignAuthData(s, c.PrivateKey)
+
+		callback(bytes.TrimSuffix(line, []byte("\n")))
+	}
+
+	return nil
+}
+
+func (c *Client) do(ctx context.Context, method string, path string, reqData any, respData any) error {
+	var reqBody io.Reader
+	var data []byte
+	var err error
+	if reqData != nil {
+		data, err = json.Marshal(reqData)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Authorization", authHeader)
+		reqBody = bytes.NewReader(data)
+	}
+
+	url := fmt.Sprintf("%s%s", c.URL, path)
+
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	if err != nil {
+		return err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -96,4 +128,15 @@ func (c *Client) do(ctx context.Context, method string, path string, stream bool
 		}
 	}
 	return nil
+}
+
+func (c *Client) Generate(ctx context.Context, req *GenerateRequest, callback func(token string)) (*GenerateResponse, error) {
+	var res GenerateResponse
+	if err := c.stream(ctx, http.MethodPost, "/api/generate", req, func(token []byte) {
+		callback(string(token))
+	}); err != nil {
+		return nil, err
+	}
+
+	return &res, nil
 }

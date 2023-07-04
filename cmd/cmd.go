@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -10,14 +9,59 @@ import (
 	"path"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/server"
+	"github.com/spf13/cobra"
 )
 
-func NewAPIClient(cmd *cobra.Command) (*api.Client, error) {
-	var rawKey []byte
+func sockpath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	return path.Join(home, ".ollama", "ollama.sock")
+}
+
+func running() bool {
+	// Set a timeout duration
+	timeout := time.Second
+	// Dial the unix socket
+	conn, err := net.DialTimeout("unix", sockpath(), timeout)
+	if err != nil {
+		return false
+	}
+
+	if conn != nil {
+		defer conn.Close()
+	}
+	return true
+}
+
+func serve() error {
+	sp := sockpath()
+
+	if err := os.MkdirAll(path.Dir(sp), 0o700); err != nil {
+		return err
+	}
+
+	if err := os.RemoveAll(sp); err != nil {
+		return err
+	}
+
+	ln, err := net.Listen("unix", sp)
+	if err != nil {
+		return err
+	}
+
+	if err := os.Chmod(sp, 0o700); err != nil {
+		return err
+	}
+
+	return server.Serve(ln)
+}
+
+func NewAPIClient() (*api.Client, error) {
 	var err error
 
 	home, err := os.UserHomeDir()
@@ -31,16 +75,6 @@ func NewAPIClient(cmd *cobra.Command) (*api.Client, error) {
 		Timeout: 10 * time.Second,
 	}
 
-	k, _ := cmd.Flags().GetString("key")
-
-	if k != "" {
-		fn := path.Join(home, ".ollama/keys/", k)
-		rawKey, err = os.ReadFile(fn)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return &api.Client{
 		URL: "http://localhost",
 		HTTP: http.Client{
@@ -50,7 +84,6 @@ func NewAPIClient(cmd *cobra.Command) (*api.Client, error) {
 				},
 			},
 		},
-		PrivateKey: rawKey,
 	}, nil
 }
 
@@ -69,28 +102,12 @@ func NewCLI() *cobra.Command {
 		},
 	}
 
-	rootCmd.PersistentFlags().StringP("key", "k", "", "Private key to use for authenticating")
-
 	cobra.EnableCommandSorting = false
 
-	modelsCmd := &cobra.Command{
-		Use:   "models",
-		Args:  cobra.MaximumNArgs(1),
-		Short: "List models",
-		Long:  "List the models",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := NewAPIClient(cmd)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("client = %q\n", client)
-			return nil
-		},
-	}
-
 	runCmd := &cobra.Command{
-		Use: "run",
-		Short: "Run a model and submit prompts.",
+		Use: "run MODEL",
+		Short: "Run a model",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command,args []string) error {
 			return nil
 		},
@@ -101,35 +118,11 @@ func NewCLI() *cobra.Command {
 		Aliases: []string{"start"},
 		Short:   "Start ollama",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return err
-			}
-
-			socket := path.Join(home, ".ollama", "ollama.sock")
-			if err := os.MkdirAll(path.Dir(socket), 0o700); err != nil {
-				return err
-			}
-
-			if err := os.RemoveAll(socket); err != nil {
-				return err
-			}
-
-			ln, err := net.Listen("unix", socket)
-			if err != nil {
-				return err
-			}
-
-			if err := os.Chmod(socket, 0o700); err != nil {
-				return err
-			}
-
-			return server.Serve(ln)
+			return serve()
 		},
 	}
 
 	rootCmd.AddCommand(
-		modelsCmd,
 		serveCmd,
 		runCmd,
 	)

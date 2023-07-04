@@ -17,30 +17,26 @@ import (
 func Serve(ln net.Listener) error {
 	r := gin.Default()
 
-	var l *llama.LLama
-
-	gpulayers := 1
+	// TODO: these should be request parameters
+	gpulayers := 0
 	tokens := 512
 	threads := runtime.NumCPU()
-	model := "/Users/pdevine/.cache/gpt4all/GPT4All-13B-snoozy.ggmlv3.q4_0.bin"
-
-	r.POST("/api/load", func(c *gin.Context) {
-		var err error
-		l, err = llama.New(model, llama.EnableF16Memory, llama.SetContext(128), llama.EnableEmbeddings, llama.SetGPULayers(gpulayers))
-		if err != nil {
-			fmt.Println("Loading the model failed:", err.Error())
-		}
-	})
-
-	r.POST("/api/unload", func(c *gin.Context) {
-	})
 
 	r.POST("/api/generate", func(c *gin.Context) {
 		// TODO: set prompt from template
+		fmt.Println("Generating text...")
 
 		var req api.GenerateRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+
+		fmt.Println(req)
+
+		l, err := llama.New(req.Model, llama.EnableF16Memory, llama.SetContext(128), llama.EnableEmbeddings, llama.SetGPULayers(gpulayers))
+		if err != nil {
+			fmt.Println("Loading the model failed:", err.Error())
 			return
 		}
 
@@ -55,7 +51,7 @@ func Serve(ln net.Listener) error {
                 	if err != nil {
 				panic(err)
 			}
-                }()
+        }()
 
 		c.Stream(func(w io.Writer) bool {
 			tok, ok := <-ch
@@ -65,11 +61,6 @@ func Serve(ln net.Listener) error {
 			c.SSEvent("token", tok)
 			return true
 		})
-
-		// embeds, err := l.Embeddings(text)
-		// if err != nil {
-		//         fmt.Printf("Embeddings: error %s \n", err.Error())
-		// }
 	})
 
 	log.Printf("Listening on %s", ln.Addr())
