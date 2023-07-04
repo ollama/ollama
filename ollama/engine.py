@@ -39,12 +39,18 @@ def load(model_name, models={}):
             for model_type in cls.model_types()
         }
 
-        best_match, _ = process.extractOne(model_path, runners.keys())
-        model = runners.get(best_match, LlamaCppRunner)
+        while len(runners) > 0:
+            try:
+                best_match, _ = process.extractOne(model_path, runners.keys())
+                model = runners.get(best_match, LlamaCppRunner)
+                runner = model(model_path, best_match)
+                models.update({model_name: runner})
+                return models.get(model_name)
+            except Exception:
+                # try the next runner
+                runners.pop(best_match)
 
-        models.update({model_name: model(model_path, best_match)})
-
-    return models.get(model_name)
+        raise Exception("failed to load model", model_path, model_name)
 
 
 def unload(model_name, models={}):
