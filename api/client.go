@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/jmorganca/ollama/signature"
 )
 
 type Client struct {
@@ -56,19 +54,6 @@ func (c *Client) stream(ctx context.Context, method string, path string, reqData
 		return err
 	}
 
-	if c.PrivateKey != nil {
-		s := signature.SignatureData{
-			Method: method,
-			Path:   url,
-			Data:   data,
-		}
-		authHeader, err := signature.SignAuthData(s, c.PrivateKey)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", authHeader)
-	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -113,19 +98,6 @@ func (c *Client) do(ctx context.Context, method string, path string, reqData any
 	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return err
-	}
-
-	if c.PrivateKey != nil {
-		s := signature.SignatureData{
-			Method: method,
-			Path:   url,
-			Data:   data,
-		}
-		authHeader, err := signature.SignAuthData(s, c.PrivateKey)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", authHeader)
 	}
 
 	req.Header.Set("Content-Type", "application/json")

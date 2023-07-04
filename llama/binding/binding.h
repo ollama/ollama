@@ -30,7 +30,7 @@ extern "C" {
 
 extern unsigned char tokenCallback(void *, char *);
 
-int eval(void *params_ptr, void *ctx, char *text);
+int eval(void *p, void *c, char *text);
 
 void *load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16,
                  bool mlock, bool embeddings, bool mmap, bool low_vram,
@@ -50,7 +50,7 @@ void *llama_allocate_params(
 
 void llama_free_params(void *params_ptr);
 
-void llama_binding_free_model(llama_context *ctx);
+void llama_binding_free_model(void *ctx);
 
 int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug);
 

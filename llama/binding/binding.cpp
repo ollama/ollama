@@ -55,7 +55,10 @@ void sigint_handler(int signo) {
 }
 #endif
 
-int eval(gpt_params *params, llama_context *ctx, char *text) {
+int eval(void *p, void *c, char *text) {
+  gpt_params *params = (gpt_params *)params;
+  llama_context *ctx = (llama_context *)ctx;
+
   auto n_past = 0;
   auto last_n_tokens_data = std::vector<llama_token>(params->repeat_last_n, 0);
 
@@ -72,8 +75,9 @@ int eval(gpt_params *params, llama_context *ctx, char *text) {
                     params->n_threads);
 }
 
-int llama_predict(gpt_params *params, llama_context *ctx, char *result,
-                  bool debug) {
+int llama_predict(void *p, void *c, char *result, bool debug) {
+  gpt_params *params = (gpt_params *)params;
+  llama_context *ctx = (llama_context *)ctx;
 
   const int n_ctx = llama_n_ctx(ctx);
 
@@ -446,8 +450,8 @@ end:
   return 0;
 }
 
-void llama_binding_free_mode(llama_context *ctx) { llama_free(ctx); }
-void llama_free_params(gpt_params *params) { delete params; }
+void llama_binding_free_model(void *ctx) { llama_free((llama_context *)ctx); }
+void llama_free_params(void *params) { delete (gpt_params *)params; }
 
 void *llama_allocate_params(
     const char *prompt, int seed, int threads, int tokens, int top_k,
@@ -572,5 +576,10 @@ void *load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16,
 
   llama_init_backend(numa);
 
-  return llama_init_from_file(fname, lparams);
+  struct llama_model *model = llama_load_model_from_file(fname, lparams);
+  if (!model) {
+    return nullptr;
+  }
+
+  return llama_new_context_with_model(model, lparams);
 }

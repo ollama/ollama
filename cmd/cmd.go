@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -12,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/llama"
 	"github.com/jmorganca/ollama/server"
 	"github.com/spf13/cobra"
 )
@@ -112,34 +109,6 @@ func NewCLI() *cobra.Command {
 		Short: "Run a model",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command,args []string) error {
-			l, err := llama.New(req.Model, llama.EnableF16Memory, llama.SetContext(128), llama.EnableEmbeddings, llama.SetGPULayers(gpulayers))
-			if err != nil {
-				fmt.Println("Loading the model failed:", err.Error())
-				return
-			}
-
-			ch := make(chan string)
-
-			go func() {
-				defer close(ch)
-				_, err := l.Predict(req.Prompt, llama.Debug, llama.SetTokenCallback(func(token string) bool {
-					ch <- token
-								return true
-						}), llama.SetTokens(tokens), llama.SetThreads(threads), llama.SetTopK(90), llama.SetTopP(0.86), llama.SetStopWords("llama"))
-						if err != nil {
-					panic(err)
-				}
-			}()
-
-			c.Stream(func(w io.Writer) bool {
-				tok, ok := <-ch
-				if !ok {
-					return false
-				}
-				c.SSEvent("token", tok)
-				return true
-			})
-
 			return nil
 		},
 	}
