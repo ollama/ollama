@@ -55,78 +55,14 @@ void sigint_handler(int signo) {
 }
 #endif
 
-int get_embeddings(void *params_ptr, void *state_pr, float *res_embeddings) {
-  gpt_params *params_p = (gpt_params *)params_ptr;
-  llama_context *ctx = (llama_context *)state_pr;
-  gpt_params params = *params_p;
-
-  if (params.seed <= 0) {
-    params.seed = time(NULL);
-  }
-
-  std::mt19937 rng(params.seed);
-
-  llama_init_backend(params.numa);
-
-  int n_past = 0;
-
-  // Add a space in front of the first character to match OG llama tokenizer
-  // behavior
-  params.prompt.insert(0, 1, ' ');
-
-  // tokenize the prompt
-  auto embd_inp = ::llama_tokenize(ctx, params.prompt, true);
-
-  // determine newline token
-  auto llama_token_newline = ::llama_tokenize(ctx, "\n", false);
-
-  if (embd_inp.size() > 0) {
-    if (llama_eval(ctx, embd_inp.data(), embd_inp.size(), n_past,
-                   params.n_threads)) {
-      fprintf(stderr, "%s : failed to eval\n", __func__);
-      return 1;
-    }
-  }
-
-  const int n_embd = llama_n_embd(ctx);
-
-  const auto embeddings = llama_get_embeddings(ctx);
-
-  for (int i = 0; i < n_embd; i++) {
-    res_embeddings[i] = embeddings[i];
-  }
-
-  return 0;
-}
-
-int get_token_embeddings(void *params_ptr, void *state_pr, int *tokens,
-                         int tokenSize, float *res_embeddings) {
-  gpt_params *params_p = (gpt_params *)params_ptr;
-  llama_context *ctx = (llama_context *)state_pr;
-  gpt_params params = *params_p;
-
-  for (int i = 0; i < tokenSize; i++) {
-    auto token_str = llama_token_to_str(ctx, tokens[i]);
-    if (token_str == nullptr) {
-      continue;
-    }
-    std::vector<std::string> my_vector;
-    std::string str_token(token_str); // create a new std::string from the char*
-    params_p->prompt += str_token;
-  }
-
-  return get_embeddings(params_ptr, state_pr, res_embeddings);
-}
-
-int eval(void *params_ptr, void *state_pr, char *text) {
-  gpt_params *params_p = (gpt_params *)params_ptr;
-  llama_context *ctx = (llama_context *)state_pr;
+int eval(void *p, void *c, char *text) {
+  gpt_params *params = (gpt_params *)params;
+  llama_context *ctx = (llama_context *)ctx;
 
   auto n_past = 0;
-  auto last_n_tokens_data =
-      std::vector<llama_token>(params_p->repeat_last_n, 0);
+  auto last_n_tokens_data = std::vector<llama_token>(params->repeat_last_n, 0);
 
-  auto tokens = std::vector<llama_token>(params_p->n_ctx);
+  auto tokens = std::vector<llama_token>(params->n_ctx);
   auto n_prompt_tokens =
       llama_tokenize(ctx, text, tokens.data(), tokens.size(), true);
 
@@ -135,26 +71,22 @@ int eval(void *params_ptr, void *state_pr, char *text) {
     return 1;
   }
 
-  // evaluate prompt
   return llama_eval(ctx, tokens.data(), n_prompt_tokens, n_past,
-                    params_p->n_threads);
+                    params->n_threads);
 }
 
-int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
-  gpt_params *params_p = (gpt_params *)params_ptr;
-  llama_context *ctx = (llama_context *)state_pr;
-
-  gpt_params params = *params_p;
+int llama_predict(void *p, void *c, char *result, bool debug) {
+  gpt_params *params = (gpt_params *)params;
+  llama_context *ctx = (llama_context *)ctx;
 
   const int n_ctx = llama_n_ctx(ctx);
 
-  if (params.seed <= 0) {
-    params.seed = time(NULL);
+  if (params->seed <= 0) {
+    params->seed = time(NULL);
   }
 
-  std::mt19937 rng(params.seed);
-
-  std::string path_session = params.path_prompt_cache;
+  std::mt19937 rng(params->seed);
+  std::string path_session = params->path_prompt_cache;
   std::vector<llama_token> session_tokens;
 
   if (!path_session.empty()) {
@@ -177,7 +109,7 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
         return 1;
       }
       session_tokens.resize(n_token_count_out);
-      llama_set_rng_seed(ctx, params.seed);
+      llama_set_rng_seed(ctx, params->seed);
       if (debug) {
         fprintf(stderr, "%s: loaded a session with prompt size of %d tokens\n",
                 __func__, (int)session_tokens.size());
@@ -191,12 +123,12 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
   }
 
   std::vector<llama_token> embd_inp;
-  if (!params.prompt.empty() || session_tokens.empty()) {
+  if (!params->prompt.empty() || session_tokens.empty()) {
     // Add a space in front of the first character to match OG llama tokenizer
     // behavior
-    params.prompt.insert(0, 1, ' ');
+    params->prompt.insert(0, 1, ' ');
 
-    embd_inp = ::llama_tokenize(ctx, params.prompt, true);
+    embd_inp = ::llama_tokenize(ctx, params->prompt, true);
   } else {
     embd_inp = session_tokens;
   }
@@ -212,7 +144,7 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
       n_matching_session_tokens++;
     }
     if (debug) {
-      if (params.prompt.empty() &&
+      if (params->prompt.empty() &&
           n_matching_session_tokens == embd_inp.size()) {
         fprintf(stderr, "%s: using full prompt from session file\n", __func__);
       } else if (n_matching_session_tokens >= embd_inp.size()) {
@@ -237,8 +169,8 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     session_tokens.resize(embd_inp.size() - 1);
   }
   // number of tokens to keep when resetting context
-  if (params.n_keep < 0 || params.n_keep > (int)embd_inp.size()) {
-    params.n_keep = (int)embd_inp.size();
+  if (params->n_keep < 0 || params->n_keep > (int)embd_inp.size()) {
+    params->n_keep = (int)embd_inp.size();
   }
 
   // determine newline token
@@ -251,7 +183,7 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
   bool need_to_save_session =
       !path_session.empty() && n_matching_session_tokens < embd_inp.size();
   int n_past = 0;
-  int n_remain = params.n_predict;
+  int n_remain = params->n_predict;
   int n_consumed = 0;
   int n_session_consumed = 0;
 
@@ -263,7 +195,7 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     const std::vector<llama_token> tmp = {
         llama_token_bos(),
     };
-    llama_eval(ctx, tmp.data(), tmp.size(), 0, params.n_threads);
+    llama_eval(ctx, tmp.data(), tmp.size(), 0, params->n_threads);
     llama_reset_timings(ctx);
   }
 
@@ -276,10 +208,10 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
       // - take half of the last (n_ctx - n_keep) tokens and recompute the
       // logits in batches
       if (n_past + (int)embd.size() > n_ctx) {
-        const int n_left = n_past - params.n_keep;
+        const int n_left = n_past - params->n_keep;
 
         // always keep the first token - BOS
-        n_past = std::max(1, params.n_keep);
+        n_past = std::max(1, params->n_keep);
 
         // insert n_left/2 tokens at the start of embd from last_n_tokens
         embd.insert(embd.begin(),
@@ -288,14 +220,6 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
 
         // stop saving session if we run out of context
         path_session.clear();
-
-        // printf("\n---\n");
-        // printf("resetting: '");
-        // for (int i = 0; i < (int) embd.size(); i++) {
-        //     printf("%s", llama_token_to_str(ctx, embd[i]));
-        // }
-        // printf("'\n");
-        // printf("\n---\n");
       }
 
       // try to reuse a matching prefix from the loaded session instead of
@@ -324,15 +248,17 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
       // evaluate tokens in batches
       // embd is typically prepared beforehand to fit within a batch, but not
       // always
-      for (int i = 0; i < (int)embd.size(); i += params.n_batch) {
+      for (int i = 0; i < (int)embd.size(); i += params->n_batch) {
         int n_eval = (int)embd.size() - i;
-        if (n_eval > params.n_batch) {
-          n_eval = params.n_batch;
+        if (n_eval > params->n_batch) {
+          n_eval = params->n_batch;
         }
-        if (llama_eval(ctx, &embd[i], n_eval, n_past, params.n_threads)) {
+
+        if (llama_eval(ctx, &embd[i], n_eval, n_past, params->n_threads)) {
           fprintf(stderr, "%s : failed to eval\n", __func__);
           return 1;
         }
+
         n_past += n_eval;
       }
 
@@ -346,26 +272,26 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
 
     if ((int)embd_inp.size() <= n_consumed) {
       // out of user input, sample next token
-      const float temp = params.temp;
+      const float temp = params->temp;
       const int32_t top_k =
-          params.top_k <= 0 ? llama_n_vocab(ctx) : params.top_k;
-      const float top_p = params.top_p;
-      const float tfs_z = params.tfs_z;
-      const float typical_p = params.typical_p;
+          params->top_k <= 0 ? llama_n_vocab(ctx) : params->top_k;
+      const float top_p = params->top_p;
+      const float tfs_z = params->tfs_z;
+      const float typical_p = params->typical_p;
       const int32_t repeat_last_n =
-          params.repeat_last_n < 0 ? n_ctx : params.repeat_last_n;
-      const float repeat_penalty = params.repeat_penalty;
-      const float alpha_presence = params.presence_penalty;
-      const float alpha_frequency = params.frequency_penalty;
-      const int mirostat = params.mirostat;
-      const float mirostat_tau = params.mirostat_tau;
-      const float mirostat_eta = params.mirostat_eta;
-      const bool penalize_nl = params.penalize_nl;
+          params->repeat_last_n < 0 ? n_ctx : params->repeat_last_n;
+      const float repeat_penalty = params->repeat_penalty;
+      const float alpha_presence = params->presence_penalty;
+      const float alpha_frequency = params->frequency_penalty;
+      const int mirostat = params->mirostat;
+      const float mirostat_tau = params->mirostat_tau;
+      const float mirostat_eta = params->mirostat_eta;
+      const bool penalize_nl = params->penalize_nl;
 
       // optionally save the session on first sample (for faster prompt loading
       // next time)
       if (!path_session.empty() && need_to_save_session &&
-          !params.prompt_cache_ro) {
+          !params->prompt_cache_ro) {
         need_to_save_session = false;
         llama_save_session_file(ctx, path_session.c_str(),
                                 session_tokens.data(), session_tokens.size());
@@ -378,8 +304,8 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
         auto n_vocab = llama_n_vocab(ctx);
 
         // Apply params.logit_bias map
-        for (auto it = params.logit_bias.begin(); it != params.logit_bias.end();
-             it++) {
+        for (auto it = params->logit_bias.begin();
+             it != params->logit_bias.end(); it++) {
           logits[it->first] += it->second;
         }
 
@@ -435,7 +361,6 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
             id = llama_sample_token(ctx, &candidates_p);
           }
         }
-        // printf("`%d`", candidates_p.size);
 
         last_n_tokens.erase(last_n_tokens.begin());
         last_n_tokens.push_back(id);
@@ -450,7 +375,7 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
       // call the token callback, no need to check if one is actually
       // registered, that will be handled on the Go side.
       auto token_str = llama_token_to_str(ctx, id);
-      if (!tokenCallback(state_pr, (char *)token_str)) {
+      if (!tokenCallback(ctx, (char *)token_str)) {
         break;
       }
     } else {
@@ -461,7 +386,7 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
         last_n_tokens.erase(last_n_tokens.begin());
         last_n_tokens.push_back(embd_inp[n_consumed]);
         ++n_consumed;
-        if ((int)embd.size() >= params.n_batch) {
+        if ((int)embd.size() >= params->n_batch) {
           break;
         }
       }
@@ -472,13 +397,13 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     }
 
     // check for stop prompt
-    if (params.antiprompt.size()) {
+    if (params->antiprompt.size()) {
       std::string last_output;
       for (auto id : last_n_tokens) {
         last_output += llama_token_to_str(ctx, id);
       }
       // Check if each of the reverse prompts appears at the end of the output.
-      for (std::string &antiprompt : params.antiprompt) {
+      for (std::string &antiprompt : params->antiprompt) {
         // size_t extra_padding = params.interactive ? 0 : 2;
         size_t extra_padding = 2;
         size_t search_start_pos =
@@ -501,8 +426,8 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     }
   }
 
-  if (!path_session.empty() && params.prompt_cache_all &&
-      !params.prompt_cache_ro) {
+  if (!path_session.empty() && params->prompt_cache_all &&
+      !params->prompt_cache_ro) {
     if (debug) {
       fprintf(stderr, "\n%s: saving final output to session file '%s'\n",
               __func__, path_session.c_str());
@@ -525,68 +450,8 @@ end:
   return 0;
 }
 
-void llama_binding_free_model(void *state_ptr) {
-  llama_context *ctx = (llama_context *)state_ptr;
-  llama_free(ctx);
-}
-
-void llama_free_params(void *params_ptr) {
-  gpt_params *params = (gpt_params *)params_ptr;
-  delete params;
-}
-
-std::vector<std::string> create_vector(const char **strings, int count) {
-  std::vector<std::string> *vec = new std::vector<std::string>;
-  for (int i = 0; i < count; i++) {
-    vec->push_back(std::string(strings[i]));
-  }
-  return *vec;
-}
-
-void delete_vector(std::vector<std::string> *vec) { delete vec; }
-
-int load_state(void *ctx, char *statefile, char *modes) {
-  llama_context *state = (llama_context *)ctx;
-  const llama_context *constState = static_cast<const llama_context *>(state);
-  const size_t state_size = llama_get_state_size(state);
-  uint8_t *state_mem = new uint8_t[state_size];
-
-  {
-    FILE *fp_read = fopen(statefile, modes);
-    if (state_size != llama_get_state_size(constState)) {
-      fprintf(stderr, "\n%s : failed to validate state size\n", __func__);
-      return 1;
-    }
-
-    const size_t ret = fread(state_mem, 1, state_size, fp_read);
-    if (ret != state_size) {
-      fprintf(stderr, "\n%s : failed to read state\n", __func__);
-      return 1;
-    }
-
-    llama_set_state_data(
-        state, state_mem); // could also read directly from memory mapped file
-    fclose(fp_read);
-  }
-
-  return 0;
-}
-
-void save_state(void *ctx, char *dst, char *modes) {
-  llama_context *state = (llama_context *)ctx;
-
-  const size_t state_size = llama_get_state_size(state);
-  uint8_t *state_mem = new uint8_t[state_size];
-
-  // Save state (rng, logits, embedding and kv_cache) to file
-  {
-    FILE *fp_write = fopen(dst, modes);
-    llama_copy_state_data(
-        state, state_mem); // could also copy directly to memory mapped file
-    fwrite(state_mem, 1, state_size, fp_write);
-    fclose(fp_write);
-  }
-}
+void llama_binding_free_model(void *ctx) { llama_free((llama_context *)ctx); }
+void llama_free_params(void *params) { delete (gpt_params *)params; }
 
 void *llama_allocate_params(
     const char *prompt, int seed, int threads, int tokens, int top_k,
@@ -640,9 +505,13 @@ void *llama_allocate_params(
   if (ignore_eos) {
     params->logit_bias[llama_token_eos()] = -INFINITY;
   }
+
   if (antiprompt_count > 0) {
-    params->antiprompt = create_vector(antiprompt, antiprompt_count);
+    for (int i = 0; i < antiprompt_count; i++) {
+      params->antiprompt.push_back(std::string(antiprompt[i]));
+    }
   }
+
   params->tfs_z = tfs_z;
   params->typical_p = typical_p;
   params->presence_penalty = presence_penalty;
@@ -650,6 +519,7 @@ void *llama_allocate_params(
   params->mirostat_eta = mirostat_eta;
   params->mirostat_tau = mirostat_tau;
   params->penalize_nl = penalize_nl;
+
   std::stringstream ss(logit_bias);
   llama_token key;
   char sign;
@@ -669,7 +539,6 @@ void *load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16,
                  bool mlock, bool embeddings, bool mmap, bool low_vram,
                  bool vocab_only, int n_gpu_layers, int n_batch,
                  const char *maingpu, const char *tensorsplit, bool numa) {
-  // load the model
   auto lparams = llama_context_default_params();
 
   lparams.n_ctx = n_ctx;
@@ -706,25 +575,11 @@ void *load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16,
   lparams.n_batch = n_batch;
 
   llama_init_backend(numa);
-  void *res = nullptr;
-  try {
-    llama_model *model = llama_load_model_from_file(fname, lparams);
-    if (model == NULL) {
-      fprintf(stderr, "error: failed to load model \n");
-      return res;
-    }
 
-    llama_context *lctx = llama_new_context_with_model(model, lparams);
-    if (lctx == NULL) {
-      fprintf(stderr, "error: failed to create context with model \n");
-      llama_free_model(model);
-      return res;
-    }
-
-  } catch (std::runtime_error &e) {
-    fprintf(stderr, "failed %s", e.what());
-    return res;
+  struct llama_model *model = llama_load_model_from_file(fname, lparams);
+  if (!model) {
+    return nullptr;
   }
 
-  return res;
+  return llama_new_context_with_model(model, lparams);
 }
