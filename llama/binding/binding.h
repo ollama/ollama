@@ -1,25 +1,3 @@
-// MIT License
-
-// Copyright (c) 2023 go-skynet authors
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
 #ifdef __cplusplus
 #include <string>
 #include <vector>
@@ -30,12 +8,21 @@ extern "C" {
 
 extern unsigned char tokenCallback(void *, char *);
 
-int eval(void *p, void *c, char *text);
+int load_state(void *ctx, char *statefile, char *modes);
+
+int eval(void *params_ptr, void *ctx, char *text);
+
+void save_state(void *ctx, char *dst, char *modes);
 
 void *load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16,
                  bool mlock, bool embeddings, bool mmap, bool low_vram,
                  bool vocab_only, int n_gpu, int n_batch, const char *maingpu,
                  const char *tensorsplit, bool numa);
+
+int get_embeddings(void *params_ptr, void *state_pr, float *res_embeddings);
+
+int get_token_embeddings(void *params_ptr, void *state_pr, int *tokens,
+                         int tokenSize, float *res_embeddings);
 
 void *llama_allocate_params(
     const char *prompt, int seed, int threads, int tokens, int top_k,
@@ -50,11 +37,13 @@ void *llama_allocate_params(
 
 void llama_free_params(void *params_ptr);
 
-void llama_binding_free_model(void *ctx);
+void llama_binding_free_model(void *state);
 
 int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug);
 
 #ifdef __cplusplus
 }
 
+std::vector<std::string> create_vector(const char **strings, int count);
+void delete_vector(std::vector<std::string> *vec);
 #endif
