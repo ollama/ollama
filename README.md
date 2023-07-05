@@ -90,5 +90,7 @@ Finally, run a model!
 Complete a prompt
 
 ```
-curl -X POST http://localhost:8080/completion -H 'Content-Type: application/json' -d '{"model": "/path/to/model", "prompt": "Once upon a time", "stream": true}'
+curl --unix-socket ~/.ollama/ollama.sock http://localhost/api/generate \
+    -X POST \
+    -d '{"model": "/path/to/model", "prompt": "Once upon a time", "stream": true}'
 ```
