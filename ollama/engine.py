@@ -1,9 +1,8 @@
 import os
 import sys
 from os import path
-from pathlib import Path
 from contextlib import contextmanager
-from fuzzywuzzy import process
+from thefuzz import process
 from llama_cpp import Llama
 from ctransformers import AutoModelForCausalLM
 
@@ -39,16 +38,14 @@ def load(model_name, models={}):
             for model_type in cls.model_types()
         }
 
-        while len(runners) > 0:
+        for match, _ in process.extract(model_path, runners.keys(), limit=len(runners)):
             try:
-                best_match, _ = process.extractOne(model_path, runners.keys())
-                model = runners.get(best_match, LlamaCppRunner)
-                runner = model(model_path, best_match)
+                model = runners.get(match)
+                runner = model(model_path, match)
                 models.update({model_name: runner})
-                return models.get(model_name)
+                return runner
             except Exception:
-                # try the next runner
-                runners.pop(best_match)
+                pass
 
         raise Exception("failed to load model", model_path, model_name)
 

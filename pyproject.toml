@@ -18,7 +18,7 @@ validators = "^0.20.0"
 yaspin = "^2.3.0"
 llama-cpp-python = "^0.1.67"
 ctransformers = "^0.2.10"
-fuzzywuzzy = {extras = ["speedup"], version = "^0.18.0"}
+thefuzz = {version = "^0.19.0", extras = ["speedup"]}
 
 [build-system]
 requires = ["poetry-core"]
