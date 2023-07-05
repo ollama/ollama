@@ -28,6 +28,7 @@ package llama
 // #cgo CXXFLAGS: -std=c++11
 // #cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
 // #include "binding/binding.h"
+// #include <stdlib.h>
 import "C"
 import (
 	"fmt"
@@ -45,8 +46,8 @@ type LLama struct {
 func New(model string, opts ...ModelOption) (*LLama, error) {
 	mo := NewModelOptions(opts...)
 
-	// TODO: free this pointer
 	modelPath := C.CString(model)
+	defer C.free(unsafe.Pointer(modelPath))
 
 	ctx := C.load_model(modelPath, C.int(mo.ContextSize), C.int(mo.Seed), C.bool(mo.F16Memory), C.bool(mo.MLock), C.bool(mo.Embeddings), C.bool(mo.MMap), C.bool(mo.LowVRAM), C.bool(mo.VocabOnly), C.int(mo.NGPULayers), C.int(mo.NBatch), C.CString(mo.MainGPU), C.CString(mo.TensorSplit), C.bool(mo.NUMA))
 	if ctx == nil {
@@ -69,7 +70,7 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 	if po.Tokens == 0 {
 		po.Tokens = 99999999
 	}
-
+	
 	reverseCount := len(po.StopPrompts)
 	reversePrompt := make([]*C.char, reverseCount)
 	var pass **C.char
@@ -94,7 +95,11 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 		return fmt.Errorf("inference failed")
 	}
 
+	fmt.Println("hi 4")
+
 	C.llama_free_params(params)
+
+	fmt.Println("hi 5")
 
 	return nil
 }
@@ -102,15 +107,21 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	po := NewPredictOptions(opts...)
 
+	fmt.Println("predict 1")
+
 	if po.TokenCallback != nil {
 		setCallback(l.ctx, po.TokenCallback)
 	}
+
+	fmt.Println("predict 2")
 
 	input := C.CString(text)
 	if po.Tokens == 0 {
 		po.Tokens = 99999999
 	}
 	out := make([]byte, po.Tokens)
+
+	fmt.Println("predict 3")
 
 	reverseCount := len(po.StopPrompts)
 	reversePrompt := make([]*C.char, reverseCount)
@@ -120,6 +131,8 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 		reversePrompt[i] = cs
 		pass = &reversePrompt[0]
 	}
+
+	fmt.Println("predict 4")
 
 	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
 		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
@@ -131,11 +144,15 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 		C.CString(po.MainGPU), C.CString(po.TensorSplit),
 		C.bool(po.PromptCacheRO),
 	)
+
+	fmt.Println("predict 4.5")
 	ret := C.llama_predict(params, l.ctx, (*C.char)(unsafe.Pointer(&out[0])), C.bool(po.DebugMode))
 	if ret != 0 {
 		return "", fmt.Errorf("inference failed")
 	}
 	res := C.GoString((*C.char)(unsafe.Pointer(&out[0])))
+
+	fmt.Println("predict 5")
 
 	res = strings.TrimPrefix(res, " ")
 	res = strings.TrimPrefix(res, text)
@@ -144,6 +161,8 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	for _, s := range po.StopPrompts {
 		res = strings.TrimRight(res, s)
 	}
+
+	fmt.Println("predict 6")
 
 	C.llama_free_params(params)
 
