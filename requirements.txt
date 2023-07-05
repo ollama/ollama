@@ -270,9 +270,6 @@ frozenlist==1.3.3 ; python_version >= "3.8" and python_version < "4.0" \
 fsspec==2023.6.0 ; python_version >= "3.8" and python_version < "4.0" \
     --hash=sha256:1cbad1faef3e391fba6dc005ae9b5bdcbf43005c9167ce78c915549c352c869a \
     --hash=sha256:d0b2f935446169753e7a5c5c55681c54ea91996cc67be93c39a154fb3a2742af
-fuzzywuzzy[speedup]==0.18.0 ; python_version >= "3.8" and python_version < "4.0" \
-    --hash=sha256:45016e92264780e58972dca1b3d939ac864b78437422beecebb3095f8efd00e8 \
-    --hash=sha256:928244b28db720d1e0ee7587acf660ea49d7e4c632569cad4f1cd7e68a5f0993
 huggingface-hub==0.15.1 ; python_version >= "3.8" and python_version < "4.0" \
     --hash=sha256:05b0fb0abbf1f625dfee864648ac3049fe225ac4371c7bafaca0c2d3a2f83445 \
     --hash=sha256:a61b7d1a7769fe10119e730277c72ab99d95c48d86a3d6da3e9f3d0f632a4081
@@ -688,6 +685,9 @@ requests==2.31.0 ; python_version >= "3.8" and python_version < "4.0" \
 termcolor==2.3.0 ; python_version >= "3.8" and python_version < "4.0" \
     --hash=sha256:3afb05607b89aed0ffe25202399ee0867ad4d3cb4180d98aaf8eefa6a5f7d475 \
     --hash=sha256:b5b08f68937f138fe92f6c089b99f1e2da0ae56c52b78bf7075fd95420fd9a5a
+thefuzz[speedup]==0.19.0 ; python_version >= "3.8" and python_version < "4.0" \
+    --hash=sha256:4fcdde8e40f5ca5e8106bc7665181f9598a9c8b18b0a4d38c41a095ba6788972 \
+    --hash=sha256:6f7126db2f2c8a54212b05e3a740e45f4291c497d75d20751728f635bb74aa3d
 tqdm==4.65.0 ; python_version >= "3.8" and python_version < "4.0" \
     --hash=sha256:1871fb68a86b8fb3b59ca4cdd3dcccbc7e6d613eeed31f4c332531977b89beb5 \
     --hash=sha256:c4f53a17fe37e132815abceec022631be8ffe1b9381c2e6e30aa70edc99e9671
