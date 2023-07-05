@@ -1,41 +1,67 @@
+![ollama](https://github.com/jmorganca/ollama/assets/251292/961f99bb-251a-4eec-897d-1ba99997ad0f)
+
 # Ollama
 
-An easy, fast runtime for large language models, powered by `llama.cpp`.
+Run large language models with `llama.cpp`.
 
-> _Note: this project is a work in progress. Certain models that can be run with `ollama` are intended for research and/or non-commercial use only._
+> Note: certain models that can be run with this project are intended for research and/or non-commercial use only.
+
+### Features
+
+- Download and run popular large language models
+- Switch between multiple models on the fly
+- Hardware acceleration where available (Metal, CUDA)
+- Fast inference server written in C++, powered by [llama.cpp](https://github.com/ggerganov/llama.cpp)
+- REST API to use with your application (python, typescript SDKs coming soon)
 
 ## Install
 
-Using `pip`:
+- Download for macOS
+- Download for Windows (coming soon)
+- Docker: `docker run -p 8080:8080 ollama/ollama`
 
-```
-pip install ollama
-```
-
-Using `docker`:
-
-```
-docker run ollama/ollama
-```
+You can also build the [binary from source](#building).
 
 ## Quickstart
 
-To run a model, use `ollama run`:
+Run the model that started it all.
 
 ```
-ollama run orca-mini-3b
+ollama run llama
 ```
 
-You can also run models from hugging face:
+## Example models
+
+### 💬 Chat
+
+Have a conversation.
 
 ```
-ollama run huggingface.co/TheBloke/orca_mini_3B-GGML
+ollama run vicuna "Why is the sky blue?"
 ```
 
-Or directly via downloaded model files:
+### 🗺️ Instructions
+
+Ask questions. Get answers.
 
 ```
-ollama run ~/Downloads/orca-mini-13b.ggmlv3.q4_0.bin
+ollama run orca "Write an email to my boss."
+```
+
+### 👩‍💻 Code completion
+
+Sometimes you just need a little help writing code.
+
+```
+ollama run replit "Give me react code to render a button"
+```
+
+### 📖 Storytelling
+
+Venture into the unknown.
+
+```
+ollama run storyteller "Once upon a time"
 ```
 
 ## Building
@@ -45,7 +71,24 @@ go generate ./...
 go build .
 ```
 
-## Documentation
+To run it start the server:
 
-- [Development](docs/development.md)
-- [Python SDK](docs/python.md)
+```
+./ollama server &
+```
+
+Finally, run a model!
+
+```
+./ollama run ~/Downloads/vicuna-7b-v1.3.ggmlv3.q4_1.bin
+```
+
+## API Reference
+
+### `POST /completion`
+
+Complete a prompt
+
+```
+curl -X POST http://localhost:8080/completion -H 'Content-Type: application/json' -d '{"model": "/path/to/model", "prompt": "Once upon a time", "stream": true}'
+```
