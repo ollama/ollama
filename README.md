@@ -11,7 +11,7 @@ Run large language models with `llama.cpp`.
 - Download and run popular large language models
 - Switch between multiple models on the fly
 - Hardware acceleration where available (Metal, CUDA)
-- Fast inference server written in C++, powered by [llama.cpp](https://github.com/ggerganov/llama.cpp)
+- Fast inference server written in Go, powered by [llama.cpp](https://github.com/ggerganov/llama.cpp)
 - REST API to use with your application (python, typescript SDKs coming soon)
 
 ## Install
