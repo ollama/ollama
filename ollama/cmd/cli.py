@@ -33,9 +33,7 @@ def main():
     # create models home if it doesn't exist
     os.makedirs(model.MODELS_CACHE_PATH, exist_ok=True)
 
-    subparsers = parser.add_subparsers(
-        title='commands',
-    )
+    subparsers = parser.add_subparsers(title='commands')
 
     list_parser = subparsers.add_parser(
         "models",
@@ -75,6 +73,13 @@ def main():
         nargs="?",
         help="Optional prompt for the model, interactive mode enabled when not specified.",
     )
+    run_parser.add_argument('--temperature', type=float, default=0.8, help='temperature to use for sampling')
+    run_parser.add_argument('--top-p', type=float, default=0.95, help='top-p to use for sampling')
+    run_parser.add_argument('--top-k', type=int, default=40, help='top-k to use for sampling')
+    run_parser.add_argument('--max-tokens', type=int, default=256, help='maximum number of tokens to generate')
+    run_parser.add_argument('--repeat-penalty', type=float, default=1.1, help='repetition penalty')
+    run_parser.add_argument('--seed', type=int, default=-1, help='random seed')
+    run_parser.add_argument('--stop', type=str, nargs='+', default=[], help='list of sequences to stop generation when encountere')
     run_parser.set_defaults(fn=run)
 
     server.set_parser(

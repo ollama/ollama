@@ -21,12 +21,12 @@ def suppress(file):
 
 
 def generate(model_name, prompt, models={}, *args, **kwargs):
-    model = load(model_name, models=models)
+    model = load(model_name, models=models, *args, **kwargs)
     inputs = ollama.prompt.template(model_name, prompt)
     return model.generate(inputs, *args, **kwargs)
 
 
-def load(model_name, models={}):
+def load(model_name, models={}, *args, **kwargs):
     if not models.get(model_name, None):
         model_path = path.expanduser(model_name)
         if not path.exists(model_path):
@@ -41,7 +41,7 @@ def load(model_name, models={}):
         for match, _ in process.extract(model_path, runners.keys(), limit=len(runners)):
             try:
                 model = runners.get(match)
-                runner = model(model_path, match)
+                runner = model(model_path, match, *args, **kwargs)
                 models.update({model_name: runner})
                 return runner
             except Exception:
@@ -56,10 +56,11 @@ def unload(model_name, models={}):
 
 
 class LlamaCppRunner:
-    def __init__(self, model_path, model_type):
+
+    def __init__(self, model_path, model_type, *args, **kwargs):
         try:
             with suppress(sys.stderr), suppress(sys.stdout):
-                self.model = Llama(model_path, verbose=False, n_gpu_layers=1, seed=-1)
+                self.model = Llama(model_path, verbose=False, n_gpu_layers=1, seed=kwargs.get('seed', -1))
         except Exception:
             raise Exception("Failed to load model", model_path, model_type)
 
@@ -73,22 +74,26 @@ class LlamaCppRunner:
         ]
 
     def generate(self, prompt, *args, **kwargs):
-        if "max_tokens" not in kwargs:
-            kwargs.update({"max_tokens": 512})
-
-        if "stop" not in kwargs:
-            kwargs.update({"stop": ["Q:"]})
-
-        if "stream" not in kwargs:
-            kwargs.update({"stream": True})
+        stop = [s for s in kwargs.get('stop', []) if s]
+        if not stop:
+            stop = ['Q: ']
 
         with suppress(sys.stderr):
-            for output in self.model(prompt, *args, **kwargs):
+            for output in self.model(
+                    prompt,
+                    max_tokens=kwargs.get('max_tokens', 512),
+                    temperature=kwargs.get('temperature', 0.8),
+                    top_p=kwargs.get('top_p', 0.95),
+                    top_k=kwargs.get('top_k', 40),
+                    repeat_penalty=kwargs.get('repeat_penalty', 1.1),
+                    stream=kwargs.get('stream', True),
+                    stop=stop):
                 yield output
 
 
 class CtransformerRunner:
-    def __init__(self, model_path, model_type):
+
+    def __init__(self, model_path, model_type, *args, **kwargs):
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path, model_type=model_type, local_files_only=True
         )
@@ -102,16 +107,20 @@ class CtransformerRunner:
         ]
 
     def generate(self, prompt, *args, **kwargs):
-        if "max_new_tokens" not in kwargs:
-            kwargs.update({"max_new_tokens": 512})
+        stop = [s for s in kwargs.get('stop', []) if s]
+        if not stop:
+            stop = ['User ']
 
-        if "stop" not in kwargs:
-            kwargs.update({"stop": ["User"]})
-
-        if "stream" not in kwargs:
-            kwargs.update({"stream": True})
-
-        for output in self.model(prompt, *args, **kwargs):
+        for output in self.model(
+                prompt,
+                max_new_tokens=kwargs.get('max_tokens', 512),
+                temperature=kwargs.get('temperature', 0.8),
+                top_p=kwargs.get('top_p', 0.95),
+                top_k=kwargs.get('top_k', 40),
+                repetition_penalty=kwargs.get('repeat_penalty', 1.1),
+                stream=kwargs.get('stream', True),
+                seed=kwargs.get('seed', -1),
+                stop=stop):
             yield {
                 'choices': [
                     {
