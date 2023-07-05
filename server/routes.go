@@ -26,15 +26,12 @@ func generate(c *gin.Context) {
 	tokens := 512
 	threads := runtime.NumCPU()
 	// TODO: set prompt from template
-	fmt.Println("Generating text...")
 
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 		return
 	}
-
-	fmt.Println(req)
 
 	l, err := llama.New(req.Model, llama.EnableF16Memory, llama.SetContext(128), llama.EnableEmbeddings, llama.SetGPULayers(gpulayers))
 	if err != nil {
