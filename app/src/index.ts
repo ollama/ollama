@@ -1,5 +1,5 @@
 import { app, BrowserWindow, autoUpdater, dialog } from 'electron'
-import { spawn } from 'child_process'
+import { spawn, exec } from 'child_process'
 import * as path from 'path'
 
 require('@electron/remote/main').initialize()
@@ -39,13 +39,11 @@ const createWindow = (): void => {
 
 // if the app is packaged then run the server
 if (app.isPackaged) {
-  const resources = process.resourcesPath
-  console.log(resources)
+  const ollama = path.join(process.resourcesPath, 'ollama')
 
   // Start the executable
-  const exec = path.join(resources, 'ollama')
-  console.log(`Starting ${exec}`)
-  const proc = spawn(exec, ['serve'])
+  console.log(`Starting server`)
+  const proc = spawn(ollama, ['serve'])
   proc.stdout.on('data', data => {
     console.log(`server: ${data}`)
   })
@@ -58,10 +56,40 @@ if (app.isPackaged) {
   })
 }
 
+function installCLI() {
+  dialog
+    .showMessageBox({
+      type: 'info',
+      title: 'Ollama CLI installation',
+      message: 'To install the ollama CLI, we need your permission. You will be prompted to confirm.',
+      buttons: ['OK'],
+    })
+    .then(result => {
+      if (result.response === 0) {
+        let resourcePath = path.join(process.resourcesPath, 'your_binary')
+        let command = `
+        do shell script "ln -F -s ${resourcePath} /usr/local/bin/ollama" with administrator privileges
+        `
+
+        exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
+          if (error) {
+            console.error(`exec error: ${error}`)
+            return
+          }
+          console.log(`stdout: ${stdout}`)
+          console.error(`stderr: ${stderr}`)
+        })
+      }
+    })
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', createWindow)
+app.on('ready', () => {
+  createWindow()
+  installCLI()
+})
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
@@ -90,6 +118,10 @@ autoUpdater.checkForUpdates()
 setInterval(() => {
   autoUpdater.checkForUpdates()
 }, 60000)
+
+autoUpdater.on('error', e => {
+  console.error('update check failed', e)
+})
 
 autoUpdater.on('update-downloaded', (event, releaseNotes, releaseName) => {
   dialog
