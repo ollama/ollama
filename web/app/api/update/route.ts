@@ -11,6 +11,10 @@ export async function GET(req: Request) {
   const os = searchParams.get('os') || ''
   const version = searchParams.get('version') || ''
 
+  if (!version) {
+    return new Response('not found', { status: 404 })
+  }
+
   try {
     const { data } = await octokit.repos.getLatestRelease({
       owner: 'jmorganca',
@@ -21,12 +25,14 @@ export async function GET(req: Request) {
     const asset = data.assets.find(a => a.name.toLowerCase().includes(os))
 
     if (!asset) {
-      return new Response('up to date', { status: 204 })
+      return new Response('not found', { status: 404 })
     }
 
     if (semver.lt(version, data.tag_name)) {
       return NextResponse.json({ version: data.tag_name, url: asset.browser_download_url })
     }
+
+    return new Response('up to date', { status: 204 })
   } catch (error) {
     const e = error as RequestError
     if (e.status === 404) {
@@ -35,6 +41,4 @@ export async function GET(req: Request) {
 
     return new Response('internal server error', { status: 500 })
   }
-
-  return new Response('up to date', { status: 204 })
 }
