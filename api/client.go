@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 )
 
@@ -140,20 +139,8 @@ func (c *Client) Pull(ctx context.Context, req *PullRequest, callback func(progr
 	var wg sync.WaitGroup
 	wg.Add(1)
 	if err := c.stream(ctx, http.MethodPost, "/api/pull", req, func(progressBytes []byte) {
-		/*
-			Events have the following format for progress:
-				event:progress
-				data:{"total":123,"completed":123,"percent":0.1}
-			Need to parse out the data part and unmarshal it.
-		*/
-		eventParts := strings.Split(string(progressBytes), "data:")
-		if len(eventParts) < 2 {
-			// no data part, ignore
-			return
-		}
-		eventData := eventParts[1]
 		var progress PullProgress
-		if err := json.Unmarshal([]byte(eventData), &progress); err != nil {
+		if err := json.Unmarshal(progressBytes, &progress); err != nil {
 			fmt.Println(err)
 			return
 		}
