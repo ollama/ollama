@@ -9,11 +9,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type Client struct {
-	URL        string
-	HTTP       http.Client
+	URL  string
+	HTTP http.Client
 }
 
 func checkError(resp *http.Response, body []byte) error {
@@ -64,7 +65,14 @@ func (c *Client) stream(ctx context.Context, method string, path string, reqData
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
-			break
+			if err == io.EOF {
+				break
+			} else {
+				return err // Handle other errors
+			}
+		}
+		if err := checkError(res, line); err != nil {
+			return err
 		}
 		callback(bytes.TrimSuffix(line, []byte("\n")))
 	}
@@ -128,8 +136,9 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, callback fu
 	return &res, nil
 }
 
-func (c *Client) Pull(ctx context.Context, req *PullRequest, callback func(progress PullProgress)) (*PullResponse, error) {
-	var res PullResponse
+func (c *Client) Pull(ctx context.Context, req *PullRequest, callback func(progress PullProgress)) error {
+	var wg sync.WaitGroup
+	wg.Add(1)
 	if err := c.stream(ctx, http.MethodPost, "/api/pull", req, func(progressBytes []byte) {
 		/*
 			Events have the following format for progress:
@@ -148,10 +157,14 @@ func (c *Client) Pull(ctx context.Context, req *PullRequest, callback func(progr
 			fmt.Println(err)
 			return
 		}
+		if progress.Completed >= progress.Total {
+			wg.Done()
+		}
 		callback(progress)
 	}); err != nil {
-		return nil, err
+		return err
 	}
 
-	return &res, nil
+	wg.Wait()
+	return nil
 }
