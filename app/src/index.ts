@@ -1,6 +1,7 @@
 import { app, BrowserWindow, autoUpdater, dialog } from 'electron'
 import { spawn, exec } from 'child_process'
 import * as path from 'path'
+import * as fs from 'fs'
 
 require('@electron/remote/main').initialize()
 
@@ -57,19 +58,24 @@ if (app.isPackaged) {
 }
 
 function installCLI() {
+  const symlinkPath = '/usr/local/bin/ollama'
+
+  if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
+    return
+  }
+
   dialog
     .showMessageBox({
       type: 'info',
       title: 'Ollama CLI installation',
-      message: 'To install the ollama CLI, we need your permission. You will be prompted to confirm.',
+      message: 'To install the Ollama CLI, we need to ask you for administrator privileges.',
       buttons: ['OK'],
     })
     .then(result => {
       if (result.response === 0) {
         let command = `
-        do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
-        `
-
+    do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
+    `
         exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
           if (error) {
             console.error(`exec error: ${error}`)
