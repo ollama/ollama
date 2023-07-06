@@ -22,7 +22,6 @@ const config: ForgeConfig = {
     icon: './assets/icon.icns',
     extraResource: [
       '../ollama',
-      '../ggml-metal.metal',
       path.join(__dirname, './assets/ollama_icon_dark_16x16@2x.png'),
       path.join(__dirname, './assets/ollama_icon_bright_16x16@2x.png'),
       ...(process.platform === 'darwin' ? ['../ggml-metal.metal'] : []),
