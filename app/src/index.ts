@@ -7,8 +7,12 @@ require('@electron/remote/main').initialize()
 
 let tray: Tray | null = null
 const createSystemtray = () => {
-  const brightModeIconPath = path.join(__dirname, '..', '..', 'src', 'ollama_icon_dark_16x16.png')
-  const darkModeIconPath = path.join(__dirname, '..', '..', 'src', 'ollama_icon_bright_16x16.png')
+  // const baseURL = path.join(__dirname, 'src')
+  const resources = process.resourcesPath
+  const brightModeIconPath = path.join(resources, 'ollama_icon_dark_16x16.png')
+  const darkModeIconPath = path.join(resources, 'ollama_icon_bright_16x16.png')
+  // const brightModeIconPath = path.join(__dirname, '..', '..', 'src', 'ollama_icon_dark_16x16.png')
+  // const darkModeIconPath = path.join(__dirname, '..', '..', 'src', 'ollama_icon_bright_16x16.png')
   
   tray = new Tray(brightModeIconPath)
 
