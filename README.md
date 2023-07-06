@@ -92,12 +92,18 @@ Finally, run a model!
 
 ## API Reference
 
-### `POST /completion`
+### `POST /api/pull`
+
+Download a model
+
+```
+curl -X POST http://localhost:11343/api/pull -d '{"model": "orca"}'
+```
+
+### `POST /api/generate`
 
 Complete a prompt
 
 ```
-curl --unix-socket ~/.ollama/ollama.sock http://localhost/api/generate \
- -X POST \
- -d '{"model": "/path/to/model", "prompt": "Once upon a time", "stream": true}'
+curl -X POST http://localhost:11434/api/generate -d '{"model": "orca", "prompt": "hello!", "stream": true}'
 ```
