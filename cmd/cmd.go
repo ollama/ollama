@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -10,9 +12,11 @@ import (
 	"sync"
 
 	"github.com/gosuri/uiprogress"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
+
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/server"
-	"github.com/spf13/cobra"
 )
 
 func cacheDir() string {
@@ -28,13 +32,13 @@ func bytesToGB(bytes int) float64 {
 	return float64(bytes) / float64(1<<30)
 }
 
-func run(model string) error {
+func RunRun(cmd *cobra.Command, args []string) error {
 	client, err := NewAPIClient()
 	if err != nil {
 		return err
 	}
 	pr := api.PullRequest{
-		Model: model,
+		Model: args[0],
 	}
 	var bar *uiprogress.Bar
 	mutex := &sync.Mutex{}
@@ -60,10 +64,71 @@ func run(model string) error {
 		return err
 	}
 	fmt.Println("Up to date.")
+	return RunGenerate(cmd, args)
+}
+
+func RunGenerate(_ *cobra.Command, args []string) error {
+	if len(args) > 1 {
+		return generate(args[0], args[1:]...)
+	}
+
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		return generateInteractive(args[0])
+	}
+
+	return generateBatch(args[0])
+}
+
+func generate(model string, prompts ...string) error {
+	client, err := NewAPIClient()
+	if err != nil {
+		return err
+	}
+
+	for _, prompt := range prompts {
+		client.Generate(context.Background(), &api.GenerateRequest{Model: model, Prompt: prompt}, func(bts []byte) {
+			var resp api.GenerateResponse
+			if err := json.Unmarshal(bts, &resp); err != nil {
+				return
+			}
+
+			fmt.Print(resp.Response)
+		})
+	}
+
+	fmt.Println()
+	fmt.Println()
 	return nil
 }
 
-func serve() error {
+func generateInteractive(model string) error {
+	fmt.Print(">>> ")
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if err := generate(model, scanner.Text()); err != nil {
+			return err
+		}
+
+		fmt.Print(">>> ")
+	}
+
+	return nil
+}
+
+func generateBatch(model string) error {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		prompt := scanner.Text()
+		fmt.Printf(">>> %s\n", prompt)
+		if err := generate(model, prompt); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func RunServer(_ *cobra.Command, _ []string) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:11434")
 	if err != nil {
 		return err
@@ -82,39 +147,32 @@ func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	rootCmd := &cobra.Command{
-		Use:   "ollama",
-		Short: "Large language model runner",
+		Use:          "ollama",
+		Short:        "Large language model runner",
+		SilenceUsage: true,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			// Disable usage printing on errors
-			cmd.SilenceUsage = true
+		PersistentPreRunE: func(_ *cobra.Command, args []string) error {
 			// create the models directory and it's parent
-			if err := os.MkdirAll(path.Join(cacheDir(), "models"), 0o700); err != nil {
-				panic(err)
-			}
+			return os.MkdirAll(path.Join(cacheDir(), "models"), 0o700)
 		},
 	}
 
 	cobra.EnableCommandSorting = false
 
 	runCmd := &cobra.Command{
-		Use:   "run MODEL",
+		Use:   "run MODEL [PROMPT]",
 		Short: "Run a model",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(args[0])
-		},
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  RunRun,
 	}
 
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
 		Short:   "Start ollama",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return serve()
-		},
+		RunE:    RunServer,
 	}
 
 	rootCmd.AddCommand(

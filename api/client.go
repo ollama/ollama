@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -63,20 +64,19 @@ func (c *Client) stream(ctx context.Context, method string, path string, reqData
 
 	for {
 		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			} else {
-				return err // Handle other errors
-			}
+		switch {
+		case errors.Is(err, io.EOF):
+			return nil
+		case err != nil:
+			return err
 		}
+
 		if err := checkError(res, line); err != nil {
 			return err
 		}
+
 		callback(bytes.TrimSuffix(line, []byte("\n")))
 	}
-
-	return nil
 }
 
 func (c *Client) do(ctx context.Context, method string, path string, reqData any, respData any) error {
@@ -124,11 +124,9 @@ func (c *Client) do(ctx context.Context, method string, path string, reqData any
 	return nil
 }
 
-func (c *Client) Generate(ctx context.Context, req *GenerateRequest, callback func(token string)) (*GenerateResponse, error) {
+func (c *Client) Generate(ctx context.Context, req *GenerateRequest, callback func(bts []byte)) (*GenerateResponse, error) {
 	var res GenerateResponse
-	if err := c.stream(ctx, http.MethodPost, "/api/generate", req, func(token []byte) {
-		callback(string(token))
-	}); err != nil {
+	if err := c.stream(ctx, http.MethodPost, "/api/generate", req, callback); err != nil {
 		return nil, err
 	}
 
