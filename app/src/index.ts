@@ -8,7 +8,11 @@ import { analytics, id } from './telemetry'
 require('@electron/remote/main').initialize()
 
 let tray: Tray | null = null
+
 const SingleInstanceLock = app.requestSingleInstanceLock()
+if (!SingleInstanceLock) {
+  app.quit()
+}
 
 const createSystemtray = () => {
   let brightModeIconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_dark_16x16.png')
@@ -108,53 +112,49 @@ function installCLI() {
     })
 }
 
-if (!SingleInstanceLock) {
-  app.quit()
-} else {
-  app.on('ready', () => {
-    if (process.platform === 'darwin') {
-      app.dock.hide()
+app.on('ready', () => {
+  if (process.platform === 'darwin') {
+    app.dock.hide()
 
-      if (!app.isInApplicationsFolder()) {
-        const chosen = dialog.showMessageBoxSync({
-          type: 'question',
-          buttons: ['Move to Applications', 'Do Not Move'],
-          message: 'Ollama works best when run from the Applications directory.',
-          defaultId: 0,
-          cancelId: 1,
-        })
+    if (!app.isInApplicationsFolder()) {
+      const chosen = dialog.showMessageBoxSync({
+        type: 'question',
+        buttons: ['Move to Applications', 'Do Not Move'],
+        message: 'Ollama works best when run from the Applications directory.',
+        defaultId: 0,
+        cancelId: 1,
+      })
 
-        if (chosen === 0) {
-          try {
-            app.moveToApplicationsFolder({
-              conflictHandler: conflictType => {
-                if (conflictType === 'existsAndRunning') {
-                  dialog.showMessageBoxSync({
-                    type: 'info',
-                    message: 'Cannot move to Applications directory',
-                    detail:
-                      'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
-                  })
-                }
-                return true
-              },
-            })
-            return
-          } catch (e) {
-            console.error('Failed to move to applications folder')
-            console.error(e)
-          }
+      if (chosen === 0) {
+        try {
+          app.moveToApplicationsFolder({
+            conflictHandler: conflictType => {
+              if (conflictType === 'existsAndRunning') {
+                dialog.showMessageBoxSync({
+                  type: 'info',
+                  message: 'Cannot move to Applications directory',
+                  detail:
+                    'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
+                })
+              }
+              return true
+            },
+          })
+          return
+        } catch (e) {
+          console.error('Failed to move to applications folder')
+          console.error(e)
         }
       }
     }
+  }
 
-    createSystemtray()
+  createSystemtray()
 
-    if (app.isPackaged) {
-      installCLI()
-    }
-  })
-}
+  if (app.isPackaged) {
+    installCLI()
+  }
+})
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
