@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type Client struct {
@@ -65,7 +66,6 @@ func (c *Client) stream(ctx context.Context, method string, path string, reqData
 		if err != nil {
 			break
 		}
-
 		callback(bytes.TrimSuffix(line, []byte("\n")))
 	}
 
@@ -128,10 +128,27 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, callback fu
 	return &res, nil
 }
 
-func (c *Client) Pull(ctx context.Context, req *PullRequest, callback func(token string)) (*PullResponse, error) {
+func (c *Client) Pull(ctx context.Context, req *PullRequest, callback func(progress PullProgress)) (*PullResponse, error) {
 	var res PullResponse
-	if err := c.stream(ctx, http.MethodPost, "/api/pull", req, func(token []byte) {
-		callback(string(token))
+	if err := c.stream(ctx, http.MethodPost, "/api/pull", req, func(progressBytes []byte) {
+		/*
+			Events have the following format for progress:
+				event:progress
+				data:{"total":123,"completed":123,"percent":0.1}
+			Need to parse out the data part and unmarshal it.
+		*/
+		eventParts := strings.Split(string(progressBytes), "data:")
+		if len(eventParts) < 2 {
+			// no data part, ignore
+			return
+		}
+		eventData := eventParts[1]
+		var progress PullProgress
+		if err := json.Unmarshal([]byte(eventData), &progress); err != nil {
+			fmt.Println(err)
+			return
+		}
+		callback(progress)
 	}); err != nil {
 		return nil, err
 	}

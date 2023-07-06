@@ -107,7 +107,7 @@ func Serve(ln net.Listener) error {
 			return
 		}
 
-		progressCh := make(chan string)
+		progressCh := make(chan api.PullProgress)
 		go func() {
 			defer close(progressCh)
 			if err := pull(req.Model, progressCh); err != nil {
