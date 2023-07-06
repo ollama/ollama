@@ -1,6 +1,7 @@
 package server
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,7 +20,9 @@ import (
 	"github.com/jmorganca/ollama/llama"
 )
 
-var templates = template.Must(template.ParseGlob("templates/*.prompt"))
+//go:embed templates/*
+var templatesFS embed.FS
+var templates = template.Must(template.ParseFS(templatesFS, "templates/*.prompt"))
 
 func generate(c *gin.Context) {
 	// TODO: these should be request parameters
