@@ -36,10 +36,7 @@ func RunRun(cmd *cobra.Command, args []string) error {
 }
 
 func pull(model string) error {
-	client, err := NewAPIClient()
-	if err != nil {
-		return err
-	}
+	client := api.NewClient()
 
 	var bar *progressbar.ProgressBar
 	return client.Pull(
@@ -68,10 +65,7 @@ func RunGenerate(_ *cobra.Command, args []string) error {
 }
 
 func generate(model string, prompts ...string) error {
-	client, err := NewAPIClient()
-	if err != nil {
-		return err
-	}
+	client := api.NewClient()
 
 	for _, prompt := range prompts {
 		client.Generate(context.Background(), &api.GenerateRequest{Model: model, Prompt: prompt}, func(resp api.GenerateResponse) error {
@@ -119,12 +113,6 @@ func RunServer(_ *cobra.Command, _ []string) error {
 	}
 
 	return server.Serve(ln)
-}
-
-func NewAPIClient() (*api.Client, error) {
-	return &api.Client{
-		URL: "http://localhost:11434",
-	}, nil
 }
 
 func NewCLI() *cobra.Command {

@@ -5,14 +5,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 type Client struct {
-	URL  string
-	HTTP http.Client
+	base url.URL
+}
+
+func NewClient(hosts ...string) *Client {
+	host := "127.0.0.1:11434"
+	if len(hosts) > 0 {
+		host = hosts[0]
+	}
+
+	return &Client{
+		base: url.URL{Scheme: "http", Host: host},
+	}
 }
 
 func (c *Client) stream(ctx context.Context, method string, path string, reqData any, fn func(bts []byte) error) error {
@@ -27,23 +37,21 @@ func (c *Client) stream(ctx context.Context, method string, path string, reqData
 		reqBody = bytes.NewReader(data)
 	}
 
-	url := fmt.Sprintf("%s%s", c.URL, path)
-
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	request, err := http.NewRequestWithContext(ctx, method, c.base.JoinPath(path).String(), reqBody)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
 
-	res, err := c.HTTP.Do(req)
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer response.Body.Close()
 
-	scanner := bufio.NewScanner(res.Body)
+	scanner := bufio.NewScanner(response.Body)
 	for scanner.Scan() {
 		if err := fn(scanner.Bytes()); err != nil {
 			return err
