@@ -18,8 +18,13 @@ const config: ForgeConfig = {
   packagerConfig: {
     appVersion: process.env.VERSION || packageJson.version,
     asar: true,
-    icon: './images/icon',
-    extraResource: ['./images/ollama_icon_dark_16x16.png', './images/ollama_icon_bright_16x16.png', '../ollama', '../ggml-metal.metal'],
+    icon: './assets/icon.icns',
+    extraResource: [
+      '../ollama', 
+      '../ggml-metal.metal',
+      path.join(__dirname, './assets/ollama_icon_dark_16x16@2x.png'), 
+      path.join(__dirname, './assets/ollama_icon_bright_16x16@2x.png')
+    ],
     ...(process.env.SIGN
       ? {
           osxSign: {

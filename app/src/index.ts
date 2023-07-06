@@ -7,12 +7,13 @@ require('@electron/remote/main').initialize()
 
 let tray: Tray | null = null
 const createSystemtray = () => {
-  // const baseURL = path.join(__dirname, 'src')
-  const resources = process.resourcesPath
-  const brightModeIconPath = path.join(resources, 'ollama_icon_dark_16x16.png')
-  const darkModeIconPath = path.join(resources, 'ollama_icon_bright_16x16.png')
-  // const brightModeIconPath = path.join(__dirname, '..', '..', 'src', 'ollama_icon_dark_16x16.png')
-  // const darkModeIconPath = path.join(__dirname, '..', '..', 'src', 'ollama_icon_bright_16x16.png')
+  let brightModeIconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_dark_16x16.png')
+  let darkModeIconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_bright_16x16.png')
+  
+  if (app.isPackaged) {
+    brightModeIconPath = path.join(process.resourcesPath, 'ollama_icon_dark_16x16@2x.png');
+    darkModeIconPath = path.join(process.resourcesPath, 'ollama_icon_bright_16x16@2x.png');
+}
   
   tray = new Tray(brightModeIconPath)
 
@@ -31,7 +32,7 @@ const createSystemtray = () => {
 
   tray.setContextMenu(contextMenu);  
   tray.setToolTip('Ollama')
- })
+ }
 
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
