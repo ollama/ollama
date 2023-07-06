@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 const Store = require('electron-store')
 const store = new Store()
 
-export const analytics = new Analytics({ writeKey: process.env.TELEMETRY_WRITE_KEY })
+export const analytics = new Analytics({ writeKey: process.env.TELEMETRY_WRITE_KEY || '' })
 
 export function id(): string {
   const id = store.get('id')
