@@ -6,12 +6,17 @@ import { MakerRpm } from '@electron-forge/maker-rpm'
 import { PublisherGithub } from '@electron-forge/publisher-github'
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives'
 import { WebpackPlugin } from '@electron-forge/plugin-webpack'
+import * as path from 'path'
+import * as fs from 'fs'
 
 import { mainConfig } from './webpack.main.config'
 import { rendererConfig } from './webpack.renderer.config'
 
+const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, './package.json'), 'utf8'))
+
 const config: ForgeConfig = {
   packagerConfig: {
+    appVersion: process.env.VERSION || packageJson.version,
     asar: true,
     icon: './images/icon',
     extraResource: ['../ollama', '../ggml-metal.metal'],
