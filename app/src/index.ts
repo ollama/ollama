@@ -28,10 +28,7 @@ const createSystemtray = () => {
     })
   }
 
-
-  const contextMenu = Menu.buildFromTemplate([
-    { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
-  ])
+  const contextMenu = Menu.buildFromTemplate([{ role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' }])
 
   tray.setContextMenu(contextMenu)
   tray.setToolTip('Ollama')
@@ -91,7 +88,7 @@ function installCLI() {
     .showMessageBox({
       type: 'info',
       title: 'Ollama CLI installation',
-      message: 'To install the Ollama CLI, we need to ask you for administrator privileges.',
+      message: 'To make the Ollama command line work in your terminal, it needs administrator privileges.',
       buttons: ['OK'],
     })
     .then(result => {
@@ -111,35 +108,36 @@ function installCLI() {
     })
 }
 
-if (!SingleInstanceLock) {  
+if (!SingleInstanceLock) {
   app.quit()
 } else {
   app.on('ready', () => {
     if (process.platform === 'darwin') {
       app.dock.hide()
-  
+
       if (!app.isInApplicationsFolder()) {
         const chosen = dialog.showMessageBoxSync({
           type: 'question',
           buttons: ['Move to Applications', 'Do Not Move'],
-          message: 'Move Ollama to the Applications directory?',
+          message: 'Ollama works best when run from the Applications directory.',
           defaultId: 0,
-          cancelId: 1
+          cancelId: 1,
         })
-  
+
         if (chosen === 0) {
           try {
             app.moveToApplicationsFolder({
-              conflictHandler: (conflictType) => {
+              conflictHandler: conflictType => {
                 if (conflictType === 'existsAndRunning') {
                   dialog.showMessageBoxSync({
                     type: 'info',
                     message: 'Cannot move to Applications directory',
-                    detail: 'Another version of Ollama is currently running from your Applications directory. Close it first and try again.'
+                    detail:
+                      'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
                   })
                 }
                 return true
-              }
+              },
             })
             return
           } catch (e) {
@@ -149,15 +147,14 @@ if (!SingleInstanceLock) {
         }
       }
     }
-  
+
     createSystemtray()
-  
+
     if (app.isPackaged) {
       installCLI()
     }
   })
 }
-
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
