@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"path"
-	"time"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/server"
@@ -40,18 +38,8 @@ func run(model string) error {
 }
 
 func serve() error {
-	sp := path.Join(cacheDir(), "ollama.sock")
-
-	if err := os.RemoveAll(sp); err != nil {
-		return err
-	}
-
-	ln, err := net.Listen("unix", sp)
+	ln, err := net.Listen("tcp", "127.0.0.1:11434")
 	if err != nil {
-		return err
-	}
-
-	if err := os.Chmod(sp, 0o700); err != nil {
 		return err
 	}
 
@@ -59,28 +47,8 @@ func serve() error {
 }
 
 func NewAPIClient() (*api.Client, error) {
-	var err error
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-
-	socket := path.Join(home, ".ollama", "ollama.sock")
-
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-	}
-
 	return &api.Client{
-		URL: "http://localhost",
-		HTTP: http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return dialer.DialContext(ctx, "unix", socket)
-				},
-			},
-		},
+		URL: "http://localhost:11434",
 	}, nil
 }
 

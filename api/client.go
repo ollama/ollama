@@ -11,12 +11,8 @@ import (
 )
 
 type Client struct {
-	Name       string
-	Version    string
 	URL        string
 	HTTP       http.Client
-	Headers    http.Header
-	PrivateKey []byte
 }
 
 func checkError(resp *http.Response, body []byte) error {
@@ -26,8 +22,7 @@ func checkError(resp *http.Response, body []byte) error {
 
 	apiError := Error{Code: int32(resp.StatusCode)}
 
-	err := json.Unmarshal(body, &apiError)
-	if err != nil {
+	if err := json.Unmarshal(body, &apiError); err != nil {
 		// Use the full body as the message if we fail to decode a response.
 		apiError.Message = string(body)
 	}
@@ -56,10 +51,6 @@ func (c *Client) stream(ctx context.Context, method string, path string, reqData
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-
-	for k, v := range c.Headers {
-		req.Header[k] = v
-	}
 
 	res, err := c.HTTP.Do(req)
 	if err != nil {
@@ -102,10 +93,6 @@ func (c *Client) do(ctx context.Context, method string, path string, reqData any
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-
-	for k, v := range c.Headers {
-		req.Header[k] = v
-	}
 
 	respObj, err := c.HTTP.Do(req)
 	if err != nil {
