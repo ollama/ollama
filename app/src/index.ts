@@ -1,12 +1,11 @@
 import { spawn, exec } from 'child_process'
-import { app, autoUpdater, dialog, Tray, Menu, nativeTheme, Notification } from 'electron'
+import { app, autoUpdater, dialog, Tray, Menu, nativeTheme } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 
 require('@electron/remote/main').initialize()
 
 let tray: Tray | null = null
-let secondInstance: Boolean = false
 const SingleInstanceLock = app.requestSingleInstanceLock()
 
 const createSystemtray = () => {
