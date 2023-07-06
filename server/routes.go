@@ -78,12 +78,8 @@ func generate(c *gin.Context) {
 			return false
 		}
 
-		resp := api.TokenResponse{
-			Choices: []api.TokenResponseChoice{
-				{
-					Text: token,
-				},
-			},
+		resp := api.GenerateResponse{
+			Response: token,
 		}
 
 		bts, err := json.Marshal(resp)
