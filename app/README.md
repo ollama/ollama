@@ -6,10 +6,10 @@ This app builds upon Ollama to provide a desktop experience for running models.
 
 ## Developing
 
-In the background run the ollama server `ollama.py`:
+First, build the `ollama` binary:
 
 ```
-poetry -C .. run ollama serve
+make -C ..
 ```
 
 Then run the desktop app with `npm start`:

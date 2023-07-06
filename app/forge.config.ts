@@ -8,6 +8,7 @@ import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-nati
 import { WebpackPlugin } from '@electron-forge/plugin-webpack'
 import * as path from 'path'
 import * as fs from 'fs'
+import * as os from 'fs'
 
 import { mainConfig } from './webpack.main.config'
 import { rendererConfig } from './webpack.renderer.config'
@@ -19,7 +20,7 @@ const config: ForgeConfig = {
     appVersion: process.env.VERSION || packageJson.version,
     asar: true,
     icon: './images/icon',
-    extraResource: ['../ollama', '../ggml-metal.metal'],
+    extraResource: ['../ollama', ...(process.platform === 'darwin' ? ['../ggml-metal.metal'] : [])],
     ...(process.env.SIGN
       ? {
           osxSign: {
