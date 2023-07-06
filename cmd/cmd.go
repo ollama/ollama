@@ -14,36 +14,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func sockpath() string {
+func cacheDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		panic(err)
 	}
 
-	return path.Join(home, ".ollama", "ollama.sock")
-}
-
-func running() bool {
-	// Set a timeout duration
-	timeout := time.Second
-	// Dial the unix socket
-	conn, err := net.DialTimeout("unix", sockpath(), timeout)
-	if err != nil {
-		return false
-	}
-
-	if conn != nil {
-		defer conn.Close()
-	}
-	return true
+	return path.Join(home, ".ollama")
 }
 
 func serve() error {
-	sp := sockpath()
-
-	if err := os.MkdirAll(path.Dir(sp), 0o700); err != nil {
-		return err
-	}
+	sp := path.Join(cacheDir(), "ollama.sock")
 
 	if err := os.RemoveAll(sp); err != nil {
 		return err
@@ -99,16 +80,20 @@ func NewCLI() *cobra.Command {
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Disable usage printing on errors
 			cmd.SilenceUsage = true
+			// create the models directory and it's parent
+			if err := os.MkdirAll(path.Join(cacheDir(), "models"), 0o700); err != nil {
+				panic(err)
+			}
 		},
 	}
 
 	cobra.EnableCommandSorting = false
 
 	runCmd := &cobra.Command{
-		Use: "run MODEL",
+		Use:   "run MODEL",
 		Short: "Run a model",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command,args []string) error {
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			return nil
 		},
 	}
