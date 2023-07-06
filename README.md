@@ -61,25 +61,39 @@ ollama run replit "Give me react code to render a button"
 Venture into the unknown.
 
 ```
-ollama run storyteller "Once upon a time"
+ollama run nous-hermes "Once upon a time"
+```
+
+## Advanced usage
+
+### Run a local model
+
+```
+ollama run ~/Downloads/vicuna-7b-v1.3.ggmlv3.q4_1.bin
 ```
 
 ## Building
 
 ```
+
 make
+
 ```
 
 To run it start the server:
 
 ```
+
 ./ollama server &
+
 ```
 
 Finally, run a model!
 
 ```
+
 ./ollama run ~/Downloads/vicuna-7b-v1.3.ggmlv3.q4_1.bin
+
 ```
 
 ## API Reference
@@ -89,7 +103,13 @@ Finally, run a model!
 Complete a prompt
 
 ```
+
 curl --unix-socket ~/.ollama/ollama.sock http://localhost/api/generate \
-    -X POST \
-    -d '{"model": "/path/to/model", "prompt": "Once upon a time", "stream": true}'
+ -X POST \
+ -d '{"model": "/path/to/model", "prompt": "Once upon a time", "stream": true}'
+
+```
+
+```
+
 ```
