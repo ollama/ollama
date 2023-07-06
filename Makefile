@@ -11,7 +11,7 @@ ollama: llama
 
 .PHONY: app
 app: ollama
-	npm run --prefix app package
+	npm run --prefix app make
 
 clean:
 	go clean
