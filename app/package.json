@@ -8,7 +8,6 @@
     "start": "electron-forge start",
     "package": "electron-forge package",
     "package:sign": "SIGN=1 electron-forge package",
-    "dist": "electron-builder",
     "make": "electron-forge make",
     "make:sign": "SIGN=1 electron-forge make",
     "publish": "SIGN=1 electron-forge publish",
@@ -20,17 +19,6 @@
     "email": "jmorganca@gmail.com"
   },
   "license": "MIT",
-  "build" : {
-    "appId": "com.ollama.app",
-    "mac": {
-      "category": "public.app-category.productivity",
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "icon": "icon.icns"
-    }
-  },
   "devDependencies": {
     "@babel/core": "^7.22.5",
     "@babel/preset-react": "^7.22.5",

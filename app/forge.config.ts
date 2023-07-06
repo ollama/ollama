@@ -20,7 +20,12 @@ const config: ForgeConfig = {
     appVersion: process.env.VERSION || packageJson.version,
     asar: true,
     icon: './images/icon',
-    extraResource: ['../ollama', ...(process.platform === 'darwin' ? ['../ggml-metal.metal'] : [])],
+    extraResource: [
+      '../ollama',
+      './images/ollama_icon_dark_16x16.png',
+      './images/ollama_icon_bright_16x16.png',
+      ...(process.platform === 'darwin' ? ['../ggml-metal.metal'] : []),
+    ],
     ...(process.env.SIGN
       ? {
           osxSign: {
@@ -36,7 +41,7 @@ const config: ForgeConfig = {
       : {}),
   },
   rebuildConfig: {},
-  makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin']), new MakerRpm({}), new MakerDeb({})],
+  makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin'])],
   publishers: [
     new PublisherGithub({
       repository: {
