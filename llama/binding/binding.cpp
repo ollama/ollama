@@ -24,7 +24,7 @@
 #include <windows.h>
 #endif
 
-#if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__)) ||          \
+#if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__)) || \
     defined(_WIN32)
 void sigint_handler(int signo) {
   if (signo == SIGINT) {
@@ -573,15 +573,13 @@ void *llama_allocate_params(
     const char **antiprompt, int antiprompt_count, float tfs_z, float typical_p,
     float frequency_penalty, float presence_penalty, int mirostat,
     float mirostat_eta, float mirostat_tau, bool penalize_nl,
-    const char *logit_bias, const char *session_file, bool prompt_cache_all,
-    bool mlock, bool mmap, const char *maingpu, const char *tensorsplit,
-    bool prompt_cache_ro) {
+    const char *logit_bias, bool mlock, bool mmap, const char *maingpu,
+    const char *tensorsplit) {
   gpt_params *params = new gpt_params;
   params->seed = seed;
   params->n_threads = threads;
   params->n_predict = tokens;
   params->repeat_last_n = repeat_last_n;
-  params->prompt_cache_ro = prompt_cache_ro;
   params->top_k = top_k;
   params->top_p = top_p;
   params->memory_f16 = memory_f16;
@@ -611,9 +609,6 @@ void *llama_allocate_params(
       }
     }
   }
-
-  params->prompt_cache_all = prompt_cache_all;
-  params->path_prompt_cache = session_file;
 
   if (ignore_eos) {
     params->logit_bias[llama_token_eos()] = -INFINITY;

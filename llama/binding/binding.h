@@ -31,9 +31,8 @@ void *llama_allocate_params(
     const char **antiprompt, int antiprompt_count, float tfs_z, float typical_p,
     float frequency_penalty, float presence_penalty, int mirostat,
     float mirostat_eta, float mirostat_tau, bool penalize_nl,
-    const char *logit_bias, const char *session_file, bool prompt_cache_all,
-    bool mlock, bool mmap, const char *maingpu, const char *tensorsplit,
-    bool prompt_cache_ro);
+    const char *logit_bias, bool mlock, bool mmap, const char *maingpu,
+    const char *tensorsplit);
 
 void llama_free_params(void *params_ptr);
 

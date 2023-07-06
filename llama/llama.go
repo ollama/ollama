@@ -28,6 +28,7 @@ package llama
 // #include "binding/binding.h"
 // #include <stdlib.h>
 import "C"
+
 import (
 	"fmt"
 	"strings"
@@ -69,7 +70,7 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 		po.Tokens = 99999999
 	}
 	defer C.free(unsafe.Pointer(input))
-	
+
 	reverseCount := len(po.StopPrompts)
 	reversePrompt := make([]*C.char, reverseCount)
 	var pass **C.char
@@ -86,9 +87,7 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
 		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
 		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL), C.CString(po.LogitBias),
-		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		C.CString(po.MainGPU), C.CString(po.TensorSplit),
-		C.bool(po.PromptCacheRO),
+		C.bool(po.MLock), C.bool(po.MMap), C.CString(po.MainGPU), C.CString(po.TensorSplit),
 	)
 	defer C.llama_free_params(params)
 
@@ -128,9 +127,6 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	cLogitBias := C.CString(po.LogitBias)
 	defer C.free(unsafe.Pointer(cLogitBias))
 
-	cPathPromptCache := C.CString(po.PathPromptCache)
-	defer C.free(unsafe.Pointer(cPathPromptCache))
-
 	cMainGPU := C.CString(po.MainGPU)
 	defer C.free(unsafe.Pointer(cMainGPU))
 
@@ -143,9 +139,7 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
 		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
 		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL), cLogitBias,
-		cPathPromptCache, C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		cMainGPU, cTensorSplit,
-		C.bool(po.PromptCacheRO),
+		C.bool(po.MLock), C.bool(po.MMap), cMainGPU, cTensorSplit,
 	)
 	defer C.llama_free_params(params)
 

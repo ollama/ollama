@@ -57,11 +57,9 @@ type PredictOptions struct {
 	LogitBias         string
 	TokenCallback     func(string) bool
 
-	PathPromptCache             string
-	MLock, MMap, PromptCacheAll bool
-	PromptCacheRO               bool
-	MainGPU                     string
-	TensorSplit                 string
+	MLock, MMap bool
+	MainGPU     string
+	TensorSplit string
 }
 
 type PredictOption func(p *PredictOptions)
@@ -182,14 +180,6 @@ var Debug PredictOption = func(p *PredictOptions) {
 	p.DebugMode = true
 }
 
-var EnablePromptCacheAll PredictOption = func(p *PredictOptions) {
-	p.PromptCacheAll = true
-}
-
-var EnablePromptCacheRO PredictOption = func(p *PredictOptions) {
-	p.PromptCacheRO = true
-}
-
 var EnableMLock ModelOption = func(p *ModelOptions) {
 	p.MLock = true
 }
@@ -281,13 +271,6 @@ func SetTopP(topp float64) PredictOption {
 func SetTemperature(temp float64) PredictOption {
 	return func(p *PredictOptions) {
 		p.Temperature = temp
-	}
-}
-
-// SetPathPromptCache sets the session file to store the prompt cache.
-func SetPathPromptCache(f string) PredictOption {
-	return func(p *PredictOptions) {
-		p.PathPromptCache = f
 	}
 }
 
