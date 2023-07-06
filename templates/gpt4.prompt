@@ -1,5 +1,5 @@
 ### Instruction:
-{{ prompt }}
+{{ .Prompt }}
 
 ### Response:
 

@@ -1,2 +1,2 @@
-USER: {{ prompt }}
+USER: {{ .Prompt }}
 ASSISTANT:
