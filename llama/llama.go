@@ -20,8 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//go:generate cmake -S . -B build
-//go:generate cmake --build build
 package llama
 
 // #cgo LDFLAGS: -Lbuild -lbinding -lllama -lm -lggml_static -lstdc++
