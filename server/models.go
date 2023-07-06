@@ -78,7 +78,7 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 		return fmt.Errorf("failed to download model: %w", err)
 	}
 	// check for resume
-	alreadyDownloaded := 0
+	alreadyDownloaded := int64(0)
 	fileInfo, err := os.Stat(fileName)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -86,8 +86,8 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 		}
 		// file doesn't exist, create it now
 	} else {
-		alreadyDownloaded = int(fileInfo.Size())
-		req.Header.Add("Range", "bytes="+strconv.Itoa(alreadyDownloaded)+"-")
+		alreadyDownloaded = fileInfo.Size()
+		req.Header.Add("Range", fmt.Sprintf("bytes=%d-", alreadyDownloaded))
 	}
 
 	resp, err := client.Do(req)
@@ -117,7 +117,7 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 	}
 	defer out.Close()
 
-	totalSize, _ := strconv.Atoi(resp.Header.Get("Content-Length"))
+	totalSize, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
 	buf := make([]byte, 1024)
 	totalBytes := alreadyDownloaded
@@ -134,7 +134,8 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 		if _, err := out.Write(buf[:n]); err != nil {
 			return err
 		}
-		totalBytes += n
+
+		totalBytes += int64(n)
 
 		// send progress updates
 		progressCh <- api.PullProgress{
