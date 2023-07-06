@@ -22,7 +22,7 @@ func pull(c *gin.Context) {
 
 func generate(c *gin.Context) {
 	// TODO: these should be request parameters
-	gpulayers := 0
+	gpulayers := 1
 	tokens := 512
 	threads := runtime.NumCPU()
 	// TODO: set prompt from template
