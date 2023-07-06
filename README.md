@@ -67,8 +67,7 @@ ollama run storyteller "Once upon a time"
 ## Building
 
 ```
-go generate ./...
-go build .
+make
 ```
 
 To run it start the server:
