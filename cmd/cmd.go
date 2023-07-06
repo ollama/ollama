@@ -7,7 +7,9 @@ import (
 	"net"
 	"os"
 	"path"
+	"sync"
 
+	"github.com/gosuri/uiprogress"
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/server"
 	"github.com/spf13/cobra"
@@ -22,6 +24,10 @@ func cacheDir() string {
 	return path.Join(home, ".ollama")
 }
 
+func bytesToGB(bytes int) float64 {
+	return float64(bytes) / float64(1<<30)
+}
+
 func run(model string) error {
 	client, err := NewAPIClient()
 	if err != nil {
@@ -30,8 +36,29 @@ func run(model string) error {
 	pr := api.PullRequest{
 		Model: model,
 	}
-	callback := func(progress string) {
-		fmt.Println(progress)
+	var bar *uiprogress.Bar
+	mutex := &sync.Mutex{}
+	var progressData api.PullProgress
+
+	callback := func(progress api.PullProgress) {
+		mutex.Lock()
+		progressData = progress
+		if bar == nil {
+			uiprogress.Start()                           // start rendering
+			bar = uiprogress.AddBar(int(progress.Total)) // Add a new bar
+
+			// display the total file size and how much has downloaded so far
+			bar.PrependFunc(func(b *uiprogress.Bar) string {
+				return fmt.Sprintf("Downloading: %.2f GB / %.2f GB", bytesToGB(progressData.Completed), bytesToGB(progressData.Total))
+			})
+
+			// display completion percentage
+			bar.AppendFunc(func(b *uiprogress.Bar) string {
+				return fmt.Sprintf(" %d%%", int((float64(progressData.Completed)/float64(progressData.Total))*100))
+			})
+		}
+		bar.Set(int(progress.Completed))
+		mutex.Unlock()
 	}
 	_, err = client.Pull(context.Background(), &pr, callback)
 	return err

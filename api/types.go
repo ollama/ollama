@@ -22,6 +22,12 @@ type PullRequest struct {
 	Model string `json:"model"`
 }
 
+type PullProgress struct {
+	Total     int     `json:"total"`
+	Completed int     `json:"completed"`
+	Percent   float64 `json:"percent"`
+}
+
 type PullResponse struct {
 	Response string `json:"response"`
 }
