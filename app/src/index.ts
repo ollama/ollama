@@ -25,7 +25,10 @@ const createSystemtray = () => {
     })
   }
 
-  const contextMenu = Menu.buildFromTemplate([{ label: 'Quit', type: 'normal', click: () => app.quit() }])
+
+  const contextMenu = Menu.buildFromTemplate([
+    { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
+  ])
 
   tray.setContextMenu(contextMenu)
   tray.setToolTip('Ollama')
@@ -90,7 +93,7 @@ function installCLI() {
     })
     .then(result => {
       if (result.response === 0) {
-        let command = `
+        const command = `
     do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
     `
         exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
@@ -109,8 +112,40 @@ function installCLI() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.on('ready', () => {
+
   if (process.platform === 'darwin') {
     app.dock.hide()
+
+    if (!app.isInApplicationsFolder()) {
+      const chosen = dialog.showMessageBoxSync({
+        type: 'question',
+        buttons: ['Move to Applications', 'Do Not Move'],
+        message: 'Move Ollama to the Applications directory?',
+        defaultId: 0,
+        cancelId: 1
+      })
+
+      if (chosen === 0) {
+        try {
+          app.moveToApplicationsFolder({
+            conflictHandler: (conflictType) => {
+              if (conflictType === 'existsAndRunning') {
+                dialog.showMessageBoxSync({
+                  type: 'info',
+                  message: 'Cannot move to Applications directory',
+                  detail: 'Another version of Ollama is currently running from your Applications directory. Close it first and try again.'
+                })
+              }
+              return true
+            }
+          })
+          return
+        } catch (e) {
+          console.error('Failed to move to applications folder')
+          console.error(e)
+        }
+      }
+    }
   }
 
   createSystemtray()
