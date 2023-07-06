@@ -33,11 +33,12 @@ func generate(c *gin.Context) {
 		return
 	}
 
-	l, err := llama.New(req.Model, llama.EnableF16Memory, llama.SetContext(128), llama.EnableEmbeddings, llama.SetGPULayers(gpulayers))
+	model, err := llama.New(req.Model, llama.EnableF16Memory, llama.SetContext(128), llama.EnableEmbeddings, llama.SetGPULayers(gpulayers))
 	if err != nil {
 		fmt.Println("Loading the model failed:", err.Error())
 		return
 	}
+	defer model.Free()
 
 	templateNames := make([]string, 0, len(templates.Templates()))
 	for _, template := range templates.Templates() {
@@ -59,7 +60,7 @@ func generate(c *gin.Context) {
 
 	go func() {
 		defer close(ch)
-		_, err := l.Predict(req.Prompt, llama.Debug, llama.SetTokenCallback(func(token string) bool {
+		_, err := model.Predict(req.Prompt, llama.Debug, llama.SetTokenCallback(func(token string) bool {
 			ch <- token
 			return true
 		}), llama.SetTokens(tokens), llama.SetThreads(threads), llama.SetTopK(90), llama.SetTopP(0.86), llama.SetStopWords("llama"))
