@@ -44,15 +44,11 @@ func run(model string) error {
 		mutex.Lock()
 		progressData = progress
 		if bar == nil {
-			uiprogress.Start()                           // start rendering
-			bar = uiprogress.AddBar(int(progress.Total)) // Add a new bar
-
-			// display the total file size and how much has downloaded so far
+			uiprogress.Start()
+			bar = uiprogress.AddBar(int(progress.Total))
 			bar.PrependFunc(func(b *uiprogress.Bar) string {
 				return fmt.Sprintf("Downloading: %.2f GB / %.2f GB", bytesToGB(progressData.Completed), bytesToGB(progressData.Total))
 			})
-
-			// display completion percentage
 			bar.AppendFunc(func(b *uiprogress.Bar) string {
 				return fmt.Sprintf(" %d%%", int((float64(progressData.Completed)/float64(progressData.Total))*100))
 			})
