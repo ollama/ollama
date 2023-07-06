@@ -18,7 +18,7 @@ Run large language models with `llama.cpp`.
 
 - Download for macOS
 - Download for Windows (coming soon)
-- Docker: `docker run -p 8080:8080 ollama/ollama`
+- Docker: `docker run -p 11434:11434 ollama/ollama`
 
 You can also build the [binary from source](#building).
 
@@ -75,25 +75,19 @@ ollama run ~/Downloads/vicuna-7b-v1.3.ggmlv3.q4_1.bin
 ## Building
 
 ```
-
 make
-
 ```
 
 To run it start the server:
 
 ```
-
 ./ollama server &
-
 ```
 
 Finally, run a model!
 
 ```
-
 ./ollama run ~/Downloads/vicuna-7b-v1.3.ggmlv3.q4_1.bin
-
 ```
 
 ## API Reference
@@ -103,13 +97,7 @@ Finally, run a model!
 Complete a prompt
 
 ```
-
 curl --unix-socket ~/.ollama/ollama.sock http://localhost/api/generate \
  -X POST \
  -d '{"model": "/path/to/model", "prompt": "Once upon a time", "stream": true}'
-
-```
-
-```
-
 ```
