@@ -37,6 +37,10 @@ func generate(c *gin.Context) {
 		return
 	}
 
+	if remoteModel, _ := getRemote(req.Model); remoteModel != nil {
+		req.Model = remoteModel.FullName()
+	}
+
 	model, err := llama.New(req.Model, llama.EnableF16Memory, llama.SetContext(128), llama.EnableEmbeddings, llama.SetGPULayers(gpulayers))
 	if err != nil {
 		fmt.Println("Loading the model failed:", err.Error())

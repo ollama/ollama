@@ -3,11 +3,13 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"path"
+	"time"
 
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
@@ -27,11 +29,18 @@ func cacheDir() string {
 }
 
 func RunRun(cmd *cobra.Command, args []string) error {
-	if err := pull(args[0]); err != nil {
+	_, err := os.Stat(args[0])
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		if err := pull(args[0]); err != nil {
+			return err
+		}
+
+		fmt.Println("Up to date.")
+	case err != nil:
 		return err
 	}
 
-	fmt.Println("Up to date.")
 	return RunGenerate(cmd, args)
 }
 
@@ -54,7 +63,7 @@ func pull(model string) error {
 
 func RunGenerate(_ *cobra.Command, args []string) error {
 	if len(args) > 1 {
-		return generate(args[0], args[1:]...)
+		return generateOneshot(args[0], args[1:]...)
 	}
 
 	if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -64,18 +73,50 @@ func RunGenerate(_ *cobra.Command, args []string) error {
 	return generateBatch(args[0])
 }
 
-func generate(model string, prompts ...string) error {
+func generate(model, prompt string) error {
 	client := api.NewClient()
 
-	for _, prompt := range prompts {
-		client.Generate(context.Background(), &api.GenerateRequest{Model: model, Prompt: prompt}, func(resp api.GenerateResponse) error {
-			fmt.Print(resp.Response)
-			return nil
-		})
-	}
+	spinner := progressbar.NewOptions(-1,
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionThrottle(60*time.Millisecond),
+		progressbar.OptionSpinnerType(14),
+		progressbar.OptionSetRenderBlankState(true),
+		progressbar.OptionSetElapsedTime(false),
+		progressbar.OptionClearOnFinish(),
+	)
+
+	go func() {
+		for range time.Tick(60 * time.Millisecond) {
+			if spinner.IsFinished() {
+				break
+			}
+
+			spinner.Add(1)
+		}
+	}()
+
+	client.Generate(context.Background(), &api.GenerateRequest{Model: model, Prompt: prompt}, func(resp api.GenerateResponse) error {
+		if !spinner.IsFinished() {
+			spinner.Finish()
+		}
+
+		fmt.Print(resp.Response)
+		return nil
+	})
 
 	fmt.Println()
 	fmt.Println()
+	return nil
+}
+
+func generateOneshot(model string, prompts ...string) error {
+	for _, prompt := range prompts {
+		fmt.Printf(">>> %s\n", prompt)
+		if err := generate(model, prompt); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

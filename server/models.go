@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
@@ -30,6 +29,15 @@ type Model struct {
 	License          string `json:"license"`
 }
 
+func (m *Model) FullName() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	return path.Join(home, ".ollama", "models", m.Name+".bin")
+}
+
 func pull(model string, progressCh chan<- api.PullProgress) error {
 	remote, err := getRemote(model)
 	if err != nil {
@@ -45,7 +53,7 @@ func getRemote(model string) (*Model, error) {
 		return nil, fmt.Errorf("failed to get directory: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
@@ -64,13 +72,6 @@ func getRemote(model string) (*Model, error) {
 
 func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 	// this models cache directory is created by the server on startup
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-	modelsCache := path.Join(home, ".ollama", "models")
-
-	fileName := path.Join(modelsCache, model.Name+".bin")
 
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", model.URL, nil)
@@ -79,7 +80,7 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 	}
 	// check for resume
 	alreadyDownloaded := int64(0)
-	fileInfo, err := os.Stat(fileName)
+	fileInfo, err := os.Stat(model.FullName())
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to check resume model file: %w", err)
@@ -111,7 +112,7 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 		return fmt.Errorf("failed to download model: %s", resp.Status)
 	}
 
-	out, err := os.OpenFile(fileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	out, err := os.OpenFile(model.FullName(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		panic(err)
 	}
