@@ -3,6 +3,8 @@ import { app, autoUpdater, dialog, Tray, Menu, nativeTheme } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 
+import { analytics, id } from './telemetry'
+
 require('@electron/remote/main').initialize()
 
 let tray: Tray | null = null
@@ -172,9 +174,20 @@ autoUpdater.setFeedURL({
   url: `https://ollama.ai/api/update?os=${process.platform}&arch=${process.arch}&version=${app.getVersion()}`,
 })
 
+async function heartbeat() {
+  analytics.track({
+    anonymousId: id(),
+    event: 'heartbeat',
+  })
+}
+
+heartbeat()
+
 if (app.isPackaged) {
+  heartbeat()
   autoUpdater.checkForUpdates()
   setInterval(() => {
+    heartbeat()
     autoUpdater.checkForUpdates()
   }, 60000)
 }

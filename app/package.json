@@ -31,8 +31,10 @@
     "@electron-forge/plugin-webpack": "^6.2.1",
     "@electron-forge/publisher-github": "^6.2.1",
     "@types/chmodr": "^1.0.0",
+    "@types/node": "^20.3.1",
     "@types/react": "^18.2.14",
     "@types/react-dom": "^18.2.6",
+    "@types/uuid": "^9.0.2",
     "@typescript-eslint/eslint-plugin": "^5.60.0",
     "@typescript-eslint/parser": "^5.60.0",
     "@vercel/webpack-asset-relocator-loader": "^1.7.3",
@@ -62,9 +64,11 @@
   },
   "dependencies": {
     "@electron/remote": "^2.0.10",
-    "@types/node": "^20.3.1",
+    "@segment/analytics-node": "^1.0.0",
     "electron-squirrel-startup": "^1.0.0",
+    "electron-store": "^8.1.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "uuid": "^9.0.0"
   }
 }
