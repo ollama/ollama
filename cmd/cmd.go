@@ -40,7 +40,7 @@ func run(model string) error {
 	mutex := &sync.Mutex{}
 	var progressData api.PullProgress
 
-	callback := func(progress api.PullProgress) {
+	pullCallback := func(progress api.PullProgress) {
 		mutex.Lock()
 		progressData = progress
 		if bar == nil {
@@ -60,8 +60,11 @@ func run(model string) error {
 		bar.Set(int(progress.Completed))
 		mutex.Unlock()
 	}
-	_, err = client.Pull(context.Background(), &pr, callback)
-	return err
+	if err := client.Pull(context.Background(), &pr, pullCallback); err != nil {
+		return err
+	}
+	fmt.Println("Up to date.")
+	return nil
 }
 
 func serve() error {

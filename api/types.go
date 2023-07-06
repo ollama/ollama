@@ -28,10 +28,6 @@ type PullProgress struct {
 	Percent   float64 `json:"percent"`
 }
 
-type PullResponse struct {
-	Response string `json:"response"`
-}
-
 type GenerateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`

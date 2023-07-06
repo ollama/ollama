@@ -79,6 +79,7 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 		panic(err)
 	}
 	// check for resume
+	alreadyDownloaded := 0
 	fileInfo, err := os.Stat(fileName)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -86,7 +87,8 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 		}
 		// file doesn't exist, create it now
 	} else {
-		req.Header.Add("Range", "bytes="+strconv.FormatInt(fileInfo.Size(), 10)+"-")
+		alreadyDownloaded = int(fileInfo.Size())
+		req.Header.Add("Range", "bytes="+strconv.Itoa(alreadyDownloaded)+"-")
 	}
 
 	resp, err := client.Do(req)
@@ -96,7 +98,17 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		// already downloaded
+		progressCh <- api.PullProgress{
+			Total:     alreadyDownloaded,
+			Completed: alreadyDownloaded,
+			Percent:   100,
+		}
+		return nil
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return fmt.Errorf("failed to download model: %s", resp.Status)
 	}
 
@@ -109,7 +121,8 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 	totalSize, _ := strconv.Atoi(resp.Header.Get("Content-Length"))
 
 	buf := make([]byte, 1024)
-	totalBytes := 0
+	totalBytes := alreadyDownloaded
+	totalSize += alreadyDownloaded
 
 	for {
 		n, err := resp.Body.Read(buf)
