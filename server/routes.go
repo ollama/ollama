@@ -14,12 +14,6 @@ import (
 	"github.com/jmorganca/ollama/api"
 )
 
-func pull(c *gin.Context) {
-	// TODO
-
-	c.JSON(http.StatusOK, gin.H{"message": "ok"})
-}
-
 func generate(c *gin.Context) {
 	// TODO: these should be request parameters
 	gpulayers := 1
@@ -65,7 +59,31 @@ func generate(c *gin.Context) {
 func Serve(ln net.Listener) error {
 	r := gin.Default()
 
-	r.POST("api/pull", pull)
+	r.POST("api/pull", func(c *gin.Context) {
+		var req api.PullRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+
+		progressCh := make(chan string)
+		go func() {
+			defer close(progressCh)
+			if err := pull(req.Model, progressCh); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+				return
+			}
+		}()
+
+		c.Stream(func(w io.Writer) bool {
+			progress, ok := <-progressCh
+			if !ok {
+				return false
+			}
+			c.SSEvent("progress", progress)
+			return true
+		})
+	})
 
 	r.POST("/api/generate", generate)
 
