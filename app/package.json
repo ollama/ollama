@@ -9,7 +9,7 @@
     "package": "electron-forge package",
     "package:sign": "SIGN=1 electron-forge package",
     "make": "electron-forge make",
-    "make:sign": "SIGN=1 electron-forge package",
+    "make:sign": "SIGN=1 electron-forge make",
     "publish": "SIGN=1 electron-forge publish",
     "lint": "eslint --ext .ts,.tsx ."
   },
