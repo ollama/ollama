@@ -1,25 +1,31 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"path"
 	"runtime"
+	"strings"
+	"text/template"
 
 	"github.com/gin-gonic/gin"
-	llama "github.com/jmorganca/ollama/llama"
+	"github.com/lithammer/fuzzysearch/fuzzy"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/llama"
 )
+
+var templates = template.Must(template.ParseGlob("templates/*.prompt"))
 
 func generate(c *gin.Context) {
 	// TODO: these should be request parameters
 	gpulayers := 1
 	tokens := 512
 	threads := runtime.NumCPU()
-	// TODO: set prompt from template
 
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -31,6 +37,22 @@ func generate(c *gin.Context) {
 	if err != nil {
 		fmt.Println("Loading the model failed:", err.Error())
 		return
+	}
+
+	templateNames := make([]string, 0, len(templates.Templates()))
+	for _, template := range templates.Templates() {
+		templateNames = append(templateNames, template.Name())
+	}
+
+	match, _ := matchRankOne(path.Base(req.Prompt), templateNames)
+	if template := templates.Lookup(match); template != nil {
+		var sb strings.Builder
+		if err := template.Execute(&sb, req); err != nil {
+			fmt.Println("Prompt template failed:", err.Error())
+			return
+		}
+
+		req.Prompt = sb.String()
 	}
 
 	ch := make(chan string)
@@ -47,11 +69,29 @@ func generate(c *gin.Context) {
 	}()
 
 	c.Stream(func(w io.Writer) bool {
-		tok, ok := <-ch
+		token, ok := <-ch
 		if !ok {
 			return false
 		}
-		c.SSEvent("token", tok)
+
+		resp := api.TokenResponse{
+			Choices: []api.TokenResponseChoice{
+				{
+					Text: token,
+				},
+			},
+		}
+
+		bts, err := json.Marshal(resp)
+		if err != nil {
+			return false
+		}
+
+		bts = append(bts, '\n')
+		if _, err := w.Write(bts); err != nil {
+			return false
+		}
+
 		return true
 	})
 }
@@ -93,4 +133,15 @@ func Serve(ln net.Listener) error {
 	}
 
 	return s.Serve(ln)
+}
+
+func matchRankOne(source string, targets []string) (bestMatch string, bestRank int) {
+	for _, target := range targets {
+		if rank := fuzzy.LevenshteinDistance(source, target); bestRank < rank {
+			bestRank = rank
+			bestMatch = target
+		}
+	}
+
+	return
 }
