@@ -135,10 +135,12 @@ autoUpdater.setFeedURL({
   url: `https://ollama.ai/api/update?os=${process.platform}&arch=${process.arch}&version=${app.getVersion()}`,
 })
 
-autoUpdater.checkForUpdates()
-setInterval(() => {
+if (app.isPackaged) {
   autoUpdater.checkForUpdates()
-}, 60000)
+  setInterval(() => {
+    autoUpdater.checkForUpdates()
+  }, 60000)
+}
 
 autoUpdater.on('error', e => {
   console.error('update check failed', e)
