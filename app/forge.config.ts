@@ -14,7 +14,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: './images/icon',
-    extraResource: ['../ollama'],
+    extraResource: ['../ollama', '../ggml-metal.metal'],
     ...(process.env.SIGN
       ? {
           osxSign: {
