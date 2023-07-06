@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -21,6 +22,21 @@ func cacheDir() string {
 	}
 
 	return path.Join(home, ".ollama")
+}
+
+func run(model string) error {
+	client, err := NewAPIClient()
+	if err != nil {
+		return err
+	}
+	pr := api.PullRequest{
+		Model: model,
+	}
+	callback := func(progress string) {
+		fmt.Println(progress)
+	}
+	_, err = client.Pull(context.Background(), &pr, callback)
+	return err
 }
 
 func serve() error {
@@ -94,7 +110,7 @@ func NewCLI() *cobra.Command {
 		Short: "Run a model",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return nil
+			return run(args[0])
 		},
 	}
 

@@ -35,7 +35,7 @@ func checkError(resp *http.Response, body []byte) error {
 	return apiError
 }
 
-func (c *Client) stream(ctx context.Context, method string, path string, reqData any, callback func (data []byte)) error {
+func (c *Client) stream(ctx context.Context, method string, path string, reqData any, callback func(data []byte)) error {
 	var reqBody io.Reader
 	var data []byte
 	var err error
@@ -133,6 +133,17 @@ func (c *Client) do(ctx context.Context, method string, path string, reqData any
 func (c *Client) Generate(ctx context.Context, req *GenerateRequest, callback func(token string)) (*GenerateResponse, error) {
 	var res GenerateResponse
 	if err := c.stream(ctx, http.MethodPost, "/api/generate", req, func(token []byte) {
+		callback(string(token))
+	}); err != nil {
+		return nil, err
+	}
+
+	return &res, nil
+}
+
+func (c *Client) Pull(ctx context.Context, req *PullRequest, callback func(token string)) (*PullResponse, error) {
+	var res PullResponse
+	if err := c.stream(ctx, http.MethodPost, "/api/pull", req, func(token []byte) {
 		callback(string(token))
 	}); err != nil {
 		return nil, err

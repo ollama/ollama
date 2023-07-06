@@ -18,6 +18,14 @@ func (e Error) Error() string {
 	return e.Message
 }
 
+type PullRequest struct {
+	Model string `json:"model"`
+}
+
+type PullResponse struct {
+	Response string `json:"response"`
+}
+
 type GenerateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
