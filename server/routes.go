@@ -120,7 +120,17 @@ func Serve(ln net.Listener) error {
 			if !ok {
 				return false
 			}
-			c.SSEvent("progress", progress)
+
+			bts, err := json.Marshal(progress)
+			if err != nil {
+				return false
+			}
+
+			bts = append(bts, '\n')
+			if _, err := w.Write(bts); err != nil {
+				return false
+			}
+
 			return true
 		})
 	})
