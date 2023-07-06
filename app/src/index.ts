@@ -6,6 +6,7 @@ import * as fs from 'fs'
 require('@electron/remote/main').initialize()
 
 let tray: Tray | null = null
+
 const createSystemtray = () => {
   let brightModeIconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_dark_16x16.png')
   let darkModeIconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_bright_16x16.png')
