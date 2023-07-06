@@ -57,6 +57,25 @@ if (app.isPackaged) {
   })
 }
 
+function server() {
+  const binary = app.isPackaged
+    ? path.join(process.resourcesPath, 'ollama')
+    : path.resolve(__dirname, '..', '..', 'ollama')
+
+  console.log(`Starting server`)
+  const proc = spawn(binary, ['serve'])
+  proc.stdout.on('data', data => {
+    console.log(`server: ${data}`)
+  })
+  proc.stderr.on('data', data => {
+    console.error(`server: ${data}`)
+  })
+
+  process.on('exit', () => {
+    proc.kill()
+  })
+}
+
 function installCLI() {
   const symlinkPath = '/usr/local/bin/ollama'
 
@@ -93,7 +112,10 @@ function installCLI() {
 // Some APIs can only be used after this event occurs.
 app.on('ready', () => {
   createWindow()
-  installCLI()
+
+  if (app.isPackaged) {
+    installCLI()
+  }
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common
