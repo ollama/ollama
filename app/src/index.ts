@@ -37,10 +37,10 @@ const createWindow = (): void => {
   mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
 }
 
+const ollama = path.join(process.resourcesPath, 'ollama')
+
 // if the app is packaged then run the server
 if (app.isPackaged) {
-  const ollama = path.join(process.resourcesPath, 'ollama')
-
   // Start the executable
   console.log(`Starting server`)
   const proc = spawn(ollama, ['serve'])
@@ -66,9 +66,8 @@ function installCLI() {
     })
     .then(result => {
       if (result.response === 0) {
-        let resourcePath = path.join(process.resourcesPath, 'your_binary')
         let command = `
-        do shell script "ln -F -s ${resourcePath} /usr/local/bin/ollama" with administrator privileges
+        do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
         `
 
         exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
