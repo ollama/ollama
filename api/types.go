@@ -36,11 +36,3 @@ type GenerateRequest struct {
 type GenerateResponse struct {
 	Response string `json:"response"`
 }
-
-type TokenResponse struct {
-	Choices []TokenResponseChoice `json:"choices"`
-}
-
-type TokenResponseChoice struct {
-	Text string `json:"text"`
-}
