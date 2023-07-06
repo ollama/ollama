@@ -35,7 +35,6 @@ func pull(model string, progressCh chan<- api.PullProgress) error {
 	if err != nil {
 		return fmt.Errorf("failed to pull model: %w", err)
 	}
-
 	return saveModel(remote, progressCh)
 }
 
@@ -76,7 +75,7 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", model.URL, nil)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to download model: %w", err)
 	}
 	// check for resume
 	alreadyDownloaded := 0
@@ -126,19 +125,15 @@ func saveModel(model *Model, progressCh chan<- api.PullProgress) error {
 
 	for {
 		n, err := resp.Body.Read(buf)
-
 		if err != nil && err != io.EOF {
 			return err
 		}
-
 		if n == 0 {
 			break
 		}
-
 		if _, err := out.Write(buf[:n]); err != nil {
 			return err
 		}
-
 		totalBytes += n
 
 		// send progress updates
