@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"path"
@@ -48,7 +49,7 @@ func generate(c *gin.Context) {
 		templateNames = append(templateNames, template.Name())
 	}
 
-	match, _ := matchRankOne(path.Base(req.Prompt), templateNames)
+	match, _ := matchRankOne(path.Base(req.Model), templateNames)
 	if template := templates.Lookup(match); template != nil {
 		var sb strings.Builder
 		if err := template.Execute(&sb, req); err != nil {
@@ -146,8 +147,9 @@ func Serve(ln net.Listener) error {
 }
 
 func matchRankOne(source string, targets []string) (bestMatch string, bestRank int) {
+	bestRank = math.MaxInt
 	for _, target := range targets {
-		if rank := fuzzy.LevenshteinDistance(source, target); bestRank < rank {
+		if rank := fuzzy.LevenshteinDistance(source, target); bestRank > rank {
 			bestRank = rank
 			bestMatch = target
 		}
