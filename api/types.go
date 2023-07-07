@@ -32,55 +32,55 @@ type GenerateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
 
-	ModelOptions   `json:"model_opts"`
-	PredictOptions `json:"predict_opts"`
+	ModelOptions   `json:"model_opts,omitempty"`
+	PredictOptions `json:"predict_opts,omitempty"`
 }
 
 type ModelOptions struct {
-	ContextSize int    `json:"context_size"`
-	Seed        int    `json:"seed"`
-	NBatch      int    `json:"n_batch"`
-	F16Memory   bool   `json:"memory_f16"`
-	MLock       bool   `json:"mlock"`
-	MMap        bool   `json:"mmap"`
-	VocabOnly   bool   `json:"vocab_only"`
-	LowVRAM     bool   `json:"low_vram"`
-	Embeddings  bool   `json:"embeddings"`
-	NUMA        bool   `json:"numa"`
-	NGPULayers  int    `json:"gpu_layers"`
-	MainGPU     string `json:"main_gpu"`
-	TensorSplit string `json:"tensor_split"`
+	ContextSize int    `json:"context_size,omitempty"`
+	Seed        int    `json:"seed,omitempty"`
+	NBatch      int    `json:"n_batch,omitempty"`
+	F16Memory   bool   `json:"memory_f16,omitempty"`
+	MLock       bool   `json:"mlock,omitempty"`
+	MMap        bool   `json:"mmap,omitempty"`
+	VocabOnly   bool   `json:"vocab_only,omitempty"`
+	LowVRAM     bool   `json:"low_vram,omitempty"`
+	Embeddings  bool   `json:"embeddings,omitempty"`
+	NUMA        bool   `json:"numa,omitempty"`
+	NGPULayers  int    `json:"gpu_layers,omitempty"`
+	MainGPU     string `json:"main_gpu,omitempty"`
+	TensorSplit string `json:"tensor_split,omitempty"`
 }
 
 type PredictOptions struct {
-	Seed        int     `json:"seed"`
-	Threads     int     `json:"threads"`
-	Tokens      int     `json:"tokens"`
-	TopK        int     `json:"top_k"`
-	Repeat      int     `json:"repeat"`
-	Batch       int     `json:"batch"`
-	NKeep       int     `json:"nkeep"`
-	TopP        float64 `json:"top_p"`
-	Temperature float64 `json:"temp"`
-	Penalty     float64 `json:"penalty"`
+	Seed        int     `json:"seed,omitempty"`
+	Threads     int     `json:"threads,omitempty"`
+	Tokens      int     `json:"tokens,omitempty"`
+	TopK        int     `json:"top_k,omitempty"`
+	Repeat      int     `json:"repeat,omitempty"`
+	Batch       int     `json:"batch,omitempty"`
+	NKeep       int     `json:"nkeep,omitempty"`
+	TopP        float64 `json:"top_p,omitempty"`
+	Temperature float64 `json:"temp,omitempty"`
+	Penalty     float64 `json:"penalty,omitempty"`
 	F16KV       bool
 	DebugMode   bool
 	StopPrompts []string
-	IgnoreEOS   bool `json:"ignore_eos"`
+	IgnoreEOS   bool `json:"ignore_eos,omitempty"`
 
-	TailFreeSamplingZ float64 `json:"tfs_z"`
-	TypicalP          float64 `json:"typical_p"`
-	FrequencyPenalty  float64 `json:"freq_penalty"`
-	PresencePenalty   float64 `json:"pres_penalty"`
-	Mirostat          int     `json:"mirostat"`
-	MirostatETA       float64 `json:"mirostat_lr"`
-	MirostatTAU       float64 `json:"mirostat_ent"`
-	PenalizeNL        bool    `json:"penalize_nl"`
-	LogitBias         string  `json:"logit_bias"`
+	TailFreeSamplingZ float64 `json:"tfs_z,omitempty"`
+	TypicalP          float64 `json:"typical_p,omitempty"`
+	FrequencyPenalty  float64 `json:"freq_penalty,omitempty"`
+	PresencePenalty   float64 `json:"pres_penalty,omitempty"`
+	Mirostat          int     `json:"mirostat,omitempty"`
+	MirostatETA       float64 `json:"mirostat_lr,omitempty"`
+	MirostatTAU       float64 `json:"mirostat_ent,omitempty"`
+	PenalizeNL        bool    `json:"penalize_nl,omitempty"`
+	LogitBias         string  `json:"logit_bias,omitempty"`
 
 	PathPromptCache string
-	MLock           bool `json:"mlock"`
-	MMap            bool `json:"mmap"`
+	MLock           bool `json:"mlock,omitempty"`
+	MMap            bool `json:"mmap,omitempty"`
 	PromptCacheAll  bool
 	PromptCacheRO   bool
 	MainGPU         string
