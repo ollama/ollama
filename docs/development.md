@@ -1,33 +1,40 @@
 # Development
 
-ollama is built using Python 3 and uses [Poetry](https://python-poetry.org/) to manage dependencies and build packages.
+Install required tools:
 
 ```
-pip install poetry
+brew install cmake go node
 ```
 
-Install ollama and its dependencies:
+Then run `make`:
 
 ```
-poetry install --extras server --with dev
+make
 ```
 
-Run ollama server:
+Now you can run `ollama`:
 
 ```
-poetry run ollama server
+./ollama
 ```
 
-Update dependencies:
+## Releasing
+
+To release a new version of Ollama you'll need to set some environment variables:
+
+* `GITHUB_TOKEN`: your GitHub token
+* `APPLE_IDENTITY`: the Apple signing identity (macOS only)
+* `APPLE_ID`: your Apple ID
+* `APPLE_PASSWORD`: your Apple ID app-specific password
+* `APPLE_TEAM_ID`: the Apple team ID for the signing identity
+* `TELEMETRY_WRITE_KEY`: segment write key for telemetry
+
+Then run the publish script with the target version:
 
 ```
-poetry update --extras server --with dev
-poetry lock
-poetry export >requirements.txt
+VERSION=0.0.2 ./scripts/publish.sh
 ```
 
-Build binary package:
 
-```
-poetry build
-```
+
+
