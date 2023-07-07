@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
@@ -79,38 +80,41 @@ func RunGenerate(_ *cobra.Command, args []string) error {
 }
 
 func generate(model, prompt string) error {
-	client := api.NewClient()
+	if len(strings.TrimSpace(prompt)) > 0 {
+		client := api.NewClient()
 
-	spinner := progressbar.NewOptions(-1,
-		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionThrottle(60*time.Millisecond),
-		progressbar.OptionSpinnerType(14),
-		progressbar.OptionSetRenderBlankState(true),
-		progressbar.OptionSetElapsedTime(false),
-		progressbar.OptionClearOnFinish(),
-	)
+		spinner := progressbar.NewOptions(-1,
+			progressbar.OptionSetWriter(os.Stderr),
+			progressbar.OptionThrottle(60*time.Millisecond),
+			progressbar.OptionSpinnerType(14),
+			progressbar.OptionSetRenderBlankState(true),
+			progressbar.OptionSetElapsedTime(false),
+			progressbar.OptionClearOnFinish(),
+		)
 
-	go func() {
-		for range time.Tick(60 * time.Millisecond) {
-			if spinner.IsFinished() {
-				break
+		go func() {
+			for range time.Tick(60 * time.Millisecond) {
+				if spinner.IsFinished() {
+					break
+				}
+
+				spinner.Add(1)
+			}
+		}()
+
+		client.Generate(context.Background(), &api.GenerateRequest{Model: model, Prompt: prompt}, func(resp api.GenerateResponse) error {
+			if !spinner.IsFinished() {
+				spinner.Finish()
 			}
 
-			spinner.Add(1)
-		}
-	}()
+			fmt.Print(resp.Response)
+			return nil
+		})
 
-	client.Generate(context.Background(), &api.GenerateRequest{Model: model, Prompt: prompt}, func(resp api.GenerateResponse) error {
-		if !spinner.IsFinished() {
-			spinner.Finish()
-		}
+		fmt.Println()
+		fmt.Println()
+	}
 
-		fmt.Print(resp.Response)
-		return nil
-	})
-
-	fmt.Println()
-	fmt.Println()
 	return nil
 }
 
