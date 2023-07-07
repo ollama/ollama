@@ -12,9 +12,7 @@ import (
 	"github.com/jmorganca/ollama/api"
 )
 
-// const directoryURL = "https://ollama.ai/api/models"
-// TODO
-const directoryURL = "https://raw.githubusercontent.com/jmorganca/ollama/go/models.json"
+const directoryURL = "https://ollama.ai/api/models"
 
 type Model struct {
 	Name             string `json:"name"`
