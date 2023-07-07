@@ -1,17 +1,23 @@
+import { AiFillApple } from 'react-icons/ai'
+
 import models from '../../models.json'
 
 export default async function Home() {
   return (
     <main className='flex min-h-screen max-w-2xl flex-col p-4 lg:p-24'>
-      <h1 className='font-serif text-3xl'>ollama</h1>
-      <section className='my-8'>
+      <img src='/ollama.png' className='w-20 h-auto' />
+      <section className='my-4'>
         <p className='my-3 max-w-md'>
           <a className='underline' href='https://github.com/jmorganca/ollama'>
             Ollama
           </a>{' '}
-          is a tool for running large language models. The latest version is available for download{' '}
-          <a className='underline' href='https://github.com/jmorganca/ollama/releases/latest'>
-            here.
+          is a tool for running large language models, currently for macOS with Windows and Linux coming soon.
+          <br />
+          <br />
+          <a href='/download'>
+            <button className='bg-black text-white text-sm py-2 px-3 rounded-lg flex items-center gap-2'>
+              <AiFillApple className='h-auto w-5 relative -top-px' /> Download for macOS
+            </button>
           </a>
         </p>
       </section>
