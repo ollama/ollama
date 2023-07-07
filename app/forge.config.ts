@@ -1,4 +1,4 @@
-import type { ForgeConfig } from '@electron-forge/shared-types'
+import type { ForgeConfig, ResolvedForgeConfig, ForgeMakeResult } from '@electron-forge/shared-types'
 import { MakerSquirrel } from '@electron-forge/maker-squirrel'
 import { MakerZIP } from '@electron-forge/maker-zip'
 import { PublisherGithub } from '@electron-forge/publisher-github'
@@ -49,6 +49,11 @@ const config: ForgeConfig = {
       prerelease: true,
     }),
   ],
+  hooks: {
+    readPackageJson: async (_, packageJson) => {
+      return { ...packageJson, version: process.env.VERSION || packageJson.version }
+    },
+  },
   plugins: [
     new AutoUnpackNativesPlugin({}),
     new WebpackPlugin({
