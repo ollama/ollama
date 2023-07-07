@@ -15,7 +15,6 @@ if (!SingleInstanceLock) {
 }
 
 const createSystemtray = () => {
-
   let iconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
 
   if (app.isPackaged) {
@@ -84,7 +83,7 @@ function installCLI() {
     .showMessageBox({
       type: 'info',
       title: 'Ollama CLI installation',
-      message: 'To make the Ollama command line work in your terminal, it needs administrator privileges.',
+      message: 'To make the Ollama command work in your terminal, it needs administrator privileges.',
       buttons: ['OK'],
     })
     .then(result => {
@@ -167,6 +166,9 @@ async function heartbeat() {
   analytics.track({
     anonymousId: id(),
     event: 'heartbeat',
+    properties: {
+      version: app.getVersion(),
+    },
   })
 }
 
