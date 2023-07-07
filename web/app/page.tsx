@@ -14,7 +14,7 @@ export default async function Home() {
           is a tool for running large language models, currently for macOS with Windows and Linux coming soon.
           <br />
           <br />
-          <a href='/download'>
+          <a href='/download' target='_blank'>
             <button className='bg-black text-white text-sm py-2 px-3 rounded-lg flex items-center gap-2'>
               <AiFillApple className='h-auto w-5 relative -top-px' /> Download for macOS
             </button>
