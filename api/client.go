@@ -106,6 +106,11 @@ func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc
 				return err
 			}
 
+			if resp.Error.Message != "" {
+				// couldn't pull the model from the directory, proceed anyway
+				return nil
+			}
+
 			return fn(resp)
 		}),
 	)

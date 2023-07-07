@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -51,10 +50,6 @@ func pull(model string) error {
 		context.Background(),
 		&api.PullRequest{Model: model},
 		func(progress api.PullProgress) error {
-			if progress.Error.Code == http.StatusBadGateway {
-				// couldn't pull the model from the directory, proceed in offline mode
-				return nil
-			}
 			if bar == nil && progress.Percent == 100 {
 				// already downloaded
 				return nil

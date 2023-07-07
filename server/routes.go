@@ -45,21 +45,15 @@ func generate(c *gin.Context) {
 		return
 	}
 
-	remoteModel, err := getRemote(req.Model)
-	if err != nil {
-		// couldn't check the directory, proceed in offline mode
-		_, err := os.Stat(req.Model)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
-				return
-			}
-			// couldn't find the model file, try setting the model to the cache directory
-			req.Model = path.Join(cacheDir(), "models", req.Model+".bin")
-		}
-	}
-	if remoteModel != nil {
+	if remoteModel, _ := getRemote(req.Model); remoteModel != nil {
 		req.Model = remoteModel.FullName()
+	}
+	if _, err := os.Stat(req.Model); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+		req.Model = path.Join(cacheDir(), "models", req.Model+".bin")
 	}
 
 	modelOpts := getModelOpts(req)
