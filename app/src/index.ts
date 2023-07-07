@@ -1,5 +1,5 @@
 import { spawn, exec } from 'child_process'
-import { app, autoUpdater, dialog, Tray, Menu, nativeTheme } from 'electron'
+import { app, autoUpdater, dialog, Tray, Menu } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 
@@ -15,22 +15,14 @@ if (!SingleInstanceLock) {
 }
 
 const createSystemtray = () => {
-  let brightModeIconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_dark_16x16.png')
-  let darkModeIconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_bright_16x16.png')
+
+  let iconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
 
   if (app.isPackaged) {
-    brightModeIconPath = path.join(process.resourcesPath, 'ollama_icon_dark_16x16@2x.png')
-    darkModeIconPath = path.join(process.resourcesPath, 'ollama_icon_bright_16x16@2x.png')
+    iconPath = path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')
   }
 
-  tray = new Tray(brightModeIconPath)
-
-  if (process.platform === 'darwin') {
-    tray.setImage(nativeTheme.shouldUseDarkColors ? darkModeIconPath : brightModeIconPath)
-    nativeTheme.on('updated', () => {
-      tray.setImage(nativeTheme.shouldUseDarkColors ? darkModeIconPath : brightModeIconPath)
-    })
-  }
+  tray = new Tray(iconPath)
 
   const contextMenu = Menu.buildFromTemplate([{ role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' }])
 
