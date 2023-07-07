@@ -5,153 +5,108 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
-	"sync"
+	"net/url"
 )
 
 type Client struct {
-	URL  string
-	HTTP http.Client
+	base url.URL
 }
 
-func checkError(resp *http.Response, body []byte) error {
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-		return nil
+func NewClient(hosts ...string) *Client {
+	host := "127.0.0.1:11434"
+	if len(hosts) > 0 {
+		host = hosts[0]
 	}
 
-	apiError := Error{Code: int32(resp.StatusCode)}
-
-	if err := json.Unmarshal(body, &apiError); err != nil {
-		// Use the full body as the message if we fail to decode a response.
-		apiError.Message = string(body)
+	return &Client{
+		base: url.URL{Scheme: "http", Host: host},
 	}
-
-	return apiError
 }
 
-func (c *Client) stream(ctx context.Context, method string, path string, reqData any, callback func(data []byte)) error {
-	var reqBody io.Reader
-	var data []byte
-	var err error
-	if reqData != nil {
-		data, err = json.Marshal(reqData)
-		if err != nil {
-			return err
-		}
-		reqBody = bytes.NewReader(data)
+type options struct {
+	requestBody  io.Reader
+	responseFunc func(bts []byte) error
+}
+
+func OptionRequestBody(data any) func(*options) {
+	bts, err := json.Marshal(data)
+	if err != nil {
+		panic(err)
 	}
 
-	url := fmt.Sprintf("%s%s", c.URL, path)
+	return func(opts *options) {
+		opts.requestBody = bytes.NewReader(bts)
+	}
+}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+func OptionResponseFunc(fn func([]byte) error) func(*options) {
+	return func(opts *options) {
+		opts.responseFunc = fn
+	}
+}
+
+func (c *Client) stream(ctx context.Context, method, path string, fns ...func(*options)) error {
+	var opts options
+	for _, fn := range fns {
+		fn(&opts)
+	}
+
+	request, err := http.NewRequestWithContext(ctx, method, c.base.JoinPath(path).String(), opts.requestBody)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
 
-	res, err := c.HTTP.Do(req)
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer response.Body.Close()
 
-	reader := bufio.NewReader(res.Body)
-
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			} else {
-				return err // Handle other errors
+	if opts.responseFunc != nil {
+		scanner := bufio.NewScanner(response.Body)
+		for scanner.Scan() {
+			if err := opts.responseFunc(scanner.Bytes()); err != nil {
+				return err
 			}
 		}
-		if err := checkError(res, line); err != nil {
-			return err
-		}
-		callback(bytes.TrimSuffix(line, []byte("\n")))
 	}
 
 	return nil
 }
 
-func (c *Client) do(ctx context.Context, method string, path string, reqData any, respData any) error {
-	var reqBody io.Reader
-	var data []byte
-	var err error
-	if reqData != nil {
-		data, err = json.Marshal(reqData)
-		if err != nil {
-			return err
-		}
-		reqBody = bytes.NewReader(data)
-	}
+type GenerateResponseFunc func(GenerateResponse) error
 
-	url := fmt.Sprintf("%s%s", c.URL, path)
+func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn GenerateResponseFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/generate",
+		OptionRequestBody(req),
+		OptionResponseFunc(func(bts []byte) error {
+			var resp GenerateResponse
+			if err := json.Unmarshal(bts, &resp); err != nil {
+				return err
+			}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	respObj, err := c.HTTP.Do(req)
-	if err != nil {
-		return err
-	}
-	defer respObj.Body.Close()
-
-	respBody, err := io.ReadAll(respObj.Body)
-	if err != nil {
-		return err
-	}
-
-	if err := checkError(respObj, respBody); err != nil {
-		return err
-	}
-
-	if len(respBody) > 0 && respData != nil {
-		if err := json.Unmarshal(respBody, respData); err != nil {
-			return err
-		}
-	}
-	return nil
+			return fn(resp)
+		}),
+	)
 }
 
-func (c *Client) Generate(ctx context.Context, req *GenerateRequest, callback func(token string)) (*GenerateResponse, error) {
-	var res GenerateResponse
-	if err := c.stream(ctx, http.MethodPost, "/api/generate", req, func(token []byte) {
-		callback(string(token))
-	}); err != nil {
-		return nil, err
-	}
+type PullProgressFunc func(PullProgress) error
 
-	return &res, nil
-}
+func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/pull",
+		OptionRequestBody(req),
+		OptionResponseFunc(func(bts []byte) error {
+			var resp PullProgress
+			if err := json.Unmarshal(bts, &resp); err != nil {
+				return err
+			}
 
-func (c *Client) Pull(ctx context.Context, req *PullRequest, callback func(progress PullProgress)) error {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	if err := c.stream(ctx, http.MethodPost, "/api/pull", req, func(progressBytes []byte) {
-		var progress PullProgress
-		if err := json.Unmarshal(progressBytes, &progress); err != nil {
-			fmt.Println(err)
-			return
-		}
-		if progress.Completed >= progress.Total {
-			wg.Done()
-		}
-		callback(progress)
-	}); err != nil {
-		return err
-	}
-
-	wg.Wait()
-	return nil
+			return fn(resp)
+		}),
+	)
 }
