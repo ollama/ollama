@@ -81,13 +81,22 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 		defer C.free(unsafe.Pointer(cs))
 	}
 
+	cLogitBias := C.CString(po.LogitBias)
+	defer C.free(unsafe.Pointer(cLogitBias))
+
+	cMainGPU := C.CString(po.MainGPU)
+	defer C.free(unsafe.Pointer(cMainGPU))
+
+	cTensorSplit := C.CString(po.TensorSplit)
+	defer C.free(unsafe.Pointer(cTensorSplit))
+
 	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
 		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
 		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
 		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
 		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
-		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL), C.CString(po.LogitBias),
-		C.bool(po.MLock), C.bool(po.MMap), C.CString(po.MainGPU), C.CString(po.TensorSplit),
+		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL), cLogitBias,
+		C.bool(po.MLock), C.bool(po.MMap), cMainGPU, cTensorSplit,
 	)
 	defer C.llama_free_params(params)
 
