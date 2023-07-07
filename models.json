@@ -12,18 +12,6 @@
     "license": "CC-BY-SA-4.0"
   },
   {
-    "name": "replit",
-    "display_name": "Replit Code",
-    "parameters": "3B",
-    "url": "https://huggingface.co/nomic-ai/ggml-replit-code-v1-3b/resolve/main/ggml-replit-code-v1-3b.bin",
-    "short_description": "Code Completion",
-    "description": "This model focuses on code completion. The training mixture includes 20 different languages, listed here in descending order of number of tokens: Markdown, Java, JavaScript, Python, TypeScript, PHP, SQL, JSX, reStructuredText, Rust, C, CSS, Go, C++, HTML, Vue, Ruby, Jupyter Notebook, R, and Shell. This model binary is converted by Nomic AI with the original Replit model code before it was refactored to use MPT configurations.",
-    "published_by": "Nomic AI",
-    "original_author": "Replit, Inc.",
-    "original_url": "https://huggingface.co/replit/replit-code-v1-3b",
-    "license": "CC-BY-SA-4.0"
-  },
-  {
     "name": "nous-hermes",
     "display_name": "Nous Hermes",
     "parameters": "13B",

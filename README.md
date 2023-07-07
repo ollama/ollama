@@ -48,14 +48,6 @@ Ask questions. Get answers.
 ollama run orca "Write an email to my boss."
 ```
 
-### 👩‍💻 Code completion
-
-Sometimes you just need a little help writing code.
-
-```
-ollama run replit "Give me react code to render a button"
-```
-
 ### 📖 Storytelling
 
 Venture into the unknown.
