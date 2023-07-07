@@ -153,7 +153,17 @@ func generateBatch(model string) error {
 }
 
 func RunServer(_ *cobra.Command, _ []string) error {
-	ln, err := net.Listen("tcp", "127.0.0.1:11434")
+	host := os.Getenv("OLLAMA_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
+	port := os.Getenv("OLLAMA_PORT")
+	if port == "" {
+		port = "11434"
+	}
+
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%s", host, port))
 	if err != nil {
 		return err
 	}
