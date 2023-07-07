@@ -35,8 +35,6 @@ func RunRun(cmd *cobra.Command, args []string) error {
 		if err := pull(args[0]); err != nil {
 			return err
 		}
-
-		fmt.Println("Up to date.")
 	case err != nil:
 		return err
 	}
@@ -45,20 +43,27 @@ func RunRun(cmd *cobra.Command, args []string) error {
 }
 
 func pull(model string) error {
-	client := api.NewClient()
+	// TODO: check if the local model is up to date with remote
+	_, err := os.Stat(cacheDir() + "/models/" + model + ".bin")
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		client := api.NewClient()
+		var bar *progressbar.ProgressBar
+		return client.Pull(
+			context.Background(),
+			&api.PullRequest{Model: model},
+			func(progress api.PullProgress) error {
+				if bar == nil {
+					bar = progressbar.DefaultBytes(progress.Total)
+				}
 
-	var bar *progressbar.ProgressBar
-	return client.Pull(
-		context.Background(),
-		&api.PullRequest{Model: model},
-		func(progress api.PullProgress) error {
-			if bar == nil {
-				bar = progressbar.DefaultBytes(progress.Total)
-			}
-
-			return bar.Set64(progress.Completed)
-		},
-	)
+				return bar.Set64(progress.Completed)
+			},
+		)
+	case err != nil:
+		return err
+	}
+	return nil
 }
 
 func RunGenerate(_ *cobra.Command, args []string) error {
