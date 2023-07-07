@@ -1,5 +1,6 @@
 import { spawn, exec } from 'child_process'
 import { app, autoUpdater, dialog, Tray, Menu } from 'electron'
+import Store from 'electron-store'
 import * as path from 'path'
 import * as fs from 'fs'
 
@@ -7,6 +8,8 @@ import { analytics, id } from './telemetry'
 
 require('@electron/remote/main').initialize()
 
+
+const store = new Store();
 let tray: Tray | null = null
 
 const SingleInstanceLock = app.requestSingleInstanceLock()
@@ -23,7 +26,9 @@ const createSystemtray = () => {
 
   tray = new Tray(iconPath)
 
-  const contextMenu = Menu.buildFromTemplate([{ role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' }])
+  const contextMenu = Menu.buildFromTemplate([
+    { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' }
+  ])
 
   tray.setContextMenu(contextMenu)
   tray.setToolTip('Ollama')
@@ -106,6 +111,15 @@ function installCLI() {
 app.on('ready', () => {
   if (process.platform === 'darwin') {
     app.dock.hide()
+
+    if (!store.has('first-time-run')) {
+      // This is the first run
+      app.setLoginItemSettings({ openAtLogin: true })
+      store.set('first-time-run', false);
+    } else {
+      // The app has been run before
+      app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
+    }
 
     if (!app.isInApplicationsFolder()) {
       const chosen = dialog.showMessageBoxSync({
