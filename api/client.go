@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,6 +24,18 @@ func NewClient(hosts ...string) *Client {
 	return &Client{
 		base: url.URL{Scheme: "http", Host: host},
 	}
+}
+
+func StatusError(status int, message ...string) error {
+	if status < 400 {
+		return nil
+	}
+
+	if len(message) > 0 && len(message[0]) > 0 {
+		return fmt.Errorf("%d %s: %s", status, http.StatusText(status), message[0])
+	}
+
+	return fmt.Errorf("%d %s", status, http.StatusText(status))
 }
 
 type options struct {
@@ -70,7 +83,20 @@ func (c *Client) stream(ctx context.Context, method, path string, fns ...func(*o
 	if opts.responseFunc != nil {
 		scanner := bufio.NewScanner(response.Body)
 		for scanner.Scan() {
-			if err := opts.responseFunc(scanner.Bytes()); err != nil {
+			var errorResponse struct {
+				Error string `json:"error"`
+			}
+
+			bts := scanner.Bytes()
+			if err := json.Unmarshal(bts, &errorResponse); err != nil {
+				return err
+			}
+
+			if err := StatusError(response.StatusCode, errorResponse.Error); err != nil {
+				return err
+			}
+
+			if err := opts.responseFunc(bts); err != nil {
 				return err
 			}
 		}
