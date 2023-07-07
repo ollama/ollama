@@ -24,10 +24,10 @@ You can also build the [binary from source](#building).
 
 ## Quickstart
 
-Run the model that started it all.
+Run a fast and simple model.
 
 ```
-ollama run llama
+ollama run orca
 ```
 
 ## Example models
