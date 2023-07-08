@@ -3,16 +3,29 @@ import { redirect } from 'next/navigation'
 
 const octokit = new Octokit()
 
-export const revalidate = 60
-
 export default async function Download() {
-  const { data } = await octokit.repos.getLatestRelease({
-    owner: 'jmorganca',
-    repo: 'ollama',
-  })
+  const res = await fetch('https://api.github.com/repos/jmorganca/ollama/releases', { next: { revalidate: 60 } })
+  const data = await res.json()
+
+  if (data.length === 0) {
+    return new Response('not found', { status: 404 })
+  }
+
+  const latest = data[0]
+  const assets = latest.assets || []
+
+  if (assets.length === 0) {
+    return new Response('not found', { status: 404 })
+  }
 
   // todo: get the correct asset for the current arch/os
-  const asset = data.assets.find(a => a.name.toLowerCase().includes('darwin') && a.name.toLowerCase().includes('.zip'))
+  const asset = assets.find(
+    (a: any) => a.name.toLowerCase().includes('darwin') && a.name.toLowerCase().includes('.zip')
+  )
+
+  if (!asset) {
+    return new Response('not found', { status: 404 })
+  }
 
   if (asset) {
     redirect(asset.browser_download_url)

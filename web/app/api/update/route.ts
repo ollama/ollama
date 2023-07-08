@@ -1,44 +1,42 @@
 import { NextResponse } from 'next/server'
 import semver from 'semver'
-import { Octokit } from '@octokit/rest'
-import { RequestError } from '@octokit/types'
-
-const octokit = new Octokit()
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
 
-  const os = searchParams.get('os') || ''
-  const version = searchParams.get('version') || ''
+  const os = searchParams.get('os') || 'darwin'
+  const version = searchParams.get('version') || '0.0.0'
 
   if (!version) {
     return new Response('not found', { status: 404 })
   }
 
-  try {
-    const { data } = await octokit.repos.getLatestRelease({
-      owner: 'jmorganca',
-      repo: 'ollama',
-    })
+  const res = await fetch('https://api.github.com/repos/jmorganca/ollama/releases', { next: { revalidate: 60 } })
+  const data = await res.json()
 
-    // todo: get the correct asset for the current arch/os
-    const asset = data.assets.find(a => a.name.toLowerCase().includes(os))
-
-    if (!asset) {
-      return new Response('not found', { status: 404 })
-    }
-
-    if (semver.lt(version, data.tag_name)) {
-      return NextResponse.json({ version: data.tag_name, url: asset.browser_download_url })
-    }
-
-    return new Response('up to date', { status: 204 })
-  } catch (error) {
-    const e = error as RequestError
-    if (e.status === 404) {
-      return new Response('not found', { status: 404 })
-    }
-
-    return new Response('internal server error', { status: 500 })
+  if (data.length === 0) {
+    return new Response('not found', { status: 404 })
   }
+
+  const latest = data[0]
+  const assets = latest.assets || []
+
+  if (assets.length === 0) {
+    return new Response('not found', { status: 404 })
+  }
+
+  // todo: get the correct asset for the current arch/os
+  const asset = assets.find((a: any) => a.name.toLowerCase().includes(os) && a.name.toLowerCase().includes('.zip'))
+
+  if (!asset) {
+    return new Response('not found', { status: 404 })
+  }
+
+  console.log(asset)
+
+  if (semver.lt(version, latest.tag_name)) {
+    return NextResponse.json({ version: data.tag_name, url: asset.browser_download_url })
+  }
+
+  return new Response(null, { status: 204 })
 }
