@@ -8,8 +8,7 @@ import { analytics, id } from './telemetry'
 
 require('@electron/remote/main').initialize()
 
-
-const store = new Store();
+const store = new Store()
 let tray: Tray | null = null
 
 const SingleInstanceLock = app.requestSingleInstanceLock()
@@ -26,9 +25,7 @@ const createSystemtray = () => {
 
   tray = new Tray(iconPath)
 
-  const contextMenu = Menu.buildFromTemplate([
-    { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' }
-  ])
+  const contextMenu = Menu.buildFromTemplate([{ role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' }])
 
   tray.setContextMenu(contextMenu)
   tray.setToolTip('Ollama')
@@ -115,7 +112,7 @@ app.on('ready', () => {
     if (!store.has('first-time-run')) {
       // This is the first run
       app.setLoginItemSettings({ openAtLogin: true })
-      store.set('first-time-run', false);
+      store.set('first-time-run', false)
     } else {
       // The app has been run before
       app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
@@ -194,7 +191,7 @@ if (app.isPackaged) {
   setInterval(() => {
     heartbeat()
     autoUpdater.checkForUpdates()
-  }, 60000)
+  }, 60 * 60 * 1000)
 }
 
 autoUpdater.on('error', e => {
