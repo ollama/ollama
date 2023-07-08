@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation'
 
 const octokit = new Octokit()
 
+export const revalidate = 60
+
 export default async function Download() {
   const { data } = await octokit.repos.getLatestRelease({
     owner: 'jmorganca',
