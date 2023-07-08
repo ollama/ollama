@@ -183,8 +183,6 @@ async function heartbeat() {
   })
 }
 
-heartbeat()
-
 if (app.isPackaged) {
   heartbeat()
   autoUpdater.checkForUpdates()
