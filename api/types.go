@@ -26,6 +26,7 @@ type PullProgress struct {
 	Total     int64   `json:"total"`
 	Completed int64   `json:"completed"`
 	Percent   float64 `json:"percent"`
+	Error     Error   `json:"error"`
 }
 
 type GenerateRequest struct {
