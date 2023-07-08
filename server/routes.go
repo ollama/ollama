@@ -125,6 +125,10 @@ func generate(c *gin.Context) {
 func Serve(ln net.Listener) error {
 	r := gin.Default()
 
+	r.GET("/", func(c *gin.Context) {
+		c.String(http.StatusOK, "Ollama is running")
+	})
+
 	r.POST("api/pull", func(c *gin.Context) {
 		var req api.PullRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
