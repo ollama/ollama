@@ -42,7 +42,7 @@ ollama run vicuna "Why is the sky blue?"
 
 ### 🗺️ Instructions
 
-Ask questions. Get answers.
+Get a helping hand.
 
 ```
 ollama run orca "Write an email to my boss."
