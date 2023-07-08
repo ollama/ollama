@@ -4,7 +4,7 @@
 
 Run large language models with `llama.cpp`.
 
-> Note: certain models that can be run with this project are intended for research and/or non-commercial use only.
+> Note: certain models that can be run with Ollama are intended for research and/or non-commercial use only.
 
 ### Features
 
