@@ -60,9 +60,7 @@ func (l *LLama) Free() {
 	C.llama_binding_free_model(l.ctx)
 }
 
-func (l *LLama) Eval(text string, opts ...PredictOption) error {
-	po := NewPredictOptions(opts...)
-
+func (l *LLama) Eval(text string, po PredictOptions) error {
 	input := C.CString(text)
 	if po.Tokens == 0 {
 		po.Tokens = 99999999
