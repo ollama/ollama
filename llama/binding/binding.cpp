@@ -1,3 +1,25 @@
+// MIT License
+
+// Copyright (c) 2023 go-skynet authors
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "common.h"
 #include "llama.h"
 
@@ -513,16 +535,6 @@ void llama_free_params(void *params_ptr) {
   delete params;
 }
 
-std::vector<std::string> create_vector(const char **strings, int count) {
-  std::vector<std::string> *vec = new std::vector<std::string>;
-  for (int i = 0; i < count; i++) {
-    vec->push_back(std::string(strings[i]));
-  }
-  return *vec;
-}
-
-void delete_vector(std::vector<std::string> *vec) { delete vec; }
-
 int load_state(void *ctx, char *statefile, char *modes) {
   llama_context *state = (llama_context *)ctx;
   const llama_context *constState = static_cast<const llama_context *>(state);
@@ -613,9 +625,11 @@ void *llama_allocate_params(
   if (ignore_eos) {
     params->logit_bias[llama_token_eos()] = -INFINITY;
   }
-  if (antiprompt_count > 0) {
-    params->antiprompt = create_vector(antiprompt, antiprompt_count);
+
+  for (int i = 0; i < antiprompt_count; i++) {
+    params->antiprompt.push_back(antiprompt[i]);
   }
+
   params->tfs_z = tfs_z;
   params->typical_p = typical_p;
   params->presence_penalty = presence_penalty;
