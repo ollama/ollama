@@ -20,7 +20,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#ifdef __cplusplus
+
 extern "C" {
+
+#endif
 
 #include <stdbool.h>
 
@@ -58,4 +62,8 @@ void llama_binding_free_model(void *state);
 
 int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug);
 
+#ifdef __cplusplus
+
 }
+
+#endif
