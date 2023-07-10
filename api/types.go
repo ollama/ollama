@@ -89,7 +89,7 @@ type PredictOptions struct {
 }
 
 var DefaultModelOptions ModelOptions = ModelOptions{
-	ContextSize: 128,
+	ContextSize: 512,
 	Seed:        0,
 	F16Memory:   true,
 	MLock:       false,
