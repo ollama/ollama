@@ -40,8 +40,8 @@ const ollama = path.join(process.resourcesPath, 'ollama')
 
 function server() {
   const binary = app.isPackaged
-    ? path.join(process.resourcesPath, 'ollama')
-    : path.resolve(process.cwd(), '..', 'ollama')
+  ? path.join(process.resourcesPath, 'ollama')
+  : path.resolve(process.cwd(), '..', 'ollama')
 
   console.log(`Starting server`)
   const proc = spawn(binary, ['serve'])
@@ -52,10 +52,21 @@ function server() {
     console.error(`server: ${data}`)
   })
 
+  proc.on('exit', () => {
+    console.log('Restarting...');
+    server();
+  })
+
+  proc.on('disconnect', () => {
+    console.log('Restarting...');
+    server();
+  })
+
   process.on('exit', () => {
     proc.kill()
   })
 }
+
 
 function installCLI() {
   const symlinkPath = '/usr/local/bin/ollama'
