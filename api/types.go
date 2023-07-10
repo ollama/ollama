@@ -33,8 +33,8 @@ type GenerateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
 
-	ModelOptions   `json:"model_opts,omitempty"`
-	PredictOptions `json:"predict_opts,omitempty"`
+	ModelOptions   *ModelOptions   `json:"model_opts,omitempty"`
+	PredictOptions *PredictOptions `json:"predict_opts,omitempty"`
 }
 
 type ModelOptions struct {

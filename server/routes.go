@@ -38,8 +38,13 @@ func cacheDir() string {
 
 func generate(c *gin.Context) {
 	var req api.GenerateRequest
-	req.ModelOptions = api.DefaultModelOptions
-	req.PredictOptions = api.DefaultPredictOptions
+	if req.ModelOptions == nil {
+		req.ModelOptions = &api.DefaultModelOptions
+	}
+
+	if req.PredictOptions == nil {
+		req.PredictOptions = &api.DefaultPredictOptions
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 		return
