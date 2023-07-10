@@ -6,17 +6,16 @@ include(FetchContent)
 FetchContent_Declare(
     llama_cpp
     GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-    GIT_TAG        55dbb91
+    GIT_TAG        1d16309
 )
 
 FetchContent_MakeAvailable(llama_cpp)
 
-add_library(binding ${CMAKE_CURRENT_SOURCE_DIR}/binding/binding.cpp ${llama_cpp_SOURCE_DIR}/examples/common.cpp)
-target_include_directories(binding PRIVATE ${llama_cpp_SOURCE_DIR}/examples)
-target_link_libraries(binding llama ggml_static)
+file(COPY ${llama_cpp_SOURCE_DIR}/llama.h DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${llama_cpp_SOURCE_DIR}/ggml.h DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 if (LLAMA_METAL)
-    configure_file(${llama_cpp_SOURCE_DIR}/ggml-metal.metal ${CMAKE_CURRENT_BINARY_DIR}/../../ggml-metal.metal COPYONLY)
+    file(COPY ${llama_cpp_SOURCE_DIR}/ggml-metal.metal DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/../..)
 endif()
 
 add_custom_target(copy_libllama ALL COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:llama> ${CMAKE_CURRENT_BINARY_DIR})

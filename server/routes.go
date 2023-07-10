@@ -82,21 +82,11 @@ func generate(c *gin.Context) {
 		req.Prompt = sb.String()
 	}
 
-	ch := make(chan string)
-	model.SetTokenCallback(func(token string) bool {
-		ch <- token
-		return true
-	})
-
 	predictOpts := getPredictOpts(req)
 
-	go func() {
-		defer close(ch)
-		_, err := model.Predict(req.Prompt, predictOpts)
-		if err != nil {
-			panic(err)
-		}
-	}()
+	ch := make(chan string)
+	defer close(ch)
+	go model.Predict(req.Prompt, predictOpts, ch)
 
 	c.Stream(func(w io.Writer) bool {
 		token, ok := <-ch
@@ -129,7 +119,7 @@ func Serve(ln net.Listener) error {
 		c.String(http.StatusOK, "Ollama is running")
 	})
 
-	r.POST("api/pull", func(c *gin.Context) {
+	r.POST("/api/pull", func(c *gin.Context) {
 		var req api.PullRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})

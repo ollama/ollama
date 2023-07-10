@@ -69,7 +69,7 @@ type ModelOption func(p *ModelOptions)
 var DefaultModelOptions ModelOptions = ModelOptions{
 	ContextSize: 512,
 	Seed:        0,
-	F16Memory:   false,
+	F16Memory:   true,
 	MLock:       false,
 	Embeddings:  false,
 	MMap:        true,
