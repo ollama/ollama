@@ -13,7 +13,7 @@ import (
 )
 
 type LLama struct {
-	ctx         *C.struct_llama_context
+	ctx *C.struct_llama_context
 }
 
 func New(modelpath string, mo ModelOptions) (*LLama, error) {
@@ -56,7 +56,7 @@ func sampleTokenGreedy(candidates []C.llama_token_data) C.int {
 	return max.id
 }
 
-func (l *LLama) Predict(prompt string, po PredictOptions, ch chan string) error {
+func (l *LLama) Predict(prompt string, po PredictOptions, ch chan string, stop chan struct{}) error {
 	toks := make([]C.llama_token, len(prompt))
 	toksPtr := (*C.llama_token)(unsafe.Pointer(&toks[0]))
 
@@ -92,19 +92,24 @@ func (l *LLama) Predict(prompt string, po PredictOptions, ch chan string) error 
 		candidates := make([]C.llama_token_data, nVocab)
 		for i := range candidates {
 			candidates[i] = C.llama_token_data{
-				id: C.llama_token(i),
+				id:    C.llama_token(i),
 				logit: *(*C.float)(unsafe.Pointer(uintptr(unsafe.Pointer(logits)) + uintptr(i)*unsafe.Sizeof(*logits))),
-				p: C.float(0.0),
+				p:     C.float(0.0),
 			}
 		}
 
 		newTokenId = sampleTokenGreedy(candidates)
 
 		if newTokenId == C.llama_token_eos() {
-			break;
+			break
 		}
 
-		ch <- C.GoString(C.llama_token_to_str(l.ctx, newTokenId))
+		select {
+		case <-stop:
+			return nil
+		default:
+			ch <- C.GoString(C.llama_token_to_str(l.ctx, newTokenId))
+		}
 
 		toks = []C.llama_token{newTokenId}
 		toksPtr = (*C.llama_token)(unsafe.Pointer(&toks[0]))
