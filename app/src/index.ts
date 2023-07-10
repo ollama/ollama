@@ -38,27 +38,10 @@ if (require('electron-squirrel-startup')) {
 
 const ollama = path.join(process.resourcesPath, 'ollama')
 
-// if the app is packaged then run the server
-if (app.isPackaged) {
-  // Start the executable
-  console.log(`Starting server`)
-  const proc = spawn(ollama, ['serve'])
-  proc.stdout.on('data', data => {
-    console.log(`server: ${data}`)
-  })
-  proc.stderr.on('data', data => {
-    console.error(`server: ${data}`)
-  })
-
-  process.on('exit', () => {
-    proc.kill()
-  })
-}
-
 function server() {
   const binary = app.isPackaged
     ? path.join(process.resourcesPath, 'ollama')
-    : path.resolve(__dirname, '..', '..', 'ollama')
+    : path.resolve(process.cwd(), '..', 'ollama')
 
   console.log(`Starting server`)
   const proc = spawn(binary, ['serve'])
@@ -118,44 +101,46 @@ app.on('ready', () => {
       app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
     }
 
-    if (!app.isInApplicationsFolder()) {
-      const chosen = dialog.showMessageBoxSync({
-        type: 'question',
-        buttons: ['Move to Applications', 'Do Not Move'],
-        message: 'Ollama works best when run from the Applications directory.',
-        defaultId: 0,
-        cancelId: 1,
-      })
+    if (app.isPackaged) {
+      if (!app.isInApplicationsFolder()) {
+        const chosen = dialog.showMessageBoxSync({
+          type: 'question',
+          buttons: ['Move to Applications', 'Do Not Move'],
+          message: 'Ollama works best when run from the Applications directory.',
+          defaultId: 0,
+          cancelId: 1,
+        })
 
-      if (chosen === 0) {
-        try {
-          app.moveToApplicationsFolder({
-            conflictHandler: conflictType => {
-              if (conflictType === 'existsAndRunning') {
-                dialog.showMessageBoxSync({
-                  type: 'info',
-                  message: 'Cannot move to Applications directory',
-                  detail:
-                    'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
-                })
-              }
-              return true
-            },
-          })
-          return
-        } catch (e) {
-          console.error('Failed to move to applications folder')
-          console.error(e)
+        if (chosen === 0) {
+          try {
+            app.moveToApplicationsFolder({
+              conflictHandler: conflictType => {
+                if (conflictType === 'existsAndRunning') {
+                  dialog.showMessageBoxSync({
+                    type: 'info',
+                    message: 'Cannot move to Applications directory',
+                    detail:
+                      'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
+                  })
+                }
+                return true
+              },
+            })
+            return
+          } catch (e) {
+            console.error('Failed to move to applications folder')
+            console.error(e)
+          }
         }
       }
+
+      installCLI()
     }
   }
 
   createSystemtray()
 
-  if (app.isPackaged) {
-    installCLI()
-  }
+  server()
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

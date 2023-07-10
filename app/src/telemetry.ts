@@ -4,8 +4,6 @@ import Store from 'electron-store'
 
 const store = new Store()
 
-console.log(process.env)
-
 export const analytics = new Analytics({ writeKey: process.env.TELEMETRY_WRITE_KEY || '<empty>' })
 
 export function id(): string {
