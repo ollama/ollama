@@ -48,6 +48,14 @@ Get a helping hand.
 ollama run orca "Write an email to my boss."
 ```
 
+### 🔎 Ask questions about documents
+
+Send the contents of a document and ask questions about it.
+
+```
+ollama run nous-hermes "$(cat input.txt)", please summarize this story
+```
+
 ### 📖 Storytelling
 
 Venture into the unknown.
