@@ -59,13 +59,6 @@ func generate(c *gin.Context) {
 	modelOpts := getModelOpts(req)
 	modelOpts.NGPULayers = 1 // hard-code this for now
 
-	model, err := llama.New(req.Model, modelOpts)
-	if err != nil {
-		fmt.Println("Loading the model failed:", err.Error())
-		return
-	}
-	defer model.Free()
-
 	templateNames := make([]string, 0, len(templates.Templates()))
 	for _, template := range templates.Templates() {
 		templateNames = append(templateNames, template.Name())
@@ -86,7 +79,25 @@ func generate(c *gin.Context) {
 
 	ch := make(chan string)
 	defer close(ch)
-	go model.Predict(req.Prompt, predictOpts, ch)
+	stop := make(chan struct{})
+	defer close(stop)
+
+	go func() {
+		model, err := llama.New(req.Model, modelOpts)
+		if err != nil {
+			fmt.Println("Loading the model failed:", err.Error())
+			return
+		}
+		defer model.Free()
+		if err := model.Predict(req.Prompt, predictOpts, ch, stop); err != nil {
+			if errors.Is(err, io.EOF) {
+				fmt.Println("Client disconnected:", err.Error())
+				return
+			}
+			fmt.Println("Error in prediction:", err.Error())
+			return
+		}
+	}()
 
 	c.Stream(func(w io.Writer) bool {
 		token, ok := <-ch
