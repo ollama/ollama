@@ -117,6 +117,46 @@ func generate(c *gin.Context) {
 	}
 }
 
+func embedding(c *gin.Context) {
+	req := api.EmbeddingRequest{
+		Options: api.DefaultOptions(),
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+		return
+	}
+
+	if remoteModel, _ := getRemote(req.Model); remoteModel != nil {
+		req.Model = remoteModel.FullName()
+	}
+	if _, err := os.Stat(req.Model); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+		req.Model = path.Join(cacheDir(), "models", req.Model+".bin")
+	}
+
+	req.Options.EmbeddingOnly = true // this is required for this endpoint
+	llm, err := llama.New(req.Model, req.Options)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer llm.Close()
+
+	embedding, err := llm.Embed(req.Input)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	resp := api.EmbeddingResponse{
+		Embedding: embedding,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 func Serve(ln net.Listener) error {
 	r := gin.Default()
 
@@ -164,6 +204,8 @@ func Serve(ln net.Listener) error {
 			return true
 		})
 	})
+
+	r.POST("/api/embedding", embedding)
 
 	r.POST("/api/generate", generate)
 

@@ -89,3 +89,14 @@ func DefaultOptions() Options {
 		NumThread: runtime.NumCPU(),
 	}
 }
+
+type EmbeddingRequest struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+
+	Options `json:"options"`
+}
+
+type EmbeddingResponse struct {
+	Embedding []float32 `json:"embedding"`
+}
