@@ -13,18 +13,16 @@ require('@electron/remote/main').initialize()
 const store = new Store()
 let tray: Tray | null = null
 
-const logFile = new winston.transports.File({
-  filename: path.join(app.getPath('home'), '.ollama', 'logs', 'server.log'),
-  maxsize: 1024 * 1024 * 20,
-  maxFiles: 5,
-});
-
-const logger = winston.createLogger({ 
-  transports: [logFile],
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.printf(info => `${info.timestamp} ${info.level}: ${info.message}`)
-  )
+const logger = winston.createLogger({
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({
+      filename: path.join(app.getPath('home'), '.ollama', 'logs', 'server.log'),
+      maxsize: 1024 * 1024 * 20,
+      maxFiles: 5,
+    }),
+  ],
+  format: winston.format.printf(info => `${info.message}`),
 })
 
 const SingleInstanceLock = app.requestSingleInstanceLock()
@@ -56,32 +54,31 @@ const ollama = path.join(process.resourcesPath, 'ollama')
 
 function server() {
   const binary = app.isPackaged
-  ? path.join(process.resourcesPath, 'ollama')
-  : path.resolve(process.cwd(), '..', 'ollama')
+    ? path.join(process.resourcesPath, 'ollama')
+    : path.resolve(process.cwd(), '..', 'ollama')
 
-  const proc = spawn(binary, ['serve'])
+  const proc = spawn(binary, ['serve'], { cwd: path.dirname(binary) })
   proc.stdout.on('data', data => {
     logger.info(`server: ${data.toString()}`)
   })
   proc.stderr.on('data', data => {
-    logger.error(`server: ${data.toString()}`)
+    logger.info(`server: ${data.toString()}`)
   })
 
   proc.on('exit', () => {
-    logger.info('Restarting the server...');
-    server();
+    logger.info('Restarting the server...')
+    server()
   })
 
   proc.on('disconnect', () => {
-    logger.info('Server disconnected. Reconnecting...');
-    server();
+    logger.info('Server disconnected. Reconnecting...')
+    server()
   })
 
   process.on('exit', () => {
     proc.kill()
   })
 }
-
 
 function installCLI() {
   const symlinkPath = '/usr/local/bin/ollama'
