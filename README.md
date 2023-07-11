@@ -75,7 +75,7 @@ ollama run ~/Downloads/vicuna-7b-v1.3.ggmlv3.q4_1.bin
 ## Building
 
 ```
-make
+go build .
 ```
 
 To run it start the server:

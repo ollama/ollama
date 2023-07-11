@@ -1,6 +1,9 @@
 package llama
 
 /*
+#cgo CPPFLAGS: -O3 -DNDEBUG=1
+#cgo CXXFLAGS: -std=c++11
+#cgo darwin CPPFLAGS: -DGGML_USE_METAL=1 -DGGML_METAL_NDEBUG=1
 #cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
 #include <stdlib.h>
 #include "llama.h"
@@ -99,7 +102,7 @@ func New(model string, opts api.Options) (*llama, error) {
 
 	llm := llama{Options: opts}
 
-	C.llama_init_backend(C.bool(llm.UseNUMA))
+	C.llama_backend_init(C.bool(llm.UseNUMA))
 
 	params := C.llama_context_default_params()
 	params.seed = C.uint(llm.Seed)
