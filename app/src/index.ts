@@ -59,11 +59,11 @@ function server() {
   const proc = spawn(binary, ['serve'])
 
   proc.stdout.on('data', data => {
-    logger.info(data.toString())
+    logger.info(data.toString().trim())
   })
 
   proc.stderr.on('data', data => {
-    logger.error(data.toString())
+    logger.error(data.toString().trim())
   })
 
   proc.on('exit', () => {
