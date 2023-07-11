@@ -98,5 +98,5 @@ type EmbeddingRequest struct {
 }
 
 type EmbeddingResponse struct {
-	Embedding []float32 `json:"embedding"`
+	Embedding []float64 `json:"embedding"`
 }

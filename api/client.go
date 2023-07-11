@@ -98,3 +98,33 @@ func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc
 		return fn(resp)
 	})
 }
+
+func (c *Client) Embedding(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
+	var buf *bytes.Buffer
+	bts, err := json.Marshal(&req)
+	if err != nil {
+		return nil, err
+	}
+
+	buf = bytes.NewBuffer(bts)
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base.JoinPath("/api/embedding").String(), buf)
+	if err != nil {
+		return nil, err
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+
+	var resp EmbeddingResponse
+	if err := json.NewDecoder(response.Body).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("unmarshal embedding: %w", err)
+	}
+	return &resp, nil
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"gonum.org/v1/gonum/mat"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/server"
@@ -67,7 +68,8 @@ func RunGenerate(_ *cobra.Command, args []string) error {
 	// join all args into a single prompt
 	prompt := strings.Join(args[1:], " ")
 	if len(args) > 1 {
-		return generate(args[0], prompt)
+		_, err := generate(args[0], prompt)
+		return err
 	}
 
 	if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -77,7 +79,67 @@ func RunGenerate(_ *cobra.Command, args []string) error {
 	return generateBatch(args[0])
 }
 
-func generate(model, prompt string) error {
+// TODO: rather than setting this, add an endpoint to the server to tokenize the prompt so we can get the real length of the prompt
+const maxChars = 250 // currently the max default context in the server is 512, this sets characters to a range that hopefully won't exceed the token length
+
+// stuffPrompt adds adds more context to the prompt from the current session
+func stuffPrompt(prompt string, similar VectorSlice) string {
+	if len(prompt) >= maxChars {
+		return prompt
+	}
+	for _, s := range similar {
+		userInput := fmt.Sprintf(". I previously stated %q", s.UserInput)
+		if len(prompt)+len(userInput) < maxChars {
+			prompt += userInput
+		}
+		modelResponse := fmt.Sprintf(". You previously responded %q", s.ModelResponse)
+		if len(prompt)+len(modelResponse) < maxChars {
+			prompt += modelResponse
+		}
+	}
+	return prompt
+}
+
+// generateWithEmbeddings adds additional context to the prompt from the current session
+func generateWithEmbeddings(model string, embeddings *VectorSlice, prompt string) error {
+	input := prompt
+	client := api.NewClient()
+	// get the embedding of the current prompt to find similar prompts stored in memory
+	e, err := client.Embedding(context.Background(), api.EmbeddingRequest{Model: model, Input: prompt})
+	if err != nil {
+		return err
+	}
+	embedding := mat.NewVecDense(len(e.Embedding), e.Embedding)
+	similar := embeddings.NearestNeighbors(embedding, 2)
+
+	prompt = stuffPrompt(input, similar)
+
+	generated, err := generate(model, prompt)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		fullText := fmt.Sprintf("%s %s", prompt, generated)
+		// if the prompt got stuffed, only add the original input to avoid nesting user inputs
+		if prompt != input {
+			fullText = fmt.Sprintf("%s %s", input, generated)
+		}
+		e, err = client.Embedding(context.Background(), api.EmbeddingRequest{Model: model, Input: fullText})
+		if err != nil {
+			return
+		}
+		embeddings.Add(Vector{
+			UserInput:     prompt,
+			ModelResponse: generated,
+			Data:          mat.NewVecDense(len(e.Embedding), e.Embedding),
+		})
+	}()
+	return nil
+}
+
+func generate(model, prompt string) (string, error) {
+	result := ""
 	if len(strings.TrimSpace(prompt)) > 0 {
 		client := api.NewClient()
 
@@ -107,25 +169,28 @@ func generate(model, prompt string) error {
 			}
 
 			fmt.Print(resp.Response)
+			result += resp.Response
 			return nil
 		}
 
 		if err := client.Generate(context.Background(), &request, fn); err != nil {
-			return err
+			return "", err
 		}
 
 		fmt.Println()
 		fmt.Println()
 	}
 
-	return nil
+	return result, nil
 }
 
+// generateInteractive runs the generator in interactive mode which has a memory of previous prompts
 func generateInteractive(model string) error {
 	fmt.Print(">>> ")
 	scanner := bufio.NewScanner(os.Stdin)
+	embeddings := &VectorSlice{}
 	for scanner.Scan() {
-		if err := generate(model, scanner.Text()); err != nil {
+		if err := generateWithEmbeddings(model, embeddings, scanner.Text()); err != nil {
 			return err
 		}
 
@@ -140,7 +205,7 @@ func generateBatch(model string) error {
 	for scanner.Scan() {
 		prompt := scanner.Text()
 		fmt.Printf(">>> %s\n", prompt)
-		if err := generate(model, prompt); err != nil {
+		if _, err := generate(model, prompt); err != nil {
 			return err
 		}
 	}

@@ -234,7 +234,7 @@ func (llm *llama) sample(pastTokens deque[C.llama_token], opts *C.struct_llama_s
 	return 0, io.EOF
 }
 
-func (llm *llama) Embed(input string) ([]float32, error) {
+func (llm *llama) Embed(input string) ([]float64, error) {
 	if !llm.EmbeddingOnly {
 		return nil, errors.New("llama: embedding not enabled")
 	}
@@ -249,7 +249,7 @@ func (llm *llama) Embed(input string) ([]float32, error) {
 			Len:  n,
 			Cap:  n,
 		}
-		embedSlice := *(*[]float32)(unsafe.Pointer(&header))
+		embedSlice := *(*[]float64)(unsafe.Pointer(&header))
 
 		return embedSlice, nil
 	}
