@@ -108,7 +108,7 @@ func pull(c *gin.Context) {
 
 	remote, err := getRemote(req.Model)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -34,7 +35,14 @@ func RunRun(cmd *cobra.Command, args []string) error {
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := pull(args[0]); err != nil {
-			return err
+			var apiStatusError api.StatusError
+			if !errors.As(err, &apiStatusError) {
+				return err
+			}
+
+			if apiStatusError.StatusCode != http.StatusBadGateway {
+				return err
+			}
 		}
 	case err != nil:
 		return err
@@ -50,11 +58,12 @@ func pull(model string) error {
 		context.Background(),
 		&api.PullRequest{Model: model},
 		func(progress api.PullProgress) error {
-			if bar == nil && progress.Percent == 100 {
-				// already downloaded
-				return nil
-			}
 			if bar == nil {
+				if progress.Percent == 100 {
+					// already downloaded
+					return nil
+				}
+
 				bar = progressbar.DefaultBytes(progress.Total)
 			}
 
