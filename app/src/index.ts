@@ -45,7 +45,6 @@ const createSystemtray = () => {
   tray.setToolTip('Ollama')
 }
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require('electron-squirrel-startup')) {
   app.quit()
 }
@@ -57,12 +56,14 @@ function server() {
     ? path.join(process.resourcesPath, 'ollama')
     : path.resolve(process.cwd(), '..', 'ollama')
 
-  const proc = spawn(binary, ['serve'], { cwd: path.dirname(binary) })
+  const proc = spawn(binary, ['serve'])
+
   proc.stdout.on('data', data => {
-    logger.info(`server: ${data.toString()}`)
+    logger.info(data.toString())
   })
+
   proc.stderr.on('data', data => {
-    logger.info(`server: ${data.toString()}`)
+    logger.error(data.toString())
   })
 
   proc.on('exit', () => {
@@ -101,12 +102,12 @@ function installCLI() {
     `
         exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
           if (error) {
-            logger.error(`CLI: Failed to install CLI - ${error.message}`)
+            logger.error(`cli: failed to install cli: ${error.message}`)
             return
           }
 
-          logger.info(`CLI: ${stdout}}`)
-          logger.error(`CLI: ${stderr}`)
+          logger.info(stdout)
+          logger.error(stderr)
         })
       }
     })
@@ -200,7 +201,7 @@ if (app.isPackaged) {
 }
 
 autoUpdater.on('error', e => {
-  logger.error(`auto updater: update check failed - ${e.message}`)
+  logger.error(`update check failed - ${e.message}`)
 })
 
 autoUpdater.on('update-downloaded', (event, releaseNotes, releaseName) => {
