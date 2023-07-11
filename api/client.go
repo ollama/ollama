@@ -10,6 +10,20 @@ import (
 	"net/url"
 )
 
+type StatusError struct {
+	StatusCode int
+	Status     string
+	Message    string
+}
+
+func (e StatusError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("%s: %s", e.Status, e.Message)
+	}
+
+	return e.Status
+}
+
 type Client struct {
 	base url.URL
 }
@@ -25,7 +39,7 @@ func NewClient(hosts ...string) *Client {
 	}
 }
 
-func (c *Client) stream(ctx context.Context, method, path string, data any, callback func([]byte) error) error {
+func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
 	var buf *bytes.Buffer
 	if data != nil {
 		bts, err := json.Marshal(data)
@@ -53,7 +67,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, call
 	scanner := bufio.NewScanner(response.Body)
 	for scanner.Scan() {
 		var errorResponse struct {
-			Error string `json:"error"`
+			Error string `json:"error,omitempty"`
 		}
 
 		bts := scanner.Bytes()
@@ -61,11 +75,15 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, call
 			return fmt.Errorf("unmarshal: %w", err)
 		}
 
-		if len(errorResponse.Error) > 0 {
-			return fmt.Errorf("stream: %s", errorResponse.Error)
+		if response.StatusCode >= 400 {
+			return StatusError{
+				StatusCode: response.StatusCode,
+				Status:     response.Status,
+				Message:    errorResponse.Error,
+			}
 		}
 
-		if err := callback(bts); err != nil {
+		if err := fn(bts); err != nil {
 			return err
 		}
 	}

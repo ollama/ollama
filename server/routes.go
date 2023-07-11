@@ -16,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lithammer/fuzzysearch/fuzzy"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llama"
@@ -56,12 +55,8 @@ func generate(c *gin.Context) {
 		req.Model = path.Join(cacheDir(), "models", req.Model+".bin")
 	}
 
-	llm, err := llama.New(req.Model, req.Options)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer llm.Close()
+	ch := make(chan any)
+	go stream(c, ch)
 
 	templateNames := make([]string, 0, len(templates.Templates()))
 	for _, template := range templates.Templates() {
@@ -79,39 +74,49 @@ func generate(c *gin.Context) {
 		req.Prompt = sb.String()
 	}
 
-	ch := make(chan string)
-	g, _ := errgroup.WithContext(c.Request.Context())
-	g.Go(func() error {
-		defer close(ch)
-		return llm.Predict(req.Prompt, func(s string) {
-			ch <- s
-		})
-	})
+	llm, err := llama.New(req.Model, req.Options)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer llm.Close()
 
-	g.Go(func() error {
-		c.Stream(func(w io.Writer) bool {
-			s, ok := <-ch
-			if !ok {
-				return false
-			}
+	fn := func(s string) {
+		ch <- api.GenerateResponse{Response: s}
+	}
 
-			bts, err := json.Marshal(api.GenerateResponse{Response: s})
-			if err != nil {
-				return false
-			}
+	if err := llm.Predict(req.Prompt, fn); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-			bts = append(bts, '\n')
-			if _, err := w.Write(bts); err != nil {
-				return false
-			}
+}
 
-			return true
-		})
+func pull(c *gin.Context) {
+	var req api.PullRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-		return nil
-	})
+	remote, err := getRemote(req.Model)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
 
-	if err := g.Wait(); err != nil && !errors.Is(err, io.EOF) {
+	ch := make(chan any)
+	go stream(c, ch)
+
+	fn := func(total, completed int64) {
+		ch <- api.PullProgress{
+			Total:     total,
+			Completed: completed,
+			Percent:   float64(total) / float64(completed) * 100,
+		}
+	}
+
+	if err := saveModel(remote, fn); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -124,47 +129,7 @@ func Serve(ln net.Listener) error {
 		c.String(http.StatusOK, "Ollama is running")
 	})
 
-	r.POST("api/pull", func(c *gin.Context) {
-		var req api.PullRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		progressCh := make(chan api.PullProgress)
-		go func() {
-			defer close(progressCh)
-			if err := pull(req.Model, progressCh); err != nil {
-				var opError *net.OpError
-				if errors.As(err, &opError) {
-					c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-					return
-				}
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-		}()
-
-		c.Stream(func(w io.Writer) bool {
-			progress, ok := <-progressCh
-			if !ok {
-				return false
-			}
-
-			bts, err := json.Marshal(progress)
-			if err != nil {
-				return false
-			}
-
-			bts = append(bts, '\n')
-			if _, err := w.Write(bts); err != nil {
-				return false
-			}
-
-			return true
-		})
-	})
-
+	r.POST("api/pull", pull)
 	r.POST("/api/generate", generate)
 
 	log.Printf("Listening on %s", ln.Addr())
@@ -185,4 +150,25 @@ func matchRankOne(source string, targets []string) (bestMatch string, bestRank i
 	}
 
 	return
+}
+
+func stream(c *gin.Context, ch chan any) {
+	c.Stream(func(w io.Writer) bool {
+		val, ok := <-ch
+		if !ok {
+			return false
+		}
+
+		bts, err := json.Marshal(val)
+		if err != nil {
+			return false
+		}
+
+		bts = append(bts, '\n')
+		if _, err := w.Write(bts); err != nil {
+			return false
+		}
+
+		return true
+	})
 }
