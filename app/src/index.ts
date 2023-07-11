@@ -13,18 +13,15 @@ require('@electron/remote/main').initialize()
 const store = new Store()
 let tray: Tray | null = null
 
-const logFile = new winston.transports.DailyRotateFile({
-  filename: path.join(app.getPath('home'), '.ollama', 'logs', 'server-%DATE%.log'),
-  datePattern: 'YYYY-MM-DD-HH',
-  zippedArchive: true,
-  maxSize: '20m',
-  maxFiles: '7d',
+const logFile = new winston.transports.File({
+  filename: path.join(app.getPath('home'), '.ollama', 'logs', 'server.log'),
+  maxsize: 1024 * 1024 * 20,
+  maxFiles: 5,
 });
 
 const logger = winston.createLogger({ 
   transports: [logFile],
   format: winston.format.combine(
-    winston.format.colorize(),
     winston.format.timestamp(),
     winston.format.printf(info => `${info.timestamp} ${info.level}: ${info.message}`)
   )
@@ -64,10 +61,10 @@ function server() {
 
   const proc = spawn(binary, ['serve'])
   proc.stdout.on('data', data => {
-    logger.info(`[server] ${data.toString()}`)
+    logger.info(`server: ${data.toString()}`)
   })
   proc.stderr.on('data', data => {
-    logger.error(`[server] ${data.toString()}`)
+    logger.error(`server: ${data.toString()}`)
   })
 
   proc.on('exit', () => {
@@ -107,12 +104,12 @@ function installCLI() {
     `
         exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
           if (error) {
-            logger.error(`[CLI] Failed to install CLI - ${error.message}`)
+            logger.error(`CLI: Failed to install CLI - ${error.message}`)
             return
           }
 
-          logger.info(`[CLI] ${stdout}}`)
-          logger.error(`[CLI] ${stderr}`)
+          logger.info(`CLI: ${stdout}}`)
+          logger.error(`CLI: ${stderr}`)
         })
       }
     })
@@ -206,7 +203,7 @@ if (app.isPackaged) {
 }
 
 autoUpdater.on('error', e => {
-  logger.error(`[auto updater] update check failed - ${e.message}`)
+  logger.error(`auto updater: update check failed - ${e.message}`)
 })
 
 autoUpdater.on('update-downloaded', (event, releaseNotes, releaseName) => {
