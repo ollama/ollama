@@ -1,215 +1,234 @@
-// MIT License
-
-// Copyright (c) 2023 go-skynet authors
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
 package llama
 
-// #cgo LDFLAGS: -Lbuild -lbinding -lllama -lm -lggml_static -lstdc++
-// #cgo CXXFLAGS: -std=c++11
-// #cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
-// #include "binding/binding.h"
-// #include <stdlib.h>
-import "C"
+/*
+#cgo CPPFLAGS: -O3 -DNDEBUG=1
+#cgo CXXFLAGS: -std=c++11
+#cgo darwin CPPFLAGS: -DGGML_USE_METAL=1 -DGGML_METAL_NDEBUG=1
+#cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
+#include <stdlib.h>
+#include "llama.h"
 
+struct llama_sample_options
+{
+	float repeat_penalty;
+	float frequency_penalty;
+	float presence_penalty;
+	float temperature;
+	int32_t top_k;
+	float top_p;
+	float tfs_z;
+	float typical_p;
+	int mirostat;
+	float mirostat_tau;
+	float mirostat_eta;
+};
+
+llama_token llama_sample(
+		struct llama_context *ctx,
+		struct llama_token_data *candidates,
+		size_t n_candidates,
+		const llama_token *last_tokens,
+		size_t n_last_tokens,
+		struct llama_sample_options *opts)
+{
+	llama_token_data_array candidates_p = {
+		candidates,
+		n_candidates,
+		false,
+	};
+
+	llama_sample_repetition_penalty(
+		ctx, &candidates_p,
+		last_tokens, n_last_tokens,
+		opts->repeat_penalty);
+
+	llama_sample_frequency_and_presence_penalties(
+		ctx, &candidates_p,
+		last_tokens, n_last_tokens,
+		opts->frequency_penalty, opts->presence_penalty);
+
+	if (opts->temperature <= 0) {
+		return llama_sample_token_greedy(ctx, &candidates_p);
+	}
+
+	if (opts->mirostat == 1) {
+		int mirostat_m = 100;
+		float mirostat_mu = 2.0f * opts->mirostat_tau;
+		llama_sample_temperature(ctx, &candidates_p, opts->temperature);
+		return llama_sample_token_mirostat(
+			ctx, &candidates_p,
+			opts->mirostat_tau, opts->mirostat_eta,
+			mirostat_m, &mirostat_mu);
+	} else if (opts->mirostat == 2) {
+		float mirostat_mu = 2.0f * opts->mirostat_tau;
+		llama_sample_temperature(ctx, &candidates_p, opts->temperature);
+		return llama_sample_token_mirostat_v2(
+			ctx, &candidates_p,
+			opts->mirostat_tau, opts->mirostat_eta,
+			&mirostat_mu);
+	} else {
+		llama_sample_top_k(ctx, &candidates_p, opts->top_k, 1);
+		llama_sample_tail_free(ctx, &candidates_p, opts->tfs_z, 1);
+		llama_sample_typical(ctx, &candidates_p, opts->typical_p, 1);
+		llama_sample_top_p(ctx, &candidates_p, opts->top_p, 1);
+		llama_sample_temperature(ctx, &candidates_p, opts->temperature);
+		return llama_sample_token(ctx, &candidates_p);
+	}
+}
+*/
+import "C"
 import (
-	"fmt"
+	"errors"
+	"io"
+	"os"
 	"strings"
-	"sync"
 	"unsafe"
+
+	"github.com/jmorganca/ollama/api"
 )
 
-type LLama struct {
-	ctx         unsafe.Pointer
-	embeddings  bool
-	contextSize int
+type llama struct {
+	params *C.struct_llama_context_params
+	model  *C.struct_llama_model
+	ctx    *C.struct_llama_context
+
+	api.Options
 }
 
-func New(model string, mo ModelOptions) (*LLama, error) {
-	modelPath := C.CString(model)
-	defer C.free(unsafe.Pointer(modelPath))
-
-	ctx := C.load_model(modelPath, C.int(mo.ContextSize), C.int(mo.Seed), C.bool(mo.F16Memory), C.bool(mo.MLock), C.bool(mo.Embeddings), C.bool(mo.MMap), C.bool(mo.LowVRAM), C.bool(mo.VocabOnly), C.int(mo.NGPULayers), C.int(mo.NBatch), C.CString(mo.MainGPU), C.CString(mo.TensorSplit), C.bool(mo.NUMA))
-	if ctx == nil {
-		return nil, fmt.Errorf("failed loading model")
+func New(model string, opts api.Options) (*llama, error) {
+	if _, err := os.Stat(model); err != nil {
+		return nil, err
 	}
 
-	ll := &LLama{ctx: ctx, contextSize: mo.ContextSize, embeddings: mo.Embeddings}
+	llm := llama{Options: opts}
 
-	return ll, nil
+	C.llama_backend_init(C.bool(llm.UseNUMA))
+
+	params := C.llama_context_default_params()
+	params.seed = C.uint(llm.Seed)
+	params.n_ctx = C.int(llm.NumCtx)
+	params.n_batch = C.int(llm.NumBatch)
+	params.n_gpu_layers = C.int(llm.NumGPU)
+	params.main_gpu = C.int(llm.MainGPU)
+	params.low_vram = C.bool(llm.LowVRAM)
+	params.f16_kv = C.bool(llm.F16KV)
+	params.logits_all = C.bool(llm.LogitsAll)
+	params.vocab_only = C.bool(llm.VocabOnly)
+	params.use_mmap = C.bool(llm.UseMMap)
+	params.use_mlock = C.bool(llm.UseMLock)
+	params.embedding = C.bool(llm.EmbeddingOnly)
+	llm.params = &params
+
+	cModel := C.CString(model)
+	defer C.free(unsafe.Pointer(cModel))
+
+	llm.model = C.llama_load_model_from_file(cModel, params)
+	llm.ctx = C.llama_new_context_with_model(llm.model, params)
+
+	// warm up the model
+	bos := []C.llama_token{C.llama_token_bos()}
+	C.llama_eval(llm.ctx, unsafe.SliceData(bos), C.int(len(bos)), 0, C.int(opts.NumThread))
+	C.llama_reset_timings(llm.ctx)
+
+	return &llm, nil
 }
 
-func (l *LLama) Free() {
-	C.llama_binding_free_model(l.ctx)
+func (llm *llama) Close() {
+	defer C.llama_free_model(llm.model)
+	defer C.llama_free(llm.ctx)
+
+	C.llama_print_timings(llm.ctx)
 }
 
-func (l *LLama) Eval(text string, po PredictOptions) error {
-	input := C.CString(text)
-	if po.Tokens == 0 {
-		po.Tokens = 99999999
-	}
-	defer C.free(unsafe.Pointer(input))
-
-	reverseCount := len(po.StopPrompts)
-	reversePrompt := make([]*C.char, reverseCount)
-	var pass **C.char
-	for i, s := range po.StopPrompts {
-		cs := C.CString(s)
-		reversePrompt[i] = cs
-		pass = &reversePrompt[0]
-		defer C.free(unsafe.Pointer(cs))
+func (llm *llama) Predict(prompt string, fn func(string)) error {
+	if tokens := llm.tokenize(prompt); tokens != nil {
+		return llm.generate(tokens, fn)
 	}
 
-	cLogitBias := C.CString(po.LogitBias)
-	defer C.free(unsafe.Pointer(cLogitBias))
+	return errors.New("llama: tokenize")
+}
 
-	cMainGPU := C.CString(po.MainGPU)
-	defer C.free(unsafe.Pointer(cMainGPU))
+func (llm *llama) tokenize(prompt string) []C.llama_token {
+	cPrompt := C.CString(prompt)
+	defer C.free(unsafe.Pointer(cPrompt))
 
-	cTensorSplit := C.CString(po.TensorSplit)
-	defer C.free(unsafe.Pointer(cTensorSplit))
-
-	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
-		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
-		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
-		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
-		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
-		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL), cLogitBias,
-		C.bool(po.MLock), C.bool(po.MMap), cMainGPU, cTensorSplit,
-	)
-	defer C.llama_free_params(params)
-
-	ret := C.eval(params, l.ctx, input)
-	if ret != 0 {
-		return fmt.Errorf("inference failed")
+	tokens := make([]C.llama_token, llm.NumCtx)
+	if n := C.llama_tokenize(llm.ctx, cPrompt, unsafe.SliceData(tokens), C.int(len(tokens)), true); n > 0 {
+		return tokens[:n]
 	}
 
 	return nil
 }
 
-func (l *LLama) Predict(text string, po PredictOptions) (string, error) {
-	if po.TokenCallback != nil {
-		setCallback(l.ctx, po.TokenCallback)
+func (llm *llama) detokenize(tokens ...C.llama_token) string {
+	var sb strings.Builder
+	for _, token := range tokens {
+		sb.WriteString(C.GoString(C.llama_token_to_str(llm.ctx, token)))
 	}
 
-	input := C.CString(text)
-	if po.Tokens == 0 {
-		po.Tokens = 99999999
-	}
-	defer C.free(unsafe.Pointer(input))
-
-	out := make([]byte, po.Tokens)
-
-	reverseCount := len(po.StopPrompts)
-	reversePrompt := make([]*C.char, reverseCount)
-	var pass **C.char
-	for i, s := range po.StopPrompts {
-		cs := C.CString(s)
-		reversePrompt[i] = cs
-		pass = &reversePrompt[0]
-		defer C.free(unsafe.Pointer(cs))
-	}
-
-	cLogitBias := C.CString(po.LogitBias)
-	defer C.free(unsafe.Pointer(cLogitBias))
-
-	cMainGPU := C.CString(po.MainGPU)
-	defer C.free(unsafe.Pointer(cMainGPU))
-
-	cTensorSplit := C.CString(po.TensorSplit)
-	defer C.free(unsafe.Pointer(cTensorSplit))
-
-	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
-		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
-		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
-		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
-		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
-		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL), cLogitBias,
-		C.bool(po.MLock), C.bool(po.MMap), cMainGPU, cTensorSplit,
-	)
-	defer C.llama_free_params(params)
-
-	ret := C.llama_predict(params, l.ctx, (*C.char)(unsafe.Pointer(&out[0])), C.bool(po.DebugMode))
-	if ret != 0 {
-		return "", fmt.Errorf("inference failed")
-	}
-	res := C.GoString((*C.char)(unsafe.Pointer(&out[0])))
-
-	res = strings.TrimPrefix(res, " ")
-	res = strings.TrimPrefix(res, text)
-	res = strings.TrimPrefix(res, "\n")
-
-	for _, s := range po.StopPrompts {
-		res = strings.TrimRight(res, s)
-	}
-
-	if po.TokenCallback != nil {
-		setCallback(l.ctx, nil)
-	}
-
-	return res, nil
+	return sb.String()
 }
 
-// CGo only allows us to use static calls from C to Go, we can't just dynamically pass in func's.
-// This is the next best thing, we register the callbacks in this map and call tokenCallback from
-// the C code. We also attach a finalizer to LLama, so it will unregister the callback when the
-// garbage collection frees it.
+func (llm *llama) generate(tokens []C.llama_token, fn func(string)) error {
+	var opts C.struct_llama_sample_options
+	opts.repeat_penalty = C.float(llm.RepeatPenalty)
+	opts.frequency_penalty = C.float(llm.FrequencyPenalty)
+	opts.presence_penalty = C.float(llm.PresencePenalty)
+	opts.temperature = C.float(llm.Temperature)
+	opts.top_k = C.int(llm.TopK)
+	opts.top_p = C.float(llm.TopP)
+	opts.tfs_z = C.float(llm.TFSZ)
+	opts.typical_p = C.float(llm.TypicalP)
+	opts.mirostat = C.int(llm.Mirostat)
+	opts.mirostat_tau = C.float(llm.MirostatTau)
+	opts.mirostat_eta = C.float(llm.MirostatEta)
 
-// SetTokenCallback registers a callback for the individual tokens created when running Predict. It
-// will be called once for each token. The callback shall return true as long as the model should
-// continue predicting the next token. When the callback returns false the predictor will return.
-// The tokens are just converted into Go strings, they are not trimmed or otherwise changed. Also
-// the tokens may not be valid UTF-8.
-// Pass in nil to remove a callback.
-//
-// It is save to call this method while a prediction is running.
-func (l *LLama) SetTokenCallback(callback func(token string) bool) {
-	setCallback(l.ctx, callback)
-}
+	pastTokens := deque[C.llama_token]{capacity: llm.RepeatLastN}
 
-var (
-	m         sync.Mutex
-	callbacks = map[uintptr]func(string) bool{}
-)
+	for C.llama_get_kv_cache_token_count(llm.ctx) < C.int(llm.NumCtx) {
+		if retval := C.llama_eval(llm.ctx, unsafe.SliceData(tokens), C.int(len(tokens)), C.llama_get_kv_cache_token_count(llm.ctx), C.int(llm.NumThread)); retval != 0 {
+			return errors.New("llama: eval")
+		}
 
-//export tokenCallback
-func tokenCallback(statePtr unsafe.Pointer, token *C.char) bool {
-	m.Lock()
-	defer m.Unlock()
+		token, err := llm.sample(pastTokens, &opts)
+		switch {
+		case err != nil:
+			return err
+		case errors.Is(err, io.EOF):
+			return nil
+		}
 
-	if callback, ok := callbacks[uintptr(statePtr)]; ok {
-		return callback(C.GoString(token))
+		fn(llm.detokenize(token))
+
+		tokens = []C.llama_token{token}
+
+		pastTokens.PushLeft(token)
 	}
 
-	return true
+	return nil
 }
 
-// setCallback can be used to register a token callback for LLama. Pass in a nil callback to
-// remove the callback.
-func setCallback(statePtr unsafe.Pointer, callback func(string) bool) {
-	m.Lock()
-	defer m.Unlock()
+func (llm *llama) sample(pastTokens deque[C.llama_token], opts *C.struct_llama_sample_options) (C.llama_token, error) {
+	numVocab := int(C.llama_n_vocab(llm.ctx))
+	logits := unsafe.Slice(C.llama_get_logits(llm.ctx), numVocab)
 
-	if callback == nil {
-		delete(callbacks, uintptr(statePtr))
-	} else {
-		callbacks[uintptr(statePtr)] = callback
+	candidates := make([]C.struct_llama_token_data, 0, numVocab)
+	for i := 0; i < numVocab; i++ {
+		candidates = append(candidates, C.llama_token_data{
+			id:    C.int(i),
+			logit: logits[i],
+			p:     0,
+		})
 	}
+
+	token := C.llama_sample(
+		llm.ctx,
+		unsafe.SliceData(candidates), C.ulong(len(candidates)),
+		unsafe.SliceData(pastTokens.Data()), C.ulong(pastTokens.Len()),
+		opts)
+	if token != C.llama_token_eos() {
+		return token, nil
+	}
+
+	return 0, io.EOF
 }

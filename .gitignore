@@ -3,8 +3,5 @@
 .env
 .venv
 *.spec
-build
 dist
-__pycache__
 ollama
-ggml-metal.metal

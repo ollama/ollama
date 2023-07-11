@@ -11,12 +11,12 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"runtime"
 	"strings"
 	"text/template"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lithammer/fuzzysearch/fuzzy"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llama"
@@ -36,14 +36,10 @@ func cacheDir() string {
 }
 
 func generate(c *gin.Context) {
-	var req api.GenerateRequest
-	if req.ModelOptions == nil {
-		req.ModelOptions = &api.DefaultModelOptions
+	req := api.GenerateRequest{
+		Options: api.DefaultOptions(),
 	}
 
-	if req.PredictOptions == nil {
-		req.PredictOptions = &api.DefaultPredictOptions
-	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -60,15 +56,12 @@ func generate(c *gin.Context) {
 		req.Model = path.Join(cacheDir(), "models", req.Model+".bin")
 	}
 
-	modelOpts := getModelOpts(req)
-	modelOpts.NGPULayers = 1 // hard-code this for now
-
-	model, err := llama.New(req.Model, modelOpts)
+	llm, err := llama.New(req.Model, req.Options)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	defer model.Free()
+	defer llm.Close()
 
 	templateNames := make([]string, 0, len(templates.Templates()))
 	for _, template := range templates.Templates() {
@@ -87,43 +80,41 @@ func generate(c *gin.Context) {
 	}
 
 	ch := make(chan string)
-	model.SetTokenCallback(func(token string) bool {
-		ch <- token
-		return true
-	})
-
-	predictOpts := getPredictOpts(req)
-
-	go func() {
+	g, _ := errgroup.WithContext(c.Request.Context())
+	g.Go(func() error {
 		defer close(ch)
-		_, err := model.Predict(req.Prompt, predictOpts)
-		if err != nil {
-			panic(err)
-		}
-	}()
-
-	c.Stream(func(w io.Writer) bool {
-		token, ok := <-ch
-		if !ok {
-			return false
-		}
-
-		resp := api.GenerateResponse{
-			Response: token,
-		}
-
-		bts, err := json.Marshal(resp)
-		if err != nil {
-			return false
-		}
-
-		bts = append(bts, '\n')
-		if _, err := w.Write(bts); err != nil {
-			return false
-		}
-
-		return true
+		return llm.Predict(req.Prompt, func(s string) {
+			ch <- s
+		})
 	})
+
+	g.Go(func() error {
+		c.Stream(func(w io.Writer) bool {
+			s, ok := <-ch
+			if !ok {
+				return false
+			}
+
+			bts, err := json.Marshal(api.GenerateResponse{Response: s})
+			if err != nil {
+				return false
+			}
+
+			bts = append(bts, '\n')
+			if _, err := w.Write(bts); err != nil {
+				return false
+			}
+
+			return true
+		})
+
+		return nil
+	})
+
+	if err := g.Wait(); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 }
 
 func Serve(ln net.Listener) error {
@@ -194,54 +185,4 @@ func matchRankOne(source string, targets []string) (bestMatch string, bestRank i
 	}
 
 	return
-}
-
-func getModelOpts(req api.GenerateRequest) llama.ModelOptions {
-	var opts llama.ModelOptions
-	opts.ContextSize = req.ModelOptions.ContextSize
-	opts.Seed = req.ModelOptions.Seed
-	opts.F16Memory = req.ModelOptions.F16Memory
-	opts.MLock = req.ModelOptions.MLock
-	opts.Embeddings = req.ModelOptions.Embeddings
-	opts.MMap = req.ModelOptions.MMap
-	opts.LowVRAM = req.ModelOptions.LowVRAM
-
-	opts.NBatch = req.ModelOptions.NBatch
-	opts.VocabOnly = req.ModelOptions.VocabOnly
-	opts.NUMA = req.ModelOptions.NUMA
-	opts.NGPULayers = req.ModelOptions.NGPULayers
-	opts.MainGPU = req.ModelOptions.MainGPU
-	opts.TensorSplit = req.ModelOptions.TensorSplit
-
-	return opts
-}
-
-func getPredictOpts(req api.GenerateRequest) llama.PredictOptions {
-	var opts llama.PredictOptions
-
-	if req.PredictOptions.Threads == -1 {
-		opts.Threads = runtime.NumCPU()
-	} else {
-		opts.Threads = req.PredictOptions.Threads
-	}
-
-	opts.Seed = req.PredictOptions.Seed
-	opts.Tokens = req.PredictOptions.Tokens
-	opts.Penalty = req.PredictOptions.Penalty
-	opts.Repeat = req.PredictOptions.Repeat
-	opts.Batch = req.PredictOptions.Batch
-	opts.NKeep = req.PredictOptions.NKeep
-	opts.TopK = req.PredictOptions.TopK
-	opts.TopP = req.PredictOptions.TopP
-	opts.TailFreeSamplingZ = req.PredictOptions.TailFreeSamplingZ
-	opts.TypicalP = req.PredictOptions.TypicalP
-	opts.Temperature = req.PredictOptions.Temperature
-	opts.FrequencyPenalty = req.PredictOptions.FrequencyPenalty
-	opts.PresencePenalty = req.PredictOptions.PresencePenalty
-	opts.Mirostat = req.PredictOptions.Mirostat
-	opts.MirostatTAU = req.PredictOptions.MirostatTAU
-	opts.MirostatETA = req.PredictOptions.MirostatETA
-	opts.MMap = req.PredictOptions.MMap
-
-	return opts
 }

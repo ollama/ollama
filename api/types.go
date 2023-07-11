@@ -1,5 +1,7 @@
 package api
 
+import "runtime"
+
 type PullRequest struct {
 	Model string `json:"model"`
 }
@@ -14,93 +16,76 @@ type GenerateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
 
-	ModelOptions   *ModelOptions   `json:"model_opts,omitempty"`
-	PredictOptions *PredictOptions `json:"predict_opts,omitempty"`
-}
-
-type ModelOptions struct {
-	ContextSize int    `json:"context_size,omitempty"`
-	Seed        int    `json:"seed,omitempty"`
-	NBatch      int    `json:"n_batch,omitempty"`
-	F16Memory   bool   `json:"memory_f16,omitempty"`
-	MLock       bool   `json:"mlock,omitempty"`
-	MMap        bool   `json:"mmap,omitempty"`
-	VocabOnly   bool   `json:"vocab_only,omitempty"`
-	LowVRAM     bool   `json:"low_vram,omitempty"`
-	Embeddings  bool   `json:"embeddings,omitempty"`
-	NUMA        bool   `json:"numa,omitempty"`
-	NGPULayers  int    `json:"gpu_layers,omitempty"`
-	MainGPU     string `json:"main_gpu,omitempty"`
-	TensorSplit string `json:"tensor_split,omitempty"`
-}
-
-type PredictOptions struct {
-	Seed        int     `json:"seed,omitempty"`
-	Threads     int     `json:"threads,omitempty"`
-	Tokens      int     `json:"tokens,omitempty"`
-	TopK        int     `json:"top_k,omitempty"`
-	Repeat      int     `json:"repeat,omitempty"`
-	Batch       int     `json:"batch,omitempty"`
-	NKeep       int     `json:"nkeep,omitempty"`
-	TopP        float64 `json:"top_p,omitempty"`
-	Temperature float64 `json:"temp,omitempty"`
-	Penalty     float64 `json:"penalty,omitempty"`
-	F16KV       bool
-	DebugMode   bool
-	StopPrompts []string
-	IgnoreEOS   bool `json:"ignore_eos,omitempty"`
-
-	TailFreeSamplingZ float64 `json:"tfs_z,omitempty"`
-	TypicalP          float64 `json:"typical_p,omitempty"`
-	FrequencyPenalty  float64 `json:"freq_penalty,omitempty"`
-	PresencePenalty   float64 `json:"pres_penalty,omitempty"`
-	Mirostat          int     `json:"mirostat,omitempty"`
-	MirostatETA       float64 `json:"mirostat_lr,omitempty"`
-	MirostatTAU       float64 `json:"mirostat_ent,omitempty"`
-	PenalizeNL        bool    `json:"penalize_nl,omitempty"`
-	LogitBias         string  `json:"logit_bias,omitempty"`
-
-	PathPromptCache string
-	MLock           bool `json:"mlock,omitempty"`
-	MMap            bool `json:"mmap,omitempty"`
-	PromptCacheAll  bool
-	PromptCacheRO   bool
-	MainGPU         string
-	TensorSplit     string
-}
-
-var DefaultModelOptions ModelOptions = ModelOptions{
-	ContextSize: 512,
-	Seed:        0,
-	F16Memory:   true,
-	MLock:       false,
-	Embeddings:  true,
-	MMap:        true,
-	LowVRAM:     false,
-}
-
-var DefaultPredictOptions PredictOptions = PredictOptions{
-	Seed:              -1,
-	Threads:           -1,
-	Tokens:            512,
-	Penalty:           1.1,
-	Repeat:            64,
-	Batch:             512,
-	NKeep:             64,
-	TopK:              90,
-	TopP:              0.86,
-	TailFreeSamplingZ: 1.0,
-	TypicalP:          1.0,
-	Temperature:       0.8,
-	FrequencyPenalty:  0.0,
-	PresencePenalty:   0.0,
-	Mirostat:          0,
-	MirostatTAU:       5.0,
-	MirostatETA:       0.1,
-	MMap:              true,
-	StopPrompts:       []string{"llama"},
+	Options `json:"options"`
 }
 
 type GenerateResponse struct {
 	Response string `json:"response"`
+}
+
+type Options struct {
+	Seed int `json:"seed,omitempty"`
+
+	// Backend options
+	UseNUMA bool `json:"numa,omitempty"`
+
+	// Model options
+	NumCtx        int  `json:"num_ctx,omitempty"`
+	NumBatch      int  `json:"num_batch,omitempty"`
+	NumGPU        int  `json:"num_gpu,omitempty"`
+	MainGPU       int  `json:"main_gpu,omitempty"`
+	LowVRAM       bool `json:"low_vram,omitempty"`
+	F16KV         bool `json:"f16_kv,omitempty"`
+	LogitsAll     bool `json:"logits_all,omitempty"`
+	VocabOnly     bool `json:"vocab_only,omitempty"`
+	UseMMap       bool `json:"use_mmap,omitempty"`
+	UseMLock      bool `json:"use_mlock,omitempty"`
+	EmbeddingOnly bool `json:"embedding_only,omitempty"`
+
+	// Predict options
+	RepeatLastN      int     `json:"repeat_last_n,omitempty"`
+	RepeatPenalty    float32 `json:"repeat_penalty,omitempty"`
+	FrequencyPenalty float32 `json:"frequency_penalty,omitempty"`
+	PresencePenalty  float32 `json:"presence_penalty,omitempty"`
+	Temperature      float32 `json:"temperature,omitempty"`
+	TopK             int     `json:"top_k,omitempty"`
+	TopP             float32 `json:"top_p,omitempty"`
+	TFSZ             float32 `json:"tfs_z,omitempty"`
+	TypicalP         float32 `json:"typical_p,omitempty"`
+	Mirostat         int     `json:"mirostat,omitempty"`
+	MirostatTau      float32 `json:"mirostat_tau,omitempty"`
+	MirostatEta      float32 `json:"mirostat_eta,omitempty"`
+
+	NumThread int `json:"num_thread,omitempty"`
+}
+
+func DefaultOptions() Options {
+	return Options{
+		Seed: -1,
+
+		UseNUMA: false,
+
+		NumCtx:   512,
+		NumBatch: 512,
+		NumGPU:   1,
+		LowVRAM:  false,
+		F16KV:    true,
+		UseMMap:  true,
+		UseMLock: false,
+
+		RepeatLastN:      512,
+		RepeatPenalty:    1.1,
+		FrequencyPenalty: 0.0,
+		PresencePenalty:  0.0,
+		Temperature:      0.8,
+		TopK:             40,
+		TopP:             0.9,
+		TFSZ:             1.0,
+		TypicalP:         1.0,
+		Mirostat:         0,
+		MirostatTau:      5.0,
+		MirostatEta:      0.1,
+
+		NumThread: runtime.NumCPU(),
+	}
 }
