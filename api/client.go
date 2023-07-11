@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 )
@@ -26,47 +25,18 @@ func NewClient(hosts ...string) *Client {
 	}
 }
 
-func StatusError(status int, message ...string) error {
-	if status < 400 {
-		return nil
+func (c *Client) stream(ctx context.Context, method, path string, data any, callback func([]byte) error) error {
+	var buf *bytes.Buffer
+	if data != nil {
+		bts, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+
+		buf = bytes.NewBuffer(bts)
 	}
 
-	if len(message) > 0 && len(message[0]) > 0 {
-		return fmt.Errorf("%d %s: %s", status, http.StatusText(status), message[0])
-	}
-
-	return fmt.Errorf("%d %s", status, http.StatusText(status))
-}
-
-type options struct {
-	requestBody  io.Reader
-	responseFunc func(bts []byte) error
-}
-
-func OptionRequestBody(data any) func(*options) {
-	bts, err := json.Marshal(data)
-	if err != nil {
-		panic(err)
-	}
-
-	return func(opts *options) {
-		opts.requestBody = bytes.NewReader(bts)
-	}
-}
-
-func OptionResponseFunc(fn func([]byte) error) func(*options) {
-	return func(opts *options) {
-		opts.responseFunc = fn
-	}
-}
-
-func (c *Client) stream(ctx context.Context, method, path string, fns ...func(*options)) error {
-	var opts options
-	for _, fn := range fns {
-		fn(&opts)
-	}
-
-	request, err := http.NewRequestWithContext(ctx, method, c.base.JoinPath(path).String(), opts.requestBody)
+	request, err := http.NewRequestWithContext(ctx, method, c.base.JoinPath(path).String(), buf)
 	if err != nil {
 		return err
 	}
@@ -80,25 +50,23 @@ func (c *Client) stream(ctx context.Context, method, path string, fns ...func(*o
 	}
 	defer response.Body.Close()
 
-	if opts.responseFunc != nil {
-		scanner := bufio.NewScanner(response.Body)
-		for scanner.Scan() {
-			var errorResponse struct {
-				Error string `json:"error"`
-			}
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		var errorResponse struct {
+			Error string `json:"error"`
+		}
 
-			bts := scanner.Bytes()
-			if err := json.Unmarshal(bts, &errorResponse); err != nil {
-				return err
-			}
+		bts := scanner.Bytes()
+		if err := json.Unmarshal(bts, &errorResponse); err != nil {
+			return fmt.Errorf("unmarshal: %w", err)
+		}
 
-			if err := StatusError(response.StatusCode, errorResponse.Error); err != nil {
-				return err
-			}
+		if len(errorResponse.Error) > 0 {
+			return fmt.Errorf("stream: %s", errorResponse.Error)
+		}
 
-			if err := opts.responseFunc(bts); err != nil {
-				return err
-			}
+		if err := callback(bts); err != nil {
+			return err
 		}
 	}
 
@@ -108,36 +76,25 @@ func (c *Client) stream(ctx context.Context, method, path string, fns ...func(*o
 type GenerateResponseFunc func(GenerateResponse) error
 
 func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn GenerateResponseFunc) error {
-	return c.stream(ctx, http.MethodPost, "/api/generate",
-		OptionRequestBody(req),
-		OptionResponseFunc(func(bts []byte) error {
-			var resp GenerateResponse
-			if err := json.Unmarshal(bts, &resp); err != nil {
-				return err
-			}
+	return c.stream(ctx, http.MethodPost, "/api/generate", req, func(bts []byte) error {
+		var resp GenerateResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
 
-			return fn(resp)
-		}),
-	)
+		return fn(resp)
+	})
 }
 
 type PullProgressFunc func(PullProgress) error
 
 func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
-	return c.stream(ctx, http.MethodPost, "/api/pull",
-		OptionRequestBody(req),
-		OptionResponseFunc(func(bts []byte) error {
-			var resp PullProgress
-			if err := json.Unmarshal(bts, &resp); err != nil {
-				return err
-			}
+	return c.stream(ctx, http.MethodPost, "/api/pull", req, func(bts []byte) error {
+		var resp PullProgress
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
 
-			if resp.Error.Message != "" {
-				// couldn't pull the model from the directory, proceed anyway
-				return nil
-			}
-
-			return fn(resp)
-		}),
-	)
+		return fn(resp)
+	})
 }

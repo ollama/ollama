@@ -54,7 +54,7 @@ func generate(c *gin.Context) {
 	}
 	if _, err := os.Stat(req.Model); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		req.Model = path.Join(cacheDir(), "models", req.Model+".bin")
@@ -136,7 +136,7 @@ func Serve(ln net.Listener) error {
 	r.POST("api/pull", func(c *gin.Context) {
 		var req api.PullRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -146,16 +146,10 @@ func Serve(ln net.Listener) error {
 			if err := pull(req.Model, progressCh); err != nil {
 				var opError *net.OpError
 				if errors.As(err, &opError) {
-					result := api.PullProgress{
-						Error: api.Error{
-							Code:    http.StatusBadGateway,
-							Message: "failed to get models from directory",
-						},
-					}
-					c.JSON(http.StatusBadGateway, result)
+					c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 					return
 				}
-				c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
 		}()
