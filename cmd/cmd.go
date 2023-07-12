@@ -59,7 +59,7 @@ func pull(model string) error {
 		&api.PullRequest{Model: model},
 		func(progress api.PullProgress) error {
 			if bar == nil {
-				if progress.Percent == 100 {
+				if progress.Percent >= 100 {
 					// already downloaded
 					return nil
 				}
@@ -73,10 +73,9 @@ func pull(model string) error {
 }
 
 func RunGenerate(_ *cobra.Command, args []string) error {
-	// join all args into a single prompt
-	prompt := strings.Join(args[1:], " ")
 	if len(args) > 1 {
-		return generate(args[0], prompt)
+		// join all args into a single prompt
+		return generate(args[0], strings.Join(args[1:], " "))
 	}
 
 	if term.IsTerminal(int(os.Stdin.Fd())) {

@@ -112,7 +112,7 @@ func pull(c *gin.Context) {
 		ch <- api.PullProgress{
 			Total:     total,
 			Completed: completed,
-			Percent:   float64(total) / float64(completed) * 100,
+			Percent:   float64(completed) / float64(total) * 100,
 		}
 	}
 
