@@ -119,25 +119,22 @@ func saveModel(model *Model, fn func(total, completed int64)) error {
 	}
 	defer out.Close()
 
-	totalSize, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	remaining, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	completed := size
 
-	totalBytes := size
-	totalSize += size
+	total := remaining + completed
 
 	for {
-		n, err := io.CopyN(out, resp.Body, 8192)
+		fn(total, completed)
+		if completed >= total {
+			return os.Rename(model.TempFile(), model.FullName())
+		}
+
+		n , err := io.CopyN(out, resp.Body, 8192)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 
-		if n == 0 {
-			break
-		}
-
-		totalBytes += n
-		fn(totalSize, totalBytes)
+		completed += n
 	}
-
-	fn(totalSize, totalSize)
-	return os.Rename(model.TempFile(), model.FullName())
 }
