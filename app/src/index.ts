@@ -1,5 +1,5 @@
 import { spawn, exec } from 'child_process'
-import { app, autoUpdater, dialog, Tray, Menu } from 'electron'
+import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow } from 'electron'
 import Store from 'electron-store'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
@@ -12,6 +12,7 @@ require('@electron/remote/main').initialize()
 
 const store = new Store()
 let tray: Tray | null = null
+let window: BrowserWindow | null = null
 
 const logger = winston.createLogger({
   transports: [
@@ -30,7 +31,48 @@ if (!SingleInstanceLock) {
   app.quit()
 }
 
-const createSystemtray = () => {
+function firstRunWindow() {
+  // Get the tray icon bounds
+  const trayBounds = tray.getBounds()
+
+  // Create a new window
+  window = new BrowserWindow({
+    width: 300,
+    height: 400,
+    show: true,
+    frame: false,
+    fullscreenable: false,
+    resizable: false,
+    movable: false,
+    transparent: true,
+    webPreferences: {
+      // Prevents renderer process code from not running when window is hidden
+      backgroundThrottling: false
+    }
+  })
+
+  window.loadURL('')
+
+  // Set the window position
+  const windowBounds = window.getBounds()
+  const x = Math.round(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2))
+  let y = Math.round(trayBounds.y + trayBounds.height)
+
+  // Check if we are on a Mac
+  if (process.platform === 'darwin') {
+    y = y - windowBounds.height - trayBounds.height
+  }
+
+  window.setBounds({ x: x, y: y })
+
+  // Show the window
+  window.show()
+  window.setVisibleOnAllWorkspaces(true)
+  window.focus()
+  window.setVisibleOnAllWorkspaces(false)
+}
+
+function createSystemtray() {
   let iconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
 
   if (app.isPackaged) {
@@ -116,16 +158,6 @@ function installCLI() {
 app.on('ready', () => {
   if (process.platform === 'darwin') {
     app.dock.hide()
-
-    if (!store.has('first-time-run')) {
-      // This is the first run
-      app.setLoginItemSettings({ openAtLogin: true })
-      store.set('first-time-run', false)
-    } else {
-      // The app has been run before
-      app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
-    }
-
     if (app.isPackaged) {
       if (!app.isInApplicationsFolder()) {
         const chosen = dialog.showMessageBoxSync({
@@ -164,6 +196,16 @@ app.on('ready', () => {
 
   createSystemtray()
   server()
+
+  if (!store.has('0-first-time-run')) {
+    // This is the first run
+    app.setLoginItemSettings({ openAtLogin: true })
+    firstRunWindow()
+    store.set('0-first-time-run', false)
+  } else {
+    // The app has been run before
+    app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
+  }
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common
