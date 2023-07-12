@@ -123,7 +123,14 @@ func New(model string, opts api.Options) (*llama, error) {
 	defer C.free(unsafe.Pointer(cModel))
 
 	llm.model = C.llama_load_model_from_file(cModel, params)
+	if llm.model == nil {
+		return nil, errors.New("failed to load model")
+	}
+
 	llm.ctx = C.llama_new_context_with_model(llm.model, params)
+	if llm.ctx == nil {
+		return nil, errors.New("failed to create context")
+	}
 
 	// warm up the model
 	bos := []C.llama_token{C.llama_token_bos()}
