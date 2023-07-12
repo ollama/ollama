@@ -199,10 +199,10 @@ func (llm *llama) generate(tokens []C.llama_token, fn func(string)) error {
 
 		token, err := llm.sample(pastTokens, &opts)
 		switch {
-		case err != nil:
-			return err
 		case errors.Is(err, io.EOF):
 			return nil
+		case err != nil:
+			return err
 		}
 
 		fn(llm.detokenize(token))
