@@ -25,14 +25,14 @@
   },
   {
     "name": "vicuna",
-    "display_name": "Wizard Vicuna Uncensored",
-    "parameters": "13B",
-    "url": "https://huggingface.co/TheBloke/Wizard-Vicuna-13B-Uncensored-GGML/resolve/main/Wizard-Vicuna-13B-Uncensored.ggmlv3.q2_K.bin",
-    "short_description": "An uncensored model with no guardrails.",
-    "description": "This model is trained with a subset of the dataset - responses that contained alignment / moralizing were removed. The intent is to train a WizardLM that doesn't have alignment built-in, so that alignment (of any sort) can be added separately with for example with a RLHF LoRA.",
+    "display_name": "Vicuna",
+    "parameters": "7B",
+    "url": "https://huggingface.co/TheBloke/vicuna-7B-v1.3-GGML/resolve/main/vicuna-7b-v1.3.ggmlv3.q4_0.bin",
+    "short_description": "Vicuna is a chat assistant trained by fine-tuning LLaMA on user-shared conversations collected from ShareGPT.",
+    "description": "The primary use of Vicuna is research on large language models and chatbots. The primary intended users of the model are researchers and hobbyists in natural language processing, machine learning, and artificial intelligence.",
     "published_by": "TheBloke",
-    "original_author": "ehartford",
-    "original_url": "https://huggingface.co/ehartford/Wizard-Vicuna-13B-Uncensored",
-    "license:": "GPL"
+    "original_author": "LMSYS",
+    "original_url": "https://huggingface.co/lmsys/vicuna-7b-v1.3",
+    "license:": "Non-commercial"
   }
 ]
