@@ -18,7 +18,6 @@ Run large language models with `llama.cpp`.
 
 - [Download](https://ollama.ai/download) for macOS
 - Download for Windows (coming soon)
-- Docker: `docker run -p 11434:11434 ollama/ollama`
 
 You can also build the [binary from source](#building).
 

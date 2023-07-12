@@ -1,3 +1,5 @@
+// +build darwin
+
 /**
  * llama.cpp - git 5bf2a2771886ee86137e01dbc7492f78fb392066
  *

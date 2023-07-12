@@ -1,8 +1,6 @@
 FROM golang:1.20
-RUN apt-get update && apt-get install -y cmake
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
-RUN cmake -S llama -B llama/build && cmake --build llama/build
 RUN CGO_ENABLED=1 go build -ldflags '-linkmode external -extldflags "-static"' .
 
 FROM alpine
