@@ -38,8 +38,6 @@ export default function () {
 
   const command = 'ollama run orca'
 
-  
-
   return (
     <div className='flex flex-col justify-between mx-auto w-full pt-16 px-4 min-h-screen bg-white'>
       {step === 0 && (
