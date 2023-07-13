@@ -12,13 +12,15 @@ ARCH=$(go env GOARCH)
 
 go build .
 
+npm --prefix app run make:sign
+
 # Create a new tag if it doesn't exist.
 if ! git rev-parse v$VERSION >/dev/null 2>&1; then
   git tag v$VERSION
   git push origin v$VERSION
 fi
 
-mkdir dist
+mkdir -p dist
 cp app/out/make/zip/${OS}/${ARCH}/Ollama-${OS}-${ARCH}-${VERSION}.zip dist/Ollama-${OS}-${ARCH}.zip
 cp ./ollama  dist/ollama-${OS}-${ARCH}
 
