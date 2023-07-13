@@ -104,5 +104,5 @@ curl -X POST http://localhost:11343/api/pull -d '{"model": "orca"}'
 Complete a prompt
 
 ```
-curl -X POST http://localhost:11434/api/generate -d '{"model": "orca", "prompt": "hello!", "stream": true}'
+curl -X POST http://localhost:11434/api/generate -d '{"model": "orca", "prompt": "hello!"}'
 ```
