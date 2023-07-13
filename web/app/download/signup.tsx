@@ -4,12 +4,15 @@ import { useState } from 'react'
 
 export default function Signup() {
   const [email, setEmail] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
 
   return (
     <form
       onSubmit={async e => {
         e.preventDefault()
+
+        setSubmitting(true)
 
         await fetch('/api/signup', {
           method: 'POST',
@@ -19,6 +22,7 @@ export default function Signup() {
           body: JSON.stringify({ email }),
         })
 
+        setSubmitting(false)
         setSuccess(true)
         setEmail('')
 
@@ -38,7 +42,8 @@ export default function Signup() {
       <input
         type='submit'
         value='Get updates'
-        className='bg-black text-white rounded-lg px-4 py-2 focus:outline-none cursor-pointer'
+        disabled={submitting}
+        className='bg-black text-white disabled:text-neutral-200 disabled:bg-neutral-700 rounded-lg px-4 py-2 focus:outline-none cursor-pointer'
       />
       {success && <p className='text-center text-sm'>You&apos;re signed up for updates</p>}
     </form>
