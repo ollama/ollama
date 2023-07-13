@@ -10,9 +10,11 @@ import { analytics, id } from './telemetry'
 
 require('@electron/remote/main').initialize()
 
+
 const store = new Store()
 let tray: Tray | null = null
-let window: BrowserWindow | null = null
+
+declare const MAIN_WINDOW_WEBPACK_ENTRY: string
 
 const logger = winston.createLogger({
   transports: [
@@ -31,46 +33,32 @@ if (!SingleInstanceLock) {
   app.quit()
 }
 
-function firstRunWindow() {
-  // Get the tray icon bounds
-  const trayBounds = tray.getBounds()
 
-  // Create a new window
-  window = new BrowserWindow({
-    width: 300,
-    height: 400,
-    show: true,
+function firstRunWindow() {
+    // Create the browser window.
+  // Create the browser window.
+  const welcomeWindow = new BrowserWindow({
+    width: 400,
+    height: 500,
     frame: false,
     fullscreenable: false,
     resizable: false,
     movable: false,
     transparent: true,
     webPreferences: {
-      // Prevents renderer process code from not running when window is hidden
-      backgroundThrottling: false
-    }
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
   })
 
-  window.loadURL('')
+  require('@electron/remote/main').enable(welcomeWindow.webContents)
 
-  // Set the window position
-  const windowBounds = window.getBounds()
-  const x = Math.round(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2))
-  let y = Math.round(trayBounds.y + trayBounds.height)
+  // and load the index.html of the app.
+  welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
+  welcomeWindow.webContents.openDevTools()
 
-  // Check if we are on a Mac
-  if (process.platform === 'darwin') {
-    y = y - windowBounds.height - trayBounds.height
-  }
-
-  window.setBounds({ x: x, y: y })
-
-  // Show the window
-  window.show()
-  window.setVisibleOnAllWorkspaces(true)
-  window.focus()
-  window.setVisibleOnAllWorkspaces(false)
 }
+
 
 function createSystemtray() {
   let iconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
@@ -123,36 +111,58 @@ function server() {
   })
 }
 
-function installCLI() {
+// function installCLI() {
+//   const symlinkPath = '/usr/local/bin/ollama'
+
+//   if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
+//     return
+//   }
+
+//   dialog
+//     .showMessageBox({
+//       type: 'info',
+//       title: 'Ollama CLI installation',
+//       message: 'To make the Ollama command work in your terminal, it needs administrator privileges.',
+//       buttons: ['OK'],
+//     })
+//     .then(result => {
+//       if (result.response === 0) {
+//         const command = `
+//     do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
+//     `
+//         exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
+//           if (error) {
+//             logger.error(`cli: failed to install cli: ${error.message}`)
+//             return
+//           }
+
+//           logger.info(stdout)
+//           logger.error(stderr)
+//         })
+//       }
+//     })
+// }
+
+export function installCLI() {
   const symlinkPath = '/usr/local/bin/ollama'
 
   if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
     return
   }
 
-  dialog
-    .showMessageBox({
-      type: 'info',
-      title: 'Ollama CLI installation',
-      message: 'To make the Ollama command work in your terminal, it needs administrator privileges.',
-      buttons: ['OK'],
-    })
-    .then(result => {
-      if (result.response === 0) {
-        const command = `
-    do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
-    `
-        exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
-          if (error) {
-            logger.error(`cli: failed to install cli: ${error.message}`)
-            return
-          }
 
-          logger.info(stdout)
-          logger.error(stderr)
-        })
-      }
-    })
+  const command = `
+    do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
+  `
+  exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
+    if (error) {
+      logger.error(`cli: failed to install cli: ${error.message}`)
+      return
+    }
+
+    logger.info(stdout)
+    logger.error(stderr)
+  })
 }
 
 app.on('ready', () => {
@@ -190,18 +200,18 @@ app.on('ready', () => {
         }
       }
 
-      installCLI()
+      // installCLI()
     }
   }
 
   createSystemtray()
   server()
+  firstRunWindow()
 
-  if (!store.has('0-first-time-run')) {
+  if (!store.has('first-time-run')) {
     // This is the first run
     app.setLoginItemSettings({ openAtLogin: true })
-    firstRunWindow()
-    store.set('0-first-time-run', false)
+    store.set('first-time-run', false)
   } else {
     // The app has been run before
     app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })

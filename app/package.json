@@ -45,6 +45,7 @@
     "electron": "25.2.0",
     "eslint": "^8.43.0",
     "eslint-plugin-import": "^2.27.5",
+    "file-loader": "^6.2.0",
     "fork-ts-checker-webpack-plugin": "^7.3.0",
     "node-loader": "^2.0.0",
     "postcss": "^8.4.24",
@@ -64,7 +65,9 @@
   },
   "dependencies": {
     "@electron/remote": "^2.0.10",
+    "@heroicons/react": "^2.0.18",
     "@segment/analytics-node": "^1.0.0",
+    "copy-to-clipboard": "^3.3.3",
     "electron-squirrel-startup": "^1.0.0",
     "electron-store": "^8.1.0",
     "react": "^18.2.0",
