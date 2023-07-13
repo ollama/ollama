@@ -147,7 +147,7 @@ func Serve(ln net.Listener) error {
 		c.String(http.StatusOK, "Ollama is running")
 	})
 
-	r.POST("api/pull", pull)
+	r.POST("/api/pull", pull)
 	r.POST("/api/generate", generate)
 
 	log.Printf("Listening on %s", ln.Addr())
