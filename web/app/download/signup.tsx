@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 
-export default function () {
+export default function Signup() {
   const [email, setEmail] = useState('')
   const [success, setSuccess] = useState(false)
 

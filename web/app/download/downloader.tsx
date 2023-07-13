@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 
-export default function ({ url }: { url: string }) {
+export default function Downloader({ url }: { url: string }) {
   useEffect(() => {
     window.location.href = url
   }, [])
