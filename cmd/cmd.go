@@ -72,20 +72,20 @@ func pull(model string) error {
 	)
 }
 
-func RunGenerate(_ *cobra.Command, args []string) error {
+func RunGenerate(cmd *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		// join all args into a single prompt
-		return generate(args[0], strings.Join(args[1:], " "))
+		return generate(cmd, args[0], strings.Join(args[1:], " "))
 	}
 
 	if term.IsTerminal(int(os.Stdin.Fd())) {
-		return generateInteractive(args[0])
+		return generateInteractive(cmd, args[0])
 	}
 
-	return generateBatch(args[0])
+	return generateBatch(cmd, args[0])
 }
 
-func generate(model, prompt string) error {
+func generate(cmd *cobra.Command, model, prompt string) error {
 	if len(strings.TrimSpace(prompt)) > 0 {
 		client := api.NewClient()
 
@@ -108,11 +108,15 @@ func generate(model, prompt string) error {
 			}
 		}()
 
+		var latest api.GenerateResponse
+
 		request := api.GenerateRequest{Model: model, Prompt: prompt}
 		fn := func(resp api.GenerateResponse) error {
 			if !spinner.IsFinished() {
 				spinner.Finish()
 			}
+
+			latest = resp
 
 			fmt.Print(resp.Response)
 			return nil
@@ -124,16 +128,25 @@ func generate(model, prompt string) error {
 
 		fmt.Println()
 		fmt.Println()
+
+		verbose, err := cmd.Flags().GetBool("verbose")
+		if err != nil {
+			return err
+		}
+
+		if verbose {
+			latest.Summary()
+		}
 	}
 
 	return nil
 }
 
-func generateInteractive(model string) error {
+func generateInteractive(cmd *cobra.Command, model string) error {
 	fmt.Print(">>> ")
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		if err := generate(model, scanner.Text()); err != nil {
+		if err := generate(cmd, model, scanner.Text()); err != nil {
 			return err
 		}
 
@@ -143,12 +156,12 @@ func generateInteractive(model string) error {
 	return nil
 }
 
-func generateBatch(model string) error {
+func generateBatch(cmd *cobra.Command, model string) error {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		prompt := scanner.Text()
 		fmt.Printf(">>> %s\n", prompt)
-		if err := generate(model, prompt); err != nil {
+		if err := generate(cmd, model, prompt); err != nil {
 			return err
 		}
 	}
@@ -199,6 +212,8 @@ func NewCLI() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE:  RunRun,
 	}
+
+	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 
 	serveCmd := &cobra.Command{
 		Use:     "serve",
