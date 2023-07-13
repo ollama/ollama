@@ -105,6 +105,24 @@ func pull(c *gin.Context) {
 		return
 	}
 
+	// check if completed file exists
+	fi, err := os.Stat(remote.FullName())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// noop, file doesn't exist so create it
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	default:
+		c.JSON(http.StatusOK, api.PullProgress{
+			Total:     fi.Size(),
+			Completed: fi.Size(),
+			Percent:   100,
+		})
+
+		return
+	}
+
 	ch := make(chan any)
 	go stream(c, ch)
 
