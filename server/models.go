@@ -76,22 +76,10 @@ func saveModel(model *Model, fn func(total, completed int64)) error {
 		return fmt.Errorf("failed to download model: %w", err)
 	}
 
-	// check if completed file exists
-	fi, err := os.Stat(model.FullName())
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		// noop, file doesn't exist so create it
-	case err != nil:
-		return fmt.Errorf("stat: %w", err)
-	default:
-		fn(fi.Size(), fi.Size())
-		return nil
-	}
-
 	var size int64
 
 	// completed file doesn't exist, check partial file
-	fi, err = os.Stat(model.TempFile())
+	fi, err := os.Stat(model.TempFile())
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// noop, file doesn't exist so create it
