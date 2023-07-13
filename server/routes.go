@@ -13,6 +13,7 @@ import (
 	"path"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lithammer/fuzzysearch/fuzzy"
@@ -35,6 +36,8 @@ func cacheDir() string {
 }
 
 func generate(c *gin.Context) {
+	start := time.Now()
+
 	req := api.GenerateRequest{
 		Options: api.DefaultOptions(),
 	}
@@ -81,8 +84,14 @@ func generate(c *gin.Context) {
 	}
 	defer llm.Close()
 
-	fn := func(s string) {
-		ch <- api.GenerateResponse{Response: s}
+	fn := func(r api.GenerateResponse) {
+		r.Model = req.Model
+		r.CreatedAt = time.Now().UTC()
+		if r.Done {
+			r.TotalDuration = time.Since(start)
+		}
+
+		ch <- r
 	}
 
 	if err := llm.Predict(req.Prompt, fn); err != nil {
@@ -147,7 +156,7 @@ func Serve(ln net.Listener) error {
 		c.String(http.StatusOK, "Ollama is running")
 	})
 
-	r.POST("api/pull", pull)
+	r.POST("/api/pull", pull)
 	r.POST("/api/generate", generate)
 
 	log.Printf("Listening on %s", ln.Addr())

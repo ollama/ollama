@@ -1,6 +1,11 @@
 package api
 
-import "runtime"
+import (
+	"fmt"
+	"os"
+	"runtime"
+	"time"
+)
 
 type PullRequest struct {
 	Model string `json:"model"`
@@ -20,7 +25,41 @@ type GenerateRequest struct {
 }
 
 type GenerateResponse struct {
-	Response string `json:"response"`
+	Model     string    `json:"model"`
+	CreatedAt time.Time `json:"created_at"`
+	Response  string    `json:"response,omitempty"`
+
+	Done bool `json:"done"`
+
+	TotalDuration      time.Duration `json:"total_duration,omitempty"`
+	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
+	EvalCount          int           `json:"eval_count,omitempty"`
+	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+}
+
+func (r *GenerateResponse) Summary() {
+	if r.TotalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "total duration:       %v\n", r.TotalDuration)
+	}
+
+	if r.PromptEvalCount > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", r.PromptEvalCount)
+	}
+
+	if r.PromptEvalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval duration: %s\n", r.PromptEvalDuration)
+		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(r.PromptEvalCount)/r.PromptEvalDuration.Seconds())
+	}
+
+	if r.EvalCount > 0 {
+		fmt.Fprintf(os.Stderr, "eval count:           %d token(s)\n", r.EvalCount)
+	}
+
+	if r.EvalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "eval duraiton:        %s\n", r.EvalDuration)
+		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(r.EvalCount)/r.EvalDuration.Seconds())
+	}
 }
 
 type Options struct {
