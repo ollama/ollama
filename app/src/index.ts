@@ -156,11 +156,11 @@ app.on('ready', () => {
   createSystemtray()
   server()
   
-  if (!store.has('first-time-run-0')) {
+  if (!store.has('first-time-run')) {
     // This is the first run
     app.setLoginItemSettings({ openAtLogin: true })
     firstRunWindow()
-    store.set('first-time-run-0', false)
+    store.set('first-time-run', false)
   } else {
     // The app has been run before
     app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
