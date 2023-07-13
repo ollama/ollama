@@ -94,7 +94,7 @@ func generate(c *gin.Context) {
 		ch <- r
 	}
 
-	if err := llm.Predict(req.Prompt, fn); err != nil {
+	if err := llm.Predict(req.Context, req.Prompt, fn); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

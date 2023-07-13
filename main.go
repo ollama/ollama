@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
+
 	"github.com/jmorganca/ollama/cmd"
 )
 
 func main() {
-	cmd.NewCLI().Execute()
+	cmd.NewCLI().ExecuteContext(context.Background())
 }

@@ -85,6 +85,8 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 	return generateBatch(cmd, args[0])
 }
 
+var generateContextKey struct{}
+
 func generate(cmd *cobra.Command, model, prompt string) error {
 	if len(strings.TrimSpace(prompt)) > 0 {
 		client := api.NewClient()
@@ -110,7 +112,12 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 
 		var latest api.GenerateResponse
 
-		request := api.GenerateRequest{Model: model, Prompt: prompt}
+		generateContext, ok := cmd.Context().Value(generateContextKey).([]int)
+		if !ok {
+			generateContext = []int{}
+		}
+
+		request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext}
 		fn := func(resp api.GenerateResponse) error {
 			if !spinner.IsFinished() {
 				spinner.Finish()
@@ -119,6 +126,8 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 			latest = resp
 
 			fmt.Print(resp.Response)
+
+			cmd.SetContext(context.WithValue(cmd.Context(), generateContextKey, resp.Context))
 			return nil
 		}
 
