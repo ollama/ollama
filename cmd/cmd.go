@@ -52,24 +52,8 @@ func RunRun(cmd *cobra.Command, args []string) error {
 }
 
 func pull(model string) error {
-	client := api.NewClient()
-	var bar *progressbar.ProgressBar
-	return client.Pull(
-		context.Background(),
-		&api.PullRequest{Model: model},
-		func(progress api.PullProgress) error {
-			if bar == nil {
-				if progress.Percent >= 100 {
-					// already downloaded
-					return nil
-				}
-
-				bar = progressbar.DefaultBytes(progress.Total)
-			}
-
-			return bar.Set64(progress.Completed)
-		},
-	)
+	// TODO add this back
+	return nil
 }
 
 func RunGenerate(cmd *cobra.Command, args []string) error {

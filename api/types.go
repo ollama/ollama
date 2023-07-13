@@ -7,22 +7,49 @@ import (
 	"time"
 )
 
-type PullRequest struct {
-	Model string `json:"model"`
-}
-
-type PullProgress struct {
-	Total     int64   `json:"total"`
-	Completed int64   `json:"completed"`
-	Percent   float64 `json:"percent"`
-}
-
 type GenerateRequest struct {
 	Model   string `json:"model"`
 	Prompt  string `json:"prompt"`
 	Context []int  `json:"context,omitempty"`
 
 	Options `json:"options"`
+}
+
+type CreateRequest struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+type CreateProgress struct {
+	Status string `json:"status"`
+}
+
+type PullRequest struct {
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type PullProgress struct {
+	Status    string  `json:"status"`
+	Digest    string  `json:"digest,omitempty"`
+	Total     int     `json:"total,omitempty"`
+	Completed int     `json:"completed,omitempty"`
+	Percent   float64 `json:"percent,omitempty"`
+}
+
+type PushRequest struct {
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type PushProgress struct {
+	Status    string  `json:"status"`
+	Digest    string  `json:"digest,omitempty"`
+	Total     int     `json:"total,omitempty"`
+	Completed int     `json:"completed,omitempty"`
+	Percent   float64 `json:"percent,omitempty"`
 }
 
 type GenerateResponse struct {

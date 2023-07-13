@@ -9,12 +9,17 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/jmorganca/ollama/api"
 )
 
 const directoryURL = "https://ollama.ai/api/models"
 
 type Model struct {
 	Name             string `json:"name"`
+	ModelPath        string
+	Prompt           string
+	Options          api.Options
 	DisplayName      string `json:"display_name"`
 	Parameters       string `json:"parameters"`
 	URL              string `json:"url"`

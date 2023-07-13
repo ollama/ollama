@@ -107,12 +107,15 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn Generate
 type PullProgressFunc func(PullProgress) error
 
 func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
-	return c.stream(ctx, http.MethodPost, "/api/pull", req, func(bts []byte) error {
-		var resp PullProgress
-		if err := json.Unmarshal(bts, &resp); err != nil {
-			return err
-		}
+	/*
+		return c.stream(ctx, http.MethodPost, "/api/pull", req, func(bts []byte) error {
+			var resp PullProgress
+			if err := json.Unmarshal(bts, &resp); err != nil {
+				return err
+			}
 
-		return fn(resp)
-	})
+			return fn(resp)
+		})
+	*/
+	return nil
 }
