@@ -1,11 +1,44 @@
 import { useState } from "react"
 import copy from 'copy-to-clipboard'
+import { exec } from 'child_process'
+import * as path from 'path'
+import * as fs from 'fs'
 import { DocumentDuplicateIcon } from '@heroicons/react/24/outline'
+import { app } from '@electron/remote'
+import OllamaIcon from './ollama.svg'
+
+const ollama = app.isPackaged
+? path.join(process.resourcesPath, 'ollama')
+: path.resolve(process.cwd(), '..', 'ollama')
+
+function installCLI() {
+  const symlinkPath = '/usr/local/bin/ollama'
+
+  if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
+    return
+  }
+
+
+  const command = `
+    do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
+  `
+  exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
+    if (error) {
+      console.error(`cli: failed to install cli: ${error.message}`)
+      return
+    }
+
+    console.info(stdout)
+    console.error(stderr)
+  })
+}
 
 export default function () {
   const [step, setStep] = useState(0)
 
   const command = 'ollama run orca'
+
+  
 
   return (
     <div className='flex flex-col justify-between mx-auto w-full pt-16 px-4 min-h-screen bg-white'>
@@ -26,7 +59,7 @@ export default function () {
             </button>      
           </div>
           <div className="mx-auto">
-            <img src='/assets/ollama.png' />
+            <OllamaIcon />
           </div>
         </>
       )}
@@ -41,6 +74,7 @@ export default function () {
               <button
                 onClick={() => {
                   // install the command line
+                  installCLI()
                   setStep(2)
                 }}
                 className='mx-auto w-[60%] rounded-dm rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
@@ -78,7 +112,7 @@ export default function () {
             </div>
             <button
               onClick={() => {
-                // close the window
+                window.close()
               }}
               className='mx-auto w-[60%] rounded-dm rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
             >

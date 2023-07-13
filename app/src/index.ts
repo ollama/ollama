@@ -1,10 +1,9 @@
-import { spawn, exec } from 'child_process'
+import { spawn } from 'child_process'
 import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow } from 'electron'
 import Store from 'electron-store'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
 import * as path from 'path'
-import * as fs from 'fs'
 
 import { analytics, id } from './telemetry'
 
@@ -13,6 +12,7 @@ require('@electron/remote/main').initialize()
 
 const store = new Store()
 let tray: Tray | null = null
+let welcomeWindow: BrowserWindow | null = null
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string
 
@@ -35,9 +35,8 @@ if (!SingleInstanceLock) {
 
 
 function firstRunWindow() {
-    // Create the browser window.
   // Create the browser window.
-  const welcomeWindow = new BrowserWindow({
+  welcomeWindow = new BrowserWindow({
     width: 400,
     height: 500,
     frame: false,
@@ -55,8 +54,13 @@ function firstRunWindow() {
 
   // and load the index.html of the app.
   welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
-  welcomeWindow.webContents.openDevTools()
 
+  // for debugging
+  // welcomeWindow.webContents.openDevTools()
+
+  if (process.platform === 'darwin') {
+    app.dock.hide()
+  }
 }
 
 
@@ -78,8 +82,6 @@ function createSystemtray() {
 if (require('electron-squirrel-startup')) {
   app.quit()
 }
-
-const ollama = path.join(process.resourcesPath, 'ollama')
 
 function server() {
   const binary = app.isPackaged
@@ -111,63 +113,12 @@ function server() {
   })
 }
 
-// function installCLI() {
-//   const symlinkPath = '/usr/local/bin/ollama'
-
-//   if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
-//     return
-//   }
-
-//   dialog
-//     .showMessageBox({
-//       type: 'info',
-//       title: 'Ollama CLI installation',
-//       message: 'To make the Ollama command work in your terminal, it needs administrator privileges.',
-//       buttons: ['OK'],
-//     })
-//     .then(result => {
-//       if (result.response === 0) {
-//         const command = `
-//     do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
-//     `
-//         exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
-//           if (error) {
-//             logger.error(`cli: failed to install cli: ${error.message}`)
-//             return
-//           }
-
-//           logger.info(stdout)
-//           logger.error(stderr)
-//         })
-//       }
-//     })
-// }
-
-export function installCLI() {
-  const symlinkPath = '/usr/local/bin/ollama'
-
-  if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
-    return
-  }
-
-
-  const command = `
-    do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
-  `
-  exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
-    if (error) {
-      logger.error(`cli: failed to install cli: ${error.message}`)
-      return
-    }
-
-    logger.info(stdout)
-    logger.error(stderr)
-  })
+if (process.platform === 'darwin') {
+  app.dock.hide()
 }
 
 app.on('ready', () => {
   if (process.platform === 'darwin') {
-    app.dock.hide()
     if (app.isPackaged) {
       if (!app.isInApplicationsFolder()) {
         const chosen = dialog.showMessageBoxSync({
@@ -199,19 +150,17 @@ app.on('ready', () => {
           }
         }
       }
-
-      // installCLI()
     }
   }
 
   createSystemtray()
   server()
-  firstRunWindow()
-
-  if (!store.has('first-time-run')) {
+  
+  if (!store.has('first-time-run-0')) {
     // This is the first run
     app.setLoginItemSettings({ openAtLogin: true })
-    store.set('first-time-run', false)
+    firstRunWindow()
+    store.set('first-time-run-0', false)
   } else {
     // The app has been run before
     app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
