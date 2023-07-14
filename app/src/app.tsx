@@ -28,9 +28,7 @@ function installCLI(callback: () => void) {
       callback && callback()
       return
     }
-
-    console.info(stdout)
-    console.error(stderr)
+    
     callback && callback()
   })
 }
