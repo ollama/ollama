@@ -116,7 +116,7 @@ func pull(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-	}
+	}()
 
 	streamResponse(c, ch)
 }

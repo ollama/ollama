@@ -107,15 +107,38 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn Generate
 type PullProgressFunc func(PullProgress) error
 
 func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
-	/*
-		return c.stream(ctx, http.MethodPost, "/api/pull", req, func(bts []byte) error {
-			var resp PullProgress
-			if err := json.Unmarshal(bts, &resp); err != nil {
-				return err
-			}
+	return c.stream(ctx, http.MethodPost, "/api/pull", req, func(bts []byte) error {
+		var resp PullProgress
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
 
-			return fn(resp)
-		})
-	*/
-	return nil
+		return fn(resp)
+	})
+}
+
+type PushProgressFunc func(PushProgress) error
+
+func (c *Client) Push(ctx context.Context, req *PushRequest, fn PushProgressFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/push", req, func(bts []byte) error {
+		var resp PushProgress
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		return fn(resp)
+	})
+}
+
+type CreateProgressFunc func(CreateProgress) error
+
+func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgressFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/create", req, func(bts []byte) error {
+		var resp CreateProgress
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		return fn(resp)
+	})
 }
