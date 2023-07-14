@@ -18,6 +18,7 @@ import (
 	"github.com/jmorganca/ollama/parser"
 )
 
+// var DefaultRegistry string = "https://registry.ollama.ai"
 var DefaultRegistry string = "http://localhost:6000"
 
 type ManifestV2 struct {
@@ -388,6 +389,9 @@ func PushModel(name, username, password string, fn func(status, digest string, T
 	}
 
 	resp, err := makeRequest("PUT", url, headers, bytes.NewReader(manifestJSON), username, password)
+	if err != nil {
+		return err
+	}
 	defer resp.Body.Close()
 
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
@@ -475,6 +479,10 @@ func pullModelManifest(registryURL, repoName, tag, username, password string) (*
 	}
 
 	resp, err := makeRequest("GET", url, headers, nil, username, password)
+	if err != nil {
+		log.Printf("couldn't get manifest: %v", err)
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
@@ -532,11 +540,11 @@ func startUpload(registryURL string, repositoryName string, username string, pas
 	url := fmt.Sprintf("%s/v2/%s/blobs/uploads/", registryURL, repositoryName)
 
 	resp, err := makeRequest("POST", url, nil, nil, username, password)
-	defer resp.Body.Close()
-
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %v", err)
+		log.Printf("couldn't start upload: %v", err)
+		return "", err
 	}
+	defer resp.Body.Close()
 
 	// Check for success
 	if resp.StatusCode != http.StatusAccepted {
@@ -558,11 +566,11 @@ func checkBlobExistence(registryURL string, repositoryName string, digest string
 	url := fmt.Sprintf("%s/v2/%s/blobs/%s", registryURL, repositoryName, digest)
 
 	resp, err := makeRequest("HEAD", url, nil, nil, username, password)
-	defer resp.Body.Close()
-
 	if err != nil {
-		return false, fmt.Errorf("failed to create request: %v", err)
+		log.Printf("couldn't check for blob: %v", err)
+		return false, err
 	}
+	defer resp.Body.Close()
 
 	// Check for success: If the blob exists, the Docker registry will respond with a 200 OK
 	return resp.StatusCode == http.StatusOK, nil
@@ -593,11 +601,11 @@ func uploadBlob(location string, layer *Layer, username string, password string)
 	}
 
 	resp, err := makeRequest("PUT", url, headers, f, username, password)
-	defer resp.Body.Close()
-
 	if err != nil {
+		log.Printf("couldn't upload blob: %v", err)
 		return err
 	}
+	defer resp.Body.Close()
 
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusCreated {
@@ -627,6 +635,10 @@ func downloadBlob(registryURL, repoName, digest, username, password string) erro
 	headers := map[string]string{}
 
 	resp, err := makeRequest("GET", url, headers, nil, username, password)
+	if err != nil {
+		log.Printf("couldn't download blob: %v", err)
+		return err
+	}
 	defer resp.Body.Close()
 
 	// TODO: handle 307 redirects
