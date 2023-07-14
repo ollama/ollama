@@ -57,7 +57,7 @@ func (r *GenerateResponse) Summary() {
 	}
 
 	if r.EvalDuration > 0 {
-		fmt.Fprintf(os.Stderr, "eval duraiton:        %s\n", r.EvalDuration)
+		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", r.EvalDuration)
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(r.EvalCount)/r.EvalDuration.Seconds())
 	}
 }
