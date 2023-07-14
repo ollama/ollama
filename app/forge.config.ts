@@ -58,7 +58,7 @@ const config: ForgeConfig = {
     new AutoUnpackNativesPlugin({}),
     new WebpackPlugin({
       mainConfig,
-      devContentSecurityPolicy: `default-src * 'unsafe-eval' 'unsafe-inline'`,
+      devContentSecurityPolicy: `default-src * 'unsafe-eval' 'unsafe-inline'; img-src data: 'self'`,
       renderer: {
         config: rendererConfig,
         nodeIntegration: true,

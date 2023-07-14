@@ -1,160 +1,127 @@
-import { useState } from 'react'
-import path from 'path'
-import os from 'os'
-import { dialog, getCurrentWindow } from '@electron/remote'
+import { useState } from "react"
+import copy from 'copy-to-clipboard'
+import { exec } from 'child_process'
+import * as path from 'path'
+import * as fs from 'fs'
+import { DocumentDuplicateIcon } from '@heroicons/react/24/outline'
+import { app } from '@electron/remote'
+import OllamaIcon from './ollama.svg'
 
-const API_URL = 'http://127.0.0.1:7734'
+const ollama = app.isPackaged
+? path.join(process.resourcesPath, 'ollama')
+: path.resolve(process.cwd(), '..', 'ollama')
 
-type Message = {
-  sender: 'bot' | 'human'
-  content: string
-}
+function installCLI(callback: () => void) {
+  const symlinkPath = '/usr/local/bin/ollama'
 
-const userInfo = os.userInfo()
-
-async function generate(prompt: string, model: string, callback: (res: string) => void) {
-  const result = await fetch(`${API_URL}/generate`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      prompt,
-      model,
-    }),
-  })
-
-  if (!result.ok) {
+  if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
+    callback && callback()
     return
   }
 
-  let reader = result.body.getReader()
-
-  while (true) {
-    const { done, value } = await reader.read()
-
-    if (done) {
-      break
+  const command = `
+    do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
+  `
+  exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
+    if (error) {
+      console.error(`cli: failed to install cli: ${error.message}`)
+      callback && callback()
+      return
     }
-
-    let decoder = new TextDecoder()
-    let str = decoder.decode(value)
-
-    let re = /}\s*{/g
-    str = '[' + str.replace(re, '},{') + ']'
-    let messages = JSON.parse(str)
-
-    for (const message of messages) {
-      const choice = message.choices[0]
-
-      callback(choice.text)
-
-      if (choice.finish_reason === 'stop') {
-        break
-      }
-    }
-  }
-
-  return
+    
+    callback && callback()
+  })
 }
 
 export default function () {
-  const [prompt, setPrompt] = useState('')
-  const [messages, setMessages] = useState<Message[]>([])
-  const [model, setModel] = useState('')
-  const [generating, setGenerating] = useState(false)
+  const [step, setStep] = useState(0)
+
+  const command = 'ollama run orca'
 
   return (
-    <div className='flex min-h-screen flex-1 flex-col justify-between bg-white'>
-      <header className='drag sticky top-0 z-50 flex h-14 w-full flex-row items-center border-b border-black/10 bg-white/75 backdrop-blur-md'>
-        <div className='mx-auto w-full max-w-xl leading-none'>
-          <h1 className='text-sm font-medium'>{path.basename(model).replace('.bin', '')}</h1>
-        </div>
-      </header>
-      {model ? (
-        <section className='mx-auto mb-10 w-full max-w-xl flex-1 break-words'>
-          {messages.map((m, i) => (
-            <div className='my-4 flex gap-4' key={i}>
-              <div className='flex-none pr-1 text-lg'>
-                {m.sender === 'human' ? (
-                  <div className='mt-px flex h-6 w-6 items-center justify-center rounded-md bg-neutral-200 text-sm text-neutral-700'>
-                    {userInfo.username[0].toUpperCase()}
-                  </div>
-                ) : (
-                  <div className='mt-0.5 flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-sm text-white'>
-                    {path.basename(model)[0].toUpperCase()}
-                  </div>
-                )}
-              </div>
-              <div className='flex-1 text-gray-800'>
-                {m.content}
-                {m.sender === 'bot' && generating && i === messages.length - 1 && (
-                  <span className='blink relative -top-[3px] left-1 text-[10px]'>█</span>
-                )}
-              </div>
-            </div>
-          ))}
-        </section>
-      ) : (
-        <section className='flex flex-1 select-none flex-col items-center justify-center pb-20'>
-          <h2 className='text-3xl font-light text-neutral-400'>No model selected</h2>
-          <button
-            onClick={async () => {
-              const res = await dialog.showOpenDialog(getCurrentWindow(), {
-                properties: ['openFile', 'multiSelections'],
-              })
-              if (res.canceled) {
-                return
-              }
-
-              setModel(res.filePaths[0])
-            }}
-            className='rounded-dm my-8 rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:brightness-110'
-          >
-            Open file...
-          </button>
-        </section>
+    <div className='flex flex-col justify-between mx-auto w-full pt-16 px-4 min-h-screen bg-white'>
+      {step === 0 && (
+        <>
+          <div className="mx-auto text-center">
+            <h1 className="mt-4 mb-6 text-2xl tracking-tight text-gray-900">Welcome to Ollama</h1>
+            <p className="mx-auto w-[65%] text-sm text-gray-400">
+              Let’s get you up and running with your own large language models.
+            </p>
+            <button
+              onClick={() => {
+                setStep(1)
+              }}
+              className='mx-auto w-[40%] rounded-dm my-8 rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
+            >
+              Next
+            </button>      
+          </div>
+          <div className="mx-auto">
+            <OllamaIcon />
+          </div>
+        </>
       )}
-      <div className='sticky bottom-0 bg-gradient-to-b from-transparent to-white'>
-        {model && (
-          <textarea
-            autoFocus
-            rows={1}
-            value={prompt}
-            placeholder='Send a message...'
-            onChange={e => setPrompt(e.target.value)}
-            className='mx-auto my-4 block w-full max-w-xl resize-none rounded-xl border border-gray-200 px-5 py-3.5 text-[15px] shadow-lg shadow-black/5 focus:outline-none'
-            onKeyDownCapture={async e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-
-                if (generating) {
-                  return
-                }
-
-                if (!prompt) {
-                  return
-                }
-
-                await setMessages(messages => {
-                  return [...messages, { sender: 'human', content: prompt }, { sender: 'bot', content: '' }]
-                })
-
-                setPrompt('')
-
-                setGenerating(true)
-                await generate(prompt, model, res => {
-                  setMessages(messages => {
-                    let last = messages[messages.length - 1]
-                    return [...messages.slice(0, messages.length - 1), { ...last, content: last.content + res }]
+      {step === 1 && (
+        <>
+          <div className="flex flex-col space-y-28 mx-auto text-center">
+            <h1 className="mt-4 text-2xl tracking-tight text-gray-900">Install the command line</h1>
+            <pre className="mx-auto text-4xl text-gray-400">
+             &gt; ollama
+            </pre>
+            <div className="mx-auto">
+              <button
+                onClick={() => {
+                  // install the command line
+                  installCLI(() => {
+                    window.focus()
+                    setStep(2)
                   })
-                })
-                setGenerating(false)
-              }
-            }}
-          ></textarea>
-        )}
-      </div>
+                }}
+                className='mx-auto w-[60%] rounded-dm rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
+              >
+                Install
+              </button>
+              <p className="mx-auto w-[70%] text-xs text-gray-400 my-4">
+                You will be prompted for administrator access
+              </p>
+            </div>
+          </div>
+        </>
+      )}
+      {step === 2 && (
+        <>
+          <div className="flex flex-col space-y-20 mx-auto text-center">
+            <h1 className="mt-4 text-2xl tracking-tight text-gray-900">Run your first model</h1>
+            <div className="flex flex-col">
+              <div className="group relative flex items-center">
+                <pre className="text-start w-full language-none rounded-md bg-gray-100 px-4 py-3 text-2xs leading-normal">
+                  {command}
+                </pre>
+                <button
+                  className='absolute right-[5px] rounded-md border bg-white/90 px-2 py-2 text-gray-400 opacity-0 backdrop-blur-xl hover:text-gray-600 group-hover:opacity-100'
+                  onClick={() => {
+                    copy(command)
+                  }}
+                >
+                  <DocumentDuplicateIcon className="h-4 w-4 text-gray-500" />
+                </button>
+              </div>
+              <p className="mx-auto w-[70%] text-xs text-gray-400 my-4">
+                Run this command in your favorite terminal.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                window.close()
+              }}
+              className='mx-auto w-[60%] rounded-dm rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
+            >
+              Finish
+            </button>
+          </div>
+        </>
+      )}
     </div>
+
   )
 }
