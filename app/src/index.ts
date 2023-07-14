@@ -9,7 +9,6 @@ import { analytics, id } from './telemetry'
 
 require('@electron/remote/main').initialize()
 
-
 const store = new Store()
 let tray: Tray | null = null
 let welcomeWindow: BrowserWindow | null = null
@@ -32,7 +31,6 @@ const SingleInstanceLock = app.requestSingleInstanceLock()
 if (!SingleInstanceLock) {
   app.quit()
 }
-
 
 function firstRunWindow() {
   // Create the browser window.
@@ -60,7 +58,7 @@ function firstRunWindow() {
 
   if (process.platform === 'darwin') {
     app.dock.hide()
-  }  
+  }
 }
 
 function createSystemtray() {
@@ -154,12 +152,12 @@ app.on('ready', () => {
 
   createSystemtray()
   server()
-  
+
   if (!store.has('first-time-run')) {
     // This is the first run
     app.setLoginItemSettings({ openAtLogin: true })
     firstRunWindow()
-    store.set('first-time-run', false)
+    store.set('first-time-run', true)
   } else {
     // The app has been run before
     app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
