@@ -60,9 +60,8 @@ function firstRunWindow() {
 
   if (process.platform === 'darwin') {
     app.dock.hide()
-  }
+  }  
 }
-
 
 function createSystemtray() {
   let iconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')

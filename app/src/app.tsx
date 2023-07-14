@@ -11,13 +11,13 @@ const ollama = app.isPackaged
 ? path.join(process.resourcesPath, 'ollama')
 : path.resolve(process.cwd(), '..', 'ollama')
 
-function installCLI() {
+function installCLI(callback: () => void) {
   const symlinkPath = '/usr/local/bin/ollama'
 
   if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
+    callback && callback()
     return
   }
-
 
   const command = `
     do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
@@ -25,11 +25,13 @@ function installCLI() {
   exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
     if (error) {
       console.error(`cli: failed to install cli: ${error.message}`)
+      callback && callback()
       return
     }
 
     console.info(stdout)
     console.error(stderr)
+    callback && callback()
   })
 }
 
@@ -72,8 +74,10 @@ export default function () {
               <button
                 onClick={() => {
                   // install the command line
-                  installCLI()
-                  setStep(2)
+                  installCLI(() => {
+                    window.focus()
+                    setStep(2)
+                  })
                 }}
                 className='mx-auto w-[60%] rounded-dm rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
               >
