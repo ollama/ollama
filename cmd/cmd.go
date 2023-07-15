@@ -9,7 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -27,7 +27,7 @@ func cacheDir() string {
 		panic(err)
 	}
 
-	return path.Join(home, ".ollama")
+	return filepath.Join(home, ".ollama")
 }
 
 func RunRun(cmd *cobra.Command, args []string) error {
@@ -209,7 +209,7 @@ func NewCLI() *cobra.Command {
 		},
 		PersistentPreRunE: func(_ *cobra.Command, args []string) error {
 			// create the models directory and it's parent
-			return os.MkdirAll(path.Join(cacheDir(), "models"), 0o700)
+			return os.MkdirAll(filepath.Join(cacheDir(), "models"), 0o700)
 		},
 	}
 

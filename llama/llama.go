@@ -264,8 +264,8 @@ func (llm *llama) sample(output deque[C.llama_token], opts *C.struct_llama_sampl
 
 	token := C.llama_sample(
 		llm.ctx,
-		unsafe.SliceData(candidates.Data()), C.ulong(candidates.Len()),
-		unsafe.SliceData(output.Data()), C.ulong(output.Len()),
+		unsafe.SliceData(candidates.Data()), C.size_t(candidates.Len()),
+		unsafe.SliceData(output.Data()), C.size_t(output.Len()),
 		opts)
 	if token != C.llama_token_eos() {
 		return token, nil

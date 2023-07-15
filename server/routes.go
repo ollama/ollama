@@ -10,7 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
@@ -32,7 +32,7 @@ func cacheDir() string {
 		panic(err)
 	}
 
-	return path.Join(home, ".ollama")
+	return filepath.Join(home, ".ollama")
 }
 
 func generate(c *gin.Context) {
@@ -55,7 +55,7 @@ func generate(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		req.Model = path.Join(cacheDir(), "models", req.Model+".bin")
+		req.Model = filepath.Join(cacheDir(), "models", req.Model+".bin")
 	}
 
 	templateNames := make([]string, 0, len(templates.Templates()))
@@ -63,7 +63,7 @@ func generate(c *gin.Context) {
 		templateNames = append(templateNames, template.Name())
 	}
 
-	match, _ := matchRankOne(path.Base(req.Model), templateNames)
+	match, _ := matchRankOne(filepath.Base(req.Model), templateNames)
 	if template := templates.Lookup(match); template != nil {
 		var sb strings.Builder
 		if err := template.Execute(&sb, req); err != nil {
