@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 )
 
@@ -32,14 +32,14 @@ func (m *Model) FullName() string {
 		panic(err)
 	}
 
-	return path.Join(home, ".ollama", "models", m.Name+".bin")
+	return filepath.Join(home, ".ollama", "models", m.Name+".bin")
 }
 
 func (m *Model) TempFile() string {
 	fullName := m.FullName()
-	return path.Join(
-		path.Dir(fullName),
-		fmt.Sprintf(".%s.part", path.Base(fullName)),
+	return filepath.Join(
+		filepath.Dir(fullName),
+		fmt.Sprintf(".%s.part", filepath.Base(fullName)),
 	)
 }
 
@@ -118,7 +118,7 @@ func saveModel(model *Model, fn func(total, completed int64)) error {
 			return os.Rename(model.TempFile(), model.FullName())
 		}
 
-		n , err := io.CopyN(out, resp.Body, 8192)
+		n, err := io.CopyN(out, resp.Body, 8192)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
