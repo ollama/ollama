@@ -287,9 +287,16 @@ func SaveLayers(layers []*LayerWithBuffer, fn func(status string), force bool) e
 		return err
 	}
 
+	dir := path.Join(home, ".ollama/models/blobs")
+
+	err = os.MkdirAll(dir, 0o700)
+	if err != nil {
+		return fmt.Errorf("make blobs directory: %w", err)
+	}
+
 	// Write each of the layers to disk
 	for _, layer := range layers {
-		fp := path.Join(home, ".ollama/models/blobs", layer.Digest)
+		fp := path.Join(dir, layer.Digest)
 
 		_, err = os.Stat(fp)
 		if os.IsNotExist(err) || force {
@@ -746,6 +753,11 @@ func downloadBlob(registryURL, repoName, digest, username, password string) erro
 	if resp.StatusCode != http.StatusOK {
 		body, _ := ioutil.ReadAll(resp.Body)
 		return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+	}
+
+	err = os.MkdirAll(path.Dir(fp), 0o700)
+	if err != nil {
+		return fmt.Errorf("make blobs directory: %w", err)
 	}
 
 	out, err := os.Create(fp)
