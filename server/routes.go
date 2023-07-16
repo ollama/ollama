@@ -19,10 +19,6 @@ import (
 	"github.com/jmorganca/ollama/llama"
 )
 
-//go:embed templates/*
-var templatesFS embed.FS
-var templates = template.Must(template.ParseFS(templatesFS, "templates/*.prompt"))
-
 func cacheDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {

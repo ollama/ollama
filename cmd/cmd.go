@@ -90,9 +90,27 @@ func RunPull(cmd *cobra.Command, args []string) error {
 func pull(model string) error {
 	client := api.NewClient()
 
+	var bar *progressbar.ProgressBar
+
+	currentLayer := ""
 	request := api.PullRequest{Name: model}
 	fn := func(resp api.PullProgress) error {
-		fmt.Println(resp.Status)
+		if resp.Digest != currentLayer && resp.Digest != "" {
+			if currentLayer != "" {
+				fmt.Println()
+			}
+			currentLayer = resp.Digest
+			layerStr := resp.Digest[7:23] + "..."
+			bar = progressbar.DefaultBytes(
+				int64(resp.Total),
+				"pulling "+layerStr,
+			)
+		} else if resp.Digest == currentLayer && resp.Digest != "" {
+			bar.Set(resp.Completed)
+		} else {
+			currentLayer = ""
+			fmt.Println(resp.Status)
+		}
 		return nil
 	}
 

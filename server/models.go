@@ -1,12 +1,6 @@
 package server
 
 import (
-	"fmt"
-	"os"
-	"path"
-	"path/filepath"
-	"strconv"
-
 	"github.com/jmorganca/ollama/api"
 )
 
@@ -26,62 +20,3 @@ type Model struct {
 	License          string `json:"license"`
 }
 
-func saveModel(model *Model, fn func(total, completed int64)) error {
-	// this models cache directory is created by the server on startup
-
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", model.URL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to download model: %w", err)
-	}
-
-	var size int64
-
-	// completed file doesn't exist, check partial file
-	fi, err := os.Stat(model.TempFile())
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		// noop, file doesn't exist so create it
-	case err != nil:
-		return fmt.Errorf("stat: %w", err)
-	default:
-		size = fi.Size()
-	}
-
-	req.Header.Add("Range", fmt.Sprintf("bytes=%d-", size))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to download model: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("failed to download model: %s", resp.Status)
-	}
-
-	out, err := os.OpenFile(model.TempFile(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		panic(err)
-	}
-	defer out.Close()
-
-	remaining, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
-	completed := size
-
-	total := remaining + completed
-
-	for {
-		fn(total, completed)
-		if completed >= total {
-			return os.Rename(model.TempFile(), model.FullName())
-		}
-
-		n, err := io.CopyN(out, resp.Body, 8192)
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-
-		completed += n
-	}
-}
