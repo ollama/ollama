@@ -14,6 +14,7 @@ type Command struct {
 
 func Parse(reader io.Reader) ([]Command, error) {
 	var commands []Command
+	var foundModel bool
 
 	scanner := bufio.NewScanner(reader)
 	multiline := false
@@ -39,12 +40,12 @@ func Parse(reader io.Reader) ([]Command, error) {
 		command := Command{}
 		switch fields[0] {
 		case "FROM":
-			// TODO - support only one of FROM or MODELFILE
-			command.Name = "image"
-			command.Arg = fields[1]
-		case "MODELFILE":
 			command.Name = "model"
 			command.Arg = fields[1]
+			if command.Arg == "" {
+				return nil, fmt.Errorf("no model specified in FROM line")
+			}
+			foundModel = true
 		case "PROMPT":
 			command.Name = "prompt"
 			if fields[1] == `"""` {
@@ -63,6 +64,10 @@ func Parse(reader io.Reader) ([]Command, error) {
 		if !multiline {
 			commands = append(commands, command)
 		}
+	}
+
+	if !foundModel {
+		return nil, fmt.Errorf("no FROM line for the model was specified")
 	}
 
 	if multiline {

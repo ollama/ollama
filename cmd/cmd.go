@@ -292,12 +292,5 @@ func NewCLI() *cobra.Command {
 		pushCmd,
 	)
 
-	rootCmd.AddCommand(
-		serveCmd,
-		createCmd,
-		runCmd,
-		pullCmd,
-	)
-
 	return rootCmd
 }
