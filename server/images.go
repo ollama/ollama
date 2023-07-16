@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -102,11 +101,7 @@ func GetModel(name string) (*Model, error) {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
 		case "application/vnd.ollama.image.prompt":
-			f, err := os.Open(filename)
-			if err != nil {
-				return nil, err
-			}
-			data, err := ioutil.ReadAll(f)
+			data, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err
 			}
@@ -156,8 +151,7 @@ func CreateModel(name string, mf io.Reader, fn func(status string)) error {
 	}
 
 	var layers []*LayerWithBuffer
-	var param map[string]string
-	param = make(map[string]string)
+	param := make(map[string]string)
 
 	for _, c := range commands {
 		log.Printf("[%s] - %s\n", c.Name, c.Arg)
@@ -360,10 +354,10 @@ func GetLayerWithBufferFromLayer(layer *Layer) (*LayerWithBuffer, error) {
 
 	fp := path.Join(home, ".ollama/models/blobs", layer.Digest)
 	file, err := os.Open(fp)
-	defer file.Close()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not open blob: %w", err)
 	}
+	defer file.Close()
 
 	newLayer, err := CreateLayer(file)
 	if err != nil {
@@ -386,7 +380,7 @@ func getLayerDigests(layers []*LayerWithBuffer) ([]string, error) {
 	var digests []string
 	for _, l := range layers {
 		if l.Digest == "" {
-			return nil, fmt.Errorf("layer is missing a digest!")
+			return nil, fmt.Errorf("layer is missing a digest")
 		}
 		digests = append(digests, l.Digest)
 	}
@@ -496,7 +490,7 @@ func PushModel(name, username, password string, fn func(status, digest string, T
 
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusCreated {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
 
@@ -594,7 +588,7 @@ func pullModelManifest(registryURL, repoName, tag, username, password string) (*
 
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusOK {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
 
@@ -655,14 +649,14 @@ func startUpload(registryURL string, repositoryName string, username string, pas
 
 	// Check for success
 	if resp.StatusCode != http.StatusAccepted {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
 
 	// Extract UUID location from header
 	location := resp.Header.Get("Location")
 	if location == "" {
-		return "", fmt.Errorf("Location header is missing in response")
+		return "", fmt.Errorf("location header is missing in response")
 	}
 
 	return location, nil
@@ -716,7 +710,7 @@ func uploadBlob(location string, layer *Layer, username string, password string)
 
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusCreated {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
 
@@ -751,7 +745,7 @@ func downloadBlob(registryURL, repoName, digest, username, password string) erro
 	// TODO: handle range requests to make this resumable
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
 

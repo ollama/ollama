@@ -1,12 +1,10 @@
 package server
 
 import (
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -16,7 +14,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lithammer/fuzzysearch/fuzzy"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llama"
@@ -201,18 +198,6 @@ func Serve(ln net.Listener) error {
 	}
 
 	return s.Serve(ln)
-}
-
-func matchRankOne(source string, targets []string) (bestMatch string, bestRank int) {
-	bestRank = math.MaxInt
-	for _, target := range targets {
-		if rank := fuzzy.LevenshteinDistance(source, target); bestRank > rank {
-			bestRank = rank
-			bestMatch = target
-		}
-	}
-
-	return
 }
 
 func streamResponse(c *gin.Context, ch chan any) {

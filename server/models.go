@@ -1,19 +1,14 @@
 package server
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 
 	"github.com/jmorganca/ollama/api"
 )
-
-const directoryURL = "https://ollama.ai/api/models"
 
 type Model struct {
 	Name             string `json:"name"`
@@ -29,47 +24,6 @@ type Model struct {
 	OriginalAuthor   string `json:"original_author"`
 	OriginalURL      string `json:"original_url"`
 	License          string `json:"license"`
-}
-
-func (m *Model) FullName() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
-
-	return filepath.Join(home, ".ollama", "models", m.Name+".bin")
-}
-
-func (m *Model) TempFile() string {
-	fullName := m.FullName()
-	return filepath.Join(
-		filepath.Dir(fullName),
-		fmt.Sprintf(".%s.part", filepath.Base(fullName)),
-	)
-}
-
-func getRemote(model string) (*Model, error) {
-	// resolve the model download from our directory
-	resp, err := http.Get(directoryURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get directory: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read directory: %w", err)
-	}
-	var models []Model
-	err = json.Unmarshal(body, &models)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse directory: %w", err)
-	}
-	for _, m := range models {
-		if m.Name == model {
-			return &m, nil
-		}
-	}
-	return nil, fmt.Errorf("model not found in directory: %s", model)
 }
 
 func saveModel(model *Model, fn func(total, completed int64)) error {
