@@ -518,8 +518,7 @@ func PullModel(name, username, password string, fn func(status, digest string, T
 
 	manifest, err := pullModelManifest(DefaultRegistry, repoName, tag, username, password)
 	if err != nil {
-		fmt.Errorf("Error: %q", err)
-		return err
+		return fmt.Errorf("pull model manifest: %q", err)
 	}
 
 	log.Printf("manifest = %#v", manifest)
@@ -556,6 +555,12 @@ func PullModel(name, username, password string, fn func(status, digest string, T
 	}
 
 	fp := path.Join(home, ".ollama/models/manifests", name)
+
+	err = os.MkdirAll(path.Dir(fp), 0o700)
+	if err != nil {
+		return fmt.Errorf("make manifests directory: %w", err)
+	}
+
 	err = os.WriteFile(fp, manifestJSON, 0644)
 	if err != nil {
 		log.Printf("couldn't write to %s", fp)
