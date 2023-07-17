@@ -95,10 +95,12 @@ function server() {
     logger.error(data.toString().trim())
   })
 
-  proc.on('exit', () => {
+  function restart() {
     logger.info('Restarting the server...')
     server()
-  })
+  }
+
+  proc.on('exit', restart)
 
   proc.on('disconnect', () => {
     logger.info('Server disconnected. Reconnecting...')
@@ -106,6 +108,7 @@ function server() {
   })
 
   process.on('exit', () => {
+    proc.off('exit', restart)
     proc.kill()
   })
 }
