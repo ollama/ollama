@@ -16,7 +16,7 @@ Run large language models with `llama.cpp`.
 
 ## Install
 
-- [Download](https://ollama.ai/download) for macOS
+- [Download](https://ollama.ai/download) for macOS with Apple Silicon (Intel coming soon)
 - Download for Windows (coming soon)
 
 You can also build the [binary from source](#building).
