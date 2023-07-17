@@ -1,12 +1,10 @@
 package server
 
 import (
-	"embed"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -16,15 +14,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lithammer/fuzzysearch/fuzzy"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llama"
 )
-
-//go:embed templates/*
-var templatesFS embed.FS
-var templates = template.Must(template.ParseFS(templatesFS, "templates/*.prompt"))
 
 func cacheDir() string {
 	home, err := os.UserHomeDir()
@@ -40,6 +33,7 @@ func generate(c *gin.Context) {
 
 	req := api.GenerateRequest{
 		Options: api.DefaultOptions(),
+		Prompt:  "",
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -47,34 +41,28 @@ func generate(c *gin.Context) {
 		return
 	}
 
-	if remoteModel, _ := getRemote(req.Model); remoteModel != nil {
-		req.Model = remoteModel.FullName()
-	}
-	if _, err := os.Stat(req.Model); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		req.Model = filepath.Join(cacheDir(), "models", req.Model+".bin")
+	model, err := GetModel(req.Model)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
-	templateNames := make([]string, 0, len(templates.Templates()))
-	for _, template := range templates.Templates() {
-		templateNames = append(templateNames, template.Name())
+	templ, err := template.New("").Parse(model.Prompt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
-	match, _ := matchRankOne(filepath.Base(req.Model), templateNames)
-	if template := templates.Lookup(match); template != nil {
-		var sb strings.Builder
-		if err := template.Execute(&sb, req); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		req.Prompt = sb.String()
+	var sb strings.Builder
+	if err = templ.Execute(&sb, req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
+	req.Prompt = sb.String()
 
-	llm, err := llama.New(req.Model, req.Options)
+	fmt.Printf("prompt = >>>%s<<<\n", req.Prompt)
+
+	llm, err := llama.New(model.ModelPath, req.Options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -105,40 +93,84 @@ func pull(c *gin.Context) {
 		return
 	}
 
-	remote, err := getRemote(req.Model)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
+	ch := make(chan any)
+	go func() {
+		defer close(ch)
+		fn := func(status, digest string, total, completed int, percent float64) {
+			ch <- api.PullProgress{
+				Status:    status,
+				Digest:    digest,
+				Total:     total,
+				Completed: completed,
+				Percent:   percent,
+			}
+		}
+		if err := PullModel(req.Name, req.Username, req.Password, fn); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}()
 
-	// check if completed file exists
-	fi, err := os.Stat(remote.FullName())
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		// noop, file doesn't exist so create it
-	case err != nil:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	default:
-		c.JSON(http.StatusOK, api.PullProgress{
-			Total:     fi.Size(),
-			Completed: fi.Size(),
-			Percent:   100,
-		})
+	streamResponse(c, ch)
+}
 
+func push(c *gin.Context) {
+	var req api.PushRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		saveModel(remote, func(total, completed int64) {
-			ch <- api.PullProgress{
+		fn := func(status, digest string, total, completed int, percent float64) {
+			ch <- api.PushProgress{
+				Status:    status,
+				Digest:    digest,
 				Total:     total,
 				Completed: completed,
-				Percent:   float64(completed) / float64(total) * 100,
+				Percent:   percent,
 			}
-		})
+		}
+		if err := PushModel(req.Name, req.Username, req.Password, fn); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}()
+
+	streamResponse(c, ch)
+}
+
+func create(c *gin.Context) {
+	var req api.CreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+		return
+	}
+
+	// NOTE consider passing the entire Modelfile in the json instead of the path to it
+
+	file, err := os.Open(req.Path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+		return
+	}
+	defer file.Close()
+
+	ch := make(chan any)
+	go func() {
+		defer close(ch)
+		fn := func(status string) {
+			ch <- api.CreateProgress{
+				Status: status,
+			}
+		}
+
+		if err := CreateModel(req.Name, file, fn); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
 	}()
 
 	streamResponse(c, ch)
@@ -153,6 +185,8 @@ func Serve(ln net.Listener) error {
 
 	r.POST("/api/pull", pull)
 	r.POST("/api/generate", generate)
+	r.POST("/api/create", create)
+	r.POST("/api/push", push)
 
 	log.Printf("Listening on %s", ln.Addr())
 	s := &http.Server{
@@ -160,18 +194,6 @@ func Serve(ln net.Listener) error {
 	}
 
 	return s.Serve(ln)
-}
-
-func matchRankOne(source string, targets []string) (bestMatch string, bestRank int) {
-	bestRank = math.MaxInt
-	for _, target := range targets {
-		if rank := fuzzy.LevenshteinDistance(source, target); bestRank > rank {
-			bestRank = rank
-			bestMatch = target
-		}
-	}
-
-	return
 }
 
 func streamResponse(c *gin.Context, ch chan any) {

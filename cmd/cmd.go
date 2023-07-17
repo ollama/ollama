@@ -30,6 +30,23 @@ func cacheDir() string {
 	return filepath.Join(home, ".ollama")
 }
 
+func create(cmd *cobra.Command, args []string) error {
+	filename, _ := cmd.Flags().GetString("file")
+	client := api.NewClient()
+
+	request := api.CreateRequest{Name: args[0], Path: filename}
+	fn := func(resp api.CreateProgress) error {
+		fmt.Println(resp.Status)
+		return nil
+	}
+
+	if err := client.Create(context.Background(), &request, fn); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func RunRun(cmd *cobra.Command, args []string) error {
 	_, err := os.Stat(args[0])
 	switch {
@@ -51,25 +68,56 @@ func RunRun(cmd *cobra.Command, args []string) error {
 	return RunGenerate(cmd, args)
 }
 
+func push(cmd *cobra.Command, args []string) error {
+	client := api.NewClient()
+
+	request := api.PushRequest{Name: args[0]}
+	fn := func(resp api.PushProgress) error {
+		fmt.Println(resp.Status)
+		return nil
+	}
+
+	if err := client.Push(context.Background(), &request, fn); err != nil {
+		return err
+	}
+	return nil
+}
+
+func RunPull(cmd *cobra.Command, args []string) error {
+	return pull(args[0])
+}
+
 func pull(model string) error {
 	client := api.NewClient()
+
 	var bar *progressbar.ProgressBar
-	return client.Pull(
-		context.Background(),
-		&api.PullRequest{Model: model},
-		func(progress api.PullProgress) error {
-			if bar == nil {
-				if progress.Percent >= 100 {
-					// already downloaded
-					return nil
-				}
 
-				bar = progressbar.DefaultBytes(progress.Total)
+	currentLayer := ""
+	request := api.PullRequest{Name: model}
+	fn := func(resp api.PullProgress) error {
+		if resp.Digest != currentLayer && resp.Digest != "" {
+			if currentLayer != "" {
+				fmt.Println()
 			}
+			currentLayer = resp.Digest
+			layerStr := resp.Digest[7:23] + "..."
+			bar = progressbar.DefaultBytes(
+				int64(resp.Total),
+				"pulling "+layerStr,
+			)
+		} else if resp.Digest == currentLayer && resp.Digest != "" {
+			bar.Set(resp.Completed)
+		} else {
+			currentLayer = ""
+			fmt.Println(resp.Status)
+		}
+		return nil
+	}
 
-			return bar.Set64(progress.Completed)
-		},
-	)
+	if err := client.Pull(context.Background(), &request, fn); err != nil {
+		return err
+	}
+	return nil
 }
 
 func RunGenerate(cmd *cobra.Command, args []string) error {
@@ -215,6 +263,15 @@ func NewCLI() *cobra.Command {
 
 	cobra.EnableCommandSorting = false
 
+	createCmd := &cobra.Command{
+		Use:   "create MODEL",
+		Short: "Create a model from a Modelfile",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  create,
+	}
+
+	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
+
 	runCmd := &cobra.Command{
 		Use:   "run MODEL [PROMPT]",
 		Short: "Run a model",
@@ -231,9 +288,26 @@ func NewCLI() *cobra.Command {
 		RunE:    RunServer,
 	}
 
+	pullCmd := &cobra.Command{
+		Use:   "pull MODEL",
+		Short: "Pull a model from a registry",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  RunPull,
+	}
+
+	pushCmd := &cobra.Command{
+		Use:   "push MODEL",
+		Short: "Push a model to a registry",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  push,
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
+		createCmd,
 		runCmd,
+		pullCmd,
+		pushCmd,
 	)
 
 	return rootCmd
