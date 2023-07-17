@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -125,21 +126,17 @@ func GetModel(name string) (*Model, error) {
 			}
 			model.Prompt = string(data)
 		case "application/vnd.ollama.image.params":
-			/*
-				f, err = os.Open(filename)
-				if err != nil {
-					return nil, err
-				}
-			*/
+			params, err := os.Open(filename)
+			if err != nil {
+				return nil, err
+			}
+			defer params.Close()
 
 			var opts api.Options
-			/*
-				decoder = json.NewDecoder(f)
-				err = decoder.Decode(&opts)
-				if err != nil {
-					return nil, err
-				}
-			*/
+			if err = json.NewDecoder(params).Decode(&opts); err != nil {
+				return nil, err
+			}
+
 			model.Options = opts
 		}
 	}
@@ -170,7 +167,7 @@ func CreateModel(name string, mf io.Reader, fn func(status string)) error {
 	}
 
 	var layers []*LayerWithBuffer
-	param := make(map[string]string)
+	params := make(map[string]string)
 
 	for _, c := range commands {
 		log.Printf("[%s] - %s\n", c.Name, c.Arg)
@@ -226,15 +223,15 @@ func CreateModel(name string, mf io.Reader, fn func(status string)) error {
 			l.MediaType = "application/vnd.ollama.image.prompt"
 			layers = append(layers, l)
 		default:
-			param[c.Name] = c.Arg
+			params[c.Name] = c.Arg
 		}
 	}
 
 	// Create a single layer for the parameters
-	fn("creating parameter layer")
-	if len(param) > 0 {
+	if len(params) > 0 {
+		fn("creating parameter layer")
 		layers = removeLayerFromLayers(layers, "application/vnd.ollama.image.params")
-		paramData, err := paramsToReader(param)
+		paramData, err := paramsToReader(params)
 		if err != nil {
 			return fmt.Errorf("couldn't create params json: %v", err)
 		}
@@ -367,13 +364,62 @@ func GetLayerWithBufferFromLayer(layer *Layer) (*LayerWithBuffer, error) {
 	return newLayer, nil
 }
 
-func paramsToReader(m map[string]string) (io.Reader, error) {
-	data, err := json.MarshalIndent(m, "", "  ")
+func paramsToReader(params map[string]string) (io.Reader, error) {
+	opts := api.DefaultOptions()
+	typeOpts := reflect.TypeOf(opts)
+
+	// build map of json struct tags
+	jsonOpts := make(map[string]reflect.StructField)
+	for _, field := range reflect.VisibleFields(typeOpts) {
+		jsonTag := strings.Split(field.Tag.Get("json"), ",")[0]
+		if jsonTag != "" {
+			jsonOpts[jsonTag] = field
+		}
+	}
+
+	valueOpts := reflect.ValueOf(&opts).Elem()
+	// iterate params and set values based on json struct tags
+	for key, val := range params {
+		if opt, ok := jsonOpts[key]; ok {
+			field := valueOpts.FieldByName(opt.Name)
+			if field.IsValid() && field.CanSet() {
+				switch field.Kind() {
+				case reflect.Float32:
+					floatVal, err := strconv.ParseFloat(val, 32)
+					if err != nil {
+						return nil, fmt.Errorf("invalid float value %s", val)
+					}
+
+					field.SetFloat(floatVal)
+				case reflect.Int:
+					intVal, err := strconv.ParseInt(val, 10, 0)
+					if err != nil {
+						return nil, fmt.Errorf("invalid int value %s", val)
+					}
+
+					field.SetInt(intVal)
+				case reflect.Bool:
+					boolVal, err := strconv.ParseBool(val)
+					if err != nil {
+						return nil, fmt.Errorf("invalid bool value %s", val)
+					}
+
+					field.SetBool(boolVal)
+				case reflect.String:
+					field.SetString(val)
+				default:
+					return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
+				}
+			}
+		}
+	}
+
+	bts, err := json.Marshal(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	return strings.NewReader(string(data)), nil
+	return bytes.NewReader(bts), nil
 }
 
 func getLayerDigests(layers []*LayerWithBuffer) ([]string, error) {
@@ -588,7 +634,7 @@ func pullModelManifest(registryURL, repoName, tag, username, password string) (*
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("registry responded with code %d: %s", resp.StatusCode, body)
 	}
 
 	var m *ManifestV2
@@ -649,7 +695,7 @@ func startUpload(registryURL string, repositoryName string, username string, pas
 	// Check for success
 	if resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+		return "", fmt.Errorf("registry responded with code %d: %s", resp.StatusCode, body)
 	}
 
 	// Extract UUID location from header
@@ -775,13 +821,11 @@ func downloadBlob(registryURL, repoName, digest string, username, password strin
 	for {
 		fn(fmt.Sprintf("Downloading %s", digest), digest, int(total), int(completed), float64(completed)/float64(total))
 		if completed >= total {
-			fmt.Printf("finished downloading\n")
-			err = os.Rename(fp+"-partial", fp)
-			if err != nil {
-				fmt.Printf("error: %v\n", err)
+			if err := os.Rename(fp+"-partial", fp); err != nil {
 				fn(fmt.Sprintf("error renaming file: %v", err), digest, int(total), int(completed), 1)
 				return err
 			}
+
 			break
 		}
 
