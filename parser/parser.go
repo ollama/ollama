@@ -2,76 +2,91 @@ package parser
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
 
 type Command struct {
 	Name string
-	Arg  string
+	Args string
+}
+
+func (c *Command) Reset() {
+	c.Name = ""
+	c.Args = ""
 }
 
 func Parse(reader io.Reader) ([]Command, error) {
 	var commands []Command
-	var foundModel bool
+
+	var command, modelCommand Command
 
 	scanner := bufio.NewScanner(reader)
-	multiline := false
-	var multilineCommand *Command
+	scanner.Split(scanModelfile)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if multiline {
-			// If we're in a multiline string and the line is """, end the multiline string.
-			if strings.TrimSpace(line) == `"""` {
-				multiline = false
-				commands = append(commands, *multilineCommand)
-			} else {
-				// Otherwise, append the line to the multiline string.
-				multilineCommand.Arg += "\n" + line
-			}
-			continue
-		}
-		fields := strings.Fields(line)
+		line := scanner.Bytes()
+
+		fields := bytes.SplitN(line, []byte(" "), 2)
 		if len(fields) == 0 {
 			continue
 		}
 
-		command := Command{}
-		switch strings.ToUpper(fields[0]) {
+		switch string(bytes.ToUpper(fields[0])) {
 		case "FROM":
 			command.Name = "model"
-			command.Arg = fields[1]
-			if command.Arg == "" {
-				return nil, fmt.Errorf("no model specified in FROM line")
-			}
-			foundModel = true
-		case "PROMPT", "LICENSE":
-			command.Name = strings.ToLower(fields[0])
-			if fields[1] == `"""` {
-				multiline = true
-				multilineCommand = &command
-				multilineCommand.Arg = ""
-			} else {
-				command.Arg = strings.Join(fields[1:], " ")
-			}
+			command.Args = string(fields[1])
+			// copy command for validation
+			modelCommand = command
+		case "LICENSE", "TEMPLATE", "SYSTEM":
+			command.Name = string(bytes.ToLower(fields[0]))
+			command.Args = string(fields[1])
 		case "PARAMETER":
-			command.Name = fields[1]
-			command.Arg = strings.Join(fields[2:], " ")
+			fields = bytes.SplitN(fields[1], []byte(" "), 2)
+			command.Name = string(fields[0])
+			command.Args = string(fields[1])
 		default:
 			continue
 		}
-		if !multiline {
-			commands = append(commands, command)
-		}
+
+		commands = append(commands, command)
+		command.Reset()
 	}
 
-	if !foundModel {
+	if modelCommand.Args == "" {
 		return nil, fmt.Errorf("no FROM line for the model was specified")
 	}
 
-	if multiline {
-		return nil, fmt.Errorf("unclosed multiline string")
-	}
 	return commands, scanner.Err()
+}
+
+func scanModelfile(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF || len(data) == 0 {
+		return 0, nil, nil
+	}
+
+	newline := bytes.IndexByte(data, '\n')
+
+	if start := bytes.Index(data, []byte(`"""`)); start >= 0 && start < newline {
+		end := bytes.Index(data[start+3:], []byte(`"""`))
+		if end < 0 {
+			return 0, nil, errors.New(`unterminated multiline string: """`)
+		}
+
+		n := start + 3 + end + 3
+		return n, bytes.Replace(data[:n], []byte(`"""`), []byte(""), 2), nil
+	}
+
+	if start := bytes.Index(data, []byte(`'''`)); start >= 0 && start < newline {
+		end := bytes.Index(data[start+3:], []byte(`'''`))
+		if end < 0 {
+			return 0, nil, errors.New("unterminated multiline string: '''")
+		}
+
+		n := start + 3 + end + 3
+		return n, bytes.Replace(data[:n], []byte("'''"), []byte(""), 2), nil
+	}
+
+	return bufio.ScanLines(data, atEOF)
 }
