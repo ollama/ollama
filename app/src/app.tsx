@@ -1,34 +1,31 @@
 import { useState } from 'react'
 import copy from 'copy-to-clipboard'
-import { exec } from 'child_process'
+import { exec as cbExec } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import { DocumentDuplicateIcon } from '@heroicons/react/24/outline'
 import { app } from '@electron/remote'
 import OllamaIcon from './ollama.svg'
+import { promisify } from 'util'
 
 const ollama = app.isPackaged ? path.join(process.resourcesPath, 'ollama') : path.resolve(process.cwd(), '..', 'ollama')
+const exec = promisify(cbExec)
 
-async function installCLI(callback: () => void) {
+async function installCLI() {
   const symlinkPath = '/usr/local/bin/ollama'
 
   if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
-    callback && callback()
     return
   }
 
-  const command = `
-    do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges
-  `
-  exec(`osascript -e '${command}'`, (error: Error | null, stdout: string, stderr: string) => {
-    if (error) {
-      console.error(`cli: failed to install cli: ${error.message}`)
-      callback && callback()
-      return
-    }
+  const command = `do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges`
 
-    callback && callback()
-  })
+  try {
+    await exec(`osascript -e '${command}'`)
+  } catch (error) {
+    console.error(`cli: failed to install cli: ${error.message}`)
+    return
+  }
 }
 
 export default function () {
@@ -66,12 +63,10 @@ export default function () {
             <pre className='mx-auto text-4xl text-gray-400'>&gt; ollama</pre>
             <div className='mx-auto'>
               <button
-                onClick={() => {
-                  // install the command line
-                  installCLI(() => {
-                    window.focus()
-                    setStep(2)
-                  })
+                onClick={async () => {
+                  await installCLI()
+                  window.focus()
+                  setStep(2)
                 }}
                 className='rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
               >
