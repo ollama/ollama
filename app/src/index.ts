@@ -107,7 +107,7 @@ function server() {
     server()
   })
 
-  process.on('exit', () => {
+  app.on('before-quit', () => {
     proc.off('exit', restart)
     proc.kill()
   })
