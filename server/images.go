@@ -634,7 +634,7 @@ func pullModelManifest(registryURL, repoName, tag, username, password string) (*
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("registry responded with code %d: %s", resp.StatusCode, body)
 	}
 
 	var m *ManifestV2
@@ -695,7 +695,7 @@ func startUpload(registryURL string, repositoryName string, username string, pas
 	// Check for success
 	if resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+		return "", fmt.Errorf("registry responded with code %d: %s", resp.StatusCode, body)
 	}
 
 	// Extract UUID location from header
