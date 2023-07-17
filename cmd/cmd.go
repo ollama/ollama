@@ -24,14 +24,26 @@ func create(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
 	client := api.NewClient()
 
+	var spinner *Spinner
+
 	request := api.CreateRequest{Name: args[0], Path: filename}
 	fn := func(resp api.CreateProgress) error {
-		fmt.Println(resp.Status)
+		if spinner != nil {
+			spinner.Stop()
+		}
+
+		spinner = NewSpinner(resp.Status)
+		go spinner.Spin(100 * time.Millisecond)
+
 		return nil
 	}
 
 	if err := client.Create(context.Background(), &request, fn); err != nil {
 		return err
+	}
+
+	if spinner != nil {
+		spinner.Stop()
 	}
 
 	return nil
@@ -129,24 +141,8 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 	if len(strings.TrimSpace(prompt)) > 0 {
 		client := api.NewClient()
 
-		spinner := progressbar.NewOptions(-1,
-			progressbar.OptionSetWriter(os.Stderr),
-			progressbar.OptionThrottle(60*time.Millisecond),
-			progressbar.OptionSpinnerType(14),
-			progressbar.OptionSetRenderBlankState(true),
-			progressbar.OptionSetElapsedTime(false),
-			progressbar.OptionClearOnFinish(),
-		)
-
-		go func() {
-			for range time.Tick(60 * time.Millisecond) {
-				if spinner.IsFinished() {
-					break
-				}
-
-				spinner.Add(1)
-			}
-		}()
+		spinner := NewSpinner("")
+		go spinner.Spin(60 * time.Millisecond)
 
 		var latest api.GenerateResponse
 
