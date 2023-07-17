@@ -66,7 +66,7 @@ func GetManifest(name string) (*ManifestV2, error) {
 		return nil, err
 	}
 
-	fp := filepath.Join(home, ".ollama/models/manifests", name)
+	fp := filepath.Join(home, ".ollama", "models", "manifests", name)
 	_, err = os.Stat(fp)
 	if os.IsNotExist(err) {
 		return nil, fmt.Errorf("couldn't find model '%s'", name)
@@ -104,7 +104,7 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	for _, layer := range manifest.Layers {
-		filename := filepath.Join(home, ".ollama/models/blobs", layer.Digest)
+		filename := filepath.Join(home, ".ollama", "models", "blobs", layer.Digest)
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
@@ -289,7 +289,7 @@ func SaveLayers(layers []*LayerWithBuffer, fn func(status string), force bool) e
 		return err
 	}
 
-	dir := filepath.Join(home, ".ollama/models/blobs")
+	dir := filepath.Join(home, ".ollama", "models", "blobs")
 
 	err = os.MkdirAll(dir, 0o700)
 	if err != nil {
@@ -345,7 +345,7 @@ func CreateManifest(name string, cfg *LayerWithBuffer, layers []*Layer) error {
 		return err
 	}
 
-	fp := filepath.Join(home, ".ollama/models/manifests", name)
+	fp := filepath.Join(home, ".ollama", "models", "manifests", name)
 	err = os.WriteFile(fp, manifestJSON, 0644)
 	if err != nil {
 		log.Printf("couldn't write to %s", fp)
@@ -360,7 +360,7 @@ func GetLayerWithBufferFromLayer(layer *Layer) (*LayerWithBuffer, error) {
 		return nil, err
 	}
 
-	fp := filepath.Join(home, ".ollama/models/blobs", layer.Digest)
+	fp := filepath.Join(home, ".ollama", "models", "blobs", layer.Digest)
 	file, err := os.Open(fp)
 	if err != nil {
 		return nil, fmt.Errorf("could not open blob: %w", err)
@@ -564,7 +564,7 @@ func PullModel(name, username, password string, fn func(status, digest string, T
 		return err
 	}
 
-	fp := filepath.Join(home, ".ollama/models/manifests", name)
+	fp := filepath.Join(home, ".ollama", "models", "manifests", name)
 
 	err = os.MkdirAll(path.Dir(fp), 0o700)
 	if err != nil {
@@ -704,7 +704,7 @@ func uploadBlob(location string, layer *Layer, username string, password string)
 	// TODO allow canceling uploads via DELETE
 	// TODO allow cross repo blob mount
 
-	fp := filepath.Join(home, ".ollama/models/blobs", layer.Digest)
+	fp := filepath.Join(home, ".ollama", "models", "blobs", layer.Digest)
 	f, err := os.Open(fp)
 	if err != nil {
 		return err
@@ -732,7 +732,7 @@ func downloadBlob(registryURL, repoName, digest string, username, password strin
 		return err
 	}
 
-	fp := filepath.Join(home, ".ollama/models/blobs", digest)
+	fp := filepath.Join(home, ".ollama", "models", "blobs", digest)
 
 	_, err = os.Stat(fp)
 	if !os.IsNotExist(err) {
