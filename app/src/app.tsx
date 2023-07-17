@@ -28,14 +28,20 @@ async function installCLI() {
   }
 }
 
+enum Step {
+  WELCOME = 0,
+  CLI,
+  FINISH,
+}
+
 export default function () {
-  const [step, setStep] = useState(0)
+  const [step, setStep] = useState<Step>(Step.WELCOME)
 
   const command = 'ollama run orca'
 
   return (
-    <div className='mx-auto flex min-h-screen w-full flex-col justify-between bg-white px-4 pt-16'>
-      {step === 0 && (
+    <div className='drag mx-auto flex min-h-screen w-full flex-col justify-between bg-white px-4 pt-16'>
+      {step === Step.WELCOME && (
         <>
           <div className='mx-auto text-center'>
             <h1 className='mb-6 mt-4 text-2xl tracking-tight text-gray-900'>Welcome to Ollama</h1>
@@ -56,7 +62,7 @@ export default function () {
           </div>
         </>
       )}
-      {step === 1 && (
+      {step === Step.CLI && (
         <>
           <div className='mx-auto flex flex-col space-y-28 text-center'>
             <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Install the command line</h1>
@@ -79,7 +85,7 @@ export default function () {
           </div>
         </>
       )}
-      {step === 2 && (
+      {step === Step.FINISH && (
         <>
           <div className='mx-auto flex flex-col space-y-20 text-center'>
             <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Run your first model</h1>
