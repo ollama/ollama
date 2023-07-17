@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState } from 'react'
 import copy from 'copy-to-clipboard'
 import { exec } from 'child_process'
 import * as path from 'path'
@@ -7,11 +7,9 @@ import { DocumentDuplicateIcon } from '@heroicons/react/24/outline'
 import { app } from '@electron/remote'
 import OllamaIcon from './ollama.svg'
 
-const ollama = app.isPackaged
-? path.join(process.resourcesPath, 'ollama')
-: path.resolve(process.cwd(), '..', 'ollama')
+const ollama = app.isPackaged ? path.join(process.resourcesPath, 'ollama') : path.resolve(process.cwd(), '..', 'ollama')
 
-function installCLI(callback: () => void) {
+async function installCLI(callback: () => void) {
   const symlinkPath = '/usr/local/bin/ollama'
 
   if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
@@ -28,7 +26,7 @@ function installCLI(callback: () => void) {
       callback && callback()
       return
     }
-    
+
     callback && callback()
   })
 }
@@ -39,36 +37,34 @@ export default function () {
   const command = 'ollama run orca'
 
   return (
-    <div className='flex flex-col justify-between mx-auto w-full pt-16 px-4 min-h-screen bg-white'>
+    <div className='mx-auto flex min-h-screen w-full flex-col justify-between bg-white px-4 pt-16'>
       {step === 0 && (
         <>
-          <div className="mx-auto text-center">
-            <h1 className="mt-4 mb-6 text-2xl tracking-tight text-gray-900">Welcome to Ollama</h1>
-            <p className="mx-auto w-[65%] text-sm text-gray-400">
-              Let’s get you up and running with your own large language models.
+          <div className='mx-auto text-center'>
+            <h1 className='mb-6 mt-4 text-2xl tracking-tight text-gray-900'>Welcome to Ollama</h1>
+            <p className='mx-auto w-[65%] text-sm text-gray-400'>
+              Let's get you up and running with your own large language models.
             </p>
             <button
               onClick={() => {
                 setStep(1)
               }}
-              className='mx-auto w-[40%] rounded-dm my-8 rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
+              className='rounded-dm mx-auto my-8 w-[40%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
             >
               Next
-            </button>      
+            </button>
           </div>
-          <div className="mx-auto">
+          <div className='mx-auto'>
             <OllamaIcon />
           </div>
         </>
       )}
       {step === 1 && (
         <>
-          <div className="flex flex-col space-y-28 mx-auto text-center">
-            <h1 className="mt-4 text-2xl tracking-tight text-gray-900">Install the command line</h1>
-            <pre className="mx-auto text-4xl text-gray-400">
-             &gt; ollama
-            </pre>
-            <div className="mx-auto">
+          <div className='mx-auto flex flex-col space-y-28 text-center'>
+            <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Install the command line</h1>
+            <pre className='mx-auto text-4xl text-gray-400'>&gt; ollama</pre>
+            <div className='mx-auto'>
               <button
                 onClick={() => {
                   // install the command line
@@ -77,11 +73,11 @@ export default function () {
                     setStep(2)
                   })
                 }}
-                className='mx-auto w-[60%] rounded-dm rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
+                className='rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
               >
                 Install
               </button>
-              <p className="mx-auto w-[70%] text-xs text-gray-400 my-4">
+              <p className='mx-auto my-4 w-[70%] text-xs text-gray-400'>
                 You will be prompted for administrator access
               </p>
             </div>
@@ -90,11 +86,11 @@ export default function () {
       )}
       {step === 2 && (
         <>
-          <div className="flex flex-col space-y-20 mx-auto text-center">
-            <h1 className="mt-4 text-2xl tracking-tight text-gray-900">Run your first model</h1>
-            <div className="flex flex-col">
-              <div className="group relative flex items-center">
-                <pre className="text-start w-full language-none rounded-md bg-gray-100 px-4 py-3 text-2xs leading-normal">
+          <div className='mx-auto flex flex-col space-y-20 text-center'>
+            <h1 className='mt-4 text-2xl tracking-tight text-gray-900'>Run your first model</h1>
+            <div className='flex flex-col'>
+              <div className='group relative flex items-center'>
+                <pre className='language-none text-2xs w-full rounded-md bg-gray-100 px-4 py-3 text-start leading-normal'>
                   {command}
                 </pre>
                 <button
@@ -103,18 +99,16 @@ export default function () {
                     copy(command)
                   }}
                 >
-                  <DocumentDuplicateIcon className="h-4 w-4 text-gray-500" />
+                  <DocumentDuplicateIcon className='h-4 w-4 text-gray-500' />
                 </button>
               </div>
-              <p className="mx-auto w-[70%] text-xs text-gray-400 my-4">
-                Run this command in your favorite terminal.
-              </p>
+              <p className='mx-auto my-4 w-[70%] text-xs text-gray-400'>Run this command in your favorite terminal.</p>
             </div>
             <button
               onClick={() => {
                 window.close()
               }}
-              className='mx-auto w-[60%] rounded-dm rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
+              className='rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
             >
               Finish
             </button>
@@ -122,6 +116,5 @@ export default function () {
         </>
       )}
     </div>
-
   )
 }
