@@ -25,7 +25,7 @@ const logger = winston.createLogger({
       maxFiles: 5,
     }),
   ],
-  format: winston.format.printf(info => `${info.message}`),
+  format: winston.format.printf(info => info.message),
 })
 
 const SingleInstanceLock = app.requestSingleInstanceLock()
