@@ -67,8 +67,6 @@ func generate(c *gin.Context) {
 	}
 	req.Prompt = sb.String()
 
-	log.Printf("prompt: \n%s", req.Prompt)
-
 	llm, err := llama.New(model.ModelPath, opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

@@ -821,13 +821,11 @@ func downloadBlob(registryURL, repoName, digest string, username, password strin
 	for {
 		fn(fmt.Sprintf("Downloading %s", digest), digest, int(total), int(completed), float64(completed)/float64(total))
 		if completed >= total {
-			fmt.Printf("finished downloading\n")
-			err = os.Rename(fp+"-partial", fp)
-			if err != nil {
-				fmt.Printf("error: %v\n", err)
+			if err := os.Rename(fp+"-partial", fp); err != nil {
 				fn(fmt.Sprintf("error renaming file: %v", err), digest, int(total), int(completed), 1)
 				return err
 			}
+
 			break
 		}
 
