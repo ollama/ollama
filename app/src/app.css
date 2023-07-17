@@ -11,6 +11,10 @@ body {
   -webkit-app-region: drag;
 }
 
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
 .blink {
   -webkit-animation: 1s blink step-end infinite;
   -moz-animation: 1s blink step-end infinite;
