@@ -102,11 +102,6 @@ function server() {
 
   proc.on('exit', restart)
 
-  proc.on('disconnect', () => {
-    logger.info('Server disconnected. Reconnecting...')
-    server()
-  })
-
   app.on('before-quit', () => {
     proc.off('exit', restart)
     proc.kill()
