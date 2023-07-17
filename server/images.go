@@ -60,15 +60,26 @@ type RootFS struct {
 	DiffIDs []string `json:"diff_ids"`
 }
 
-func GetManifest(name string) (*ManifestV2, error) {
+func modelsDir(part ...string) (string, error) {
 	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	path := filepath.Join(home, ".ollama", "models", filepath.Join(part...))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+
+	return path, nil
+}
+
+func GetManifest(name string) (*ManifestV2, error) {
+	fp, err := modelsDir("manifests", name)
 	if err != nil {
 		return nil, err
 	}
-
-	fp := filepath.Join(home, ".ollama/models/manifests", name)
-	_, err = os.Stat(fp)
-	if os.IsNotExist(err) {
+	if _, err = os.Stat(fp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("couldn't find model '%s'", name)
 	}
 
@@ -89,11 +100,6 @@ func GetManifest(name string) (*ManifestV2, error) {
 }
 
 func GetModel(name string) (*Model, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-
 	manifest, err := GetManifest(name)
 	if err != nil {
 		return nil, err
@@ -104,7 +110,11 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	for _, layer := range manifest.Layers {
-		filename := filepath.Join(home, ".ollama/models/blobs", layer.Digest)
+		filename, err := modelsDir("blobs", layer.Digest)
+		if err != nil {
+			return nil, err
+		}
+
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
@@ -137,17 +147,18 @@ func GetModel(name string) (*Model, error) {
 	return model, nil
 }
 
-func getAbsPath(fn string) (string, error) {
-	if strings.HasPrefix(fn, "~/") {
+func getAbsPath(fp string) (string, error) {
+	if strings.HasPrefix(fp, "~/") {
+		parts := strings.Split(fp, "/")
 		home, err := os.UserHomeDir()
 		if err != nil {
-			log.Printf("error getting home directory: %v", err)
 			return "", err
 		}
-		fn = strings.Replace(fn, "~", home, 1)
+
+		fp = filepath.Join(home, filepath.Join(parts[1:]...))
 	}
 
-	return filepath.Abs(fn)
+	return os.ExpandEnv(fp), nil
 }
 
 func CreateModel(name string, mf io.Reader, fn func(status string)) error {
@@ -283,22 +294,12 @@ func removeLayerFromLayers(layers []*LayerWithBuffer, mediaType string) []*Layer
 }
 
 func SaveLayers(layers []*LayerWithBuffer, fn func(status string), force bool) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		log.Printf("error getting home directory: %v", err)
-		return err
-	}
-
-	dir := filepath.Join(home, ".ollama/models/blobs")
-
-	err = os.MkdirAll(dir, 0o700)
-	if err != nil {
-		return fmt.Errorf("make blobs directory: %w", err)
-	}
-
 	// Write each of the layers to disk
 	for _, layer := range layers {
-		fp := filepath.Join(dir, layer.Digest)
+		fp, err := modelsDir("blobs", layer.Digest)
+		if err != nil {
+			return err
+		}
 
 		_, err = os.Stat(fp)
 		if os.IsNotExist(err) || force {
@@ -323,12 +324,6 @@ func SaveLayers(layers []*LayerWithBuffer, fn func(status string), force bool) e
 }
 
 func CreateManifest(name string, cfg *LayerWithBuffer, layers []*Layer) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		log.Printf("error getting home directory: %v", err)
-		return err
-	}
-
 	manifest := ManifestV2{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
@@ -345,22 +340,19 @@ func CreateManifest(name string, cfg *LayerWithBuffer, layers []*Layer) error {
 		return err
 	}
 
-	fp := filepath.Join(home, ".ollama/models/manifests", name)
-	err = os.WriteFile(fp, manifestJSON, 0644)
+	fp, err := modelsDir("manifests", name)
 	if err != nil {
-		log.Printf("couldn't write to %s", fp)
 		return err
 	}
-	return nil
+	return os.WriteFile(fp, manifestJSON, 0o644)
 }
 
 func GetLayerWithBufferFromLayer(layer *Layer) (*LayerWithBuffer, error) {
-	home, err := os.UserHomeDir()
+	fp, err := modelsDir("blobs", layer.Digest)
 	if err != nil {
 		return nil, err
 	}
 
-	fp := filepath.Join(home, ".ollama/models/blobs", layer.Digest)
 	file, err := os.Open(fp)
 	if err != nil {
 		return nil, fmt.Errorf("could not open blob: %w", err)
@@ -554,17 +546,15 @@ func PullModel(name, username, password string, fn func(status, digest string, T
 
 	fn("writing manifest", "", total, completed, 1.0)
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		return err
 	}
 
-	fp := filepath.Join(home, ".ollama/models/manifests", name)
+	fp, err := modelsDir("manifests", name)
+	if err != nil {
+		return err
+	}
 
 	err = os.MkdirAll(path.Dir(fp), 0o700)
 	if err != nil {
@@ -687,11 +677,6 @@ func checkBlobExistence(registryURL string, repositoryName string, digest string
 }
 
 func uploadBlob(location string, layer *Layer, username string, password string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
 	// Create URL
 	url := fmt.Sprintf("%s&digest=%s", location, layer.Digest)
 
@@ -704,7 +689,11 @@ func uploadBlob(location string, layer *Layer, username string, password string)
 	// TODO allow canceling uploads via DELETE
 	// TODO allow cross repo blob mount
 
-	fp := filepath.Join(home, ".ollama/models/blobs", layer.Digest)
+	fp, err := modelsDir("blobs", layer.Digest)
+	if err != nil {
+		return err
+	}
+
 	f, err := os.Open(fp)
 	if err != nil {
 		return err
@@ -727,12 +716,10 @@ func uploadBlob(location string, layer *Layer, username string, password string)
 }
 
 func downloadBlob(registryURL, repoName, digest string, username, password string, fn func(status, digest string, Total, Completed int, Percent float64)) error {
-	home, err := os.UserHomeDir()
+	fp, err := modelsDir("blobs", digest)
 	if err != nil {
 		return err
 	}
-
-	fp := filepath.Join(home, ".ollama/models/blobs", digest)
 
 	_, err = os.Stat(fp)
 	if !os.IsNotExist(err) {
