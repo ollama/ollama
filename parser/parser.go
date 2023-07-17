@@ -38,7 +38,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 		}
 
 		command := Command{}
-		switch fields[0] {
+		switch strings.ToUpper(fields[0]) {
 		case "FROM":
 			command.Name = "model"
 			command.Arg = fields[1]
