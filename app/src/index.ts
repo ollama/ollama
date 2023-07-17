@@ -6,7 +6,7 @@ import 'winston-daily-rotate-file'
 import * as path from 'path'
 
 import { analytics, id } from './telemetry'
-import { installed, install } from './install'
+import { installed } from './install'
 
 require('@electron/remote/main').initialize()
 
