@@ -6,6 +6,7 @@ import 'winston-daily-rotate-file'
 import * as path from 'path'
 
 import { analytics, id } from './telemetry'
+import { installed, install } from './install'
 
 require('@electron/remote/main').initialize()
 
@@ -40,18 +41,21 @@ function firstRunWindow() {
     frame: false,
     fullscreenable: false,
     resizable: false,
-    movable: false,
-    transparent: true,
+    movable: true,
+    show: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
     },
+    alwaysOnTop: true,
   })
 
   require('@electron/remote/main').enable(welcomeWindow.webContents)
 
   // and load the index.html of the app.
   welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
+
+  welcomeWindow.on('ready-to-show', () => welcomeWindow.show())
 
   // for debugging
   // welcomeWindow.webContents.openDevTools()
@@ -151,15 +155,15 @@ app.on('ready', () => {
   createSystemtray()
   server()
 
-  if (!store.has('first-time-run')) {
-    // This is the first run
-    app.setLoginItemSettings({ openAtLogin: true })
-    firstRunWindow()
-    store.set('first-time-run', true)
-  } else {
-    // The app has been run before
+  if (store.get('first-time-run') && installed()) {
     app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
+    return
   }
+
+  // This is the first run or the CLI is no longer installed
+  app.setLoginItemSettings({ openAtLogin: true })
+
+  firstRunWindow()
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

@@ -1,32 +1,13 @@
 import { useState } from 'react'
 import copy from 'copy-to-clipboard'
-import { exec as cbExec } from 'child_process'
-import * as path from 'path'
-import * as fs from 'fs'
 import { DocumentDuplicateIcon } from '@heroicons/react/24/outline'
-import { app } from '@electron/remote'
+import Store from 'electron-store'
+import { getCurrentWindow } from '@electron/remote'
+
+import { install } from './install'
 import OllamaIcon from './ollama.svg'
-import { promisify } from 'util'
 
-const ollama = app.isPackaged ? path.join(process.resourcesPath, 'ollama') : path.resolve(process.cwd(), '..', 'ollama')
-const exec = promisify(cbExec)
-
-async function installCLI() {
-  const symlinkPath = '/usr/local/bin/ollama'
-
-  if (fs.existsSync(symlinkPath) && fs.readlinkSync(symlinkPath) === ollama) {
-    return
-  }
-
-  const command = `do shell script "ln -F -s ${ollama} /usr/local/bin/ollama" with administrator privileges`
-
-  try {
-    await exec(`osascript -e '${command}'`)
-  } catch (error) {
-    console.error(`cli: failed to install cli: ${error.message}`)
-    return
-  }
-}
+const store = new Store()
 
 enum Step {
   WELCOME = 0,
@@ -40,7 +21,7 @@ export default function () {
   const command = 'ollama run orca'
 
   return (
-    <div className='drag mx-auto flex min-h-screen w-full flex-col justify-between bg-white px-4 pt-16'>
+    <div className='mx-auto flex min-h-screen w-full flex-col justify-between bg-white px-4 pt-16'>
       {step === Step.WELCOME && (
         <>
           <div className='mx-auto text-center'>
@@ -49,9 +30,7 @@ export default function () {
               Let's get you up and running with your own large language models.
             </p>
             <button
-              onClick={() => {
-                setStep(1)
-              }}
+              onClick={() => setStep(Step.CLI)}
               className='rounded-dm mx-auto my-8 w-[40%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
             >
               Next
@@ -70,9 +49,10 @@ export default function () {
             <div className='mx-auto'>
               <button
                 onClick={async () => {
-                  await installCLI()
-                  window.focus()
-                  setStep(2)
+                  await install()
+                  getCurrentWindow().show()
+                  getCurrentWindow().focus()
+                  setStep(Step.FINISH)
                 }}
                 className='rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
               >
@@ -107,6 +87,7 @@ export default function () {
             </div>
             <button
               onClick={() => {
+                store.set('first-time-run', true)
                 window.close()
               }}
               className='rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
