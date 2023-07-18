@@ -220,15 +220,25 @@ func (llm *llama) generate(input []C.llama_token, fn func(api.GenerateResponse))
 		}
 
 		b.WriteString(llm.detokenize(token))
-		if utf8.Valid(b.Bytes()) || b.Len() >= utf8.UTFMax {
-			// call the callback
-			fn(api.GenerateResponse{
-				Response: b.String(),
-			})
 
-			output.PushLeft(token)
-			context.PushLeft(int(token))
-			b.Reset()
+		if token == C.llama_token_eos() {
+			// output is a newline. hold on the token until something else is generated
+		} else if b.String() == llm.StopCondition {
+			// output is the stop condition. stop generation
+			break
+		} else if strings.HasPrefix(llm.StopCondition, b.String()) && b.Len() < len(llm.StopCondition) {
+			// output looks like it may be the stop condition. hold on to the token until we know more
+		} else {
+			if utf8.Valid(b.Bytes()) || b.Len() >= utf8.UTFMax {
+				// call the callback
+				fn(api.GenerateResponse{
+					Response: b.String(),
+				})
+
+				output.PushLeft(token)
+				context.PushLeft(int(token))
+				b.Reset()
+			}
 		}
 
 		input = []C.llama_token{token}

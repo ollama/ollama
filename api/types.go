@@ -147,7 +147,8 @@ type Options struct {
 	MirostatTau      float32 `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32 `json:"mirostat_eta,omitempty"`
 
-	NumThread int `json:"num_thread,omitempty"`
+	NumThread     int    `json:"num_thread,omitempty"`
+	StopCondition string `json:"stop_condition,omitempty"`
 }
 
 func DefaultOptions() Options {
