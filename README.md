@@ -7,74 +7,59 @@
 
 # Ollama
 
-Run large language models with `llama.cpp`.
+Create, run, and share self-contained large language models (LLMs). Ollama bundles a model’s weights, configuration, prompts, and more into self-contained packages that run anywhere.
 
-> Note: certain models that can be run with Ollama are intended for research and/or non-commercial use only.
+> Note: Ollama is in early preview. Please report any issues you find.
 
-### Features
+## Examples
 
-- Download and run popular large language models
-- Switch between multiple models on the fly
-- Hardware acceleration where available (Metal, CUDA)
-- Fast inference server written in Go, powered by [llama.cpp](https://github.com/ggerganov/llama.cpp)
-- REST API to use with your application (python, typescript SDKs coming soon)
+### Quickstart
+
+```
+ollama run llama2
+>>> hi
+Hello! How can I help you today?
+```
+
+### Creating a model
+
+Create a `Modelfile`:
+
+```
+FROM llama2
+PROMPT """
+You are super mario from super mario bros. Answer Mario, the assistant, only.
+
+User: {{ .Prompt }}
+Mario:
+"""
+```
+
+Next, create and run the model:
+
+```
+ollama create mario -f ./Modelfile
+ollama run mario
+>>> hi
+Hello! It's your friend Mario.
+```
 
 ## Install
 
-- [Download](https://ollama.ai/download) for macOS with Apple Silicon (Intel coming soon)
-- Download for Windows (coming soon)
+- [Download](https://ollama.ai/download) for macOS on Apple Silicon (Intel coming soon)
+- Download for Windows and Linux (coming soon)
+- Build [from source](#building)
 
-You can also build the [binary from source](#building).
+## Model library
 
-## Quickstart
+Ollama includes a library of open-source, pre-trained models. More models are coming soon.
 
-Run a fast and simple model.
-
-```
-ollama run orca
-```
-
-## Example models
-
-### 💬 Chat
-
-Have a conversation.
-
-```
-ollama run vicuna "Why is the sky blue?"
-```
-
-### 🗺️ Instructions
-
-Get a helping hand.
-
-```
-ollama run orca "Write an email to my boss."
-```
-
-### 🔎 Ask questions about documents
-
-Send the contents of a document and ask questions about it.
-
-```
-ollama run nous-hermes "$(cat input.txt)", please summarize this story
-```
-
-### 📖 Storytelling
-
-Venture into the unknown.
-
-```
-ollama run nous-hermes "Once upon a time"
-```
-
-## Advanced usage
-
-### Run a local model
-
-```
-ollama run ~/Downloads/vicuna-7b-v1.3.ggmlv3.q4_1.bin
-```
+| Model       | Parameters | Size  | Download                  |
+| ----------- | ---------- | ----- | ------------------------- |
+| Llama2      | 7B         | 3.8GB | `ollama pull llama`       |
+| Orca Mini   | 3B         | 1.9GB | `ollama pull orca`        |
+| Vicuna      | 7B         | 3.8GB | `ollama pull vicuna`      |
+| Nous-Hermes | 13         | 7.3GB | `ollama pull hous-hermes` |
 
 ## Building
 
@@ -91,23 +76,5 @@ To run it start the server:
 Finally, run a model!
 
 ```
-./ollama run ~/Downloads/vicuna-7b-v1.3.ggmlv3.q4_1.bin
-```
-
-## API Reference
-
-### `POST /api/pull`
-
-Download a model
-
-```
-curl -X POST http://localhost:11343/api/pull -d '{"model": "orca"}'
-```
-
-### `POST /api/generate`
-
-Complete a prompt
-
-```
-curl -X POST http://localhost:11434/api/generate -d '{"model": "orca", "prompt": "hello!"}'
+./ollama run llama2
 ```
