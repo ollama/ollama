@@ -29,7 +29,7 @@ export default async function Download() {
   return (
     <>
       <Header />
-      <main className='flex min-h-screen max-w-6xl flex-col p-20 lg:p-32 items-center mx-auto'>
+      <main className='flex min-h-screen max-w-6xl flex-col py-20 px-16 lg:p-32 items-center mx-auto'>
         <img src='/ollama.png' className='w-16 h-auto' />
         <section className='mt-12 mb-8 text-center'>
           <h2 className='my-2 max-w-md text-3xl tracking-tight'>Downloading...</h2>
