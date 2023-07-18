@@ -3,13 +3,13 @@
 Install required tools:
 
 ```
-brew install cmake go node
+brew install go
 ```
 
-Then run `make`:
+Then build ollama:
 
 ```
-make
+go build .
 ```
 
 Now you can run `ollama`:
