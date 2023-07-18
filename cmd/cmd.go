@@ -13,11 +13,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
+	"github.com/olekukonko/tablewriter"
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/server"
 )
 
@@ -86,6 +89,34 @@ func push(cmd *cobra.Command, args []string) error {
 	if err := client.Push(context.Background(), &request, fn); err != nil {
 		return err
 	}
+	return nil
+}
+
+func list(cmd *cobra.Command, args []string) error {
+	client := api.NewClient()
+
+	models, err := client.List(context.Background())
+	if err != nil {
+		return err
+	}
+
+	var data [][]string
+
+	for _, m := range models.Models {
+		data = append(data, []string{m.Name, humanize.Bytes(uint64(m.Size)), format.HumanTime(m.ModifiedAt, "Never")})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"NAME", "SIZE", "MODIFIED"})
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("\t")
+	table.AppendBulk(data)
+	table.Render()
+
 	return nil
 }
 
@@ -308,12 +339,19 @@ func NewCLI() *cobra.Command {
 		RunE:  push,
 	}
 
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List models",
+		RunE:  list,
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
 		runCmd,
 		pullCmd,
 		pushCmd,
+		listCmd,
 	)
 
 	return rootCmd

@@ -7,6 +7,19 @@ import (
 	"time"
 )
 
+type StatusError struct {
+	StatusCode int
+	Status     string
+	Message    string
+}
+
+func (e StatusError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("%s: %s", e.Status, e.Message)
+	}
+	return e.Status
+}
+
 type GenerateRequest struct {
 	Model   string `json:"model"`
 	Prompt  string `json:"prompt"`
@@ -50,6 +63,16 @@ type PushProgress struct {
 	Total     int     `json:"total,omitempty"`
 	Completed int     `json:"completed,omitempty"`
 	Percent   float64 `json:"percent,omitempty"`
+}
+
+type ListResponse struct {
+	Models []ListResponseModel `json:"models"`
+}
+
+type ListResponseModel struct {
+	Name       string    `json:"name"`
+	ModifiedAt time.Time `json:"modified_at"`
+	Size       int       `json:"size"`
 }
 
 type GenerateResponse struct {

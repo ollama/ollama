@@ -59,6 +59,15 @@ type RootFS struct {
 	DiffIDs []string `json:"diff_ids"`
 }
 
+func (m *ManifestV2) GetTotalSize() int {
+	var total int
+	for _, layer := range m.Layers {
+		total += layer.Size
+	}
+	total += m.Config.Size
+	return total
+}
+
 func GetManifest(mp ModelPath) (*ManifestV2, error) {
 	fp, err := mp.GetManifestPath(false)
 	if err != nil {
