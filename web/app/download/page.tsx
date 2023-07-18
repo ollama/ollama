@@ -36,7 +36,7 @@ export default async function Download() {
           <h3 className='text-base text-neutral-500 mt-12 max-w-[16rem]'>
             While Ollama downloads, sign up to get notified of new updates.
           </h3>
-          {/* <Downloader url={asset.browser_download_url} /> */}
+          <Downloader url={asset.browser_download_url} />
         </section>
         <Signup />
       </main>
