@@ -27,7 +27,7 @@ ollama run llama2
 Hello! How can I help you today?
 ```
 
-### Creating a model
+### Creating a custom model
 
 Create a `Modelfile`:
 
@@ -56,7 +56,7 @@ Ollama includes a library of open-source, pre-trained models. More models are co
 
 | Model       | Parameters | Size  | Download                  |
 | ----------- | ---------- | ----- | ------------------------- |
-| Llama2      | 7B         | 3.8GB | `ollama pull llama`       |
+| Llama2      | 7B         | 3.8GB | `ollama pull llama2`      |
 | Orca Mini   | 3B         | 1.9GB | `ollama pull orca`        |
 | Vicuna      | 7B         | 3.8GB | `ollama pull vicuna`      |
 | Nous-Hermes | 13         | 7.3GB | `ollama pull hous-hermes` |
