@@ -1,4 +1,4 @@
-import type { ForgeConfig, ResolvedForgeConfig, ForgeMakeResult } from '@electron-forge/shared-types'
+import type { ForgeConfig } from '@electron-forge/shared-types'
 import { MakerSquirrel } from '@electron-forge/maker-squirrel'
 import { MakerZIP } from '@electron-forge/maker-zip'
 import { PublisherGithub } from '@electron-forge/publisher-github'
@@ -19,8 +19,8 @@ const config: ForgeConfig = {
     icon: './assets/icon.icns',
     extraResource: [
       '../ollama',
-      path.join(__dirname, './assets/ollama_icon_16x16Template.png'),
-      path.join(__dirname, './assets/ollama_icon_16x16Template@2x.png'),
+      path.join(__dirname, './assets/icon3_16x16Template.png'),
+      path.join(__dirname, './assets/icon3_16x16Template@2x.png'),
       ...(process.platform === 'darwin' ? ['../llama/ggml-metal.metal'] : []),
     ],
     ...(process.env.SIGN

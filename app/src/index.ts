@@ -66,10 +66,10 @@ function firstRunWindow() {
 }
 
 function createSystemtray() {
-  let iconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
+  let iconPath = path.join(__dirname, '..', '..', 'assets', 'icon3_16x16Template.png')
 
   if (app.isPackaged) {
-    iconPath = path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')
+    iconPath = path.join(process.resourcesPath, 'icon3_16x16Template.png')
   }
 
   tray = new Tray(iconPath)
@@ -162,7 +162,6 @@ app.on('ready', () => {
 
   // This is the first run or the CLI is no longer installed
   app.setLoginItemSettings({ openAtLogin: true })
-
   firstRunWindow()
 })
 
