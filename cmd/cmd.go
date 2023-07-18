@@ -48,7 +48,13 @@ func create(cmd *cobra.Command, args []string) error {
 }
 
 func RunRun(cmd *cobra.Command, args []string) error {
-	_, err := os.Stat(args[0])
+	mp := server.ParseModelPath(args[0])
+	fp, err := mp.GetManifestPath(false)
+	if err != nil {
+		return err
+	}
+
+	_, err = os.Stat(fp)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := pull(args[0]); err != nil {
