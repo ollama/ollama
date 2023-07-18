@@ -34,7 +34,7 @@ Create a `Modelfile`:
 ```
 FROM llama2
 PROMPT """
-You are super mario from super mario bros. Answer Mario, the assistant, only.
+You are Mario from Super Mario Bros. Answer as Mario, the assistant, only.
 
 User: {{ .Prompt }}
 Mario:
