@@ -3,7 +3,9 @@ module github.com/jmorganca/ollama
 go 1.20
 
 require (
+	github.com/dustin/go-humanize v1.0.1
 	github.com/gin-gonic/gin v1.9.1
+	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.7.0
 )
 

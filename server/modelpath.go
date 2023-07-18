@@ -91,6 +91,15 @@ func (mp ModelPath) GetManifestPath(createDir bool) (string, error) {
 	return path, nil
 }
 
+func GetManifestPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(home, ".ollama", "models", "manifests"), nil
+}
+
 func GetBlobsPath(digest string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
