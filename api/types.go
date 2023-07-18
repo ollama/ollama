@@ -28,9 +28,10 @@ func (e StatusError) Error() string {
 }
 
 type GenerateRequest struct {
-	Model   string `json:"model"`
-	Prompt  string `json:"prompt"`
-	Context []int  `json:"context,omitempty"`
+	SessionID int64  `json:"session_id"`
+	Model     string `json:"model"`
+	Prompt    string `json:"prompt"`
+	Context   []int  `json:"context,omitempty"`
 
 	Options `json:"options"`
 }
@@ -81,6 +82,7 @@ type ListResponseModel struct {
 }
 
 type GenerateResponse struct {
+	SessionID int64     `json:"session_id"`
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
 	Response  string    `json:"response,omitempty"`
