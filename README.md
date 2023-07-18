@@ -11,6 +11,12 @@ Create, run, and share self-contained large language models (LLMs). Ollama bundl
 
 > Note: Ollama is in early preview. Please report any issues you find.
 
+## Download
+
+- [Download](https://ollama.ai/download) for macOS on Apple Silicon (Intel coming soon)
+- Download for Windows and Linux (coming soon)
+- Build [from source](#building)
+
 ## Examples
 
 ### Quickstart
@@ -43,12 +49,6 @@ ollama run mario
 >>> hi
 Hello! It's your friend Mario.
 ```
-
-## Install
-
-- [Download](https://ollama.ai/download) for macOS on Apple Silicon (Intel coming soon)
-- Download for Windows and Linux (coming soon)
-- Build [from source](#building)
 
 ## Model library
 
