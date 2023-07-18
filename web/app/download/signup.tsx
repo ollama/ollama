@@ -28,7 +28,7 @@ export default function Signup() {
 
         return false
       }}
-      className='flex self-stretch flex-col gap-3 h-32'
+      className='flex self-stretch flex-col gap-3 h-32 md:mx-40 lg:mx-72'
     >
       <input
         required
@@ -37,13 +37,13 @@ export default function Signup() {
         onChange={e => setEmail(e.target.value)}
         type='email'
         placeholder='your@email.com'
-        className='bg-neutral-100 rounded-lg px-4 py-2 focus:outline-none placeholder-neutral-500'
+        className='border border-neutral-200 rounded-lg px-4 py-2 focus:outline-none placeholder-neutral-300'
       />
       <input
         type='submit'
         value='Get updates'
         disabled={submitting}
-        className='bg-black text-white disabled:text-neutral-200 disabled:bg-neutral-700 rounded-lg px-4 py-2 focus:outline-none cursor-pointer'
+        className='bg-black text-white disabled:text-neutral-200 disabled:bg-neutral-700 rounded-full px-4 py-2 focus:outline-none cursor-pointer'
       />
       {success && <p className='text-center text-sm'>You&apos;re signed up for updates</p>}
     </form>

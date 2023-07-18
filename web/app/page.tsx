@@ -1,34 +1,32 @@
 import { AiFillApple } from 'react-icons/ai'
 
 import models from '../../models.json'
+import Header from './header'
 
 export default async function Home() {
   return (
-    <main className='flex min-h-screen max-w-2xl flex-col p-4 lg:p-24'>
-      <img src='/ollama.png' className='w-16 h-auto' />
-      <section className='my-4'>
-        <p className='my-3 max-w-md'>
-          <a className='underline' href='https://github.com/jmorganca/ollama'>
-            Ollama
-          </a>{' '}
-          is a tool for running large language models, currently for macOS with Windows and Linux coming soon.
-          <br />
-          <br />
-          <a href='/download'>
-            <button className='bg-black text-white text-sm py-2 px-3 rounded-lg flex items-center gap-2'>
-              <AiFillApple className='h-auto w-5 relative -top-px' /> Download for macOS
-            </button>
-          </a>
-        </p>
-      </section>
-      <section className='my-4'>
-        <h2 className='mb-4 text-lg'>Example models you can try running:</h2>
-        {models.map(m => (
-          <div className='my-2 grid font-mono' key={m.name}>
-            <code className='py-0.5'>ollama run {m.name}</code>
+    <>
+      <Header />
+      <main className='flex min-h-screen max-w-6xl flex-col py-20 px-16 md:p-32 items-center mx-auto'>
+        <img src='/ollama.png' className='w-16 h-auto' />
+        <section className='my-12 text-center'>
+          <div className='flex flex-col space-y-2'>
+            <h2 className='md:max-w-[18rem] mx-auto my-2 text-3xl tracking-tight'>Portable large language models</h2>
+            <h3 className='md:max-w-xs mx-auto text-base text-neutral-500'>
+              Bundle a model’s weights, configuration, prompts, data and more into self-contained packages that run anywhere.
+            </h3>
           </div>
-        ))}
-      </section>
-    </main>
+          <div className='mx-auto flex flex-col space-y-4 mt-12'>
+            <a href='/download' className='md:mx-10 lg:mx-14 bg-black text-white rounded-full px-4 py-2 focus:outline-none cursor-pointer'>
+              Download
+            </a>
+            <p className='text-neutral-500 text-sm '>
+            Available for macOS with Apple Silicon <br />
+            Windows & Linux support coming soon.
+            </p>
+          </div>
+        </section>
+      </main>
+    </>
   )
 }
