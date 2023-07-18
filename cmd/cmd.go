@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,15 +22,6 @@ import (
 	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/server"
 )
-
-func cacheDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
-
-	return filepath.Join(home, ".ollama")
-}
 
 func create(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
@@ -291,10 +281,6 @@ func NewCLI() *cobra.Command {
 		SilenceUsage: true,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
-		},
-		PersistentPreRunE: func(_ *cobra.Command, args []string) error {
-			// create the models directory and it's parent
-			return os.MkdirAll(filepath.Join(cacheDir(), "models"), 0o700)
 		},
 	}
 
