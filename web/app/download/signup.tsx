@@ -28,7 +28,7 @@ export default function Signup() {
 
         return false
       }}
-      className='flex self-stretch flex-col gap-3 h-32 md:mx-[10rem] lg:mx-[18rem]'
+      className='flex self-stretch flex-col gap-3 h-32 md:mx-40 lg:mx-72'
     >
       <input
         required
