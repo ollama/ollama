@@ -33,7 +33,7 @@ func GenerateHandler(c *gin.Context) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	start := time.Now()
+	checkpointStart := time.Now()
 
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -74,6 +74,8 @@ func GenerateHandler(c *gin.Context) {
 		activeSession.LLM = llm
 	}
 
+	checkpointLoaded := time.Now()
+
 	prompt, err := model.Prompt(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -88,7 +90,8 @@ func GenerateHandler(c *gin.Context) {
 			r.CreatedAt = time.Now().UTC()
 			r.SessionID = activeSession.ID
 			if r.Done {
-				r.TotalDuration = time.Since(start)
+				r.TotalDuration = time.Since(checkpointStart)
+				r.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
 			ch <- r
