@@ -19,7 +19,7 @@ export default function () {
   const [step, setStep] = useState<Step>(Step.WELCOME)
   const [commandCopied, setCommandCopied] = useState<boolean>(false)
 
-  const command = 'ollama run orca'
+  const command = 'ollama run llama2'
 
   return (
     <div className='drag'>
@@ -77,7 +77,11 @@ export default function () {
                     {command}
                   </pre>
                   <button
-                    className={`no-drag absolute right-[5px] px-2 py-2 ${commandCopied ? 'text-gray-900 opacity-100 hover:cursor-auto' : 'text-gray-200 opacity-50 hover:cursor-pointer'} hover:text-gray-900 hover:font-bold group-hover:opacity-100`}
+                    className={`no-drag absolute right-[5px] px-2 py-2 ${
+                      commandCopied
+                        ? 'text-gray-900 opacity-100 hover:cursor-auto'
+                        : 'text-gray-200 opacity-50 hover:cursor-pointer'
+                    } hover:font-bold hover:text-gray-900 group-hover:opacity-100`}
                     onClick={() => {
                       copy(command)
                       setCommandCopied(true)
@@ -85,13 +89,15 @@ export default function () {
                     }}
                   >
                     {commandCopied ? (
-                      <CheckIcon className='h-4 w-4 text-gray-500 font-bold' />
+                      <CheckIcon className='h-4 w-4 font-bold text-gray-500' />
                     ) : (
                       <DocumentDuplicateIcon className='h-4 w-4 text-gray-500' />
                     )}
                   </button>
                 </div>
-                <p className='mx-auto my-4 w-[70%] text-xs text-gray-400'>Run this command in your favorite terminal.</p>
+                <p className='mx-auto my-4 w-[70%] text-xs text-gray-400'>
+                  Run this command in your favorite terminal.
+                </p>
               </div>
               <button
                 onClick={() => {
