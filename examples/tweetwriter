@@ -1,7 +1,7 @@
 # Modelfile for creating a tweet from a topic
 # Run `ollama create tweetwriter -f pathtofile` and then `ollama run tweetwriter` and enter a topic 
 
-FROM library/nous-hermes:latest
+FROM nous-hermes:latest
 PROMPT """
 {{- if not .Context }}
 ### System:
