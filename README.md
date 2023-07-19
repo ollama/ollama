@@ -7,7 +7,7 @@
 
 # Ollama
 
-![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)
+[![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
 Create, run, and share large language models (LLMs). Ollama bundles a model’s weights, configuration, prompts, and more into self-contained packages that can run on any machine.
 
