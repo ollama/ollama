@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"time"
@@ -28,10 +30,12 @@ func (e StatusError) Error() string {
 }
 
 type GenerateRequest struct {
-	SessionID int64  `json:"session_id"`
-	Model     string `json:"model"`
-	Prompt    string `json:"prompt"`
-	Context   []int  `json:"context,omitempty"`
+	SessionID       int64    `json:"session_id"`
+	SessionDuration Duration `json:"session_duration,omitempty"`
+
+	Model   string `json:"model"`
+	Prompt  string `json:"prompt"`
+	Context []int  `json:"context,omitempty"`
 
 	Options `json:"options"`
 }
@@ -82,7 +86,9 @@ type ListResponseModel struct {
 }
 
 type GenerateResponse struct {
-	SessionID int64     `json:"session_id"`
+	SessionID        int64     `json:"session_id"`
+	SessionExpiresAt time.Time `json:"session_expires_at"`
+
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
 	Response  string    `json:"response,omitempty"`
@@ -194,4 +200,33 @@ func DefaultOptions() Options {
 
 		NumThread: runtime.NumCPU(),
 	}
+}
+
+type Duration struct {
+	time.Duration
+}
+
+func (d *Duration) UnmarshalJSON(b []byte) (err error) {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+
+	d.Duration = 5 * time.Minute
+
+	switch t := v.(type) {
+	case float64:
+		if t < 0 {
+			t = math.MaxFloat64
+		}
+
+		d.Duration = time.Duration(t)
+	case string:
+		d.Duration, err = time.ParseDuration(t)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
