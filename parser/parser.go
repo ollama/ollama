@@ -46,8 +46,8 @@ func Parse(reader io.Reader) ([]Command, error) {
 				return nil, fmt.Errorf("no model specified in FROM line")
 			}
 			foundModel = true
-		case "PROMPT":
-			command.Name = "prompt"
+		case "PROMPT", "LICENSE":
+			command.Name = strings.ToLower(fields[0])
 			if fields[1] == `"""` {
 				multiline = true
 				multilineCommand = &command
