@@ -43,26 +43,17 @@ type PullRequest struct {
 	Password string `json:"password"`
 }
 
-type PullProgress struct {
+type ProgressResponse struct {
 	Status    string  `json:"status"`
 	Digest    string  `json:"digest,omitempty"`
 	Total     int     `json:"total,omitempty"`
 	Completed int     `json:"completed,omitempty"`
-	Percent   float64 `json:"percent,omitempty"`
 }
 
 type PushRequest struct {
 	Name     string `json:"name"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-}
-
-type PushProgress struct {
-	Status    string  `json:"status"`
-	Digest    string  `json:"digest,omitempty"`
-	Total     int     `json:"total,omitempty"`
-	Completed int     `json:"completed,omitempty"`
-	Percent   float64 `json:"percent,omitempty"`
 }
 
 type ListResponse struct {

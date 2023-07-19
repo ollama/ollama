@@ -89,7 +89,7 @@ func push(cmd *cobra.Command, args []string) error {
 	client := api.NewClient()
 
 	request := api.PushRequest{Name: args[0]}
-	fn := func(resp api.PushProgress) error {
+	fn := func(resp api.ProgressResponse) error {
 		fmt.Println(resp.Status)
 		return nil
 	}
@@ -135,25 +135,23 @@ func RunPull(cmd *cobra.Command, args []string) error {
 func pull(model string) error {
 	client := api.NewClient()
 
+	var currentDigest string
 	var bar *progressbar.ProgressBar
 
-	currentLayer := ""
 	request := api.PullRequest{Name: model}
-	fn := func(resp api.PullProgress) error {
-		if resp.Digest != currentLayer && resp.Digest != "" {
-			if currentLayer != "" {
-				fmt.Println()
-			}
-			currentLayer = resp.Digest
-			layerStr := resp.Digest[7:23] + "..."
+	fn := func(resp api.ProgressResponse) error {
+		if resp.Digest != currentDigest && resp.Digest != "" {
+			currentDigest = resp.Digest
 			bar = progressbar.DefaultBytes(
 				int64(resp.Total),
-				"pulling "+layerStr,
+				fmt.Sprintf("pulling %s...", resp.Digest[7:19]),
 			)
-		} else if resp.Digest == currentLayer && resp.Digest != "" {
+
+			bar.Set(resp.Completed)
+		} else if resp.Digest == currentDigest && resp.Digest != "" {
 			bar.Set(resp.Completed)
 		} else {
-			currentLayer = ""
+			currentDigest = ""
 			fmt.Println(resp.Status)
 		}
 		return nil
