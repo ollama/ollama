@@ -134,6 +134,7 @@ type Options struct {
 
 	// Model options
 	NumCtx        int  `json:"num_ctx,omitempty"`
+	NumKeep       int  `json:"num_keep,omitempty"`
 	NumBatch      int  `json:"num_batch,omitempty"`
 	NumGPU        int  `json:"num_gpu,omitempty"`
 	MainGPU       int  `json:"main_gpu,omitempty"`
@@ -158,6 +159,7 @@ type Options struct {
 	Mirostat         int     `json:"mirostat,omitempty"`
 	MirostatTau      float32 `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32 `json:"mirostat_eta,omitempty"`
+	PenalizeNewline  bool    `json:"penalize_newline,omitempty"`
 
 	NumThread int `json:"num_thread,omitempty"`
 }
@@ -176,7 +178,7 @@ func DefaultOptions() Options {
 		UseMMap:  true,
 		UseMLock: false,
 
-		RepeatLastN:      512,
+		RepeatLastN:      64,
 		RepeatPenalty:    1.1,
 		FrequencyPenalty: 0.0,
 		PresencePenalty:  0.0,
@@ -188,6 +190,7 @@ func DefaultOptions() Options {
 		Mirostat:         0,
 		MirostatTau:      5.0,
 		MirostatEta:      0.1,
+		PenalizeNewline:  true,
 
 		NumThread: runtime.NumCPU(),
 	}
