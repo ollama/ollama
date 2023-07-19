@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +26,11 @@ import (
 
 func create(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
+	filename, err := filepath.Abs(filename)
+	if err != nil {
+		return err
+	}
+
 	client := api.NewClient()
 
 	var spinner *Spinner
