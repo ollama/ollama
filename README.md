@@ -7,7 +7,9 @@
 
 # Ollama
 
-Create, run, and share self-contained large language models (LLMs). Ollama bundles a model’s weights, configuration, prompts, and more into self-contained packages that run anywhere.
+![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)
+
+Create, run, and share large language models (LLMs). Ollama bundles a model’s weights, configuration, prompts, and more into self-contained packages that can run on any machine.
 
 > Note: Ollama is in early preview. Please report any issues you find.
 
@@ -17,9 +19,30 @@ Create, run, and share self-contained large language models (LLMs). Ollama bundl
 - Download for Windows and Linux (coming soon)
 - Build [from source](#building)
 
+## Quickstart
+
+To run and chat with [Llama 2](https://ai.meta.com/llama), the new model by Meta:
+
+```
+ollama run llama2
+```
+
+## Model library
+
+Ollama includes a library of open-source, pre-trained models. More models are coming soon. You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
+
+| Model                    | Parameters | Size  | Download                    |
+| ------------------------ | ---------- | ----- | --------------------------- |
+| Llama2                   | 7B         | 3.8GB | `ollama pull llama2`        |
+| Llama2 13B               | 13B        | 7.3GB | `ollama pull llama2:13b`    |
+| Orca Mini                | 3B         | 1.9GB | `ollama pull orca`          |
+| Vicuna                   | 7B         | 3.8GB | `ollama pull vicuna`        |
+| Nous-Hermes              | 13B        | 7.3GB | `ollama pull nous-hermes`   |
+| Wizard Vicuna Uncensored | 13B        | 7.3GB | `ollama pull wizard-vicuna` |
+
 ## Examples
 
-### Quickstart
+### Run a model
 
 ```
 ollama run llama2
@@ -27,17 +50,26 @@ ollama run llama2
 Hello! How can I help you today?
 ```
 
-### Creating a custom model
+### Create a custom character model
+
+Pull a base model:
+
+```
+ollama pull orca
+```
 
 Create a `Modelfile`:
 
 ```
-FROM llama2
+FROM orca
 PROMPT """
+### System:
 You are Mario from Super Mario Bros. Answer as Mario, the assistant, only.
 
-User: {{ .Prompt }}
-Mario:
+### User:
+{{ .Prompt }}
+
+### Response:
 """
 ```
 
@@ -50,19 +82,13 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-## Model library
+For more info on `Modelfile` syntax see [this doc](./docs/modelfile).
 
-Ollama includes a library of open-source, pre-trained models. More models are coming soon. You should have at least 8 GB of RAM to run the 3B models, 16 GB
-to run the 7B models, and 32 GB to run the 13B models.
+### Pull a model from the registry
 
-| Model                     | Parameters | Size  | Download                    |
-| ----------------------    | ---------- | ----- | --------------------------- |
-| Llama2                    | 7B         | 3.8GB | `ollama pull llama2`        |
-| Llama2 13B                | 13B        | 7.3GB | `ollama pull llama2:13b`    |
-| Orca Mini                 | 3B         | 1.9GB | `ollama pull orca`          |
-| Vicuna                    | 7B         | 3.8GB | `ollama pull vicuna`        |
-| Nous-Hermes               | 13B        | 7.3GB | `ollama pull nous-hermes`   |
-| Wizard Vicuna Uncensored  | 13B        | 7.3GB | `ollama pull wizard-vicuna` |
+```
+ollama pull nous-hermes
+```
 
 ## Building
 
