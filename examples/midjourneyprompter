@@ -2,7 +2,7 @@
 # This prompt was adapted from the original at https://www.greataiprompts.com/guide/midjourney/best-chatgpt-prompt-for-midjourney/
 # Run `ollama create mj -f pathtofile` and then `ollama run mj` and enter a topic
 
-FROM nous-hermes:latest
+FROM nous-hermes
 PROMPT """
 {{- if not .Context }}
 ### System:
