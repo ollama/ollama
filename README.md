@@ -71,7 +71,7 @@ go build .
 To run it start the server:
 
 ```
-./ollama server &
+./ollama serve &
 ```
 
 Finally, run a model!
