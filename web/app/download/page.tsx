@@ -1,3 +1,5 @@
+import Image from 'next/image'
+
 import Header from '../header'
 import Downloader from './downloader'
 import Signup from './signup'
@@ -30,7 +32,7 @@ export default async function Download() {
     <>
       <Header />
       <main className='flex min-h-screen max-w-6xl flex-col py-20 px-16 lg:p-32 items-center mx-auto'>
-        <img src='/ollama.png' className='w-16 h-auto' />
+        <Image src='/ollama.png' width={64} height={64} alt='ollamaIcon' />
         <section className='mt-12 mb-8 text-center'>
           <h2 className='my-2 max-w-md text-3xl tracking-tight'>Downloading...</h2>
           <h3 className='text-base text-neutral-500 mt-12 max-w-[16rem]'>
