@@ -45,5 +45,5 @@ Once the changes are made,
 
 Notes:
 
-- This example is for research purposes only
+- This example is for research purposes only. There is no affiliation with any entity.
 - When using an uncensored model, please be aware that it may generate offensive content.
