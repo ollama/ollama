@@ -13,7 +13,9 @@ export function installed() {
 }
 
 export async function install() {
-  const command = `do shell script "ln -F -s ${ollama} ${symlinkPath}" with administrator privileges`
+  const command = `do shell script "mkdir -p ${path.dirname(
+    symlinkPath
+  )} && ln -F -s ${ollama} ${symlinkPath}" with administrator privileges`
 
   try {
     await exec(`osascript -e '${command}'`)
