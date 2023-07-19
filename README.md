@@ -54,12 +54,13 @@ Hello! It's your friend Mario.
 
 Ollama includes a library of open-source, pre-trained models. More models are coming soon.
 
-| Model       | Parameters | Size  | Download                  |
-| ----------- | ---------- | ----- | ------------------------- |
-| Llama2      | 7B         | 3.8GB | `ollama pull llama2`      |
-| Orca Mini   | 3B         | 1.9GB | `ollama pull orca`        |
-| Vicuna      | 7B         | 3.8GB | `ollama pull vicuna`      |
-| Nous-Hermes | 13B         | 7.3GB | `ollama pull nous-hermes` |
+| Model                     | Parameters | Size  | Download                    |
+| ----------------------    | ---------- | ----- | --------------------------- |
+| Llama2                    | 7B         | 3.8GB | `ollama pull llama2`        |
+| Orca Mini                 | 3B         | 1.9GB | `ollama pull orca`          |
+| Vicuna                    | 7B         | 3.8GB | `ollama pull vicuna`        |
+| Nous-Hermes               | 13B        | 7.3GB | `ollama pull nous-hermes`   |
+| Wizard Vicuna Uncensored  | 13B        | 6.8GB | `ollama pull wizard-vicuna` |
 
 ## Building
 
