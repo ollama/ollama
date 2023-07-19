@@ -21,6 +21,8 @@ const config: ForgeConfig = {
       '../ollama',
       path.join(__dirname, './assets/ollama_icon_16x16Template.png'),
       path.join(__dirname, './assets/ollama_icon_16x16Template@2x.png'),
+      path.join(__dirname, './assets/ollama_outline_icon_16x16Template.png'),
+      path.join(__dirname, './assets/ollama_outline_icon_16x16Template@2x.png'),
       ...(process.platform === 'darwin' ? ['../llama/ggml-metal.metal'] : []),
     ],
     ...(process.env.SIGN

@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow } from 'electron'
+import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow, nativeTheme } from 'electron'
 import Store from 'electron-store'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
@@ -66,13 +66,29 @@ function firstRunWindow() {
 }
 
 function createSystemtray() {
-  let iconPath = path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
+  let iconPath = nativeTheme.shouldUseDarkColors
+    ? path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png') 
+    : path.join(__dirname, '..', '..', 'assets', 'ollama_outline_icon_16x16Template.png')
 
   if (app.isPackaged) {
-    iconPath = path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')
+    iconPath = nativeTheme.shouldUseDarkColors
+    ? path.join(process.resourcesPath, 'ollama_icon_16x16Template.png') 
+    : path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')
   }
 
   tray = new Tray(iconPath)
+
+  nativeTheme.on('updated', function theThemeHasChanged () {
+    if (nativeTheme.shouldUseDarkColors) {
+      app.isPackaged 
+        ? tray.setImage(path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')) 
+        : tray.setImage(path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png'))
+    } else {
+      app.isPackaged 
+        ? tray.setImage(path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')) 
+        : tray.setImage(path.join(__dirname, '..', '..', 'assets', 'ollama_outline_icon_16x16Template.png'))
+    }
+  })
 
   const contextMenu = Menu.buildFromTemplate([{ role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' }])
 
