@@ -241,6 +241,8 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		readline.PcItem("/set",
 			readline.PcItem("history"),
 			readline.PcItem("nohistory"),
+			readline.PcItem("verbose"),
+			readline.PcItem("quiet"),
 			readline.PcItem("mode",
 				readline.PcItem("vim"),
 				readline.PcItem("emacs"),
@@ -298,6 +300,12 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 					continue
 				case "nohistory":
 					scanner.HistoryDisable()
+					continue
+				case "verbose":
+					cmd.Flags().Set("verbose", "true")
+					continue
+				case "quiet":
+					cmd.Flags().Set("verbose", "false")
 					continue
 				case "mode":
 					if len(args) > 2 {
