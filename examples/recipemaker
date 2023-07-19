@@ -1,6 +1,6 @@
 # Modelfile for creating a recipe from a list of ingredients
 # Run `ollama create recipemaker -f pathtofile` and then `ollama run recipemaker` and feed it lists of ingredients to create recipes around.
-FROM library/nous-hermes:latest
+FROM nous-hermes
 PROMPT """
 {{- if not .Context }}
 ### System:
