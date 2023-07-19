@@ -52,15 +52,17 @@ Hello! It's your friend Mario.
 
 ## Model library
 
-Ollama includes a library of open-source, pre-trained models. More models are coming soon.
+Ollama includes a library of open-source, pre-trained models. More models are coming soon. You should have at least 8 GB of RAM to run the 3B models, 16 GB
+to run the 7B models, and 32 GB to run the 13B models.
 
 | Model                     | Parameters | Size  | Download                    |
 | ----------------------    | ---------- | ----- | --------------------------- |
 | Llama2                    | 7B         | 3.8GB | `ollama pull llama2`        |
+| Llama2 13B                | 13B        | 7.3GB | `ollama pull llama2:13b`    |
 | Orca Mini                 | 3B         | 1.9GB | `ollama pull orca`          |
 | Vicuna                    | 7B         | 3.8GB | `ollama pull vicuna`        |
 | Nous-Hermes               | 13B        | 7.3GB | `ollama pull nous-hermes`   |
-| Wizard Vicuna Uncensored  | 13B        | 6.8GB | `ollama pull wizard-vicuna` |
+| Wizard Vicuna Uncensored  | 13B        | 7.3GB | `ollama pull wizard-vicuna` |
 
 ## Building
 
