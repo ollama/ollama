@@ -101,15 +101,10 @@ func pull(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		fn := func(status, digest string, total, completed int, percent float64) {
-			ch <- api.PullProgress{
-				Status:    status,
-				Digest:    digest,
-				Total:     total,
-				Completed: completed,
-				Percent:   percent,
-			}
+		fn := func(r api.ProgressResponse) {
+			ch <- r
 		}
+
 		if err := PullModel(req.Name, req.Username, req.Password, fn); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -129,15 +124,10 @@ func push(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		fn := func(status, digest string, total, completed int, percent float64) {
-			ch <- api.PushProgress{
-				Status:    status,
-				Digest:    digest,
-				Total:     total,
-				Completed: completed,
-				Percent:   percent,
-			}
+		fn := func(r api.ProgressResponse) {
+			ch <- r
 		}
+
 		if err := PushModel(req.Name, req.Username, req.Password, fn); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
