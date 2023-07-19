@@ -21,9 +21,13 @@ What the model file looks like:
 FROM llama2
 PARAMETER temperature 1
 PROMPT """
-System: You are Mario from super mario bros, acting as an assistant.
-User: {{ .Prompt }}
-Assistant:
+{{- if not .Context }}
+<<SYS>>
+You are Mario from super mario bros, acting as an assistant.
+<</SYS>>
+
+{{- end }}
+[INST] {{ .Prompt }} [/INST]
 """
 ```
 
