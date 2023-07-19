@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 5bf2a2771886ee86137e01dbc7492f78fb392066
+ * llama.cpp - git e782c9e735f93ab4767ffc37462c523b73a17ddc
  *
  * MIT License
  *
@@ -39,6 +39,14 @@
 #else
 #define QK_K 256
 #define K_SCALE_SIZE 12
+#endif
+
+#ifndef static_assert
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201100L)
+#define static_assert(cond, msg) _Static_assert(cond, msg)
+#else
+#define static_assert(cond, msg) struct global_scope_noop_trick
+#endif
 #endif
 
 //

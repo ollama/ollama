@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 5bf2a2771886ee86137e01dbc7492f78fb392066
+ * llama.cpp - git e782c9e735f93ab4767ffc37462c523b73a17ddc
  *
  * MIT License
  *
@@ -115,6 +115,11 @@ extern "C" {
         int32_t  n_gpu_layers;                 // number of layers to store in VRAM
         int32_t  main_gpu;                     // the GPU that is used for scratch and small tensors
         float tensor_split[LLAMA_MAX_DEVICES]; // how to split layers across multiple GPUs
+
+        // ref: https://github.com/ggerganov/llama.cpp/pull/2054
+        float    rope_freq_base;  // RoPE base frequency
+        float    rope_freq_scale; // RoPE frequency scaling factor
+
         // called with a progress value between 0 and 1, pass NULL to disable
         llama_progress_callback progress_callback;
         // context pointer passed to the progress callback
@@ -173,6 +178,8 @@ extern "C" {
         int32_t n_p_eval;
         int32_t n_eval;
     };
+
+    LLAMA_API int llama_max_devices();
 
     LLAMA_API struct llama_context_params llama_context_default_params();
     LLAMA_API struct llama_model_quantize_params llama_model_quantize_default_params();
@@ -296,14 +303,31 @@ extern "C" {
                              int   n_max_tokens,
                             bool   add_bos);
 
+    LLAMA_API int llama_tokenize_with_model(
+        const struct llama_model * model,
+                      const char * text,
+                     llama_token * tokens,
+                             int   n_max_tokens,
+                            bool   add_bos);
+
     LLAMA_API int llama_n_vocab(const struct llama_context * ctx);
     LLAMA_API int llama_n_ctx  (const struct llama_context * ctx);
     LLAMA_API int llama_n_embd (const struct llama_context * ctx);
+
+    LLAMA_API int llama_n_vocab_from_model(const struct llama_model * model);
+    LLAMA_API int llama_n_ctx_from_model  (const struct llama_model * model);
+    LLAMA_API int llama_n_embd_from_model (const struct llama_model * model);
 
     // Get the vocabulary as output parameters.
     // Returns number of results.
     LLAMA_API int llama_get_vocab(
             const struct llama_context * ctx,
+                          const char * * strings,
+                                 float * scores,
+                                   int   capacity);
+
+    LLAMA_API int llama_get_vocab_from_model(
+              const struct llama_model * model,
                           const char * * strings,
                                  float * scores,
                                    int   capacity);
@@ -320,7 +344,13 @@ extern "C" {
     LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
 
     // Token Id -> String. Uses the vocabulary in the provided context
-    LLAMA_API const char * llama_token_to_str(const struct llama_context * ctx, llama_token token);
+    LLAMA_API const char * llama_token_to_str(
+            const struct llama_context * ctx,
+                           llama_token   token);
+
+    LLAMA_API const char * llama_token_to_str_with_model(
+              const struct llama_model * model,
+                           llama_token   token);
 
     // Special tokens
     LLAMA_API llama_token llama_token_bos();  // beginning-of-sentence
