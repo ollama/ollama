@@ -6,9 +6,19 @@ const analytics = new Analytics({ writeKey: process.env.TELEMETRY_WRITE_KEY || '
 export async function POST(req: Request) {
   const { email } = await req.json()
 
-  analytics.identify({
-    anonymousId: uuid(),
+  const id = uuid()
+
+  await analytics.identify({
+    anonymousId: id,
     traits: {
+      email,
+    },
+  })
+
+  await analytics.track({
+    anonymousId: id,
+    event: 'signup',
+    properties: {
       email,
     },
   })
