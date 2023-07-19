@@ -651,8 +651,7 @@ func createConfigLayer(layers []string) (*LayerReader, error) {
 		return nil, err
 	}
 
-	buf := bytes.NewBuffer(configJSON)
-	digest, size := GetSHA256Digest(buf)
+	digest, size := GetSHA256Digest(bytes.NewBuffer(configJSON))
 
 	layer := &LayerReader{
 		Layer: Layer{
@@ -660,7 +659,7 @@ func createConfigLayer(layers []string) (*LayerReader, error) {
 			Digest:    digest,
 			Size:      size,
 		},
-		Reader: buf,
+		Reader: bytes.NewBuffer(configJSON),
 	}
 	return layer, nil
 }
