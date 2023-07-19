@@ -215,6 +215,16 @@ func CreateModel(name string, mf io.Reader, fn func(status string)) error {
 			}
 			l.MediaType = "application/vnd.ollama.image.prompt"
 			layers = append(layers, l)
+		case "license":
+			fn("creating license layer")
+			license := strings.NewReader(c.Arg)
+			l, err := CreateLayer(license)
+			if err != nil {
+				fn(fmt.Sprintf("couldn't create license layer: %v", err))
+				return fmt.Errorf("failed to create layer: %v", err)
+			}
+			l.MediaType = "application/vnd.ollama.image.license"
+			layers = append(layers, l)
 		default:
 			params[c.Name] = c.Arg
 		}
