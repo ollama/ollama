@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 5bf2a2771886ee86137e01dbc7492f78fb392066
+ * llama.cpp - git e782c9e735f93ab4767ffc37462c523b73a17ddc
  *
  * MIT License
  *
@@ -201,13 +201,13 @@ struct llama_mmap {
     llama_mmap(struct llama_file * file, size_t prefetch = (size_t) -1 /* -1 = max value */, bool numa = false) {
         size = file->size;
         int fd = fileno(file->fp);
-        int flags = MAP_PRIVATE;
+        int flags = MAP_SHARED;
         // prefetch/readahead impairs performance on NUMA systems
         if (numa) { prefetch = 0; }
 #ifdef __linux__
         if (prefetch) { flags |= MAP_POPULATE; }
 #endif
-        addr = mmap(NULL, file->size, PROT_READ | PROT_WRITE, flags, fd, 0);
+        addr = mmap(NULL, file->size, PROT_READ, flags, fd, 0);
         if (addr == MAP_FAILED) {
             throw std::runtime_error(format("mmap failed: %s", strerror(errno)));
         }
@@ -249,7 +249,7 @@ struct llama_mmap {
             throw std::runtime_error(format("CreateFileMappingA failed: %s", llama_format_win_err(error).c_str()));
         }
 
-        addr = MapViewOfFile(hMapping, FILE_MAP_COPY, 0, 0, 0);
+        addr = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
         error = GetLastError();
         CloseHandle(hMapping);
 
