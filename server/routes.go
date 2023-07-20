@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -163,6 +164,10 @@ func list(c *gin.Context) {
 	}
 	err = filepath.Walk(fp, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				log.Printf("manifest file does not exist: %s", fp)
+				return nil
+			}
 			return err
 		}
 		if !info.IsDir() {
