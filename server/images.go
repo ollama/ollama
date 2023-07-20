@@ -250,7 +250,7 @@ func CreateModel(name string, path string, fn func(status string)) error {
 					layers = append(layers, newLayer)
 				}
 			}
-		case "license", "template", "system":
+		case "license", "template", "system", "prompt":
 			fn(fmt.Sprintf("creating %s layer", c.Name))
 			// remove the prompt layer if one exists
 			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
