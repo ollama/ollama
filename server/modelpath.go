@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -104,6 +105,10 @@ func GetBlobsPath(digest string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
+	}
+
+	if runtime.GOOS == "windows" {
+		digest = strings.ReplaceAll(digest, ":", "-")
 	}
 
 	path := filepath.Join(home, ".ollama", "models", "blobs", digest)

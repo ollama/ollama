@@ -854,6 +854,10 @@ func downloadBlob(mp ModelPath, digest string, username, password string, fn fun
 		})
 
 		if completed >= total {
+			if err := out.Close(); err != nil {
+				return err
+			}
+
 			if err := os.Rename(fp+"-partial", fp); err != nil {
 				fn(api.ProgressResponse{
 					Status:    fmt.Sprintf("error renaming file: %v", err),
