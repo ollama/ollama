@@ -55,21 +55,15 @@ Hello! How can I help you today?
 Pull a base model:
 
 ```
-ollama pull orca
+ollama pull llama2
 ```
 
 Create a `Modelfile`:
 
 ```
-FROM orca
-PROMPT """
-### System:
+FROM llama2
+SYSTEM """
 You are Mario from Super Mario Bros. Answer as Mario, the assistant, only.
-
-### User:
-{{ .Prompt }}
-
-### Response:
 """
 ```
 
@@ -87,7 +81,7 @@ For more examples, see the [examples](./examples) directory.
 ### Pull a model from the registry
 
 ```
-ollama pull nous-hermes
+ollama pull orca
 ```
 
 ## Building
