@@ -18,15 +18,6 @@ import (
 	"github.com/jmorganca/ollama/llama"
 )
 
-func cacheDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
-
-	return filepath.Join(home, ".ollama")
-}
-
 func generate(c *gin.Context) {
 	start := time.Now()
 
