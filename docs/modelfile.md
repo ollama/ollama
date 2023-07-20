@@ -11,12 +11,13 @@ The format of the Modelfile:
 INSTRUCTION arguments
 ```
 
-| Instruction              | Description                                              |
-|------------------------- |--------------------------------------------------------- |
-| FROM<br>(required)       | Defines the base model to be used when creating a model  |
-| PARAMETER<br>(optional)  | Sets the parameters for how the model will be run        |
-| PROMPT <br>(optional)    | Sets the prompt to use when the model will be run        |
-| LICENSE<br>(optional)    | Specify the license of the model. It is additive, and                          |
+| Instruction               | Description                                              |
+|-------------------------- |--------------------------------------------------------- |
+| `FROM`<br>(required)      | Defines the base model to be used when creating a model  |
+| `PARAMETER`<br>(optional) | Sets the parameters for how the model will be run        |
+| `TEMPLATE`<br>(optional)  | Sets the prompt template to use when the model will be run        |
+| `SYSTEM`<br>(optional)    | // todo |
+| `LICENSE`<br>(optional)   | Specify the license of the model. It is additive, and                          |
 
 ## Examples
 
@@ -25,11 +26,13 @@ An example of a model file creating a mario blueprint:
 ```
 FROM llama2
 PARAMETER temperature 1
-PROMPT """
-System: You are Mario from super mario bros, acting as an assistant.
+TEMPLATE """
+System: {{ .System }}
 User: {{ .Prompt }}
 Assistant:
 """
+
+SYSTEM You are Mario from super mario bros, acting as an assistant.
 ```
 
 To use this:
@@ -64,7 +67,7 @@ FROM ./ollama-model.bin
 
 ## PARAMETER (Optional)
 
-The PARAMETER instruction defines a parameter that can be set when the model is run.
+The `PARAMETER` instruction defines a parameter that can be set when the model is run.
 
 ```
 PARAMETER <parameter> <parametervalue>
@@ -87,23 +90,30 @@ PARAMETER <parameter> <parametervalue>
 | MirostatEta   | Influences how quickly the algorithm responds to feedback from the generated text. A lower learning rate will result in slower adjustments, while a higher learning rate will make the algorithm more responsive. (Default: 0.1)                        | float      | MirostatEta 0.1   |
 | NumThread     | Sets the number of threads to use during computation. By default, Ollama will detect this for optimal performance. It is recommended to set this value to the number of physical CPU cores your system has (as opposed to the logical number of cores). | int        | NumThread 8       |
 
-## PROMPT
+## TEMPLATE
 
-Prompt is a set of instructions to an LLM to cause the model to return desired response(s). Typically there are 3-4 components to a prompt: System, context, user, and response.
+`TEMPLATE` is a set of instructions to an LLM to cause the model to return desired response(s). Typically there are 3-4 components to a prompt: system, input, and response.
 
 ```modelfile
-PROMPT """
-{{- if not .Context }}
+TEMPLATE """
 ### System:
-You are a content marketer who needs to come up with a short but succinct tweet. Make sure to include the appropriate hashtags and links. Sometimes when appropriate, describe a meme that can be includes as well. All answers should be in the form of a tweet which has a max size of 280 characters. Every instruction will be the topic to create a tweet about.
-{{- end }}
+{{ .System }}
+
 ### Instruction:
 {{ .Prompt }}
 
 ### Response:
 """
 
+SYSTEM """
+You are a content marketer who needs to come up with a short but succinct tweet. Make sure to include the appropriate hashtags and links. Sometimes when appropriate, describe a meme that can be includes as well. All answers should be in the form of a tweet which has a max size of 280 characters. Every instruction will be the topic to create a tweet about.
+"""
+
 ```
+
+## SYSTEM
+
+// todo
 
 ## Notes
 
