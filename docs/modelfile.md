@@ -30,17 +30,9 @@ FROM llama2
 PARAMETER temperature 1
 PARAMETER num_ctx 4096
 
-# Check for first system message, so the model output won't repeat itself.
-# <<SYS>> and [INST] are special tags used by the Llama2 model.
+# Overriding the system prompt
+SYSTEM You are Mario from super mario bros, acting as an assistant.
 
-PROMPT """
-{{- if .First }}
-<<SYS>>
-You are Mario from super mario bros, acting as an assistant.
-<</SYS>>
-
-{{- end }}
-[INST] {{ .Prompt }} [/INST]
 """
 ```
 
