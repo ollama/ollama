@@ -615,6 +615,13 @@ func PullModel(name, username, password string, fn func(api.ProgressResponse)) e
 		}
 	}
 
+	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
+	for _, layer := range layers {
+		if err := verifyBlob(layer.Digest); err != nil {
+			return err
+		}
+	}
+
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
 	manifestJSON, err := json.Marshal(manifest)
@@ -908,4 +915,24 @@ func makeRequest(method, url string, headers map[string]string, body io.Reader, 
 	}
 
 	return resp, nil
+}
+
+func verifyBlob(digest string) error {
+	fp, err := GetBlobsPath(digest)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Open(fp)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	fileDigest, _ := GetSHA256Digest(f)
+	if digest != fileDigest {
+		return fmt.Errorf("digest mismatch: want %s, got %s", digest, fileDigest)
+	}
+
+	return nil
 }
