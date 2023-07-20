@@ -156,7 +156,6 @@ func GetModel(name string) (*Model, error) {
 
 			model.System = string(bts)
 		case "application/vnd.ollama.image.prompt":
-			log.Printf("PROMPT is deprecated. Please use TEMPLATE and SYSTEM instead.")
 			bts, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err
