@@ -37,6 +37,7 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 	}
 
 	var vars struct {
+		First  bool
 		System string
 		Prompt string
 
@@ -44,8 +45,10 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 		Context []int
 	}
 
+	vars.First = len(vars.Context) == 0
 	vars.System = m.System
 	vars.Prompt = request.Prompt
+	vars.Context = request.Context
 
 	var sb strings.Builder
 	if err := tmpl.Execute(&sb, vars); err != nil {
