@@ -101,7 +101,7 @@ PARAMETER <parameter> <parametervalue>
 
 ## Prompt
 
-When building on top of the base models supplied by Ollama, it comes with the prompt template predefined. To override the supplied system prompt, simply add `SYSTEM: insert system prompt` to change the systme prompt.
+When building on top of the base models supplied by Ollama, it comes with the prompt template predefined. To override the supplied system prompt, simply add `SYSTEM insert system prompt` to change the system prompt.
 
 ### Prompt Template
 
