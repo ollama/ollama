@@ -26,7 +26,6 @@ cp -a "$1"/*.{c,h,cpp,m,metal,cu} "$OUT"
 
 status "removing incompatible files..."
 rm -f "$OUT"/build-info.h
-rm -f "$OUT"/ggml-{mpi,opencl}.*
 
 SHA1=$(git -C $1 rev-parse @)
 
@@ -45,17 +44,27 @@ $(sed 's/^/ * /' <$1/LICENSE)
 
 EOF
 
-for f in $OUT/*.{c,h,cpp,m,metal,cu}; do
+for IN in $OUT/*.{c,h,cpp,m,metal,cu}; do
     TMP=$(mktemp)
-    status "updating license: $f"
-    cat $LICENSE $f >$TMP
-    mv $TMP $f
+    status "updating license $IN"
+    cat $LICENSE $IN >$TMP
+    mv $TMP $IN
 done
 
-status "touching up MacOS files..."
-TMP=$(mktemp)
-{
-    echo "// +build darwin"
-    echo
-} | cat - $OUT/ggml-metal.m >$TMP
-mv $TMP $OUT/ggml-metal.m
+touchup() {
+    local CONSTRAINT=$1 && shift
+
+    for IN in $*; do
+        status "touching up $IN..."
+        TMP=$(mktemp)
+        {
+            echo "//go:build $CONSTRAINT"
+            echo
+        } | cat - $IN >$TMP
+        mv $TMP $IN
+    done
+}
+
+touchup darwin $OUT/ggml-metal.*
+touchup mpi $OUT/ggml-mpi.*
+touchup opencl $OUT/ggml-opencl.*
