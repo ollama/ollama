@@ -60,7 +60,7 @@ func generate(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		llm.Predict(req.Context, prompt, func(r api.GenerateResponse) {
+		fn := func(r api.GenerateResponse) {
 			r.Model = req.Model
 			r.CreatedAt = time.Now().UTC()
 			if r.Done {
@@ -68,7 +68,11 @@ func generate(c *gin.Context) {
 			}
 
 			ch <- r
-		})
+		}
+
+		if err := llm.Predict(req.Context, prompt, fn); err != nil {
+			ch <- gin.H{"error": err.Error()}
+		}
 	}()
 
 	streamResponse(c, ch)
@@ -89,8 +93,7 @@ func pull(c *gin.Context) {
 		}
 
 		if err := PullModel(req.Name, req.Username, req.Password, fn); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+			ch <- gin.H{"error": err.Error()}
 		}
 	}()
 
@@ -112,8 +115,7 @@ func push(c *gin.Context) {
 		}
 
 		if err := PushModel(req.Name, req.Username, req.Password, fn); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+			ch <- gin.H{"error": err.Error()}
 		}
 	}()
 
@@ -137,8 +139,7 @@ func create(c *gin.Context) {
 		}
 
 		if err := CreateModel(req.Name, req.Path, fn); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
-			return
+			ch <- gin.H{"error": err.Error()}
 		}
 	}()
 
