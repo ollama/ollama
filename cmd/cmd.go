@@ -424,6 +424,7 @@ func NewCLI() *cobra.Command {
 
 	listCmd := &cobra.Command{
 		Use:   "list",
+		Aliases: []string{"ls"},
 		Short: "List models",
 		RunE:  list,
 	}
