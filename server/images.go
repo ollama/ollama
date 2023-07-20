@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"text/template"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/parser"
@@ -24,8 +25,37 @@ import (
 type Model struct {
 	Name      string `json:"name"`
 	ModelPath string
-	Prompt    string
+	Template  string
+	System    string
 	Options   api.Options
+}
+
+func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
+	tmpl, err := template.New("").Parse(m.Template)
+	if err != nil {
+		return "", err
+	}
+
+	var vars struct {
+		First  bool
+		System string
+		Prompt string
+
+		// deprecated: versions <= 0.0.7 used this to omit the system prompt
+		Context []int
+	}
+
+	vars.First = len(vars.Context) == 0
+	vars.System = m.System
+	vars.Prompt = request.Prompt
+	vars.Context = request.Context
+
+	var sb strings.Builder
+	if err := tmpl.Execute(&sb, vars); err != nil {
+		return "", err
+	}
+
+	return sb.String(), nil
 }
 
 type ManifestV2 struct {
@@ -71,20 +101,19 @@ func GetManifest(mp ModelPath) (*ManifestV2, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if _, err = os.Stat(fp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("couldn't find model '%s'", mp.GetShortTagname())
 	}
 
 	var manifest *ManifestV2
 
-	f, err := os.Open(fp)
+	bts, err := os.ReadFile(fp)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't open file '%s'", fp)
 	}
 
-	decoder := json.NewDecoder(f)
-	err = decoder.Decode(&manifest)
-	if err != nil {
+	if err := json.Unmarshal(bts, &manifest); err != nil {
 		return nil, err
 	}
 
@@ -112,12 +141,28 @@ func GetModel(name string) (*Model, error) {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
-		case "application/vnd.ollama.image.prompt":
-			data, err := os.ReadFile(filename)
+		case "application/vnd.ollama.image.template":
+			bts, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err
 			}
-			model.Prompt = string(data)
+
+			model.Template = string(bts)
+		case "application/vnd.ollama.image.system":
+			bts, err := os.ReadFile(filename)
+			if err != nil {
+				return nil, err
+			}
+
+			model.System = string(bts)
+		case "application/vnd.ollama.image.prompt":
+			log.Printf("PROMPT is deprecated. Please use TEMPLATE and SYSTEM instead.")
+			bts, err := os.ReadFile(filename)
+			if err != nil {
+				return nil, err
+			}
+
+			model.Template = string(bts)
 		case "application/vnd.ollama.image.params":
 			params, err := os.Open(filename)
 			if err != nil {
@@ -156,13 +201,13 @@ func CreateModel(name string, path string, fn func(status string)) error {
 	params := make(map[string]string)
 
 	for _, c := range commands {
-		log.Printf("[%s] - %s\n", c.Name, c.Arg)
+		log.Printf("[%s] - %s\n", c.Name, c.Args)
 		switch c.Name {
 		case "model":
 			fn("looking for model")
-			mf, err := GetManifest(ParseModelPath(c.Arg))
+			mf, err := GetManifest(ParseModelPath(c.Args))
 			if err != nil {
-				fp := c.Arg
+				fp := c.Args
 
 				// If filePath starts with ~/, replace it with the user's home directory.
 				if strings.HasPrefix(fp, "~/") {
@@ -183,7 +228,7 @@ func CreateModel(name string, path string, fn func(status string)) error {
 				fn("creating model layer")
 				file, err := os.Open(fp)
 				if err != nil {
-					fn(fmt.Sprintf("couldn't find model '%s'", c.Arg))
+					fn(fmt.Sprintf("couldn't find model '%s'", c.Args))
 					return fmt.Errorf("failed to open file: %v", err)
 				}
 				defer file.Close()
@@ -206,31 +251,21 @@ func CreateModel(name string, path string, fn func(status string)) error {
 					layers = append(layers, newLayer)
 				}
 			}
-		case "prompt":
-			fn("creating prompt layer")
+		case "license", "template", "system":
+			fn(fmt.Sprintf("creating %s layer", c.Name))
 			// remove the prompt layer if one exists
-			layers = removeLayerFromLayers(layers, "application/vnd.ollama.image.prompt")
+			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
+			layers = removeLayerFromLayers(layers, mediaType)
 
-			prompt := strings.NewReader(c.Arg)
-			l, err := CreateLayer(prompt)
+			layer, err := CreateLayer(strings.NewReader(c.Args))
 			if err != nil {
-				fn(fmt.Sprintf("couldn't create prompt layer: %v", err))
-				return fmt.Errorf("failed to create layer: %v", err)
+				return err
 			}
-			l.MediaType = "application/vnd.ollama.image.prompt"
-			layers = append(layers, l)
-		case "license":
-			fn("creating license layer")
-			license := strings.NewReader(c.Arg)
-			l, err := CreateLayer(license)
-			if err != nil {
-				fn(fmt.Sprintf("couldn't create license layer: %v", err))
-				return fmt.Errorf("failed to create layer: %v", err)
-			}
-			l.MediaType = "application/vnd.ollama.image.license"
-			layers = append(layers, l)
+
+			layer.MediaType = mediaType
+			layers = append(layers, layer)
 		default:
-			params[c.Name] = c.Arg
+			params[c.Name] = c.Args
 		}
 	}
 
