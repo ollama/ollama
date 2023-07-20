@@ -53,7 +53,7 @@ To use this:
 
 ## FROM (Required)
 
-The FROM instruction Defines the base model to use when creating a model.
+The FROM instruction defines the base model to use when creating a model.
 
 ```
 FROM <model name>:<tag>
