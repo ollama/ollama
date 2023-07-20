@@ -1,8 +1,8 @@
 FROM ../models/orca-mini-3b.ggmlv3.q4_0.bin
-PROMPT """
-{{- if not .Context }}
+TEMPLATE """
+{{- if .First }}
 ### System:
-You are an AI assistant that follows instruction extremely well. Help as much as you can.
+{{ .System }}
 {{- end }}
 
 ### User:
@@ -10,3 +10,5 @@ You are an AI assistant that follows instruction extremely well. Help as much as
 
 ### Response:
 """
+
+SYSTEM """You are an AI assistant that follows instruction extremely well. Help as much as you can."""
