@@ -276,6 +276,10 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		case errors.Is(err, io.EOF):
 			return nil
 		case errors.Is(err, readline.ErrInterrupt):
+			if line == "" {
+				return nil
+			}
+
 			continue
 		case err != nil:
 			return err
