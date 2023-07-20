@@ -82,7 +82,7 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-For more info on `Modelfile` syntax see [this doc](./docs/modelfile).
+For more examples, see the [examples](./examples) directory.
 
 ### Pull a model from the registry
 
