@@ -62,10 +62,6 @@ func Parse(reader io.Reader) ([]Command, error) {
 }
 
 func scanModelfile(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	if atEOF || len(data) == 0 {
-		return 0, nil, nil
-	}
-
 	newline := bytes.IndexByte(data, '\n')
 
 	if start := bytes.Index(data, []byte(`"""`)); start >= 0 && start < newline {
