@@ -8,16 +8,23 @@ import (
 )
 
 type StatusError struct {
-	StatusCode int
-	Status     string
-	Message    string
+	StatusCode   int
+	Status       string
+	ErrorMessage string `json:"error"`
 }
 
 func (e StatusError) Error() string {
-	if e.Message != "" {
-		return fmt.Sprintf("%s: %s", e.Status, e.Message)
+	switch {
+	case e.Status != "" && e.ErrorMessage != "":
+		return fmt.Sprintf("%s: %s", e.Status, e.ErrorMessage)
+	case e.Status != "":
+		return e.Status
+	case e.ErrorMessage != "":
+		return e.ErrorMessage
+	default:
+		// this should not happen
+		return "something went wrong, please see the ollama server logs for details"
 	}
-	return e.Status
 }
 
 type GenerateRequest struct {
@@ -44,10 +51,10 @@ type PullRequest struct {
 }
 
 type ProgressResponse struct {
-	Status    string  `json:"status"`
-	Digest    string  `json:"digest,omitempty"`
-	Total     int     `json:"total,omitempty"`
-	Completed int     `json:"completed,omitempty"`
+	Status    string `json:"status"`
+	Digest    string `json:"digest,omitempty"`
+	Total     int    `json:"total,omitempty"`
+	Completed int    `json:"completed,omitempty"`
 }
 
 type PushRequest struct {
