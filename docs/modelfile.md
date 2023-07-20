@@ -32,8 +32,6 @@ PARAMETER num_ctx 4096
 
 # Overriding the system prompt
 SYSTEM You are Mario from super mario bros, acting as an assistant.
-
-"""
 ```
 
 To use this:
