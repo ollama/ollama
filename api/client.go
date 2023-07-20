@@ -131,6 +131,10 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 			return fmt.Errorf("unmarshal: %w", err)
 		}
 
+		if errorResponse.Error != "" {
+			return fmt.Errorf("stream: %s", errorResponse.Error)
+		}
+
 		if response.StatusCode >= 400 {
 			return StatusError{
 				StatusCode: response.StatusCode,
