@@ -39,6 +39,9 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 	var vars struct {
 		System string
 		Prompt string
+
+		// deprecated: versions <= 0.0.7 used this to omit the system prompt
+		Context []int
 	}
 
 	vars.System = m.System
@@ -149,6 +152,14 @@ func GetModel(name string) (*Model, error) {
 			}
 
 			model.System = string(bts)
+		case "application/vnd.ollama.image.prompt":
+			log.Printf("PROMPT is deprecated. Please use TEMPLATE and SYSTEM instead.")
+			bts, err := os.ReadFile(filename)
+			if err != nil {
+				return nil, err
+			}
+
+			model.Template = string(bts)
 		case "application/vnd.ollama.image.params":
 			params, err := os.Open(filename)
 			if err != nil {
