@@ -1,3 +1,5 @@
+//go:build darwin
+
 /**
  * llama.cpp - git e782c9e735f93ab4767ffc37462c523b73a17ddc
  *
