@@ -10,6 +10,7 @@ function process_line {
     # Get the filename from the URL
     local filename=models/$(basename $url)
 
+    echo "verifying $filename..."
 
     # If the file exists, compute its checksum
     if [ -f $filename ]; then
