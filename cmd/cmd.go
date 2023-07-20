@@ -17,11 +17,11 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/tablewriter"
-	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
+	"github.com/jmorganca/ollama/progressbar"
 	"github.com/jmorganca/ollama/server"
 )
 
