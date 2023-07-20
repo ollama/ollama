@@ -18,7 +18,7 @@ import (
 	"github.com/jmorganca/ollama/llama"
 )
 
-func generate(c *gin.Context) {
+func GenerateHandler(c *gin.Context) {
 	start := time.Now()
 
 	var req api.GenerateRequest
@@ -78,7 +78,7 @@ func generate(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func pull(c *gin.Context) {
+func PullModelHandler(c *gin.Context) {
 	var req api.PullRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -100,7 +100,7 @@ func pull(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func push(c *gin.Context) {
+func PushModelHandler(c *gin.Context) {
 	var req api.PushRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -122,7 +122,7 @@ func push(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func create(c *gin.Context) {
+func CreateModelHandler(c *gin.Context) {
 	var req api.CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
@@ -146,7 +146,30 @@ func create(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func list(c *gin.Context) {
+func DeleteModelHandler(c *gin.Context) {
+	var req api.DeleteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ch := make(chan any)
+	go func() {
+		defer close(ch)
+		fn := func(r api.ProgressResponse) {
+			ch <- r
+		}
+
+		if err := DeleteModel(req.Name, fn); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}()
+
+	streamResponse(c, ch)
+}
+
+func ListModelsHandler(c *gin.Context) {
 	var models []api.ListResponseModel
 	fp, err := GetManifestPath()
 	if err != nil {
@@ -199,11 +222,12 @@ func Serve(ln net.Listener) error {
 		c.String(http.StatusOK, "Ollama is running")
 	})
 
-	r.POST("/api/pull", pull)
-	r.POST("/api/generate", generate)
-	r.POST("/api/create", create)
-	r.POST("/api/push", push)
-	r.GET("/api/tags", list)
+	r.POST("/api/pull", PullModelHandler)
+	r.POST("/api/generate", GenerateHandler)
+	r.POST("/api/create", CreateModelHandler)
+	r.POST("/api/push", PushModelHandler)
+	r.GET("/api/tags", ListModelsHandler)
+	r.DELETE("/api/delete", DeleteModelHandler)
 
 	log.Printf("Listening on %s", ln.Addr())
 	s := &http.Server{
