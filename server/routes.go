@@ -2,17 +2,20 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
 
 	"dario.cat/mergo"
+	"github.com/Masterminds/sprig/v3"
 	"github.com/gin-gonic/gin"
 
 	"github.com/jmorganca/ollama/api"
@@ -54,7 +57,24 @@ func generate(c *gin.Context) {
 		return
 	}
 
-	templ, err := template.New("").Parse(model.Prompt)
+	execFunc := template.FuncMap(map[string]any{
+		"exec": func(args ...string) string {
+			cmd := exec.Command(args[0], args[1:]...)
+			// spew.Dump(cmd)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "====> ERROR:", err)
+				fmt.Fprintln(os.Stderr, string(output))
+				os.Exit(1)
+			}
+			return string(output)
+		},
+	})
+
+	templ, err := template.New("").
+		Funcs(execFunc).
+		Funcs(sprig.FuncMap()).
+		Parse(model.Prompt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
