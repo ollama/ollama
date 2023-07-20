@@ -1,0 +1,12 @@
+FROM ../models/orca-mini-3b.ggmlv3.q4_0.bin
+PROMPT """
+{{- if not .Context }}
+### System:
+You are an AI assistant that follows instruction extremely well. Help as much as you can.
+{{- end }}
+
+### User:
+{{ .Prompt }}
+
+### Response:
+"""
