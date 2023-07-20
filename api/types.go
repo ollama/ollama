@@ -37,6 +37,10 @@ type CreateProgress struct {
 	Status string `json:"status"`
 }
 
+type DeleteRequest struct {
+	Name string `json:"name"`
+}
+
 type PullRequest struct {
 	Name     string `json:"name"`
 	Username string `json:"username"`
@@ -44,10 +48,10 @@ type PullRequest struct {
 }
 
 type ProgressResponse struct {
-	Status    string  `json:"status"`
-	Digest    string  `json:"digest,omitempty"`
-	Total     int     `json:"total,omitempty"`
-	Completed int     `json:"completed,omitempty"`
+	Status    string `json:"status"`
+	Digest    string `json:"digest,omitempty"`
+	Total     int    `json:"total,omitempty"`
+	Completed int    `json:"completed,omitempty"`
 }
 
 type PushRequest struct {

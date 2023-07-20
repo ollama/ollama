@@ -25,7 +25,7 @@ import (
 	"github.com/jmorganca/ollama/server"
 )
 
-func create(cmd *cobra.Command, args []string) error {
+func CreateHandler(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
 	filename, err := filepath.Abs(filename)
 	if err != nil {
@@ -59,7 +59,7 @@ func create(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func RunRun(cmd *cobra.Command, args []string) error {
+func RunHandler(cmd *cobra.Command, args []string) error {
 	mp := server.ParseModelPath(args[0])
 	fp, err := mp.GetManifestPath(false)
 	if err != nil {
@@ -86,7 +86,7 @@ func RunRun(cmd *cobra.Command, args []string) error {
 	return RunGenerate(cmd, args)
 }
 
-func push(cmd *cobra.Command, args []string) error {
+func PushHandler(cmd *cobra.Command, args []string) error {
 	client := api.NewClient()
 
 	request := api.PushRequest{Name: args[0]}
@@ -101,7 +101,7 @@ func push(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func list(cmd *cobra.Command, args []string) error {
+func ListHandler(cmd *cobra.Command, args []string) error {
 	client := api.NewClient()
 
 	models, err := client.List(context.Background())
@@ -131,7 +131,22 @@ func list(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func RunPull(cmd *cobra.Command, args []string) error {
+func DeleteHandler(cmd *cobra.Command, args []string) error {
+	client := api.NewClient()
+
+	request := api.DeleteRequest{Name: args[0]}
+	fn := func(resp api.ProgressResponse) error {
+		fmt.Println(resp.Status)
+		return nil
+	}
+
+	if err := client.Delete(context.Background(), &request, fn); err != nil {
+		return err
+	}
+	return nil
+}
+
+func PullHandler(cmd *cobra.Command, args []string) error {
 	return pull(args[0])
 }
 
@@ -290,7 +305,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		switch {
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
-			if err := list(cmd, args[1:]); err != nil {
+			if err := ListHandler(cmd, args[1:]); err != nil {
 				return err
 			}
 
@@ -387,7 +402,7 @@ func NewCLI() *cobra.Command {
 		Use:   "create MODEL",
 		Short: "Create a model from a Modelfile",
 		Args:  cobra.MinimumNArgs(1),
-		RunE:  create,
+		RunE:  CreateHandler,
 	}
 
 	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
@@ -396,7 +411,7 @@ func NewCLI() *cobra.Command {
 		Use:   "run MODEL [PROMPT]",
 		Short: "Run a model",
 		Args:  cobra.MinimumNArgs(1),
-		RunE:  RunRun,
+		RunE:  RunHandler,
 	}
 
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
@@ -412,21 +427,28 @@ func NewCLI() *cobra.Command {
 		Use:   "pull MODEL",
 		Short: "Pull a model from a registry",
 		Args:  cobra.MinimumNArgs(1),
-		RunE:  RunPull,
+		RunE:  PullHandler,
 	}
 
 	pushCmd := &cobra.Command{
 		Use:   "push MODEL",
 		Short: "Push a model to a registry",
 		Args:  cobra.MinimumNArgs(1),
-		RunE:  push,
+		RunE:  PushHandler,
 	}
 
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Aliases: []string{"ls"},
 		Short: "List models",
-		RunE:  list,
+		RunE:  ListHandler,
+	}
+
+	deleteCmd := &cobra.Command{
+		Use:   "rm",
+		Short: "Remove a model",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  DeleteHandler,
 	}
 
 	rootCmd.AddCommand(
@@ -436,6 +458,7 @@ func NewCLI() *cobra.Command {
 		pullCmd,
 		pushCmd,
 		listCmd,
+		deleteCmd,
 	)
 
 	return rootCmd

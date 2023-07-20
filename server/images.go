@@ -487,6 +487,83 @@ func CreateLayer(f io.ReadSeeker) (*LayerReader, error) {
 	return layer, nil
 }
 
+func DeleteModel(name string, fn func(api.ProgressResponse)) error {
+	mp := ParseModelPath(name)
+
+	manifest, err := GetManifest(mp)
+	if err != nil {
+		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
+		return err
+	}
+	deleteMap := make(map[string]bool)
+	for _, layer := range manifest.Layers {
+		deleteMap[layer.Digest] = true
+	}
+	deleteMap[manifest.Config.Digest] = true
+
+	fp, err := GetManifestPath()
+	if err != nil {
+		fn(api.ProgressResponse{Status: "problem getting manifest path"})
+		return err
+	}
+	err = filepath.Walk(fp, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			fn(api.ProgressResponse{Status: "problem walking manifest dir"})
+			return err
+		}
+		if !info.IsDir() {
+			path := path[len(fp)+1:]
+			slashIndex := strings.LastIndex(path, "/")
+			if slashIndex == -1 {
+				return nil
+			}
+			tag := path[:slashIndex] + ":" + path[slashIndex+1:]
+			fmp := ParseModelPath(tag)
+
+			// skip the manifest we're trying to delete
+			if mp.GetFullTagname() == fmp.GetFullTagname() {
+				return nil
+			}
+
+			// save (i.e. delete from the deleteMap) any files used in other manifests
+			manifest, err := GetManifest(fmp)
+			if err != nil {
+				log.Printf("skipping file: %s", fp)
+				return nil
+			}
+			for _, layer := range manifest.Layers {
+				delete(deleteMap, layer.Digest)
+			}
+			delete(deleteMap, manifest.Config.Digest)
+		}
+		return nil
+	})
+
+	// only delete the files which are still in the deleteMap
+	for k, v := range deleteMap {
+		if v {
+			err := os.Remove(k)
+			if err != nil {
+				log.Printf("couldn't remove file '%s': %v", k, err)
+				continue
+			}
+		}
+	}
+
+	fp, err = mp.GetManifestPath(false)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(fp)
+	if err != nil {
+		log.Printf("couldn't remove manifest file '%s': %v", fp, err)
+		return err
+	}
+	fn(api.ProgressResponse{Status: fmt.Sprintf("deleted '%s'", name)})
+
+	return nil
+}
+
 func PushModel(name, username, password string, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
