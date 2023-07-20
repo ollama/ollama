@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" height="200px" srcset="https://github.com/jmorganca/ollama/assets/3325447/318048d2-b2dd-459c-925a-ac8449d5f02c">
-    <img alt="logo" height="200px" src="https://github.com/jmorganca/ollama/assets/3325447/c7d6e15f-7f4d-4776-b568-c084afa297c2">
+    <source media="(prefers-color-scheme: dark)" height="200px" srcset="https://github.com/jmorganca/ollama/assets/3325447/56ea1849-1284-4645-8970-956de6e51c3c">
+    <img alt="logo" height="200px" src="https://github.com/jmorganca/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
   </picture>
 </div>
 
