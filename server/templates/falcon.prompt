@@ -1,5 +1,0 @@
-{{- if not .Context }}
-A helpful assistant who helps the user with any questions asked.
-{{- end }}
-User: {{ .Prompt }}
-Assistant:

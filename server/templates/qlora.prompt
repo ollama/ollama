@@ -1,2 +1,0 @@
-### Human: {{ .Prompt }}
-### Assistant:

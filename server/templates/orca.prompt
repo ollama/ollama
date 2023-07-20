@@ -1,9 +1,0 @@
-{{- if not .Context }}
-### System:
-You are an AI assistant that follows instruction extremely well. Help as much as you can.
-{{- end }}
-
-### User:
-{{ .Prompt }}
-
-### Response:
