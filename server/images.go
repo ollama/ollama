@@ -137,21 +137,14 @@ func GetModel(name string) (*Model, error) {
 	return model, nil
 }
 
-func getAbsPath(fp string) (string, error) {
-	if strings.HasPrefix(fp, "~/") {
-		parts := strings.Split(fp, "/")
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-
-		fp = filepath.Join(home, filepath.Join(parts[1:]...))
+func CreateModel(name string, path string, fn func(status string)) error {
+	mf, err := os.Open(path)
+	if err != nil {
+		fn(fmt.Sprintf("couldn't open modelfile '%s'", path))
+		return fmt.Errorf("failed to open file: %w", err)
 	}
+	defer mf.Close()
 
-	return os.ExpandEnv(fp), nil
-}
-
-func CreateModel(name string, mf io.Reader, fn func(status string)) error {
 	fn("parsing modelfile")
 	commands, err := parser.Parse(mf)
 	if err != nil {
@@ -169,11 +162,22 @@ func CreateModel(name string, mf io.Reader, fn func(status string)) error {
 			fn("looking for model")
 			mf, err := GetManifest(ParseModelPath(c.Arg))
 			if err != nil {
-				// if we couldn't read the manifest, try getting the bin file
-				fp, err := getAbsPath(c.Arg)
-				if err != nil {
-					fn("error determing path. exiting.")
-					return err
+				fp := c.Arg
+
+				// If filePath starts with ~/, replace it with the user's home directory.
+				if strings.HasPrefix(fp, "~/") {
+					parts := strings.Split(fp, "/")
+					home, err := os.UserHomeDir()
+					if err != nil {
+						return fmt.Errorf("failed to open file: %v", err)
+					}
+
+					fp = filepath.Join(home, filepath.Join(parts[1:]...))
+				}
+
+				// If filePath is not an absolute path, make it relative to the modelfile path
+				if !filepath.IsAbs(fp) {
+					fp = filepath.Join(filepath.Dir(path), fp)
 				}
 
 				fn("creating model layer")

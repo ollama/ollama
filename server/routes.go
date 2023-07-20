@@ -144,15 +144,6 @@ func create(c *gin.Context) {
 		return
 	}
 
-	// NOTE consider passing the entire Modelfile in the json instead of the path to it
-
-	file, err := os.Open(req.Path)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
-		return
-	}
-	defer file.Close()
-
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -162,7 +153,7 @@ func create(c *gin.Context) {
 			}
 		}
 
-		if err := CreateModel(req.Name, file, fn); err != nil {
+		if err := CreateModel(req.Name, req.Path, fn); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 			return
 		}
