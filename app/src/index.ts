@@ -115,15 +115,14 @@ function server() {
     logger.error(data.toString().trim())
   })
 
-  function restart(code: number) {
-    logger.info(`Server exited with code: ${code}`)
+  function restart() {
     setTimeout(server, 3000)
   }
 
-  proc.on('exit', code => restart(code))
+  proc.on('exit', restart)
 
   app.on('before-quit', () => {
-    proc.off('exit', code => restart(code))
+    proc.off('exit', restart)
     proc.kill()
   })
 }
