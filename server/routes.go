@@ -93,7 +93,13 @@ func PullModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := PullModel(req.Name, req.Username, req.Password, fn); err != nil {
+		regOpts := &RegistryOptions{
+			Insecure: req.Insecure,
+			Username: req.Username,
+			Password: req.Password,
+		}
+
+		if err := PullModel(req.Name, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -115,7 +121,13 @@ func PushModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := PushModel(req.Name, req.Username, req.Password, fn); err != nil {
+		regOpts := &RegistryOptions{
+			Insecure: req.Insecure,
+			Username: req.Username,
+			Password: req.Password,
+		}
+
+		if err := PushModel(req.Name, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
