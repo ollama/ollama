@@ -103,33 +103,33 @@ if (require('electron-squirrel-startup')) {
 function server() {
   const binary = app.isPackaged
   ? path.join(process.resourcesPath, 'ollama')
-  : path.resolve(process.cwd(), '..', 'ollama');
+  : path.resolve(process.cwd(), '..', 'ollama')
 
-  const proc = spawn(binary, ['serve']);
+  const proc = spawn(binary, ['serve'])
 
   proc.stdout.on('data', data => {
-    logger.info(data.toString().trim());
-  });
+    logger.info(data.toString().trim())
+  })
 
   proc.stderr.on('data', data => {
-    logger.error(data.toString().trim());
-  });
+    logger.error(data.toString().trim())
+  })
     
 
   proc.on('exit', (code, signal) => {
     if (code === 0 || code === null) {
-      logger.info('Server has stopped.');
-      setTimeout(server, 5000);
+      logger.info('Server has stopped.')
+      setTimeout(server, 5000)
     } else {
-      logger.error(`Server exited with code: ${code}, signal: ${signal}`);
-      setTimeout(server, 3000);
+      logger.error(`Server exited with code: ${code}, signal: ${signal}`)
+      setTimeout(server, 3000)
     }
-  });
+  })
 
   app.on('before-quit', () => {
-    proc.off('exit', server);
-    proc.kill();
-  });
+    proc.off('exit', server)
+    proc.kill()
+  })
 }
 
 if (process.platform === 'darwin') {
