@@ -6,6 +6,12 @@ Install required tools:
 brew install go
 ```
 
+Enable CGO:
+
+```
+export CGO_ENABLED=1
+```
+
 Then build ollama:
 
 ```
