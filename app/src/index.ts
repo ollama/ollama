@@ -117,7 +117,7 @@ function server() {
     
 
   proc.on('exit', (code, signal) => {
-    if (code === 0 || code === null) {
+    if (!code) {
       logger.info('Server has stopped.')
       setTimeout(server, 5000)
     } else {
