@@ -116,7 +116,7 @@ function server() {
   })
     
 
-  proc.on('exit', (code, signal) => {
+  proc.on('exit', (code) => {
     logger.error(`Server exited with code: ${code}`)
     setTimeout(server, 3000)
   })
