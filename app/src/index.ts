@@ -117,13 +117,8 @@ function server() {
     
 
   proc.on('exit', (code, signal) => {
-    if (!code) {
-      logger.info('Server has stopped.')
-      setTimeout(server, 5000)
-    } else {
-      logger.error(`Server exited with code: ${code}, signal: ${signal}`)
-      setTimeout(server, 3000)
-    }
+    logger.error(`Server exited with code: ${code}`)
+    setTimeout(server, 3000)
   })
 
   app.on('before-quit', () => {
