@@ -67,25 +67,25 @@ function firstRunWindow() {
 
 function createSystemtray() {
   let iconPath = nativeTheme.shouldUseDarkColors
-    ? path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png') 
+    ? path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
     : path.join(__dirname, '..', '..', 'assets', 'ollama_outline_icon_16x16Template.png')
 
   if (app.isPackaged) {
     iconPath = nativeTheme.shouldUseDarkColors
-    ? path.join(process.resourcesPath, 'ollama_icon_16x16Template.png') 
-    : path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')
+      ? path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')
+      : path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')
   }
 
   tray = new Tray(iconPath)
 
-  nativeTheme.on('updated', function theThemeHasChanged () {
+  nativeTheme.on('updated', function theThemeHasChanged() {
     if (nativeTheme.shouldUseDarkColors) {
-      app.isPackaged 
-        ? tray.setImage(path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')) 
+      app.isPackaged
+        ? tray.setImage(path.join(process.resourcesPath, 'ollama_icon_16x16Template.png'))
         : tray.setImage(path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png'))
     } else {
-      app.isPackaged 
-        ? tray.setImage(path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')) 
+      app.isPackaged
+        ? tray.setImage(path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png'))
         : tray.setImage(path.join(__dirname, '..', '..', 'assets', 'ollama_outline_icon_16x16Template.png'))
     }
   })
@@ -102,8 +102,8 @@ if (require('electron-squirrel-startup')) {
 
 function server() {
   const binary = app.isPackaged
-  ? path.join(process.resourcesPath, 'ollama')
-  : path.resolve(process.cwd(), '..', 'ollama')
+    ? path.join(process.resourcesPath, 'ollama')
+    : path.resolve(process.cwd(), '..', 'ollama')
 
   const proc = spawn(binary, ['serve'])
 
@@ -114,15 +114,16 @@ function server() {
   proc.stderr.on('data', data => {
     logger.error(data.toString().trim())
   })
-    
 
-  proc.on('exit', (code) => {
-    logger.error(`Server exited with code: ${code}`)
+  function restart(code: number) {
+    logger.info(`Server exited with code: ${code}`)
     setTimeout(server, 3000)
-  })
+  }
+
+  proc.on('exit', code => restart(code))
 
   app.on('before-quit', () => {
-    proc.off('exit', server)
+    proc.off('exit', code => restart(code))
     proc.kill()
   })
 }
