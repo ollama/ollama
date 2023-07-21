@@ -66,6 +66,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Access-Control-Allow-Origin", "*")
 
 	for k, v := range c.Headers {
 		req.Header[k] = v
