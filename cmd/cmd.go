@@ -69,7 +69,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	_, err = os.Stat(fp)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		if err := pull(args[0]); err != nil {
+		if err := pull(args[0], false); err != nil {
 			var apiStatusError api.StatusError
 			if !errors.As(err, &apiStatusError) {
 				return err
@@ -89,7 +89,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 func PushHandler(cmd *cobra.Command, args []string) error {
 	client := api.NewClient()
 
-	request := api.PushRequest{Name: args[0]}
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
+		return err
+	}
+
+	request := api.PushRequest{Name: args[0], Insecure: insecure}
 	fn := func(resp api.ProgressResponse) error {
 		fmt.Println(resp.Status)
 		return nil
@@ -147,16 +152,21 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func PullHandler(cmd *cobra.Command, args []string) error {
-	return pull(args[0])
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
+		return err
+	}
+
+	return pull(args[0], insecure)
 }
 
-func pull(model string) error {
+func pull(model string, insecure bool) error {
 	client := api.NewClient()
 
 	var currentDigest string
 	var bar *progressbar.ProgressBar
 
-	request := api.PullRequest{Name: model}
+	request := api.PullRequest{Name: model, Insecure: insecure}
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != currentDigest && resp.Digest != "" {
 			currentDigest = resp.Digest
@@ -430,6 +440,8 @@ func NewCLI() *cobra.Command {
 		RunE:  PullHandler,
 	}
 
+	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+
 	pushCmd := &cobra.Command{
 		Use:   "push MODEL",
 		Short: "Push a model to a registry",
@@ -437,11 +449,13 @@ func NewCLI() *cobra.Command {
 		RunE:  PushHandler,
 	}
 
+	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+
 	listCmd := &cobra.Command{
-		Use:   "list",
+		Use:     "list",
 		Aliases: []string{"ls"},
-		Short: "List models",
-		RunE:  ListHandler,
+		Short:   "List models",
+		RunE:    ListHandler,
 	}
 
 	deleteCmd := &cobra.Command{

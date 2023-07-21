@@ -70,10 +70,13 @@ func (mp ModelPath) GetFullTagname() string {
 }
 
 func (mp ModelPath) GetShortTagname() string {
-	if mp.Registry == DefaultRegistry && mp.Namespace == DefaultNamespace {
-		return fmt.Sprintf("%s:%s", mp.Repository, mp.Tag)
+	if mp.Registry == DefaultRegistry {
+		if mp.Namespace == DefaultNamespace {
+			return fmt.Sprintf("%s:%s", mp.Repository, mp.Tag)
+		}
+		return fmt.Sprintf("%s/%s:%s", mp.Namespace, mp.Repository, mp.Tag)
 	}
-	return fmt.Sprintf("%s/%s:%s", mp.Namespace, mp.Repository, mp.Tag)
+	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
 func (mp ModelPath) GetManifestPath(createDir bool) (string, error) {

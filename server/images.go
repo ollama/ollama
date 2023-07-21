@@ -22,6 +22,12 @@ import (
 	"github.com/jmorganca/ollama/parser"
 )
 
+type RegistryOptions struct {
+	Insecure bool
+	Username string
+	Password string
+}
+
 type Model struct {
 	Name      string `json:"name"`
 	ModelPath string
@@ -564,7 +570,7 @@ func DeleteModel(name string, fn func(api.ProgressResponse)) error {
 	return nil
 }
 
-func PushModel(name, username, password string, fn func(api.ProgressResponse)) error {
+func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
@@ -586,7 +592,7 @@ func PushModel(name, username, password string, fn func(api.ProgressResponse)) e
 	total += manifest.Config.Size
 
 	for _, layer := range layers {
-		exists, err := checkBlobExistence(mp, layer.Digest, username, password)
+		exists, err := checkBlobExistence(mp, layer.Digest, regOpts)
 		if err != nil {
 			return err
 		}
@@ -609,13 +615,13 @@ func PushModel(name, username, password string, fn func(api.ProgressResponse)) e
 			Completed: completed,
 		})
 
-		location, err := startUpload(mp, username, password)
+		location, err := startUpload(mp, regOpts)
 		if err != nil {
 			log.Printf("couldn't start upload: %v", err)
 			return err
 		}
 
-		err = uploadBlob(location, layer, username, password)
+		err = uploadBlob(location, layer, regOpts)
 		if err != nil {
 			log.Printf("error uploading blob: %v", err)
 			return err
@@ -634,7 +640,7 @@ func PushModel(name, username, password string, fn func(api.ProgressResponse)) e
 		Total:     total,
 		Completed: completed,
 	})
-	url := fmt.Sprintf("%s://%s/v2/%s/manifests/%s", mp.ProtocolScheme, mp.Registry, mp.GetNamespaceRepository(), mp.Tag)
+	url := fmt.Sprintf("%s/v2/%s/manifests/%s", mp.Registry, mp.GetNamespaceRepository(), mp.Tag)
 	headers := map[string]string{
 		"Content-Type": "application/vnd.docker.distribution.manifest.v2+json",
 	}
@@ -644,7 +650,7 @@ func PushModel(name, username, password string, fn func(api.ProgressResponse)) e
 		return err
 	}
 
-	resp, err := makeRequest("PUT", url, headers, bytes.NewReader(manifestJSON), username, password)
+	resp, err := makeRequest("PUT", url, headers, bytes.NewReader(manifestJSON), regOpts)
 	if err != nil {
 		return err
 	}
@@ -665,12 +671,12 @@ func PushModel(name, username, password string, fn func(api.ProgressResponse)) e
 	return nil
 }
 
-func PullModel(name, username, password string, fn func(api.ProgressResponse)) error {
+func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
 
-	manifest, err := pullModelManifest(mp, username, password)
+	manifest, err := pullModelManifest(mp, regOpts)
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %q", err)
 	}
@@ -680,7 +686,7 @@ func PullModel(name, username, password string, fn func(api.ProgressResponse)) e
 	layers = append(layers, &manifest.Config)
 
 	for _, layer := range layers {
-		if err := downloadBlob(mp, layer.Digest, username, password, fn); err != nil {
+		if err := downloadBlob(mp, layer.Digest, regOpts, fn); err != nil {
 			return err
 		}
 	}
@@ -715,13 +721,13 @@ func PullModel(name, username, password string, fn func(api.ProgressResponse)) e
 	return nil
 }
 
-func pullModelManifest(mp ModelPath, username, password string) (*ManifestV2, error) {
-	url := fmt.Sprintf("%s://%s/v2/%s/manifests/%s", mp.ProtocolScheme, mp.Registry, mp.GetNamespaceRepository(), mp.Tag)
+func pullModelManifest(mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, error) {
+	url := fmt.Sprintf("%s/v2/%s/manifests/%s", mp.Registry, mp.GetNamespaceRepository(), mp.Tag)
 	headers := map[string]string{
 		"Accept": "application/vnd.docker.distribution.manifest.v2+json",
 	}
 
-	resp, err := makeRequest("GET", url, headers, nil, username, password)
+	resp, err := makeRequest("GET", url, headers, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't get manifest: %v", err)
 		return nil, err
@@ -782,10 +788,10 @@ func GetSHA256Digest(r io.Reader) (string, int) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), int(n)
 }
 
-func startUpload(mp ModelPath, username string, password string) (string, error) {
-	url := fmt.Sprintf("%s://%s/v2/%s/blobs/uploads/", mp.ProtocolScheme, mp.Registry, mp.GetNamespaceRepository())
+func startUpload(mp ModelPath, regOpts *RegistryOptions) (string, error) {
+	url := fmt.Sprintf("%s/v2/%s/blobs/uploads/", mp.Registry, mp.GetNamespaceRepository())
 
-	resp, err := makeRequest("POST", url, nil, nil, username, password)
+	resp, err := makeRequest("POST", url, nil, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't start upload: %v", err)
 		return "", err
@@ -808,10 +814,10 @@ func startUpload(mp ModelPath, username string, password string) (string, error)
 }
 
 // Function to check if a blob already exists in the Docker registry
-func checkBlobExistence(mp ModelPath, digest string, username string, password string) (bool, error) {
-	url := fmt.Sprintf("%s://%s/v2/%s/blobs/%s", mp.ProtocolScheme, mp.Registry, mp.GetNamespaceRepository(), digest)
+func checkBlobExistence(mp ModelPath, digest string, regOpts *RegistryOptions) (bool, error) {
+	url := fmt.Sprintf("%s/v2/%s/blobs/%s", mp.Registry, mp.GetNamespaceRepository(), digest)
 
-	resp, err := makeRequest("HEAD", url, nil, nil, username, password)
+	resp, err := makeRequest("HEAD", url, nil, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't check for blob: %v", err)
 		return false, err
@@ -822,7 +828,7 @@ func checkBlobExistence(mp ModelPath, digest string, username string, password s
 	return resp.StatusCode == http.StatusOK, nil
 }
 
-func uploadBlob(location string, layer *Layer, username string, password string) error {
+func uploadBlob(location string, layer *Layer, regOpts *RegistryOptions) error {
 	// Create URL
 	url := fmt.Sprintf("%s&digest=%s", location, layer.Digest)
 
@@ -845,7 +851,7 @@ func uploadBlob(location string, layer *Layer, username string, password string)
 		return err
 	}
 
-	resp, err := makeRequest("PUT", url, headers, f, username, password)
+	resp, err := makeRequest("PUT", url, headers, f, regOpts)
 	if err != nil {
 		log.Printf("couldn't upload blob: %v", err)
 		return err
@@ -861,7 +867,7 @@ func uploadBlob(location string, layer *Layer, username string, password string)
 	return nil
 }
 
-func downloadBlob(mp ModelPath, digest string, username, password string, fn func(api.ProgressResponse)) error {
+func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	fp, err := GetBlobsPath(digest)
 	if err != nil {
 		return err
@@ -890,12 +896,12 @@ func downloadBlob(mp ModelPath, digest string, username, password string, fn fun
 		size = fi.Size()
 	}
 
-	url := fmt.Sprintf("%s://%s/v2/%s/blobs/%s", mp.ProtocolScheme, mp.Registry, mp.GetNamespaceRepository(), digest)
+	url := fmt.Sprintf("%s/v2/%s/blobs/%s", mp.Registry, mp.GetNamespaceRepository(), digest)
 	headers := map[string]string{
 		"Range": fmt.Sprintf("bytes=%d-", size),
 	}
 
-	resp, err := makeRequest("GET", url, headers, nil, username, password)
+	resp, err := makeRequest("GET", url, headers, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't download blob: %v", err)
 		return err
@@ -959,7 +965,17 @@ func downloadBlob(mp ModelPath, digest string, username, password string, fn fun
 	return nil
 }
 
-func makeRequest(method, url string, headers map[string]string, body io.Reader, username, password string) (*http.Response, error) {
+func makeRequest(method, url string, headers map[string]string, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
+	if !strings.HasPrefix(url, "http") {
+		if regOpts.Insecure {
+			url = "http://" + url
+		} else {
+			url = "https://" + url
+		}
+	}
+
+	log.Printf("url = %s", url)
+
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
@@ -970,8 +986,8 @@ func makeRequest(method, url string, headers map[string]string, body io.Reader, 
 	}
 
 	// TODO: better auth
-	if username != "" && password != "" {
-		req.SetBasicAuth(username, password)
+	if regOpts.Username != "" && regOpts.Password != "" {
+		req.SetBasicAuth(regOpts.Username, regOpts.Password)
 	}
 
 	client := &http.Client{

@@ -43,6 +43,7 @@ type DeleteRequest struct {
 
 type PullRequest struct {
 	Name     string `json:"name"`
+	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
@@ -56,6 +57,7 @@ type ProgressResponse struct {
 
 type PushRequest struct {
 	Name     string `json:"name"`
+	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
