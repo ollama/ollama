@@ -38,7 +38,7 @@ SYSTEM You are Mario from super mario bros, acting as an assistant.
 
 To use this:
 
-1. Save it as a file (eg. `Modelfile``)
+1. Save it as a file (eg. `Modelfile`)
 2. `ollama create NAME -f <location of the file eg. ./Modelfile>'`
 3. `ollama run NAME`
 4. Start using the model!
