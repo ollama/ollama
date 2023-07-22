@@ -168,7 +168,7 @@ func (llm *llama) tokenize(prompt string) []C.llama_token {
 	cPrompt := C.CString(prompt)
 	defer C.free(unsafe.Pointer(cPrompt))
 
-	tokens := make([]C.llama_token, llm.NumCtx)
+	tokens := make([]C.llama_token, len(prompt)+1)
 	if n := C.llama_tokenize(llm.ctx, cPrompt, unsafe.SliceData(tokens), C.int(len(tokens)), true); n > 0 {
 		return tokens[:n]
 	}
