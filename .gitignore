@@ -2,5 +2,6 @@
 .vscode
 .env
 .venv
+.swp
 dist
 ollama
