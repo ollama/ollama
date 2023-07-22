@@ -548,9 +548,13 @@ func DeleteModel(name string, fn func(api.ProgressResponse)) error {
 	// only delete the files which are still in the deleteMap
 	for k, v := range deleteMap {
 		if v {
-			err := os.Remove(k)
+			fp, err := GetBlobsPath(k)
 			if err != nil {
-				log.Printf("couldn't remove file '%s': %v", k, err)
+				log.Printf("couldn't get file path for '%s': %v", k, err)
+				continue
+			}
+			if err := os.Remove(fp); err != nil {
+				log.Printf("couldn't remove file '%s': %v", fp, err)
 				continue
 			}
 		}
