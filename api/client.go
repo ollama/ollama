@@ -210,15 +210,9 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	return &lr, nil
 }
 
-type DeleteProgressFunc func(ProgressResponse) error
-
-func (c *Client) Delete(ctx context.Context, req *DeleteRequest, fn DeleteProgressFunc) error {
-	return c.stream(ctx, http.MethodDelete, "/api/delete", req, func(bts []byte) error {
-		var resp ProgressResponse
-		if err := json.Unmarshal(bts, &resp); err != nil {
-			return err
-		}
-
-		return fn(resp)
-	})
+func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
+	if err := c.do(ctx, http.MethodDelete, "/api/delete", req, nil); err != nil {
+		return err
+	}
+	return nil
 }

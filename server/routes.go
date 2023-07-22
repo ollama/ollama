@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -166,20 +167,14 @@ func DeleteModelHandler(c *gin.Context) {
 		return
 	}
 
-	ch := make(chan any)
-	go func() {
-		defer close(ch)
-		fn := func(r api.ProgressResponse) {
-			ch <- r
-		}
-
-		if err := DeleteModel(req.Name, fn); err != nil {
+	if err := DeleteModel(req.Name); err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Name)})
+		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
 		}
-	}()
-
-	streamResponse(c, ch)
+		return
+	}
 }
 
 func ListModelsHandler(c *gin.Context) {

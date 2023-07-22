@@ -108,8 +108,8 @@ func GetManifest(mp ModelPath) (*ManifestV2, error) {
 		return nil, err
 	}
 
-	if _, err = os.Stat(fp); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("couldn't find model '%s'", mp.GetShortTagname())
+	if _, err = os.Stat(fp); err != nil {
+		return nil, err
 	}
 
 	var manifest *ManifestV2
@@ -493,12 +493,11 @@ func CreateLayer(f io.ReadSeeker) (*LayerReader, error) {
 	return layer, nil
 }
 
-func DeleteModel(name string, fn func(api.ProgressResponse)) error {
+func DeleteModel(name string) error {
 	mp := ParseModelPath(name)
 
 	manifest, err := GetManifest(mp)
 	if err != nil {
-		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
 		return err
 	}
 	deleteMap := make(map[string]bool)
@@ -509,12 +508,10 @@ func DeleteModel(name string, fn func(api.ProgressResponse)) error {
 
 	fp, err := GetManifestPath()
 	if err != nil {
-		fn(api.ProgressResponse{Status: "problem getting manifest path"})
 		return err
 	}
 	err = filepath.Walk(fp, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			fn(api.ProgressResponse{Status: "problem walking manifest dir"})
 			return err
 		}
 		if !info.IsDir() {
@@ -569,7 +566,6 @@ func DeleteModel(name string, fn func(api.ProgressResponse)) error {
 		log.Printf("couldn't remove manifest file '%s': %v", fp, err)
 		return err
 	}
-	fn(api.ProgressResponse{Status: fmt.Sprintf("deleted '%s'", name)})
 
 	return nil
 }
