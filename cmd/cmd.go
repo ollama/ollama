@@ -140,14 +140,10 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 	client := api.NewClient()
 
 	request := api.DeleteRequest{Name: args[0]}
-	fn := func(resp api.ProgressResponse) error {
-		fmt.Println(resp.Status)
-		return nil
-	}
-
-	if err := client.Delete(context.Background(), &request, fn); err != nil {
+	if err := client.Delete(context.Background(), &request); err != nil {
 		return err
 	}
+	fmt.Printf("deleted '%s'\n", args[0])
 	return nil
 }
 
