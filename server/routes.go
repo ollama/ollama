@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"dario.cat/mergo"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	"github.com/jmorganca/ollama/api"
@@ -228,7 +229,22 @@ func ListModelsHandler(c *gin.Context) {
 }
 
 func Serve(ln net.Listener) error {
+	config := cors.DefaultConfig()
+	config.AllowWildcard = true
+	// only allow http/https from localhost
+	config.AllowOrigins = []string{
+		"http://localhost",
+		"http://localhost:*",
+		"https://localhost",
+		"https://localhost:*",
+		"http://127.0.0.1",
+		"http://127.0.0.1:*",
+		"https://127.0.0.1",
+		"https://127.0.0.1:*",
+	}
+
 	r := gin.Default()
+	r.Use(cors.New(config))
 
 	r.GET("/", func(c *gin.Context) {
 		c.String(http.StatusOK, "Ollama is running")
