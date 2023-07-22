@@ -67,25 +67,25 @@ function firstRunWindow() {
 
 function createSystemtray() {
   let iconPath = nativeTheme.shouldUseDarkColors
-    ? path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png') 
+    ? path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
     : path.join(__dirname, '..', '..', 'assets', 'ollama_outline_icon_16x16Template.png')
 
   if (app.isPackaged) {
     iconPath = nativeTheme.shouldUseDarkColors
-    ? path.join(process.resourcesPath, 'ollama_icon_16x16Template.png') 
-    : path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')
+      ? path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')
+      : path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')
   }
 
   tray = new Tray(iconPath)
 
-  nativeTheme.on('updated', function theThemeHasChanged () {
+  nativeTheme.on('updated', function theThemeHasChanged() {
     if (nativeTheme.shouldUseDarkColors) {
-      app.isPackaged 
-        ? tray.setImage(path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')) 
+      app.isPackaged
+        ? tray.setImage(path.join(process.resourcesPath, 'ollama_icon_16x16Template.png'))
         : tray.setImage(path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png'))
     } else {
-      app.isPackaged 
-        ? tray.setImage(path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')) 
+      app.isPackaged
+        ? tray.setImage(path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png'))
         : tray.setImage(path.join(__dirname, '..', '..', 'assets', 'ollama_outline_icon_16x16Template.png'))
     }
   })
@@ -116,8 +116,7 @@ function server() {
   })
 
   function restart() {
-    logger.info('Restarting the server...')
-    server()
+    setTimeout(server, 3000)
   }
 
   proc.on('exit', restart)
