@@ -45,7 +45,7 @@ func ParseModelPath(name string) ModelPath {
 		return ModelPath{}
 	}
 
-	colonParts := strings.Split(name, ":")
+	colonParts := strings.Split(slashParts[len(slashParts)-1], ":")
 	if len(colonParts) == 2 {
 		tag = colonParts[1]
 	} else {
