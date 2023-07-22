@@ -51,7 +51,7 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 		Context []int
 	}
 
-	vars.First = len(vars.Context) == 0
+	vars.First = len(request.Context) == 0
 	vars.System = m.System
 	vars.Prompt = request.Prompt
 	vars.Context = request.Context
