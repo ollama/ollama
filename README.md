@@ -135,3 +135,11 @@ Generate text from a model.
 ```
 curl -X POST http://localhost:11434/api/generate -d '{"model": "llama2", "prompt":"Why is the sky blue?"}'
 ```
+
+### `POST /api/create`
+
+Create a model from a `Modelfile`.
+
+```
+curl -X POST http://localhost:11434/api/create -d '{"name": "my-model", "path": "/path/to/modelfile"}'
+```
