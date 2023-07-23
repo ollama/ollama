@@ -94,9 +94,25 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	var currentDigest string
+	var bar *progressbar.ProgressBar
+
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
 	fn := func(resp api.ProgressResponse) error {
-		fmt.Println(resp.Status)
+		if resp.Digest != currentDigest && resp.Digest != "" {
+			currentDigest = resp.Digest
+			bar = progressbar.DefaultBytes(
+				int64(resp.Total),
+				fmt.Sprintf("pushing %s...", resp.Digest[7:19]),
+			)
+
+			bar.Set(resp.Completed)
+		} else if resp.Digest == currentDigest && resp.Digest != "" {
+			bar.Set(resp.Completed)
+		} else {
+			currentDigest = ""
+			fmt.Println(resp.Status)
+		}
 		return nil
 	}
 
