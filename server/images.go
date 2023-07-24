@@ -510,7 +510,7 @@ func CopyModel(src, dest string) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(destPath, input, 0644)
+	err = ioutil.WriteFile(destPath, input, 0o644)
 	if err != nil {
 		fmt.Println("Error reading file:", err)
 		return err
@@ -669,7 +669,7 @@ func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+		return fmt.Errorf("on push registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
 
 	fn(api.ProgressResponse{Status: "success"})
@@ -743,7 +743,7 @@ func pullModelManifest(mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, err
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("registry responded with code %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("on pull registry responded with code %d: %s", resp.StatusCode, body)
 	}
 
 	var m *ManifestV2
@@ -807,7 +807,7 @@ func startUpload(mp ModelPath, regOpts *RegistryOptions) (string, error) {
 	// Check for success
 	if resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("registry responded with code %d: %s", resp.StatusCode, body)
+		return "", fmt.Errorf("on upload registry responded with code %d: %s", resp.StatusCode, body)
 	}
 
 	// Extract UUID location from header
@@ -896,7 +896,7 @@ func uploadBlobChunked(mp ModelPath, location string, layer *Layer, regOpts *Reg
 				Completed: int(totalUploaded),
 			})
 			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+			return fmt.Errorf("on layer upload registry responded with code %d: %v", resp.StatusCode, string(body))
 		}
 
 		totalUploaded += n
@@ -913,7 +913,7 @@ func uploadBlobChunked(mp ModelPath, location string, layer *Layer, regOpts *Reg
 
 			if resp.StatusCode != http.StatusCreated {
 				body, _ := io.ReadAll(resp.Body)
-				return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+				return fmt.Errorf("on finish upload registry responded with code %d: %v", resp.StatusCode, string(body))
 			}
 			break
 		}
@@ -964,7 +964,7 @@ func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		body, _ := ioutil.ReadAll(resp.Body)
-		return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+		return fmt.Errorf("on download registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
 
 	err = os.MkdirAll(path.Dir(fp), 0o700)
