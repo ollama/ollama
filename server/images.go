@@ -700,6 +700,17 @@ func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
 	for _, layer := range layers {
 		if err := verifyBlob(layer.Digest); err != nil {
+			if errors.Is(err, errDigestMismatch) {
+				// something went wrong, delete the blob
+				fp, err := GetBlobsPath(layer.Digest)
+				if err != nil {
+					return err
+				}
+				if err := os.Remove(fp); err != nil {
+					// log this, but return the original error
+					log.Printf("couldn't remove file with digest mismatch '%s': %v", fp, err)
+				}
+			}
 			return err
 		}
 	}
@@ -1067,6 +1078,8 @@ func makeRequest(method, url string, headers map[string]string, body io.Reader, 
 	return resp, nil
 }
 
+var errDigestMismatch = fmt.Errorf("digest mismatch, file must be downloaded again")
+
 func verifyBlob(digest string) error {
 	fp, err := GetBlobsPath(digest)
 	if err != nil {
@@ -1081,7 +1094,7 @@ func verifyBlob(digest string) error {
 
 	fileDigest, _ := GetSHA256Digest(f)
 	if digest != fileDigest {
-		return fmt.Errorf("digest mismatch: want %s, got %s", digest, fileDigest)
+		return fmt.Errorf("%w: want %s, got %s", errDigestMismatch, digest, fileDigest)
 	}
 
 	return nil
