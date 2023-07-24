@@ -155,11 +155,22 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 func DeleteHandler(cmd *cobra.Command, args []string) error {
 	client := api.NewClient()
 
-	request := api.DeleteRequest{Name: args[0]}
-	if err := client.Delete(context.Background(), &request); err != nil {
+	req := api.DeleteRequest{Name: args[0]}
+	if err := client.Delete(context.Background(), &req); err != nil {
 		return err
 	}
 	fmt.Printf("deleted '%s'\n", args[0])
+	return nil
+}
+
+func CopyHandler(cmd *cobra.Command, args []string) error {
+	client := api.NewClient()
+
+	req := api.CopyRequest{Source: args[0], Destination: args[1]}
+	if err := client.Copy(context.Background(), &req); err != nil {
+		return err
+	}
+	fmt.Printf("copied '%s' to '%s'\n", args[0], args[1])
 	return nil
 }
 
@@ -470,6 +481,13 @@ func NewCLI() *cobra.Command {
 		RunE:    ListHandler,
 	}
 
+	copyCmd := &cobra.Command{
+		Use:   "cp",
+		Short: "Copy a model",
+		Args:  cobra.MinimumNArgs(2),
+		RunE:  CopyHandler,
+	}
+
 	deleteCmd := &cobra.Command{
 		Use:   "rm",
 		Short: "Remove a model",
@@ -484,6 +502,7 @@ func NewCLI() *cobra.Command {
 		pullCmd,
 		pushCmd,
 		listCmd,
+		copyCmd,
 		deleteCmd,
 	)
 

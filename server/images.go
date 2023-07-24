@@ -493,6 +493,32 @@ func CreateLayer(f io.ReadSeeker) (*LayerReader, error) {
 	return layer, nil
 }
 
+func CopyModel(src, dest string) error {
+	srcPath, err := ParseModelPath(src).GetManifestPath(false)
+	if err != nil {
+		return err
+	}
+	destPath, err := ParseModelPath(dest).GetManifestPath(true)
+	if err != nil {
+		return err
+	}
+
+	// copy the file
+	input, err := ioutil.ReadFile(srcPath)
+	if err != nil {
+		fmt.Println("Error reading file:", err)
+		return err
+	}
+
+	err = ioutil.WriteFile(destPath, input, 0644)
+	if err != nil {
+		fmt.Println("Error reading file:", err)
+		return err
+	}
+
+	return nil
+}
+
 func DeleteModel(name string) error {
 	mp := ParseModelPath(name)
 

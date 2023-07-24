@@ -228,6 +228,23 @@ func ListModelsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ListResponse{models})
 }
 
+func CopyModelHandler(c *gin.Context) {
+	var req api.CopyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := CopyModel(req.Source, req.Destination); err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Source)})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+}
+
 func Serve(ln net.Listener) error {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
@@ -254,6 +271,7 @@ func Serve(ln net.Listener) error {
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
+	r.POST("/api/copy", CopyModelHandler)
 	r.GET("/api/tags", ListModelsHandler)
 	r.DELETE("/api/delete", DeleteModelHandler)
 
