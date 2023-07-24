@@ -974,7 +974,7 @@ func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func
 
 	out, err := os.OpenFile(fp+"-partial", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("open file: %w", err)
 	}
 	defer out.Close()
 
