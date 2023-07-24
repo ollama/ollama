@@ -1,4 +1,4 @@
-# Modelfile for creating a tweet from a topic
+# Modelfile for creating a devops engineer assistant
 # Run `ollama create devops-engineer -f ./Modelfile` and then `ollama run devops-engineer` and enter a topic
 
 FROM llama2:13b
