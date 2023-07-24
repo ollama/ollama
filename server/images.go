@@ -913,6 +913,7 @@ func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func
 	}
 
 	var size int64
+	chunkSize := 1024 * 1024 // 1 MiB in bytes
 
 	fi, err := os.Stat(fp + "-partial")
 	switch {
@@ -922,6 +923,13 @@ func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func
 		return fmt.Errorf("stat: %w", err)
 	default:
 		size = fi.Size()
+		// Ensure the size is divisible by the chunk size by removing excess bytes
+		size -= size % int64(chunkSize)
+
+		err := os.Truncate(fp+"-partial", size)
+		if err != nil {
+			return fmt.Errorf("truncate: %w", err)
+		}
 	}
 
 	url := fmt.Sprintf("%s/v2/%s/blobs/%s", mp.Registry, mp.GetNamespaceRepository(), digest)
@@ -982,7 +990,7 @@ func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func
 			break
 		}
 
-		n, err := io.CopyN(out, resp.Body, 8192)
+		n, err := io.CopyN(out, resp.Body, int64(chunkSize))
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
