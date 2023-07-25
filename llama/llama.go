@@ -1,7 +1,7 @@
 package llama
 
 /*
-#cgo CPPFLAGS: -O3 -DNDEBUG=1
+#cgo CPPFLAGS: -O3 -DNDEBUG=1 -DGGML_USE_K_QUANTS
 #cgo CXXFLAGS: -std=c++11
 #cgo darwin CPPFLAGS: -DGGML_USE_ACCELERATE -DGGML_USE_METAL -DGGML_METAL_NDEBUG
 #cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
