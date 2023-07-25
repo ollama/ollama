@@ -2,7 +2,7 @@ import Link from "next/link"
 
 const navigation = [
   { name: 'Discord', href: 'https://discord.gg/MrfB5FbNWN' },
-  { name: 'Github', href: 'https://github.com/jmorganca/ollama' },
+  { name: 'GitHub', href: 'https://github.com/jmorganca/ollama' },
   { name: 'Download', href: '/download' },
 ]
 
@@ -21,6 +21,6 @@ export default function Header() {
           ))}
         </div>
       </nav>
-    </header >
+    </header>
   )
 }
