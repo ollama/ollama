@@ -147,10 +147,8 @@ func CreateModelHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		fn := func(status string) {
-			ch <- api.CreateProgress{
-				Status: status,
-			}
+		fn := func(resp api.ProgressResponse) {
+			ch <- resp
 		}
 
 		if err := CreateModel(req.Name, req.Path, fn); err != nil {
