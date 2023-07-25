@@ -14,11 +14,12 @@ export async function GET(req: Request) {
   const res = await fetch('https://api.github.com/repos/jmorganca/ollama/releases', { next: { revalidate: 60 } })
   const data = await res.json()
 
-  if (data.length === 0) {
+  const latest = data?.filter((f: any) => !f.prerelease)?.[0]
+
+  if (!latest) {
     return new Response('not found', { status: 404 })
   }
 
-  const latest = data[0]
   const assets = latest.assets || []
 
   if (assets.length === 0) {
