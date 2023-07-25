@@ -216,6 +216,8 @@ func (llm *LLM) Predict(ctx []int, prompt string, fn func(api.GenerateResponse))
 	fn(api.GenerateResponse{
 		Done:               true,
 		Context:            last,
+		SampleCount:        int(timings.n_sample),
+		SampleDuration:     parseDurationMs(float64(timings.t_sample_ms)),
 		PromptEvalCount:    int(timings.n_p_eval),
 		PromptEvalDuration: parseDurationMs(float64(timings.t_p_eval_ms)),
 		EvalCount:          int(timings.n_eval),

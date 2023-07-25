@@ -98,6 +98,8 @@ type GenerateResponse struct {
 
 	TotalDuration      time.Duration `json:"total_duration,omitempty"`
 	LoadDuration       time.Duration `json:"load_duration,omitempty"`
+	SampleCount        int           `json:"sample_count,omitempty"`
+	SampleDuration     time.Duration `json:"sample_duration,omitempty"`
 	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
@@ -111,6 +113,15 @@ func (r *GenerateResponse) Summary() {
 
 	if r.LoadDuration > 0 {
 		fmt.Fprintf(os.Stderr, "load duration:        %v\n", r.LoadDuration)
+	}
+
+	if r.SampleCount > 0 {
+		fmt.Fprintf(os.Stderr, "sample count:         %d token(s)\n", r.SampleCount)
+	}
+
+	if r.SampleDuration > 0 {
+		fmt.Fprintf(os.Stderr, "sample duration:      %s\n", r.SampleDuration)
+		fmt.Fprintf(os.Stderr, "sample rate:          %.2f tokens/s\n", float64(r.SampleCount)/r.SampleDuration.Seconds())
 	}
 
 	if r.PromptEvalCount > 0 {
