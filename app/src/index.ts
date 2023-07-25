@@ -54,11 +54,7 @@ function firstRunWindow() {
 
   // and load the index.html of the app.
   welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
-
   welcomeWindow.on('ready-to-show', () => welcomeWindow.show())
-
-  // for debugging
-  // welcomeWindow.webContents.openDevTools()
 
   if (process.platform === 'darwin') {
     app.dock.hide()
@@ -215,10 +211,10 @@ if (app.isPackaged) {
 }
 
 autoUpdater.on('error', e => {
-  logger.error(`update check failed - ${e.message}`)
+  console.error(`update check failed - ${e.message}`)
 })
 
-autoUpdater.on('update-downloaded', (event, releaseNotes, releaseName) => {
+autoUpdater.on('update-downloaded', (_, releaseNotes, releaseName) => {
   dialog
     .showMessageBox({
       type: 'info',
