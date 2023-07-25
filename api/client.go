@@ -131,7 +131,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 
 		if errorResponse.Error != "" {
-			return fmt.Errorf("stream: %s", errorResponse.Error)
+			return fmt.Errorf(errorResponse.Error)
 		}
 
 		if response.StatusCode >= 400 {

@@ -684,7 +684,7 @@ func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 
 	manifest, err := pullModelManifest(mp, regOpts)
 	if err != nil {
-		return fmt.Errorf("pull model manifest: %q", err)
+		return fmt.Errorf("pull model manifest: %s", err)
 	}
 
 	var layers []*Layer
@@ -753,6 +753,9 @@ func pullModelManifest(mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, err
 
 	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("model not found")
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("on pull registry responded with code %d: %s", resp.StatusCode, body)
 	}
