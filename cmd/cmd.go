@@ -36,15 +36,32 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	var spinner *Spinner
 
+	var currentDigest string
+	var bar *progressbar.ProgressBar
+
 	request := api.CreateRequest{Name: args[0], Path: filename}
-	fn := func(resp api.CreateProgress) error {
-		if spinner != nil {
-			spinner.Stop()
+	fn := func(resp api.ProgressResponse) error {
+		if resp.Digest != currentDigest && resp.Digest != "" {
+			if spinner != nil {
+				spinner.Stop()
+			}
+			currentDigest = resp.Digest
+			bar = progressbar.DefaultBytes(
+				int64(resp.Total),
+				fmt.Sprintf("pulling %s...", resp.Digest[7:19]),
+			)
+
+			bar.Set(resp.Completed)
+		} else if resp.Digest == currentDigest && resp.Digest != "" {
+			bar.Set(resp.Completed)
+		} else {
+			currentDigest = ""
+			if spinner != nil {
+				spinner.Stop()
+			}
+			spinner = NewSpinner(resp.Status)
+			go spinner.Spin(100 * time.Millisecond)
 		}
-
-		spinner = NewSpinner(resp.Status)
-		go spinner.Spin(100 * time.Millisecond)
-
 		return nil
 	}
 

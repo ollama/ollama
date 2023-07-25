@@ -189,11 +189,11 @@ func (c *Client) Push(ctx context.Context, req *PushRequest, fn PushProgressFunc
 	})
 }
 
-type CreateProgressFunc func(CreateProgress) error
+type CreateProgressFunc func(ProgressResponse) error
 
 func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgressFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/create", req, func(bts []byte) error {
-		var resp CreateProgress
+		var resp ProgressResponse
 		if err := json.Unmarshal(bts, &resp); err != nil {
 			return err
 		}
