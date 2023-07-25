@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
+	"log"
 )
 
 type Command struct {
@@ -28,7 +28,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 		line := scanner.Bytes()
 
 		fields := bytes.SplitN(line, []byte(" "), 2)
-		if len(fields) == 0 {
+		if len(fields) == 0 || len(fields[0]) == 0 {
 			continue
 		}
 
@@ -47,7 +47,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 			command.Args = string(fields[1])
 		default:
 			// log a warning for unknown commands
-			fmt.Printf("WARNING: Unknown command: %s\n", fields[0])
+			log.Printf("WARNING: Unknown command: %s", fields[0])
 			continue
 		}
 
@@ -78,7 +78,10 @@ func scanModelfile(data []byte, atEOF bool) (advance int, token []byte, err erro
 		}
 
 		n := start + len(multilineString) + end + len(multilineString)
-		return n, data[:n], nil
+
+		newData := data[:start]
+		newData = append(newData, data[start+len(multilineString):n-len(multilineString)]...)
+		return n, newData, nil
 	}
 
 	return bufio.ScanLines(data, atEOF)
