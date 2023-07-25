@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -232,7 +233,7 @@ func filenameWithPath(path, f string) (string, error) {
 	return f, nil
 }
 
-func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) error {
+func CreateModel(ctx context.Context, name string, path string, fn func(resp api.ProgressResponse)) error {
 	mf, err := os.Open(path)
 	if err != nil {
 		fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't open modelfile '%s'", path)})
@@ -265,7 +266,7 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 					// the model file does not exist, try pulling it
 					if errors.Is(err, os.ErrNotExist) {
 						fn(api.ProgressResponse{Status: "pulling model file"})
-						if err := PullModel(c.Args, &RegistryOptions{}, fn); err != nil {
+						if err := PullModel(ctx, c.Args, &RegistryOptions{}, fn); err != nil {
 							return err
 						}
 						mf, err = GetManifest(ParseModelPath(c.Args))
@@ -900,7 +901,7 @@ func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 	return nil
 }
 
-func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
@@ -915,7 +916,7 @@ func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 	layers = append(layers, &manifest.Config)
 
 	for _, layer := range layers {
-		if err := downloadBlob(mp, layer.Digest, regOpts, fn); err != nil {
+		if err := downloadBlob(ctx, mp, layer.Digest, regOpts, fn); err != nil {
 			return err
 		}
 	}
