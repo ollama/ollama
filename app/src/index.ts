@@ -17,6 +17,7 @@ import * as path from 'path'
 
 import { analytics, id } from './telemetry'
 import { installed } from './install'
+import { MenuItem } from '@electron/remote'
 
 require('@electron/remote/main').initialize()
 
@@ -74,21 +75,17 @@ function firstRunWindow() {
 let tray: Tray | null = null
 
 function setTray(updateAvailable: boolean) {
-  const menuItemAvailable: MenuItemConstructorOptions = {
-    label: 'Restart to update',
-    click: () => autoUpdater.quitAndInstall(),
-  }
-
-  const menuItemUpToDate: MenuItemConstructorOptions = {
-    label: 'Ollama is up to date',
-    enabled: false,
-  }
+  const updateItems: MenuItemConstructorOptions[] = [
+    { label: 'An update is available', enabled: false },
+    {
+      label: 'Restart to update',
+      click: () => autoUpdater.quitAndInstall(),
+    },
+    { type: 'separator' },
+  ]
 
   const menu = Menu.buildFromTemplate([
-    ...(updateAvailable
-      ? [{ label: 'An update is available', enabled: false }, menuItemAvailable]
-      : [menuItemUpToDate]),
-    { type: 'separator' },
+    ...(updateAvailable ? updateItems : []),
     { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
   ])
 
@@ -145,8 +142,6 @@ if (process.platform === 'darwin') {
 }
 
 app.on('ready', () => {
-  setTray(false)
-
   if (app.isPackaged) {
     heartbeat()
     autoUpdater.checkForUpdates()
@@ -155,6 +150,8 @@ app.on('ready', () => {
       autoUpdater.checkForUpdates()
     }, 60 * 60 * 1000)
   }
+
+  setTray(false)
 
   if (process.platform === 'darwin') {
     if (app.isPackaged) {
