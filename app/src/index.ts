@@ -1,5 +1,15 @@
 import { spawn } from 'child_process'
-import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow, nativeTheme } from 'electron'
+import {
+  app,
+  autoUpdater,
+  dialog,
+  Tray,
+  Menu,
+  BrowserWindow,
+  MenuItemConstructorOptions,
+  nativeTheme,
+  systemPreferences,
+} from 'electron'
 import Store from 'electron-store'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
@@ -11,7 +21,7 @@ import { installed } from './install'
 require('@electron/remote/main').initialize()
 
 const store = new Store()
-let tray: Tray | null = null
+
 let welcomeWindow: BrowserWindow | null = null
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string
@@ -61,35 +71,42 @@ function firstRunWindow() {
   }
 }
 
-function createSystemtray() {
-  let iconPath = nativeTheme.shouldUseDarkColors
-    ? path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png')
-    : path.join(__dirname, '..', '..', 'assets', 'ollama_outline_icon_16x16Template.png')
+let tray: Tray | null = null
 
-  if (app.isPackaged) {
-    iconPath = nativeTheme.shouldUseDarkColors
-      ? path.join(process.resourcesPath, 'ollama_icon_16x16Template.png')
-      : path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png')
+function setTray(updateAvailable: boolean) {
+  const menuItemAvailable: MenuItemConstructorOptions = {
+    label: 'Restart to update',
+    click: () => autoUpdater.quitAndInstall(),
   }
 
-  tray = new Tray(iconPath)
+  const menuItemUpToDate: MenuItemConstructorOptions = {
+    label: 'Ollama is up to date',
+    enabled: false,
+  }
 
-  nativeTheme.on('updated', function theThemeHasChanged() {
-    if (nativeTheme.shouldUseDarkColors) {
-      app.isPackaged
-        ? tray.setImage(path.join(process.resourcesPath, 'ollama_icon_16x16Template.png'))
-        : tray.setImage(path.join(__dirname, '..', '..', 'assets', 'ollama_icon_16x16Template.png'))
-    } else {
-      app.isPackaged
-        ? tray.setImage(path.join(process.resourcesPath, 'ollama_outline_icon_16x16Template.png'))
-        : tray.setImage(path.join(__dirname, '..', '..', 'assets', 'ollama_outline_icon_16x16Template.png'))
-    }
-  })
+  const menu = Menu.buildFromTemplate([
+    ...(updateAvailable
+      ? [{ label: 'An update is available', enabled: false }, menuItemAvailable]
+      : [menuItemUpToDate]),
+    { type: 'separator' },
+    { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
+  ])
 
-  const contextMenu = Menu.buildFromTemplate([{ role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' }])
+  const iconPath = app.isPackaged
+    ? updateAvailable
+      ? path.join(process.resourcesPath, 'iconUpdateTemplate.png')
+      : path.join(process.resourcesPath, 'iconTemplate.png')
+    : updateAvailable
+    ? path.join(__dirname, '..', '..', 'assets', 'iconUpdateTemplate.png')
+    : path.join(__dirname, '..', '..', 'assets', 'iconTemplate.png')
 
-  tray.setContextMenu(contextMenu)
-  tray.setToolTip('Ollama')
+  if (!tray) {
+    tray = new Tray(iconPath)
+  }
+
+  tray.setToolTip(updateAvailable ? 'An update is available' : 'Ollama')
+  tray.setContextMenu(menu)
+  tray.setImage(iconPath)
 }
 
 if (require('electron-squirrel-startup')) {
@@ -128,6 +145,17 @@ if (process.platform === 'darwin') {
 }
 
 app.on('ready', () => {
+  setTray(false)
+
+  if (app.isPackaged) {
+    heartbeat()
+    autoUpdater.checkForUpdates()
+    setInterval(() => {
+      heartbeat()
+      autoUpdater.checkForUpdates()
+    }, 60 * 60 * 1000)
+  }
+
   if (process.platform === 'darwin') {
     if (app.isPackaged) {
       if (!app.isInApplicationsFolder()) {
@@ -163,7 +191,6 @@ app.on('ready', () => {
     }
   }
 
-  createSystemtray()
   server()
 
   if (store.get('first-time-run') && installed()) {
@@ -201,29 +228,10 @@ async function heartbeat() {
   })
 }
 
-if (app.isPackaged) {
-  heartbeat()
-  autoUpdater.checkForUpdates()
-  setInterval(() => {
-    heartbeat()
-    autoUpdater.checkForUpdates()
-  }, 60 * 60 * 1000)
-}
-
 autoUpdater.on('error', e => {
   console.error(`update check failed - ${e.message}`)
 })
 
-autoUpdater.on('update-downloaded', (_, releaseNotes, releaseName) => {
-  dialog
-    .showMessageBox({
-      type: 'info',
-      buttons: ['Restart Now', 'Later'],
-      title: 'New update available',
-      message: process.platform === 'win32' ? releaseNotes : releaseName,
-      detail: 'A new version of Ollama is available. Restart to apply the update.',
-    })
-    .then(returnValue => {
-      if (returnValue.response === 0) autoUpdater.quitAndInstall()
-    })
+autoUpdater.on('update-downloaded', () => {
+  setTray(true)
 })

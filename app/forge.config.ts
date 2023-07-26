@@ -19,10 +19,10 @@ const config: ForgeConfig = {
     icon: './assets/icon.icns',
     extraResource: [
       '../ollama',
-      path.join(__dirname, './assets/ollama_icon_16x16Template.png'),
-      path.join(__dirname, './assets/ollama_icon_16x16Template@2x.png'),
-      path.join(__dirname, './assets/ollama_outline_icon_16x16Template.png'),
-      path.join(__dirname, './assets/ollama_outline_icon_16x16Template@2x.png'),
+      path.join(__dirname, './assets/iconTemplate.png'),
+      path.join(__dirname, './assets/iconTemplate@2x.png'),
+      path.join(__dirname, './assets/iconUpdateTemplate.png'),
+      path.join(__dirname, './assets/iconUpdateTemplate@2x.png'),
       ...(process.platform === 'darwin' ? ['../llama/ggml-metal.metal'] : []),
     ],
     ...(process.env.SIGN
