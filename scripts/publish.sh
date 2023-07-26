@@ -29,8 +29,8 @@ cp ./ollama  dist/ollama-${OS}-${ARCH}
 gh release create -p v$VERSION -t v$VERSION
 
 # Upload the zip file.
-gh release upload v$VERSION ./dist/Ollama-${OS}-${ARCH}.zip
+gh release upload v$VERSION ./dist/Ollama-${OS}-${ARCH}.zip --clobber
 
 # Upload the binary.
-gh release upload v$VERSION ./dist/ollama-${OS}-${ARCH}
+gh release upload v$VERSION ./dist/ollama-${OS}-${ARCH} --clobber
 
