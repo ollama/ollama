@@ -51,10 +51,15 @@ export default function () {
               <div className='mx-auto'>
                 <button
                   onClick={async () => {
-                    await install()
-                    getCurrentWindow().show()
-                    getCurrentWindow().focus()
-                    setStep(Step.FINISH)
+                    try {
+                      await install()
+                      setStep(Step.FINISH)
+                    } catch (e) {
+                      console.error('could not install: ', e)
+                    } finally {
+                      getCurrentWindow().show()
+                      getCurrentWindow().focus()
+                    }
                   }}
                   className='no-drag rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
                 >

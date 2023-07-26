@@ -17,10 +17,5 @@ export async function install() {
     symlinkPath
   )} && ln -F -s ${ollama} ${symlinkPath}" with administrator privileges`
 
-  try {
-    await exec(`osascript -e '${command}'`)
-  } catch (error) {
-    console.error(`cli: failed to install cli: ${error.message}`)
-    return
-  }
+  await exec(`osascript -e '${command}'`)
 }
