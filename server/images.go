@@ -240,7 +240,6 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 						if err != nil {
 							return fmt.Errorf("failed to open file after pull: %v", err)
 						}
-
 					} else {
 						return err
 					}
@@ -588,6 +587,9 @@ func DeleteModel(name string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
 	// only delete the files which are still in the deleteMap
 	for k, v := range deleteMap {
@@ -597,9 +599,13 @@ func DeleteModel(name string) error {
 				log.Printf("couldn't get file path for '%s': %v", k, err)
 				continue
 			}
+			if err := os.Remove(fp + "-partial"); err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					log.Printf("couldn't remove partial file '%s': %v", fp, err)
+				}
+			}
 			if err := os.Remove(fp); err != nil {
 				log.Printf("couldn't remove file '%s': %v", fp, err)
-				continue
 			}
 		}
 	}
@@ -708,6 +714,24 @@ func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 
+	fn(api.ProgressResponse{Status: "writing manifest"})
+
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+
+	fp, err := mp.GetManifestPath(true)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(fp, manifestJSON, 0o644)
+	if err != nil {
+		log.Printf("couldn't write to %s", fp)
+		return err
+	}
+
 	var layers []*Layer
 	layers = append(layers, manifest.Layers...)
 	layers = append(layers, &manifest.Config)
@@ -734,24 +758,6 @@ func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 			}
 			return err
 		}
-	}
-
-	fn(api.ProgressResponse{Status: "writing manifest"})
-
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-
-	fp, err := mp.GetManifestPath(true)
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile(fp, manifestJSON, 0o644)
-	if err != nil {
-		log.Printf("couldn't write to %s", fp)
-		return err
 	}
 
 	fn(api.ProgressResponse{Status: "success"})

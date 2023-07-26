@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -83,9 +84,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	_, err = os.Stat(fp)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
+	available, err := statModel(fp)
+	if err != nil {
+		return err
+	}
+	if !available {
 		if err := pull(args[0], false); err != nil {
 			var apiStatusError api.StatusError
 			if !errors.As(err, &apiStatusError) {
@@ -96,8 +99,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
-	case err != nil:
-		return err
 	}
 
 	return RunGenerate(cmd, args)
@@ -524,4 +525,44 @@ func NewCLI() *cobra.Command {
 	)
 
 	return rootCmd
+}
+
+// statModel checks if any of the files needed to run a model are available
+func statModel(fp string) (bool, error) {
+	if _, err := os.Stat(fp); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	file, err := os.Open(fp)
+	if err != nil {
+		return false, fmt.Errorf("failed to open file: %v", err)
+	}
+	defer file.Close()
+
+	var m *server.ManifestV2
+	if err := json.NewDecoder(file).Decode(&m); err != nil {
+		return false, err
+	}
+
+	var layers []*server.Layer
+	layers = append(layers, m.Layers...)
+	layers = append(layers, &m.Config)
+
+	for _, layer := range layers {
+		lp, err := server.GetBlobsPath(layer.Digest)
+		if err != nil {
+			return false, err
+		}
+		if _, err := os.Stat(lp); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
+
+	return true, nil
 }
