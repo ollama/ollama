@@ -1,15 +1,5 @@
-import { spawn } from 'child_process'
-import {
-  app,
-  autoUpdater,
-  dialog,
-  Tray,
-  Menu,
-  BrowserWindow,
-  MenuItemConstructorOptions,
-  nativeTheme,
-  systemPreferences,
-} from 'electron'
+import { spawn, ChildProcess } from 'child_process'
+import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow, MenuItemConstructorOptions } from 'electron'
 import Store from 'electron-store'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
@@ -17,9 +7,12 @@ import * as path from 'path'
 
 import { analytics, id } from './telemetry'
 import { installed } from './install'
-import { MenuItem } from '@electron/remote'
 
 require('@electron/remote/main').initialize()
+
+if (require('electron-squirrel-startup')) {
+  app.quit()
+}
 
 const store = new Store()
 
@@ -39,9 +32,32 @@ const logger = winston.createLogger({
   format: winston.format.printf(info => info.message),
 })
 
-const SingleInstanceLock = app.requestSingleInstanceLock()
-if (!SingleInstanceLock) {
-  app.quit()
+app.on('ready', () => {
+  const gotTheLock = app.requestSingleInstanceLock()
+  if (!gotTheLock) {
+    app.exit(0)
+  }
+
+  app.on('second-instance', () => {
+    if (app.hasSingleInstanceLock()) {
+      app.releaseSingleInstanceLock()
+    }
+
+    if (proc) {
+      proc.off('exit', restart)
+      proc.kill()
+    }
+
+    app.exit(0)
+  })
+
+  app.focus({ steal: true })
+
+  init()
+})
+
+if (process.platform === 'darwin') {
+  app.dock.hide()
 }
 
 function firstRunWindow() {
@@ -63,13 +79,8 @@ function firstRunWindow() {
 
   require('@electron/remote/main').enable(welcomeWindow.webContents)
 
-  // and load the index.html of the app.
   welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
   welcomeWindow.on('ready-to-show', () => welcomeWindow.show())
-
-  if (process.platform === 'darwin') {
-    app.dock.hide()
-  }
 }
 
 let tray: Tray | null = null
@@ -106,16 +117,14 @@ function setTray(updateAvailable: boolean) {
   tray.setImage(iconPath)
 }
 
-if (require('electron-squirrel-startup')) {
-  app.quit()
-}
+let proc: ChildProcess = null
 
 function server() {
   const binary = app.isPackaged
     ? path.join(process.resourcesPath, 'ollama')
     : path.resolve(process.cwd(), '..', 'ollama')
 
-  const proc = spawn(binary, ['serve'])
+  proc = spawn(binary, ['serve'])
 
   proc.stdout.on('data', data => {
     logger.info(data.toString().trim())
@@ -125,23 +134,21 @@ function server() {
     logger.error(data.toString().trim())
   })
 
-  function restart() {
-    setTimeout(server, 3000)
-  }
-
   proc.on('exit', restart)
+}
 
-  app.on('before-quit', () => {
+function restart() {
+  setTimeout(server, 1000)
+}
+
+app.on('before-quit', () => {
+  if (proc) {
     proc.off('exit', restart)
     proc.kill()
-  })
-}
+  }
+})
 
-if (process.platform === 'darwin') {
-  app.dock.hide()
-}
-
-app.on('ready', () => {
+function init() {
   if (app.isPackaged) {
     heartbeat()
     autoUpdater.checkForUpdates()
@@ -198,7 +205,7 @@ app.on('ready', () => {
   // This is the first run or the CLI is no longer installed
   app.setLoginItemSettings({ openAtLogin: true })
   firstRunWindow()
-})
+}
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
