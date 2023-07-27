@@ -165,19 +165,20 @@ type Options struct {
 	EmbeddingOnly bool `json:"embedding_only,omitempty"`
 
 	// Predict options
-	RepeatLastN      int     `json:"repeat_last_n,omitempty"`
-	RepeatPenalty    float32 `json:"repeat_penalty,omitempty"`
-	FrequencyPenalty float32 `json:"frequency_penalty,omitempty"`
-	PresencePenalty  float32 `json:"presence_penalty,omitempty"`
-	Temperature      float32 `json:"temperature,omitempty"`
-	TopK             int     `json:"top_k,omitempty"`
-	TopP             float32 `json:"top_p,omitempty"`
-	TFSZ             float32 `json:"tfs_z,omitempty"`
-	TypicalP         float32 `json:"typical_p,omitempty"`
-	Mirostat         int     `json:"mirostat,omitempty"`
-	MirostatTau      float32 `json:"mirostat_tau,omitempty"`
-	MirostatEta      float32 `json:"mirostat_eta,omitempty"`
-	PenalizeNewline  bool    `json:"penalize_newline,omitempty"`
+	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
+	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
+	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
+	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
+	Temperature      float32  `json:"temperature,omitempty"`
+	TopK             int      `json:"top_k,omitempty"`
+	TopP             float32  `json:"top_p,omitempty"`
+	TFSZ             float32  `json:"tfs_z,omitempty"`
+	TypicalP         float32  `json:"typical_p,omitempty"`
+	Mirostat         int      `json:"mirostat,omitempty"`
+	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
+	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
+	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
+	StopConditions   []string `json:"stop_conditions,omitempty"`
 
 	NumThread int `json:"num_thread,omitempty"`
 }
