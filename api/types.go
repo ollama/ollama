@@ -188,7 +188,7 @@ func DefaultOptions() Options {
 		UseNUMA: false,
 
 		NumCtx:   2048,
-		NumBatch: 32,
+		NumBatch: 1024,
 		NumGPU:   1,
 		LowVRAM:  false,
 		F16KV:    true,
