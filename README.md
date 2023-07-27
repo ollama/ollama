@@ -84,6 +84,7 @@ Hello! It's your friend Mario.
 ```
 
 For more examples, see the [examples](./examples) directory.
+
 For more information on creating a Modelfile, see the [Modelfile](./docs/modelfile.md) documentation.
 
 ### Pull a model from the registry
