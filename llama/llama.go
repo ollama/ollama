@@ -246,7 +246,7 @@ func (llm *LLM) Predict(ctx []int, prompt string, fn func(api.GenerateResponse))
 }
 
 func (llm *LLM) checkStopConditions(b bytes.Buffer) error {
-	for _, stopCondition := range llm.StopConditions {
+	for _, stopCondition := range llm.Stop {
 		if stopCondition == b.String() {
 			return io.EOF
 		} else if strings.HasPrefix(stopCondition, b.String()) {

@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -472,6 +473,14 @@ func paramsToReader(params map[string]string) (io.ReadSeeker, error) {
 					field.SetBool(boolVal)
 				case reflect.String:
 					field.SetString(val)
+				case reflect.Slice:
+					re := regexp.MustCompile(`"(.*?)"`) // matches everything enclosed in quotes
+					vals := re.FindAllStringSubmatch(val, -1)
+					var sliceVal []string
+					for _, v := range vals {
+						sliceVal = append(sliceVal, v[1]) // v[1] is the captured group, v[0] is the entire match
+					}
+					field.Set(reflect.ValueOf(sliceVal))
 				default:
 					return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
 				}
