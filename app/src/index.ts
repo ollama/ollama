@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process'
-import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow, MenuItemConstructorOptions } from 'electron'
+import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow, MenuItemConstructorOptions, nativeTheme } from 'electron'
 import Store from 'electron-store'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
@@ -81,8 +81,26 @@ function firstRunWindow() {
 }
 
 let tray: Tray | null = null
+let updateAvailable = false
+const assetPath = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..', 'assets')
 
-function setTray(updateAvailable: boolean) {
+function trayIconPath() {
+  return nativeTheme.shouldUseDarkColors
+    ? updateAvailable
+      ? path.join(assetPath, 'iconDarkUpdateTemplate.png')
+      : path.join(assetPath, 'iconDarkTemplate.png')
+    : updateAvailable
+    ? path.join(assetPath, 'iconUpdateTemplate.png')
+    : path.join(assetPath, 'iconTemplate.png')
+}
+
+function updateTrayIcon() {
+  if (tray) {
+    tray.setImage(trayIconPath())
+  }
+}
+
+function updateTray() {
   const updateItems: MenuItemConstructorOptions[] = [
     { label: 'An update is available', enabled: false },
     {
@@ -97,21 +115,16 @@ function setTray(updateAvailable: boolean) {
     { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
   ])
 
-  const iconPath = app.isPackaged
-    ? updateAvailable
-      ? path.join(process.resourcesPath, 'iconUpdateTemplate.png')
-      : path.join(process.resourcesPath, 'iconTemplate.png')
-    : updateAvailable
-    ? path.join(__dirname, '..', '..', 'assets', 'iconUpdateTemplate.png')
-    : path.join(__dirname, '..', '..', 'assets', 'iconTemplate.png')
-
   if (!tray) {
-    tray = new Tray(iconPath)
+    tray = new Tray(trayIconPath())
   }
 
   tray.setToolTip(updateAvailable ? 'An update is available' : 'Ollama')
   tray.setContextMenu(menu)
-  tray.setImage(iconPath)
+  tray.setImage(trayIconPath())
+
+  nativeTheme.off('updated', updateTrayIcon)
+  nativeTheme.on('updated', updateTrayIcon)
 }
 
 let proc: ChildProcess = null
@@ -155,7 +168,7 @@ function init() {
     }, 60 * 60 * 1000)
   }
 
-  setTray(false)
+  updateTray()
 
   if (process.platform === 'darwin') {
     if (app.isPackaged) {
@@ -238,5 +251,6 @@ autoUpdater.on('error', e => {
 })
 
 autoUpdater.on('update-downloaded', () => {
-  setTray(true)
+  updateAvailable = true
+  updateTray()
 })
