@@ -2,7 +2,7 @@ import { useState } from 'react'
 import copy from 'copy-to-clipboard'
 import { CheckIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline'
 import Store from 'electron-store'
-import { getCurrentWindow } from '@electron/remote'
+import { getCurrentWindow, app } from '@electron/remote'
 
 import { install } from './install'
 import OllamaIcon from './ollama.svg'
@@ -107,6 +107,11 @@ export default function () {
               <button
                 onClick={() => {
                   store.set('first-time-run', true)
+
+                  if (process.platform === 'darwin') {
+                    app.dock.hide()
+                  }
+
                   window.close()
                 }}
                 className='no-drag rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
