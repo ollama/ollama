@@ -153,6 +153,7 @@ type Options struct {
 	NumCtx        int  `json:"num_ctx,omitempty"`
 	NumKeep       int  `json:"num_keep,omitempty"`
 	NumBatch      int  `json:"num_batch,omitempty"`
+	NumGQA        int  `json:"num_gqa,omitempty"`
 	NumGPU        int  `json:"num_gpu,omitempty"`
 	MainGPU       int  `json:"main_gpu,omitempty"`
 	LowVRAM       bool `json:"low_vram,omitempty"`
@@ -190,6 +191,7 @@ func DefaultOptions() Options {
 		NumCtx:   2048,
 		NumBatch: 1024,
 		NumGPU:   1,
+		NumGQA:   1,
 		LowVRAM:  false,
 		F16KV:    true,
 		UseMMap:  true,

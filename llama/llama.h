@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git e782c9e735f93ab4767ffc37462c523b73a17ddc
+ * llama.cpp - git 7c529cede6e84054e77a3eceab31c53de7b2f55b
  *
  * MIT License
  *
@@ -79,6 +79,10 @@
 #define LLAMA_SUPPORTS_GPU_OFFLOAD
 #endif
 
+#ifndef LLAMA_DEFAULT_RMS_EPS
+#define LLAMA_DEFAULT_RMS_EPS 5e-6f
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -109,12 +113,15 @@ extern "C" {
     typedef void (*llama_progress_callback)(float progress, void *ctx);
 
    struct llama_context_params {
-        uint32_t seed;                         // RNG seed, -1 for random
-        int32_t  n_ctx;                        // text context
-        int32_t  n_batch;                      // prompt processing batch size
-        int32_t  n_gpu_layers;                 // number of layers to store in VRAM
-        int32_t  main_gpu;                     // the GPU that is used for scratch and small tensors
-        float tensor_split[LLAMA_MAX_DEVICES]; // how to split layers across multiple GPUs
+        uint32_t seed;         // RNG seed, -1 for random
+        int32_t  n_ctx;        // text context
+        int32_t  n_batch;      // prompt processing batch size
+        int32_t  n_gqa;        // grouped-query attention (TEMP - will be moved to model hparams)
+        float    rms_norm_eps; // rms norm epsilon (TEMP - will be moved to model hparams)
+        int32_t  n_gpu_layers; // number of layers to store in VRAM
+        int32_t  main_gpu;     // the GPU that is used for scratch and small tensors
+
+        const float * tensor_split; // how to split layers across multiple GPUs (size: LLAMA_MAX_DEVICES)
 
         // ref: https://github.com/ggerganov/llama.cpp/pull/2054
         float    rope_freq_base;  // RoPE base frequency
@@ -164,6 +171,40 @@ extern "C" {
         bool allow_requantize;       // allow quantizing non-f32/f16 tensors
         bool quantize_output_tensor; // quantize output.weight
     } llama_model_quantize_params;
+
+    // grammar types
+    struct llama_grammar;
+
+    // grammar element type
+    enum llama_gretype {
+        // end of rule definition
+        LLAMA_GRETYPE_END            = 0,
+
+        // start of alternate definition for rule
+        LLAMA_GRETYPE_ALT            = 1,
+
+        // non-terminal element: reference to rule
+        LLAMA_GRETYPE_RULE_REF       = 2,
+
+        // terminal element: character (code point)
+        LLAMA_GRETYPE_CHAR           = 3,
+
+        // inverse char(s) ([^a], [^a-b] [^abc])
+        LLAMA_GRETYPE_CHAR_NOT       = 4,
+
+        // modifies a preceding LLAMA_GRETYPE_CHAR or LLAMA_GRETYPE_CHAR_ALT to
+        // be an inclusive range ([a-z])
+        LLAMA_GRETYPE_CHAR_RNG_UPPER = 5,
+
+        // modifies a preceding LLAMA_GRETYPE_CHAR or
+        // LLAMA_GRETYPE_CHAR_RNG_UPPER to add an alternate char to match ([ab], [a-zA])
+        LLAMA_GRETYPE_CHAR_ALT       = 6,
+    };
+
+    typedef struct llama_grammar_element {
+        enum llama_gretype type;
+        uint32_t           value; // Unicode code point or rule ID
+    } llama_grammar_element;
 
     // performance timing information
     struct llama_timings {
@@ -357,6 +398,15 @@ extern "C" {
     LLAMA_API llama_token llama_token_eos();  // end-of-sentence
     LLAMA_API llama_token llama_token_nl();   // next-line
 
+    // Grammar
+    //
+    LLAMA_API struct llama_grammar * llama_grammar_init(
+            const llama_grammar_element ** rules,
+                                 size_t    n_rules,
+                                 size_t    start_rule_index);
+
+    LLAMA_API void llama_grammar_free(struct llama_grammar * grammar);
+
     // Sampling functions
 
     /// @details Repetition penalty described in CTRL academic paper https://arxiv.org/abs/1909.05858, with negative logit fix.
@@ -369,13 +419,11 @@ extern "C" {
     /// @param candidates A vector of `llama_token_data` containing the candidate tokens, the logits must be directly extracted from the original generation context without being sorted.
     /// @params guidance_ctx A separate context from the same model. Other than a negative prompt at the beginning, it should have all generated and user input tokens copied from the main context.
     /// @params scale Guidance strength. 1.0f means no guidance. Higher values mean stronger guidance.
-    /// @params smooth_factor Smooth factor between guidance logits and original logits. 1.0f means only use guidance logits. 0.0f means only original logits.
     LLAMA_API void llama_sample_classifier_free_guidance(
               struct llama_context * ctx,
             llama_token_data_array * candidates,
               struct llama_context * guidance_ctx,
-                             float   scale,
-                             float   smooth_factor);
+                             float   scale);
 
     /// @details Sorts candidate tokens by their logits in descending order and calculate probabilities based on logits.
     LLAMA_API void llama_sample_softmax(struct llama_context * ctx, llama_token_data_array * candidates);
@@ -392,6 +440,9 @@ extern "C" {
     /// @details Locally Typical Sampling implementation described in the paper https://arxiv.org/abs/2202.00666.
     LLAMA_API void llama_sample_typical(struct llama_context * ctx, llama_token_data_array * candidates, float p, size_t min_keep);
     LLAMA_API void llama_sample_temperature(struct llama_context * ctx, llama_token_data_array * candidates, float temp);
+
+    /// @details Apply constraints from grammar
+    LLAMA_API void llama_sample_grammar(struct llama_context * ctx, llama_token_data_array * candidates, const struct llama_grammar * grammar);
 
     /// @details Mirostat 1.0 algorithm described in the paper https://arxiv.org/abs/2007.14966. Uses tokens instead of words.
     /// @param candidates A vector of `llama_token_data` containing the candidate tokens, their probabilities (p), and log-odds (logit) for the current position in the generated text.
@@ -413,6 +464,9 @@ extern "C" {
 
     /// @details Randomly selects a token from the candidates based on their probabilities.
     LLAMA_API llama_token llama_sample_token(struct llama_context * ctx, llama_token_data_array * candidates);
+
+    /// @details Accepts the sampled token into the grammar
+    LLAMA_API void llama_grammar_accept_token(struct llama_context * ctx, struct llama_grammar * grammar, llama_token token);
 
     // Performance information
     LLAMA_API struct llama_timings llama_get_timings(struct llama_context * ctx);

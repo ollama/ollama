@@ -127,6 +127,7 @@ func New(model string, opts api.Options) (*LLM, error) {
 	params.seed = C.uint(llm.Seed)
 	params.n_ctx = C.int(llm.NumCtx)
 	params.n_batch = C.int(llm.NumBatch)
+	params.n_gqa = C.int(llm.NumGQA)
 	params.n_gpu_layers = C.int(llm.NumGPU)
 	params.main_gpu = C.int(llm.MainGPU)
 	params.low_vram = C.bool(llm.LowVRAM)

@@ -1,7 +1,7 @@
 //go:build darwin
 
 /**
- * llama.cpp - git e782c9e735f93ab4767ffc37462c523b73a17ddc
+ * llama.cpp - git 7c529cede6e84054e77a3eceab31c53de7b2f55b
  *
  * MIT License
  *
@@ -93,6 +93,17 @@ kernel void kernel_add(
         device       float * dst,
         uint tpig[[thread_position_in_grid]]) {
     dst[tpig] = src0[tpig] + src1[tpig];
+}
+
+// assumption: src1 is a row
+// broadcast src1 into src0
+kernel void kernel_add_row(
+        device const float * src0,
+        device const float * src1,
+        device       float * dst,
+        constant   int64_t & ne00,
+        uint tpig[[thread_position_in_grid]]) {
+    dst[tpig] = src0[tpig] + src1[tpig % ne00];
 }
 
 kernel void kernel_mul(
@@ -379,7 +390,7 @@ kernel void kernel_rms_norm(
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
     // broadcast, simd group number is ntg / 32
-    for (int i = ntg / 32 / 2; i > 0; i /= 2) {
+    for (uint i = ntg / 32 / 2; i > 0; i /= 2) {
        if (tpitg < i) {
            sum[tpitg] += sum[tpitg + i];
        }
@@ -404,87 +415,90 @@ kernel void kernel_rms_norm(
     }
 }
 
-// function for calculate inner product between a q4_0 block and 32 floats (yl), sumy is SUM(yl[i])
-float block_q_n_dot_y(device const block_q4_0 * qb_curr, float sumy, thread float * yl) {
+// function for calculate inner product between half a q4_0 block and 16 floats (yl), sumy is SUM(yl[i])
+// il indicates where the q4 quants begin (0 or QK4_0/4)
+// we assume that the yl's have been multiplied with the appropriate scale factor
+// that corresponds to the missing bit shifts (1, 1/16, 1/256, 1/4096)
+inline float block_q_n_dot_y(device const block_q4_0 * qb_curr, float sumy, thread float * yl, int il) {
     float d = qb_curr->d;
-    float4 acc = 0.f;
-    device uint16_t * qs = ((device uint16_t *)qb_curr + 1);
-    for (int i = 0; i < 16; i+=2) {
-        acc[0] += yl[i]      * (qs[i / 2] & 0x000F);
-        acc[1] += yl[i + 16] * (qs[i / 2] & 0x00F0);
-        acc[2] += yl[i +  1] * (qs[i / 2] & 0x0F00);
-        acc[3] += yl[i + 17] * (qs[i / 2] & 0xF000);
+    float2 acc = 0.f;
+    device const uint16_t * qs = ((device const uint16_t *)qb_curr + 1 + il/2);
+    for (int i = 0; i < 8; i+=2) {
+        acc[0] += yl[i + 0] * (qs[i / 2] & 0x000F)
+                + yl[i + 1] * (qs[i / 2] & 0x0F00);
+        acc[1] += yl[i + 8] * (qs[i / 2] & 0x00F0)
+                + yl[i + 9] * (qs[i / 2] & 0xF000);
     }
-    return d * (sumy * -8.f + acc[0] + acc[1]/16.f + acc[2]/256.f + acc[3]/4096.f);
+    return d * (sumy * -8.f + acc[0] + acc[1]);
 }
 
-// function for calculate inner product between a q4_1 block and 32 floats (yl), sumy is SUM(yl[i])
-float block_q_n_dot_y(device const block_q4_1 * qb_curr, float sumy, thread float * yl) {
+// function for calculate inner product between half a q4_1 block and 16 floats (yl), sumy is SUM(yl[i])
+// il indicates where the q4 quants begin (0 or QK4_0/4)
+// we assume that the yl's have been multiplied with the appropriate scale factor
+// that corresponds to the missing bit shifts (1, 1/16, 1/256, 1/4096)
+inline float block_q_n_dot_y(device const block_q4_1 * qb_curr, float sumy, thread float * yl, int il) {
     float d = qb_curr->d;
     float m = qb_curr->m;
-    float4 acc = 0.f;
-    device uint16_t * qs = ((device uint16_t *)qb_curr + 2);
-    for (int i = 0; i < 16; i+=2) {
-        acc[0] += yl[i]      * (qs[i / 2] & 0x000F);
-        acc[1] += yl[i + 16] * (qs[i / 2] & 0x00F0);
-        acc[2] += yl[i +  1] * (qs[i / 2] & 0x0F00);
-        acc[3] += yl[i + 17] * (qs[i / 2] & 0xF000);
+    device const uint16_t * qs = ((device const uint16_t *)qb_curr + 2 + il/2);
+    float2 acc = 0.f;
+    for (int i = 0; i < 8; i+=2) {
+        acc[0] += yl[i + 0] * (qs[i / 2] & 0x000F)
+                + yl[i + 1] * (qs[i / 2] & 0x0F00);
+        acc[1] += yl[i + 8] * (qs[i / 2] & 0x00F0)
+                + yl[i + 9] * (qs[i / 2] & 0xF000);
     }
-    return d * (acc[0] + acc[1]/16.f + acc[2]/256.f + acc[3]/4096.f) + sumy * m;
+    return d * (acc[0] + acc[1]) + sumy * m;
 }
 
 // putting them in the kernel cause a significant performance penalty
 #define N_DST 4 // each SIMD group works on 4 rows
 #define N_SIMDGROUP 2 // number of SIMD groups in a thread group
 #define N_SIMDWIDTH 32 // assuming SIMD group size is 32
-template<typename block_q_type>
+//Note: This is a template, but strictly speaking it only applies to
+//      quantizations where the block size is 32. It also does not
+//      giard against the number of rows not being divisible by
+//      N_DST, so this is another explicit assumption of the implementation.
+template<typename block_q_type, int nr, int nsg, int nw>
 void mul_vec_q_n_f32(device const void * src0, device const float * src1, device float * dst,
                     int64_t ne00, int64_t ne10, int64_t ne0, int64_t ne01,
                     uint2 tgpig, uint tiisg, uint sgitg) {
     const int nb = ne00/QK4_0;
     const int r0 = tgpig.x;
     const int r1 = tgpig.y;
-    device const block_q_type * x = (device const block_q_type *) src0 + (r0 * N_SIMDGROUP + sgitg) * N_DST * nb;
+    const int first_row = (r0 * nsg + sgitg) * nr;
+    device const block_q_type * x = (device const block_q_type *) src0 + first_row * nb;
     device const float      * y = (device const float      *) src1 + r1*ne10;
-    float4 y_curr[8];       // src1 vector cache
-    float sumf[N_DST]={0.f}, all_sum;
-    thread float * yl=(thread float *)y_curr;
+    float yl[16];       // src1 vector cache
+    float sumf[nr]={0.f};
 
-    // each thread in a SIMD group deals with 1 block.
-    for (int column = 0; column < nb / N_SIMDWIDTH; column++) {
+    const int ix = tiisg/2;
+    const int il = 8*(tiisg%2);
+
+    device const float * yb = y + ix * QK4_0 + il;
+
+    // each thread in a SIMD group deals with half a block.
+    for (int ib = ix; ib < nb; ib += nw/2) {
         float sumy = 0;
-        for (int i = 0; i < QK4_0 / 4; i++) {
-            y_curr[i] = *((device float4  *)(y + N_SIMDWIDTH * (tiisg + column * QK4_0)) + i);
-            sumy += y_curr[i][0] + y_curr[i][1] + y_curr[i][2] + y_curr[i][3];
+        for (int i = 0; i < 8; i += 2) {
+            sumy += yb[i] + yb[i+1];
+            yl[i+0] = yb[i+ 0];
+            yl[i+1] = yb[i+ 1]/256.f;
+            sumy += yb[i+16] + yb[i+17];
+            yl[i+8] = yb[i+16]/16.f;
+            yl[i+9] = yb[i+17]/4096.f;
         }
 
-        for (int row = 0; row < N_DST; row++) {
-            sumf[row] += block_q_n_dot_y(x+(tiisg + row * nb + column * N_SIMDWIDTH), sumy, yl);
+        for (int row = 0; row < nr; row++) {
+            sumf[row] += block_q_n_dot_y(x+ib+row*nb, sumy, yl, il);
         }
+
+        yb += QK4_0 * 16;
     }
 
-    // from now loads two rows every time and 16 blocks per row
-    int ir = tiisg / (N_SIMDWIDTH / 2);
-    int ib = tiisg % (N_SIMDWIDTH / 2);
-    for (int ind = 0; ind < (nb % N_SIMDWIDTH + N_SIMDWIDTH / 2 - 1)/(N_SIMDWIDTH / 2); ind++) {
-        int nb_start = (nb / N_SIMDWIDTH) * N_SIMDWIDTH + ind * (N_SIMDWIDTH / 2); //where the left blocks start
-        float sumy = 0;
-        for (int i = 0; i < QK4_0 / 4; i++) {
-            y_curr[i] = *((device float4 *)(y + (nb_start + ib) * QK4_0) + i);
-            sumy += y_curr[i][0] + y_curr[i][1] + y_curr[i][2] + y_curr[i][3];
-        }
-
-        for (int row = 0; row < N_DST; row+=2) {
-            if (nb_start + ib < nb) {
-                sumf[row + ir] += block_q_n_dot_y(x + (nb_start + ib + (row + ir) * nb), sumy, yl);
-            }
-        }
-    }
-
-    for (int row = 0; row < N_DST; ++row) {
-        all_sum = simd_sum(sumf[row]);
-        if (tiisg == 0 && ((r0 * N_SIMDGROUP + sgitg) * N_DST + row) < ne01) {
-            dst[r1*ne0 + (r0 * N_SIMDGROUP + sgitg) * N_DST + row] = all_sum;
+    for (int row = 0; row < nr; ++row) {
+        const float tot = simd_sum(sumf[row]);
+        if (tiisg == 0 && first_row + row < ne01) {
+            dst[r1*ne0 + first_row + row] = tot;
         }
     }
 }
@@ -500,7 +514,7 @@ kernel void kernel_mul_mat_q4_0_f32(
         uint2 tgpig[[threadgroup_position_in_grid]],
         uint tiisg[[thread_index_in_simdgroup]],
         uint sgitg[[simdgroup_index_in_threadgroup]]) {
-    mul_vec_q_n_f32<block_q4_0>(src0,src1,dst,ne00,ne10,ne0,ne01,tgpig,tiisg,sgitg);
+    mul_vec_q_n_f32<block_q4_0, N_DST, N_SIMDGROUP, N_SIMDWIDTH>(src0,src1,dst,ne00,ne10,ne0,ne01,tgpig,tiisg,sgitg);
 }
 
 kernel void kernel_mul_mat_q4_1_f32(
@@ -514,7 +528,7 @@ kernel void kernel_mul_mat_q4_1_f32(
         uint2 tgpig[[threadgroup_position_in_grid]],
         uint tiisg[[thread_index_in_simdgroup]],
         uint sgitg[[simdgroup_index_in_threadgroup]]) {
-     mul_vec_q_n_f32<block_q4_1>(src0,src1,dst,ne00,ne10,ne0,ne01,tgpig,tiisg,sgitg);
+     mul_vec_q_n_f32<block_q4_1, N_DST, N_SIMDGROUP, N_SIMDWIDTH>(src0,src1,dst,ne00,ne10,ne0,ne01,tgpig,tiisg,sgitg);
 }
 
 kernel void kernel_mul_mat_f16_f32(
@@ -1237,111 +1251,137 @@ kernel void kernel_mul_mat_q2_K_f32(
         constant   int64_t & ne00,
         constant   int64_t & ne10,
         constant   int64_t & ne0,
-        threadgroup float  * sum [[threadgroup(0)]],
+        constant   int64_t & ne01[[buffer(4)]],
         uint2 tgpig[[threadgroup_position_in_grid]],
-        uint2 tpitg[[thread_position_in_threadgroup]],
-        uint2  tptg[[threads_per_threadgroup]]) {
+        uint tiisg[[thread_index_in_simdgroup]],
+        uint sgitg[[simdgroup_index_in_threadgroup]]) {
 
     const int nb = ne00/QK_K;
+    const int r0 = tgpig.x;
+    const int r1 = tgpig.y;
 
-    const int64_t r0 = tgpig.x;
-    const int64_t r1 = tgpig.y;
+    const int first_row = (r0 * N_SIMDGROUP + sgitg) * N_DST;
+    const int ib_row = first_row * nb;
+    device const block_q2_K * x = (device const block_q2_K *) src0 + ib_row;
+    device const float      * y = (device const float      *) src1 + r1*ne10;
+    float yl[32];
+    float sumf[N_DST]={0.f}, all_sum;
 
-    device const block_q2_K * x = (device const block_q2_K *) src0 + r0*nb;
-    device const float     * yy = (device const float      *) src1 + r1*ne10;
-
-    const int nth = tptg.x*tptg.y;
-    const int ith = tptg.y*tpitg.x + tpitg.y;
-
-    float sumf = 0;
+    const int step = sizeof(block_q2_K) * nb;
 
 #if QK_K == 256
-    const int tid = tpitg.y;    // 0...16
-    const int il  = tid/4;      // 0...3
-    const int ir  = tid%4;      // 0...3
-    const int ip  = il/2;       // 0 or 1
-    const int shift1 = 4*(il%2);// 0 or 4
-    const int shift2 = shift1+2;// 2 or 6
-    const int n   = 8;
-    const int is  = 4*il + (n*ir)/16;
+    const int ix = tiisg/8;  // 0...3
+    const int it = tiisg%8;  // 0...7
+    const int im = it/4;     // 0 or 1
+    const int ir = it%4;     // 0...3
+    const int is = (8*ir)/16;// 0 or 1
 
-    const int y_offset = 64*il + n*ir;
-    const int q_offset = 32*ip + n*ir;
+    device const float * y4 = y + ix * QK_K + 128 * im + 8 * ir;
 
-    for (int i = tpitg.x; i < nb; i += tptg.x) {
+    for (int ib = ix; ib < nb; ib += 4) {
 
-        device const uint8_t * q = x[i].qs + q_offset;
-        device const uint8_t * scales = x[i].scales + is;
-
-        uint8_t d1 = scales[0] & 0xF;
-        uint8_t d2 = scales[2] & 0xF;
-        uint8_t m1 = scales[0] >>  4;
-        uint8_t m2 = scales[2] >>  4;
-
-        device const float   * y = yy + i*QK_K + y_offset;
-
-        float2 s = {0.f, 0.f};
-        float smin = 0;
-        for (int l = 0; l < n; ++l) {
-            s[0] += y[l+ 0] * ((q[l] >> shift1) & 3);
-            s[1] += y[l+32] * ((q[l] >> shift2) & 3);
-            smin += y[l+ 0] * m1 + y[l+32] * m2;
+        float4 sumy = {0.f, 0.f, 0.f, 0.f};
+        for (int i = 0; i < 8; ++i) {
+            yl[i+ 0] = y4[i+ 0]; sumy[0] += yl[i+ 0];
+            yl[i+ 8] = y4[i+32]; sumy[1] += yl[i+ 8];
+            yl[i+16] = y4[i+64]; sumy[2] += yl[i+16];
+            yl[i+24] = y4[i+96]; sumy[3] += yl[i+24];
         }
 
-        const float dall = (float)x[i].d;
-        const float dmin = (float)x[i].dmin;
+        device const uint8_t  * sc = (device const uint8_t  *)x[ib].scales + 8*im + is;
+        device const uint16_t * qs = (device const uint16_t *)x[ib].qs + 16 * im + 4 * ir;
+        device const half     * dh = &x[ib].d;
 
-        sumf += dall * (s[0] * d1 + s[1] * d2) - dmin * smin;
+        for (int row = 0; row < N_DST; row++) {
 
+            float4 acc1 = {0.f, 0.f, 0.f, 0.f};
+            float4 acc2 = {0.f, 0.f, 0.f, 0.f};
+            for (int i = 0; i < 8; i += 2) {
+                acc1[0] += yl[i+ 0] * (qs[i/2] & 0x0003);
+                acc2[0] += yl[i+ 1] * (qs[i/2] & 0x0300);
+                acc1[1] += yl[i+ 8] * (qs[i/2] & 0x000c);
+                acc2[1] += yl[i+ 9] * (qs[i/2] & 0x0c00);
+                acc1[2] += yl[i+16] * (qs[i/2] & 0x0030);
+                acc2[2] += yl[i+17] * (qs[i/2] & 0x3000);
+                acc1[3] += yl[i+24] * (qs[i/2] & 0x00c0);
+                acc2[3] += yl[i+25] * (qs[i/2] & 0xc000);
+            }
+            float dall = dh[0];
+            float dmin = dh[1] * 1.f/16.f;
+            sumf[row] += dall * ((acc1[0] + 1.f/256.f * acc2[0]) * (sc[0] & 0xF) * 1.f/ 1.f +
+                                 (acc1[1] + 1.f/256.f * acc2[1]) * (sc[2] & 0xF) * 1.f/ 4.f +
+                                 (acc1[2] + 1.f/256.f * acc2[2]) * (sc[4] & 0xF) * 1.f/16.f +
+                                 (acc1[3] + 1.f/256.f * acc2[3]) * (sc[6] & 0xF) * 1.f/64.f) -
+                         dmin * (sumy[0] * (sc[0] & 0xF0) + sumy[1] * (sc[2] & 0xF0) + sumy[2] * (sc[4] & 0xF0) + sumy[3] * (sc[6] & 0xF0));
+
+            qs += step/2;
+            sc += step;
+            dh += step/2;
+        }
+
+        y4 += 4 * QK_K;
     }
 #else
-    const int il = 4 * tpitg.x;
+    const int ix = tiisg/2;  // 0...15
+    const int it = tiisg%2;  // 0...1
 
-    uint32_t aux[2];
-    thread const uint8_t * d = (thread const uint8_t *)aux;
-    thread const uint8_t * m = (thread const uint8_t *)aux + 4;
+    device const float * y4 = y + ix * QK_K + 8 * it;
 
-    for (int i = tpitg.y; i < nb; i += tptg.y) {
+    for (int ib = ix; ib < nb; ib += 16) {
 
-        device const uint8_t * q = x[i].qs + il;
-        device const float   * y = yy + i*QK_K + il;
-
-        const float dall = (float)x[i].d;
-        const float dmin = (float)x[i].dmin;
-
-        device const uint32_t * a = (device const uint32_t *)x[i].scales;
-        aux[0] = a[0] & 0x0f0f0f0f;
-        aux[1] = (a[0] >> 4) & 0x0f0f0f0f;
-
-        for (int l = 0; l < 4; ++l) {
-            sumf += y[l+ 0] * (dall * d[0] * ((q[l] >> 0) & 3) - dmin * m[0])
-                  + y[l+16] * (dall * d[1] * ((q[l] >> 2) & 3) - dmin * m[1])
-                  + y[l+32] * (dall * d[2] * ((q[l] >> 4) & 3) - dmin * m[2])
-                  + y[l+48] * (dall * d[3] * ((q[l] >> 6) & 3) - dmin * m[3]);
+        float4 sumy = {0.f, 0.f, 0.f, 0.f};
+        for (int i = 0; i < 8; ++i) {
+            yl[i+ 0] = y4[i+ 0]; sumy[0] += yl[i+ 0];
+            yl[i+ 8] = y4[i+16]; sumy[1] += yl[i+ 8];
+            yl[i+16] = y4[i+32]; sumy[2] += yl[i+16];
+            yl[i+24] = y4[i+48]; sumy[3] += yl[i+24];
         }
+
+        device const uint8_t  * sc = (device const uint8_t  *)x[ib].scales;
+        device const uint16_t * qs = (device const uint16_t *)x[ib].qs + 4 * it;
+        device const half     * dh = &x[ib].d;
+
+        for (int row = 0; row < N_DST; row++) {
+
+            float4 acc1 = {0.f, 0.f, 0.f, 0.f};
+            float4 acc2 = {0.f, 0.f, 0.f, 0.f};
+            for (int i = 0; i < 8; i += 2) {
+                acc1[0] += yl[i+ 0] * (qs[i/2] & 0x0003);
+                acc2[0] += yl[i+ 1] * (qs[i/2] & 0x0300);
+                acc1[1] += yl[i+ 8] * (qs[i/2] & 0x000c);
+                acc2[1] += yl[i+ 9] * (qs[i/2] & 0x0c00);
+                acc1[2] += yl[i+16] * (qs[i/2] & 0x0030);
+                acc2[2] += yl[i+17] * (qs[i/2] & 0x3000);
+                acc1[3] += yl[i+24] * (qs[i/2] & 0x00c0);
+                acc2[3] += yl[i+25] * (qs[i/2] & 0xc000);
+            }
+
+            float dall = dh[0];
+            float dmin = dh[1];
+            sumf[row] += dall * ((acc1[0] + 1.f/256.f * acc2[0]) * (sc[0] & 0xF) * 1.f/ 1.f +
+                                 (acc1[1] + 1.f/256.f * acc2[1]) * (sc[1] & 0xF) * 1.f/ 4.f +
+                                 (acc1[2] + 1.f/256.f * acc2[2]) * (sc[2] & 0xF) * 1.f/16.f +
+                                 (acc1[3] + 1.f/256.f * acc2[3]) * (sc[3] & 0xF) * 1.f/64.f) -
+                         dmin * (sumy[0] * (sc[0] >> 4) + sumy[1] * (sc[1] >> 4) + sumy[2] * (sc[2] >> 4) + sumy[3] * (sc[3] >> 4));
+
+            qs += step/2;
+            sc += step;
+            dh += step/2;
+        }
+
+        y4 += 16 * QK_K;
     }
 #endif
 
-    sum[ith] = sumf;
-
-    //
-    // Accumulate the sum from all threads in the threadgroup
-    //
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (ith%4 == 0) {
-        for (int i = 1; i < 4; ++i) sum[ith] += sum[ith + i];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (ith%16 == 0) {
-        for (int i = 4; i < 16; i += 4) sum[ith] += sum[ith + i];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (ith == 0) {
-        for (int i = 16; i < nth; i += 16) sum[0] += sum[i];
-        dst[r1*ne0 + r0] = sum[0];
+    for (int row = 0; row < N_DST; ++row) {
+        all_sum = simd_sum(sumf[row]);
+        if (tiisg == 0) {
+            dst[r1*ne0 + first_row + row] = all_sum;
+        }
     }
 }
 
+#if QK_K == 256
 kernel void kernel_mul_mat_q3_K_f32(
         device const  void * src0,
         device const float * src1,
@@ -1350,40 +1390,41 @@ kernel void kernel_mul_mat_q3_K_f32(
         constant   int64_t & ne10,
         constant   int64_t & ne0,
         constant   int64_t & ne1,
-        threadgroup float  * sum [[threadgroup(0)]],
         uint2 tgpig[[threadgroup_position_in_grid]],
-        uint2 tpitg[[thread_position_in_threadgroup]],
-        uint2  tptg[[threads_per_threadgroup]]) {
+        uint tiisg[[thread_index_in_simdgroup]],
+        uint sgitg[[simdgroup_index_in_threadgroup]]) {
 
     const int nb = ne00/QK_K;
 
     const int64_t r0 = tgpig.x;
     const int64_t r1 = tgpig.y;
 
-    device const block_q3_K * x = (device const block_q3_K *) src0 + r0*nb;
+    const int first_row = (r0 * N_SIMDGROUP + sgitg) * 2;
+
+    device const block_q3_K * x = (device const block_q3_K *) src0 + first_row*nb;
     device const float     * yy = (device const float      *) src1 + r1*ne10;
 
-    const int nth = tptg.x*tptg.y;
-    const int ith = tptg.y*tpitg.x + tpitg.y;
-
-#if QK_K == 256
-
-    const uint8_t m3 = 3;
-    const int8_t  m4 = 4;
+    float yl[16];
 
     const uint16_t kmask1 = 0x0303;
     const uint16_t kmask2 = 0x0f0f;
 
-    const int tid = tpitg.y;        // expecting 16
+    const int tid = tiisg/2;
+    const int ix  = tiisg%2;
     const int ip  = tid/8;          // 0 or 1
     const int il  = tid/2 - 4*ip;   // 0...3
     const int ir  = tid%2;
     const int n   = 8;
     const int l0  = n*ir;
 
-    const uint8_t m = 1 << (4*ip + il);
+    const uint16_t m1 = 1 << (4*ip + il);
+    const uint16_t m2 = m1 << 8;
 
     const int shift = 2*il;
+    const uint16_t qm1 = 0x0003 << shift;
+    const uint16_t qm2 = 0x0300 << shift;
+    const int32_t v1 = 4 << shift;
+    const int32_t v2 = 1024 << shift;
 
     const uint16_t s_shift1 = 4*ip;
     const uint16_t s_shift2 = s_shift1 + 2*(il/2);
@@ -1392,93 +1433,132 @@ kernel void kernel_mul_mat_q3_K_f32(
     const int q_offset = 32*ip + l0;
     const int y_offset = 128*ip + 32*il + l0;
 
-    //float sumf = 0;
-    float sumf1 = 0, sumf2 = 0;
-    for (int i = tpitg.x; i < nb; i += tptg.x) {
+    const int step = sizeof(block_q3_K) * nb / 2;
 
-        const float d_all = (float)(x[i].d);
+    device const float * y1 = yy + ix*QK_K + y_offset;
 
-        device const uint8_t * q = x[i].qs + q_offset;
-        device const uint8_t * h = x[i].hmask + l0;
-        device const float   * y = yy + i * QK_K + y_offset;
+    float sumf1[2] = {0.f}, sumf2[2] = {0.f};
+    for (int i = ix; i < nb; i += 2) {
 
-        device const uint16_t * a = (device const uint16_t *)x[i].scales;
-        const char2 scales = as_type<char2>((uint16_t)(((a[il] >> s_shift1) & kmask2) | (((a[ik] >> s_shift2) & kmask1) << 4)));
-
-        float s = 0;
-        for (int l = 0; l < n; ++l) {
-            s += y[l+ 0] * ((int8_t)((q[l+ 0] >> shift) & m3) - ((h[l+ 0] & m) ? 0 : m4));
+        for (int l = 0; l < 8; ++l) {
+            yl[l+0] = y1[l+ 0];
+            yl[l+8] = y1[l+16];
         }
-        float d = d_all * s;
-        sumf1 += d * scales[0];
-        sumf2 += d;
-        //sumf += d_all * s * (scales[0] - 32);
 
-        s = 0;
-        for (int l = 0; l < n; ++l) {
-            s += y[l+16] * ((int8_t)((q[l+16] >> shift) & m3) - ((h[l+16] & m) ? 0 : m4));
+        device const uint16_t * q = (device const uint16_t *)(x[i].qs + q_offset);
+        device const uint16_t * h = (device const uint16_t *)(x[i].hmask + l0);
+        device const uint16_t * a = (device const uint16_t *)(x[i].scales);
+        device const half * dh = &x[i].d;
+
+        for (int row = 0; row < 2; ++row) {
+
+            const float d_all = (float)dh[0];
+            const char2 scales = as_type<char2>((uint16_t)(((a[il] >> s_shift1) & kmask2) | (((a[ik] >> s_shift2) & kmask1) << 4)));
+
+            float s1 = 0, s2 = 0;
+            for (int l = 0; l < n; l += 2) {
+                const uint16_t qs = q[l/2];
+                s1 += yl[l+0] * ((int32_t)(qs & qm1) - ((h[l/2] & m1) ? 0 : v1));
+                s2 += yl[l+1] * ((int32_t)(qs & qm2) - ((h[l/2] & m2) ? 0 : v2));
+            }
+            float d = d_all * (s1 + 1.f/256.f * s2);
+            sumf1[row] += d * scales[0];
+            sumf2[row] += d;
+
+            s1 = s2 = 0;
+            for (int l = 0; l < n; l += 2) {
+                const uint16_t qs = q[l/2+8];
+                s1 += yl[l+8] * ((int32_t)(qs & qm1) - ((h[l/2+8] & m1) ? 0 : v1));
+                s2 += yl[l+9] * ((int32_t)(qs & qm2) - ((h[l/2+8] & m2) ? 0 : v2));
+            }
+            d = d_all * (s1 + 1.f/256.f * s2);
+            sumf1[row] += d * scales[1];
+            sumf2[row] += d;
+
+            q  += step;
+            h  += step;
+            a  += step;
+            dh += step;
+
         }
-        d = d_all * s;
-        sumf1 += d * scales[1];
-        sumf2 += d;
-        //sumf += d_all * s * (scales[1] - 32);
+
+        y1 += 2 * QK_K;
 
     }
 
-    //sum[ith] = sumf;
-    sum[ith] = sumf1 - 32.f*sumf2;
+    for (int row = 0; row < 2; ++row) {
+        const float sumf = (sumf1[row] - 32.f*sumf2[row]) / (1 << shift);
+        const float tot = simd_sum(sumf);
+        if (tiisg == 0) {
+            dst[r1*ne0 + first_row + row] = tot;
+        }
+    }
+}
 #else
-    const int il = 4 * tpitg.x;  // 0, 4, 8, 12
+kernel void kernel_mul_mat_q3_K_f32(
+        device const  void * src0,
+        device const float * src1,
+        device       float * dst,
+        constant   int64_t & ne00,
+        constant   int64_t & ne10,
+        constant   int64_t & ne0,
+        constant   int64_t & ne1,
+        uint2 tgpig[[threadgroup_position_in_grid]],
+        uint tiisg[[thread_index_in_simdgroup]],
+        uint sgitg[[simdgroup_index_in_threadgroup]]) {
+
+    const int nb = ne00/QK_K;
+
+    const int64_t r0 = tgpig.x;
+    const int64_t r1 = tgpig.y;
+
+    const int row = 2 * r0 + sgitg;
+
+    device const block_q3_K * x = (device const block_q3_K *) src0 + row*nb;
+    device const float     * yy = (device const float      *) src1 + r1*ne10;
+    const int ix = tiisg/4;
+    const int il = 4 * (tiisg%4);// 0, 4, 8, 12
     const int im = il/8;         // 0, 0, 1, 1
     const int in = il%8;         // 0, 4, 0, 4
 
-    float sumf = 0;
+    float2 sum = {0.f, 0.f};
 
-    for (int i = tpitg.y; i < nb; i += tptg.y) {
+    for (int i = ix; i < nb; i += 8) {
 
         const float d_all = (float)(x[i].d);
 
-        device const uint8_t * q = x[i].qs + il;
-        device const uint8_t * h = x[i].hmask + in;
-        device const float   * y = yy + i * QK_K + il;
+        device const uint16_t * q = (device const uint16_t *)(x[i].qs + il);
+        device const uint16_t * h = (device const uint16_t *)(x[i].hmask + in);
+        device const uint16_t * s = (device const uint16_t *)(x[i].scales);
+        device const float    * y = yy + i * QK_K + il;
 
-        const float d1 = d_all * ((x[i].scales[0] & 0xF) - 8);
-        const float d2 = d_all * ((x[i].scales[0] >>  4) - 8);
-        const float d3 = d_all * ((x[i].scales[1] & 0xF) - 8);
-        const float d4 = d_all * ((x[i].scales[1] >>  4) - 8);
+        const float d1 = d_all * ((int32_t)(s[0] & 0x000F) - 8);
+        const float d2 = d_all * ((int32_t)(s[0] & 0x00F0) - 128) * 1.f/64.f;
+        const float d3 = d_all * ((int32_t)(s[0] & 0x0F00) - 2048) * 1.f/4096.f;
+        const float d4 = d_all * ((int32_t)(s[0] & 0xF000) - 32768) * 1.f/262144.f;
 
-        for (int l = 0; l < 4; ++l) {
-            const uint8_t hm = h[l] >> im;
-            sumf += y[l+ 0] * d1 * ((int8_t)((q[l+0] >> 0) & 3) - ((hm & 0x01) ? 0 : 4))
-                  + y[l+16] * d2 * ((int8_t)((q[l+0] >> 2) & 3) - ((hm & 0x04) ? 0 : 4))
-                  + y[l+32] * d3 * ((int8_t)((q[l+0] >> 4) & 3) - ((hm & 0x10) ? 0 : 4))
-                  + y[l+48] * d4 * ((int8_t)((q[l+0] >> 6) & 3) - ((hm & 0x40) ? 0 : 4));
+        for (int l = 0; l < 4; l += 2) {
+            const uint16_t hm = h[l/2] >> im;
+            sum[0] += y[l+ 0] * d1 * ((int32_t)(q[l/2] & 0x0003) - ((hm & 0x0001) ? 0 :  4))
+                    + y[l+16] * d2 * ((int32_t)(q[l/2] & 0x000c) - ((hm & 0x0004) ? 0 : 16))
+                    + y[l+32] * d3 * ((int32_t)(q[l/2] & 0x0030) - ((hm & 0x0010) ? 0 : 64))
+                    + y[l+48] * d4 * ((int32_t)(q[l/2] & 0x00c0) - ((hm & 0x0040) ? 0 : 256));
+            sum[1] += y[l+ 1] * d1 * ((int32_t)(q[l/2] & 0x0300) - ((hm & 0x0100) ? 0 : 1024))
+                    + y[l+17] * d2 * ((int32_t)(q[l/2] & 0x0c00) - ((hm & 0x0400) ? 0 : 4096))
+                    + y[l+33] * d3 * ((int32_t)(q[l/2] & 0x3000) - ((hm & 0x1000) ? 0 : 16384))
+                    + y[l+49] * d4 * ((int32_t)(q[l/2] & 0xc000) - ((hm & 0x4000) ? 0 : 65536));
         }
 
     }
+    const float sumf = sum[0] + sum[1] * 1.f/256.f;
 
-    sum[ith] = sumf;
-
-#endif
-
-    //
-    // Accumulate the sum from all threads in the threadgroup
-    //
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (ith%4 == 0) {
-        for (int i = 1; i < 4; ++i) sum[ith] += sum[ith + i];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (ith%16 == 0) {
-        for (int i = 4; i < 16; i += 4) sum[ith] += sum[ith + i];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (ith == 0) {
-        for (int i = 16; i < nth; i += 16) sum[0] += sum[i];
-        dst[r1*ne0 + r0] = sum[0];
+    const float tot = simd_sum(sumf);
+    if (tiisg == 0) {
+        dst[r1*ne0 + row] = tot;
     }
 
 }
+#endif
 
 #if QK_K == 256
 kernel void kernel_mul_mat_q4_K_f32(
@@ -1776,7 +1856,6 @@ kernel void kernel_mul_mat_q5_K_f32(
 
     for (int i = ix; i < nb; i += 8) {
 
-        float4 sumy = {0.f, 0.f, 0.f, 0.f};
         for (int l = 0; l < 4; ++l) {
             yl[l+0] = y[l+ 0];
             yl[l+4] = y[l+16];

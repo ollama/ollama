@@ -1,7 +1,7 @@
 //go:build darwin
 
 /**
- * llama.cpp - git e782c9e735f93ab4767ffc37462c523b73a17ddc
+ * llama.cpp - git 7c529cede6e84054e77a3eceab31c53de7b2f55b
  *
  * MIT License
  *
@@ -88,6 +88,13 @@ void ggml_metal_set_tensor(struct ggml_metal_context * ctx, struct ggml_tensor *
 
 // get data from the device into host memory
 void ggml_metal_get_tensor(struct ggml_metal_context * ctx, struct ggml_tensor * t);
+
+// try to find operations that can be run concurrently in the graph
+// you should run it again if the topology of your graph changes
+void ggml_metal_graph_find_concurrency(struct ggml_metal_context * ctx, struct ggml_cgraph * gf);
+
+// if the graph has been optimized for concurrently dispatch
+bool ggml_metal_if_optimized(struct ggml_metal_context * ctx);
 
 // same as ggml_graph_compute but uses Metal
 // creates gf->n_threads command buffers in parallel
