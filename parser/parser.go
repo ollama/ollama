@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 )
@@ -63,26 +64,46 @@ func Parse(reader io.Reader) ([]Command, error) {
 }
 
 func scanModelfile(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	const multilineString = `"""`
+	advance, token, err = scan([]byte(`"""`), []byte(`"""`), data, atEOF)
+	if err != nil {
+		return 0, nil, err
+	}
 
+	if advance > 0 && token != nil {
+		return advance, token, nil
+	}
+
+	advance, token, err = scan([]byte(`"`), []byte(`"`), data, atEOF)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if advance > 0 && token != nil {
+		return advance, token, nil
+	}
+
+	return bufio.ScanLines(data, atEOF)
+}
+
+func scan(openBytes, closeBytes, data []byte, atEOF bool) (advance int, token []byte, err error) {
 	newline := bytes.IndexByte(data, '\n')
 
-	if start := bytes.Index(data, []byte(multilineString)); start >= 0 && start < newline {
-		end := bytes.Index(data[start+len(multilineString):], []byte(multilineString))
+	if start := bytes.Index(data, openBytes); start >= 0 && start < newline {
+		end := bytes.Index(data[start+len(openBytes):], closeBytes)
 		if end < 0 {
 			if atEOF {
-				return 0, nil, errors.New("unterminated multiline string: " + multilineString)
+				return 0, nil, fmt.Errorf("unterminated %s: expecting %s", openBytes, closeBytes)
 			} else {
 				return 0, nil, nil
 			}
 		}
 
-		n := start + len(multilineString) + end + len(multilineString)
+		n := start + len(openBytes) + end + len(closeBytes)
 
 		newData := data[:start]
-		newData = append(newData, data[start+len(multilineString):n-len(multilineString)]...)
+		newData = append(newData, data[start+len(openBytes):n-len(closeBytes)]...)
 		return n, newData, nil
 	}
 
-	return bufio.ScanLines(data, atEOF)
+	return 0, nil, nil
 }
