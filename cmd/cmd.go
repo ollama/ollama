@@ -302,6 +302,16 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 	return nil
 }
 
+func showLayer(l *server.Layer) {
+	filename, err := server.GetBlobsPath(l.Digest)
+	bts, err := os.ReadFile(filename)
+	if err != nil {
+		fmt.Printf("Couldn't read layer")
+		return
+	}
+	fmt.Printf(string(bts) + "\n")
+}
+
 func generateInteractive(cmd *cobra.Command, model string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -321,6 +331,11 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				readline.PcItem("emacs"),
 				readline.PcItem("default"),
 			),
+		),
+		readline.PcItem("/show",
+			readline.PcItem("license"),
+			readline.PcItem("system"),
+			readline.PcItem("template"),
 		),
 		readline.PcItem("/exit"),
 		readline.PcItem("/bye"),
@@ -393,9 +408,58 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 						case "emacs", "default":
 							scanner.SetVimMode(false)
 							continue
+						default:
+							usage()
+							continue
 						}
+
+					} else {
+						usage()
+						continue
 					}
 				}
+			} else {
+				usage()
+				continue
+			}
+		case strings.HasPrefix(line, "/show"):
+			args := strings.Fields(line)
+			if len(args) > 1 {
+				mp := server.ParseModelPath(model)
+				manifest, err := server.GetManifest(mp)
+				if err != nil {
+					fmt.Printf("error: couldn't get a manifestfor this model")
+					continue
+				}
+				switch args[1] {
+				case "license":
+					for _, l := range manifest.Layers {
+						if l.MediaType == "application/vnd.ollama.image.license" {
+							showLayer(l)
+						}
+					}
+					continue
+				case "system":
+					for _, l := range manifest.Layers {
+						if l.MediaType == "application/vnd.ollama.image.system" {
+							showLayer(l)
+						}
+					}
+					continue
+				case "template":
+					for _, l := range manifest.Layers {
+						if l.MediaType == "application/vnd.ollama.image.template" {
+							showLayer(l)
+						}
+					}
+					continue
+				default:
+					usage()
+					continue
+				}
+			} else {
+				usage()
+				continue
 			}
 		case line == "/help", line == "/?":
 			usage()
