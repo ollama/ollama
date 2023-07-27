@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"time"
@@ -28,6 +30,9 @@ func (e StatusError) Error() string {
 }
 
 type GenerateRequest struct {
+	SessionID       int64    `json:"session_id"`
+	SessionDuration Duration `json:"session_duration,omitempty"`
+
 	Model   string `json:"model"`
 	Prompt  string `json:"prompt"`
 	Context []int  `json:"context,omitempty"`
@@ -81,6 +86,9 @@ type ListResponseModel struct {
 }
 
 type GenerateResponse struct {
+	SessionID        int64     `json:"session_id"`
+	SessionExpiresAt time.Time `json:"session_expires_at"`
+
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
 	Response  string    `json:"response,omitempty"`
@@ -89,6 +97,9 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	TotalDuration      time.Duration `json:"total_duration,omitempty"`
+	LoadDuration       time.Duration `json:"load_duration,omitempty"`
+	SampleCount        int           `json:"sample_count,omitempty"`
+	SampleDuration     time.Duration `json:"sample_duration,omitempty"`
 	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
@@ -98,6 +109,19 @@ type GenerateResponse struct {
 func (r *GenerateResponse) Summary() {
 	if r.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", r.TotalDuration)
+	}
+
+	if r.LoadDuration > 0 {
+		fmt.Fprintf(os.Stderr, "load duration:        %v\n", r.LoadDuration)
+	}
+
+	if r.SampleCount > 0 {
+		fmt.Fprintf(os.Stderr, "sample count:         %d token(s)\n", r.SampleCount)
+	}
+
+	if r.SampleDuration > 0 {
+		fmt.Fprintf(os.Stderr, "sample duration:      %s\n", r.SampleDuration)
+		fmt.Fprintf(os.Stderr, "sample rate:          %.2f tokens/s\n", float64(r.SampleCount)/r.SampleDuration.Seconds())
 	}
 
 	if r.PromptEvalCount > 0 {
@@ -127,6 +151,7 @@ type Options struct {
 
 	// Model options
 	NumCtx        int  `json:"num_ctx,omitempty"`
+	NumKeep       int  `json:"num_keep,omitempty"`
 	NumBatch      int  `json:"num_batch,omitempty"`
 	NumGPU        int  `json:"num_gpu,omitempty"`
 	MainGPU       int  `json:"main_gpu,omitempty"`
@@ -151,6 +176,7 @@ type Options struct {
 	Mirostat         int     `json:"mirostat,omitempty"`
 	MirostatTau      float32 `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32 `json:"mirostat_eta,omitempty"`
+	PenalizeNewline  bool    `json:"penalize_newline,omitempty"`
 
 	NumThread int `json:"num_thread,omitempty"`
 }
@@ -162,14 +188,14 @@ func DefaultOptions() Options {
 		UseNUMA: false,
 
 		NumCtx:   2048,
-		NumBatch: 512,
+		NumBatch: 1024,
 		NumGPU:   1,
 		LowVRAM:  false,
 		F16KV:    true,
 		UseMMap:  true,
 		UseMLock: false,
 
-		RepeatLastN:      512,
+		RepeatLastN:      64,
 		RepeatPenalty:    1.1,
 		FrequencyPenalty: 0.0,
 		PresencePenalty:  0.0,
@@ -181,7 +207,37 @@ func DefaultOptions() Options {
 		Mirostat:         0,
 		MirostatTau:      5.0,
 		MirostatEta:      0.1,
+		PenalizeNewline:  true,
 
 		NumThread: runtime.NumCPU(),
 	}
+}
+
+type Duration struct {
+	time.Duration
+}
+
+func (d *Duration) UnmarshalJSON(b []byte) (err error) {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+
+	d.Duration = 5 * time.Minute
+
+	switch t := v.(type) {
+	case float64:
+		if t < 0 {
+			t = math.MaxFloat64
+		}
+
+		d.Duration = time.Duration(t)
+	case string:
+		d.Duration, err = time.ParseDuration(t)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
