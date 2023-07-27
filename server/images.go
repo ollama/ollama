@@ -286,6 +286,7 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 			layer.MediaType = mediaType
 			layers = append(layers, layer)
 		default:
+			// runtime parameters
 			params[c.Name] = c.Args
 		}
 	}
