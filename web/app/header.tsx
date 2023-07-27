@@ -1,7 +1,7 @@
 import Link from "next/link"
 
 const navigation = [
-  { name: 'Discord', href: 'https://discord.gg/MrfB5FbNWN' },
+  { name: 'Discord', href: 'https://discord.com/invite/ollama' },
   { name: 'GitHub', href: 'https://github.com/jmorganca/ollama' },
   { name: 'Download', href: '/download' },
 ]
