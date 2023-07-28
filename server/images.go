@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -528,13 +527,13 @@ func CopyModel(src, dest string) error {
 	}
 
 	// copy the file
-	input, err := ioutil.ReadFile(srcPath)
+	input, err := os.ReadFile(srcPath)
 	if err != nil {
 		fmt.Println("Error reading file:", err)
 		return err
 	}
 
-	err = ioutil.WriteFile(destPath, input, 0o644)
+	err = os.WriteFile(destPath, input, 0o644)
 	if err != nil {
 		fmt.Println("Error reading file:", err)
 		return err
@@ -1009,7 +1008,7 @@ func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("on download registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
 
