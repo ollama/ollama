@@ -172,6 +172,8 @@ func (llm *LLM) Close() {
 	C.llama_print_timings(llm.ctx)
 }
 
+var errNeedMoreData = errors.New("need more data")
+
 func (llm *LLM) Predict(ctx []int, prompt string, fn func(api.GenerateResponse)) error {
 	C.llama_reset_timings(llm.ctx)
 
@@ -200,6 +202,17 @@ func (llm *LLM) Predict(ctx []int, prompt string, fn func(api.GenerateResponse))
 		}
 
 		b.WriteString(llm.detokenize(token))
+
+		if err := llm.checkStopConditions(b); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			} else if errors.Is(err, errNeedMoreData) {
+				continue
+			}
+
+			return err
+		}
+
 		if utf8.Valid(b.Bytes()) || b.Len() >= utf8.UTFMax {
 			fn(api.GenerateResponse{Response: b.String()})
 			b.Reset()
@@ -224,6 +237,18 @@ func (llm *LLM) Predict(ctx []int, prompt string, fn func(api.GenerateResponse))
 		EvalCount:          int(timings.n_eval),
 		EvalDuration:       parseDurationMs(float64(timings.t_eval_ms)),
 	})
+
+	return nil
+}
+
+func (llm *LLM) checkStopConditions(b bytes.Buffer) error {
+	for _, stopCondition := range llm.StopConditions {
+		if stopCondition == b.String() {
+			return io.EOF
+		} else if strings.HasPrefix(stopCondition, b.String()) {
+			return errNeedMoreData
+		}
+	}
 
 	return nil
 }
