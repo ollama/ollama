@@ -24,6 +24,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 	var command, modelCommand Command
 
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), bufio.MaxScanTokenSize)
 	scanner.Split(scanModelfile)
 	for scanner.Scan() {
 		line := scanner.Bytes()
