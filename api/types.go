@@ -190,7 +190,7 @@ func DefaultOptions() Options {
 		UseNUMA: false,
 
 		NumCtx:   2048,
-		NumBatch: 1024,
+		NumBatch: 512,
 		NumGPU:   1,
 		NumGQA:   1,
 		LowVRAM:  false,
