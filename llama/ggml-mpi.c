@@ -1,7 +1,7 @@
 //go:build mpi
 
 /**
- * llama.cpp - git 7c529cede6e84054e77a3eceab31c53de7b2f55b
+ * llama.cpp - git d91f3f0c55663719ea03b76311e8c36ed55eb0e2
  *
  * MIT License
  *
