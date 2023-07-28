@@ -5,3 +5,4 @@
 .swp
 dist
 ollama
+/ggml-metal.metal
