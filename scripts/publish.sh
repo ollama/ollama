@@ -10,9 +10,7 @@ fi
 OS=$(go env GOOS)
 ARCH=$(go env GOARCH)
 
-go build .
-
-npm --prefix app run make:sign
+./script/build.sh
 
 # Create a new tag if it doesn't exist.
 if ! git rev-parse v$VERSION >/dev/null 2>&1; then

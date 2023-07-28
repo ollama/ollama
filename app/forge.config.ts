@@ -18,7 +18,7 @@ const config: ForgeConfig = {
     asar: true,
     icon: './assets/icon.icns',
     extraResource: [
-      '../ollama',
+      '../dist/ollama',
       path.join(__dirname, './assets/iconTemplate.png'),
       path.join(__dirname, './assets/iconTemplate@2x.png'),
       path.join(__dirname, './assets/iconUpdateTemplate.png'),
@@ -42,6 +42,9 @@ const config: ForgeConfig = {
           },
         }
       : {}),
+    osxUniversal: {
+      x64ArchFiles: '**/ollama',
+    },
   },
   rebuildConfig: {},
   makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin'])],

@@ -7,12 +7,14 @@ This app builds upon Ollama to provide a desktop experience for running models.
 First, build the `ollama` binary:
 
 ```
-make -C ..
+cd ..
+go build .
 ```
 
 Then run the desktop app with `npm start`:
 
 ```
+cd app
 npm install
 npm start
 ```
