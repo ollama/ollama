@@ -592,6 +592,10 @@ func DeleteModel(name string) error {
 		return nil
 	})
 
+	if err != nil {
+		return err
+	}
+
 	// only delete the files which are still in the deleteMap
 	for k, v := range deleteMap {
 		if v {
