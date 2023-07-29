@@ -11,7 +11,7 @@ codesign --deep --force --options=runtime --sign "$APPLE_IDENTITY" --timestamp d
 
 # build and sign the mac app
 npm run --prefix app make:sign
-cp app/out/make/zip/darwin/universal/Ollama-darwin-universal-${VERSION:-0.0..zip dist/Ollama-darwin.zip
+cp app/out/make/zip/darwin/universal/Ollama-darwin-universal-${VERSION:-0.0.0}.zip dist/Ollama-darwin.zip
 
 # sign the binary and rename it
 codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/ollama
