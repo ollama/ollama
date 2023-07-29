@@ -358,6 +358,9 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 	defer scanner.Close()
 
+	var multiLineBuffer string
+	var isMultiLine bool
+
 	for {
 		line, err := scanner.Readline()
 		switch {
@@ -376,6 +379,22 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		line = strings.TrimSpace(line)
 
 		switch {
+		case isMultiLine:
+			if strings.HasSuffix(line, `"""`) {
+				isMultiLine = false
+				multiLineBuffer += strings.TrimSuffix(line, `"""`)
+				line = multiLineBuffer
+				multiLineBuffer = ""
+				scanner.SetPrompt(">>> ")
+			} else {
+				multiLineBuffer += line + " "
+				continue
+			}
+		case strings.HasPrefix(line, `"""`):
+			isMultiLine = true
+			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
+			scanner.SetPrompt("... ")
+			continue
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
 			if err := ListHandler(cmd, args[1:]); err != nil {
