@@ -11,7 +11,10 @@ require (
 	github.com/spf13/cobra v1.7.0
 )
 
-require github.com/rivo/uniseg v0.2.0 // indirect
+require (
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/rivo/uniseg v0.2.0 // indirect
+)
 
 require (
 	dario.cat/mergo v1.0.0

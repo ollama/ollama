@@ -19,6 +19,7 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/parser"
+	"github.com/mitchellh/mapstructure"
 )
 
 type RegistryOptions struct {
@@ -32,7 +33,7 @@ type Model struct {
 	ModelPath string
 	Template  string
 	System    string
-	Digest string
+	Digest    string
 	Options   api.Options
 }
 
@@ -135,7 +136,7 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	model := &Model{
-		Name: mp.GetFullTagname(),
+		Name:   mp.GetFullTagname(),
 		Digest: manifest.Config.Digest,
 	}
 
@@ -176,12 +177,17 @@ func GetModel(name string) (*Model, error) {
 			}
 			defer params.Close()
 
-			var opts api.Options
+			// parse model options parameters into a map so that we can see which fields have been specified explicitly
+			// TODO: once there are no modelfiles in the wild that do not have default options populated this can be removed
+			var opts map[string]interface{}
 			if err = json.NewDecoder(params).Decode(&opts); err != nil {
 				return nil, err
 			}
 
-			model.Options = opts
+			// update the default options on the model with the options that have been specified
+			if err := mapstructure.Decode(opts, &model.Options); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -494,7 +500,13 @@ func paramsToReader(params map[string][]string) (io.ReadSeeker, error) {
 		}
 	}
 
-	bts, err := json.Marshal(opts)
+	// convert opts to map so that zero fields are not omitted
+	out := make(map[string]interface{})
+	if err := mapstructure.Decode(opts, &out); err != nil {
+		return nil, err
+	}
+
+	bts, err := json.Marshal(out)
 	if err != nil {
 		return nil, err
 	}

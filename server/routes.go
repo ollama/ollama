@@ -59,12 +59,7 @@ func GenerateHandler(c *gin.Context) {
 			loaded.llm = nil
 		}
 
-		opts := api.DefaultOptions()
-		if err := mergo.Merge(&opts, model.Options, mergo.WithOverride); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
+		opts := model.Options
 		if err := mergo.Merge(&opts, req.Options, mergo.WithOverride); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
