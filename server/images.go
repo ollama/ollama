@@ -873,13 +873,10 @@ func checkBlobExistence(mp ModelPath, digest string, regOpts *RegistryOptions) (
 	return resp.StatusCode == http.StatusOK, nil
 }
 
-func uploadBlobChunked(mp ModelPath, location string, layer *Layer, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func uploadBlobChunked(mp ModelPath, url string, layer *Layer, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	// TODO allow resumability
 	// TODO allow canceling uploads via DELETE
 	// TODO allow cross repo blob mount
-
-	// Create URL
-	url := location
 
 	fp, err := GetBlobsPath(layer.Digest)
 	if err != nil {
