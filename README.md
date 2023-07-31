@@ -145,3 +145,8 @@ Create a model from a `Modelfile`.
 ```
 curl -X POST http://localhost:11434/api/create -d '{"name": "my-model", "path": "/path/to/modelfile"}'
 ```
+
+## Awesome projects built with Ollama
+
+### Continue 
+Use [Continue](https://github.com/continuedev/continue) to embed Ollama inside of VS Code. The extension lets you highlight code to add to the prompt, ask questions in the sidebar, and generate code inline.
