@@ -85,6 +85,7 @@ func monitorDownload(ctx context.Context, mp ModelPath, regOpts *RegistryOptions
 			// resume the download
 			resp, err := requestDownload(ctx, mp, regOpts, f)
 			if err != nil {
+				downloadMu.Unlock()
 				return fmt.Errorf("resume: %w", err)
 			}
 			inProgress.Store(f.Digest, f)
