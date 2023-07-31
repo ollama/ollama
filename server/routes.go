@@ -129,6 +129,7 @@ func GenerateHandler(c *gin.Context) {
 		}
 
 		if err := activeSession.llm.Predict(req.Context, prompt, fn); err != nil {
+			log.Printf("llm.Predict failed with %s", err)
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -345,11 +346,13 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 		bts, err := json.Marshal(val)
 		if err != nil {
+			log.Printf("streamResponse: json.Marshal failed with %s", err)
 			return false
 		}
 
 		bts = append(bts, '\n')
 		if _, err := w.Write(bts); err != nil {
+			log.Printf("streamResponse: w.Write failed with %s", err)
 			return false
 		}
 
