@@ -526,34 +526,43 @@ func RunServer(_ *cobra.Command, _ []string) error {
 	return server.Serve(ln)
 }
 
+func startMacApp(client *api.Client) error {
+	link, err := os.Readlink("/usr/local/bin/ollama")
+	if err != nil {
+		return err
+	}
+	path := strings.Split(link, "Ollama.app")
+	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
+		return err
+	}
+	// wait for the server to start
+	timeout := time.After(5 * time.Second)
+	tick := time.Tick(500 * time.Millisecond)
+	for {
+		select {
+		case <-timeout:
+			return errors.New("timed out waiting for server to start")
+		case <-tick:
+			if err := client.Heartbeat(context.Background()); err == nil {
+				return nil // server has started
+			}
+		}
+	}
+}
+
 func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
 	client := api.NewClient()
 	if err := client.Heartbeat(context.Background()); err != nil {
-		if strings.Contains(err.Error(), "connection refused") {
-			if runtime.GOOS == "darwin" {
-				// if the mac app is available, start it
-				if _, err := os.Stat("/Applications/Ollama.app"); err == nil {
-					if err := exec.Command("/usr/bin/open", "-a", "/Applications/Ollama.app").Run(); err != nil {
-						return err
-					}
-					// wait for the server to start
-					timeout := time.After(5 * time.Second)
-					tick := time.Tick(500 * time.Millisecond)
-					for {
-						select {
-						case <-timeout:
-							return errors.New("timed out waiting for server to start")
-						case <-tick:
-							if err := client.Heartbeat(context.Background()); err == nil {
-								return nil // server has started
-							}
-						}
-					}
-				}
+		if !strings.Contains(err.Error(), "connection refused") {
+			return err
+		}
+		if runtime.GOOS == "darwin" {
+			if err := startMacApp(client); err != nil {
+				return fmt.Errorf("could not connect to ollama app server, run 'ollama serve' to start it")
 			}
+		} else {
 			return fmt.Errorf("could not connect to ollama server, run 'ollama serve' to start it")
 		}
-		return err
 	}
 	return nil
 }
