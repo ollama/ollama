@@ -590,6 +590,9 @@ func DeleteModel(name string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
 	if err != nil {
 		return err
