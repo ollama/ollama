@@ -271,7 +271,19 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 					layers = append(layers, newLayer)
 				}
 			}
-		case "license", "template", "system", "prompt":
+		case "license":
+			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
+			// remove the prompt layer if one exists
+			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
+
+			layer, err := CreateLayer(strings.NewReader(c.Args))
+			if err != nil {
+				return err
+			}
+
+			layer.MediaType = mediaType
+			layers = append(layers, layer)
+		case "template", "system", "prompt":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
 			// remove the prompt layer if one exists
 			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
