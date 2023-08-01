@@ -225,7 +225,7 @@ func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
 }
 
 func (c *Client) Heartbeat(ctx context.Context) error {
-	if err := c.do(ctx, http.MethodGet, "/", nil, nil); err != nil {
+	if err := c.do(ctx, http.MethodHead, "/", nil, nil); err != nil {
 		return err
 	}
 	return nil
