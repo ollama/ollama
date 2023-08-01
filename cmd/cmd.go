@@ -527,7 +527,11 @@ func RunServer(_ *cobra.Command, _ []string) error {
 }
 
 func startMacApp(client *api.Client) error {
-	link, err := os.Readlink("/usr/local/bin/ollama")
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	link, err := os.Readlink(exe)
 	if err != nil {
 		return err
 	}
