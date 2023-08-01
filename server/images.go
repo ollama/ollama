@@ -271,7 +271,19 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 					layers = append(layers, newLayer)
 				}
 			}
-		case "license", "template", "system", "prompt":
+		case "license":
+			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
+			// remove the prompt layer if one exists
+			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
+
+			layer, err := CreateLayer(strings.NewReader(c.Args))
+			if err != nil {
+				return err
+			}
+
+			layer.MediaType = mediaType
+			layers = append(layers, layer)
+		case "template", "system", "prompt":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
 			// remove the prompt layer if one exists
 			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
@@ -590,6 +602,9 @@ func DeleteModel(name string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
 	if err != nil {
 		return err
@@ -873,13 +888,10 @@ func checkBlobExistence(mp ModelPath, digest string, regOpts *RegistryOptions) (
 	return resp.StatusCode == http.StatusOK, nil
 }
 
-func uploadBlobChunked(mp ModelPath, location string, layer *Layer, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func uploadBlobChunked(mp ModelPath, url string, layer *Layer, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	// TODO allow resumability
 	// TODO allow canceling uploads via DELETE
 	// TODO allow cross repo blob mount
-
-	// Create URL
-	url := location
 
 	fp, err := GetBlobsPath(layer.Digest)
 	if err != nil {
