@@ -60,6 +60,7 @@ Pull a base model:
 ```
 ollama pull llama2
 ```
+> To update a model to the latest version, run `ollama pull llama2` again. The model will be updated (if necessary).
 
 Create a `Modelfile`:
 
