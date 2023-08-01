@@ -1,5 +1,3 @@
-//go:build mpi
-
 /**
  * llama.cpp - git c574bddb368424b5996cbee2ec45ec050967d404
  *
@@ -28,40 +26,23 @@
 
 #pragma once
 
-struct ggml_context;
-struct ggml_tensor;
-struct ggml_cgraph;
+#include "ggml.h"
 
-#ifdef __cplusplus
+#ifdef  __cplusplus
 extern "C" {
 #endif
 
-struct ggml_mpi_context;
 
-void ggml_mpi_backend_init(void);
-void ggml_mpi_backend_free(void);
+GGML_API struct ggml_allocr * ggml_allocr_new(void * data, size_t size, size_t alignment);
+GGML_API struct ggml_allocr * ggml_allocr_new_measure(size_t alignment);
 
-struct ggml_mpi_context * ggml_mpi_init(void);
-void ggml_mpi_free(struct ggml_mpi_context * ctx);
+GGML_API void   ggml_allocr_free(struct ggml_allocr * alloc);
+GGML_API bool   ggml_allocr_is_measure(struct ggml_allocr * alloc);
+GGML_API void   ggml_allocr_reset(struct ggml_allocr * alloc);
+GGML_API void   ggml_allocr_alloc(struct ggml_allocr * alloc, struct ggml_tensor * tensor);
+GGML_API size_t ggml_allocr_alloc_graph(struct ggml_allocr * alloc, struct ggml_cgraph * graph);
 
-int ggml_mpi_rank(struct ggml_mpi_context * ctx);
 
-void ggml_mpi_eval_init(
-        struct ggml_mpi_context * ctx_mpi,
-                            int * n_tokens,
-                            int * n_past,
-                            int * n_threads);
-
-void ggml_mpi_graph_compute_pre(
-        struct ggml_mpi_context * ctx_mpi,
-             struct ggml_cgraph * gf,
-                            int   n_layers);
-
-void ggml_mpi_graph_compute_post(
-        struct ggml_mpi_context * ctx_mpi,
-             struct ggml_cgraph * gf,
-                            int   n_layers);
-
-#ifdef __cplusplus
+#ifdef  __cplusplus
 }
 #endif
