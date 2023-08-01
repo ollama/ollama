@@ -10,6 +10,7 @@ rm dist/ollama-darwin-amd64 dist/ollama-darwin-arm64
 codesign --deep --force --options=runtime --sign "$APPLE_IDENTITY" --timestamp dist/ollama
 
 # build and sign the mac app
+npm install --prefix app
 npm run --prefix app make:sign
 cp app/out/make/zip/darwin/universal/Ollama-darwin-universal-${VERSION:-0.0.0}.zip dist/Ollama-darwin.zip
 
