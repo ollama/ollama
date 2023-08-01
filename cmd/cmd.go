@@ -531,6 +531,9 @@ func startMacApp(client *api.Client) error {
 	if err != nil {
 		return err
 	}
+	if !strings.Contains(link, "Ollama.app") {
+		return fmt.Errorf("could not find ollama app")
+	}
 	path := strings.Split(link, "Ollama.app")
 	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
 		return err
@@ -558,7 +561,7 @@ func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
 		}
 		if runtime.GOOS == "darwin" {
 			if err := startMacApp(client); err != nil {
-				return fmt.Errorf("could not connect to ollama app server, run 'ollama serve' to start it")
+				return fmt.Errorf("could not connect to ollama app, is it running?")
 			}
 		} else {
 			return fmt.Errorf("could not connect to ollama server, run 'ollama serve' to start it")
