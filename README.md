@@ -146,7 +146,10 @@ Create a model from a `Modelfile`.
 curl -X POST http://localhost:11434/api/create -d '{"name": "my-model", "path": "/path/to/modelfile"}'
 ```
 
-## Awesome projects built with Ollama
+## Projects built with Ollama
 
-### Continue 
-Use [Continue](https://github.com/continuedev/continue) to embed Ollama inside of VS Code. The extension lets you highlight code to add to the prompt, ask questions in the sidebar, and generate code inline.
+- [Continue](https://github.com/continuedev/continue) - embeds Ollama inside Visual Studio Code. The extension lets you highlight code to add to the prompt, ask questions in the sidebar, and generate code inline.
+
+- [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot) - interact with Ollama as a chatbot on Discord.
+
+- [Raycast Ollama](https://github.com/MassimilianoPasquini97/raycast_ollama) - Raycast extension to use Ollama for local llama inference on Raycast. 
