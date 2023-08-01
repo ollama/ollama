@@ -260,12 +260,7 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 			generateContext = []int{}
 		}
 
-		generateSession, ok := cmd.Context().Value(generateContextKey("session")).(int64)
-		if !ok {
-			generateSession = 0
-		}
-
-		request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext, SessionID: generateSession}
+		request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext}
 		fn := func(response api.GenerateResponse) error {
 			if !spinner.IsFinished() {
 				spinner.Finish()
@@ -295,7 +290,6 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 
 		ctx := cmd.Context()
 		ctx = context.WithValue(ctx, generateContextKey("context"), latest.Context)
-		ctx = context.WithValue(ctx, generateContextKey("session"), latest.SessionID)
 		cmd.SetContext(ctx)
 	}
 

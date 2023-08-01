@@ -32,6 +32,7 @@ type Model struct {
 	ModelPath string
 	Template  string
 	System    string
+	Digest string
 	Options   api.Options
 }
 
@@ -135,6 +136,7 @@ func GetModel(name string) (*Model, error) {
 
 	model := &Model{
 		Name: mp.GetFullTagname(),
+		Digest: manifest.Config.Digest,
 	}
 
 	for _, layer := range manifest.Layers {
