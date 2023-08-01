@@ -31,14 +31,15 @@ ollama run llama2
 
 `ollama` includes a library of open-source models:
 
-| Model                    | Parameters | Size  | Download                    |
-| ------------------------ | ---------- | ----- | --------------------------- |
-| Llama2                   | 7B         | 3.8GB | `ollama pull llama2`        |
-| Llama2 13B               | 13B        | 7.3GB | `ollama pull llama2:13b`    |
-| Orca Mini                | 3B         | 1.9GB | `ollama pull orca`          |
-| Vicuna                   | 7B         | 3.8GB | `ollama pull vicuna`        |
-| Nous-Hermes              | 13B        | 7.3GB | `ollama pull nous-hermes`   |
-| Wizard Vicuna Uncensored | 13B        | 7.3GB | `ollama pull wizard-vicuna` |
+| Model                    | Parameters | Size  | Download                        |
+| ------------------------ | ---------- | ----- | ------------------------------- |
+| Llama2                   | 7B         | 3.8GB | `ollama pull llama2`            |
+| Llama2 Uncensored        | 7B         | 3.8GB | `ollama pull llama2-uncensored` |
+| Llama2 13B               | 13B        | 7.3GB | `ollama pull llama2:13b`        |
+| Orca Mini                | 3B         | 1.9GB | `ollama pull orca`              |
+| Vicuna                   | 7B         | 3.8GB | `ollama pull vicuna`            |
+| Nous-Hermes              | 13B        | 7.3GB | `ollama pull nous-hermes`       |
+| Wizard Vicuna Uncensored | 13B        | 7.3GB | `ollama pull wizard-vicuna`     |
 
 > Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
 
@@ -152,4 +153,4 @@ curl -X POST http://localhost:11434/api/create -d '{"name": "my-model", "path": 
 
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot) - interact with Ollama as a chatbot on Discord.
 
-- [Raycast Ollama](https://github.com/MassimilianoPasquini97/raycast_ollama) - Raycast extension to use Ollama for local llama inference on Raycast. 
+- [Raycast Ollama](https://github.com/MassimilianoPasquini97/raycast_ollama) - Raycast extension to use Ollama for local llama inference on Raycast.
