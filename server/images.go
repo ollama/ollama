@@ -635,9 +635,7 @@ func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 	}
 
 	var layers []*Layer
-	for _, layer := range manifest.Layers {
-		layers = append(layers, layer)
-	}
+	layers = append(layers, manifest.Layers...)
 	layers = append(layers, &manifest.Config)
 
 	for _, layer := range layers {
@@ -881,7 +879,7 @@ func uploadBlobChunked(mp ModelPath, location string, layer *Layer, regOpts *Reg
 	// TODO allow cross repo blob mount
 
 	// Create URL
-	url := fmt.Sprintf("%s", location)
+	url := location
 
 	fp, err := GetBlobsPath(layer.Digest)
 	if err != nil {
@@ -931,7 +929,7 @@ func uploadBlobChunked(mp ModelPath, location string, layer *Layer, regOpts *Reg
 		// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 		if resp.StatusCode != http.StatusAccepted {
 			fn(api.ProgressResponse{
-				Status:    fmt.Sprintf("error uploading layer"),
+				Status:    "error uploading layer",
 				Digest:    layer.Digest,
 				Total:     int(layer.Size),
 				Completed: int(totalUploaded),
