@@ -318,6 +318,9 @@ func Serve(ln net.Listener) error {
 	r.GET("/", func(c *gin.Context) {
 		c.String(http.StatusOK, "Ollama is running")
 	})
+	r.HEAD("/", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
 
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
