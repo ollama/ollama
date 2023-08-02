@@ -1,7 +1,7 @@
 //go:build darwin
 
 /**
- * llama.cpp - git d91f3f0c55663719ea03b76311e8c36ed55eb0e2
+ * llama.cpp - git c574bddb368424b5996cbee2ec45ec050967d404
  *
  * MIT License
  *
@@ -537,11 +537,13 @@ kernel void kernel_mul_mat_f16_f32(
         device       float * dst,
         constant   int64_t & ne00,
         constant   int64_t & ne01,
+        constant   int64_t & ne02,
         constant  uint64_t & nb00,
         constant  uint64_t & nb01,
         constant  uint64_t & nb02,
         constant   int64_t & ne10,
         constant   int64_t & ne11,
+        constant   int64_t & ne12,
         constant  uint64_t & nb10,
         constant  uint64_t & nb11,
         constant  uint64_t & nb12,
@@ -557,7 +559,7 @@ kernel void kernel_mul_mat_f16_f32(
     const int64_t r1 = tgpig.y;
     const int64_t im = tgpig.z;
 
-    device const half  * x = (device const half  *) (src0 + r0*nb01 + im*nb02);
+    device const half  * x = (device const half  *) (src0 + r0*nb01 + im/(ne12/ne02)*nb02);
     device const float * y = (device const float *) (src1 + r1*nb11 + im*nb12);
 
     sum[tpitg.x] = 0.0f;
@@ -579,6 +581,7 @@ kernel void kernel_mul_mat_f16_f32(
         dst[im*ne1*ne0 + r1*ne0 + r0] = sum[0];
     }
 }
+
 
 kernel void kernel_alibi_f32(
         device const float * src0,

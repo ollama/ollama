@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git d91f3f0c55663719ea03b76311e8c36ed55eb0e2
+ * llama.cpp - git c574bddb368424b5996cbee2ec45ec050967d404
  *
  * MIT License
  *
@@ -1196,7 +1196,18 @@ extern "C" {
             int                   mode,
             int                   n_ctx);
 
-    // custom RoPE, in-place, returns view(a)
+    // custom RoPE
+    GGML_API struct ggml_tensor * ggml_rope_custom(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                   n_past,
+            int                   n_dims,
+            int                   mode,
+            int                   n_ctx,
+            float                 freq_base,
+            float                 freq_scale);
+
+    // in-place, returns view(a)
     GGML_API struct ggml_tensor * ggml_rope_custom_inplace(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,

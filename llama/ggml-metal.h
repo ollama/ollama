@@ -1,7 +1,7 @@
 //go:build darwin
 
 /**
- * llama.cpp - git d91f3f0c55663719ea03b76311e8c36ed55eb0e2
+ * llama.cpp - git c574bddb368424b5996cbee2ec45ec050967d404
  *
  * MIT License
  *
