@@ -31,8 +31,8 @@ var loaded struct {
 	expireAt    time.Time
 	expireTimer *time.Timer
 
-	digest string
-	options   api.Options
+	digest  string
+	options api.Options
 }
 
 func GenerateHandler(c *gin.Context) {
@@ -57,6 +57,7 @@ func GenerateHandler(c *gin.Context) {
 		if loaded.llm != nil {
 			loaded.llm.Close()
 			loaded.llm = nil
+			loaded.digest = ""
 		}
 
 		opts := api.DefaultOptions()
@@ -98,6 +99,7 @@ func GenerateHandler(c *gin.Context) {
 
 			loaded.llm.Close()
 			loaded.llm = nil
+			loaded.digest = ""
 		})
 	}
 	loaded.expireTimer.Reset(sessionDuration)
