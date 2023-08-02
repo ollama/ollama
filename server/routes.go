@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"dario.cat/mergo"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
@@ -61,12 +60,13 @@ func GenerateHandler(c *gin.Context) {
 		}
 
 		opts := api.DefaultOptions()
-		if err := mergo.Merge(&opts, model.Options, mergo.WithOverride); err != nil {
+		if err := opts.FromMap(model.Options); err != nil {
+			log.Printf("could not load model options: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
-		if err := mergo.Merge(&opts, req.Options, mergo.WithOverride); err != nil {
+		if err := opts.FromMap(req.Options); err != nil {
+			log.Printf("could not merge model options: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
