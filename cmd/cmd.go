@@ -34,7 +34,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client := api.NewClient()
+	client, err := api.FromEnv()
+	if err != nil {
+		return err
+	}
 
 	var spinner *Spinner
 
@@ -106,7 +109,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
-	client := api.NewClient()
+	client, err := api.FromEnv()
+	if err != nil {
+		return err
+	}
 
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
@@ -142,7 +148,10 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
-	client := api.NewClient()
+	client, err := api.FromEnv()
+	if err != nil {
+		return err
+	}
 
 	models, err := client.List(context.Background())
 	if err != nil {
@@ -172,7 +181,10 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 }
 
 func DeleteHandler(cmd *cobra.Command, args []string) error {
-	client := api.NewClient()
+	client, err := api.FromEnv()
+	if err != nil {
+		return err
+	}
 
 	req := api.DeleteRequest{Name: args[0]}
 	if err := client.Delete(context.Background(), &req); err != nil {
@@ -183,7 +195,10 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
-	client := api.NewClient()
+	client, err := api.FromEnv()
+	if err != nil {
+		return err
+	}
 
 	req := api.CopyRequest{Source: args[0], Destination: args[1]}
 	if err := client.Copy(context.Background(), &req); err != nil {
@@ -203,7 +218,10 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 }
 
 func pull(model string, insecure bool) error {
-	client := api.NewClient()
+	client, err := api.FromEnv()
+	if err != nil {
+		return err
+	}
 
 	var currentDigest string
 	var bar *progressbar.ProgressBar
@@ -250,7 +268,10 @@ type generateContextKey string
 
 func generate(cmd *cobra.Command, model, prompt string) error {
 	if len(strings.TrimSpace(prompt)) > 0 {
-		client := api.NewClient()
+		client, err := api.FromEnv()
+		if err != nil {
+			return err
+		}
 
 		spinner := NewSpinner("")
 		go spinner.Spin(60 * time.Millisecond)
@@ -552,7 +573,10 @@ func startMacApp(client *api.Client) error {
 }
 
 func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
-	client := api.NewClient()
+	client, err := api.FromEnv()
+	if err != nil {
+		return err
+	}
 	if err := client.Heartbeat(context.Background()); err != nil {
 		if !strings.Contains(err.Error(), "connection refused") {
 			return err
