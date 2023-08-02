@@ -107,11 +107,6 @@ export default function () {
               <button
                 onClick={() => {
                   store.set('first-time-run', true)
-
-                  if (process.platform === 'darwin') {
-                    app.dock.hide()
-                  }
-
                   window.close()
                 }}
                 className='no-drag rounded-dm mx-auto w-[60%] rounded-md bg-black px-4 py-2 text-sm text-white hover:brightness-110'
