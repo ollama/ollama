@@ -52,23 +52,24 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if model.Digest != loaded.digest || !reflect.DeepEqual(loaded.options, req.Options) {
+	opts := api.DefaultOptions()
+	if err := opts.FromMap(model.Options); err != nil {
+		log.Printf("could not load model options: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := opts.FromMap(req.Options); err != nil {
+		log.Printf("could not merge model options: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if model.Digest != loaded.digest || !reflect.DeepEqual(loaded.options, opts) {
 		if loaded.llm != nil {
 			loaded.llm.Close()
 			loaded.llm = nil
 			loaded.digest = ""
-		}
-
-		opts := api.DefaultOptions()
-		if err := opts.FromMap(model.Options); err != nil {
-			log.Printf("could not load model options: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if err := opts.FromMap(req.Options); err != nil {
-			log.Printf("could not merge model options: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
 		}
 
 		llm, err := llama.New(model.ModelPath, opts)
@@ -79,6 +80,7 @@ func GenerateHandler(c *gin.Context) {
 
 		loaded.llm = llm
 		loaded.digest = model.Digest
+		loaded.options = opts
 	}
 
 	sessionDuration := 5 * time.Minute
