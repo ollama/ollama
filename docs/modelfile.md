@@ -152,7 +152,7 @@ SYSTEM """<system message>"""
 
 ### LICENSE
 
-The `LICENSE`` instruction allows you to specify the legal license under which the model used with this Modelfile is shared or distributed.
+The `LICENSE` instruction allows you to specify the legal license under which the model used with this Modelfile is shared or distributed.
 
 ```
 LICENSE """
