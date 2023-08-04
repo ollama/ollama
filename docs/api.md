@@ -23,8 +23,8 @@ The **Generate** endpoint takes a JSON object with the following fields:
 
 ```JSON
 {
-  Model: "modelname",
-  Prompt: "prompt",
+  "model": "modelname",
+  "prompt": "prompt",
 }
 ```
 
