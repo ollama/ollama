@@ -5,6 +5,8 @@
 ## Generate a Prompt
 **POST /api/generate**
 
+**Generate** is the main endpoint that you will use when working with Ollama. This is used to generate a response to a prompt sent to a model.
+
 The **Generate** endpoint takes a JSON object with the following fields:
 
 ```
