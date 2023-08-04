@@ -2,24 +2,37 @@
 
 # API
 
+- [Generate a Prompt](#generate-a-prompt)
+- [Create a Model](#create-a-model)
+- [List Local Models](#list-local-models)
+- [Copy a Model](#copy-a-model)
+- [Delete a Model](#delete-a-model)
+- [Pull a Model](#pull-a-model)
+
 ## Generate a Prompt
 
 **POST /api/generate**
 
+### Description
+
 **Generate** is the main endpoint that you will use when working with Ollama. This is used to generate a response to a prompt sent to a model.
+
+### Request
 
 The **Generate** endpoint takes a JSON object with the following fields:
 
-```
+```JSON
 {
   Model: "modelname",
   Prompt: "prompt",
 }
 ```
 
+### Response
+
 The response is a stream of JSON objects with the following fields:
 
-```
+```JSON
 {
   "model": "modelname",
   "created_at": "2023-08-04T08:52:19.385406455-07:00"
@@ -30,7 +43,7 @@ The response is a stream of JSON objects with the following fields:
 
 The final response in the stream also includes the context and what is usually seen in the output from verbose mode. For example:
 
-```
+```JSON
 {
   "model":"orca",
   "created_at":"2023-08-04T19:22:45.499127Z",
@@ -46,26 +59,26 @@ The final response in the stream also includes the context and what is usually s
 }
 ```
 
-| field      | description                         |
-| ---------- | ----------------------------------- |
-| model      | the name of the model               |
-| created_at | the time the response was generated |
-| response   | the current token                   |
-| done       | whether the response is complete    |
-| total_duration | total time spent generating the response |
-| load_duration | time spent loading the model |
-| sample_count | number of samples generated |
-| sample_duration | time spent generating samples |
-| prompt_eval_count | number of times the prompt was evaluated |
-| prompt_eval_duration | time spent evaluating the prompt |
-| eval_count | number of times the response was evaluated |
-| eval_duration | time spent evaluating the response |
+| field                | description                                |
+| -------------------- | ------------------------------------------ |
+| model                | the name of the model                      |
+| created_at           | the time the response was generated        |
+| response             | the current token                          |
+| done                 | whether the response is complete           |
+| total_duration       | total time spent generating the response   |
+| load_duration        | time spent loading the model               |
+| sample_count         | number of samples generated                |
+| sample_duration      | time spent generating samples              |
+| prompt_eval_count    | number of times the prompt was evaluated   |
+| prompt_eval_duration | time spent evaluating the prompt           |
+| eval_count           | number of times the response was evaluated |
+| eval_duration        | time spent evaluating the response         |
 
+### Example
 
+#### Request
 
-### Example Request
-
-```curl
+```shell
 curl --location --request POST 'http://localhost:11434/api/generate' \
 --header 'Content-Type: text/plain' \
 --data-raw '{
@@ -74,7 +87,7 @@ curl --location --request POST 'http://localhost:11434/api/generate' \
 }'
 ```
 
-### Example Response
+#### Response
 
 ```json
 {"model":"orca","created_at":"2023-08-04T19:22:44.085127Z","response":" The","done":false}
@@ -84,9 +97,7 @@ curl --location --request POST 'http://localhost:11434/api/generate' \
 {"model":"orca","created_at":"2023-08-04T19:22:44.213644Z","response":" because","done":false}
 {"model":"orca","created_at":"2023-08-04T19:22:44.225706Z","response":" of","done":false}
 {"model":"orca","created_at":"2023-08-04T19:22:44.237686Z","response":" a","done":false}
-.
-.
-.
+...
 {"model":"orca","created_at":"2023-08-04T19:22:45.487113Z","response":".","done":false}
 {"model":"orca","created_at":"2023-08-04T19:22:45.499127Z","done":true,"total_duration":5589157167,"load_duration":3013701500,"sample_count":114,"sample_duration":81442000,"prompt_eval_count":46,"prompt_eval_duration":1160282000,"eval_count":113,"eval_duration":1325948000}
 ```
@@ -95,13 +106,76 @@ curl --location --request POST 'http://localhost:11434/api/generate' \
 
 **POST /api/create**
 
+### Description
+
+**Create** takes a path to a Modelfile and creates a model. The Modelfile is documented [here](./modelfile.md).
+
+### Request
+
+The **Create** endpoint takes a JSON object with the following fields:
+
+```JSON
+{
+  "name": "modelname",
+  "path": "path to Modelfile"
+}
+```
+
+### Response
+
+The response is a stream of JSON objects that have a single key/value pair for status. For example:
+
+```JSON
+{
+  "status": "parsing modelfile"
+}
+```
+
+### Example
+
+#### Request
+
+```shell
+curl --location --request POST 'http://localhost:11434/api/create' \
+--header 'Content-Type: text/plain' \
+--data-raw '{
+    "name": "myCoolModel",
+    "path": "/Users/matt/ollamamodelfiles/sentiments"
+}'
+```
+
+#### Response
+
+```JSON
+{"status":"parsing modelfile"}
+{"status":"looking for model"}
+{"status":"creating model template layer"}
+{"status":"creating config layer"}
+{"status":"using already created layer sha256:e84705205f71dd55be7b24a778f248f0eda9999a125d313358c087e092d83148"}
+{"status":"using already created layer sha256:93ca9b3d83dc541f11062c0b994ae66a7b327146f59a9564aafef4a4c15d1ef5"}
+{"status":"writing layer sha256:d3fe6fb39620a477da7720c5fa00abe269a018a9675a726320e18122b7142ee7"}
+{"status":"writing layer sha256:16cc83359b0395026878b41662f7caef433f5260b5d49a3257312b6417b7d8a8"}
+{"status":"writing manifest"}
+{"status":"success"}
+```
+
 ## List Local Models
 
 **GET /api/tags**
 
-### Return Object
+### Description
 
-```
+**List** will list out all the models on the that have been created or pulled locally.
+
+### Request
+
+The **List** endpoint takes no parameters and is a simple GET request.
+
+### Response
+
+The response is a JSON object with a single key/value pair for models. For example:
+
+```JSON
 {
   "models": [
     {
@@ -110,26 +184,183 @@ curl --location --request POST 'http://localhost:11434/api/generate' \
       "size": size
     }
   ]
+}
+```
 
+### Example
+
+#### Request
+
+```shell
+curl --location --request GET 'http://localhost:11434/api/tags'
+```
+
+#### Response
+
+```JSON
+{
+    "models": [
+        {
+            "name": "llama2:70b",
+            "modified_at": "2023-08-04T08:52:19.385406455-07:00",
+            "size": 38871966966
+        },
+        {
+            "name": "llama2:70b-chat-q4_0",
+            "modified_at": "2023-08-04T09:21:27.703371485-07:00",
+            "size": 38871974480
+        },
+        {
+            "name": "midjourney-prompter:latest",
+            "modified_at": "2023-08-04T08:45:46.399609053-07:00",
+            "size": 7323311708
+        },
+        {
+            "name": "raycast_orca:3b",
+            "modified_at": "2023-08-04T06:23:20.10832636-07:00",
+            "size": 1928446602
+        },
+        {
+            "name": "stablebeluga:13b-q4_K_M",
+            "modified_at": "2023-08-04T09:48:26.416547463-07:00",
+            "size": 7865679045
+        }
+    ]
 }
 ```
 
 ## Copy a Model
 
-**/api/copy**
+**POST /api/copy**
+
+### Description
+
+**Copy** will copy a model from one name to another. This is useful for creating a new model from an existing model. It is often used as the first step to renaming a model.
+
+### Request
+
+The **Copy** endpoint takes a JSON object with the following fields:
+
+```JSON
+{
+  "from": "modelname",
+  "to": "newmodelname"
+}
+```
+
+### Response
+
+There is no response other than a 200 status code.
+
+### Example
+
+#### Request
+
+```shell
+curl --location --request POST 'http://localhost:11434/api/copy' \
+--header 'Content-Type: text/plain' \
+--data-raw '{
+    "source": "MyCoolModel",
+    "destination": "ADifferentModel"
+}'
+```
+
+#### Response
+
+No response is returned other than a 200 status code.
 
 ## Delete a Model
 
-**/api/delete**
+**DEL /api/delete**
+
+### Description
+
+**Delete** will delete a model from the local machine. This is useful for cleaning up models that are no longer needed.
+
+### Request
+
+The **Delete** endpoint takes a JSON object with a single key/value pair for modelname. For example:
+
+```JSON
+{
+  "model": "modelname"
+}
+```
+
+### Response
+
+No response is returned other than a 200 status code.
+
+### Example
+
+#### Request
+
+```shell
+curl --location --request DELETE 'http://localhost:11434/api/delete' \
+--header 'Content-Type: text/plain' \
+--data-raw '{
+    "name": "adifferentModel"
+}'
+```
+
+#### Response
+
+No response is returned other than a 200 status code.
 
 ## Pull a Model
 
-**/api/pull**
+**POST /api/pull**
 
-## Push a Model
+### Description
 
-**/api/push**
+**Pull** will pull a model from a remote registry. This is useful for getting a model from the Ollama registry and in the future from alternate registries.
 
-## Heartbeat
+### Request
 
-**/**
+The **Pull** endpoint takes a JSON object with the following fields:
+
+```JSON
+{
+  "name": "modelname",
+  "registry": "registryname"
+}
+```
+
+### Response
+
+The response is a stream of JSON objects with the following format:
+
+```JSON
+{
+  "status":"downloading digestname",
+  "digest":"digestname",
+  "total":2142590208
+}
+```
+
+### Example
+
+#### Request
+
+```shell
+curl --location --request POST 'http://localhost:11434/api/pull' \
+--header 'Content-Type: text/plain' \
+--data-raw '{
+    "name": "orca:3b-q4_1"
+}'
+```
+
+#### Response
+
+```JSON
+{"status":"pulling manifest"}
+{"status":"downloading sha256:63151c63f792939bb4a40b35f37ea06e047c02486399d1742113aaefd0d33e29","digest":"sha256:63151c63f792939bb4a40b35f37ea06e047c02486399d1742113aaefd0d33e29","total":2142590208}
+{"status":"downloading sha256:63151c63f792939bb4a40b35f37ea06e047c02486399d1742113aaefd0d33e29","digest":"sha256:63151c63f792939bb4a40b35f37ea06e047c02486399d1742113aaefd0d33e29","total":2142590208,"completed":1048576}
+...
+{"status":"downloading sha256:20714f2ebe4be44313358bfa58556d783652398ed47f12178914c706c4ad12c4","digest":"sha256:20714f2ebe4be44313358bfa58556d783652398ed47f12178914c706c4ad12c4","total":299}
+{"status":"downloading sha256:20714f2ebe4be44313358bfa58556d783652398ed47f12178914c706c4ad12c4","digest":"sha256:20714f2ebe4be44313358bfa58556d783652398ed47f12178914c706c4ad12c4","total":299,"completed":299}
+{"status":"verifying sha256 digest"}
+{"status":"writing manifest"}
+{"status":"success"}
+
+```
