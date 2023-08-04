@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -18,7 +20,10 @@ import (
 	"strings"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/llama"
 	"github.com/jmorganca/ollama/parser"
+	"github.com/jmorganca/ollama/vector"
+	"gonum.org/v1/gonum/mat"
 )
 
 type RegistryOptions struct {
@@ -28,12 +33,13 @@ type RegistryOptions struct {
 }
 
 type Model struct {
-	Name      string `json:"name"`
-	ModelPath string
-	Template  string
-	System    string
-	Digest    string
-	Options   map[string]interface{}
+	Name       string `json:"name"`
+	ModelPath  string
+	Template   string
+	System     string
+	Digest     string
+	Options    map[string]interface{}
+	Embeddings []vector.Embedding
 }
 
 func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
@@ -51,6 +57,7 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 		First  bool
 		System string
 		Prompt string
+		Embed  string
 
 		// deprecated: versions <= 0.0.7 used this to omit the system prompt
 		Context []int
@@ -63,6 +70,21 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 
 	if request.System != "" {
 		vars.System = request.System
+	}
+
+	if len(m.Embeddings) > 0 {
+		promptEmbed, err := loaded.llm.Embedding(request.Prompt)
+		if err != nil {
+			return "", fmt.Errorf("failed to get embedding for prompt: %v", err)
+		}
+		// TODO: set embed_top from specified parameters in modelfile
+		embed_top := 3
+		embed := vector.TopK(embed_top, mat.NewVecDense(len(promptEmbed), promptEmbed), loaded.Embeddings)
+		toEmbed := ""
+		for _, e := range embed {
+			toEmbed = fmt.Sprintf("%s %s", toEmbed, e.Embedding.Data)
+		}
+		vars.Embed = toEmbed
 	}
 
 	var sb strings.Builder
@@ -157,6 +179,16 @@ func GetModel(name string) (*Model, error) {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
+		case "application/vnd.ollama.image.embed":
+			file, err := os.Open(filename)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open file: %s", filename)
+			}
+			defer file.Close()
+
+			if err = json.NewDecoder(file).Decode(&model.Embeddings); err != nil {
+				return nil, err
+			}
 		case "application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
@@ -195,6 +227,26 @@ func GetModel(name string) (*Model, error) {
 	return model, nil
 }
 
+func filenameWithPath(path, f string) (string, error) {
+	// if filePath starts with ~/, replace it with the user's home directory.
+	if strings.HasPrefix(f, "~/") {
+		parts := strings.Split(f, "/")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to open file: %v", err)
+		}
+
+		f = filepath.Join(home, filepath.Join(parts[1:]...))
+	}
+
+	// if filePath is not an absolute path, make it relative to the modelfile path
+	if !filepath.IsAbs(f) {
+		f = filepath.Join(filepath.Dir(path), f)
+	}
+
+	return f, nil
+}
+
 func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) error {
 	mf, err := os.Open(path)
 	if err != nil {
@@ -211,52 +263,37 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 
 	var layers []*LayerReader
 	params := make(map[string][]string)
-
+	embed := EmbeddingParams{fn: fn, opts: api.DefaultOptions()}
 	for _, c := range commands {
 		log.Printf("[%s] - %s\n", c.Name, c.Args)
 		switch c.Name {
 		case "model":
 			fn(api.ProgressResponse{Status: "looking for model"})
+			embed.model = c.Args
 			mf, err := GetManifest(ParseModelPath(c.Args))
 			if err != nil {
-				fp := c.Args
-
-				// If filePath starts with ~/, replace it with the user's home directory.
-				if strings.HasPrefix(fp, "~/") {
-					parts := strings.Split(fp, "/")
-					home, err := os.UserHomeDir()
-					if err != nil {
-						return fmt.Errorf("failed to open file: %v", err)
-					}
-
-					fp = filepath.Join(home, filepath.Join(parts[1:]...))
+				modelFile, err := filenameWithPath(path, c.Args)
+				if err != nil {
+					return err
 				}
-
-				// If filePath is not an absolute path, make it relative to the modelfile path
-				if !filepath.IsAbs(fp) {
-					fp = filepath.Join(filepath.Dir(path), fp)
-				}
-
-				if _, err := os.Stat(fp); err != nil {
+				if _, err := os.Stat(modelFile); err != nil {
 					// the model file does not exist, try pulling it
 					if errors.Is(err, os.ErrNotExist) {
 						fn(api.ProgressResponse{Status: "pulling model file"})
 						if err := PullModel(c.Args, &RegistryOptions{}, fn); err != nil {
 							return err
 						}
-						mf, err = GetManifest(ParseModelPath(c.Args))
+						mf, err = GetManifest(ParseModelPath(modelFile))
 						if err != nil {
 							return fmt.Errorf("failed to open file after pull: %v", err)
 						}
-
 					} else {
 						return err
 					}
 				} else {
 					// create a model from this specified file
 					fn(api.ProgressResponse{Status: "creating model layer"})
-
-					file, err := os.Open(fp)
+					file, err := os.Open(modelFile)
 					if err != nil {
 						return fmt.Errorf("failed to open file: %v", err)
 					}
@@ -280,19 +317,14 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 					layers = append(layers, newLayer)
 				}
 			}
-		case "license":
-			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
-			// remove the prompt layer if one exists
-			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
-
-			layer, err := CreateLayer(strings.NewReader(c.Args))
+		case "embed":
+			// TODO: support entire directories here
+			embedFilePath, err := filenameWithPath(path, c.Args)
 			if err != nil {
 				return err
 			}
-
-			layer.MediaType = mediaType
-			layers = append(layers, layer)
-		case "template", "system", "prompt":
+			embed.files = append(embed.files, embedFilePath)
+		case "license", "template", "system", "prompt":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
 			// remove the prompt layer if one exists
 			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
@@ -315,17 +347,34 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 	if len(params) > 0 {
 		fn(api.ProgressResponse{Status: "creating parameter layer"})
 		layers = removeLayerFromLayers(layers, "application/vnd.ollama.image.params")
-		paramData, err := paramsToReader(params)
+		formattedParams, err := formatParams(params)
 		if err != nil {
 			return fmt.Errorf("couldn't create params json: %v", err)
 		}
-		l, err := CreateLayer(paramData)
+
+		bts, err := json.Marshal(formattedParams)
+		if err != nil {
+			return err
+		}
+
+		l, err := CreateLayer(bytes.NewReader(bts))
 		if err != nil {
 			return fmt.Errorf("failed to create layer: %v", err)
 		}
 		l.MediaType = "application/vnd.ollama.image.params"
 		layers = append(layers, l)
+
+		// apply these parameters to the embedding options, in case embeddings need to be generated using this model
+		embed.opts = api.DefaultOptions()
+		embed.opts.FromMap(formattedParams)
 	}
+
+	// generate the embedding layers
+	embeddingLayers, err := embeddingLayers(embed)
+	if err != nil {
+		return err
+	}
+	layers = append(layers, embeddingLayers...)
 
 	digests, err := getLayerDigests(layers)
 	if err != nil {
@@ -359,6 +408,112 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 
 	fn(api.ProgressResponse{Status: "success"})
 	return nil
+}
+
+type EmbeddingParams struct {
+	model string
+	opts  api.Options
+	files []string // paths to files to embed
+	fn    func(resp api.ProgressResponse)
+}
+
+// embeddingLayers loads the associated LLM and generates the embeddings to be stored from an input file
+func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
+	layers := []*LayerReader{}
+	if len(e.files) > 0 {
+		model, err := GetModel(e.model)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get model to generate embeddings: %v", err)
+		}
+
+		e.opts.EmbeddingOnly = true
+		llm, err := llama.New(model.ModelPath, e.opts)
+		if err != nil {
+			return nil, fmt.Errorf("load model to generate embeddings: %v", err)
+		}
+
+		for _, filePath := range e.files {
+			// TODO: check if txt file type
+			f, err := os.Open(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("could not open embed file: %w", err)
+			}
+			scanner := bufio.NewScanner(f)
+			scanner.Split(bufio.ScanLines)
+
+			data := []string{}
+			for scanner.Scan() {
+				data = append(data, scanner.Text())
+			}
+			f.Close()
+
+			// the digest of the file is set here so that the client knows a new operation is in progress
+			fileDigest, _ := GetSHA256Digest(bytes.NewReader([]byte(filePath)))
+
+			embeddings := []vector.Embedding{}
+			for i, d := range data {
+				if strings.TrimSpace(d) == "" {
+					continue
+				}
+				e.fn(api.ProgressResponse{
+					Status:    fmt.Sprintf("creating embeddings for file %s", filePath),
+					Digest:    fileDigest,
+					Total:     len(data) - 1,
+					Completed: i,
+				})
+				retry := 0
+			generate:
+				if retry > 3 {
+					log.Printf("failed to generate embedding for '%s' line %d: %v", filePath, i+1, err)
+					continue
+				}
+				embed, err := llm.Embedding(d)
+				if err != nil {
+					log.Printf("retrying embedding generation for '%s' line %d: %v", filePath, i+1, err)
+					retry++
+					goto generate
+				}
+				// Check for NaN and Inf in the embedding, which can't be stored
+				for _, value := range embed {
+					if math.IsNaN(value) || math.IsInf(value, 0) {
+						log.Printf("reloading model, embedding contains NaN or Inf")
+						// reload the model to get a new embedding
+						llm, err = llama.New(model.ModelPath, e.opts)
+						if err != nil {
+							return nil, fmt.Errorf("load model to generate embeddings: %v", err)
+						}
+						retry++
+						goto generate
+					}
+				}
+				embeddings = append(embeddings, vector.Embedding{Data: d, Vector: embed})
+			}
+
+			b, err := json.Marshal(embeddings)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode embeddings: %w", err)
+			}
+			r := bytes.NewReader(b)
+
+			digest, size := GetSHA256Digest(r)
+			// Reset the position of the reader after calculating the digest
+			if _, err := r.Seek(0, 0); err != nil {
+				return nil, fmt.Errorf("could not reset embed reader: %w", err)
+			}
+
+			layer := &LayerReader{
+				Layer: Layer{
+					MediaType: "application/vnd.ollama.image.embed",
+					Digest:    digest,
+					Size:      size,
+				},
+				Reader: r,
+			}
+
+			layers = append(layers, layer)
+		}
+	}
+	return layers, nil
 }
 
 func removeLayerFromLayers(layers []*LayerReader, mediaType string) []*LayerReader {
@@ -449,8 +604,8 @@ func GetLayerWithBufferFromLayer(layer *Layer) (*LayerReader, error) {
 	return newLayer, nil
 }
 
-// paramsToReader converts specified parameter options to their correct types, and returns a reader for the json
-func paramsToReader(params map[string][]string) (io.ReadSeeker, error) {
+// formatParams converts specified parameter options to their correct types
+func formatParams(params map[string][]string) (map[string]interface{}, error) {
 	opts := api.Options{}
 	valueOpts := reflect.ValueOf(&opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts)           // types of the fields in the options struct
@@ -504,12 +659,7 @@ func paramsToReader(params map[string][]string) (io.ReadSeeker, error) {
 		}
 	}
 
-	bts, err := json.Marshal(out)
-	if err != nil {
-		return nil, err
-	}
-
-	return bytes.NewReader(bts), nil
+	return out, nil
 }
 
 func getLayerDigests(layers []*LayerReader) ([]string, error) {
@@ -1042,7 +1192,7 @@ func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func
 
 	for {
 		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("downloading %s", digest),
+			Status:    fmt.Sprintf("pulling %s...", digest[7:19]),
 			Digest:    digest,
 			Total:     int(total),
 			Completed: int(completed),

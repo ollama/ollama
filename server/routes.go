@@ -20,12 +20,14 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llama"
+	"github.com/jmorganca/ollama/vector"
 )
 
 var loaded struct {
 	mu sync.Mutex
 
-	llm *llama.LLM
+	llm        *llama.LLM
+	Embeddings []vector.Embedding
 
 	expireAt    time.Time
 	expireTimer *time.Timer
@@ -72,6 +74,11 @@ func GenerateHandler(c *gin.Context) {
 			loaded.digest = ""
 		}
 
+		if model.Embeddings != nil && len(model.Embeddings) > 0 {
+			opts.EmbeddingOnly = true // this is requried to generate embeddings, completions will still work
+			loaded.Embeddings = model.Embeddings
+		}
+
 		llm, err := llama.New(model.ModelPath, opts)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -82,7 +89,6 @@ func GenerateHandler(c *gin.Context) {
 		loaded.digest = model.Digest
 		loaded.options = opts
 	}
-
 	sessionDuration := 5 * time.Minute
 
 	loaded.expireAt = time.Now().Add(sessionDuration)
