@@ -31,13 +31,14 @@ type RegistryOptions struct {
 }
 
 type Model struct {
-	Name       string `json:"name"`
-	ModelPath  string
-	Template   string
-	System     string
-	Digest     string
-	Options    map[string]interface{}
-	Embeddings []vector.Embedding
+	Name         string `json:"name"`
+	ModelPath    string
+	AdapterPaths []string
+	Template     string
+	System       string
+	Digest       string
+	Options      map[string]interface{}
+	Embeddings   []vector.Embedding
 }
 
 func (m *Model) Prompt(request api.GenerateRequest, embedding string) (string, error) {
@@ -178,6 +179,8 @@ func GetModel(name string) (*Model, error) {
 			if err = json.NewDecoder(file).Decode(&model.Embeddings); err != nil {
 				return nil, err
 			}
+		case "application/vnd.ollama.image.adapter":
+			model.AdapterPaths = append(model.AdapterPaths, filename)
 		case "application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
@@ -330,6 +333,40 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 				return err
 			}
 			embed.files = append(embed.files, embedFilePath)
+		case "adapter":
+			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
+
+			fp := c.Args
+			if strings.HasPrefix(fp, "~/") {
+				parts := strings.Split(fp, "/")
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("failed to open file: %v", err)
+				}
+
+				fp = filepath.Join(home, filepath.Join(parts[1:]...))
+			}
+
+			// If filePath is not an absolute path, make it relative to the modelfile path
+			if !filepath.IsAbs(fp) {
+				fp = filepath.Join(filepath.Dir(path), fp)
+			}
+
+			// create a model from this specified file
+			fn(api.ProgressResponse{Status: "creating model layer"})
+
+			file, err := os.Open(fp)
+			if err != nil {
+				return fmt.Errorf("failed to open file: %v", err)
+			}
+			defer file.Close()
+
+			l, err := CreateLayer(file)
+			if err != nil {
+				return fmt.Errorf("failed to create layer: %v", err)
+			}
+			l.MediaType = "application/vnd.ollama.image.adapter"
+			layers = append(layers, l)
 		case "license":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
 			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
@@ -452,7 +489,7 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 		}
 
 		e.opts.EmbeddingOnly = true
-		llmModel, err := llm.New(e.model, e.opts)
+		llmModel, err := llm.New(e.model, []string{}, e.opts)
 		if err != nil {
 			return nil, fmt.Errorf("load model to generate embeddings: %v", err)
 		}

@@ -63,7 +63,7 @@ func load(model *Model, reqOpts map[string]interface{}, sessionDuration time.Dur
 			loaded.Embeddings = model.Embeddings
 		}
 
-		llmModel, err := llm.New(model.ModelPath, opts)
+		llmModel, err := llm.New(model.ModelPath, model.AdapterPaths, opts)
 		if err != nil {
 			return err
 		}
