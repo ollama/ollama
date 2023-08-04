@@ -142,6 +142,8 @@ func New(model string, opts api.Options) (*LLM, error) {
 	params.use_mmap = C.bool(llm.UseMMap)
 	params.use_mlock = C.bool(llm.UseMLock)
 	params.embedding = C.bool(llm.EmbeddingOnly)
+	params.rope_freq_base = C.float(llm.RopeFrequencyBase)
+	params.rope_freq_scale = C.float(llm.RopeFrequencyScale)
 	llm.params = &params
 
 	cModel := C.CString(model)

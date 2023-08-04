@@ -147,19 +147,21 @@ type Options struct {
 	UseNUMA bool `json:"numa,omitempty"`
 
 	// Model options
-	NumCtx        int  `json:"num_ctx,omitempty"`
-	NumKeep       int  `json:"num_keep,omitempty"`
-	NumBatch      int  `json:"num_batch,omitempty"`
-	NumGQA        int  `json:"num_gqa,omitempty"`
-	NumGPU        int  `json:"num_gpu,omitempty"`
-	MainGPU       int  `json:"main_gpu,omitempty"`
-	LowVRAM       bool `json:"low_vram,omitempty"`
-	F16KV         bool `json:"f16_kv,omitempty"`
-	LogitsAll     bool `json:"logits_all,omitempty"`
-	VocabOnly     bool `json:"vocab_only,omitempty"`
-	UseMMap       bool `json:"use_mmap,omitempty"`
-	UseMLock      bool `json:"use_mlock,omitempty"`
-	EmbeddingOnly bool `json:"embedding_only,omitempty"`
+	NumCtx             int     `json:"num_ctx,omitempty"`
+	NumKeep            int     `json:"num_keep,omitempty"`
+	NumBatch           int     `json:"num_batch,omitempty"`
+	NumGQA             int     `json:"num_gqa,omitempty"`
+	NumGPU             int     `json:"num_gpu,omitempty"`
+	MainGPU            int     `json:"main_gpu,omitempty"`
+	LowVRAM            bool    `json:"low_vram,omitempty"`
+	F16KV              bool    `json:"f16_kv,omitempty"`
+	LogitsAll          bool    `json:"logits_all,omitempty"`
+	VocabOnly          bool    `json:"vocab_only,omitempty"`
+	UseMMap            bool    `json:"use_mmap,omitempty"`
+	UseMLock           bool    `json:"use_mlock,omitempty"`
+	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
+	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
+	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 
 	// Predict options
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
@@ -261,14 +263,16 @@ func DefaultOptions() Options {
 
 		UseNUMA: false,
 
-		NumCtx:   2048,
-		NumBatch: 512,
-		NumGPU:   1,
-		NumGQA:   1,
-		LowVRAM:  false,
-		F16KV:    true,
-		UseMMap:  true,
-		UseMLock: false,
+		NumCtx:             2048,
+		NumBatch:           512,
+		NumGPU:             1,
+		NumGQA:             1,
+		LowVRAM:            false,
+		F16KV:              true,
+		UseMMap:            true,
+		UseMLock:           false,
+		RopeFrequencyBase:  10000.0,
+		RopeFrequencyScale: 1.0,
 
 		RepeatLastN:      64,
 		RepeatPenalty:    1.1,
