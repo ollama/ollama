@@ -15,7 +15,7 @@ Run, create, and share large language models (LLMs).
 
 ## Download
 
-- [Download](https://ollama.ai/download) for macOS on Apple Silicon (Intel coming soon)
+- [Download](https://ollama.ai/download) for macOS
 - Download for Windows and Linux (coming soon)
 - Build [from source](#building)
 
