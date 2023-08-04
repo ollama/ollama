@@ -1,7 +1,12 @@
 FROM ../models/nous-hermes-13b.ggmlv3.q4_0.bin
 TEMPLATE """
+{{- if .First }}
 ### Instruction:
+{{ .System }}
+{{- end }}
+### Input:
 {{ .Prompt }}
-
 ### Response:
 """
+
+SYSTEM """You are an AI assistant that follows instruction extremely well. Help as much as you can."""
