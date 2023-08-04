@@ -1,11 +1,13 @@
 FROM ../models/nous-hermes-13b.ggmlv3.q4_0.bin
 TEMPLATE """
-{{- if .First }}
 ### Instruction:
+{{ .Prompt }}
+
+{{- if and .First .System }}
+### Input:
 {{ .System }}
 {{- end }}
-### Input:
-{{ .Prompt }}
+
 ### Response:
 """
 
