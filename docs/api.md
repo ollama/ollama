@@ -3,19 +3,69 @@
 # API
 
 ## Generate a Prompt
-**/api/generate**
+**POST /api/generate**
 
+The **Generate** endpoint takes a JSON object with the following fields:
+
+```
+{
+  Model: "modelname",
+  Prompt: "prompt",
+  Context: "context",
+}
+```
+
+Context is optional, but is used to provide additional context, such as memory of earlier prompts. 
+
+The response is a stream of JSON objects with the following fields:
+
+```
+{
+  "model": "modelname",
+  "created_at": "2023-08-04T08:52:19.385406455-07:00"
+  "response": "the current token",
+  "done": false
+}
+```
+
+| field | description |
+| --- | --- |
+| model | the name of the model |
+| created_at | the time the response was generated |
+| response | the current token |
+| done | whether the response is complete |
 ## Create a Model
-**/api/create**
+**POST /api/create**
 
 ## List Local Models
-**/api/list**
+**GET /api/tags**
+
+### Return Object
+```
+{
+  "models": [
+    {
+      "name": "modelname:tags",
+      "modified_at": "2023-08-04T08:52:19.385406455-07:00",
+      "size": size
+    }
+  ]
+
+}
+```
 
 ## Copy a Model
 **/api/copy**
+
+## Delete a Model
+**/api/delete**
 
 ## Pull a Model
 **/api/pull**
 
 ## Push a Model
 **/api/push**
+
+## Heartbeat
+**/**
+
