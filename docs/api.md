@@ -24,9 +24,14 @@ The **Generate** endpoint takes a JSON object with the following fields:
 ```JSON
 {
   "model": "modelname",
-  "prompt": "prompt",
+  "prompt": "You are a software engineer working on building docs for Ollama.",
+  "options": {
+    "temperature": 0.7,
+  }
 }
 ```
+
+**Options** can include any of the parameters listed in the [Modelfile](./modelfile.mdvalid-parameters-and-values) documentation. The only required parameter is **model**. If no **prompt** is provided, the model will generate a response to an empty prompt. If no **options** are provided, the model will use the default options from the Modelfile of the parent model.
 
 ### Response
 
@@ -59,20 +64,20 @@ The final response in the stream also includes the context and what is usually s
 }
 ```
 
-| field                | description                                |
-| -------------------- | ------------------------------------------ |
-| model                | the name of the model                      |
-| created_at           | the time the response was generated        |
-| response             | the current token                          |
-| done                 | whether the response is complete           |
-| total_duration       | total time spent generating the response   |
-| load_duration        | time spent loading the model               |
-| sample_count         | number of samples generated                |
-| sample_duration      | time spent generating samples              |
-| prompt_eval_count    | number of times the prompt was evaluated   |
-| prompt_eval_duration | time spent evaluating the prompt           |
-| eval_count           | number of times the response was evaluated |
-| eval_duration        | time spent evaluating the response         |
+| field                | description                                             |
+| -------------------- | ------------------------------------------------------- |
+| model                | the name of the model                                   |
+| created_at           | the time the response was generated                     |
+| response             | the current token                                       |
+| done                 | whether the response is complete                        |
+| total_duration       | total time in nanoseconds spent generating the response |
+| load_duration        | time spent in nanoseconds loading the model             |
+| sample_count         | number of samples generated                             |
+| sample_duration      | time spent generating samples                           |
+| prompt_eval_count    | number of times the prompt was evaluated                |
+| prompt_eval_duration | time spent in nanoseconds evaluating the prompt         |
+| eval_count           | number of times the response was evaluated              |
+| eval_duration        | time in nanoseconds spent evaluating the response       |
 
 ### Example
 
@@ -117,7 +122,7 @@ The **Create** endpoint takes a JSON object with the following fields:
 ```JSON
 {
   "name": "modelname",
-  "path": "path to Modelfile"
+  "path": "absolute path to Modelfile"
 }
 ```
 
@@ -321,8 +326,7 @@ The **Pull** endpoint takes a JSON object with the following fields:
 
 ```JSON
 {
-  "name": "modelname",
-  "registry": "registryname"
+  "name": "modelname"
 }
 ```
 
