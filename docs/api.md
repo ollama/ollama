@@ -271,7 +271,7 @@ No response is returned other than a 200 status code.
 
 ## Delete a Model
 
-**DEL /api/delete**
+**DELETE /api/delete**
 
 ### Description
 
