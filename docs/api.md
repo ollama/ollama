@@ -243,8 +243,8 @@ The **Copy** endpoint takes a JSON object with the following fields:
 
 ```JSON
 {
-  "from": "modelname",
-  "to": "newmodelname"
+  "source": "modelname",
+  "destination": "newmodelname"
 }
 ```
 
