@@ -165,7 +165,7 @@ curl --location --request POST 'http://localhost:11434/api/create' \
 
 ### Description
 
-**List** will list out all the models on the that have been created or pulled locally.
+**List** will list out the models that are available locally.
 
 ### Request
 
