@@ -101,9 +101,14 @@ type GenerateResponse struct {
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	TokenDuration      time.Duration `json:"token_duration,omitempty"`
 }
 
 func (r *GenerateResponse) Summary() {
+	if r.SampleCount > 0 || r.PromptEvalCount > 0 || r.EvalCount > 0 {
+		fmt.Fprintf(os.Stderr, "token rate:           %.2f tokens/s\n", float64(r.SampleCount+r.PromptEvalCount+r.EvalCount)/r.TotalDuration.Seconds())
+	}
+
 	if r.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", r.TotalDuration)
 	}
