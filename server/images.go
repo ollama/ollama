@@ -962,6 +962,13 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 }
 
 func pullModelManifest(mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, error) {
+	token, err := getAuthToken(mp, regOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("tok = %s", token)
+
 	url := fmt.Sprintf("%s/v2/%s/manifests/%s", mp.Registry, mp.GetNamespaceRepository(), mp.Tag)
 	headers := map[string]string{
 		"Accept": "application/vnd.docker.distribution.manifest.v2+json",
