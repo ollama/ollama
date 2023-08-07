@@ -84,9 +84,8 @@ The final response in the stream also includes the context and what is usually s
 #### Request
 
 ```shell
-curl --location --request POST 'http://localhost:11434/api/generate' \
---header 'Content-Type: text/plain' \
---data-raw '{
+curl -X POST 'http://localhost:11434/api/generate' -d \
+'{
     "model": "orca",
     "prompt": "why is the sky blue"
 }'
@@ -197,7 +196,7 @@ The response is a JSON object with a single key/value pair for models. For examp
 #### Request
 
 ```shell
-curl --location --request GET 'http://localhost:11434/api/tags'
+curl 'http://localhost:11434/api/tags'
 ```
 
 #### Response
@@ -262,9 +261,8 @@ There is no response other than a 200 status code.
 #### Request
 
 ```shell
-curl --location --request POST 'http://localhost:11434/api/copy' \
---header 'Content-Type: text/plain' \
---data-raw '{
+curl -X POST 'http://localhost:11434/api/copy' -d \
+'{
     "source": "MyCoolModel",
     "destination": "ADifferentModel"
 }'
@@ -301,9 +299,8 @@ No response is returned other than a 200 status code.
 #### Request
 
 ```shell
-curl --location --request DELETE 'http://localhost:11434/api/delete' \
---header 'Content-Type: text/plain' \
---data-raw '{
+curl -X DELETE 'http://localhost:11434/api/delete' -d \
+'{
     "name": "adifferentModel"
 }'
 ```
@@ -347,9 +344,8 @@ The response is a stream of JSON objects with the following format:
 #### Request
 
 ```shell
-curl --location --request POST 'http://localhost:11434/api/pull' \
---header 'Content-Type: text/plain' \
---data-raw '{
+curl -X POST 'http://localhost:11434/api/pull' -d \
+'{
     "name": "orca:3b-q4_1"
 }'
 ```
