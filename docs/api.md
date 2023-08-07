@@ -13,7 +13,7 @@
 
 ### Model name format
 
-The model name format today is model:tag`. Some examples are `orca:3b-q4_1` and `llama2:70b`. The tag is optional and if not provided will default to `latest`. The tag is used to identify a specific version.
+The model name format today is `model:tag`. Some examples are `orca:3b-q4_1` and `llama2:70b`. The tag is optional and if not provided will default to `latest`. The tag is used to identify a specific version.
 
 ### Durations
 
