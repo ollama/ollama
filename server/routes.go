@@ -301,11 +301,11 @@ func CopyModelHandler(c *gin.Context) {
 	}
 }
 
-func Serve(ln net.Listener) error {
+func Serve(ln net.Listener, extraOrigins []string) error {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	// only allow http/https from localhost
-	config.AllowOrigins = []string{
+	allowedOrigins := []string{
 		"http://localhost",
 		"http://localhost:*",
 		"https://localhost",
@@ -315,6 +315,8 @@ func Serve(ln net.Listener) error {
 		"https://127.0.0.1",
 		"https://127.0.0.1:*",
 	}
+	allowedOrigins = append(allowedOrigins, extraOrigins...)
+	config.AllowOrigins = allowedOrigins
 
 	r := gin.Default()
 	r.Use(cors.New(config))
