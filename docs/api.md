@@ -13,13 +13,11 @@
 
 ### Model name format
 
-The model name format is `site/namespace/model:tag`. **Site** and **namespace** are optional, but will default to `registry.ollama.ai/library`. 
+The model name format is `site/namespace/model:tag`. **Site** and **namespace** are optional, but will default to `registry.ollama.ai/library`. You will see this format used in `~/.ollama/models/manifests/`.
 
 ### Durations
 
 All durations are in nanoseconds.
-
-
 
 ## Generate a Prompt
 
