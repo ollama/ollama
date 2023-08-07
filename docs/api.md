@@ -9,13 +9,25 @@
 - [Delete a Model](#delete-a-model)
 - [Pull a Model](#pull-a-model)
 
+## Things to keep in mind when using the API
+
+### Model name format
+
+The model name format is `site/namespace/model:tag`. **Site** and **namespace** are optional, but will default to `registry.ollama.ai/library`. 
+
+### Durations
+
+All durations are in nanoseconds.
+
+
+
 ## Generate a Prompt
 
 **POST /api/generate**
 
 ### Description
 
-**Generate** is the main endpoint that you will use when working with Ollama. This is used to generate a response to a prompt sent to a model.
+**Generate** is the main endpoint that you will use when working with Ollama. This is used to generate a response to a prompt sent to a model. This is a streaming endpoint, so will be a series of responses. The final response will include the context and what is usually seen in the output from verbose mode.
 
 ### Request
 
@@ -23,7 +35,7 @@ The **Generate** endpoint takes a JSON object with the following fields:
 
 ```JSON
 {
-  "model": "modelname",
+  "model": "site/namespace/model:tag",
   "prompt": "You are a software engineer working on building docs for Ollama.",
   "options": {
     "temperature": 0.7,
