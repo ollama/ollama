@@ -264,6 +264,7 @@ func DefaultOptions() Options {
 		UseNUMA: false,
 
 		NumCtx:             2048,
+		NumKeep:            -1,
 		NumBatch:           512,
 		NumGPU:             1,
 		NumGQA:             1,
