@@ -186,7 +186,7 @@ The response is a JSON object with a single key/value pair for models. For examp
     {
       "name": "modelname:tags",
       "modified_at": "2023-08-04T08:52:19.385406455-07:00",
-      "size": size
+      "size": 7323310500
     }
   ]
 }
