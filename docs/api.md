@@ -13,7 +13,7 @@
 
 ### Model name format
 
-The model name format is `site/namespace/model:tag`. **Site** and **namespace** are optional, but will default to `registry.ollama.ai/library`. You will see this format used in `~/.ollama/models/manifests/`.
+The model name format today is model:tag`. Some examples are `orca:3b-q4_1` and `llama2:70b`. The tag is optional and if not provided will default to `latest`. The tag is used to identify a specific version.
 
 ### Durations
 
