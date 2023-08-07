@@ -270,7 +270,8 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 			embed.model = c.Args
 			mf, err := GetManifest(ParseModelPath(c.Args))
 			if err != nil {
-				modelFile, err := filenameWithPath(path, c.Args)
+				fields := strings.Fields(c.Args)
+				modelFile, err := filenameWithPath(path, fields[0])
 				if err != nil {
 					return err
 				}
@@ -305,6 +306,31 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 					config.ModelFamily = ggml.ModelFamily
 					config.ModelType = ggml.ModelType
 					config.FileType = ggml.FileType
+
+					if len(fields) == 3 && strings.ToUpper(fields[1]) == "AS" {
+						switch config.FileType {
+						case llm.FileTypeF32, llm.FileTypeF16:
+							out, err := os.CreateTemp("", "llama")
+							if err != nil {
+								return err
+							}
+							defer out.Close()
+							defer os.Remove(out.Name())
+
+							fn(api.ProgressResponse{Status: "creating quantized model layer"})
+
+							fileType, err := llm.ParseFileType(ggml.ModelFamily, fields[2])
+							if err != nil {
+								return err
+							}
+
+							if err := llm.Quantize(file.Name(), out.Name(), fileType); err != nil {
+								return err
+							}
+
+							file = out
+						}
+					}
 
 					// reset the file
 					file.Seek(0, io.SeekStart)

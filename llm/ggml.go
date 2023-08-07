@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 type ModelFamily string
@@ -38,6 +39,45 @@ const (
 	FileTypeQ5_K
 	FileTypeQ6_K
 )
+
+func ParseFileType(family ModelFamily, s string) (FileType, error) {
+	switch family {
+	case ModelFamilyLlama:
+		return llamaParseFileType(s)
+	}
+
+	// if there's no family specific file type, parse as generic ggml file type
+	switch strings.ToLower(s) {
+	case "f32":
+		return FileTypeF32, nil
+	case "f16":
+		return FileTypeF16, nil
+	case "q4_0":
+		return FileTypeQ4_0, nil
+	case "q4_1":
+		return FileTypeQ4_1, nil
+	case "q4_1_f16":
+		return FileTypeQ4_1_F16, nil
+	case "q8_0":
+		return FileTypeQ8_0, nil
+	case "q5_0":
+		return FileTypeQ5_0, nil
+	case "q5_1":
+		return FileTypeQ5_1, nil
+	case "q2_k":
+		return FileTypeQ2_K, nil
+	case "q3_k":
+		return FileTypeQ3_K, nil
+	case "q4_k":
+		return FileTypeQ4_K, nil
+	case "q5_k":
+		return FileTypeQ5_K, nil
+	case "q6_k":
+		return FileTypeQ6_K, nil
+	}
+
+	return 0, fmt.Errorf("invalid file type: %s", s)
+}
 
 type GGML struct {
 	ModelFamily

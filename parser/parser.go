@@ -37,6 +37,17 @@ func Parse(reader io.Reader) ([]Command, error) {
 		switch string(bytes.ToUpper(fields[0])) {
 		case "FROM":
 			command.Name = "model"
+			args := bytes.Split(fields[1], []byte(" "))
+
+			// FROM must be length 2, FROM <model>, or length 4, FROM <model> AS <quant>
+			if len(args) != 1 && len(args) != 3 {
+				return nil, fmt.Errorf("invalid FROM line: %s", line)
+			}
+
+			if len(args) == 3 && !bytes.Equal(bytes.ToUpper(args[1]), []byte("AS")) {
+				return nil, fmt.Errorf("invalid FROM line: %s", line)
+			}
+
 			command.Args = string(fields[1])
 			// copy command for validation
 			modelCommand = command

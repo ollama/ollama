@@ -120,6 +120,67 @@ type llama struct {
 	api.Options
 }
 
+const (
+	llamaFileTypeF32 FileType = iota
+	llamaFileTypeF16
+	llamaFileTypeQ4_0
+	llamaFileTypeQ4_1
+	llamaFileTypeQ4_1_F16
+	llamaFileTypeQ8_0 = iota + 2
+	llamaFileTypeQ5_0
+	llamaFileTypeQ5_1
+	llamaFileTypeQ2_K
+	llamaFileTypeQ3_K_S
+	llamaFileTypeQ3_K_M
+	llamaFileTypeQ3_K_L
+	llamaFileTypeQ4_K_S
+	llamaFileTypeQ4_K_M
+	llamaFileTypeQ5_K_S
+	llamaFileTypeQ5_K_M
+	llamaFileTypeQ6_K
+)
+
+func llamaParseFileType(s string) (FileType, error) {
+	switch strings.ToLower(s) {
+	case "f32":
+		return llamaFileTypeF32, nil
+	case "f16":
+		return llamaFileTypeF16, nil
+	case "q4_0":
+		return llamaFileTypeQ4_0, nil
+	case "q4_1":
+		return llamaFileTypeQ4_1, nil
+	case "q4_1_f16":
+		return llamaFileTypeQ4_1_F16, nil
+	case "q8_0":
+		return llamaFileTypeQ8_0, nil
+	case "q5_0":
+		return llamaFileTypeQ5_0, nil
+	case "q5_1":
+		return llamaFileTypeQ5_1, nil
+	case "q2_k":
+		return llamaFileTypeQ2_K, nil
+	case "q3_k_s":
+		return llamaFileTypeQ3_K_S, nil
+	case "q3_k", "q3_k_m":
+		return llamaFileTypeQ3_K_M, nil
+	case "q3_k_l":
+		return llamaFileTypeQ3_K_L, nil
+	case "q4_k_s":
+		return llamaFileTypeQ4_K_S, nil
+	case "q4_k", "q4_k_m":
+		return llamaFileTypeQ4_K_M, nil
+	case "q5_k_s":
+		return llamaFileTypeQ5_K_S, nil
+	case "q5_k", "q5_k_m":
+		return llamaFileTypeQ5_K_M, nil
+	case "q6_k":
+		return llamaFileTypeQ6_K, nil
+	}
+
+	return 0, fmt.Errorf("unknown file type: %s", s)
+}
+
 type llamaHyperparameters struct {
 	// NumVocab is the size of the model's vocabulary.
 	NumVocab uint32
@@ -481,4 +542,22 @@ func (llm *llama) Embedding(input string) ([]float64, error) {
 		embeddings[i] = float64(v)
 	}
 	return embeddings, nil
+}
+
+func Quantize(infile, outfile string, fileType FileType) error {
+	cInfile := C.CString(infile)
+	defer C.free(unsafe.Pointer(cInfile))
+
+	cOutfile := C.CString(outfile)
+	defer C.free(unsafe.Pointer(cOutfile))
+
+	params := C.llama_model_quantize_default_params()
+	params.nthread = -1
+	params.ftype = uint32(fileType)
+
+	if retval := C.llama_model_quantize(cInfile, cOutfile, &params); retval != 0 {
+		return fmt.Errorf("llama_model_quantize: %d", retval)
+	}
+
+	return nil
 }
