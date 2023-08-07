@@ -513,28 +513,39 @@ func generateBatch(cmd *cobra.Command, model string) error {
 	return nil
 }
 
+// getRunServerParams takes a command and the environment variables and returns the correct params
+// given the order of precedence: command line args (highest), environment variables, defaults (lowest)
+func getRunServerParams(cmd *cobra.Command) (host, port string, extraOrigins []string, err error) {
+	host = os.Getenv("OLLAMA_HOST")
+	hostFlag := cmd.Flags().Lookup("host")
+	if hostFlag == nil {
+		return "", "", nil, errors.New("host unset")
+	}
+	if hostFlag.Changed || host == "" {
+		host = hostFlag.Value.String()
+	}
+	port = os.Getenv("OLLAMA_PORT")
+	portFlag := cmd.Flags().Lookup("port")
+	if portFlag == nil {
+		return "", "", nil, errors.New("port unset")
+	}
+	if portFlag.Changed || port == "" {
+		port = portFlag.Value.String()
+	}
+	extraOrigins, err = cmd.Flags().GetStringSlice("allowed-origins")
+	if err != nil {
+		return "", "", nil, err
+	}
+	return host, port, extraOrigins, nil
+}
+
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, err := cmd.Flags().GetString("host")
-	if err != nil {
-		return errors.New("host unset")
-	}
-	if os.Getenv("OLLAMA_HOST") != "" {
-		host = os.Getenv("OLLAMA_HOST")
-	}
-	port, err := cmd.Flags().GetString("port")
-	if err != nil {
-		return errors.New("port unset")
-	}
-
-	if os.Getenv("OLLAMA_PORT") != "" {
-		port = os.Getenv("OLLAMA_PORT")
-	}
-
-	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%s", host, port))
+	host, port, extraOrigins, err := getRunServerParams(cmd)
 	if err != nil {
 		return err
 	}
-	extraOrigins, err := cmd.Flags().GetStringSlice("allowed-origins")
+
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%s", host, port))
 	if err != nil {
 		return err
 	}
