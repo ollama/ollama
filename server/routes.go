@@ -78,6 +78,25 @@ func GenerateHandler(c *gin.Context) {
 			return
 		}
 
+		if opts.NumKeep < 0 {
+			promptWithSystem, err := model.Prompt(api.GenerateRequest{})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			tokensWithSystem := llm.Encode(promptWithSystem)
+			tokensNoSystem := llm.Encode(promptNoSystem)
+
+			llm.NumKeep = len(tokensWithSystem) - len(tokensNoSystem) + 1
+		}
+
 		loaded.llm = llm
 		loaded.digest = model.Digest
 		loaded.options = opts
