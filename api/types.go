@@ -33,9 +33,11 @@ func (e StatusError) Error() string {
 }
 
 type GenerateRequest struct {
-	Model   string `json:"model"`
-	Prompt  string `json:"prompt"`
-	Context []int  `json:"context,omitempty"`
+	Model    string `json:"model"`
+	Prompt   string `json:"prompt"`
+	System   string `json:"system"`
+	Template string `json:"template"`
+	Context  []int  `json:"context,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }

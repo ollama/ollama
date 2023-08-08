@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -15,7 +16,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"text/template"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/parser"
@@ -37,7 +37,12 @@ type Model struct {
 }
 
 func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
-	tmpl, err := template.New("").Parse(m.Template)
+	t := m.Template
+	if request.Template != "" {
+		t = request.Template
+	}
+
+	tmpl, err := template.New("").Parse(t)
 	if err != nil {
 		return "", err
 	}
@@ -55,6 +60,10 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 	vars.System = m.System
 	vars.Prompt = request.Prompt
 	vars.Context = request.Context
+
+	if request.System != "" {
+		vars.System = request.System
+	}
 
 	var sb strings.Builder
 	if err := tmpl.Execute(&sb, vars); err != nil {
