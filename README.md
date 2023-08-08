@@ -34,8 +34,9 @@ ollama run llama2
 | Model                    | Parameters | Size  | Download                        |
 | ------------------------ | ---------- | ----- | ------------------------------- |
 | Llama2                   | 7B         | 3.8GB | `ollama pull llama2`            |
-| Llama2 Uncensored        | 7B         | 3.8GB | `ollama pull llama2-uncensored` |
 | Llama2 13B               | 13B        | 7.3GB | `ollama pull llama2:13b`        |
+| Llama2 70B               | 70B        | 39GB  | `ollama pull llama2:70b`        |
+| Llama2 Uncensored        | 7B         | 3.8GB | `ollama pull llama2-uncensored` |
 | Orca Mini                | 3B         | 1.9GB | `ollama pull orca`              |
 | Vicuna                   | 7B         | 3.8GB | `ollama pull vicuna`            |
 | Nous-Hermes              | 13B        | 7.3GB | `ollama pull nous-hermes`       |
