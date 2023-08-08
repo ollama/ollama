@@ -29,6 +29,7 @@ type RegistryOptions struct {
 	Insecure bool
 	Username string
 	Password string
+	Token    string
 }
 
 type Model struct {
@@ -824,6 +825,14 @@ func DeleteModel(name string) error {
 func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
+	token, err := getAuthToken(mp, regOpts)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("tok = %s", token)
+	regOpts.Token = token
+
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
 	manifest, err := GetManifest(mp)
@@ -903,6 +912,14 @@ func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
+	token, err := getAuthToken(mp, regOpts)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("tok = %s", token)
+	regOpts.Token = token
+
 	fn(api.ProgressResponse{Status: "pulling manifest"})
 
 	manifest, err := pullModelManifest(mp, regOpts)
@@ -962,13 +979,6 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 }
 
 func pullModelManifest(mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, error) {
-	token, err := getAuthToken(mp, regOpts)
-	if err != nil {
-		return nil, err
-	}
-
-	log.Printf("tok = %s", token)
-
 	url := fmt.Sprintf("%s/v2/%s/manifests/%s", mp.Registry, mp.GetNamespaceRepository(), mp.Tag)
 	headers := map[string]string{
 		"Accept": "application/vnd.docker.distribution.manifest.v2+json",
@@ -1168,7 +1178,9 @@ func makeRequest(method, url string, headers map[string]string, body io.Reader, 
 	}
 
 	// TODO: better auth
-	if regOpts.Username != "" && regOpts.Password != "" {
+	if regOpts.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+regOpts.Token)
+	} else if regOpts.Username != "" && regOpts.Password != "" {
 		req.SetBasicAuth(regOpts.Username, regOpts.Password)
 	}
 
