@@ -9,7 +9,8 @@
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-> Note: Ollama is in early preview. Please report any issues you find.
+> [!NOTE]
+> Ollama is in early preview. Please report any issues you find.
 
 Run, create, and share large language models (LLMs).
 
