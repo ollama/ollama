@@ -103,9 +103,7 @@ EMBED <file path>
 The `PARAMETER` instruction defines a parameter that can be set when the model is run.
 
 ```
-
 PARAMETER <parameter> <parametervalue>
-
 ```
 
 ### Valid Parameters and Values
@@ -139,25 +137,19 @@ PARAMETER <parameter> <parametervalue>
 | `{{ .First }}`  | A boolean value used to render specific template information for the first generation of a session.          |
 
 ```
-
 TEMPLATE """
 {{- if .First }}
-
 ### System:
-
 {{ .System }}
 {{- end }}
 
 ### User:
-
 {{ .Prompt }}
 
 ### Response:
-
 """
 
 SYSTEM """<system message>"""
-
 ```
 
 ### SYSTEM
@@ -165,9 +157,7 @@ SYSTEM """<system message>"""
 The `SYSTEM` instruction specifies the system prompt to be used in the template, if applicable.
 
 ```
-
 SYSTEM """<system message>"""
-
 ```
 
 ### LICENSE
@@ -175,18 +165,12 @@ SYSTEM """<system message>"""
 The `LICENSE` instruction allows you to specify the legal license under which the model used with this Modelfile is shared or distributed.
 
 ```
-
 LICENSE """
 <license text>
 """
-
 ```
 
 ## Notes
 
 - the **modelfile is not case sensitive**. In the examples, we use uppercase for instructions to make it easier to distinguish it from arguments.
 - Instructions can be in any order. In the examples, we start with FROM instruction to keep it easily readable.
-
-```
-
-```

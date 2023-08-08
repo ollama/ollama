@@ -303,13 +303,23 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 				}
 			}
 		case "embed":
-			// TODO: support entire directories here
 			embedFilePath, err := filenameWithPath(path, c.Args)
 			if err != nil {
 				return err
 			}
 			embed.files = append(embed.files, embedFilePath)
-		case "license", "template", "system", "prompt":
+		case "license":
+			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
+			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
+
+			layer, err := CreateLayer(strings.NewReader(c.Args))
+			if err != nil {
+				return err
+			}
+
+			layer.MediaType = mediaType
+			layers = append(layers, layer)
+		case "template", "system", "prompt":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
 			// remove the prompt layer if one exists
 			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
@@ -353,8 +363,6 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 		embed.opts = api.DefaultOptions()
 		embed.opts.FromMap(formattedParams)
 	}
-
-	fmt.Println(embed.model)
 
 	// generate the embedding layers
 	embeddingLayers, err := embeddingLayers(embed)
@@ -426,6 +434,11 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load model to generate embeddings: %v", err)
 		}
+		defer func() {
+			if llm != nil {
+				llm.Close()
+			}
+		}()
 
 		addedFiles := make(map[string]bool) // keep track of files that have already been added
 		for _, filePattern := range e.files {
