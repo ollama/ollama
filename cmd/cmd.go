@@ -513,15 +513,36 @@ func generateBatch(cmd *cobra.Command, model string) error {
 	return nil
 }
 
-func RunServer(_ *cobra.Command, _ []string) error {
-	host := os.Getenv("OLLAMA_HOST")
-	if host == "" {
-		host = "127.0.0.1"
+// getRunServerParams takes a command and the environment variables and returns the correct params
+// given the order of precedence: command line args (highest), environment variables, defaults (lowest)
+func getRunServerParams(cmd *cobra.Command) (host, port string, extraOrigins []string, err error) {
+	host = os.Getenv("OLLAMA_HOST")
+	hostFlag := cmd.Flags().Lookup("host")
+	if hostFlag == nil {
+		return "", "", nil, errors.New("host unset")
 	}
+	if hostFlag.Changed || host == "" {
+		host = hostFlag.Value.String()
+	}
+	port = os.Getenv("OLLAMA_PORT")
+	portFlag := cmd.Flags().Lookup("port")
+	if portFlag == nil {
+		return "", "", nil, errors.New("port unset")
+	}
+	if portFlag.Changed || port == "" {
+		port = portFlag.Value.String()
+	}
+	extraOrigins, err = cmd.Flags().GetStringSlice("allowed-origins")
+	if err != nil {
+		return "", "", nil, err
+	}
+	return host, port, extraOrigins, nil
+}
 
-	port := os.Getenv("OLLAMA_PORT")
-	if port == "" {
-		port = "11434"
+func RunServer(cmd *cobra.Command, _ []string) error {
+	host, port, extraOrigins, err := getRunServerParams(cmd)
+	if err != nil {
+		return err
 	}
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%s", host, port))
@@ -529,7 +550,7 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	return server.Serve(ln)
+	return server.Serve(ln, extraOrigins)
 }
 
 func startMacApp(client *api.Client) error {
@@ -620,6 +641,10 @@ func NewCLI() *cobra.Command {
 		Short:   "Start ollama",
 		RunE:    RunServer,
 	}
+
+	serveCmd.Flags().String("port", "11434", "Port to listen on, may also use OLLAMA_PORT environment variable")
+	serveCmd.Flags().String("host", "127.0.0.1", "Host listen address, may also use OLLAMA_HOST environment variable")
+	serveCmd.Flags().StringSlice("allowed-origins", []string{}, "Additional allowed CORS origins (outside of localhost), specify as comma-separated list")
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
