@@ -9,13 +9,16 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 )
 
 type Client struct {
-	base    url.URL
-	HTTP    http.Client
+	base	url.URL
+	HTTP	http.Client
 	Headers http.Header
 }
+
+const DEFAULT_HOST string = "127.0.0.1:11434"
 
 func checkError(resp *http.Response, body []byte) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
@@ -33,8 +36,17 @@ func checkError(resp *http.Response, body []byte) error {
 	return apiError
 }
 
+func getDefaultHost() string {
+	host := os.Getenv("OLLAMA_HOST")
+	if host == "" {
+		host = DEFAULT_HOST
+	}
+
+	return host
+}
+
 func NewClient(hosts ...string) *Client {
-	host := "127.0.0.1:11434"
+	host := getDefaultHost()
 	if len(hosts) > 0 {
 		host = hosts[0]
 	}

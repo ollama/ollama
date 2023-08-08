@@ -130,6 +130,13 @@ Finally, run a model!
 ./ollama run llama2
 ```
 
+When using the Ollama command-line tool, you can define the `OLLAMA_HOST` environment variable to point to a different Ollama server, if not running on localhost:
+
+```
+export OLLAMA_HOST=https://my.ollama.server
+./ollama list  # executes API on OLLAMA_SERVER
+```
+
 ## REST API
 
 ### `POST /api/generate`
