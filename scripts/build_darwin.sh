@@ -8,6 +8,7 @@ CGO_ENABLED=1 GOARCH=amd64 go build -o dist/ollama-darwin-amd64
 lipo -create -output dist/ollama dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
 rm dist/ollama-darwin-amd64 dist/ollama-darwin-arm64
 codesign --deep --force --options=runtime --sign "$APPLE_IDENTITY" --timestamp dist/ollama
+chmod +x dist/ollama
 
 # build and sign the mac app
 npm install --prefix app

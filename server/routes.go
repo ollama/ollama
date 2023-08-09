@@ -52,23 +52,24 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if model.Digest != loaded.digest || !reflect.DeepEqual(loaded.options, req.Options) {
+	opts := api.DefaultOptions()
+	if err := opts.FromMap(model.Options); err != nil {
+		log.Printf("could not load model options: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := opts.FromMap(req.Options); err != nil {
+		log.Printf("could not merge model options: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if model.Digest != loaded.digest || !reflect.DeepEqual(loaded.options, opts) {
 		if loaded.llm != nil {
 			loaded.llm.Close()
 			loaded.llm = nil
 			loaded.digest = ""
-		}
-
-		opts := api.DefaultOptions()
-		if err := opts.FromMap(model.Options); err != nil {
-			log.Printf("could not load model options: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if err := opts.FromMap(req.Options); err != nil {
-			log.Printf("could not merge model options: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
 		}
 
 		llm, err := llama.New(model.ModelPath, opts)
@@ -77,8 +78,28 @@ func GenerateHandler(c *gin.Context) {
 			return
 		}
 
+		if opts.NumKeep < 0 {
+			promptWithSystem, err := model.Prompt(api.GenerateRequest{})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			tokensWithSystem := llm.Encode(promptWithSystem)
+			tokensNoSystem := llm.Encode(promptNoSystem)
+
+			llm.NumKeep = len(tokensWithSystem) - len(tokensNoSystem) + 1
+		}
+
 		loaded.llm = llm
 		loaded.digest = model.Digest
+		loaded.options = opts
 	}
 
 	sessionDuration := 5 * time.Minute
@@ -299,11 +320,10 @@ func CopyModelHandler(c *gin.Context) {
 	}
 }
 
-func Serve(ln net.Listener) error {
+func Serve(ln net.Listener, extraOrigins []string) error {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
-	// only allow http/https from localhost
-	config.AllowOrigins = []string{
+	allowedOrigins := []string{
 		"http://localhost",
 		"http://localhost:*",
 		"https://localhost",
@@ -312,7 +332,13 @@ func Serve(ln net.Listener) error {
 		"http://127.0.0.1:*",
 		"https://127.0.0.1",
 		"https://127.0.0.1:*",
+		"http://0.0.0.0",
+		"http://0.0.0.0:*",
+		"https://0.0.0.0",
+		"https://0.0.0.0:*",
 	}
+	allowedOrigins = append(allowedOrigins, extraOrigins...)
+	config.AllowOrigins = allowedOrigins
 
 	r := gin.Default()
 	r.Use(cors.New(config))

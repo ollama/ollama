@@ -9,13 +9,13 @@
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-> Note: Ollama is in early preview. Please report any issues you find.
-
 Run, create, and share large language models (LLMs).
+
+> Note: Ollama is in early preview. Please report any issues you find.
 
 ## 💾 Download
 
-- [Download](https://ollama.ai/download) for macOS on Apple Silicon (Intel coming soon)
+- [Download](https://ollama.ai/download) for macOS
 - Download for Windows and Linux (coming soon)
 - Build [from source](#building)
 
@@ -34,8 +34,9 @@ ollama run llama2
 | Model                    | Parameters | Size  | Download                        |
 | ------------------------ | ---------- | ----- | ------------------------------- |
 | Llama2                   | 7B         | 3.8GB | `ollama pull llama2`            |
-| Llama2 Uncensored        | 7B         | 3.8GB | `ollama pull llama2-uncensored` |
 | Llama2 13B               | 13B        | 7.3GB | `ollama pull llama2:13b`        |
+| Llama2 70B               | 70B        | 39GB  | `ollama pull llama2:70b`        |
+| Llama2 Uncensored        | 7B         | 3.8GB | `ollama pull llama2-uncensored` |
 | Orca Mini                | 3B         | 1.9GB | `ollama pull orca`              |
 | Vicuna                   | 7B         | 3.8GB | `ollama pull vicuna`            |
 | Nous-Hermes              | 13B        | 7.3GB | `ollama pull nous-hermes`       |
@@ -60,6 +61,7 @@ Pull a base model:
 ```
 ollama pull llama2
 ```
+
 > To update a model to the latest version, run `ollama pull llama2` again. The model will be updated (if necessary).
 
 Create a `Modelfile`:
@@ -138,20 +140,15 @@ Finally, run a model!
 
 ## REST API
 
-### `POST /api/generate`
+> See the [API documentation](./docs/api.md) for all endpoints.
 
-Generate text from a model.
-
-```
-curl -X POST http://localhost:11434/api/generate -d '{"model": "llama2", "prompt":"Why is the sky blue?"}'
-```
-
-### `POST /api/create`
-
-Create a model from a `Modelfile`.
+Ollama has an API for running and managing models. For example to generate text from a model:
 
 ```
-curl -X POST http://localhost:11434/api/create -d '{"name": "my-model", "path": "/path/to/modelfile"}'
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "llama2",
+  "prompt":"Why is the sky blue?"
+}'
 ```
 
 <hr/>
@@ -164,8 +161,9 @@ curl -X POST http://localhost:11434/api/create -d '{"name": "my-model", "path": 
 
 <hr/>
 
-## 😍 Projects built with Ollama
+## 😍 Tools using Ollama
 
+- [LangChain](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa) integration - Set up all local, JS-based retrival + QA over docs in 5 minutes.
 - [Continue](https://github.com/continuedev/continue) - embeds Ollama inside Visual Studio Code. The extension lets you highlight code to add to the prompt, ask questions in the sidebar, and generate code inline.
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot) - interact with Ollama as a chatbot on Discord.
 - [Raycast Ollama](https://github.com/MassimilianoPasquini97/raycast_ollama) - Raycast extension to use Ollama for local llama inference on Raycast.

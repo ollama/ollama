@@ -1,7 +1,0 @@
-FROM ../models/nous-hermes-13b.ggmlv3.q4_0.bin
-TEMPLATE """
-### Instruction:
-{{ .Prompt }}
-
-### Response:
-"""

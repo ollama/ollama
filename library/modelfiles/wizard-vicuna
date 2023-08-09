@@ -1,5 +1,0 @@
-FROM ../models/Wizard-Vicuna-13B-Uncensored.ggmlv3.q4_0.bin
-TEMPLATE """
-USER: {{ .Prompt }}
-ASSISTANT:
-"""
