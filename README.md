@@ -54,6 +54,15 @@ ollama run llama2
 Hello! How can I help you today?
 ```
 
+For multiline input, you can wrap it with `"""`:
+
+```
+>>> """Hello,
+... world!
+... """
+I'm a basic program that prints the famous "Hello, world!" message to the console.
+```
+
 ### Create a custom model
 
 Pull a base model:
