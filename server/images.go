@@ -825,14 +825,6 @@ func DeleteModel(name string) error {
 func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
-	token, err := getAuthToken(mp, regOpts)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("tok = %s", token)
-	regOpts.Token = token
-
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
 	manifest, err := GetManifest(mp)
@@ -911,14 +903,6 @@ func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 
 func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
-
-	token, err := getAuthToken(mp, regOpts)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("tok = %s", token)
-	regOpts.Token = token
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
 
@@ -1168,20 +1152,30 @@ func makeRequest(method, url string, headers map[string]string, body io.Reader, 
 		}
 	}
 
-	req, err := http.NewRequest(method, url, body)
+	// make a copy of the body in case we need to try the call to makeRequest again
+	var buf bytes.Buffer
+	if body != nil {
+		_, err := io.Copy(&buf, body)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	bodyCopy := bytes.NewReader(buf.Bytes())
+
+	req, err := http.NewRequest(method, url, bodyCopy)
 	if err != nil {
 		return nil, err
 	}
 
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	// TODO: better auth
 	if regOpts.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+regOpts.Token)
 	} else if regOpts.Username != "" && regOpts.Password != "" {
 		req.SetBasicAuth(regOpts.Username, regOpts.Password)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	client := &http.Client{
@@ -1198,7 +1192,53 @@ func makeRequest(method, url string, headers map[string]string, body io.Reader, 
 		return nil, err
 	}
 
+	// if the request is unauthenticated, try to authenticate and make the request again
+	if resp.StatusCode == http.StatusUnauthorized {
+		auth := resp.Header.Get("Www-Authenticate")
+		authRedir := ParseAuthRedirectString(string(auth))
+		token, err := getAuthToken(authRedir, regOpts)
+		if err != nil {
+			return nil, err
+		}
+		regOpts.Token = token
+		bodyCopy = bytes.NewReader(buf.Bytes())
+		return makeRequest(method, url, headers, bodyCopy, regOpts)
+	}
+
 	return resp, nil
+}
+
+func getValue(header, key string) string {
+	startIdx := strings.Index(header, key+"=")
+	if startIdx == -1 {
+		return ""
+	}
+
+	// Move the index to the starting quote after the key.
+	startIdx += len(key) + 2
+	endIdx := startIdx
+
+	for endIdx < len(header) {
+		if header[endIdx] == '"' {
+			if endIdx+1 < len(header) && header[endIdx+1] != ',' { // If the next character isn't a comma, continue
+				endIdx++
+				continue
+			}
+			break
+		}
+		endIdx++
+	}
+	return header[startIdx:endIdx]
+}
+
+func ParseAuthRedirectString(authStr string) AuthRedirect {
+	authStr = strings.TrimPrefix(authStr, "Bearer ")
+
+	return AuthRedirect{
+		Realm:   getValue(authStr, "realm"),
+		Service: getValue(authStr, "service"),
+		Scope:   getValue(authStr, "scope"),
+	}
 }
 
 var errDigestMismatch = fmt.Errorf("digest mismatch, file must be downloaded again")

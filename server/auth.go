@@ -20,16 +20,25 @@ import (
 	"github.com/jmorganca/ollama/api"
 )
 
+type AuthRedirect struct {
+	Realm   string
+	Service string
+	Scope   string
+}
+
 type SignatureData struct {
 	Method string
 	Path   string
 	Data   []byte
 }
 
-func getAuthToken(mp ModelPath, regOpts *RegistryOptions) (string, error) {
-	//url := fmt.Sprintf("%s/token", mp.Registry)
-	url := fmt.Sprintf("localhost/token?service=%s&scope=repository:%s:pull,push", mp.Registry, mp.GetNamespaceRepository())
-	//url := "localhost/token"
+func (r AuthRedirect) URL() string {
+	return fmt.Sprintf("%s?service=%s&scope=%s", r.Realm, r.Service, r.Scope)
+}
+
+func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, error) {
+	url := redirData.URL()
+
 	fmt.Printf("url = '%s'", url)
 
 	home, err := os.UserHomeDir()
