@@ -367,6 +367,7 @@ func Serve(ln net.Listener, extraOrigins []string) error {
 }
 
 func streamResponse(c *gin.Context, ch chan any) {
+	c.Header("Content-Type", "application/x-ndjson")
 	c.Stream(func(w io.Writer) bool {
 		val, ok := <-ch
 		if !ok {
