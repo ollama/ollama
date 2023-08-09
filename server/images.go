@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,6 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -232,7 +232,7 @@ func filenameWithPath(path, f string) (string, error) {
 	return f, nil
 }
 
-func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) error {
+func CreateModel(ctx context.Context, name string, path string, fn func(resp api.ProgressResponse)) error {
 	mf, err := os.Open(path)
 	if err != nil {
 		fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't open modelfile '%s'", path)})
@@ -265,7 +265,7 @@ func CreateModel(name string, path string, fn func(resp api.ProgressResponse)) e
 					// the model file does not exist, try pulling it
 					if errors.Is(err, os.ErrNotExist) {
 						fn(api.ProgressResponse{Status: "pulling model file"})
-						if err := PullModel(c.Args, &RegistryOptions{}, fn); err != nil {
+						if err := PullModel(ctx, c.Args, &RegistryOptions{}, fn); err != nil {
 							return err
 						}
 						mf, err = GetManifest(ParseModelPath(c.Args))
@@ -900,7 +900,7 @@ func PushModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 	return nil
 }
 
-func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
@@ -915,7 +915,7 @@ func PullModel(name string, regOpts *RegistryOptions, fn func(api.ProgressRespon
 	layers = append(layers, &manifest.Config)
 
 	for _, layer := range layers {
-		if err := downloadBlob(mp, layer.Digest, regOpts, fn); err != nil {
+		if err := downloadBlob(ctx, mp, layer.Digest, regOpts, fn); err != nil {
 			return err
 		}
 	}
@@ -1139,112 +1139,6 @@ func uploadBlobChunked(mp ModelPath, url string, layer *Layer, regOpts *Registry
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("on finish upload registry responded with code %d: %v", resp.StatusCode, string(body))
 	}
-	return nil
-}
-
-func downloadBlob(mp ModelPath, digest string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
-	fp, err := GetBlobsPath(digest)
-	if err != nil {
-		return err
-	}
-
-	if fi, _ := os.Stat(fp); fi != nil {
-		// we already have the file, so return
-		fn(api.ProgressResponse{
-			Digest:    digest,
-			Total:     int(fi.Size()),
-			Completed: int(fi.Size()),
-		})
-
-		return nil
-	}
-
-	var size int64
-	chunkSize := 1024 * 1024 // 1 MiB in bytes
-
-	fi, err := os.Stat(fp + "-partial")
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		// noop, file doesn't exist so create it
-	case err != nil:
-		return fmt.Errorf("stat: %w", err)
-	default:
-		size = fi.Size()
-		// Ensure the size is divisible by the chunk size by removing excess bytes
-		size -= size % int64(chunkSize)
-
-		err := os.Truncate(fp+"-partial", size)
-		if err != nil {
-			return fmt.Errorf("truncate: %w", err)
-		}
-	}
-
-	url := fmt.Sprintf("%s/v2/%s/blobs/%s", mp.Registry, mp.GetNamespaceRepository(), digest)
-	headers := map[string]string{
-		"Range": fmt.Sprintf("bytes=%d-", size),
-	}
-
-	resp, err := makeRequest("GET", url, headers, nil, regOpts)
-	if err != nil {
-		log.Printf("couldn't download blob: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("on download registry responded with code %d: %v", resp.StatusCode, string(body))
-	}
-
-	err = os.MkdirAll(path.Dir(fp), 0o700)
-	if err != nil {
-		return fmt.Errorf("make blobs directory: %w", err)
-	}
-
-	out, err := os.OpenFile(fp+"-partial", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("open file: %w", err)
-	}
-	defer out.Close()
-
-	remaining, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
-	completed := size
-	total := remaining + completed
-
-	for {
-		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("pulling %s...", digest[7:19]),
-			Digest:    digest,
-			Total:     int(total),
-			Completed: int(completed),
-		})
-
-		if completed >= total {
-			if err := out.Close(); err != nil {
-				return err
-			}
-
-			if err := os.Rename(fp+"-partial", fp); err != nil {
-				fn(api.ProgressResponse{
-					Status:    fmt.Sprintf("error renaming file: %v", err),
-					Digest:    digest,
-					Total:     int(total),
-					Completed: int(completed),
-				})
-				return err
-			}
-
-			break
-		}
-
-		n, err := io.CopyN(out, resp.Body, int64(chunkSize))
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-		completed += n
-	}
-
-	log.Printf("success getting %s\n", digest)
 	return nil
 }
 

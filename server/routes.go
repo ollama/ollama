@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -200,7 +201,10 @@ func PullModelHandler(c *gin.Context) {
 			Password: req.Password,
 		}
 
-		if err := PullModel(req.Name, regOpts, fn); err != nil {
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+
+		if err := PullModel(ctx, req.Name, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -250,7 +254,10 @@ func CreateModelHandler(c *gin.Context) {
 			ch <- resp
 		}
 
-		if err := CreateModel(req.Name, req.Path, fn); err != nil {
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+
+		if err := CreateModel(ctx, req.Name, req.Path, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
