@@ -276,6 +276,7 @@ func DefaultOptions() Options {
 		UseMLock:           false,
 		RopeFrequencyBase:  10000.0,
 		RopeFrequencyScale: 1.0,
+		EmbeddingOnly:      true,
 
 		RepeatLastN:      64,
 		RepeatPenalty:    1.1,
