@@ -66,7 +66,7 @@ More examples are available in the [examples directory](../examples).
 
 ### FROM (Required)
 
-The FROM instruction defines the base model to use when creating a model.
+The `FROM` instruction defines the base model to use when creating a model.
 
 ```
 FROM <model name>:<tag>
@@ -88,6 +88,35 @@ FROM ./ollama-model.bin
 ```
 
 This bin file location should be specified as an absolute path or relative to the Modelfile location.
+
+### Build from unquantized bin file
+
+```
+FROM ./ollama-model-f16.bin AS Q4_0
+```
+
+This creates a model using the raw weights and converts it to 4-bit quantization. Other quantization levels are available depending on the original model type:
+
+- Q2\_K
+- Q3\_K
+- Q3\_K (alias for Q3\_K\_M)
+- Q3\_K\_S
+- Q3\_K\_M
+- Q3\_K\_L
+- Q4\_0
+- Q4\_1
+- Q4\_K (alias for Q4\_K\_M)
+- Q4\_K\_S
+- Q4\_K\_M
+- Q5\_0
+- Q5\_1
+- Q5\_K (alias for Q5\_K\_M)
+- Q5\_K\_S
+- Q5\_K\_M
+- Q6\_K
+- Q8\_0
+
+The model can also be converted into unquantized models F16 and F32.
 
 ### PARAMETER
 
