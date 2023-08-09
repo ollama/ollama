@@ -87,13 +87,13 @@ func GenerateHandler(c *gin.Context) {
 		}
 
 		if opts.NumKeep < 0 {
-			promptWithSystem, err := model.Prompt(api.GenerateRequest{})
+			promptWithSystem, err := model.Prompt(api.GenerateRequest{}, "")
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
 
-			promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}})
+			promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}}, "")
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return

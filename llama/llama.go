@@ -416,7 +416,7 @@ func (llm *LLM) Embedding(input string) ([]float64, error) {
 		return nil, errors.New("llama: embedding not enabled")
 	}
 
-	tokens := llm.tokenize(input)
+	tokens := llm.Encode(input)
 	if tokens == nil {
 		return nil, errors.New("llama: tokenize embedding")
 	}
