@@ -11,7 +11,6 @@ import (
 	"html/template"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -480,31 +479,10 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 						Total:     len(data) - 1,
 						Completed: i,
 					})
-					retry := 0
-				generate:
-					if retry > 3 {
-						log.Printf("failed to generate embedding for '%s' line %d: %v", filePath, i+1, err)
-						continue
-					}
 					embed, err := llm.Embedding(d)
 					if err != nil {
-						log.Printf("retrying embedding generation for '%s' line %d: %v", filePath, i+1, err)
-						retry++
-						goto generate
-					}
-					// Check for NaN and Inf in the embedding, which can't be stored
-					for _, value := range embed {
-						if math.IsNaN(value) || math.IsInf(value, 0) {
-							log.Printf("reloading model, embedding contains NaN or Inf")
-							// reload the model to get a new embedding, the seed can effect these outputs and reloading changes it
-							llm.Close()
-							llm, err = llama.New(e.model, e.opts)
-							if err != nil {
-								return nil, fmt.Errorf("load model to generate embeddings: %v", err)
-							}
-							retry++
-							goto generate
-						}
+						log.Printf("failed to generate embedding for '%s' line %d: %v", filePath, i+1, err)
+						continue
 					}
 					embeddings = append(embeddings, vector.Embedding{Data: d, Vector: embed})
 				}
