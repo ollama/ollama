@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -32,14 +34,28 @@ type SignatureData struct {
 	Data   []byte
 }
 
-func (r AuthRedirect) URL() string {
-	return fmt.Sprintf("%s?service=%s&scope=%s", r.Realm, r.Service, r.Scope)
+func generateNonce(length int) (string, error) {
+	nonce := make([]byte, length)
+	_, err := rand.Read(nonce)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(nonce), nil
+}
+
+func (r AuthRedirect) URL() (string, error) {
+	nonce, err := generateNonce(16)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s?service=%s&scope=%s&ts=%d&nonce=%s", r.Realm, r.Service, r.Scope, time.Now().Unix(), nonce), nil
 }
 
 func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, error) {
-	url := redirData.URL()
-
-	fmt.Printf("url = '%s'", url)
+	url, err := redirData.URL()
+	if err != nil {
+		return "", err
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -73,8 +89,6 @@ func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, err
 		return "", err
 	}
 
-	log.Printf("sig = %s", sig)
-
 	headers := map[string]string{
 		"Authorization": sig,
 	}
@@ -85,7 +99,6 @@ func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, err
 	}
 	defer resp.Body.Close()
 
-	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("on pull registry responded with code %d: %s", resp.StatusCode, body)
@@ -104,19 +117,21 @@ func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, err
 	return tok.Token, nil
 }
 
+// Bytes returns a byte slice of the data to sign for the request
 func (s SignatureData) Bytes() []byte {
-	// contentHash = base64(hex(sha256(s.Data)))
+	// We first derive the content hash of the request body using:
+	//     base64(hex(sha256(request body)))
+
 	hash := sha256.Sum256(s.Data)
 	hashHex := make([]byte, hex.EncodedLen(len(hash)))
 	hex.Encode(hashHex, hash[:])
 	contentHash := base64.StdEncoding.EncodeToString(hashHex)
-	log.Printf("data = %v hash = %v hashHex = %v contentHash = %v", s.Data, hash, string(hashHex), contentHash)
 
-	log.Printf("string = '%s'", strings.Join([]string{s.Method, s.Path, contentHash}, ","))
-	// bytesToSign e.g.: "GET,http://localhost,OTdkZjM1O...
-	bytesToSign := []byte(strings.Join([]string{s.Method, s.Path, contentHash}, ","))
+	// We then put the entire request together in a serialize string using:
+	//       "<method>,<uri>,<content hash>"
+	// e.g.  "GET,http://localhost,OTdkZjM1O..."
 
-	return bytesToSign
+	return []byte(strings.Join([]string{s.Method, s.Path, contentHash}, ","))
 }
 
 // SignData takes a SignatureData object and signs it with a raw private key
@@ -135,7 +150,7 @@ func (s SignatureData) Sign(rawKey []byte) (string, error) {
 	pubKey := ssh.MarshalAuthorizedKey(signer.PublicKey())
 	parts := bytes.Split(pubKey, []byte(" "))
 	if len(parts) < 2 {
-		return "", fmt.Errorf("malformed private key")
+		return "", fmt.Errorf("malformed public key")
 	}
 
 	signedData, err := signer.Sign(nil, s.Bytes())
