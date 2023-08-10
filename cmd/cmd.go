@@ -523,41 +523,31 @@ func generateBatch(cmd *cobra.Command, model string) error {
 	return nil
 }
 
-// getRunServerParams takes a command and the environment variables and returns the correct params
-// given the order of precedence: command line args (highest), environment variables, defaults (lowest)
-func getRunServerParams(cmd *cobra.Command) (host, port string, extraOrigins []string, err error) {
-	host = os.Getenv("OLLAMA_HOST")
-	hostFlag := cmd.Flags().Lookup("host")
-	if hostFlag == nil {
-		return "", "", nil, errors.New("host unset")
-	}
-	if hostFlag.Changed || host == "" {
-		host = hostFlag.Value.String()
-	}
-	port = os.Getenv("OLLAMA_PORT")
-	portFlag := cmd.Flags().Lookup("port")
-	if portFlag == nil {
-		return "", "", nil, errors.New("port unset")
-	}
-	if portFlag.Changed || port == "" {
-		port = portFlag.Value.String()
-	}
-	extraOrigins, err = cmd.Flags().GetStringSlice("origins")
-	if err != nil {
-		return "", "", nil, err
-	}
-	return host, port, extraOrigins, nil
-}
-
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, origins, err := getRunServerParams(cmd)
-	if err != nil {
-		return err
+	var host, port = "127.0.0.1", "11434"
+
+	parts := strings.Split(os.Getenv("OLLAMA_HOST"), ":")
+	if ip := net.ParseIP(parts[0]); ip != nil {
+		host = ip.String()
+	}
+
+	if len(parts) > 1 {
+		port = parts[1]
+	}
+
+	// deprecated: include port in OLLAMA_HOST
+	if p := os.Getenv("OLLAMA_PORT"); p != "" {
+		port = p
 	}
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%s", host, port))
 	if err != nil {
 		return err
+	}
+
+	var origins []string
+	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
+		origins = strings.Split(o, ",")
 	}
 
 	return server.Serve(ln, origins)
@@ -651,10 +641,6 @@ func NewCLI() *cobra.Command {
 		Short:   "Start ollama",
 		RunE:    RunServer,
 	}
-
-	serveCmd.Flags().String("port", "11434", "Port to listen on")
-	serveCmd.Flags().String("host", "127.0.0.1", "Host to listen on")
-	serveCmd.Flags().StringSlice("origins", nil, "Additional allowed CORS origins as comma-separated list (e.g. http://192.168.1.24:3000)")
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
