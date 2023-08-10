@@ -218,13 +218,15 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 			if field.IsValid() && field.CanSet() {
 				switch field.Kind() {
 				case reflect.Int:
-					// when JSON unmarshals numbers, it uses float64 by default, not int
-					val, ok := val.(float64)
-					if !ok {
+					switch t := val.(type) {
+					case int64:
+						field.SetInt(t)
+					case float64:
+						// when JSON unmarshals numbers, it uses float64, not int
+						field.SetInt(int64(t))
+					default:
 						log.Printf("could not convert model parmeter %v to int, skipped", key)
-						continue
 					}
-					field.SetInt(int64(val))
 				case reflect.Bool:
 					val, ok := val.(bool)
 					if !ok {
