@@ -318,12 +318,16 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 
 func showLayer(l *server.Layer) {
 	filename, err := server.GetBlobsPath(l.Digest)
-	bts, err := os.ReadFile(filename)
 	if err != nil {
-		fmt.Printf("Couldn't read layer")
+		fmt.Println("Couldn't get layer's path")
 		return
 	}
-	fmt.Printf(string(bts) + "\n")
+	bts, err := os.ReadFile(filename)
+	if err != nil {
+		fmt.Println("Couldn't read layer")
+		return
+	}
+	fmt.Println(string(bts))
 }
 
 func generateInteractive(cmd *cobra.Command, model string) error {
@@ -460,7 +464,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				mp := server.ParseModelPath(model)
 				manifest, err := server.GetManifest(mp)
 				if err != nil {
-					fmt.Printf("error: couldn't get a manifestfor this model")
+					fmt.Println("error: couldn't get a manifest for this model")
 					continue
 				}
 				switch args[1] {
