@@ -84,7 +84,7 @@ func TestGetRunServerParams(t *testing.T) {
 		// now set command flags
 		serveCmd.Flags().Set("host", "localhost")
 		serveCmd.Flags().Set("port", "8888")
-		serveCmd.Flags().Set("allowed-origins", "http://foo.example.com,http://192.168.1.1")
+		serveCmd.Flags().Set("origins", "http://foo.example.com,http://192.168.1.1")
 
 		host, port, extraOrigins, err := getRunServerParams(serveCmd)
 		if err != nil {

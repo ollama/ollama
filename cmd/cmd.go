@@ -538,7 +538,7 @@ func getRunServerParams(cmd *cobra.Command) (host, port string, extraOrigins []s
 	if portFlag.Changed || port == "" {
 		port = portFlag.Value.String()
 	}
-	extraOrigins, err = cmd.Flags().GetStringSlice("allowed-origins")
+	extraOrigins, err = cmd.Flags().GetStringSlice("origins")
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -546,7 +546,7 @@ func getRunServerParams(cmd *cobra.Command) (host, port string, extraOrigins []s
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, extraOrigins, err := getRunServerParams(cmd)
+	host, port, origins, err := getRunServerParams(cmd)
 	if err != nil {
 		return err
 	}
@@ -556,7 +556,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	return server.Serve(ln, extraOrigins)
+	return server.Serve(ln, origins)
 }
 
 func startMacApp(client *api.Client) error {
@@ -650,7 +650,7 @@ func NewCLI() *cobra.Command {
 
 	serveCmd.Flags().String("port", "11434", "Port to listen on, may also use OLLAMA_PORT environment variable")
 	serveCmd.Flags().String("host", "127.0.0.1", "Host listen address, may also use OLLAMA_HOST environment variable")
-	serveCmd.Flags().StringSlice("allowed-origins", []string{}, "Additional allowed CORS origins (outside of localhost), specify as comma-separated list")
+	serveCmd.Flags().StringSlice("origins", nil, "Additional allowed CORS origins as comma-separated list")
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
