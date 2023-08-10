@@ -48,8 +48,10 @@ func Parse(reader io.Reader) ([]Command, error) {
 			command.Name = string(fields[0])
 			command.Args = string(fields[1])
 		default:
-			// log a warning for unknown commands
-			log.Printf("WARNING: Unknown command: %s", fields[0])
+			if !bytes.HasPrefix(fields[0], []byte("#")) {
+				// log a warning for unknown commands
+				log.Printf("WARNING: Unknown command: %s", fields[0])
+			}
 			continue
 		}
 
