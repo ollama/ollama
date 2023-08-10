@@ -45,6 +45,10 @@ func Parse(reader io.Reader) ([]Command, error) {
 			command.Args = string(fields[1])
 		case "PARAMETER":
 			fields = bytes.SplitN(fields[1], []byte(" "), 2)
+			if len(fields) < 2 {
+				return nil, fmt.Errorf("missing value for %s", fields)
+			}
+
 			command.Name = string(fields[0])
 			command.Args = string(fields[1])
 		default:
