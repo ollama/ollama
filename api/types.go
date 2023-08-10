@@ -42,6 +42,17 @@ type GenerateRequest struct {
 	Options map[string]interface{} `json:"options"`
 }
 
+type EmbeddingRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+
+	Options map[string]interface{} `json:"options"`
+}
+
+type EmbeddingResponse struct {
+	Embedding []float64 `json:"embedding"`
+}
+
 type CreateRequest struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
