@@ -648,9 +648,9 @@ func NewCLI() *cobra.Command {
 		RunE:    RunServer,
 	}
 
-	serveCmd.Flags().String("port", "11434", "Port to listen on, may also use OLLAMA_PORT environment variable")
-	serveCmd.Flags().String("host", "127.0.0.1", "Host listen address, may also use OLLAMA_HOST environment variable")
-	serveCmd.Flags().StringSlice("origins", nil, "Additional allowed CORS origins as comma-separated list")
+	serveCmd.Flags().String("port", "11434", "Port to listen on")
+	serveCmd.Flags().String("host", "127.0.0.1", "Host to listen on")
+	serveCmd.Flags().StringSlice("origins", nil, "Additional allowed CORS origins as comma-separated list (e.g. http://192.168.1.24:3000)")
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
