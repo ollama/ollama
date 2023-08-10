@@ -182,6 +182,23 @@ func GenerateHandler(c *gin.Context) {
 		}
 	}()
 
+	if c.GetHeader("X-Streamed") == "false" {
+		var response api.GenerateResponse
+		generated := ""
+		for resp := range ch {
+			if r, ok := resp.(api.GenerateResponse); ok {
+				generated += r.Response
+				response = r
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Unexpected generate response type"})
+				return
+			}
+		}
+		response.Response = generated
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
 	streamResponse(c, ch)
 }
 
