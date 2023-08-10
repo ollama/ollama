@@ -98,6 +98,10 @@ type ListResponseModel struct {
 	Size       int       `json:"size"`
 }
 
+type TokenResponse struct {
+	Token string `json:"token"`
+}
+
 type GenerateResponse struct {
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
