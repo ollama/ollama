@@ -54,7 +54,7 @@ ollama run llama2
 Hello! How can I help you today?
 ```
 
-For multiline input, you can wrap it with `"""`:
+For multiline input, you can wrap text with `"""`:
 
 ```
 >>> """Hello,
@@ -96,9 +96,7 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-For more examples, see the [examples](./examples) directory.
-
-For more information on creating a Modelfile, see the [Modelfile](./docs/modelfile.md) documentation.
+For more examples, see the [examples](./examples) directory. For more information on creating a Modelfile, see the [Modelfile](./docs/modelfile.md) documentation.
 
 ### Pull a model from the registry
 
