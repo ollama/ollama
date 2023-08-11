@@ -159,3 +159,4 @@ curl -X POST http://localhost:11434/api/generate -d '{
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot) - interact with Ollama as a chatbot on Discord.
 - [Raycast Ollama](https://github.com/MassimilianoPasquini97/raycast_ollama) - Raycast extension to use Ollama for local llama inference on Raycast.
 - [Simple HTML UI for Ollama](https://github.com/rtcfirefly/ollama-ui)
+- [Emacs client](https://github.com/zweifisch/ollama) for Ollama
