@@ -277,7 +277,8 @@ func PushModelHandler(c *gin.Context) {
 			Password: req.Password,
 		}
 
-		if err := PushModel(req.Name, regOpts, fn); err != nil {
+		ctx := context.Background()
+		if err := PushModel(ctx, req.Name, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -50,7 +51,7 @@ func (r AuthRedirect) URL() (string, error) {
 	return fmt.Sprintf("%s?service=%s&scope=%s&ts=%d&nonce=%s", r.Realm, r.Service, r.Scope, time.Now().Unix(), nonce), nil
 }
 
-func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, error) {
+func getAuthToken(ctx context.Context, redirData AuthRedirect, regOpts *RegistryOptions) (string, error) {
 	url, err := redirData.URL()
 	if err != nil {
 		return "", err
@@ -92,7 +93,7 @@ func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, err
 		"Authorization": sig,
 	}
 
-	resp, err := makeRequest("GET", url, headers, nil, regOpts)
+	resp, err := makeRequest(ctx, "GET", url, headers, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't get token: %q", err)
 	}
