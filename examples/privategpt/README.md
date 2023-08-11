@@ -59,6 +59,13 @@ Enter a query: How many locations does WeWork have?
 As of June 2023, WeWork has 777 locations worldwide, including 610 Consolidated Locations (as defined in the section entitled Key Performance Indicators).
 ```
 
+### Try a different model:
+
+```
+ollama pull llama2:13b
+MODEL=llama2:13b python privateGPT.py
+```
+
 ## Adding your own data
 
 Put any and all your files into the `source_documents` directory
