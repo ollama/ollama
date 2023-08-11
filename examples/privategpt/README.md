@@ -4,8 +4,16 @@
 
 ### Setup
 
+Install the Python dependencies:
+
 ```shell
 pip install -r requirements.txt
+```
+
+Pull the model you'd like to use:
+
+```
+ollama pull llama2-uncensored
 ```
 
 ### Getting WeWork's latest quarterly report
