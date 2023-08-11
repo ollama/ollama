@@ -63,11 +63,6 @@ func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, err
 
 	keyPath := path.Join(home, ".ollama", "id_ed25519")
 
-	err = os.MkdirAll(path.Dir(keyPath), 0700)
-	if err != nil {
-		return "", fmt.Errorf("could not create .ollama directory %w", err)
-	}
-
 	rawKey, err := os.ReadFile(keyPath)
 	if err != nil {
 		log.Printf("Failed to load private key: %v", err)

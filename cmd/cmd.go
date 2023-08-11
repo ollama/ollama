@@ -9,12 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -585,7 +585,12 @@ func initializeKeypair() error {
 			return err
 		}
 
-		err = ioutil.WriteFile(privKeyPath, pem.EncodeToMemory(privKeyBytes), 0600)
+		err = os.MkdirAll(path.Dir(privKeyPath), 0o700)
+		if err != nil {
+			return fmt.Errorf("could not create directory %w", err)
+		}
+
+		err = os.WriteFile(privKeyPath, pem.EncodeToMemory(privKeyBytes), 0600)
 		if err != nil {
 			return err
 		}
@@ -597,7 +602,7 @@ func initializeKeypair() error {
 
 		pubKeyData := ssh.MarshalAuthorizedKey(sshPrivateKey.PublicKey())
 
-		err = ioutil.WriteFile(pubKeyPath, pubKeyData, 0644)
+		err = os.WriteFile(pubKeyPath, pubKeyData, 0644)
 		if err != nil {
 			return err
 		}
