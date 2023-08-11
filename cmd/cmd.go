@@ -545,7 +545,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		port = p
 	}
 
-	err = initializeKeypair()
+	err := initializeKeypair()
 	if err != nil {
 		return err
 	}
