@@ -1,6 +1,6 @@
 # privateGPT with Llama 2 Uncensored
 
-> Note: this example is a simplified version of [PrivateGPT](https://github.com/imartinez/privateGPT) that works with Llama 2 Uncensored.
+> Note: this example is a slightly modified version of PrivateGPT using models such as Llama 2 Uncensored. All credit for PrivateGPT goes to Iván Martínez who is the creator of it, and you can find his GitHub repo [here](https://github.com/imartinez/privateGPT).
 
 ### Setup
 
