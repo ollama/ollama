@@ -26,6 +26,7 @@ ollama pull llama2-uncensored
 ### Getting WeWork's latest quarterly report
 
 ```
+mkdir source_documents
 curl https://d18rn0p25nwr6d.cloudfront.net/CIK-0001813756/975b3e9b-268e-4798-a9e4-2a9a7c92dc10.pdf  -o source_documents/wework.pdf
 ```
 
