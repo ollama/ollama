@@ -29,7 +29,7 @@ const (
 	FileTypeQ4_0
 	FileTypeQ4_1
 	FileTypeQ4_1_F16
-	FileTypeQ8_0 = iota + 3
+	FileTypeQ8_0 = iota + 2
 	FileTypeQ5_0
 	FileTypeQ5_1
 	FileTypeQ2_K
@@ -37,7 +37,6 @@ const (
 	FileTypeQ4_K
 	FileTypeQ5_K
 	FileTypeQ6_K
-	FileTypeUnknown = -1
 )
 
 type GGML struct {
