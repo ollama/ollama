@@ -2,7 +2,6 @@
 import os
 import glob
 from typing import List
-from dotenv import load_dotenv
 from multiprocessing import Pool
 from tqdm import tqdm
 
@@ -27,16 +26,12 @@ from langchain.docstore.document import Document
 from constants import CHROMA_SETTINGS
 
 
-load_dotenv()
-
-
 # Load environment variables
 persist_directory = os.environ.get('PERSIST_DIRECTORY', 'db')
 source_directory = os.environ.get('SOURCE_DIRECTORY', 'source_documents')
 embeddings_model_name = os.environ.get('EMBEDDINGS_MODEL_NAME', 'all-MiniLM-L6-v2')
 chunk_size = 500
 chunk_overlap = 50
-
 
 # Custom document loaders
 class MyElmLoader(UnstructuredEmailLoader):

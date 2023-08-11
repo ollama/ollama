@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from dotenv import load_dotenv
 from langchain.chains import RetrievalQA
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
@@ -8,8 +7,6 @@ from langchain.llms import GPT4All, Ollama
 import os
 import argparse
 import time
-
-load_dotenv()
 
 model = os.environ.get("MODEL", "llama2-uncensored")
 embeddings_model_name = os.environ.get("EMBEDDINGS_MODEL_NAME", "all-MiniLM-L6-v2")
