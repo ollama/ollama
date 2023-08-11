@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -62,9 +61,14 @@ func getAuthToken(redirData AuthRedirect, regOpts *RegistryOptions) (string, err
 		return "", err
 	}
 
-	keyPath := path.Join(home, ".ollama/id_ed25519")
+	keyPath := path.Join(home, ".ollama", "id_ed25519")
 
-	rawKey, err := ioutil.ReadFile(keyPath)
+	err = os.MkdirAll(path.Dir(keyPath), 0700)
+	if err != nil {
+		return "", fmt.Errorf("could not create .ollama directory %w", err)
+	}
+
+	rawKey, err := os.ReadFile(keyPath)
 	if err != nil {
 		log.Printf("Failed to load private key: %v", err)
 		return "", err
