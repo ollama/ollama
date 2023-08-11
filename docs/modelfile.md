@@ -35,6 +35,7 @@ INSTRUCTION arguments
 | [`PARAMETER`](#parameter)           | Sets the parameters for how Ollama will run the model.        |
 | [`TEMPLATE`](#template)             | The full prompt template to be sent to the model.             |
 | [`SYSTEM`](#system)                 | Specifies the system prompt that will be set in the template. |
+| [`ADAPTER`](#adapter)               | Defines the (Q)LoRA adapters to apply to the model.           |
 | [`LICENSE`](#license)               | Specifies the legal license.                                  |
 
 ## Examples
@@ -148,6 +149,14 @@ The `SYSTEM` instruction specifies the system prompt to be used in the template,
 
 ```
 SYSTEM """<system message>"""
+```
+
+### ADAPTER
+
+The `ADAPTER` instruction specifies the LoRA adapter to apply to the base model. The value of this instruction should be an absolute path or a path relative to the Modelfile and the file must be in a GGML file format. The adapter should be tuned from the base model otherwise the behaviour is undefined.
+
+```
+ADAPTER ./ollama-lora.bin
 ```
 
 ### LICENSE

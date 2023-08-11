@@ -40,7 +40,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 			command.Args = string(fields[1])
 			// copy command for validation
 			modelCommand = command
-		case "LICENSE", "TEMPLATE", "SYSTEM", "PROMPT", "EMBED":
+		case "LICENSE", "TEMPLATE", "SYSTEM", "PROMPT", "EMBED", "ADAPTER":
 			command.Name = string(bytes.ToLower(fields[0]))
 			command.Args = string(fields[1])
 		case "PARAMETER":
