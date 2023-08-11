@@ -3,9 +3,13 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -20,6 +24,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
@@ -540,6 +545,11 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		port = p
 	}
 
+	err := initializeKeypair()
+	if err != nil {
+		return err
+	}
+
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%s", host, port))
 	if err != nil {
 		return err
@@ -551,6 +561,50 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 	}
 
 	return server.Serve(ln, origins)
+}
+
+func initializeKeypair() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	privKeyPath := filepath.Join(home, ".ollama", "id_ed25519")
+	pubKeyPath := filepath.Join(home, ".ollama", "id_ed25519.pub")
+
+	_, err = os.Stat(privKeyPath)
+	if os.IsNotExist(err) {
+		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
+		_, privKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return err
+		}
+
+		privKeyBytes, err := format.OpenSSHPrivateKey(privKey, "")
+		if err != nil {
+			return err
+		}
+
+		err = ioutil.WriteFile(privKeyPath, pem.EncodeToMemory(privKeyBytes), 0600)
+		if err != nil {
+			return err
+		}
+
+		sshPrivateKey, err := ssh.NewSignerFromKey(privKey)
+		if err != nil {
+			return err
+		}
+
+		pubKeyData := ssh.MarshalAuthorizedKey(sshPrivateKey.PublicKey())
+
+		err = ioutil.WriteFile(pubKeyPath, pubKeyData, 0644)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("Your new public key is: \n\n%s\n", string(pubKeyData))
+	}
+	return nil
 }
 
 func startMacApp(client *api.Client) error {
