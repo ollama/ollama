@@ -23,7 +23,7 @@ const answer = await ollama.call(`why is the sky blue?`);
 console.log(answer);
 ```
 
-That will get us the same thing as if we ran `ollama run llama2 "why is the sky blue"`. But we want to load a document from the web to ask a question against. **Cheerio** is a great library for ingesting a webpage, and **LangChain** uses it in their **CheerioWebBaseLoader**. So let's build that part of the app.
+That will get us the same thing as if we ran `ollama run llama2 "why is the sky blue"` in the terminal. But we want to load a document from the web to ask a question against. **Cheerio** is a great library for ingesting a webpage, and **LangChain** uses it in their **CheerioWebBaseLoader**. So let's build that part of the app.
 
 ```javascript
 import { CheerioWebBaseLoader } from "langchain/document_loaders/web/cheerio";
