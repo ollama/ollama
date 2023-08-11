@@ -137,7 +137,7 @@ func doDownload(ctx context.Context, mp ModelPath, regOpts *RegistryOptions, f *
 		"Range": fmt.Sprintf("bytes=%d-", size),
 	}
 
-	resp, err := makeRequest("GET", url, headers, nil, regOpts)
+	resp, err := makeRequest(ctx, "GET", url, headers, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't download blob: %v", err)
 		return err
