@@ -1,6 +1,6 @@
 # Using LangChain with Ollama using JavaScript
 
-In this tutorial, we are going to use JavaScript with LangChain and Ollama to learn about something just a touch more recent. In August 2023, there was a series of wildfires on Maui. There is no way any LLM can know about this, since their training data doesn't include anything as recent as that. So we can find the [Wikipedia article about the fires](https://en.wikipedia.org/wiki/2023_Hawaii_wildfires) and ask questions about the contents.
+In this tutorial, we are going to use JavaScript with LangChain and Ollama to learn about something just a touch more recent. In August 2023, there was a series of wildfires on Maui. There is no way an LLM trained before that time can know about this, since their training data would not include anything as recent as that. So we can find the [Wikipedia article about the fires](https://en.wikipedia.org/wiki/2023_Hawaii_wildfires) and ask questions about the contents.
 
 To get started, let's just use **LangChain** to ask a simple question to a model. To do this with JavaScript, we need to install **LangChain**:
 
