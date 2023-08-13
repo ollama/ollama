@@ -1,8 +1,9 @@
 package llm
 
 /*
-#cgo CPPFLAGS: -O3 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -DNDEBUG -DGGML_USE_K_QUANTS
-#cgo CXXFLAGS: -std=gnu++11
+#cgo CFLAGS: -Ofast -std=c11 -fPIC
+#cgo CPPFLAGS: -Ofast -Wall -Wextra -Wno-unused-function -Wno-unused-variable -DNDEBUG -DGGML_USE_K_QUANTS
+#cgo CXXFLAGS: -std=c++11 -fPIC
 #cgo darwin CPPFLAGS:  -DGGML_USE_ACCELERATE
 #cgo darwin,arm64 CPPFLAGS: -DGGML_USE_METAL -DGGML_METAL_NDEBUG
 #cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders

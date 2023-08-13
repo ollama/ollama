@@ -1,7 +1,7 @@
 //go:build opencl
 
 /**
- * llama.cpp - git 8183159cf3def112f6d1fe94815fce70e1bffa12
+ * llama.cpp - git f64d44a9b9581cd58f7ec40f4fa1c3ca5ca18e1e
  *
  * MIT License
  *

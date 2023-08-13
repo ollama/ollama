@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 8183159cf3def112f6d1fe94815fce70e1bffa12
+ * llama.cpp - git f64d44a9b9581cd58f7ec40f4fa1c3ca5ca18e1e
  *
  * MIT License
  *
@@ -175,6 +175,46 @@ struct llama_file {
     }
 };
 
+// llama_context_data
+struct llama_data_context {
+    virtual void write(const void * src, size_t size) = 0;
+    virtual size_t get_size_written() = 0;
+    virtual ~llama_data_context() = default;
+};
+
+struct llama_data_buffer_context : llama_data_context {
+    uint8_t* ptr;
+    size_t size_written = 0;
+
+    llama_data_buffer_context(uint8_t * p) : ptr(p) {}
+
+    void write(const void * src, size_t size) override {
+        memcpy(ptr, src, size);
+        ptr += size;
+        size_written += size;
+    }
+
+    size_t get_size_written() override {
+        return size_written;
+    }
+};
+
+struct llama_data_file_context : llama_data_context {
+    llama_file* file;
+    size_t size_written = 0;
+
+    llama_data_file_context(llama_file * f) : file(f) {}
+
+    void write(const void * src, size_t size) override {
+        file->write_raw(src, size);
+        size_written += size;
+    }
+
+    size_t get_size_written() override {
+        return size_written;
+    }
+};
+
 #if defined(_WIN32)
 static std::string llama_format_win_err(DWORD err) {
     LPSTR buf;
@@ -205,7 +245,7 @@ struct llama_mmap {
         // prefetch/readahead impairs performance on NUMA systems
         if (numa) { prefetch = 0; }
 #ifdef __linux__
-        if (prefetch) { flags |= MAP_POPULATE; }
+        if (prefetch >= file->size) { flags |= MAP_POPULATE; }
 #endif
         addr = mmap(NULL, file->size, PROT_READ, flags, fd, 0);
         if (addr == MAP_FAILED) {

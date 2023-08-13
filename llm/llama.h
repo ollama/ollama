@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 8183159cf3def112f6d1fe94815fce70e1bffa12
+ * llama.cpp - git f64d44a9b9581cd58f7ec40f4fa1c3ca5ca18e1e
  *
  * MIT License
  *
@@ -112,7 +112,20 @@ extern "C" {
 
     typedef void (*llama_progress_callback)(float progress, void *ctx);
 
-   struct llama_context_params {
+    enum llama_log_level {
+        LLAMA_LOG_LEVEL_ERROR = 2,
+        LLAMA_LOG_LEVEL_WARN  = 3,
+        LLAMA_LOG_LEVEL_INFO  = 4
+    };
+
+    // Signature for logging events
+    // Note that text includes the new line character at the end for most events.
+    // If your logging mechanism cannot handle that, check if the last character is '\n' and strip it
+    // if it exists.
+    // It might not exist for progress report where '.' is output repeatedly.
+    typedef void (*llama_log_callback)(enum llama_log_level level, const char * text, void * user_data);
+
+    struct llama_context_params {
         uint32_t seed;         // RNG seed, -1 for random
         int32_t  n_ctx;        // text context
         int32_t  n_batch;      // prompt processing batch size
@@ -220,6 +233,10 @@ extern "C" {
         int32_t n_p_eval;
         int32_t n_eval;
     };
+
+    // Set callback for all future logging events.
+    // If this is not called, or NULL is supplied, everything is output on stderr.
+    LLAMA_API void llama_log_set(llama_log_callback log_callback, void * user_data);
 
     LLAMA_API int llama_max_devices();
 
