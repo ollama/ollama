@@ -18,7 +18,7 @@ Then we can create a model and ask the question:
 
 ```python
 from langchain.llms import Ollama
-ollama = Ollama(base_url='[http://localhost:11434](http://localhost:11434/)',
+ollama = Ollama(base_url='http://localhost:11434',
 model="llama2")
 print(ollama("why is the sky blue"))
 ```
