@@ -471,6 +471,8 @@ func (llm *llama) Embedding(input string) ([]float64, error) {
 		return nil, errors.New("llama: eval")
 	}
 
+	C.llama_print_timings(llm.ctx)
+
 	n := C.llama_n_embd(llm.ctx)
 	if n <= 0 {
 		return nil, errors.New("llama: no embeddings generated")
