@@ -1117,6 +1117,7 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, url string, layer *Lay
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 
 	totalUploaded := 0
 
