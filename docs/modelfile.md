@@ -91,11 +91,12 @@ This bin file location should be specified as an absolute path or relative to th
 
 ### EMBED
 
-The EMBED instruction is used to add embeddings of files to a model. This is useful for adding custom data that the model can reference when generating an answer.
-
+The EMBED instruction is used to add embeddings of files to a model. This is useful for adding custom data that the model can reference when generating an answer. Note that currently only text files are supported, formatted with each line as one embedding.
 ```
 FROM <model name>:<tag>
-EMBED <file path>
+EMBED <file path>.txt
+EMBED <different file path>.txt
+EMBED <path to directory>/*.txt
 ```
 
 ### PARAMETER
