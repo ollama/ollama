@@ -1,7 +1,7 @@
 //go:build darwin
 
 /**
- * llama.cpp - git f64d44a9b9581cd58f7ec40f4fa1c3ca5ca18e1e
+ * llama.cpp - git 3ebb00935f3f0522b75df49c2769ab1774b91380
  *
  * MIT License
  *
@@ -154,7 +154,7 @@ struct ggml_metal_context * ggml_metal_init(int n_cb) {
         ctx->library = [ctx->device newLibraryWithSource:msl_library_source options:nil error:&error];
         if (error) {
             fprintf(stderr, "%s: error: %s\n", __func__, [[error description] UTF8String]);
-            exit(1);
+            return NULL;
         }
     }
 #else
@@ -172,7 +172,7 @@ struct ggml_metal_context * ggml_metal_init(int n_cb) {
         NSString * src  = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&error];
         if (error) {
             fprintf(stderr, "%s: error: %s\n", __func__, [[error description] UTF8String]);
-            exit(1);
+            return NULL;
         }
 
 #ifdef GGML_QKK_64
@@ -184,7 +184,7 @@ struct ggml_metal_context * ggml_metal_init(int n_cb) {
 #endif
         if (error) {
             fprintf(stderr, "%s: error: %s\n", __func__, [[error description] UTF8String]);
-            exit(1);
+            return NULL;
         }
     }
 #endif

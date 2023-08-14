@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git f64d44a9b9581cd58f7ec40f4fa1c3ca5ca18e1e
+ * llama.cpp - git 3ebb00935f3f0522b75df49c2769ab1774b91380
  *
  * MIT License
  *
@@ -297,20 +297,29 @@ struct llama_mmap {
             throw std::runtime_error(format("MapViewOfFile failed: %s", llama_format_win_err(error).c_str()));
         }
 
-        #if _WIN32_WINNT >= _WIN32_WINNT_WIN8
         if (prefetch) {
-            // Advise the kernel to preload the mapped memory
-            WIN32_MEMORY_RANGE_ENTRY range;
-            range.VirtualAddress = addr;
-            range.NumberOfBytes = (SIZE_T)size;
-            if (!PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)) {
-                fprintf(stderr, "warning: PrefetchVirtualMemory failed: %s\n",
-                        llama_format_win_err(GetLastError()).c_str());
+            // The PrefetchVirtualMemory API is only present on Windows 8 and above, so we
+            // will dynamically load it using GetProcAddress.
+            BOOL (WINAPI *pPrefetchVirtualMemory) (HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG);
+            HMODULE hKernel32;
+
+            // This call is guaranteed to succeed.
+            hKernel32 = GetModuleHandleW(L"kernel32.dll");
+
+            // This call may fail if on a pre-Win8 system.
+            pPrefetchVirtualMemory = reinterpret_cast<decltype(pPrefetchVirtualMemory)> (GetProcAddress(hKernel32, "PrefetchVirtualMemory"));
+
+            if (pPrefetchVirtualMemory) {
+                // Advise the kernel to preload the mapped memory.
+                WIN32_MEMORY_RANGE_ENTRY range;
+                range.VirtualAddress = addr;
+                range.NumberOfBytes = (SIZE_T)size;
+                if (!pPrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)) {
+                    fprintf(stderr, "warning: PrefetchVirtualMemory failed: %s\n",
+                            llama_format_win_err(GetLastError()).c_str());
+                }
             }
         }
-        #else
-        #pragma message("warning: You are building for pre-Windows 8; prefetch not supported")
-        #endif // _WIN32_WINNT >= _WIN32_WINNT_WIN8
     }
 
     ~llama_mmap() {

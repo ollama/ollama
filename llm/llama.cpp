@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git f64d44a9b9581cd58f7ec40f4fa1c3ca5ca18e1e
+ * llama.cpp - git 3ebb00935f3f0522b75df49c2769ab1774b91380
  *
  * MIT License
  *
@@ -3362,6 +3362,12 @@ struct llama_context * llama_new_context_with_model(
     if (params.n_gpu_layers > 0) {
         // this allocates all Metal resources and memory buffers
         ctx->ctx_metal = ggml_metal_init(1);
+
+        if (!ctx->ctx_metal) {
+            LLAMA_LOG_ERROR("%s: ggml_metal_init() failed\n", __func__);
+            llama_free(ctx);
+            return NULL;
+        }
 
         void * data_ptr  = NULL;
         size_t data_size = 0;
