@@ -502,6 +502,12 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 			}
 		}()
 
+		// this will be used to check if we already have embeddings for a file
+		modelDigest, err := modelDigest(e.model)
+		if err != nil {
+			return nil, fmt.Errorf("model digest: %w", err)
+		}
+
 		addedFiles := make(map[string]bool) // keep track of files that have already been added
 		for _, filePattern := range e.files {
 			matchingFiles, err := filepath.Glob(filePattern)
@@ -515,7 +521,7 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 				}
 				addedFiles[filePath] = true
 				// check if we already have embeddings for this file path
-				layerIdentifier := fmt.Sprintf("%s:%s", filePath, e.model)
+				layerIdentifier := fmt.Sprintf("%s:%s", filePath, modelDigest)
 				digest, _ := GetSHA256Digest(strings.NewReader(layerIdentifier))
 				existing, err := existingFileEmbeddings(digest)
 				if err != nil {
@@ -583,6 +589,17 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 		}
 	}
 	return layers, nil
+}
+
+func modelDigest(modelPath string) (string, error) {
+	modelFile, err := os.Open(modelPath)
+	if err != nil {
+		return "", fmt.Errorf("could not open model blob: %w", err)
+	}
+	defer modelFile.Close()
+
+	digest, _ := GetSHA256Digest(modelFile)
+	return digest, nil
 }
 
 // existingFileEmbeddings checks if we already have embeddings for a file and loads them into a look-up map
