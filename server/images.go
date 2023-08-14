@@ -514,6 +514,14 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 					continue
 				}
 				addedFiles[filePath] = true
+				// check if we already have embeddings for this file path
+				layerIdentifier := fmt.Sprintf("%s:%s", filePath, e.model)
+				digest, _ := GetSHA256Digest(strings.NewReader(layerIdentifier))
+				existing, err := existingFileEmbeddings(digest)
+				if err != nil {
+					return nil, fmt.Errorf("failed to check existing embeddings for file %s: %v", filePath, err)
+				}
+
 				// TODO: check file type
 				f, err := os.Open(filePath)
 				if err != nil {
@@ -542,6 +550,11 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 						Total:     len(data) - 1,
 						Completed: i,
 					})
+					if len(existing[d]) > 0 {
+						// already have an embedding for this line
+						embeddings = append(embeddings, vector.Embedding{Data: d, Vector: existing[d]})
+						continue
+					}
 					embed, err := llmModel.Embedding(d)
 					if err != nil {
 						log.Printf("failed to generate embedding for '%s' line %d: %v", filePath, i+1, err)
@@ -556,17 +569,11 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 				}
 				r := bytes.NewReader(b)
 
-				digest, size := GetSHA256Digest(r)
-				// Reset the position of the reader after calculating the digest
-				if _, err := r.Seek(0, io.SeekStart); err != nil {
-					return nil, fmt.Errorf("could not reset embed reader: %w", err)
-				}
-
 				layer := &LayerReader{
 					Layer: Layer{
 						MediaType: "application/vnd.ollama.image.embed",
 						Digest:    digest,
-						Size:      size,
+						Size:      r.Len(),
 					},
 					Reader: r,
 				}
@@ -576,6 +583,32 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 		}
 	}
 	return layers, nil
+}
+
+// existingFileEmbeddings checks if we already have embeddings for a file and loads them into a look-up map
+func existingFileEmbeddings(digest string) (map[string][]float64, error) {
+	path, err := GetBlobsPath(digest)
+	if err != nil {
+		return nil, fmt.Errorf("embeddings blobs path: %w", err)
+	}
+	existingFileEmbeddings := make(map[string][]float64)
+	if _, err := os.Stat(path); err == nil {
+		// already have some embeddings for this file, load embeddings previously generated
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open existing embedding file: %s", err)
+		}
+		defer file.Close()
+
+		existing := []vector.Embedding{}
+		if err = json.NewDecoder(file).Decode(&existing); err != nil {
+			return nil, err
+		}
+		for _, e := range existing {
+			existingFileEmbeddings[e.Data] = e.Vector
+		}
+	}
+	return existingFileEmbeddings, nil
 }
 
 func removeLayerFromLayers(layers []*LayerReader, mediaType string) []*LayerReader {
@@ -598,7 +631,8 @@ func SaveLayers(layers []*LayerReader, fn func(resp api.ProgressResponse), force
 		}
 
 		_, err = os.Stat(fp)
-		if os.IsNotExist(err) || force {
+		// note: embed layers are always written since their digest doesnt indicate anything about the contents
+		if os.IsNotExist(err) || force || layer.MediaType == "application/vnd.ollama.image.embed" {
 			fn(api.ProgressResponse{Status: fmt.Sprintf("writing layer %s", layer.Digest)})
 
 			out, err := os.Create(fp)
@@ -1180,7 +1214,7 @@ func makeRequest(ctx context.Context, method, url string, headers map[string]str
 	var ok bool
 	if retries, ok = retryCtx.(int); ok {
 		if retries > MaxRetries {
-			return nil, fmt.Errorf("Maximum retries hit; are you sure you have access to this resource?")
+			return nil, fmt.Errorf("maximum retries hit; are you sure you have access to this resource?")
 		}
 	}
 
