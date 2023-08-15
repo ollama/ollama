@@ -38,6 +38,8 @@ var loaded struct {
 	options api.Options
 }
 
+var defaultSessionDuration = 5 * time.Minute
+
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
 func load(model *Model, reqOpts map[string]interface{}, sessionDuration time.Duration) error {
 	opts := api.DefaultOptions()
@@ -134,7 +136,7 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	sessionDuration := 5 * time.Minute
+	sessionDuration := defaultSessionDuration // TODO: set this duration from the request if specified
 	if err := load(model, req.Options, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
