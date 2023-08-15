@@ -38,6 +38,7 @@ Advanced parameters:
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system prompt to (overrides what is defined in the `Modelfile`)
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
+- `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 
 ### Request
 
@@ -71,6 +72,7 @@ The final response in the stream also includes additional data about the generat
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
 - `eval_count`: number of tokens the response
 - `eval_duration`: time in nanoseconds spent generating the response
+- `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
 
 To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration`.
 
@@ -78,6 +80,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 {
   "model": "llama2:7b",
   "created_at": "2023-08-04T19:22:45.499127Z",
+  "context": [1, 2, 3],
   "done": true,
   "total_duration": 5589157167,
   "load_duration": 3013701500,
