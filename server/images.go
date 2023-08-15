@@ -505,7 +505,7 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 		// this will be used to check if we already have embeddings for a file
 		modelInfo, err := os.Stat(e.model)
 		if err != nil {
-			log.Fatalf("Error getting file info: %s", err)
+			return nil, fmt.Errorf("failed to get model file info: %v", err)
 		}
 
 		addedFiles := make(map[string]bool) // keep track of files that have already been added
