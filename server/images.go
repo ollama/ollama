@@ -1222,15 +1222,6 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, url string, layer *Lay
 }
 
 func makeRequest(ctx context.Context, method, url string, headers map[string]string, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
-	retryCtx := ctx.Value("retries")
-	var retries int
-	var ok bool
-	if retries, ok = retryCtx.(int); ok {
-		if retries > MaxRetries {
-			return nil, fmt.Errorf("maximum retries hit; are you sure you have access to this resource?")
-		}
-	}
-
 	if !strings.HasPrefix(url, "http") {
 		if regOpts.Insecure {
 			url = "http://" + url
@@ -1239,18 +1230,7 @@ func makeRequest(ctx context.Context, method, url string, headers map[string]str
 		}
 	}
 
-	// make a copy of the body in case we need to try the call to makeRequest again
-	var buf bytes.Buffer
-	if body != nil {
-		_, err := io.Copy(&buf, body)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	bodyCopy := bytes.NewReader(buf.Bytes())
-
-	req, err := http.NewRequest(method, url, bodyCopy)
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1274,23 +1254,10 @@ func makeRequest(ctx context.Context, method, url string, headers map[string]str
 			return nil
 		},
 	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
-	}
-
-	// if the request is unauthenticated, try to authenticate and make the request again
-	if resp.StatusCode == http.StatusUnauthorized {
-		auth := resp.Header.Get("Www-Authenticate")
-		authRedir := ParseAuthRedirectString(string(auth))
-		token, err := getAuthToken(ctx, authRedir, regOpts)
-		if err != nil {
-			return nil, err
-		}
-		regOpts.Token = token
-		bodyCopy = bytes.NewReader(buf.Bytes())
-		ctx = context.WithValue(ctx, "retries", retries+1)
-		return makeRequest(ctx, method, url, headers, bodyCopy, regOpts)
 	}
 
 	return resp, nil
