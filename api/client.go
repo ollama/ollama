@@ -41,7 +41,7 @@ func checkError(resp *http.Response, body []byte) error {
 }
 
 // Host returns the default host to use for the client. It is determined in the following order:
-// 1. The OLLAMA_CLIENT_HOST environment variable
+// 1. The OLLAMA_HOST environment variable
 // 2. The default host (localhost:11434)
 func Host() string {
 	if envHost != "" {
