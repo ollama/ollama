@@ -12,7 +12,7 @@ import (
 	"os"
 )
 
-const DefaultHost = "localhost:11434"
+const DefaultHost = "http://localhost:11434"
 
 var (
 	envHost = os.Getenv("OLLAMA_HOST")
