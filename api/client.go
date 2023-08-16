@@ -15,7 +15,7 @@ import (
 const DefaultHost = "localhost:11434"
 
 var (
-	envHost = os.Getenv("OLLAMA_CLIENT_HOST")
+	envHost = os.Getenv("OLLAMA_HOST")
 )
 
 type Client struct {
