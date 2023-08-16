@@ -78,6 +78,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			spinner = NewSpinner(resp.Status)
 			go spinner.Spin(100 * time.Millisecond)
 		}
+
 		return nil
 	}
 
@@ -87,6 +88,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	if spinner != nil {
 		spinner.Stop()
+		if spinner.description != "success" {
+			return errors.New("unexpected end to create model")
+		}
 	}
 
 	return nil
@@ -155,6 +159,11 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	if err := client.Push(context.Background(), &request, fn); err != nil {
 		return err
 	}
+
+	if bar != nil && !bar.IsFinished() {
+		return errors.New("unexpected end to push model")
+	}
+
 	return nil
 }
 
@@ -253,12 +262,18 @@ func pull(model string, insecure bool) error {
 			currentDigest = ""
 			fmt.Println(resp.Status)
 		}
+
 		return nil
 	}
 
 	if err := client.Pull(context.Background(), &request, fn); err != nil {
 		return err
 	}
+
+	if bar != nil && !bar.IsFinished() {
+		return errors.New("unexpected end to pull model")
+	}
+
 	return nil
 }
 
@@ -324,6 +339,10 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 
 		fmt.Println()
 		fmt.Println()
+
+		if !latest.Done {
+			return errors.New("unexpected end of response")
+		}
 
 		verbose, err := cmd.Flags().GetBool("verbose")
 		if err != nil {
@@ -688,9 +707,10 @@ func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	rootCmd := &cobra.Command{
-		Use:          "ollama",
-		Short:        "Large language model runner",
-		SilenceUsage: true,
+		Use:           "ollama",
+		Short:         "Large language model runner",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
