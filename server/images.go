@@ -1106,7 +1106,11 @@ func GetSHA256Digest(r io.Reader) (string, int) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), int(n)
 }
 
+type requestContextKey string
+
 func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *RegistryOptions) (string, error) {
+	retry, _ := ctx.Value(requestContextKey("retry")).(int)
+
 	url := fmt.Sprintf("%s/v2/%s/blobs/uploads/", mp.Registry, mp.GetNamespaceRepository())
 	if layer.From != "" {
 		url = fmt.Sprintf("%s/v2/%s/blobs/uploads/?mount=%s&from=%s", mp.Registry, mp.GetNamespaceRepository(), layer.Digest, layer.From)
@@ -1119,8 +1123,25 @@ func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *Regis
 	}
 	defer resp.Body.Close()
 
-	// Check for success
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusCreated {
+	switch resp.StatusCode {
+	case http.StatusAccepted, http.StatusCreated:
+		// noop
+	case http.StatusUnauthorized:
+		if retry > MaxRetries {
+			return "", fmt.Errorf("max retries exceeded: %s", resp.Status)
+		}
+
+		auth := resp.Header.Get("www-authenticate")
+		authRedir := ParseAuthRedirectString(auth)
+		token, err := getAuthToken(ctx, authRedir, regOpts)
+		if err != nil {
+			return "", err
+		}
+
+		regOpts.Token = token
+		ctx = context.WithValue(ctx, requestContextKey("retry"), retry+1)
+		return startUpload(ctx, mp, layer, regOpts)
+	default:
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("on upload registry responded with code %d: %s", resp.StatusCode, body)
 	}
