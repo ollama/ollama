@@ -105,9 +105,9 @@ type LayerReader struct {
 
 type ConfigV2 struct {
 	ModelFamily llm.ModelFamily `json:"model_family"`
-	ModelType   string      `json:"model_type"`
-	FileType    string      `json:"file_type"`
-	RootFS      RootFS      `json:"rootfs"`
+	ModelType   string          `json:"model_type"`
+	FileType    string          `json:"file_type"`
+	RootFS      RootFS          `json:"rootfs"`
 
 	// required by spec
 	Architecture string `json:"architecture"`
