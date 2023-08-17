@@ -48,7 +48,12 @@ func (r AuthRedirect) URL() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s?service=%s&scope=%s&ts=%d&nonce=%s", r.Realm, r.Service, r.Scope, time.Now().Unix(), nonce), nil
+	scopes := []string{}
+	for _, s := range strings.Split(r.Scope, " ") {
+		scopes = append(scopes, fmt.Sprintf("scope=%s", s))
+	}
+	scopeStr := strings.Join(scopes, "&")
+	return fmt.Sprintf("%s?service=%s&%s&ts=%d&nonce=%s", r.Realm, r.Service, scopeStr, time.Now().Unix(), nonce), nil
 }
 
 func getAuthToken(ctx context.Context, redirData AuthRedirect, regOpts *RegistryOptions) (string, error) {
