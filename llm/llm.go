@@ -35,10 +35,10 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 		return nil, err
 	}
 
-	switch ggml.FileType {
-	case FileTypeF32, FileTypeF16, FileTypeQ5_0, FileTypeQ5_1, FileTypeQ8_0:
+	switch ggml.FileType().String() {
+	case "F32", "F16", "Q5_0", "Q5_1", "Q8_0":
 		if opts.NumGPU != 0 {
-			// Q5_0, Q5_1, and Q8_0 do not support Metal API and will
+			// F32, F16, Q5_0, Q5_1, and Q8_0 do not support Metal API and will
 			// cause the runner to segmentation fault so disable GPU
 			log.Printf("WARNING: GPU disabled for F32, F16, Q5_0, Q5_1, and Q8_0")
 			opts.NumGPU = 0
@@ -46,7 +46,7 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 	}
 
 	totalResidentMemory := memory.TotalMemory()
-	switch ggml.ModelType {
+	switch ggml.ModelType() {
 	case ModelType3B, ModelType7B:
 		if totalResidentMemory < 8*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 8GB of memory")
@@ -65,10 +65,10 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 		}
 	}
 
-	switch ggml.ModelFamily {
+	switch ggml.ModelFamily() {
 	case ModelFamilyLlama:
 		return newLlama(model, adapters, opts)
 	default:
-		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily)
+		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
 	}
 }

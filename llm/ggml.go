@@ -9,8 +9,6 @@ import (
 
 type ModelFamily string
 
-const ModelFamilyLlama ModelFamily = "llama"
-
 type ModelType uint32
 
 const (
@@ -21,32 +19,37 @@ const (
 	ModelType65B ModelType = 80
 )
 
-type FileType uint32
+func (mt ModelType) String() string {
+	switch mt {
+	case ModelType3B:
+		return "3B"
+	case ModelType7B:
+		return "7B"
+	case ModelType13B:
+		return "13B"
+	case ModelType30B:
+		return "30B"
+	case ModelType65B:
+		return "65B"
+	default:
+		return "Unknown"
+	}
+}
 
-const (
-	FileTypeF32 FileType = iota
-	FileTypeF16
-	FileTypeQ4_0
-	FileTypeQ4_1
-	FileTypeQ4_1_F16
-	FileTypeQ8_0 = iota + 2
-	FileTypeQ5_0
-	FileTypeQ5_1
-	FileTypeQ2_K
-	FileTypeQ3_K
-	FileTypeQ4_K
-	FileTypeQ5_K
-	FileTypeQ6_K
-)
+type FileType interface {
+	String() string
+}
 
 type GGML struct {
-	ModelFamily
-	ModelType
-
 	magic uint32
 	container
+	model
+}
 
-	llamaHyperparameters
+type model interface {
+	ModelFamily() ModelFamily
+	ModelType() ModelType
+	FileType() FileType
 }
 
 type container interface {
@@ -166,14 +169,14 @@ func DecodeGGML(r io.ReadSeeker, hint ModelFamily) (*GGML, error) {
 	// different model types may have different layouts for hyperparameters
 	switch hint {
 	case ModelFamilyLlama:
-		binary.Read(r, binary.LittleEndian, &ggml.llamaHyperparameters)
+		var llama llamaModel
+		binary.Read(r, binary.LittleEndian, &llama.hyperparameters)
+		ggml.model = &llama
 		// TODO: sanity check hyperparameters
 	default:
 		return nil, fmt.Errorf("unsupported model type: %s", hint)
 	}
 
 	// final model type
-	ggml.ModelFamily = hint
-	ggml.ModelType = ModelType(ggml.NumLayer)
 	return &ggml, nil
 }
