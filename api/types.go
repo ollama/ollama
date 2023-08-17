@@ -216,6 +216,10 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 		if opt, ok := jsonOpts[key]; ok {
 			field := valueOpts.FieldByName(opt.Name)
 			if field.IsValid() && field.CanSet() {
+				if val == nil {
+					continue
+				}
+
 				switch field.Kind() {
 				case reflect.Int:
 					switch t := val.(type) {
