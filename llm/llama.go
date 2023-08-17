@@ -106,19 +106,22 @@ import (
 //go:embed ggml-metal.metal
 var fs embed.FS
 
-type llama struct {
-	params *C.struct_llama_context_params
-	model  *C.struct_llama_model
-	ctx    *C.struct_llama_context
+const ModelFamilyLlama ModelFamily = "llama"
 
-	last   []C.llama_token
-	embd   []C.llama_token
-	cursor int
+type llamaModel struct {
+	hyperparameters llamaHyperparameters
+}
 
-	mu sync.Mutex
-	gc bool
+func (llm *llamaModel) ModelFamily() ModelFamily {
+	return ModelFamilyLlama
+}
 
-	api.Options
+func (llm *llamaModel) ModelType() ModelType {
+	return ModelType30B
+}
+
+func (llm *llamaModel) FileType() FileType {
+	return llm.hyperparameters.FileType
 }
 
 type llamaHyperparameters struct {
@@ -133,8 +136,87 @@ type llamaHyperparameters struct {
 	// NumLayer is the number of layers in the model.
 	NumLayer uint32
 	NumRot   uint32
+
 	// FileType describes the quantization level of the model, e.g. Q4_0, Q5_K, etc.
-	FileType
+	FileType llamaFileType
+}
+
+type llamaFileType uint32
+
+const (
+	llamaFileTypeF32 llamaFileType = iota
+	llamaFileTypeF16
+	llamaFileTypeQ4_0
+	llamaFileTypeQ4_1
+	llamaFileTypeQ4_1_F16
+	llamaFileTypeQ8_0 llamaFileType = iota + 2
+	llamaFileTypeQ5_0
+	llamaFileTypeQ5_1
+	llamaFileTypeQ2_K
+	llamaFileTypeQ3_K_S
+	llamaFileTypeQ3_K_M
+	llamaFileTypeQ3_K_L
+	llamaFileTypeQ4_K_S
+	llamaFileTypeQ4_K_M
+	llamaFileTypeQ5_K_S
+	llamaFileTypeQ5_K_M
+	llamaFileTypeQ6_K
+)
+
+func (ft llamaFileType) String() string {
+	switch ft {
+	case llamaFileTypeF32:
+		return "F32"
+	case llamaFileTypeF16:
+		return "F16"
+	case llamaFileTypeQ4_0:
+		return "Q4_0"
+	case llamaFileTypeQ4_1:
+		return "Q4_1"
+	case llamaFileTypeQ4_1_F16:
+		return "Q4_1_F16"
+	case llamaFileTypeQ8_0:
+		return "Q8_0"
+	case llamaFileTypeQ5_0:
+		return "Q5_0"
+	case llamaFileTypeQ5_1:
+		return "Q5_1"
+	case llamaFileTypeQ2_K:
+		return "Q2_K"
+	case llamaFileTypeQ3_K_S:
+		return "Q3_K_S"
+	case llamaFileTypeQ3_K_M:
+		return "Q3_K_M"
+	case llamaFileTypeQ3_K_L:
+		return "Q3_K_L"
+	case llamaFileTypeQ4_K_S:
+		return "Q4_K_S"
+	case llamaFileTypeQ4_K_M:
+		return "Q4_K_M"
+	case llamaFileTypeQ5_K_S:
+		return "Q5_K_S"
+	case llamaFileTypeQ5_K_M:
+		return "Q5_K_M"
+	case llamaFileTypeQ6_K:
+		return "Q6_K"
+	default:
+		return "Unknown"
+	}
+}
+
+type llama struct {
+	params *C.struct_llama_context_params
+	model  *C.struct_llama_model
+	ctx    *C.struct_llama_context
+
+	last   []C.llama_token
+	embd   []C.llama_token
+	cursor int
+
+	mu sync.Mutex
+	gc bool
+
+	api.Options
 }
 
 func newLlama(model string, adapters []string, opts api.Options) (*llama, error) {

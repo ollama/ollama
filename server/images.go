@@ -105,9 +105,9 @@ type LayerReader struct {
 
 type ConfigV2 struct {
 	ModelFamily llm.ModelFamily `json:"model_family"`
-	ModelType   llm.ModelType   `json:"model_type"`
-	FileType    llm.FileType    `json:"file_type"`
-	RootFS      RootFS          `json:"rootfs"`
+	ModelType   string      `json:"model_type"`
+	FileType    string      `json:"file_type"`
+	RootFS      RootFS      `json:"rootfs"`
 
 	// required by spec
 	Architecture string `json:"architecture"`
@@ -308,9 +308,9 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 						return err
 					}
 
-					config.ModelFamily = ggml.ModelFamily
-					config.ModelType = ggml.ModelType
-					config.FileType = ggml.FileType
+					config.ModelFamily = ggml.ModelFamily()
+					config.ModelType = ggml.ModelType().String()
+					config.FileType = ggml.FileType().String()
 
 					// reset the file
 					file.Seek(0, io.SeekStart)
