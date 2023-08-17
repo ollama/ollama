@@ -10,9 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 )
 
-const DefaultHost = "http://localhost:11434"
+const DefaultHost = "localhost:11434"
 
 var (
 	envHost = os.Getenv("OLLAMA_HOST")
@@ -53,23 +54,21 @@ func Host() string {
 // FromEnv creates a new client using Host() as the host. An error is returns
 // if the host is invalid.
 func FromEnv() (*Client, error) {
-	u, err := url.Parse(Host())
+	h := Host()
+	if !strings.HasPrefix(h, "http://") && !strings.HasPrefix(h, "https://") {
+		h = "http://" + h
+	}
+
+	u, err := url.Parse(h)
 	if err != nil {
-		return nil, err
-	}
-	return &Client{Base: *u}, nil
-}
-
-func NewClient(hosts ...string) *Client {
-	host := DefaultHost
-	if len(hosts) > 0 {
-		host = hosts[0]
+		return nil, fmt.Errorf("could not parse host: %w", err)
 	}
 
-	return &Client{
-		Base: url.URL{Scheme: "http", Host: host},
-		HTTP: http.Client{},
+	if u.Port() == "" {
+		u.Host += ":11434"
 	}
+
+	return &Client{Base: *u, HTTP: http.Client{}}, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
