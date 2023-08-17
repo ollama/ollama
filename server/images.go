@@ -995,7 +995,14 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	layers = append(layers, &manifest.Config)
 
 	for _, layer := range layers {
-		if err := downloadBlob(ctx, mp, layer.Digest, regOpts, fn); err != nil {
+		if err := downloadBlob(
+			ctx,
+			downloadOpts{
+				mp:      mp,
+				digest:  layer.Digest,
+				regOpts: regOpts,
+				fn:      fn,
+			}); err != nil {
 			return err
 		}
 	}
