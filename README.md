@@ -29,7 +29,9 @@ ollama run llama2
 
 ## Model library
 
-`ollama` includes a library of open-source models:
+Ollama's open-source models are available on [ollama.ai/library](https://ollama.ai/library "ollama model library") 
+
+Here are some example open-source models that can be downloaded: 
 
 | Model                    | Parameters | Size  | Download                        |
 | ------------------------ | ---------- | ----- | ------------------------------- |
