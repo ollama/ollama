@@ -26,6 +26,22 @@ Now you can run `ollama`:
 ./ollama
 ```
 
+## Building
+
+### Nvidia
+
+If necessary re-generate the cuda object file.
+
+```
+go generate llm/generate_cuda.go
+```
+
+Build the Go binary with the `cuda` tag.
+
+```
+go build -tags cuda .
+```
+
 ## Releasing
 
 To release a new version of Ollama you'll need to set some environment variables:
