@@ -357,7 +357,12 @@ func ListModelsHandler(c *gin.Context) {
 				return nil
 			}
 			tag := path[:slashIndex] + ":" + path[slashIndex+1:]
-			mp := ParseModelPath(tag)
+
+			mp, err := ParseModelPath(tag, false)
+			if err != nil {
+				return err
+			}
+
 			manifest, err := GetManifest(mp)
 			if err != nil {
 				log.Printf("skipping file: %s", fp)
