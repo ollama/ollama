@@ -10,10 +10,10 @@ func TestParseModelPath(t *testing.T) {
 	}{
 		{
 			"full path https",
-			"https://ollama.ai/ns/repo:tag",
+			"https://example.com/ns/repo:tag",
 			ModelPath{
 				ProtocolScheme: DefaultProtocolScheme,
-				Registry:       "ollama.ai",
+				Registry:       "example.com",
 				Namespace:      "ns",
 				Repository:     "repo",
 				Tag:            "tag",
@@ -21,10 +21,10 @@ func TestParseModelPath(t *testing.T) {
 		},
 		{
 			"full path non-http",
-			"file://ollama.ai/ns/repo:tag",
+			"file://example.com/ns/repo:tag",
 			ModelPath{
 				ProtocolScheme: DefaultProtocolScheme,
-				Registry:       "ollama.ai",
+				Registry:       "example.com",
 				Namespace:      "ns",
 				Repository:     "repo",
 				Tag:            "tag",
@@ -32,10 +32,10 @@ func TestParseModelPath(t *testing.T) {
 		},
 		{
 			"no protocol",
-			"ollama.ai/ns/repo:tag",
+			"example.com/ns/repo:tag",
 			ModelPath{
 				ProtocolScheme: DefaultProtocolScheme,
-				Registry:       "ollama.ai",
+				Registry:       "example.com",
 				Namespace:      "ns",
 				Repository:     "repo",
 				Tag:            "tag",
@@ -79,9 +79,7 @@ func TestParseModelPath(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := ParseModelPath(tc.input)
-			want := tc.want
-
-			if got != want {
+			if got != tc.want {
 				t.Errorf("got: %q want: %q", got, tc.want)
 			}
 		})
