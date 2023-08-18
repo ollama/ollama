@@ -28,6 +28,10 @@ func ParseModelPath(name string) ModelPath {
 	var registry, namespace, repository, tag string
 
 	switch len(slashParts) {
+	case 5:
+		registry = slashParts[2]
+		namespace = slashParts[3]
+		repository = strings.Split(slashParts[4], ":")[0]
 	case 3:
 		registry = slashParts[0]
 		namespace = slashParts[1]
