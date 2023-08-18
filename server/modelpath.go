@@ -24,7 +24,7 @@ const (
 )
 
 func ParseModelPath(name string) ModelPath {
-	slashParts := strings.Split(strings.trimPrefix(name, "https://"), "/")
+	slashParts := strings.Split(strings.TrimPrefix(name, "https://"), "/")
 	var registry, namespace, repository, tag string
 
 	switch len(slashParts) {
