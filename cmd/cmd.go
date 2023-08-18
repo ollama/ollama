@@ -115,7 +115,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	_, err = os.Stat(fp)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		if err := pull(args[0], false); err != nil {
+		if err := pull(args[0], insecure); err != nil {
 			var apiStatusError api.StatusError
 			if !errors.As(err, &apiStatusError) {
 				return err
