@@ -325,7 +325,27 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 			}
 
 			if mf != nil {
-				log.Printf("manifest = %#v", mf)
+				sourceBlobPath, err := GetBlobsPath(mf.Config.Digest)
+				if err != nil {
+					return err
+				}
+
+				sourceBlob, err := os.Open(sourceBlobPath)
+				if err != nil {
+					return err
+				}
+				defer sourceBlob.Close()
+
+				var source ConfigV2
+				if err := json.NewDecoder(sourceBlob).Decode(&source); err != nil {
+					return err
+				}
+
+				// copie the model metadata
+				config.ModelFamily = source.ModelFamily
+				config.ModelType = source.ModelType
+				config.FileType = source.FileType
+
 				for _, l := range mf.Layers {
 					newLayer, err := GetLayerWithBufferFromLayer(l)
 					if err != nil {
