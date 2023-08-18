@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -23,33 +24,37 @@ const (
 	DefaultProtocolScheme = "https"
 )
 
+var protocolPattern = regexp.MustCompile(`^.*://`)
+
 func ParseModelPath(name string) ModelPath {
+	name = protocolPattern.ReplaceAllString(name, "")
+
 	slashParts := strings.Split(name, "/")
-	var registry, namespace, repository, tag string
+
+	registry := DefaultRegistry
+	namespace := DefaultNamespace
+	repository := ""
+	tag := DefaultTag
 
 	switch len(slashParts) {
 	case 3:
 		registry = slashParts[0]
 		namespace = slashParts[1]
-		repository = strings.Split(slashParts[2], ":")[0]
+		repository = slashParts[2]
 	case 2:
-		registry = DefaultRegistry
 		namespace = slashParts[0]
-		repository = strings.Split(slashParts[1], ":")[0]
+		repository = slashParts[1]
 	case 1:
-		registry = DefaultRegistry
-		namespace = DefaultNamespace
-		repository = strings.Split(slashParts[0], ":")[0]
+		repository = slashParts[0]
 	default:
 		fmt.Println("Invalid image format.")
 		return ModelPath{}
 	}
 
-	colonParts := strings.Split(slashParts[len(slashParts)-1], ":")
-	if len(colonParts) == 2 {
-		tag = colonParts[1]
-	} else {
-		tag = DefaultTag
+	repoParts := strings.Split(repository, ":")
+	if len(repoParts) == 2 {
+		repository = repoParts[0]
+		tag = repoParts[1]
 	}
 
 	return ModelPath{
