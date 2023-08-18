@@ -27,43 +27,38 @@ const (
 var protocolPattern = regexp.MustCompile(`^.*://`)
 
 func ParseModelPath(name string) ModelPath {
+	mp := ModelPath{
+		ProtocolScheme: DefaultProtocolScheme,
+		Registry:       DefaultRegistry,
+		Namespace:      DefaultNamespace,
+		Repository:     "",
+		Tag:            DefaultTag,
+	}
+
 	name = protocolPattern.ReplaceAllString(name, "")
-
 	slashParts := strings.Split(name, "/")
-
-	registry := DefaultRegistry
-	namespace := DefaultNamespace
-	repository := ""
-	tag := DefaultTag
 
 	switch len(slashParts) {
 	case 3:
-		registry = slashParts[0]
-		namespace = slashParts[1]
-		repository = slashParts[2]
+		mp.Registry = slashParts[0]
+		mp.Namespace = slashParts[1]
+		mp.Repository = slashParts[2]
 	case 2:
-		namespace = slashParts[0]
-		repository = slashParts[1]
+		mp.Namespace = slashParts[0]
+		mp.Repository = slashParts[1]
 	case 1:
-		repository = slashParts[0]
+		mp.Repository = slashParts[0]
 	default:
 		fmt.Println("Invalid image format.")
 		return ModelPath{}
 	}
 
-	repoParts := strings.Split(repository, ":")
-	if len(repoParts) == 2 {
-		repository = repoParts[0]
-		tag = repoParts[1]
+	if repo, tag, didSplit := strings.Cut(mp.Repository, ":"); didSplit {
+		mp.Repository = repo
+		mp.Tag = tag
 	}
 
-	return ModelPath{
-		ProtocolScheme: DefaultProtocolScheme,
-		Registry:       registry,
-		Namespace:      namespace,
-		Repository:     repository,
-		Tag:            tag,
-	}
+	return mp
 }
 
 func (mp ModelPath) GetNamespaceRepository() string {
