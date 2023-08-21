@@ -5,3 +5,4 @@ llama/build
 ollama
 app
 web
+.env
