@@ -155,12 +155,13 @@ func doDownload(ctx context.Context, opts downloadOpts, f *FileDownload) error {
 		}
 	}
 
-	url := fmt.Sprintf("%s/v2/%s/blobs/%s", opts.mp.Registry, opts.mp.GetNamespaceRepository(), f.Digest)
+	requestURL := opts.mp.BaseURL()
+	requestURL = requestURL.JoinPath("v2", opts.mp.GetNamespaceRepository(), "blobs", f.Digest)
 
 	headers := make(http.Header)
 	headers.Set("Range", fmt.Sprintf("bytes=%d-", size))
 
-	resp, err := makeRequest(ctx, "GET", url, headers, nil, opts.regOpts)
+	resp, err := makeRequest(ctx, "GET", requestURL, headers, nil, opts.regOpts)
 	if err != nil {
 		log.Printf("couldn't download blob: %v", err)
 		return fmt.Errorf("%w: %w", errDownload, err)
