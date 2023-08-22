@@ -19,6 +19,14 @@ Run, create, and share large language models (LLMs).
 - Download for Windows and Linux (coming soon)
 - Build [from source](#building)
 
+Upon first launch, the following actions will be performed in the background:
+
+- Login item is added (see #162)
+- `~/.ollama/` directory is created to store models, prompt history, and logs (see #153 & #228)
+- Menu bar item and associated background processes are launched (Ollama Helper, `ollama` server component)
+
+In addition, a dialog window will appear and prompt you for administrative access in order to install the command line executable, which in practice means symlinking `/Applications/Ollama.app/Contents/Resources/ollama` to `/usr/local/bin/ollama`. If you prefer to manage your `$PATH` yourself, you can skip this step by selecting _File_ → _Close Window_ from the menu bar to close the set-up application, while still leaving the Ollama menu bar item and background processes running (see #283).
+
 ## Quickstart
 
 To run and chat with [Llama 2](https://ai.meta.com/llama), the new model by Meta:
