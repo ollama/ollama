@@ -23,7 +23,7 @@ import (
 
 const ModelFamilyLlama ModelFamily = "llama"
 
-//go:embed llama_cpp
+//go:embed llama_cpp_metal
 var llamaBin []byte
 var _ embed.FS // appease go
 
@@ -177,6 +177,10 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		return nil, err
 	}
 
+	if len(adapters) > 0 {
+		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
+	}
+
 	// TODO: if GOOS == LINUX, run from memory
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -200,7 +204,6 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	}
 
 	params := []string{
-		"--model", model,
 		"--port", fmt.Sprintf("%d", port),
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--threads", fmt.Sprintf("%d", opts.NumThread),
@@ -210,6 +213,15 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--embedding",
 	}
+
+	if len(adapters) > 0 {
+		// TODO: applying multiple adapters is not supported by the llama.cpp server yet
+		params = append(params, "--lora", adapters[0])
+		params = append(params, "--lora-base", model)
+	} else {
+		params = append(params, "--model", model)
+	}
+
 	if !opts.F16KV {
 		params = append(params, "--memory-f32")
 	}
@@ -223,7 +235,6 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		params = append(params, "--numa")
 	}
 
-	// TODO: LoRA adapters
 	cmd := exec.Command(
 		path,
 		params...,
@@ -238,7 +249,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 
 	for time.Now().Before(deadline) {
 		if !isPortAvailable(port) {
-			// TODO: warm up the model
+			log.Printf("llama.cpp started on 127.0.0.1:%d", port)
 			return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
 		}
 		time.Sleep(time.Millisecond)
