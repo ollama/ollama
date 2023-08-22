@@ -206,7 +206,6 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	params := []string{
 		"--port", fmt.Sprintf("%d", port),
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
-		"--threads", fmt.Sprintf("%d", opts.NumThread),
 		"--gqa", fmt.Sprintf("%d", opts.NumGQA),
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
@@ -220,6 +219,10 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		params = append(params, "--lora-base", model)
 	} else {
 		params = append(params, "--model", model)
+	}
+
+	if opts.NumThread > 0 {
+		params = append(params, "--threads", fmt.Sprintf("%d", opts.NumThread))
 	}
 
 	if !opts.F16KV {

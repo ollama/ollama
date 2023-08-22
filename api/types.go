@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"reflect"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -316,7 +315,7 @@ func DefaultOptions() Options {
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
 
-		NumThread: runtime.NumCPU(),
+		NumThread: 0, // let the runtime decide
 	}
 }
 
