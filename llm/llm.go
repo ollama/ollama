@@ -14,7 +14,7 @@ import (
 type LLM interface {
 	Predict(context.Context, []int, string, func(api.GenerateResponse)) error
 	Embedding(context.Context, string) ([]float64, error)
-	Encode(context.Context, string) []int
+	Encode(context.Context, string) ([]int, error)
 	SetOptions(api.Options)
 	Close()
 }

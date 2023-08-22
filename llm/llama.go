@@ -23,7 +23,10 @@ import (
 
 const ModelFamilyLlama ModelFamily = "llama"
 
-//go:embed llama_cpp_metal
+//go:embed llama_cpp_gpu
+var llamaGPUBin []byte
+
+//go:embed llama_cpp
 var llamaBin []byte
 var _ embed.FS // appease go
 
@@ -172,6 +175,31 @@ func getRandomPort() (int, error) {
 	return -1, fmt.Errorf("could not find an available port")
 }
 
+func llamaCmd(name string, embedded []byte, params []string) (*exec.Cmd, error) {
+	// TODO: if GOOS == LINUX, run from memory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(home, ".ollama", "runners", name)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, embedded, 0o755); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(
+		path,
+		params...,
+	)
+
+	return cmd, nil
+}
+
 func newLlama(model string, adapters []string, opts api.Options) (*llama, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
@@ -179,23 +207,6 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 
 	if len(adapters) > 0 {
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
-	}
-
-	// TODO: if GOOS == LINUX, run from memory
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	path := filepath.Join(home, ".ollama", "runners", "llama_cpp")
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(path, llamaBin, 0o755); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, err
 	}
 
 	port, err := getRandomPort()
@@ -238,14 +249,36 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		params = append(params, "--numa")
 	}
 
-	cmd := exec.Command(
-		path,
-		params...,
-	)
+	// try to start llama.cpp with gpu acceleration, if it fails, fallback to CPU
+	cmd, err := llamaCmd("llama_cpp_gpu", llamaGPUBin, params)
+	if err != nil {
+		return nil, fmt.Errorf("llama_cpp_gpu command setup: %w", err)
+	}
 	err = cmd.Start()
 	if err != nil {
 		return nil, fmt.Errorf("error starting the external server: %w", err)
 	}
+
+	// monitor the command in a goroutine, if it fails log the error and start the CPU version
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			if err.Error() == "signal: killed" {
+				// this is expected when the server is closed due to loading a new model
+				return
+			}
+			// TODO: what is the specific error when the GPU is not supported?
+			log.Printf("could not start llama.cpp with gpu acceleration: %v\n", err)
+			// fallback to the CPU runner
+			cmd, err = llamaCmd("llama_cpp", llamaBin, params)
+			if err != nil {
+				log.Fatalf("error setting up the llama.cpp CPU runner: %v", err)
+			}
+			if err := cmd.Start(); err != nil {
+				log.Fatalf("error starting the llama.cpp CPU server: %v", err)
+			}
+		}
+	}()
 
 	// wait for llama.cpp to come up
 	deadline := time.Now().Add(10 * time.Second)
@@ -396,6 +429,15 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 400 {
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed reading llm error response: %w", err)
+		}
+		log.Printf("llm predict error: %s", bodyBytes)
+		return fmt.Errorf("%s", bodyBytes)
+	}
+
 	reader := bufio.NewReader(resp.Body)
 	fullResponse := ""
 	for {
@@ -425,7 +467,10 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 
 				if complete.Timings.PredictedMS > 0 {
 					// this is a complete response
-					embd := llm.Encode(ctx, fullResponse)
+					embd, err := llm.Encode(ctx, fullResponse)
+					if err != nil {
+						return fmt.Errorf("encoding context: %v", err)
+					}
 					fn(api.GenerateResponse{
 						Done:        true,
 						Context:     embd,
@@ -460,41 +505,41 @@ type TokenizeResponse struct {
 	Tokens []int `json:"tokens"`
 }
 
-func (llm *llama) Encode(ctx context.Context, prompt string) []int {
+func (llm *llama) Encode(ctx context.Context, prompt string) ([]int, error) {
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/tokenize", llm.Port)
 	data, err := json.Marshal(TokenizeRequest{Content: prompt})
 	if err != nil {
-		// TODO: should this be fatal?
-		log.Printf("Error marshaling encode data: %v", err)
-		return nil
+		return nil, fmt.Errorf("marshaling encode data: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(data))
 	if err != nil {
-		log.Printf("error creating POST request: %v", err)
-		return nil
+		return nil, fmt.Errorf("encode request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("POST encode: %v", err)
-		return nil
+		return nil, fmt.Errorf("do encode request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("error reading tokenize response: %s", err)
-		return nil
+		return nil, fmt.Errorf("read encode request: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		log.Printf("llm encode error: %s", body)
+		return nil, fmt.Errorf("%s", body)
 	}
 
 	var encoded TokenizeResponse
 	if err := json.Unmarshal(body, &encoded); err != nil {
-		log.Fatalf("error unmarshaling llm tokenize response: %v", err)
+		return nil, fmt.Errorf("unmarshal encode response: %w", err)
 	}
 
-	return encoded.Tokens
+	return encoded.Tokens, nil
 }
 
 type EmbeddingRequest struct {
@@ -533,9 +578,14 @@ func (llm *llama) Embedding(ctx context.Context, input string) ([]float64, error
 		return nil, fmt.Errorf("error reading embed response: %w", err)
 	}
 
+	if resp.StatusCode >= 400 {
+		log.Printf("llm encode error: %s", body)
+		return nil, fmt.Errorf("%s", body)
+	}
+
 	var embedding EmbeddingResponse
 	if err := json.Unmarshal(body, &embedding); err != nil {
-		log.Fatalf("error unmarshaling llm tokenize response: %v", err)
+		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
 	}
 
 	return embedding.Embedding, nil
