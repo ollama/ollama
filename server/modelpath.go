@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,42 +24,54 @@ const (
 	DefaultProtocolScheme = "https"
 )
 
-func ParseModelPath(name string) ModelPath {
-	slashParts := strings.Split(name, "/")
-	var registry, namespace, repository, tag string
+var (
+	ErrInvalidImageFormat = errors.New("invalid image format")
+	ErrInvalidProtocol    = errors.New("invalid protocol scheme")
+	ErrInsecureProtocol   = errors.New("insecure protocol http")
+)
 
+func ParseModelPath(name string, allowInsecure bool) (ModelPath, error) {
+	mp := ModelPath{
+		ProtocolScheme: DefaultProtocolScheme,
+		Registry:       DefaultRegistry,
+		Namespace:      DefaultNamespace,
+		Repository:     "",
+		Tag:            DefaultTag,
+	}
+
+	protocol, rest, didSplit := strings.Cut(name, "://")
+	if didSplit {
+		if protocol == "https" || protocol == "http" && allowInsecure {
+			mp.ProtocolScheme = protocol
+			name = rest
+		} else if protocol == "http" && !allowInsecure {
+			return ModelPath{}, ErrInsecureProtocol
+		} else {
+			return ModelPath{}, ErrInvalidProtocol
+		}
+	}
+
+	slashParts := strings.Split(name, "/")
 	switch len(slashParts) {
 	case 3:
-		registry = slashParts[0]
-		namespace = slashParts[1]
-		repository = strings.Split(slashParts[2], ":")[0]
+		mp.Registry = slashParts[0]
+		mp.Namespace = slashParts[1]
+		mp.Repository = slashParts[2]
 	case 2:
-		registry = DefaultRegistry
-		namespace = slashParts[0]
-		repository = strings.Split(slashParts[1], ":")[0]
+		mp.Namespace = slashParts[0]
+		mp.Repository = slashParts[1]
 	case 1:
-		registry = DefaultRegistry
-		namespace = DefaultNamespace
-		repository = strings.Split(slashParts[0], ":")[0]
+		mp.Repository = slashParts[0]
 	default:
-		fmt.Println("Invalid image format.")
-		return ModelPath{}
+		return ModelPath{}, ErrInvalidImageFormat
 	}
 
-	colonParts := strings.Split(slashParts[len(slashParts)-1], ":")
-	if len(colonParts) == 2 {
-		tag = colonParts[1]
-	} else {
-		tag = DefaultTag
+	if repo, tag, didSplit := strings.Cut(mp.Repository, ":"); didSplit {
+		mp.Repository = repo
+		mp.Tag = tag
 	}
 
-	return ModelPath{
-		ProtocolScheme: DefaultProtocolScheme,
-		Registry:       registry,
-		Namespace:      namespace,
-		Repository:     repository,
-		Tag:            tag,
-	}
+	return mp, nil
 }
 
 func (mp ModelPath) GetNamespaceRepository() string {

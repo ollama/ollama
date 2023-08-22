@@ -153,7 +153,10 @@ func GetManifest(mp ModelPath) (*ManifestV2, error) {
 }
 
 func GetModel(name string) (*Model, error) {
-	mp := ParseModelPath(name)
+	mp, err := ParseModelPath(name, false)
+	if err != nil {
+		return nil, err
+	}
 
 	manifest, err := GetManifest(mp)
 	if err != nil {
@@ -272,7 +275,12 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 		case "model":
 			fn(api.ProgressResponse{Status: "looking for model"})
 			embed.model = c.Args
-			mp := ParseModelPath(c.Args)
+
+			mp, err := ParseModelPath(c.Args, false)
+			if err != nil {
+				return err
+			}
+
 			mf, err := GetManifest(mp)
 			if err != nil {
 				modelFile, err := filenameWithPath(path, c.Args)
@@ -286,7 +294,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 						if err := PullModel(ctx, c.Args, &RegistryOptions{}, fn); err != nil {
 							return err
 						}
-						mf, err = GetManifest(ParseModelPath(c.Args))
+						mf, err = GetManifest(mp)
 						if err != nil {
 							return fmt.Errorf("failed to open file after pull: %v", err)
 						}
@@ -674,7 +682,10 @@ func SaveLayers(layers []*LayerReader, fn func(resp api.ProgressResponse), force
 }
 
 func CreateManifest(name string, cfg *LayerReader, layers []*Layer) error {
-	mp := ParseModelPath(name)
+	mp, err := ParseModelPath(name, false)
+	if err != nil {
+		return err
+	}
 
 	manifest := ManifestV2{
 		SchemaVersion: 2,
@@ -806,11 +817,22 @@ func CreateLayer(f io.ReadSeeker) (*LayerReader, error) {
 }
 
 func CopyModel(src, dest string) error {
-	srcPath, err := ParseModelPath(src).GetManifestPath(false)
+	srcModelPath, err := ParseModelPath(src, false)
 	if err != nil {
 		return err
 	}
-	destPath, err := ParseModelPath(dest).GetManifestPath(true)
+
+	srcPath, err := srcModelPath.GetManifestPath(false)
+	if err != nil {
+		return err
+	}
+
+	destModelPath, err := ParseModelPath(dest, false)
+	if err != nil {
+		return err
+	}
+
+	destPath, err := destModelPath.GetManifestPath(true)
 	if err != nil {
 		return err
 	}
@@ -832,7 +854,10 @@ func CopyModel(src, dest string) error {
 }
 
 func DeleteModel(name string) error {
-	mp := ParseModelPath(name)
+	mp, err := ParseModelPath(name, false)
+	if err != nil {
+		return err
+	}
 
 	manifest, err := GetManifest(mp)
 	if err != nil {
@@ -859,7 +884,10 @@ func DeleteModel(name string) error {
 				return nil
 			}
 			tag := path[:slashIndex] + ":" + path[slashIndex+1:]
-			fmp := ParseModelPath(tag)
+			fmp, err := ParseModelPath(tag, false)
+			if err != nil {
+				return err
+			}
 
 			// skip the manifest we're trying to delete
 			if mp.GetFullTagname() == fmp.GetFullTagname() {
@@ -912,7 +940,10 @@ func DeleteModel(name string) error {
 }
 
 func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
-	mp := ParseModelPath(name)
+	mp, err := ParseModelPath(name, regOpts.Insecure)
+	if err != nil {
+		return err
+	}
 
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
@@ -995,7 +1026,10 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 }
 
 func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
-	mp := ParseModelPath(name)
+	mp, err := ParseModelPath(name, regOpts.Insecure)
+	if err != nil {
+		return err
+	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
 
