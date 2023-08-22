@@ -290,11 +290,11 @@ func DefaultOptions() Options {
 		UseNUMA: false,
 
 		NumCtx:             2048,
-		NumKeep:            -1,  // not supported
-		NumBatch:           512, // not supported
-		NumGPU:             1,   // not supported
+		NumKeep:            -1,
+		NumBatch:           512,
+		NumGPU:             1,
 		NumGQA:             1,
-		LowVRAM:            false, // not supported
+		LowVRAM:            false,
 		F16KV:              true,
 		UseMMap:            true,
 		UseMLock:           false,
@@ -302,19 +302,19 @@ func DefaultOptions() Options {
 		RopeFrequencyScale: 1.0,
 		EmbeddingOnly:      true,
 
-		RepeatLastN:      64,  // not supported
-		RepeatPenalty:    1.1, // not supported
-		FrequencyPenalty: 0.0, // not supported
-		PresencePenalty:  0.0, // not supported
+		RepeatLastN:      64,
+		RepeatPenalty:    1.1,
+		FrequencyPenalty: 0.0,
+		PresencePenalty:  0.0,
 		Temperature:      0.8,
-		TopK:             40,   // not supported
-		TopP:             0.9,  // not supported
-		TFSZ:             1.0,  // not supported
-		TypicalP:         1.0,  // not supported
-		Mirostat:         0,    // not supported
-		MirostatTau:      5.0,  // not supported
-		MirostatEta:      0.1,  // not supported
-		PenalizeNewline:  true, // not supported
+		TopK:             40,
+		TopP:             0.9,
+		TFSZ:             1.0,
+		TypicalP:         1.0,
+		Mirostat:         0,
+		MirostatTau:      5.0,
+		MirostatEta:      0.1,
+		PenalizeNewline:  true,
 
 		NumThread: runtime.NumCPU(),
 	}

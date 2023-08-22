@@ -10,10 +10,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -454,6 +456,17 @@ func Serve(ln net.Listener, origins []string) error {
 	s := &http.Server{
 		Handler: r,
 	}
+
+	// listen for a ctrl+c and stop any loaded llm
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT)
+	go func() {
+		<-signals
+		if loaded.llm != nil {
+			loaded.llm.Close()
+		}
+		os.Exit(0)
+	}()
 
 	return s.Serve(ln)
 }

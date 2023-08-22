@@ -202,26 +202,25 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		"--model", model,
 		"--port", fmt.Sprintf("%d", port),
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
-		// "--threads", fmt.Sprintf("%d", opts.NumThread),
-		// "--gqa", fmt.Sprintf("%d", opts.NumGQA),
-		// "--rms-norm-eps", fmt.Sprintf("%f", opts.Temperature),
-		// "--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
-		// "--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
-		// "--batch-size", fmt.Sprintf("%d", opts.NumBatch),
+		"--threads", fmt.Sprintf("%d", opts.NumThread),
+		"--gqa", fmt.Sprintf("%d", opts.NumGQA),
+		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
+		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
+		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--embedding",
 	}
-	// if !opts.F16KV {
-	// 	params = append(params, "--memory-f32")
-	// }
-	// if opts.UseMLock {
-	// 	params = append(params, "--mlock")
-	// }
-	// if !opts.UseMMap {
-	// 	params = append(params, "--no-mmap")
-	// }
-	// if opts.UseNUMA {
-	// 	params = append(params, "--numa")
-	// }
+	if !opts.F16KV {
+		params = append(params, "--memory-f32")
+	}
+	if opts.UseMLock {
+		params = append(params, "--mlock")
+	}
+	if !opts.UseMMap {
+		params = append(params, "--no-mmap")
+	}
+	if opts.UseNUMA {
+		params = append(params, "--numa")
+	}
 
 	// TODO: LoRA adapters
 	cmd := exec.Command(
@@ -348,12 +347,13 @@ func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse
 		Prompt:           prompt,
 		Stream:           true,
 		NPredict:         llm.NumPredict,
+		NKeep:            llm.NumKeep,
+		Temperature:      llm.Temperature,
 		TopK:             llm.TopK,
 		TopP:             llm.TopP,
 		TfsZ:             llm.TFSZ,
 		TypicalP:         llm.TypicalP,
 		RepeatLastN:      llm.RepeatLastN,
-		Temperature:      llm.Temperature,
 		RepeatPenalty:    llm.RepeatPenalty,
 		PresencePenalty:  llm.PresencePenalty,
 		FrequencyPenalty: llm.FrequencyPenalty,
