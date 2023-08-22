@@ -3,11 +3,12 @@ package llm
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 )
 
 type ModelFamily string
+
+const ModelFamilyUnknown ModelFamily = "unknown"
 
 type ModelType uint32
 
@@ -54,7 +55,7 @@ type model interface {
 
 type container interface {
 	Name() string
-	Decode(io.Reader) error
+	Decode(io.Reader) (model, error)
 }
 
 type containerGGML struct {
@@ -64,8 +65,8 @@ func (c *containerGGML) Name() string {
 	return "ggml"
 }
 
-func (c *containerGGML) Decode(r io.Reader) error {
-	return nil
+func (c *containerGGML) Decode(r io.Reader) (model, error) {
+	return nil, nil
 }
 
 type containerGGMF struct {
@@ -76,18 +77,18 @@ func (c *containerGGMF) Name() string {
 	return "ggmf"
 }
 
-func (c *containerGGMF) Decode(r io.Reader) error {
+func (c *containerGGMF) Decode(r io.Reader) (model, error) {
 	var version uint32
 	binary.Read(r, binary.LittleEndian, &version)
 
 	switch version {
 	case 1:
 	default:
-		return errors.New("invalid version")
+		return nil, errors.New("invalid version")
 	}
 
 	c.version = version
-	return nil
+	return nil, nil
 }
 
 type containerGGJT struct {
@@ -98,18 +99,22 @@ func (c *containerGGJT) Name() string {
 	return "ggjt"
 }
 
-func (c *containerGGJT) Decode(r io.Reader) error {
+func (c *containerGGJT) Decode(r io.Reader) (model, error) {
 	var version uint32
 	binary.Read(r, binary.LittleEndian, &version)
 
 	switch version {
 	case 1, 2, 3:
 	default:
-		return errors.New("invalid version")
+		return nil, errors.New("invalid version")
 	}
 
 	c.version = version
-	return nil
+
+	// different model types may have different layouts for hyperparameters
+	var llama llamaModel
+	binary.Read(r, binary.LittleEndian, &llama.hyperparameters)
+	return &llama, nil
 }
 
 type containerLORA struct {
@@ -120,32 +125,61 @@ func (c *containerLORA) Name() string {
 	return "ggla"
 }
 
-func (c *containerLORA) Decode(r io.Reader) error {
+func (c *containerLORA) Decode(r io.Reader) (model, error) {
 	var version uint32
 	binary.Read(r, binary.LittleEndian, &version)
 
 	switch version {
 	case 1:
 	default:
-		return errors.New("invalid version")
+		return nil, errors.New("invalid version")
 	}
 
 	c.version = version
-	return nil
+	return nil, nil
+}
+
+type containerGGUF struct {
+	Version    uint32
+	NumTensors uint32
+	NumKV      uint32
+}
+
+func (c *containerGGUF) Name() string {
+	return "gguf"
+}
+
+func (c *containerGGUF) Decode(r io.Reader) (model, error) {
+	binary.Read(r, binary.LittleEndian, c)
+
+	switch c.Version {
+	case 1:
+	default:
+		return nil, errors.New("invalid version")
+	}
+
+	model := newGGUFModel(c.NumTensors, c.NumKV)
+	if err := model.Decode(r); err != nil {
+		return nil, err
+	}
+
+	return model, nil
 }
 
 const (
-	// / Magic constant for `ggml` files (unversioned).
+	// Magic constant for `ggml` files (unversioned).
 	FILE_MAGIC_GGML = 0x67676d6c
-	// / Magic constant for `ggml` files (versioned, ggmf).
+	// Magic constant for `ggml` files (versioned, ggmf).
 	FILE_MAGIC_GGMF = 0x67676d66
-	// / Magic constant for `ggml` files (versioned, ggjt).
+	// Magic constant for `ggml` files (versioned, ggjt).
 	FILE_MAGIC_GGJT = 0x67676a74
-	// / Magic constant for `ggla` files (LoRA adapter).
+	// Magic constant for `ggla` files (LoRA adapter).
 	FILE_MAGIC_GGLA = 0x67676C61
+	// Magic constant for `gguf` files (versioned, gguf)
+	FILE_MAGIC_GGUF = 0x46554747
 )
 
-func DecodeGGML(r io.ReadSeeker, hint ModelFamily) (*GGML, error) {
+func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	var ggml GGML
 	binary.Read(r, binary.LittleEndian, &ggml.magic)
 
@@ -158,24 +192,18 @@ func DecodeGGML(r io.ReadSeeker, hint ModelFamily) (*GGML, error) {
 		ggml.container = &containerGGJT{}
 	case FILE_MAGIC_GGLA:
 		ggml.container = &containerLORA{}
+	case FILE_MAGIC_GGUF:
+		ggml.container = &containerGGUF{}
 	default:
 		return nil, errors.New("invalid file magic")
 	}
 
-	if err := ggml.Decode(r); err != nil {
+	model, err := ggml.Decode(r)
+	if err != nil {
 		return nil, err
 	}
 
-	// different model types may have different layouts for hyperparameters
-	switch hint {
-	case ModelFamilyLlama:
-		var llama llamaModel
-		binary.Read(r, binary.LittleEndian, &llama.hyperparameters)
-		ggml.model = &llama
-		// TODO: sanity check hyperparameters
-	default:
-		return nil, fmt.Errorf("unsupported model type: %s", hint)
-	}
+	ggml.model = model
 
 	// final model type
 	return &ggml, nil

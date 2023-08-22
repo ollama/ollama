@@ -30,7 +30,7 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 	}
 	defer f.Close()
 
-	ggml, err := DecodeGGML(f, ModelFamilyLlama)
+	ggml, err := DecodeGGML(f)
 	if err != nil {
 		return nil, err
 	}
