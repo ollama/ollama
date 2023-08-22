@@ -88,16 +88,22 @@ llama_token llama_sample(
 import "C"
 
 import (
+	"bufio"
 	"bytes"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
-	"unicode/utf8"
+	"time"
 	"unsafe"
 
 	"github.com/jmorganca/ollama/api"
@@ -218,6 +224,14 @@ func (ft llamaFileType) String() string {
 	}
 }
 
+// TODO: this should be packed with ollama
+const llmServerBin = "/Users/bruce/Development/llama.cpp/build/bin/server"
+
+type Running struct {
+	Port int
+	Cmd  *exec.Cmd
+}
+
 type llama struct {
 	params *C.struct_llama_context_params
 	model  *C.struct_llama_model
@@ -231,6 +245,32 @@ type llama struct {
 	gc bool
 
 	api.Options
+	Running
+}
+
+func isPortAvailable(port int) bool {
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	listener.Close()
+	return true
+}
+
+func getRandomPort() (int, error) {
+	const (
+		minPort  = 1024
+		maxPort  = 49151
+		attempts = 100 // Number of attempts to find an available port
+	)
+	for i := 0; i < attempts; i++ {
+		port := minPort + rand.Intn(maxPort-minPort+1)
+		if isPortAvailable(port) {
+			return port, nil
+		}
+	}
+	return -1, fmt.Errorf("could not find an available port")
 }
 
 func newLlama(model string, adapters []string, opts api.Options) (*llama, error) {
@@ -238,159 +278,185 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		return nil, err
 	}
 
-	llm := llama{Options: opts}
-
-	C.llama_backend_init(C.bool(llm.UseNUMA))
-
-	params := C.llama_context_default_params()
-	params.seed = C.uint(llm.Seed)
-	params.n_ctx = C.int(llm.NumCtx)
-	params.n_batch = C.int(llm.NumBatch)
-	params.n_gqa = C.int(llm.NumGQA)
-	params.n_gpu_layers = C.int(llm.NumGPU)
-	params.main_gpu = C.int(llm.MainGPU)
-	params.low_vram = C.bool(llm.LowVRAM)
-	params.f16_kv = C.bool(llm.F16KV)
-	params.logits_all = C.bool(llm.LogitsAll)
-	params.vocab_only = C.bool(llm.VocabOnly)
-	params.use_mmap = C.bool(llm.UseMMap)
-	params.use_mlock = C.bool(llm.UseMLock)
-	params.embedding = C.bool(llm.EmbeddingOnly)
-	params.rope_freq_base = C.float(llm.RopeFrequencyBase)
-	params.rope_freq_scale = C.float(llm.RopeFrequencyScale)
-
-	if len(adapters) > 0 && llm.UseMMap {
-		log.Printf("must disable mmap to use lora adapters")
-		params.use_mmap = C.bool(false)
+	port, err := getRandomPort()
+	if err != nil {
+		return nil, fmt.Errorf("load llm: %w", err)
 	}
 
-	llm.params = &params
+	fmt.Println(model)
 
-	cModel := C.CString(model)
-	defer C.free(unsafe.Pointer(cModel))
-
-	llm.model = C.llama_load_model_from_file(cModel, params)
-	if llm.model == nil {
-		return nil, errors.New("failed to load model")
+	// TODO: server options from incoming options
+	cmd := exec.Command(
+		llmServerBin,
+		"--model", model,
+		"--port", fmt.Sprintf("%d", port),
+		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
+	)
+	err = cmd.Start()
+	if err != nil {
+		return nil, fmt.Errorf("error starting the external server: %w", err)
 	}
 
-	llm.ctx = C.llama_new_context_with_model(llm.model, params)
-	if llm.ctx == nil {
-		return nil, errors.New("failed to create context")
-	}
+	// wait for llama.cpp to come up
+	deadline := time.Now().Add(10 * time.Second)
 
-	for _, adapter := range adapters {
-		cAdapter := C.CString(adapter)
-		defer C.free(unsafe.Pointer(cAdapter))
-
-		if retval := C.llama_model_apply_lora_from_file(llm.model, cAdapter, nil, C.int(llm.NumThread)); retval != 0 {
-			return nil, fmt.Errorf("failed to load adapter %s", adapter)
+	for time.Now().Before(deadline) {
+		if !isPortAvailable(port) {
+			// TODO: warm up the model
+			fmt.Printf("llama.cpp is up at %d", port)
+			return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
 		}
+		time.Sleep(time.Millisecond)
 	}
 
-	// warm up the model
-	bos := []C.llama_token{C.llama_token_bos()}
-	C.llama_eval(llm.ctx, unsafe.SliceData(bos), C.int(len(bos)), 0, C.int(opts.NumThread))
-	C.llama_reset_timings(llm.ctx)
-
-	return &llm, nil
+	return nil, fmt.Errorf("timed out waiting for llama.cpp at port %d", port)
 }
 
 func (llm *llama) Close() {
-	llm.gc = true
-
-	llm.mu.Lock()
-	defer llm.mu.Unlock()
-
-	defer C.llama_free_model(llm.model)
-	defer C.llama_free(llm.ctx)
-
-	C.llama_print_timings(llm.ctx)
+	llm.Running.Cmd.Process.Kill()
 }
 
+// TODO: might be possible to remove
 func (llm *llama) SetOptions(opts api.Options) {
 	llm.Options = opts
 }
 
-var errNeedMoreData = errors.New("need more data")
+type Prediction struct {
+	Content string `json:"content"`
+	Stop    bool   `json:"stop"`
+}
 
+type GenerationSettings struct {
+	FrequencyPenalty float64       `json:"frequency_penalty"`
+	Grammar          string        `json:"grammar"`
+	IgnoreEOS        bool          `json:"ignore_eos"`
+	LogitBias        []interface{} `json:"logit_bias"` // TODO
+	Mirostat         int           `json:"mirostat"`
+	MirostatEta      float64       `json:"mirostat_eta"`
+	MirostatTau      float64       `json:"mirostat_tau"`
+	Model            string        `json:"model"`
+	NCtx             int           `json:"n_ctx"`
+	NKeep            int           `json:"n_keep"`
+	NPredict         int           `json:"n_predict"`
+	NProbs           int           `json:"n_probs"`
+	PenalizeNl       bool          `json:"penalize_nl"`
+	PresencePenalty  float64       `json:"presence_penalty"`
+	RepeatLastN      int           `json:"repeat_last_n"`
+	RepeatPenalty    float64       `json:"repeat_penalty"`
+	Seed             uint32        `json:"seed"`
+	Stop             []interface{} `json:"stop"` // TODO
+	Stream           bool          `json:"stream"`
+	Temp             float64       `json:"temp"`
+	TfsZ             float64       `json:"tfs_z"`
+	TopK             int           `json:"top_k"`
+	TopP             float64       `json:"top_p"`
+	TypicalP         float64       `json:"typical_p"`
+}
+
+type Timings struct {
+	PredictedMS         float64 `json:"predicted_ms"`
+	PredictedN          int     `json:"predicted_n"`
+	PredictedPerSecond  float64 `json:"predicted_per_second"`
+	PredictedPerTokenMS float64 `json:"predicted_per_token_ms"`
+	PromptMS            float64 `json:"prompt_ms"`
+	PromptN             int     `json:"prompt_n"`
+	PromptPerSecond     float64 `json:"prompt_per_second"`
+	PromptPerTokenMS    float64 `json:"prompt_per_token_ms"`
+}
+
+type PredictComplete struct {
+	Content            string             `json:"content"`
+	GenerationSettings GenerationSettings `json:"generation_settings"`
+	Model              string             `json:"model"`
+	Prompt             string             `json:"prompt"`
+	Stop               bool               `json:"stop"`
+	StoppedEOS         bool               `json:"stopped_eos"`
+	StoppedLimit       bool               `json:"stopped_limit"`
+	StoppedWord        bool               `json:"stopped_word"`
+	StoppingWord       string             `json:"stopping_word"`
+	Timings            Timings            `json:"timings"`
+	TokensCached       int                `json:"tokens_cached"`
+	TokensEvaluated    int                `json:"tokens_evaluated"`
+	TokensPredicted    int                `json:"tokens_predicted"`
+	Truncated          bool               `json:"truncated"`
+}
+
+type PredictReq struct {
+	Prompt string `json:"prompt"`
+	Stream bool   `json:"stream"`
+}
+
+// TODO: client closing should release nested lock
 func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse)) error {
-	C.llama_reset_timings(llm.ctx)
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
+	predReq := PredictReq{Prompt: prompt, Stream: true}
+	data, err := json.Marshal(predReq)
+	if err != nil {
+		log.Fatalf("Error marshaling data: %v", err)
+	}
 
-	llm.marshalPrompt(ctx, prompt)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(data))
+	if err != nil {
+		log.Fatalf("error creating POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-	C.llama_set_rng_seed(llm.ctx, C.uint(llm.Seed))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatalf("POST predict: %v", err)
+	}
+	defer resp.Body.Close()
 
-	var b bytes.Buffer
+	reader := bufio.NewReader(resp.Body)
+	// TODO: for context fullResponse := ""
 	for {
-		token, err := llm.next()
-		if llm.gc {
-			return nil
-		} else if errors.Is(err, io.EOF) {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
 			break
-		} else if err != nil {
-			return err
 		}
-
-		b.WriteString(llm.Decode(int(token)))
-
-		stop, endsWithStopPrefix := handleStopSequences(&b, llm.Stop)
-		if endsWithStopPrefix {
+		if err != nil {
+			return fmt.Errorf("error reading llm response: %v", err)
+		}
+		if line == "\n" {
 			continue
 		}
 
-		if utf8.Valid(b.Bytes()) || b.Len() >= utf8.UTFMax {
-			fn(api.GenerateResponse{Response: b.String()})
-			b.Reset()
-		}
-		if stop {
-			break
-		}
-	}
-
-	embd := make([]int, len(llm.embd))
-	for i := range llm.embd {
-		embd[i] = int(llm.embd[i])
-	}
-
-	timings := C.llama_get_timings(llm.ctx)
-	fn(api.GenerateResponse{
-		Done:               true,
-		Context:            embd,
-		SampleCount:        int(timings.n_sample),
-		SampleDuration:     parseDurationMs(float64(timings.t_sample_ms)),
-		PromptEvalCount:    int(timings.n_p_eval),
-		PromptEvalDuration: parseDurationMs(float64(timings.t_p_eval_ms)),
-		EvalCount:          int(timings.n_eval),
-		EvalDuration:       parseDurationMs(float64(timings.t_eval_ms)),
-	})
-
-	return nil
-}
-
-// handleStopSequences checks whether b contains any of the stop sequences, or ends with a prefix of
-// any stop sequence (and therefore might contain data that should not ultimately be returned to the
-// client).
-//
-// If b contains a stop sequence, it modifies b to remove the stop sequence and all subsequent data.
-func handleStopSequences(b *bytes.Buffer, stopSequences []string) (stop bool, endsWithStopPrefix bool) {
-	s := b.String()
-	for _, seq := range stopSequences {
-		// Check for an exact or substring match.
-		if i := strings.Index(s, seq); i != -1 {
-			b.Truncate(i)
-			return true, false
-		}
-
-		// Check if b ends with a prefix of the stop sequence.
-		if len(seq) > 1 {
-			for i := 1; i < len(seq); i++ {
-				if strings.HasSuffix(s, seq[:i]) {
-					return false, true
-				}
+		// Read data from the server-side event stream
+		if len(line) > 6 && line[:6] == "data: " {
+			evt := line[6:]
+			var complete PredictComplete
+			if err := json.Unmarshal([]byte(evt), &complete); err != nil {
+				return fmt.Errorf("error unmarshaling llm complete response: %v", err)
 			}
+
+			if complete.Timings.PredictedMS > 0 {
+				// this is a complete response
+				fn(api.GenerateResponse{
+					Done: true,
+					// Context:            embd,
+					SampleCount: int(complete.Timings.PredictedN), // TODO
+					// SampleDuration:     parseDurationMs(float64(complete.Timings.PredictedMS)),
+					PromptEvalCount:    int(complete.TokensEvaluated),
+					PromptEvalDuration: parseDurationMs(float64(complete.Timings.PredictedMS)),
+					// EvalCount:          int(complete.TokensEvaluated),
+					EvalDuration: parseDurationMs(float64(complete.Timings.PredictedMS)),
+				})
+				break
+			}
+
+			var pred Prediction
+			if err := json.Unmarshal([]byte(evt), &pred); err != nil {
+				return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
+			}
+			fn(api.GenerateResponse{Response: pred.Content})
 		}
 	}
+	// TODO: re-tokenize full response to get context
+
+	// embd := make([]int, len(llm.embd))
+	// for i := range llm.embd {
+	// 	embd[i] = int(llm.embd[i])
+	// }
 
 	return false, false
 }

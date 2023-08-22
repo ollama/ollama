@@ -89,24 +89,24 @@ func load(model *Model, reqOpts map[string]interface{}, sessionDuration time.Dur
 		loaded.digest = model.Digest
 		loaded.options = opts
 
-		if opts.NumKeep < 0 {
-			promptWithSystem, err := model.Prompt(api.GenerateRequest{}, "")
-			if err != nil {
-				return err
-			}
+		// if opts.NumKeep < 0 {
+		// 	promptWithSystem, err := model.Prompt(api.GenerateRequest{}, "")
+		// 	if err != nil {
+		// 		return err
+		// 	}
 
-			promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}}, "")
-			if err != nil {
-				return err
-			}
+		// 	promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}}, "")
+		// 	if err != nil {
+		// 		return err
+		// 	}
 
-			tokensWithSystem := llmModel.Encode(promptWithSystem)
-			tokensNoSystem := llmModel.Encode(promptNoSystem)
+		// 	tokensWithSystem := llmModel.Encode(promptWithSystem)
+		// 	tokensNoSystem := llmModel.Encode(promptNoSystem)
 
-			opts.NumKeep = len(tokensWithSystem) - len(tokensNoSystem) + 1
+		// 	opts.NumKeep = len(tokensWithSystem) - len(tokensNoSystem) + 1
 
-			llmModel.SetOptions(opts)
-		}
+		// 	llmModel.SetOptions(opts)
+		// }
 	}
 	loaded.expireAt = time.Now().Add(sessionDuration)
 
