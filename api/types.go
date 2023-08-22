@@ -182,19 +182,21 @@ type Options struct {
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 
 	// Predict options
-	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
-	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
-	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
-	Temperature      float32  `json:"temperature,omitempty"`
+	NumPredict       int      `json:"num_predict,omitempty"`
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	TFSZ             float32  `json:"tfs_z,omitempty"`
 	TypicalP         float32  `json:"typical_p,omitempty"`
+	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
+	Temperature      float32  `json:"temperature,omitempty"`
+	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
+	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Mirostat         int      `json:"mirostat,omitempty"`
 	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
+	Grammar          string   `json:"grammar,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
 
 	NumThread int `json:"num_thread,omitempty"`

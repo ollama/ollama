@@ -6,3 +6,5 @@
 dist
 ollama
 /ggml-metal.metal
+build
+llm/llama_cpp

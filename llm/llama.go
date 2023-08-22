@@ -3,6 +3,7 @@ package llm
 import (
 	"bufio"
 	"bytes"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,12 +14,17 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/jmorganca/ollama/api"
 )
 
 const ModelFamilyLlama ModelFamily = "llama"
+
+//go:embed llama_cpp
+var llamaBin []byte
+var _ embed.FS // appease go
 
 type llamaModel struct {
 	hyperparameters llamaHyperparameters
@@ -130,9 +136,6 @@ func (ft llamaFileType) String() string {
 	}
 }
 
-// TODO: this should be packed with ollama
-const llmServerBin = "/Users/bruce/Development/llama.cpp/build/bin/server"
-
 type Running struct {
 	Port int
 	Cmd  *exec.Cmd
@@ -173,28 +176,57 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		return nil, err
 	}
 
+	// TODO: if GOOS == LINUX, run from memory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(home, ".ollama", "runners", "llama_cpp")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, llamaBin, 0o755); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
+
 	port, err := getRandomPort()
 	if err != nil {
 		return nil, fmt.Errorf("load llm: %w", err)
 	}
 
-	// TODO: LoRA adapter
-	cmd := exec.Command(
-		llmServerBin,
+	params := []string{
 		"--model", model,
 		"--port", fmt.Sprintf("%d", port),
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
-		"--threads", fmt.Sprintf("%d", opts.NumThread),
-		"--gqa", fmt.Sprintf("%d", opts.NumGQA),
-		"--rms-norm-eps", fmt.Sprintf("%f", opts.Temperature),
-		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
-		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
-		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
-		"--memory-f32", fmt.Sprintf("%v", !opts.F16KV),
-		"--mlock", fmt.Sprintf("%v", opts.UseMLock),
-		"--no-mmap", fmt.Sprintf("%v", !opts.UseMMap),
-		"--numa", fmt.Sprintf("%v", opts.UseNUMA),
+		// "--threads", fmt.Sprintf("%d", opts.NumThread),
+		// "--gqa", fmt.Sprintf("%d", opts.NumGQA),
+		// "--rms-norm-eps", fmt.Sprintf("%f", opts.Temperature),
+		// "--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
+		// "--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
+		// "--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--embedding",
+	}
+	// if !opts.F16KV {
+	// 	params = append(params, "--memory-f32")
+	// }
+	// if opts.UseMLock {
+	// 	params = append(params, "--mlock")
+	// }
+	// if !opts.UseMMap {
+	// 	params = append(params, "--no-mmap")
+	// }
+	// if opts.UseNUMA {
+	// 	params = append(params, "--numa")
+	// }
+
+	// TODO: LoRA adapters
+	cmd := exec.Command(
+		path,
+		params...,
 	)
 	err = cmd.Start()
 	if err != nil {
@@ -219,7 +251,6 @@ func (llm *llama) Close() {
 	llm.Running.Cmd.Process.Kill()
 }
 
-// TODO: might be possible to remove
 func (llm *llama) SetOptions(opts api.Options) {
 	llm.Options = opts
 }
@@ -285,14 +316,54 @@ type PredictComplete struct {
 }
 
 type PredictRequest struct {
-	Prompt string `json:"prompt"`
-	Stream bool   `json:"stream"`
+	Stream           bool            `json:"stream"`
+	NPredict         int             `json:"n_predict,omitempty"`
+	TopK             int             `json:"top_k,omitempty"`
+	TopP             float32         `json:"top_p,omitempty"`
+	TfsZ             float32         `json:"tfs_z,omitempty"`
+	TypicalP         float32         `json:"typical_p,omitempty"`
+	RepeatLastN      int             `json:"repeat_last_n,omitempty"`
+	Temperature      float32         `json:"temperature,omitempty"`
+	RepeatPenalty    float32         `json:"repeat_penalty,omitempty"`
+	PresencePenalty  float32         `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float32         `json:"frequency_penalty,omitempty"`
+	Mirostat         int             `json:"mirostat,omitempty"`
+	MirostatTau      float32         `json:"mirostat_tau,omitempty"`
+	MirostatEta      float32         `json:"mirostat_eta,omitempty"`
+	PenalizeNl       bool            `json:"penalize_nl,omitempty"`
+	NKeep            int             `json:"n_keep,omitempty"`
+	Seed             int             `json:"seed,omitempty"`
+	Prompt           string          `json:"prompt,omitempty"`
+	Grammar          string          `json:"grammar,omitempty"`
+	NProbs           int             `json:"n_probs,omitempty"`
+	LogitBias        map[int]float32 `json:"logit_bias,omitempty"`
+	IgnoreEos        bool            `json:"ignore_eos,omitempty"`
+	Stop             []string        `json:"stop,omitempty"`
 }
 
 // TODO: client closing should release nested lock
 func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse)) error {
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
-	predReq := PredictRequest{Prompt: prompt, Stream: true}
+	predReq := PredictRequest{
+		Prompt:           prompt,
+		Stream:           true,
+		NPredict:         llm.NumPredict,
+		TopK:             llm.TopK,
+		TopP:             llm.TopP,
+		TfsZ:             llm.TFSZ,
+		TypicalP:         llm.TypicalP,
+		RepeatLastN:      llm.RepeatLastN,
+		Temperature:      llm.Temperature,
+		RepeatPenalty:    llm.RepeatPenalty,
+		PresencePenalty:  llm.PresencePenalty,
+		FrequencyPenalty: llm.FrequencyPenalty,
+		Mirostat:         llm.Mirostat,
+		MirostatTau:      llm.MirostatTau,
+		MirostatEta:      llm.MirostatEta,
+		PenalizeNl:       llm.PenalizeNewline,
+		Grammar:          llm.Grammar,
+		Stop:             llm.Stop,
+	}
 	data, err := json.Marshal(predReq)
 	if err != nil {
 		return fmt.Errorf("error marshaling data: %v", err)
@@ -334,9 +405,10 @@ func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse
 
 			if complete.Timings.PredictedMS > 0 {
 				// this is a complete response
+				embd := llm.Encode(fullResponse)
 				fn(api.GenerateResponse{
-					Done: true,
-					// Context:            embd,
+					Done:        true,
+					Context:     embd,
 					SampleCount: int(complete.Timings.PredictedN), // TODO
 					// SampleDuration:     parseDurationMs(float64(complete.Timings.PredictedMS)),
 					PromptEvalCount:    int(complete.TokensEvaluated),
@@ -355,12 +427,6 @@ func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse
 			fn(api.GenerateResponse{Response: pred.Content})
 		}
 	}
-	// TODO: re-tokenize full response to get context
-
-	// embd := make([]int, len(llm.embd))
-	// for i := range llm.embd {
-	// 	embd[i] = int(llm.embd[i])
-	// }
 
 	return false, false
 }
