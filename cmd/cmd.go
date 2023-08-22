@@ -30,6 +30,7 @@ import (
 	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/progressbar"
 	"github.com/jmorganca/ollama/server"
+	"github.com/jmorganca/ollama/version"
 )
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
@@ -727,6 +728,7 @@ func NewCLI() *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
+		Version: version.Version,
 	}
 
 	cobra.EnableCommandSorting = false

@@ -94,10 +94,8 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect, regOpts *Registry
 		return "", err
 	}
 
-	headers := map[string]string{
-		"Authorization": sig,
-	}
-
+	headers := make(http.Header)
+	headers.Set("Authorization", sig)
 	resp, err := makeRequest(ctx, "GET", url, headers, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't get token: %q", err)

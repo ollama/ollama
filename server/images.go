@@ -16,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/vector"
+	"github.com/jmorganca/ollama/version"
 )
 
 const MaxRetries = 3
@@ -1005,15 +1007,14 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	fn(api.ProgressResponse{Status: "pushing manifest"})
 	url := fmt.Sprintf("%s/v2/%s/manifests/%s", mp.Registry, mp.GetNamespaceRepository(), mp.Tag)
-	headers := map[string]string{
-		"Content-Type": "application/vnd.docker.distribution.manifest.v2+json",
-	}
 
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		return err
 	}
 
+	headers := make(http.Header)
+	headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
 	resp, err := makeRequestWithRetry(ctx, "PUT", url, headers, bytes.NewReader(manifestJSON), regOpts)
 	if err != nil {
 		return err
@@ -1098,10 +1099,9 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, error) {
 	url := fmt.Sprintf("%s/v2/%s/manifests/%s", mp.Registry, mp.GetNamespaceRepository(), mp.Tag)
-	headers := map[string]string{
-		"Accept": "application/vnd.docker.distribution.manifest.v2+json",
-	}
 
+	headers := make(http.Header)
+	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
 	resp, err := makeRequest(ctx, "GET", url, headers, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't get manifest: %v", err)
@@ -1226,11 +1226,10 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, url string, layer *Lay
 
 		sectionReader := io.NewSectionReader(f, int64(completed), chunk)
 
-		headers := make(map[string]string)
-		headers["Content-Type"] = "application/octet-stream"
-		headers["Content-Length"] = strconv.Itoa(int(chunk))
-		headers["Content-Range"] = fmt.Sprintf("%d-%d", completed, completed+sectionReader.Size()-1)
-
+		headers := make(http.Header)
+		headers.Set("Content-Type", "application/octet-stream")
+		headers.Set("Content-Length", strconv.Itoa(int(chunk)))
+		headers.Set("Content-Range", fmt.Sprintf("%d-%d", completed, completed+sectionReader.Size()-1))
 		resp, err := makeRequestWithRetry(ctx, "PATCH", url, headers, sectionReader, regOpts)
 		if err != nil && !errors.Is(err, io.EOF) {
 			fn(api.ProgressResponse{
@@ -1260,9 +1259,9 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, url string, layer *Lay
 
 	url = fmt.Sprintf("%s&digest=%s", url, layer.Digest)
 
-	headers := make(map[string]string)
-	headers["Content-Type"] = "application/octet-stream"
-	headers["Content-Length"] = "0"
+	headers := make(http.Header)
+	headers.Set("Content-Type", "application/octet-stream")
+	headers.Set("Content-Length", "0")
 
 	// finish the upload
 	resp, err := makeRequest(ctx, "PUT", url, headers, nil, regOpts)
@@ -1279,7 +1278,7 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, url string, layer *Lay
 	return nil
 }
 
-func makeRequestWithRetry(ctx context.Context, method, url string, headers map[string]string, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
+func makeRequestWithRetry(ctx context.Context, method, url string, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
 	var status string
 	for try := 0; try < MaxRetries; try++ {
 		resp, err := makeRequest(ctx, method, url, headers, body, regOpts)
@@ -1318,7 +1317,7 @@ func makeRequestWithRetry(ctx context.Context, method, url string, headers map[s
 	return nil, fmt.Errorf("max retry exceeded: %v", status)
 }
 
-func makeRequest(ctx context.Context, method, url string, headers map[string]string, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
+func makeRequest(ctx context.Context, method, url string, headers http.Header, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
 	if !strings.HasPrefix(url, "http") {
 		if regOpts.Insecure {
 			url = "http://" + url
@@ -1332,15 +1331,17 @@ func makeRequest(ctx context.Context, method, url string, headers map[string]str
 		return nil, err
 	}
 
+	if headers != nil {
+		req.Header = headers
+	}
+
 	if regOpts.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+regOpts.Token)
 	} else if regOpts.Username != "" && regOpts.Password != "" {
 		req.SetBasicAuth(regOpts.Username, regOpts.Password)
 	}
 
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
+	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
