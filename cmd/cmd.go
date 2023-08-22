@@ -102,9 +102,13 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mp, err := server.ParseModelPath(args[0], insecure)
+	mp := server.ParseModelPath(args[0])
 	if err != nil {
 		return err
+	}
+
+	if mp.ProtocolScheme == "http" && !insecure {
+		return fmt.Errorf("insecure protocol http")
 	}
 
 	fp, err := mp.GetManifestPath(false)
@@ -515,7 +519,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		case strings.HasPrefix(line, "/show"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
-				mp, err := server.ParseModelPath(model, false)
+				mp := server.ParseModelPath(model)
 				if err != nil {
 					return err
 				}
