@@ -158,7 +158,12 @@ function restart() {
 app.on('before-quit', () => {
   if (proc) {
     proc.off('exit', restart)
-    proc.kill()
+    proc.kill('SIGINT') // send SIGINT signal to the server, which also stop and loaded llms
+    setTimeout(() => {
+      if (!proc.killed) {
+        proc.kill() // force kill after a timeout if the server didn't shut down gracefully
+      }
+    }, 2000)
   }
 })
 
