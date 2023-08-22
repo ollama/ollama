@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -11,9 +12,9 @@ import (
 )
 
 type LLM interface {
-	Predict([]int, string, func(api.GenerateResponse)) error
-	Embedding(string) ([]float64, error)
-	Encode(string) []int
+	Predict(context.Context, []int, string, func(api.GenerateResponse)) error
+	Embedding(context.Context, string) ([]float64, error)
+	Encode(context.Context, string) []int
 	SetOptions(api.Options)
 	Close()
 }

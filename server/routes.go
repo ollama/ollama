@@ -162,7 +162,7 @@ func GenerateHandler(c *gin.Context) {
 
 	embedding := ""
 	if model.Embeddings != nil && len(model.Embeddings) > 0 {
-		promptEmbed, err := loaded.llm.Embedding(req.Prompt)
+		promptEmbed, err := loaded.llm.Embedding(c.Request.Context(), req.Prompt)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -198,7 +198,7 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := loaded.llm.Predict(req.Context, prompt, fn); err != nil {
+		if err := loaded.llm.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -231,7 +231,7 @@ func EmbeddingHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := loaded.llm.Embedding(req.Prompt)
+	embedding, err := loaded.llm.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		log.Printf("embedding generation failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})

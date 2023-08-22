@@ -3,6 +3,7 @@ package llm
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -341,7 +342,7 @@ type PredictRequest struct {
 }
 
 // TODO: client closing should release nested lock
-func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse)) error {
+func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, fn func(api.GenerateResponse)) error {
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
 	predReq := PredictRequest{
 		Prompt:           prompt,
@@ -369,7 +370,7 @@ func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse
 		return fmt.Errorf("error marshaling data: %v", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(data))
 	if err != nil {
 		return fmt.Errorf("error creating POST request: %v", err)
 	}
@@ -384,47 +385,53 @@ func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse
 	reader := bufio.NewReader(resp.Body)
 	fullResponse := ""
 	for {
-		line, err := reader.ReadString('\n')
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("error reading llm response: %v", err)
-		}
-		if line == "\n" {
-			continue
-		}
-
-		// Read data from the server-side event stream
-		if len(line) > 6 && line[:6] == "data: " {
-			evt := line[6:]
-			var complete PredictComplete
-			if err := json.Unmarshal([]byte(evt), &complete); err != nil {
-				return fmt.Errorf("error unmarshaling llm complete response: %v", err)
-			}
-
-			if complete.Timings.PredictedMS > 0 {
-				// this is a complete response
-				embd := llm.Encode(fullResponse)
-				fn(api.GenerateResponse{
-					Done:        true,
-					Context:     embd,
-					SampleCount: int(complete.Timings.PredictedN), // TODO
-					// SampleDuration:     parseDurationMs(float64(complete.Timings.PredictedMS)),
-					PromptEvalCount:    int(complete.TokensEvaluated),
-					PromptEvalDuration: parseDurationMs(float64(complete.Timings.PredictedMS)),
-					// EvalCount:          int(complete.TokensEvaluated),
-					EvalDuration: parseDurationMs(float64(complete.Timings.PredictedMS)),
-				})
+		select {
+		case <-ctx.Done():
+			// This handles the request cancellation
+			return ctx.Err()
+		default:
+			line, err := reader.ReadString('\n')
+			if err == io.EOF {
 				break
 			}
-
-			var pred Prediction
-			if err := json.Unmarshal([]byte(evt), &pred); err != nil {
-				return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
+			if err != nil {
+				return fmt.Errorf("error reading llm response: %v", err)
 			}
-			fullResponse += pred.Content
-			fn(api.GenerateResponse{Response: pred.Content})
+			if line == "\n" {
+				continue
+			}
+
+			// Read data from the server-side event stream
+			if len(line) > 6 && line[:6] == "data: " {
+				evt := line[6:]
+				var complete PredictComplete
+				if err := json.Unmarshal([]byte(evt), &complete); err != nil {
+					return fmt.Errorf("error unmarshaling llm complete response: %v", err)
+				}
+
+				if complete.Timings.PredictedMS > 0 {
+					// this is a complete response
+					embd := llm.Encode(ctx, fullResponse)
+					fn(api.GenerateResponse{
+						Done:        true,
+						Context:     embd,
+						SampleCount: int(complete.Timings.PredictedN), // TODO
+						// SampleDuration:     parseDurationMs(float64(complete.Timings.PredictedMS)),
+						PromptEvalCount:    int(complete.TokensEvaluated),
+						PromptEvalDuration: parseDurationMs(float64(complete.Timings.PredictedMS)),
+						// EvalCount:          int(complete.TokensEvaluated),
+						EvalDuration: parseDurationMs(float64(complete.Timings.PredictedMS)),
+					})
+					return nil
+				}
+
+				var pred Prediction
+				if err := json.Unmarshal([]byte(evt), &pred); err != nil {
+					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
+				}
+				fullResponse += pred.Content
+				fn(api.GenerateResponse{Response: pred.Content})
+			}
 		}
 	}
 
@@ -439,7 +446,7 @@ type TokenizeResponse struct {
 	Tokens []int `json:"tokens"`
 }
 
-func (llm *llama) Encode(prompt string) []int {
+func (llm *llama) Encode(ctx context.Context, prompt string) []int {
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/tokenize", llm.Port)
 	data, err := json.Marshal(TokenizeRequest{Content: prompt})
 	if err != nil {
@@ -448,7 +455,7 @@ func (llm *llama) Encode(prompt string) []int {
 		return nil
 	}
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(data))
 	if err != nil {
 		log.Printf("error creating POST request: %v", err)
 		return nil
@@ -484,7 +491,7 @@ type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
-func (llm *llama) Embedding(input string) ([]float64, error) {
+func (llm *llama) Embedding(ctx context.Context, input string) ([]float64, error) {
 	if !llm.EmbeddingOnly {
 		return nil, errors.New("llama: embedding not enabled")
 	}
@@ -495,7 +502,7 @@ func (llm *llama) Embedding(input string) ([]float64, error) {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(data))
 	if err != nil {
 		return nil, fmt.Errorf("error creating embed request: %w", err)
 	}
