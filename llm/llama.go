@@ -472,14 +472,12 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 						return fmt.Errorf("encoding context: %v", err)
 					}
 					fn(api.GenerateResponse{
-						Done:        true,
-						Context:     embd,
-						SampleCount: int(complete.Timings.PredictedN), // TODO
-						// SampleDuration:     parseDurationMs(float64(complete.Timings.PredictedMS)),
-						PromptEvalCount:    int(complete.TokensEvaluated),
-						PromptEvalDuration: parseDurationMs(float64(complete.Timings.PredictedMS)),
-						// EvalCount:          int(complete.TokensEvaluated),
-						EvalDuration: parseDurationMs(float64(complete.Timings.PredictedMS)),
+						Done:               true,
+						Context:            embd,
+						PromptEvalCount:    int(complete.Timings.PromptN),
+						PromptEvalDuration: parseDurationMs(float64(complete.Timings.PromptMS)),
+						EvalCount:          int(complete.Timings.PredictedN),
+						EvalDuration:       parseDurationMs(float64(complete.Timings.PredictedMS)),
 					})
 					return nil
 				}
