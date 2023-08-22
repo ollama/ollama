@@ -25,6 +25,20 @@ import (
 	"github.com/jmorganca/ollama/vector"
 )
 
+var mode string = gin.DebugMode
+
+func init() {
+	switch mode {
+	case gin.DebugMode:
+	case gin.ReleaseMode:
+	case gin.TestMode:
+	default:
+		mode = gin.DebugMode
+	}
+
+	gin.SetMode(mode)
+}
+
 var loaded struct {
 	mu sync.Mutex
 

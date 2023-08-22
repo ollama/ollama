@@ -3,6 +3,7 @@
 mkdir -p dist
 
 GO_LDFLAGS="-X github.com/jmorganca/ollama/version.Version=$VERSION"
+GO_LDFLAGS="$GO_LDFLAGS -X github.com/jmorganca/ollama/server.mode=release"
 
 # build universal binary
 CGO_ENABLED=1 GOARCH=arm64 go build -ldflags "$GO_LDFLAGS" -o dist/ollama-darwin-arm64
