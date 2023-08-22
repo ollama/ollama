@@ -156,9 +156,9 @@ func doDownload(ctx context.Context, opts downloadOpts, f *FileDownload) error {
 	}
 
 	url := fmt.Sprintf("%s/v2/%s/blobs/%s", opts.mp.Registry, opts.mp.GetNamespaceRepository(), f.Digest)
-	headers := map[string]string{
-		"Range": fmt.Sprintf("bytes=%d-", size),
-	}
+
+	headers := make(http.Header)
+	headers.Set("Range", fmt.Sprintf("bytes=%d-", size))
 
 	resp, err := makeRequest(ctx, "GET", url, headers, nil, opts.regOpts)
 	if err != nil {
