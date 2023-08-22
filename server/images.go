@@ -521,7 +521,7 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 			model = &Model{ModelPath: e.model}
 		}
 
-		if err := load(model, e.opts, defaultSessionDuration); err != nil {
+		if err := load(context.Background(), model, e.opts, defaultSessionDuration); err != nil {
 			return nil, fmt.Errorf("load model to generate embeddings: %v", err)
 		}
 
