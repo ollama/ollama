@@ -14,7 +14,6 @@ type LLM interface {
 	Predict([]int, string, func(api.GenerateResponse)) error
 	Embedding(string) ([]float64, error)
 	Encode(string) []int
-	Decode(...int) string
 	SetOptions(api.Options)
 	Close()
 }

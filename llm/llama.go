@@ -1,96 +1,8 @@
 package llm
 
-/*
-#cgo CFLAGS: -Ofast -std=c11 -fPIC
-#cgo CPPFLAGS: -Ofast -Wall -Wextra -Wno-unused-function -Wno-unused-variable -DNDEBUG -DGGML_USE_K_QUANTS
-#cgo CXXFLAGS: -std=c++11 -fPIC
-#cgo darwin CPPFLAGS:  -DGGML_USE_ACCELERATE
-#cgo darwin,arm64 CPPFLAGS: -DGGML_USE_METAL -DGGML_METAL_NDEBUG
-#cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
-#include <stdlib.h>
-#include "llama.h"
-
-struct llama_sample_options
-{
-	float repeat_penalty;
-	float frequency_penalty;
-	float presence_penalty;
-	float temperature;
-	int32_t top_k;
-	float top_p;
-	float tfs_z;
-	float typical_p;
-	int mirostat;
-	float mirostat_tau;
-	float mirostat_eta;
-	bool penalize_newline;
-};
-
-llama_token llama_sample(
-		struct llama_context *ctx,
-		struct llama_token_data *candidates,
-		size_t n_candidates,
-		const llama_token *last_tokens,
-		size_t n_last_tokens,
-		struct llama_sample_options *opts)
-{
-	llama_token_data_array candidates_p = {
-		candidates,
-		n_candidates,
-		false,
-	};
-
-	struct llama_token_data newline = candidates_p.data[llama_token_nl()];
-
-	llama_sample_repetition_penalty(
-		ctx, &candidates_p,
-		last_tokens, n_last_tokens,
-		opts->repeat_penalty);
-
-	llama_sample_frequency_and_presence_penalties(
-		ctx, &candidates_p,
-		last_tokens, n_last_tokens,
-		opts->frequency_penalty, opts->presence_penalty);
-
-	if (!opts->penalize_newline) {
-		candidates_p.data[llama_token_nl()] = newline;
-	}
-
-	if (opts->temperature <= 0) {
-		return llama_sample_token_greedy(ctx, &candidates_p);
-	}
-
-	if (opts->mirostat == 1) {
-		int mirostat_m = 100;
-		float mirostat_mu = 2.0f * opts->mirostat_tau;
-		llama_sample_temperature(ctx, &candidates_p, opts->temperature);
-		return llama_sample_token_mirostat(
-			ctx, &candidates_p,
-			opts->mirostat_tau, opts->mirostat_eta,
-			mirostat_m, &mirostat_mu);
-	} else if (opts->mirostat == 2) {
-		float mirostat_mu = 2.0f * opts->mirostat_tau;
-		llama_sample_temperature(ctx, &candidates_p, opts->temperature);
-		return llama_sample_token_mirostat_v2(
-			ctx, &candidates_p,
-			opts->mirostat_tau, opts->mirostat_eta,
-			&mirostat_mu);
-	} else {
-		llama_sample_top_k(ctx, &candidates_p, opts->top_k, 1);
-		llama_sample_tail_free(ctx, &candidates_p, opts->tfs_z, 1);
-		llama_sample_typical(ctx, &candidates_p, opts->typical_p, 1);
-		llama_sample_top_p(ctx, &candidates_p, opts->top_p, 1);
-		llama_sample_temperature(ctx, &candidates_p, opts->temperature);
-		return llama_sample_token(ctx, &candidates_p);
-	}
-}
-*/
-import "C"
-
 import (
 	"bufio"
 	"bytes"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,16 +13,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
-	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/jmorganca/ollama/api"
 )
-
-//go:embed ggml-metal.metal
-var fs embed.FS
 
 const ModelFamilyLlama ModelFamily = "llama"
 
@@ -233,17 +139,6 @@ type Running struct {
 }
 
 type llama struct {
-	params *C.struct_llama_context_params
-	model  *C.struct_llama_model
-	ctx    *C.struct_llama_context
-
-	last   []C.llama_token
-	embd   []C.llama_token
-	cursor int
-
-	mu sync.Mutex
-	gc bool
-
 	api.Options
 	Running
 }
@@ -283,14 +178,23 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		return nil, fmt.Errorf("load llm: %w", err)
 	}
 
-	fmt.Println(model)
-
-	// TODO: server options from incoming options
+	// TODO: LoRA adapter
 	cmd := exec.Command(
 		llmServerBin,
 		"--model", model,
 		"--port", fmt.Sprintf("%d", port),
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
+		"--threads", fmt.Sprintf("%d", opts.NumThread),
+		"--gqa", fmt.Sprintf("%d", opts.NumGQA),
+		"--rms-norm-eps", fmt.Sprintf("%f", opts.Temperature),
+		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
+		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
+		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
+		"--memory-f32", fmt.Sprintf("%v", !opts.F16KV),
+		"--mlock", fmt.Sprintf("%v", opts.UseMLock),
+		"--no-mmap", fmt.Sprintf("%v", !opts.UseMMap),
+		"--numa", fmt.Sprintf("%v", opts.UseNUMA),
+		"--embedding",
 	)
 	err = cmd.Start()
 	if err != nil {
@@ -303,7 +207,6 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	for time.Now().Before(deadline) {
 		if !isPortAvailable(port) {
 			// TODO: warm up the model
-			fmt.Printf("llama.cpp is up at %d", port)
 			return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
 		}
 		time.Sleep(time.Millisecond)
@@ -381,7 +284,7 @@ type PredictComplete struct {
 	Truncated          bool               `json:"truncated"`
 }
 
-type PredictReq struct {
+type PredictRequest struct {
 	Prompt string `json:"prompt"`
 	Stream bool   `json:"stream"`
 }
@@ -389,26 +292,26 @@ type PredictReq struct {
 // TODO: client closing should release nested lock
 func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse)) error {
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
-	predReq := PredictReq{Prompt: prompt, Stream: true}
+	predReq := PredictRequest{Prompt: prompt, Stream: true}
 	data, err := json.Marshal(predReq)
 	if err != nil {
-		log.Fatalf("Error marshaling data: %v", err)
+		return fmt.Errorf("error marshaling data: %v", err)
 	}
 
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(data))
 	if err != nil {
-		log.Fatalf("error creating POST request: %v", err)
+		return fmt.Errorf("error creating POST request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Fatalf("POST predict: %v", err)
+		return fmt.Errorf("POST predict: %v", err)
 	}
 	defer resp.Body.Close()
 
 	reader := bufio.NewReader(resp.Body)
-	// TODO: for context fullResponse := ""
+	fullResponse := ""
 	for {
 		line, err := reader.ReadString('\n')
 		if err == io.EOF {
@@ -448,6 +351,7 @@ func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse
 			if err := json.Unmarshal([]byte(evt), &pred); err != nil {
 				return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
 			}
+			fullResponse += pred.Content
 			fn(api.GenerateResponse{Response: pred.Content})
 		}
 	}
@@ -461,169 +365,57 @@ func (llm *llama) Predict(ctx []int, prompt string, fn func(api.GenerateResponse
 	return false, false
 }
 
-func (llm *llama) marshalPrompt(ctx []int, prompt string) []C.llama_token {
-	tokens := append(ctx, llm.Encode(prompt)...)
-	if llm.NumKeep < 0 {
-		llm.NumKeep = len(tokens)
-	}
+type TokenizeRequest struct {
+	Content string `json:"content"`
+}
 
-	cTokens := make([]C.llama_token, len(tokens))
-	for i := range tokens {
-		cTokens[i] = C.llama_token(tokens[i])
-	}
-
-	// min(llm.NumCtx - 4, llm.NumKeep)
-	if llm.NumCtx-4 < llm.NumKeep {
-		llm.NumKeep = llm.NumCtx - 4
-	}
-
-	if len(tokens) >= llm.NumCtx {
-		// truncate input
-		numLeft := (llm.NumCtx - llm.NumKeep) / 2
-		truncated := cTokens[:llm.NumKeep]
-		erasedBlocks := (len(cTokens) - llm.NumKeep - numLeft - 1) / numLeft
-		truncated = append(truncated, cTokens[llm.NumKeep+erasedBlocks*numLeft:]...)
-		copy(llm.last, cTokens[len(cTokens)-llm.NumCtx:])
-
-		cTokens = truncated
-		log.Printf("input truncated: num_ctx=%d num_keep=%d num_left=%d num_tokens=%d", llm.NumCtx, llm.NumKeep, numLeft, len(truncated))
-	} else {
-		llm.last = make([]C.llama_token, llm.NumCtx-len(cTokens))
-		llm.last = append(llm.last, cTokens...)
-	}
-
-	var i int
-	for i = 0; i < len(llm.embd) && i < len(cTokens) && llm.embd[i] == cTokens[i]; i++ {
-		// noop
-	}
-
-	llm.embd = cTokens
-	if i == len(cTokens) {
-		// evaluate at least one token to generate logits
-		i--
-	}
-
-	llm.cursor = i
-
-	log.Printf("prompt: num_past=%d cached=%v eval=%v", i, len(llm.embd[:i]), len(llm.embd[i:]))
-	return cTokens
+type TokenizeResponse struct {
+	Tokens []int `json:"tokens"`
 }
 
 func (llm *llama) Encode(prompt string) []int {
-	cPrompt := C.CString(prompt)
-	defer C.free(unsafe.Pointer(cPrompt))
-
-	cTokens := make([]C.llama_token, len(prompt)+1)
-	if n := C.llama_tokenize(llm.ctx, cPrompt, unsafe.SliceData(cTokens), C.int(len(cTokens)), true); n > 0 {
-		tokens := make([]int, n)
-		for i := range cTokens[:n] {
-			tokens[i] = int(cTokens[i])
-		}
-
-		return tokens
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/tokenize", llm.Port)
+	data, err := json.Marshal(TokenizeRequest{Content: prompt})
+	if err != nil {
+		// TODO: should this be fatal?
+		log.Printf("Error marshaling encode data: %v", err)
+		return nil
 	}
 
-	return nil
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(data))
+	if err != nil {
+		log.Printf("error creating POST request: %v", err)
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("POST encode: %v", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("error reading tokenize response: %s", err)
+		return nil
+	}
+
+	var encoded TokenizeResponse
+	if err := json.Unmarshal(body, &encoded); err != nil {
+		log.Fatalf("error unmarshaling llm tokenize response: %v", err)
+	}
+
+	return encoded.Tokens
 }
 
-func (llm *llama) Decode(tokens ...int) string {
-	var sb strings.Builder
-	for _, token := range tokens {
-		sb.WriteString(C.GoString(C.llama_token_to_str(llm.ctx, C.llama_token(token))))
-	}
-
-	return sb.String()
+type EmbeddingRequest struct {
+	Content string `json:"content"`
 }
 
-func (llm *llama) next() (C.llama_token, error) {
-	llm.mu.Lock()
-	defer llm.mu.Unlock()
-
-	if len(llm.embd) >= llm.NumCtx {
-		numLeft := (llm.NumCtx - llm.NumKeep) / 2
-		truncated := llm.embd[:llm.NumKeep]
-		truncated = append(truncated, llm.embd[len(llm.embd)-numLeft:]...)
-
-		llm.embd = truncated
-		llm.cursor = llm.NumKeep
-		log.Printf("input truncated: num_ctx=%d num_keep=%d num_left=%d num_tokens=%d cursor=%d", llm.NumCtx, llm.NumKeep, numLeft, len(truncated), llm.cursor)
-	}
-
-	for {
-		if llm.gc {
-			return 0, io.EOF
-		}
-
-		if llm.cursor >= len(llm.embd) {
-			break
-		}
-
-		numEval := len(llm.embd) - llm.cursor
-		if numEval > llm.NumBatch {
-			numEval = llm.NumBatch
-		}
-
-		if retval := C.llama_eval(llm.ctx, unsafe.SliceData(llm.embd[llm.cursor:]), C.int(numEval), C.int(llm.cursor), C.int(llm.NumThread)); retval != 0 {
-			return 0, fmt.Errorf("llama_eval: %d", retval)
-		}
-
-		llm.cursor += numEval
-	}
-
-	var sampleOpts C.struct_llama_sample_options
-	sampleOpts.repeat_penalty = C.float(llm.RepeatPenalty)
-	sampleOpts.frequency_penalty = C.float(llm.FrequencyPenalty)
-	sampleOpts.presence_penalty = C.float(llm.PresencePenalty)
-	sampleOpts.temperature = C.float(llm.Temperature)
-	sampleOpts.top_k = C.int(llm.TopK)
-	sampleOpts.top_p = C.float(llm.TopP)
-	sampleOpts.tfs_z = C.float(llm.TFSZ)
-	sampleOpts.typical_p = C.float(llm.TypicalP)
-	sampleOpts.mirostat = C.int(llm.Mirostat)
-	sampleOpts.mirostat_tau = C.float(llm.MirostatTau)
-	sampleOpts.mirostat_eta = C.float(llm.MirostatEta)
-	sampleOpts.penalize_newline = C.bool(llm.PenalizeNewline)
-
-	numVocab := C.llama_n_vocab(llm.ctx)
-	logits := unsafe.Slice(C.llama_get_logits(llm.ctx), numVocab)
-
-	// TODO: logit bias
-
-	candidates := make([]C.llama_token_data, numVocab)
-	for i := range logits {
-		candidates[i] = C.llama_token_data{
-			id:    C.int(i),
-			logit: logits[i],
-			p:     0,
-		}
-	}
-
-	repeatLastN := llm.RepeatLastN
-	if len(llm.last) < repeatLastN {
-		repeatLastN = len(llm.last)
-	}
-
-	if llm.NumCtx < repeatLastN {
-		repeatLastN = llm.NumCtx
-	}
-
-	lastN := llm.last[len(llm.last)-repeatLastN:]
-
-	token := C.llama_sample(
-		llm.ctx,
-		unsafe.SliceData(candidates), C.size_t(len(candidates)),
-		unsafe.SliceData(lastN), C.size_t(len(lastN)),
-		&sampleOpts,
-	)
-
-	llm.last = append(llm.last, token)
-	llm.embd = append(llm.embd, token)
-
-	if token == C.llama_token_eos() {
-		return 0, io.EOF
-	}
-
-	return token, nil
+type EmbeddingResponse struct {
+	Embedding []float64 `json:"embedding"`
 }
 
 func (llm *llama) Embedding(input string) ([]float64, error) {
@@ -631,32 +423,33 @@ func (llm *llama) Embedding(input string) ([]float64, error) {
 		return nil, errors.New("llama: embedding not enabled")
 	}
 
-	tokens := llm.Encode(input)
-	if tokens == nil {
-		return nil, errors.New("llama: tokenize embedding")
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/embedding", llm.Port)
+	data, err := json.Marshal(TokenizeRequest{Content: input})
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}
 
-	cTokens := make([]C.llama_token, len(tokens))
-	for i := range tokens {
-		cTokens[i] = C.llama_token(tokens[i])
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBuffer(data))
+	if err != nil {
+		return nil, fmt.Errorf("error creating embed request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST embedding: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading embed response: %w", err)
 	}
 
-	retval := C.llama_eval(llm.ctx, unsafe.SliceData(cTokens), C.int(len(tokens)), 0, C.int(llm.NumThread))
-	if retval != 0 {
-		return nil, errors.New("llama: eval")
+	var embedding EmbeddingResponse
+	if err := json.Unmarshal(body, &embedding); err != nil {
+		log.Fatalf("error unmarshaling llm tokenize response: %v", err)
 	}
 
-	C.llama_print_timings(llm.ctx)
-
-	n := C.llama_n_embd(llm.ctx)
-	if n <= 0 {
-		return nil, errors.New("llama: no embeddings generated")
-	}
-	cEmbeddings := unsafe.Slice(C.llama_get_embeddings(llm.ctx), n)
-
-	embeddings := make([]float64, len(cEmbeddings))
-	for i, v := range cEmbeddings {
-		embeddings[i] = float64(v)
-	}
-	return embeddings, nil
+	return embedding.Embedding, nil
 }
