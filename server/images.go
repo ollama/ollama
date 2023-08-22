@@ -1137,8 +1137,6 @@ func GetSHA256Digest(r io.Reader) (string, int) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), int(n)
 }
 
-type requestContextKey string
-
 // Function to check if a blob already exists in the Docker registry
 func checkBlobExistence(ctx context.Context, mp ModelPath, digest string, regOpts *RegistryOptions) (bool, error) {
 	requestURL := mp.BaseURL()
