@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -39,13 +40,13 @@ func ParseModelPath(name string) ModelPath {
 		Tag:            DefaultTag,
 	}
 
-	parts := strings.Split(name, "://")
-	if len(parts) > 1 {
-		mp.ProtocolScheme = parts[0]
-		name = parts[1]
+	before, after, found := strings.Cut(name, "://")
+	if found {
+		mp.ProtocolScheme = before
+		name = after
 	}
 
-	parts = strings.Split(name, "/")
+	parts := strings.Split(name, "/")
 	switch len(parts) {
 	case 3:
 		mp.Registry = parts[0]
@@ -98,6 +99,13 @@ func (mp ModelPath) GetManifestPath(createDir bool) (string, error) {
 	}
 
 	return path, nil
+}
+
+func (mp ModelPath) BaseURL() *url.URL {
+	return &url.URL{
+		Scheme: mp.ProtocolScheme,
+		Host:   mp.Registry,
+	}
 }
 
 func GetManifestPath() (string, error) {
