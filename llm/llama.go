@@ -311,7 +311,7 @@ type GenerationSettings struct {
 	FrequencyPenalty float64         `json:"frequency_penalty"`
 	Grammar          string          `json:"grammar"`
 	IgnoreEOS        bool            `json:"ignore_eos"`
-	LogitBias        map[int]float32 `json:"logit_bias"` // TODO
+	LogitBias        map[int]float32 `json:"logit_bias"`
 	Mirostat         int             `json:"mirostat"`
 	MirostatEta      float64         `json:"mirostat_eta"`
 	MirostatTau      float64         `json:"mirostat_tau"`
@@ -388,7 +388,6 @@ type PredictRequest struct {
 	Stop             []string        `json:"stop,omitempty"`
 }
 
-// TODO: client closing should release nested lock
 func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, fn func(api.GenerateResponse)) error {
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
 	predReq := PredictRequest{
