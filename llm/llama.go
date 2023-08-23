@@ -285,7 +285,6 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 
 	for time.Now().Before(deadline) {
 		if !isPortAvailable(port) {
-			log.Printf("llama.cpp started on 127.0.0.1:%d", port)
 			return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
 		}
 		time.Sleep(time.Millisecond)
