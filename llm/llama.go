@@ -308,30 +308,30 @@ type Prediction struct {
 }
 
 type GenerationSettings struct {
-	FrequencyPenalty float64         `json:"frequency_penalty"`
-	Grammar          string          `json:"grammar"`
-	IgnoreEOS        bool            `json:"ignore_eos"`
-	LogitBias        map[int]float32 `json:"logit_bias"`
-	Mirostat         int             `json:"mirostat"`
-	MirostatEta      float64         `json:"mirostat_eta"`
-	MirostatTau      float64         `json:"mirostat_tau"`
-	Model            string          `json:"model"`
-	NCtx             int             `json:"n_ctx"`
-	NKeep            int             `json:"n_keep"`
-	NPredict         int             `json:"n_predict"`
-	NProbs           int             `json:"n_probs"`
-	PenalizeNl       bool            `json:"penalize_nl"`
-	PresencePenalty  float64         `json:"presence_penalty"`
-	RepeatLastN      int             `json:"repeat_last_n"`
-	RepeatPenalty    float64         `json:"repeat_penalty"`
-	Seed             uint32          `json:"seed"`
-	Stop             []string        `json:"stop"`
-	Stream           bool            `json:"stream"`
-	Temp             float64         `json:"temp"`
-	TfsZ             float64         `json:"tfs_z"`
-	TopK             int             `json:"top_k"`
-	TopP             float64         `json:"top_p"`
-	TypicalP         float64         `json:"typical_p"`
+	FrequencyPenalty float64       `json:"frequency_penalty"`
+	Grammar          string        `json:"grammar"`
+	IgnoreEOS        bool          `json:"ignore_eos"`
+	LogitBias        []interface{} `json:"logit_bias"`
+	Mirostat         int           `json:"mirostat"`
+	MirostatEta      float64       `json:"mirostat_eta"`
+	MirostatTau      float64       `json:"mirostat_tau"`
+	Model            string        `json:"model"`
+	NCtx             int           `json:"n_ctx"`
+	NKeep            int           `json:"n_keep"`
+	NPredict         int           `json:"n_predict"`
+	NProbs           int           `json:"n_probs"`
+	PenalizeNl       bool          `json:"penalize_nl"`
+	PresencePenalty  float64       `json:"presence_penalty"`
+	RepeatLastN      int           `json:"repeat_last_n"`
+	RepeatPenalty    float64       `json:"repeat_penalty"`
+	Seed             uint32        `json:"seed"`
+	Stop             []string      `json:"stop"`
+	Stream           bool          `json:"stream"`
+	Temp             float64       `json:"temp"`
+	TfsZ             float64       `json:"tfs_z"`
+	TopK             int           `json:"top_k"`
+	TopP             float64       `json:"top_p"`
+	TypicalP         float64       `json:"typical_p"`
 }
 
 type Timings struct {
