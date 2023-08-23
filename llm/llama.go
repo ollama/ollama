@@ -9,13 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"path"
 	"time"
 
 	"github.com/jmorganca/ollama/api"
@@ -23,12 +23,11 @@ import (
 
 const ModelFamilyLlama ModelFamily = "llama"
 
-//go:embed llama_cpp_gpu
-var llamaGPUBin []byte
+//go:embed llama.cpp/ggml/build/gpu/bin/*
+var llamaGPU embed.FS
 
-//go:embed llama_cpp
-var llamaBin []byte
-var _ embed.FS // appease go
+//go:embed llama.cpp/ggml/build/cpu/bin/*
+var llamaCPU embed.FS
 
 type llamaModel struct {
 	hyperparameters llamaHyperparameters
@@ -160,40 +159,67 @@ func isPortAvailable(port int) bool {
 	return true
 }
 
-func getRandomPort() (int, error) {
-	const (
-		minPort  = 1024
-		maxPort  = 49151
-		attempts = 100 // Number of attempts to find an available port
-	)
-	for i := 0; i < attempts; i++ {
-		port := minPort + rand.Intn(maxPort-minPort+1)
-		if isPortAvailable(port) {
-			return port, nil
-		}
+func getAvailablePort() (int, error) {
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return 0, err
 	}
-	return -1, fmt.Errorf("could not find an available port")
+	defer ln.Close()
+
+	return ln.Addr().(*net.TCPAddr).Port, nil
 }
 
-func llamaCmd(name string, embedded []byte, params []string) (*exec.Cmd, error) {
-	// TODO: if GOOS == LINUX, run from memory
-	home, err := os.UserHomeDir()
+// retrieveContents recursively retrieves all the files in a directory since go embedding preserves directory structure
+func retrieveContents(fsys fs.FS, path string) ([]string, error) {
+	entries, err := fs.ReadDir(fsys, path)
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(home, ".ollama", "runners", name)
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			return retrieveContents(fsys, path+"/"+entry.Name())
 		}
-		if err := os.WriteFile(path, embedded, 0o755); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
+	}
+
+	result := []string{}
+	for _, e := range entries {
+		result = append(result, path+"/"+e.Name())
+	}
+	return result, nil
+}
+
+func llamaCmd(embeddedFS fs.FS, params []string) (*exec.Cmd, error) {
+	tmpDir, err := os.MkdirTemp("", "llama-*")
+	if err != nil {
 		return nil, err
 	}
+
+	files, err := retrieveContents(embeddedFS, "llama.cpp")
+	if err != nil {
+		return nil, err
+	}
+
+	for _, f := range files {
+		data, err := fs.ReadFile(embeddedFS, f)
+		if err != nil {
+			return nil, err
+		}
+		destPath := fmt.Sprintf("%s/%s", tmpDir, path.Base(f))
+		err = os.WriteFile(destPath, data, 0o755)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	cmdPath := fmt.Sprintf("%s/%s", tmpDir, "server")
+
+	if _, err := os.Stat(cmdPath); os.IsNotExist(err) {
+		return nil, errors.New("executable not found for llama.cpp")
+	}
+
 	cmd := exec.Command(
-		path,
+		cmdPath,
 		params...,
 	)
 
@@ -209,7 +235,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	port, err := getRandomPort()
+	port, err := getAvailablePort()
 	if err != nil {
 		return nil, fmt.Errorf("load llm: %w", err)
 	}
@@ -222,6 +248,10 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--embedding",
+	}
+
+	if opts.NumGPU > 0 {
+		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
 	}
 
 	if len(adapters) > 0 {
@@ -250,9 +280,9 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	}
 
 	// try to start llama.cpp with gpu acceleration, if it fails, fallback to CPU
-	cmd, err := llamaCmd("llama_cpp_gpu", llamaGPUBin, params)
+	cmd, err := llamaCmd(llamaGPU, params)
 	if err != nil {
-		return nil, fmt.Errorf("llama_cpp_gpu command setup: %w", err)
+		return nil, fmt.Errorf("llama.cpp gpu command setup: %w", err)
 	}
 	err = cmd.Start()
 	if err != nil {
@@ -270,7 +300,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 			// TODO: what is the specific error when the GPU is not supported?
 			log.Printf("could not start llama.cpp with gpu acceleration: %v\n", err)
 			// fallback to the CPU runner
-			cmd, err = llamaCmd("llama_cpp", llamaBin, params)
+			cmd, err = llamaCmd(llamaCPU, params)
 			if err != nil {
 				log.Fatalf("error setting up the llama.cpp CPU runner: %v", err)
 			}
