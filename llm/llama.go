@@ -327,7 +327,6 @@ type Prediction struct {
 
 type GenerationSettings struct {
 	FrequencyPenalty float64       `json:"frequency_penalty"`
-	Grammar          string        `json:"grammar"`
 	IgnoreEOS        bool          `json:"ignore_eos"`
 	LogitBias        []interface{} `json:"logit_bias"`
 	Mirostat         int           `json:"mirostat"`
