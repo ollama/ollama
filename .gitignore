@@ -5,6 +5,4 @@
 .swp
 dist
 ollama
-/ggml-metal.metal
 build
-llm/llama.cpp*
