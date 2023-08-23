@@ -23,11 +23,8 @@ import (
 
 const ModelFamilyLlama ModelFamily = "llama"
 
-//go:embed llama.cpp/ggml/build/gpu/bin/*
-var llamaGPU embed.FS
-
-//go:embed llama.cpp/ggml/build/cpu/bin/*
-var llamaCPU embed.FS
+//go:embed llama.cpp/ggml/build/bin/*
+var llamaCpp embed.FS
 
 type llamaModel struct {
 	hyperparameters llamaHyperparameters
@@ -280,7 +277,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	}
 
 	// try to start llama.cpp with gpu acceleration, if it fails, fallback to CPU
-	cmd, err := llamaCmd(llamaGPU, params)
+	cmd, err := llamaCmd(llamaCpp, params)
 	if err != nil {
 		return nil, fmt.Errorf("llama.cpp gpu command setup: %w", err)
 	}
@@ -298,15 +295,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 				return
 			}
 			// TODO: what is the specific error when the GPU is not supported?
-			log.Printf("could not start llama.cpp with gpu acceleration: %v\n", err)
-			// fallback to the CPU runner
-			cmd, err = llamaCmd(llamaCPU, params)
-			if err != nil {
-				log.Fatalf("error setting up the llama.cpp CPU runner: %v", err)
-			}
-			if err := cmd.Start(); err != nil {
-				log.Fatalf("error starting the llama.cpp CPU server: %v", err)
-			}
+			log.Printf("could not start llama.cpp: %v\n", err)
 		}
 	}()
 
