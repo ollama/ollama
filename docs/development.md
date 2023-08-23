@@ -3,8 +3,7 @@
 Install required tools:
 
 ```
-brew install go
-brew install cmake
+brew install go cmake
 ```
 
 You will also need a C/C++ compiler such as GCC for MacOS and Linux or Mingw-w64 GCC for Windows.
