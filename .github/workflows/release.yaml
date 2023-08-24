@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  linux:
+    permissions: write-all
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Go environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install build-essential
+
+      - name: Build CPU binary
+        run: |
+          git submodule update --init --recursive
+          go generate ./...
+          mkdir -p linux-amd64-ollama
+          go build -o linux-amd64-ollama/ollama
+
+      - name: Zip the build
+        run: zip -r linux-amd64-ollama.zip linux-amd64-ollama/
+
+      - run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          gh release view ${TAG_NAME} || exit 1
+          gh release upload ${TAG_NAME} linux-amd64-ollama.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
