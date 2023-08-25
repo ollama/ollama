@@ -8,10 +8,17 @@ require (
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db
 	github.com/olekukonko/tablewriter v0.0.5
+	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/spf13/cobra v1.7.0
 )
 
-require github.com/rivo/uniseg v0.2.0 // indirect
+require (
+	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/tklauser/go-sysconf v0.3.12 // indirect
+	github.com/tklauser/numcpus v0.6.1 // indirect
+	github.com/yusufpapurcu/wmi v1.2.3 // indirect
+)
 
 require (
 	github.com/bytedance/sonic v1.9.1 // indirect
@@ -38,9 +45,9 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/crypto v0.10.0 // indirect
+	golang.org/x/crypto v0.10.0
 	golang.org/x/net v0.10.0 // indirect
-	golang.org/x/sys v0.10.0 // indirect
+	golang.org/x/sys v0.11.0 // indirect
 	golang.org/x/term v0.10.0
 	golang.org/x/text v0.10.0 // indirect
 	gonum.org/v1/gonum v0.13.0

@@ -11,14 +11,17 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/shirou/gopsutil/process"
 )
 
 const ModelFamilyLlama ModelFamily = "llama"
@@ -232,13 +235,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	port, err := getAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("load llm: %w", err)
-	}
-
 	params := []string{
-		"--port", fmt.Sprintf("%d", port),
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--gqa", fmt.Sprintf("%d", opts.NumGQA),
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
@@ -276,40 +273,65 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		params = append(params, "--numa")
 	}
 
-	// try to start llama.cpp with gpu acceleration, if it fails, fallback to CPU
-	cmd, err := llamaCmd(llamaCpp, params)
-	if err != nil {
-		return nil, fmt.Errorf("llama.cpp gpu command setup: %w", err)
-	}
-	err = cmd.Start()
-	if err != nil {
-		return nil, fmt.Errorf("error starting the external server: %w", err)
-	}
-
-	// monitor the command in a goroutine, if it fails log the error and start the CPU version
-	go func() {
-		err := cmd.Wait()
+	// start the llama.cpp server with a retry in case the port is already in use
+	for try := 0; try < 3; try++ {
+		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
+		cmd, err := llamaCmd(llamaCpp, append(params, "--port", strconv.Itoa(port)))
 		if err != nil {
-			if err.Error() == "signal: killed" {
-				// this is expected when the server is closed due to loading a new model
-				return
+			return nil, fmt.Errorf("llama.cpp gpu command setup: %w", err)
+		}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+
+		err = cmd.Start()
+		if err != nil {
+			return nil, fmt.Errorf("error starting the external llama.cpp server: %w", err)
+		}
+
+		// relay the logs from the external process
+		go func() {
+			err := cmd.Wait()
+			if err != nil {
+				if err.Error() == "signal: killed" {
+					// this is expected when the server is closed due to loading a new model
+					return
+				}
+				// TODO: what is the specific error when the GPU is not supported?
+				log.Print(stderr.String())
 			}
-			// TODO: what is the specific error when the GPU is not supported?
-			log.Printf("could not start llama.cpp: %v\n", err)
-		}
-	}()
+		}()
 
-	// wait for llama.cpp to come up
-	deadline := time.Now().Add(10 * time.Second)
-
-	for time.Now().Before(deadline) {
-		if !isPortAvailable(port) {
-			return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
+		proc, err := process.NewProcess(int32(cmd.Process.Pid))
+		if err != nil {
+			return nil, fmt.Errorf("llama.cpp process details: %w", err)
 		}
-		time.Sleep(time.Millisecond)
+
+		timeout := time.After(3 * time.Second)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+	next:
+		for {
+			select {
+			case <-timeout:
+				break next
+			case <-ticker.C:
+				conns, err := proc.Connections()
+				if err != nil {
+					return nil, fmt.Errorf("get llama.cpp connections: %w", err)
+				}
+				if len(conns) > 0 {
+					return &llama{Options: opts, Running: Running{Port: int(conns[0].Laddr.Port), Cmd: cmd}}, nil
+				}
+			}
+		}
+
+		err = cmd.Process.Kill()
+		if err != nil && err.Error() != "os: process already finished" {
+			return nil, fmt.Errorf("kill llama.cpp: %w", err)
+		}
 	}
 
-	return nil, fmt.Errorf("timed out waiting for llama.cpp at port %d", port)
+	return nil, fmt.Errorf("max retry exceeded starting llama.cpp")
 }
 
 func (llm *llama) Close() {
@@ -398,7 +420,6 @@ type PredictRequest struct {
 	NKeep            int             `json:"n_keep,omitempty"`
 	Seed             int             `json:"seed,omitempty"`
 	Prompt           string          `json:"prompt,omitempty"`
-	Grammar          string          `json:"grammar,omitempty"`
 	NProbs           int             `json:"n_probs,omitempty"`
 	LogitBias        map[int]float32 `json:"logit_bias,omitempty"`
 	IgnoreEos        bool            `json:"ignore_eos,omitempty"`
@@ -425,7 +446,6 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 		MirostatTau:      llm.MirostatTau,
 		MirostatEta:      llm.MirostatEta,
 		PenalizeNl:       llm.PenalizeNewline,
-		Grammar:          llm.Grammar,
 		Stop:             llm.Stop,
 	}
 	data, err := json.Marshal(predReq)
