@@ -56,7 +56,8 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, requestURL *url.URL, l
 	defer f.Close()
 
 	var completed int64
-	chunkSize := 10 * 1024 * 1024
+	// 95MB chunk size
+	chunkSize := 95 * 1024 * 1024
 
 	for {
 		chunk := int64(layer.Size) - completed
