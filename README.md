@@ -126,6 +126,8 @@ Ollama bundles model weights, configuration, and data into a single package, def
 
 ## Building
 
+You will also need a C/C++ compiler such as GCC for MacOS and Linux or Mingw-w64 GCC for Windows.
+
 ```
 go build .
 ```
