@@ -5,36 +5,69 @@ on:
     types: [published]
 
 jobs:
-  linux:
-    permissions: write-all
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+        arch:
+          - amd64
+
+    runs-on: ${{ matrix.os }}
     steps:
+      - run: |
+          case "${{ runner.os }}" in
+            'Linux') echo 'linux' ;;
+            'Windows') echo 'windows' ;;
+            'macOS') echo 'darwin' ;;
+          esac | xargs -I{} echo 'GOOS={}' | tee -a $GITHUB_ENV
+
+          case "${{ runner.arch }}" in
+            'X86') echo 'i386' ;;
+            'X64') echo 'amd64' ;;
+            'ARM') echo 'arm' ;;
+            'ARM64') echo 'arm64' ;;
+          esac | xargs -I{} echo 'GOARCH={}' | tee -a $GITHUB_ENV
+
       - uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Setup Go environment
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
-          cache: true
+          go-version: 1.21
 
-      - name: Install dependencies
+      - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install build-essential
+          sudo apt-get install -y build-essential cmake
+        if: ${{ runner.os == 'Linux' }}
 
-      - name: Build CPU binary
+      - name: Install macOS build dependencies
         run: |
-          git submodule update --init --recursive
-          go generate ./...
-          mkdir -p linux-amd64-ollama
-          go build -o linux-amd64-ollama/ollama
+          brew update
+          brew install cmake
+        if: ${{ runner.os == 'macOS' }}
 
-      - name: Zip the build
-        run: zip -r linux-amd64-ollama.zip linux-amd64-ollama/
+      - name: Install Windows build dependencies
+        run: |
+          choco install mingw cmake
+        if: ${{ runner.os == 'Windows' }}
 
       - run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          gh release view ${TAG_NAME} || exit 1
-          gh release upload ${TAG_NAME} linux-amd64-ollama.zip
+          go generate ./...
+          go build -o ollama-$GOOS-$GOARCH
+          zip ollama-$GOOS-$GOARCH.zip ollama-$GOOS-$GOARCH
+        env:
+          CGO_ENABLED: 1
+          GOFLAGS: >-
+            '-ldflags=-w -s
+              "-X=github.com/jmorganca/ollama/version.Version=${{ github.ref_name }}"
+              "-X=github.com/jmorganca/ollama/server.mode=release"'
+
+      - run: |
+          gh release view $GITHUB_REF_NAME || exit 1
+          gh release upload $GITHUB_REF_NAME *.zip
         env:
           GH_TOKEN: ${{ github.token }}
