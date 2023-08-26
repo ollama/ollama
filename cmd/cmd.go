@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -9,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -292,16 +292,19 @@ func pull(model string, insecure bool) error {
 }
 
 func RunGenerate(cmd *cobra.Command, args []string) error {
-	if len(args) > 1 {
-		// join all args into a single prompt
-		return generate(cmd, args[0], strings.Join(args[1:], " "))
+	model := args[0]
+	rest := args[1:]
+
+	if len(rest) > 0 {
+		// join rest of args into a single prompt
+		return generate(cmd, model, strings.Join(rest, " "))
 	}
 
 	if readline.IsTerminal(int(os.Stdin.Fd())) {
-		return generateInteractive(cmd, args[0])
+		return generateInteractive(cmd, model)
 	}
 
-	return generateBatch(cmd, args[0])
+	return generateBatch(cmd, model)
 }
 
 type generateContextKey string
@@ -574,16 +577,11 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 }
 
 func generateBatch(cmd *cobra.Command, model string) error {
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		prompt := scanner.Text()
-		fmt.Printf(">>> %s\n", prompt)
-		if err := generate(cmd, model, prompt); err != nil {
-			return err
-		}
+	prompt, err := ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		return err
 	}
-
-	return nil
+	return generate(cmd, model, string(prompt))
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
