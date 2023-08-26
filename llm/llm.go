@@ -55,7 +55,7 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 		if totalResidentMemory < 16*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 16GB of memory")
 		}
-	case ModelType30B:
+	case ModelType30B, ModelType34B:
 		if totalResidentMemory < 32*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 32GB of memory")
 		}
