@@ -149,6 +149,7 @@ static const std::map<e_model, size_t> & MEM_REQ_SCRATCH0(int n_ctx)
         { MODEL_7B,   ((size_t) n_ctx / 16ull + 100ull) * MB },
         { MODEL_13B,  ((size_t) n_ctx / 12ull + 120ull) * MB },
         { MODEL_30B,  ((size_t) n_ctx /  9ull + 160ull) * MB },
+        { MODEL_34B,  ((size_t) n_ctx /  9ull + 160ull) * MB },
         { MODEL_65B,  ((size_t) n_ctx /  6ull + 256ull) * MB }, // guess
         { MODEL_70B,  ((size_t) n_ctx /  7ull + 164ull) * MB },
     };
@@ -162,6 +163,7 @@ static const std::map<e_model, size_t> & MEM_REQ_SCRATCH1()
         { MODEL_7B,  160ull * MB },
         { MODEL_13B, 192ull * MB },
         { MODEL_30B, 256ull * MB },
+        { MODEL_34B, 256ull * MB },
         { MODEL_65B, 384ull * MB }, // guess
         { MODEL_70B, 304ull * MB },
     };
@@ -176,6 +178,7 @@ static const std::map<e_model, size_t> & MEM_REQ_EVAL()
         { MODEL_7B,  10ull * MB },
         { MODEL_13B, 12ull * MB },
         { MODEL_30B, 16ull * MB },
+        { MODEL_34B, 16ull * MB },
         { MODEL_65B, 24ull * MB }, // guess
         { MODEL_70B, 24ull * MB },
     };
@@ -191,6 +194,7 @@ static const std::map<e_model, size_t> & VRAM_REQ_SCRATCH_BASE()
         { MODEL_7B,   512ull * kB },
         { MODEL_13B,  640ull * kB },
         { MODEL_30B,  768ull * kB },
+        { MODEL_34B,  768ull * kB },
         { MODEL_65B, 1280ull * kB },
         { MODEL_70B, 1280ull * kB },
     };
@@ -206,6 +210,7 @@ static const std::map<e_model, size_t> & VRAM_REQ_SCRATCH_PER_CONTEXT()
         { MODEL_7B,  128ull },
         { MODEL_13B, 160ull },
         { MODEL_30B, 208ull },
+        { MODEL_34B, 208ull },
         { MODEL_65B, 256ull },
         { MODEL_70B, 256ull },
     };
@@ -1123,6 +1128,8 @@ static void llama_model_load_internal(
             LLAMA_LOG_WARN("%s: warning: assuming 70B model based on GQA == %d\n", __func__, n_gqa);
             model.type = e_model::MODEL_70B;
             hparams.f_ffn_mult = 1.3f; // from the params.json of the 70B model
+        } else if (model.type == e_model::MODEL_34B && n_gqa == 8) {
+            hparams.f_ffn_mult = 1.0f; // from the params.json of the 34B model
         }
 
         hparams.rope_freq_base  = rope_freq_base;
