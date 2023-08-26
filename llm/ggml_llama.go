@@ -12,11 +12,10 @@ import (
 	"io/fs"
 	"log"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -26,8 +25,13 @@ import (
 
 const ModelFamilyLlama ModelFamily = "llama"
 
-//go:embed llama.cpp/ggml/build/bin/*
-var llamaCpp embed.FS
+//go:embed llama.cpp/ggml/build/*/bin/*
+var llamaCppEmbed embed.FS
+
+var (
+	llamaCppGpu = filepath.Join("llama.cpp", "ggml", "build", "gpu", "bin")
+	llamaCppCpu = filepath.Join("llama.cpp", "ggml", "build", "cpu", "bin")
+)
 
 type llamaModel struct {
 	hyperparameters llamaHyperparameters
@@ -149,70 +153,38 @@ type llama struct {
 	Running
 }
 
-func isPortAvailable(port int) bool {
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return false
-	}
-	listener.Close()
-	return true
-}
-
-func getAvailablePort() (int, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer ln.Close()
-
-	return ln.Addr().(*net.TCPAddr).Port, nil
-}
-
-// retrieveContents recursively retrieves all the files in a directory since go embedding preserves directory structure
-func retrieveContents(fsys fs.FS, path string) ([]string, error) {
-	entries, err := fs.ReadDir(fsys, path)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			return retrieveContents(fsys, path+"/"+entry.Name())
-		}
-	}
-
-	result := []string{}
-	for _, e := range entries {
-		result = append(result, path+"/"+e.Name())
-	}
-	return result, nil
-}
-
 func llamaCmd(embeddedFS fs.FS, params []string) (*exec.Cmd, error) {
 	tmpDir, err := os.MkdirTemp("", "llama-*")
 	if err != nil {
 		return nil, err
 	}
 
-	files, err := retrieveContents(embeddedFS, "llama.cpp")
-	if err != nil {
-		return nil, err
+	llamaPath := llamaCppGpu
+	if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
+		llamaPath = llamaCppCpu
+		if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
+			return nil, errors.New("llama.cpp executable not found")
+		}
 	}
 
+	files := []string{"server"}
+	if llamaPath == llamaCppGpu {
+		// TODO: this should be an OS specific check for the relevant GPU libraries
+		files = append(files, "ggml-metal.metal")
+	}
 	for _, f := range files {
-		data, err := fs.ReadFile(embeddedFS, f)
+		data, err := fs.ReadFile(embeddedFS, filepath.Join(llamaPath, f))
 		if err != nil {
 			return nil, err
 		}
-		destPath := fmt.Sprintf("%s/%s", tmpDir, path.Base(f))
+		destPath := filepath.Join(tmpDir, f)
 		err = os.WriteFile(destPath, data, 0o755)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	cmdPath := fmt.Sprintf("%s/%s", tmpDir, "server")
+	cmdPath := filepath.Join(tmpDir, "server")
 
 	if _, err := os.Stat(cmdPath); os.IsNotExist(err) {
 		return nil, errors.New("executable not found for llama.cpp")
@@ -276,7 +248,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	// start the llama.cpp server with a retry in case the port is already in use
 	for try := 0; try < 3; try++ {
 		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
-		cmd, err := llamaCmd(llamaCpp, append(params, "--port", strconv.Itoa(port)))
+		cmd, err := llamaCmd(llamaCppEmbed, append(params, "--port", strconv.Itoa(port)))
 		if err != nil {
 			return nil, fmt.Errorf("llama.cpp gpu command setup: %w", err)
 		}
