@@ -29,9 +29,9 @@ ollama run llama2
 
 ## Model library
 
-Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library "ollama model library") 
+Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
 
-Here are some example open-source models that can be downloaded: 
+Here are some example open-source models that can be downloaded:
 
 | Model                    | Parameters | Size  | Download                        |
 | ------------------------ | ---------- | ----- | ------------------------------- |
@@ -39,6 +39,7 @@ Here are some example open-source models that can be downloaded:
 | Llama2 13B               | 13B        | 7.3GB | `ollama pull llama2:13b`        |
 | Llama2 70B               | 70B        | 39GB  | `ollama pull llama2:70b`        |
 | Llama2 Uncensored        | 7B         | 3.8GB | `ollama pull llama2-uncensored` |
+| Code Llama               | 7B         | 3.8GB | `ollama pull codellama`         |
 | Orca Mini                | 3B         | 1.9GB | `ollama pull orca-mini`         |
 | Vicuna                   | 7B         | 3.8GB | `ollama pull vicuna`            |
 | Nous-Hermes              | 7B         | 3.8GB | `ollama pull nous-hermes`       |
