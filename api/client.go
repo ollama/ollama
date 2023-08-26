@@ -16,7 +16,7 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
-const DefaultHost = "localhost:11434"
+const DefaultHost = "127.0.0.1:11434"
 
 var (
 	envHost = os.Getenv("OLLAMA_HOST")
