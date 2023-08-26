@@ -33,6 +33,43 @@ var (
 	llamaCppCpu = filepath.Join("llama.cpp", "ggml", "build", "cpu", "bin")
 )
 
+var runner = ""
+
+// TODO: remove this init, and instead bind this to an object initialization
+func init() {
+	tmpDir, err := os.MkdirTemp("", "llama-*")
+	if err != nil {
+		log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
+	}
+
+	llamaPath := llamaCppGpu
+	if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
+		llamaPath = llamaCppCpu
+		if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
+			log.Fatalf("llama.cpp executable not found")
+		}
+	}
+
+	files := []string{"server"}
+	if llamaPath == llamaCppGpu {
+		// TODO: this should be an OS specific check for the relevant GPU libraries
+		files = append(files, "ggml-metal.metal")
+	}
+	for _, f := range files {
+		data, err := fs.ReadFile(llamaCppEmbed, filepath.Join(llamaPath, f))
+		if err != nil {
+			log.Fatalf("read llama.cpp %s", f)
+		}
+		destPath := filepath.Join(tmpDir, f)
+		err = os.WriteFile(destPath, data, 0o755)
+		if err != nil {
+			log.Fatalf("write llama.cpp %s", f)
+		}
+	}
+
+	runner = filepath.Join(tmpDir, "server")
+}
+
 type llamaModel struct {
 	hyperparameters llamaHyperparameters
 }
@@ -153,53 +190,12 @@ type llama struct {
 	Running
 }
 
-func llamaCmd(embeddedFS fs.FS, params []string) (*exec.Cmd, error) {
-	tmpDir, err := os.MkdirTemp("", "llama-*")
-	if err != nil {
+func newLlama(model string, adapters []string, opts api.Options) (*llama, error) {
+	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
 
-	llamaPath := llamaCppGpu
-	if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-		llamaPath = llamaCppCpu
-		if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-			return nil, errors.New("llama.cpp executable not found")
-		}
-	}
-
-	files := []string{"server"}
-	if llamaPath == llamaCppGpu {
-		// TODO: this should be an OS specific check for the relevant GPU libraries
-		files = append(files, "ggml-metal.metal")
-	}
-	for _, f := range files {
-		data, err := fs.ReadFile(embeddedFS, filepath.Join(llamaPath, f))
-		if err != nil {
-			return nil, err
-		}
-		destPath := filepath.Join(tmpDir, f)
-		err = os.WriteFile(destPath, data, 0o755)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	cmdPath := filepath.Join(tmpDir, "server")
-
-	if _, err := os.Stat(cmdPath); os.IsNotExist(err) {
-		return nil, errors.New("executable not found for llama.cpp")
-	}
-
-	cmd := exec.Command(
-		cmdPath,
-		params...,
-	)
-
-	return cmd, nil
-}
-
-func newLlama(model string, adapters []string, opts api.Options) (*llama, error) {
-	if _, err := os.Stat(model); err != nil {
+	if _, err := os.Stat(runner); err != nil {
 		return nil, err
 	}
 
@@ -248,14 +244,14 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	// start the llama.cpp server with a retry in case the port is already in use
 	for try := 0; try < 3; try++ {
 		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
-		cmd, err := llamaCmd(llamaCppEmbed, append(params, "--port", strconv.Itoa(port)))
-		if err != nil {
-			return nil, fmt.Errorf("llama.cpp gpu command setup: %w", err)
-		}
+		cmd := exec.Command(
+			runner,
+			append(params, "--port", strconv.Itoa(port))...,
+		)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 
-		err = cmd.Start()
+		err := cmd.Start()
 		if err != nil {
 			return nil, fmt.Errorf("error starting the external llama.cpp server: %w", err)
 		}
