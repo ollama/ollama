@@ -163,8 +163,9 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	model := &Model{
-		Name:   mp.GetFullTagname(),
-		Digest: manifest.Config.Digest,
+		Name:     mp.GetFullTagname(),
+		Digest:   manifest.Config.Digest,
+		Template: "{{ .Prompt }}",
 	}
 
 	for _, layer := range manifest.Layers {
