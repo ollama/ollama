@@ -105,7 +105,7 @@ For more examples, see the [examples](./examples) directory. For more informatio
 ### Pull a model from the registry
 
 ```
-ollama pull orca
+ollama pull orca-mini
 ```
 
 ### Listing local models
