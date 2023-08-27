@@ -1086,11 +1086,11 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptio
 	}
 	defer resp.Body.Close()
 
-	// Check for success: For a successful upload, the Docker registry will respond with a 201 Created
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode >= http.StatusBadRequest {
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, fmt.Errorf("model not found")
 		}
+
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("on pull registry responded with code %d: %s", resp.StatusCode, body)
 	}
@@ -1151,7 +1151,7 @@ func checkBlobExistence(ctx context.Context, mp ModelPath, digest string, regOpt
 	defer resp.Body.Close()
 
 	// Check for success: If the blob exists, the Docker registry will respond with a 200 OK
-	return resp.StatusCode == http.StatusOK, nil
+	return resp.StatusCode < http.StatusBadRequest, nil
 }
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
@@ -1165,10 +1165,8 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 		status = resp.Status
 
-		switch resp.StatusCode {
-		case http.StatusAccepted, http.StatusCreated:
-			return resp, nil
-		case http.StatusUnauthorized:
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized:
 			auth := resp.Header.Get("www-authenticate")
 			authRedir := ParseAuthRedirectString(auth)
 			token, err := getAuthToken(ctx, authRedir, regOpts)
@@ -1184,9 +1182,11 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 			}
 
 			continue
-		default:
+		case resp.StatusCode >= http.StatusBadRequest:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, fmt.Errorf("on upload registry responded with code %d: %s", resp.StatusCode, body)
+		default:
+			return resp, nil
 		}
 	}
 

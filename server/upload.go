@@ -111,9 +111,8 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, requestURL *url.URL, l
 			}
 			defer resp.Body.Close()
 
-			switch resp.StatusCode {
-			case http.StatusAccepted, http.StatusCreated:
-			case http.StatusUnauthorized:
+			switch {
+			case resp.StatusCode == http.StatusUnauthorized:
 				auth := resp.Header.Get("www-authenticate")
 				authRedir := ParseAuthRedirectString(auth)
 				token, err := getAuthToken(ctx, authRedir, regOpts)
@@ -127,7 +126,7 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, requestURL *url.URL, l
 				}
 
 				continue
-			default:
+			case resp.StatusCode >= http.StatusBadRequest:
 				body, _ := io.ReadAll(resp.Body)
 				return fmt.Errorf("on upload registry responded with code %d: %s", resp.StatusCode, body)
 			}
@@ -158,7 +157,7 @@ func uploadBlobChunked(ctx context.Context, mp ModelPath, requestURL *url.URL, l
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("on finish upload registry responded with code %d: %v", resp.StatusCode, string(body))
 	}

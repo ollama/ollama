@@ -109,7 +109,7 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect, regOpts *Registry
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("on pull registry responded with code %d: %s", resp.StatusCode, body)
 	}
