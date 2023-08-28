@@ -974,7 +974,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 			continue
 		}
 
-		if err := uploadBlobChunked(ctx, mp, location, layer, regOpts, fn); err != nil {
+		if err := uploadBlobChunked(ctx, location, layer, regOpts, fn); err != nil {
 			log.Printf("error uploading blob: %v", err)
 			return err
 		}
