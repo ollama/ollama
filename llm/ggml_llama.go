@@ -495,8 +495,6 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 			}
 		}
 	}
-
-	return false, false
 }
 
 type TokenizeRequest struct {
@@ -542,6 +540,12 @@ func (llm *llama) Encode(ctx context.Context, prompt string) ([]int, error) {
 	}
 
 	return encoded.Tokens, nil
+}
+
+func (llm *llama) Decode(ctx context.Context, tokens []int) (string, error) {
+	// TODO
+
+	return "", nil
 }
 
 type EmbeddingRequest struct {

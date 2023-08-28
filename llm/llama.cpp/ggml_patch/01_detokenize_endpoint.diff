@@ -1,0 +1,39 @@
+diff --git a/examples/server/server.cpp b/examples/server/server.cpp
+index 9966045..5014691 100644
+--- a/examples/server/server.cpp
++++ b/examples/server/server.cpp
+@@ -1075,6 +1075,12 @@ static json format_tokenizer_response(const std::vector<llama_token> &tokens)
+         {"tokens", tokens}};
+ }
+ 
++static json format_detokenized_response(std::string content)
++{
++    return json{
++        {"content", content}};
++}
++
+ static void parse_options_completion(const json &body, llama_server_context &llama)
+ {
+     gpt_params default_params;
+@@ -1361,6 +1367,21 @@ int main(int argc, char **argv)
+         const json data = format_tokenizer_response(tokens);
+         return res.set_content(data.dump(), "application/json"); });
+ 
++    svr.Post("/detokenize", [&llama](const Request &req, Response &res)
++             {
++        auto lock = llama.lock();
++
++        const json body = json::parse(req.body);
++        std::string content;
++        if (body.count("tokens") != 0)
++        {
++            const std::vector<llama_token> tokens = body["tokens"];
++            content = tokens_to_str(llama.ctx, tokens.cbegin(), tokens.cend());
++        }
++
++        const json data = format_detokenized_response(content);
++        return res.set_content(data.dump(), "application/json"); });
++
+     svr.Post("/embedding", [&llama](const Request &req, Response &res)
+              {
+         auto lock = llama.lock();

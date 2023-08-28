@@ -11,7 +11,6 @@ You will also need a C/C++ compiler such as GCC for MacOS and Linux or Mingw-w64
 Get the required libraries:
 
 ```
-git submodule update --init --recursive
 go generate ./...
 ```
 
