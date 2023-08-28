@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jmorganca/ollama/api"
@@ -395,9 +396,14 @@ type PredictRequest struct {
 }
 
 func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, fn func(api.GenerateResponse)) error {
+	// we need to find the trimmed prompt context before predicting so that we can return it to the client
+	trimmedPrompt, err := llm.marshalPrompt(ctx, predictCtx, prompt)
+	if err != nil {
+		return fmt.Errorf("marshaling prompt: %v", err)
+	}
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
 	predReq := PredictRequest{
-		Prompt:           prompt,
+		Prompt:           trimmedPrompt,
 		Stream:           true,
 		NPredict:         llm.NumPredict,
 		NKeep:            llm.NumKeep,
@@ -443,7 +449,11 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	fullResponse := ""
+	var genCtx strings.Builder
+	genCtx.WriteString(trimmedPrompt)
+	if err != nil {
+		return fmt.Errorf("decode prompt context: %v", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -470,8 +480,8 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 				}
 
 				if complete.Timings.PredictedMS > 0 {
-					// this is a complete response
-					embd, err := llm.Encode(ctx, fullResponse)
+					genCtx.WriteString(complete.Content)
+					embd, err := llm.Encode(ctx, genCtx.String())
 					if err != nil {
 						return fmt.Errorf("encoding context: %v", err)
 					}
@@ -490,11 +500,39 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 				if err := json.Unmarshal([]byte(evt), &pred); err != nil {
 					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
 				}
-				fullResponse += pred.Content
+				genCtx.WriteString(pred.Content)
 				fn(api.GenerateResponse{Response: pred.Content})
 			}
 		}
 	}
+}
+
+func (llm *llama) marshalPrompt(ctx context.Context, pCtx []int, prompt string) (string, error) {
+	pEncode, err := llm.Encode(ctx, prompt)
+	if err != nil {
+		return "", fmt.Errorf("encoding prompt context: %w", err)
+	}
+	tokens := append(pCtx, pEncode...)
+	if llm.NumKeep < 0 {
+		llm.NumKeep = len(tokens)
+	}
+
+	// min(llm.NumCtx - 4, llm.NumKeep)
+	if llm.NumCtx-4 < llm.NumKeep {
+		llm.NumKeep = llm.NumCtx - 4
+	}
+
+	if len(tokens) >= 120 {
+		// truncate input
+		numLeft := (llm.NumCtx - llm.NumKeep) / 2
+		truncated := tokens[:llm.NumKeep]
+		erasedBlocks := (len(tokens) - llm.NumKeep - numLeft - 1) / numLeft
+		truncated = append(truncated, tokens[llm.NumKeep+erasedBlocks*numLeft:]...)
+		tokens = truncated
+		log.Printf("input truncated: num_ctx=%d num_keep=%d num_left=%d num_tokens=%d", llm.NumCtx, llm.NumKeep, numLeft, len(truncated))
+	}
+
+	return llm.Decode(ctx, tokens)
 }
 
 type TokenizeRequest struct {
@@ -542,10 +580,55 @@ func (llm *llama) Encode(ctx context.Context, prompt string) ([]int, error) {
 	return encoded.Tokens, nil
 }
 
-func (llm *llama) Decode(ctx context.Context, tokens []int) (string, error) {
-	// TODO
+type DetokenizeRequest struct {
+	Tokens []int `json:"tokens"`
+}
 
-	return "", nil
+type DetokenizeResponse struct {
+	Content string `json:"content"`
+}
+
+func (llm *llama) Decode(ctx context.Context, tokens []int) (string, error) {
+	if len(tokens) == 0 {
+		return "", nil
+	}
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/detokenize", llm.Port)
+	data, err := json.Marshal(DetokenizeRequest{Tokens: tokens})
+	if err != nil {
+		return "", fmt.Errorf("marshaling decode data: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(data))
+	if err != nil {
+		return "", fmt.Errorf("decode request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("do decode request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read decode request: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		log.Printf("llm decode error: %s", body)
+		return "", fmt.Errorf("%s", body)
+	}
+
+	var decoded DetokenizeResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return "", fmt.Errorf("unmarshal encode response: %w", err)
+	}
+
+	// decoded content contains a leading whitespace
+	decoded.Content, _ = strings.CutPrefix(decoded.Content, "")
+
+	return decoded.Content, nil
 }
 
 type EmbeddingRequest struct {
@@ -557,10 +640,6 @@ type EmbeddingResponse struct {
 }
 
 func (llm *llama) Embedding(ctx context.Context, input string) ([]float64, error) {
-	if !llm.EmbeddingOnly {
-		return nil, errors.New("llama: embedding not enabled")
-	}
-
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/embedding", llm.Port)
 	data, err := json.Marshal(TokenizeRequest{Content: input})
 	if err != nil {
