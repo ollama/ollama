@@ -87,6 +87,8 @@ func (llm *llamaModel) ModelType() ModelType {
 		return ModelType7B
 	case 40:
 		return ModelType13B
+	case 48:
+		return ModelType34B
 	case 60:
 		return ModelType30B
 	case 80:
