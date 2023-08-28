@@ -517,7 +517,7 @@ func (llm *llama) marshalPrompt(ctx context.Context, pCtx []int, prompt string) 
 		llm.NumKeep = llm.NumCtx - 4
 	}
 
-	if len(tokens) >= 120 {
+	if len(tokens) >= llm.NumCtx {
 		// truncate input
 		numLeft := (llm.NumCtx - llm.NumKeep) / 2
 		truncated := tokens[:llm.NumKeep]
