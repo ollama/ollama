@@ -1,3 +1,12 @@
+From 6145068a6613c37bb43a7408b5496524bdcfc402 Mon Sep 17 00:00:00 2001
+From: Bruce MacDonald <brucewmacdonald@gmail.com>
+Date: Mon, 28 Aug 2023 18:08:53 -0400
+Subject: [PATCH] 34B model support
+
+---
+ llama.cpp | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
 diff --git a/llama.cpp b/llama.cpp
 index f2cbe76..62c5cdf 100644
 --- a/llama.cpp
@@ -75,3 +84,6 @@ index f2cbe76..62c5cdf 100644
          }
  
          hparams.rope_freq_base  = rope_freq_base;
+-- 
+2.39.2 (Apple Git-143)
+

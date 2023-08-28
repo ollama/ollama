@@ -1,3 +1,12 @@
+From 032ef7ff2423f5117bb59d42fb71be9cebf0a2de Mon Sep 17 00:00:00 2001
+From: Bruce MacDonald <brucewmacdonald@gmail.com>
+Date: Mon, 28 Aug 2023 18:08:12 -0400
+Subject: [PATCH] add detokenize endpoint
+
+---
+ examples/server/server.cpp | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
 index 9966045..5014691 100644
 --- a/examples/server/server.cpp
@@ -37,3 +46,6 @@ index 9966045..5014691 100644
      svr.Post("/embedding", [&llama](const Request &req, Response &res)
               {
          auto lock = llama.lock();
+-- 
+2.39.2 (Apple Git-143)
+

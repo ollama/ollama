@@ -5,11 +5,11 @@
 # This script is needed because the patches must be applied to the git submodule.
 cd ggml
 
-# Loop through all the .diff files in the ggml_patch directory
-for diff_file in ../ggml_patch/*.diff; do
-  if git apply --check "$diff_file" 2>/dev/null; then
-    git apply "$diff_file"
+# Loop through all the .patch files in the ggml_patch directory
+for patch in ../ggml_patch/*.patch; do
+  if git apply --check "$patch" 2>/dev/null; then
+    git apply "$patch"
   else
-    echo "The patch $diff_file cannot be applied or has already been applied."
+    echo "The patch $patch cannot be applied or has already been applied."
   fi
 done
