@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/jmorganca/ollama/api"
-	"github.com/shirou/gopsutil/process"
 )
 
 const ModelFamilyLlama ModelFamily = "llama"
@@ -57,14 +56,23 @@ func init() {
 		files = append(files, "ggml-metal.metal")
 	}
 	for _, f := range files {
-		data, err := fs.ReadFile(llamaCppEmbed, filepath.Join(llamaPath, f))
-		if err != nil {
-			log.Fatalf("read llama.cpp %s", f)
-		}
+		srcPath := filepath.Join(llamaPath, f)
 		destPath := filepath.Join(tmpDir, f)
-		err = os.WriteFile(destPath, data, 0o755)
+
+		srcFile, err := llamaCppEmbed.Open(srcPath)
 		if err != nil {
-			log.Fatalf("write llama.cpp %s", f)
+			log.Fatalf("read llama.cpp %s: %v", f, err)
+		}
+		defer srcFile.Close()
+
+		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+		if err != nil {
+			log.Fatalf("write llama.cpp %s: %v", f, err)
+		}
+		defer destFile.Close()
+
+		if _, err := io.Copy(destFile, srcFile); err != nil {
+			log.Fatalf("copy llama.cpp %s: %v", f, err)
 		}
 	}
 
@@ -267,11 +275,6 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 			}
 		}()
 
-		proc, err := process.NewProcess(int32(cmd.Process.Pid))
-		if err != nil {
-			return nil, fmt.Errorf("llama.cpp process details: %w", err)
-		}
-
 		timeout := time.After(3 * time.Second)
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
@@ -281,12 +284,13 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 			case <-timeout:
 				break next
 			case <-ticker.C:
-				conns, err := proc.Connections()
+				resp, err := http.Head(fmt.Sprintf("http://127.0.0.1:%d", port))
 				if err != nil {
-					return nil, fmt.Errorf("get llama.cpp connections: %w", err)
+					continue
 				}
-				if len(conns) > 0 {
-					return &llama{Options: opts, Running: Running{Port: int(conns[0].Laddr.Port), Cmd: cmd}}, nil
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
 				}
 			}
 		}
@@ -445,31 +449,21 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 		return fmt.Errorf("%s", bodyBytes)
 	}
 
-	reader := bufio.NewReader(resp.Body)
-	var genCtx strings.Builder
-	genCtx.WriteString(trimmedPrompt)
-	if err != nil {
-		return fmt.Errorf("decode prompt context: %v", err)
-	}
-	for {
+	scanner := bufio.NewScanner(resp.Body)
+	genCtx := trimmedPrompt // start with the trimmed prompt
+	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			// This handles the request cancellation
 			return ctx.Err()
 		default:
-			line, err := reader.ReadString('\n')
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return fmt.Errorf("error reading llm response: %v", err)
-			}
-			if line == "\n" {
+			line := scanner.Text()
+			if line == "" {
 				continue
 			}
 
 			// Read data from the server-side event stream
-			if len(line) > 6 && line[:6] == "data: " {
+			if strings.HasPrefix(line, "data: ") {
 				evt := line[6:]
 				var complete PredictComplete
 				if err := json.Unmarshal([]byte(evt), &complete); err != nil {
@@ -477,8 +471,8 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 				}
 
 				if complete.Timings.PredictedMS > 0 {
-					genCtx.WriteString(complete.Content)
-					embd, err := llm.Encode(ctx, genCtx.String())
+					genCtx += complete.Content
+					embd, err := llm.Encode(ctx, genCtx)
 					if err != nil {
 						return fmt.Errorf("encoding context: %v", err)
 					}
@@ -497,11 +491,17 @@ func (llm *llama) Predict(ctx context.Context, predictCtx []int, prompt string, 
 				if err := json.Unmarshal([]byte(evt), &pred); err != nil {
 					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
 				}
-				genCtx.WriteString(pred.Content)
+				genCtx += pred.Content
 				fn(api.GenerateResponse{Response: pred.Content})
 			}
 		}
 	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading llm response: %v", err)
+	}
+
+	return nil
 }
 
 func (llm *llama) marshalPrompt(ctx context.Context, pCtx []int, prompt string) (string, error) {
