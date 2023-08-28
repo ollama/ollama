@@ -205,24 +205,19 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	}
 
 	params := []string{
+		"--model", model,
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--gqa", fmt.Sprintf("%d", opts.NumGQA),
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
+		"--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU),
 		"--embedding",
-	}
-
-	if opts.NumGPU > 0 {
-		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
 	}
 
 	if len(adapters) > 0 {
 		// TODO: applying multiple adapters is not supported by the llama.cpp server yet
 		params = append(params, "--lora", adapters[0])
-		params = append(params, "--lora-base", model)
-	} else {
-		params = append(params, "--model", model)
 	}
 
 	if opts.NumThread > 0 {
