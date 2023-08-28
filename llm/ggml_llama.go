@@ -200,7 +200,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 		return nil, err
 	}
 
-	if len(adapters) > 0 {
+	if len(adapters) > 1 {
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
