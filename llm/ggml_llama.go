@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,13 @@ var (
 	ggmlRunnerPath string
 )
 
+func osPath(path string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(path, "Release")
+	}
+	return path
+}
+
 func initGGML() {
 	ggmlInit.Do(func() {
 		tmpDir, err := os.MkdirTemp("", "llama-*")
@@ -46,9 +54,9 @@ func initGGML() {
 			log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
 		}
 
-		path := ggmlGPU
+		path := osPath(ggmlGPU)
 		if _, err := fs.Stat(llamaCppEmbed, path); err != nil {
-			path = ggmlCPU
+			path = osPath(ggmlCPU)
 			if _, err := fs.Stat(llamaCppEmbed, path); err != nil {
 				log.Fatalf("llama.cpp executable not found")
 			}
@@ -80,7 +88,12 @@ func initGGML() {
 			}
 		}
 
-		ggmlRunnerPath = filepath.Join(tmpDir, "server")
+		switch runtime.GOOS {
+		case "windows":
+			ggmlRunnerPath = filepath.Join(tmpDir, "server.exe")
+		default:
+			ggmlRunnerPath = filepath.Join(tmpDir, "server")
+		}
 	})
 }
 
