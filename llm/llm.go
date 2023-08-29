@@ -76,7 +76,7 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 
 	switch ggml.ModelFamily() {
 	case ModelFamilyLlama:
-		return newLlama(model, adapters, opts)
+		return newLlama(model, adapters, ggmlRunner(), opts)
 	default:
 		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
 	}

@@ -23,7 +23,7 @@ index f2cbe76..62c5cdf 100644
          { MODEL_7B,   ((size_t) n_ctx / 16ull + 100ull) * MB },
          { MODEL_13B,  ((size_t) n_ctx / 12ull + 120ull) * MB },
          { MODEL_30B,  ((size_t) n_ctx /  9ull + 160ull) * MB },
-+        { MODEL_34B, ((size_t) n_ctx / 9ull + 160ull) * MB },
++        { MODEL_34B,  ((size_t) n_ctx / 9ull + 160ull) * MB },
          { MODEL_65B,  ((size_t) n_ctx /  6ull + 256ull) * MB }, // guess
          { MODEL_70B,  ((size_t) n_ctx /  7ull + 164ull) * MB },
      };

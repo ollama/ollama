@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmorganca/ollama/api"
@@ -29,54 +30,67 @@ const ModelFamilyLlama ModelFamily = "llama"
 var llamaCppEmbed embed.FS
 
 var (
-	llamaCppGpu = filepath.Join("llama.cpp", "ggml", "build", "gpu", "bin")
-	llamaCppCpu = filepath.Join("llama.cpp", "ggml", "build", "cpu", "bin")
+	ggmlGPU = filepath.Join("llama.cpp", "ggml", "build", "gpu", "bin")
+	ggmlCPU = filepath.Join("llama.cpp", "ggml", "build", "cpu", "bin")
 )
 
-var runner = ""
+var (
+	ggmlInit       sync.Once
+	ggmlRunnerPath string
+)
 
-// TODO: remove this init, and instead bind this to an object initialization
-func init() {
-	tmpDir, err := os.MkdirTemp("", "llama-*")
-	if err != nil {
-		log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
-	}
-
-	llamaPath := llamaCppGpu
-	if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-		llamaPath = llamaCppCpu
-		if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-			log.Fatalf("llama.cpp executable not found")
-		}
-	}
-
-	files := []string{"server"}
-	if llamaPath == llamaCppGpu {
-		// TODO: this should be an OS specific check for the relevant GPU libraries
-		files = append(files, "ggml-metal.metal")
-	}
-	for _, f := range files {
-		srcPath := filepath.Join(llamaPath, f)
-		destPath := filepath.Join(tmpDir, f)
-
-		srcFile, err := llamaCppEmbed.Open(srcPath)
+func initGGML() {
+	ggmlInit.Do(func() {
+		tmpDir, err := os.MkdirTemp("", "llama-*")
 		if err != nil {
-			log.Fatalf("read llama.cpp %s: %v", f, err)
+			log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
 		}
-		defer srcFile.Close()
 
-		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-		if err != nil {
-			log.Fatalf("write llama.cpp %s: %v", f, err)
+		path := ggmlGPU
+		if _, err := fs.Stat(llamaCppEmbed, path); err != nil {
+			path = ggmlCPU
+			if _, err := fs.Stat(llamaCppEmbed, path); err != nil {
+				log.Fatalf("llama.cpp executable not found")
+			}
 		}
-		defer destFile.Close()
 
-		if _, err := io.Copy(destFile, srcFile); err != nil {
-			log.Fatalf("copy llama.cpp %s: %v", f, err)
+		files := []string{"server"}
+		if path == ggmlGPU {
+			// TODO: this should be an OS specific check for the relevant GPU libraries
+			files = append(files, "ggml-metal.metal")
 		}
-	}
+		for _, f := range files {
+			srcPath := filepath.Join(path, f)
+			destPath := filepath.Join(tmpDir, f)
 
-	runner = filepath.Join(tmpDir, "server")
+			srcFile, err := llamaCppEmbed.Open(srcPath)
+			if err != nil {
+				log.Fatalf("read llama.cpp %s: %v", f, err)
+			}
+			defer srcFile.Close()
+
+			destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+			if err != nil {
+				log.Fatalf("write llama.cpp %s: %v", f, err)
+			}
+			defer destFile.Close()
+
+			if _, err := io.Copy(destFile, srcFile); err != nil {
+				log.Fatalf("copy llama.cpp %s: %v", f, err)
+			}
+		}
+
+		ggmlRunnerPath = filepath.Join(tmpDir, "server")
+	})
+}
+
+type ModelRunner struct {
+	Path string // path to the model runner executable
+}
+
+func ggmlRunner() ModelRunner {
+	initGGML()
+	return ModelRunner{Path: ggmlRunnerPath}
 }
 
 type llamaModel struct {
@@ -201,12 +215,12 @@ type llama struct {
 	Running
 }
 
-func newLlama(model string, adapters []string, opts api.Options) (*llama, error) {
+func newLlama(model string, adapters []string, runner ModelRunner, opts api.Options) (*llama, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
 
-	if _, err := os.Stat(runner); err != nil {
+	if _, err := os.Stat(runner.Path); err != nil {
 		return nil, err
 	}
 
@@ -251,7 +265,7 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 	for try := 0; try < 3; try++ {
 		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		cmd := exec.Command(
-			runner,
+			runner.Path,
 			append(params, "--port", strconv.Itoa(port))...,
 		)
 		var stderr bytes.Buffer
