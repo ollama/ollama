@@ -373,7 +373,7 @@ func ListModelsHandler(c *gin.Context) {
 			tag := path[:slashIndex] + ":" + path[slashIndex+1:]
 
 			mp := ParseModelPath(tag)
-			manifest, err := GetManifest(mp)
+			manifest, digest, err := GetManifest(mp)
 			if err != nil {
 				log.Printf("skipping file: %s", fp)
 				return nil
@@ -381,6 +381,7 @@ func ListModelsHandler(c *gin.Context) {
 			model := api.ListResponseModel{
 				Name:       mp.GetShortTagname(),
 				Size:       manifest.GetTotalSize(),
+				Digest:     digest,
 				ModifiedAt: fi.ModTime(),
 			}
 			models = append(models, model)
