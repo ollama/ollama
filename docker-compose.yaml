@@ -1,0 +1,10 @@
+
+version: '3'
+
+services:
+
+  ollama:
+    build: .
+    image: jmorganca/ollama
+    volumes:
+      - ./runtime/ollama:/home/ollama

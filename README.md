@@ -27,6 +27,50 @@ To run and chat with [Llama 2](https://ai.meta.com/llama), the new model by Meta
 ollama run llama2
 ```
 
+## Docker or Docker Compose
+
+Run Ollama with Docker or Docker Compose.
+
+Run the following commands to start Ollama with Docker:
+
+```shell
+docker build . -t jmorganca/ollama
+
+docker run -p 11434:11434 -v "$PWD/runtime/ollama:/home/ollama" -d --name ollama jmorganca/ollama
+```
+
+Or run with Docker Compose:
+
+```shell
+docker compose up
+```
+
+Execute Ollama commands with container:
+
+First, Get the container ID using docker ps and grep
+
+```shell
+container_id=$(docker ps | grep ollama | awk '{print $1}')
+```
+
+Execute the command inside the container
+
+```shell
+docker exec -it $container_id ollama run llama2
+```
+
+Or go to the container shell
+
+```shell
+docker exec -it $container_id sh
+```
+
+Then run Ollama commands inside the container shell:
+
+```shell
+ollama run llama2
+```
+
 ## Model library
 
 Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
