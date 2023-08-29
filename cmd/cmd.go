@@ -196,12 +196,12 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	for _, m := range models.Models {
 		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
-			data = append(data, []string{m.Name, humanize.Bytes(uint64(m.Size)), format.HumanTime(m.ModifiedAt, "Never")})
+			data = append(data, []string{m.Name, m.Digest[:12], humanize.Bytes(uint64(m.Size)), format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "SIZE", "MODIFIED"})
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
@@ -527,7 +527,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 					return err
 				}
 
-				manifest, err := server.GetManifest(mp)
+				manifest, _, err := server.GetManifest(mp)
 				if err != nil {
 					fmt.Println("error: couldn't get a manifest for this model")
 					continue

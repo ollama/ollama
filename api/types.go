@@ -96,6 +96,7 @@ type ListResponseModel struct {
 	Name       string    `json:"name"`
 	ModifiedAt time.Time `json:"modified_at"`
 	Size       int       `json:"size"`
+	Digest     string    `json:"digest"`
 }
 
 type TokenResponse struct {
