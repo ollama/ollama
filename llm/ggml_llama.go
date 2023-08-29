@@ -275,23 +275,19 @@ func newLlama(model string, adapters []string, opts api.Options) (*llama, error)
 			}
 		}()
 
-		timeout := time.After(3 * time.Second)
+		expiresAt := time.Now().Add(3 * time.Second)
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
-	next:
-		for {
-			select {
-			case <-timeout:
-				break next
-			case <-ticker.C:
-				resp, err := http.Head(fmt.Sprintf("http://127.0.0.1:%d", port))
-				if err != nil {
-					continue
-				}
-				defer resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
-				}
+		for range ticker.C {
+			if time.Now().After(expiresAt) {
+				break
+			}
+			resp, err := http.Head(fmt.Sprintf("http://127.0.0.1:%d", port))
+			if err != nil {
+				continue
+			}
+			if resp.StatusCode == http.StatusOK {
+				return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
 			}
 		}
 
