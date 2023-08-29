@@ -20,26 +20,13 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jmorganca/ollama/api"
 )
 
-const ModelFamilyLlama ModelFamily = "llama"
-
-//go:embed llama.cpp/ggml/build/*/bin/*
+//go:embed llama.cpp/*/build/*/bin/*
 var llamaCppEmbed embed.FS
-
-var (
-	ggmlGPU = path.Join("llama.cpp", "ggml", "build", "gpu", "bin")
-	ggmlCPU = path.Join("llama.cpp", "ggml", "build", "cpu", "bin")
-)
-
-var (
-	ggmlInit       sync.Once
-	ggmlRunnerPath string
-)
 
 func osPath(llamaPath string) string {
 	if runtime.GOOS == "windows" {
@@ -49,67 +36,60 @@ func osPath(llamaPath string) string {
 	return llamaPath
 }
 
-func initGGML() {
-	ggmlInit.Do(func() {
-		tmpDir, err := os.MkdirTemp("", "llama-*")
-		if err != nil {
-			log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
-		}
+func chooseRunner(gpuPath, cpuPath string) string {
+	tmpDir, err := os.MkdirTemp("", "llama-*")
+	if err != nil {
+		log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
+	}
 
-		llamaPath := osPath(ggmlGPU)
+	llamaPath := osPath(gpuPath)
+	if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
+		llamaPath = osPath(cpuPath)
 		if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-			llamaPath = osPath(ggmlCPU)
-			if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-				log.Fatalf("llama.cpp executable not found")
-			}
+			log.Fatalf("llama.cpp executable not found")
 		}
+	}
 
-		files := []string{"server"}
-		switch runtime.GOOS {
-		case "windows":
-			files = []string{"server.exe"}
-		case "darwin":
-			if llamaPath == osPath(ggmlGPU) {
-				files = append(files, "ggml-metal.metal")
-			}
+	files := []string{"server"}
+	switch runtime.GOOS {
+	case "windows":
+		files = []string{"server.exe"}
+	case "darwin":
+		if llamaPath == osPath(ggmlGPU) {
+			files = append(files, "ggml-metal.metal")
 		}
+	}
 
-		for _, f := range files {
-			srcPath := path.Join(llamaPath, f)
-			destPath := filepath.Join(tmpDir, f)
+	for _, f := range files {
+		srcPath := path.Join(llamaPath, f)
+		destPath := filepath.Join(tmpDir, f)
 
-			srcFile, err := llamaCppEmbed.Open(srcPath)
-			if err != nil {
-				log.Fatalf("read llama.cpp %s: %v", f, err)
-			}
-			defer srcFile.Close()
-
-			destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-			if err != nil {
-				log.Fatalf("write llama.cpp %s: %v", f, err)
-			}
-			defer destFile.Close()
-
-			if _, err := io.Copy(destFile, srcFile); err != nil {
-				log.Fatalf("copy llama.cpp %s: %v", f, err)
-			}
+		srcFile, err := llamaCppEmbed.Open(srcPath)
+		if err != nil {
+			log.Fatalf("read llama.cpp %s: %v", f, err)
 		}
+		defer srcFile.Close()
 
-		ggmlRunnerPath = filepath.Join(tmpDir, "server")
-		if runtime.GOOS == "windows" {
-			ggmlRunnerPath = filepath.Join(tmpDir, "server.exe")
+		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+		if err != nil {
+			log.Fatalf("write llama.cpp %s: %v", f, err)
 		}
-	})
+		defer destFile.Close()
+
+		if _, err := io.Copy(destFile, srcFile); err != nil {
+			log.Fatalf("copy llama.cpp %s: %v", f, err)
+		}
+	}
+
+	runPath := filepath.Join(tmpDir, "server")
+	if runtime.GOOS == "windows" {
+		runPath = filepath.Join(tmpDir, "server.exe")
+	}
+
+	return runPath
 }
 
-type ModelRunner struct {
-	Path string // path to the model runner executable
-}
-
-func ggmlRunner() ModelRunner {
-	initGGML()
-	return ModelRunner{Path: ggmlRunnerPath}
-}
+const ModelFamilyLlama ModelFamily = "llama"
 
 type llamaModel struct {
 	hyperparameters llamaHyperparameters
@@ -250,12 +230,15 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 	params := []string{
 		"--model", model,
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
-		"--gqa", fmt.Sprintf("%d", opts.NumGQA),
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU),
 		"--embedding",
+	}
+
+	if opts.NumGQA > 0 {
+		params = append(params, "--gqa", fmt.Sprintf("%d", opts.NumGQA))
 	}
 
 	if len(adapters) > 0 {
