@@ -127,19 +127,26 @@ Ollama bundles model weights, configuration, and data into a single package, def
 
 ## Building
 
-You will also need a C/C++ compiler such as GCC for MacOS and Linux or Mingw-w64 GCC for Windows.
+Install `cmake`:
 
 ```
+brew install cmake
+```
+
+Then generate dependencies and build:
+
+```
+go generate ./...
 go build .
 ```
 
-To run it start the server:
+Next, start the server:
 
 ```
-./ollama serve &
+./ollama serve
 ```
 
-Finally, run a model!
+Finally, run a model in another shell:
 
 ```
 ./ollama run llama2
