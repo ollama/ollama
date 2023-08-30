@@ -29,7 +29,7 @@ type Client struct {
 }
 
 func checkError(resp *http.Response, body []byte) error {
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+	if resp.StatusCode < http.StatusBadRequest {
 		return nil
 	}
 
@@ -165,7 +165,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 			return fmt.Errorf(errorResponse.Error)
 		}
 
-		if response.StatusCode >= 400 {
+		if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
 				StatusCode:   response.StatusCode,
 				Status:       response.Status,
