@@ -88,10 +88,10 @@ type PushRequest struct {
 }
 
 type ListResponse struct {
-	Models []ListResponseModel `json:"models"`
+	Models []ModelResponse `json:"models"`
 }
 
-type ListResponseModel struct {
+type ModelResponse struct {
 	Name       string    `json:"name"`
 	ModifiedAt time.Time `json:"modified_at"`
 	Size       int       `json:"size"`

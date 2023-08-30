@@ -365,7 +365,7 @@ func DeleteModelHandler(c *gin.Context) {
 }
 
 func ListModelsHandler(c *gin.Context) {
-	var models []api.ListResponseModel
+	var models []api.ModelResponse
 	fp, err := GetManifestPath()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -398,7 +398,7 @@ func ListModelsHandler(c *gin.Context) {
 				log.Printf("skipping file: %s", fp)
 				return nil
 			}
-			model := api.ListResponseModel{
+			model := api.ModelResponse{
 				Name:       mp.GetShortTagname(),
 				Size:       manifest.GetTotalSize(),
 				Digest:     digest,
