@@ -286,55 +286,65 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 
-		err := cmd.Start()
-		if err != nil {
-			return nil, fmt.Errorf("error starting the external llama.cpp server: %w", err)
-		}
+		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}
 
-		// relay the logs from the external process
-		go func() {
-			err := cmd.Wait()
-			if err != nil {
-				if err.Error() == "signal: killed" {
-					// this is expected when the server is closed due to loading a new model
-					return
-				}
-				// TODO: what is the specific error when the GPU is not supported?
-				log.Print(stderr.String())
-			}
-		}()
-
-		expiresAt := time.Now().Add(10 * time.Second)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-	next:
-		for {
-			select {
-			case <-timeout:
-				break next
-			case <-ticker.C:
-				resp, err := http.Head(fmt.Sprintf("http://127.0.0.1:%d", port))
-				if err != nil {
-					continue
-				}
-				defer resp.Body.Close()
-				if resp.StatusCode < http.StatusBadRequest {
-					return &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}, nil
-				}
-			}
+		if err := waitForServer(llm); err != nil {
+			log.Printf("error starting llama.cpp server: %v", err)
+			llm.Close()
+			// try again
+			continue
 		}
-
-		err = cmd.Process.Kill()
-		if err != nil && err.Error() != "os: process already finished" {
-			return nil, fmt.Errorf("kill llama.cpp: %w", err)
-		}
+		// server started successfully
+		return llm, nil
 	}
 
 	return nil, fmt.Errorf("max retry exceeded starting llama.cpp")
 }
 
+func waitForServer(llm *llama) error {
+	log.Print("starting llama.cpp server")
+	var stderr bytes.Buffer
+	llm.Cmd.Stderr = &stderr
+	err := llm.Cmd.Start()
+	if err != nil {
+		return fmt.Errorf("error starting the external llama.cpp server: %w", err)
+	}
+
+	exitChan := make(chan error, 1)
+
+	// the server is a long running process, watch for it exiting to keep track of something going wrong
+	go func() {
+		err := llm.Cmd.Wait()
+		log.Print(stderr.String())
+		exitChan <- err
+	}()
+
+	// wait for the server to start responding
+	start := time.Now()
+	expiresAt := time.Now().Add(30 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+
+	log.Print("waiting for llama.cpp server to start responding")
+
+	for {
+		select {
+		case <-ticker.C:
+			if time.Now().After(expiresAt) {
+				return fmt.Errorf("llama.cpp server did not start responding within 30 seconds, retrying")
+			}
+			if err := llm.Ping(context.Background()); err == nil {
+				log.Printf("llama.cpp server started in %f seconds", time.Since(start).Seconds())
+				return nil
+			}
+		case err := <-exitChan:
+			return fmt.Errorf("llama.cpp server exited unexpectedly: %w", err)
+		}
+	}
+}
+
 func (llm *llama) Close() {
 	llm.Running.Cmd.Process.Kill()
+	llm.Running.Cmd.Wait()
 }
 
 func (llm *llama) SetOptions(opts api.Options) {
@@ -700,4 +710,16 @@ func (llm *llama) Embedding(ctx context.Context, input string) ([]float64, error
 	}
 
 	return embedding.Embedding, nil
+}
+
+// Ping checks that the server subprocess is still running and responding to requests
+func (llm *llama) Ping(ctx context.Context) error {
+	resp, err := http.Head(fmt.Sprintf("http://127.0.0.1:%d", llm.Running.Port))
+	if err != nil {
+		return fmt.Errorf("ping resp: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected ping status: %s", resp.Status)
+	}
+	return nil
 }

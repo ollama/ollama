@@ -69,8 +69,20 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 		return err
 	}
 
+	// check if the loaded model is still running in a subprocess, in case something unexpected happened
+	if loaded.llm != nil {
+		if err := loaded.llm.Ping(ctx); err != nil {
+			log.Print("loaded llm process not responding, closing now")
+			// the subprocess is no longer running, so close it
+			loaded.llm.Close()
+			loaded.llm = nil
+			loaded.digest = ""
+		}
+	}
+
 	if model.Digest != loaded.digest || !reflect.DeepEqual(loaded.options, opts) {
 		if loaded.llm != nil {
+			log.Println("changing loaded model")
 			loaded.llm.Close()
 			loaded.llm = nil
 			loaded.digest = ""

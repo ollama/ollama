@@ -18,6 +18,7 @@ type LLM interface {
 	Decode(context.Context, []int) (string, error)
 	SetOptions(api.Options)
 	Close()
+	Ping(context.Context) error
 }
 
 func New(model string, adapters []string, opts api.Options) (LLM, error) {
