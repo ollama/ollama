@@ -1,18 +1,20 @@
 # Development
 
+- Install cmake or (optionally, required tools for GPUs)
+- run `go generate ./...`
+- run `go build .`
+
 Install required tools:
 
 ```
-brew install go
+brew install go cmake gcc
 ```
 
-Enable CGO:
+Get the required libraries:
 
 ```
-export CGO_ENABLED=1
+go generate ./...
 ```
-
-You will also need a C/C++ compiler such as GCC for MacOS and Linux or Mingw-w64 GCC for Windows.
 
 Then build ollama:
 

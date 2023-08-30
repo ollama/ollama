@@ -521,7 +521,7 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 			model = &Model{ModelPath: e.model}
 		}
 
-		if err := load(model, e.opts, defaultSessionDuration); err != nil {
+		if err := load(context.Background(), model, e.opts, defaultSessionDuration); err != nil {
 			return nil, fmt.Errorf("load model to generate embeddings: %v", err)
 		}
 
@@ -584,7 +584,7 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 						embeddings = append(embeddings, vector.Embedding{Data: d, Vector: existing[d]})
 						continue
 					}
-					embed, err := loaded.llm.Embedding(d)
+					embed, err := loaded.llm.Embedding(context.Background(), d)
 					if err != nil {
 						log.Printf("failed to generate embedding for '%s' line %d: %v", filePath, i+1, err)
 						continue

@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"reflect"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -113,8 +112,6 @@ type GenerateResponse struct {
 
 	TotalDuration      time.Duration `json:"total_duration,omitempty"`
 	LoadDuration       time.Duration `json:"load_duration,omitempty"`
-	SampleCount        int           `json:"sample_count,omitempty"`
-	SampleDuration     time.Duration `json:"sample_duration,omitempty"`
 	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
@@ -128,15 +125,6 @@ func (r *GenerateResponse) Summary() {
 
 	if r.LoadDuration > 0 {
 		fmt.Fprintf(os.Stderr, "load duration:        %v\n", r.LoadDuration)
-	}
-
-	if r.SampleCount > 0 {
-		fmt.Fprintf(os.Stderr, "sample count:         %d token(s)\n", r.SampleCount)
-	}
-
-	if r.SampleDuration > 0 {
-		fmt.Fprintf(os.Stderr, "sample duration:      %s\n", r.SampleDuration)
-		fmt.Fprintf(os.Stderr, "sample rate:          %.2f tokens/s\n", float64(r.SampleCount)/r.SampleDuration.Seconds())
 	}
 
 	if r.PromptEvalCount > 0 {
@@ -182,15 +170,16 @@ type Options struct {
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 
 	// Predict options
-	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
-	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
-	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
-	Temperature      float32  `json:"temperature,omitempty"`
+	NumPredict       int      `json:"num_predict,omitempty"`
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	TFSZ             float32  `json:"tfs_z,omitempty"`
 	TypicalP         float32  `json:"typical_p,omitempty"`
+	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
+	Temperature      float32  `json:"temperature,omitempty"`
+	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
+	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Mirostat         int      `json:"mirostat,omitempty"`
 	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
@@ -314,7 +303,7 @@ func DefaultOptions() Options {
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
 
-		NumThread: runtime.NumCPU(),
+		NumThread: 0, // let the runtime decide
 	}
 }
 

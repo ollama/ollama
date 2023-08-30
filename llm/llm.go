@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -11,12 +12,13 @@ import (
 )
 
 type LLM interface {
-	Predict([]int, string, func(api.GenerateResponse)) error
-	Embedding(string) ([]float64, error)
-	Encode(string) []int
-	Decode(...int) string
+	Predict(context.Context, []int, string, func(api.GenerateResponse)) error
+	Embedding(context.Context, string) ([]float64, error)
+	Encode(context.Context, string) ([]int, error)
+	Decode(context.Context, []int) (string, error)
 	SetOptions(api.Options)
 	Close()
+	Ping(context.Context) error
 }
 
 func New(model string, adapters []string, opts api.Options) (LLM, error) {
@@ -75,7 +77,7 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 
 	switch ggml.ModelFamily() {
 	case ModelFamilyLlama:
-		return newLlama(model, adapters, opts)
+		return newLlama(model, adapters, ggmlRunner(), opts)
 	default:
 		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
 	}

@@ -158,7 +158,7 @@ function restart() {
 app.on('before-quit', () => {
   if (proc) {
     proc.off('exit', restart)
-    proc.kill()
+    proc.kill('SIGINT') // send SIGINT signal to the server, which also stops any loaded llms
   }
 })
 
