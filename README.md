@@ -146,7 +146,7 @@ Next, start the server:
 ./ollama serve
 ```
 
-Finally, run a model in another shell:
+Finally, run a model (in another shell):
 
 ```
 ./ollama run llama2
