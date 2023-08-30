@@ -796,15 +796,22 @@ func ExportHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
+	// Create a new spinner
+	s := NewSpinner("Exporting model...")
+	go s.Spin(100 * time.Millisecond)
+
+	// Add each blob to the tarball
 	// Add each blob to the tarball
 	for _, layer := range mf.Layers {
 		blobPath := filepath.Join(home, ".ollama/models/blobs", layer.Digest)
 		err = handleFile(tarWriter, blobPath, "blobs/"+layer.Digest)
 		if err != nil {
+			s.Stop()
 			return err
 		}
 	}
-
+	s.Stop()
+	fmt.Println("Export completed successfully")
 	return nil
 }
 
@@ -838,12 +845,17 @@ func ImportHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
+	// Create a new spinner
+	s := NewSpinner("Importing model...")
+	go s.Spin(100 * time.Millisecond)
+
 	// Extract each file from the tarball
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
 			break
 		} else if err != nil {
+			s.Stop()
 			return fmt.Errorf("failed to read next file from tarball: %w", err)
 		}
 
@@ -866,6 +878,7 @@ func ImportHandler(cmd *cobra.Command, args []string) error {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			err = os.MkdirAll(dir, 0755)
 			if err != nil {
+				s.Stop()
 				return fmt.Errorf("failed to create directory %s: %w", dir, err)
 			}
 		}
@@ -873,6 +886,7 @@ func ImportHandler(cmd *cobra.Command, args []string) error {
 		// Create the file
 		file, err := os.Create(filePath)
 		if err != nil {
+			s.Stop()
 			return fmt.Errorf("failed to create file %s: %w", filePath, err)
 		}
 		defer file.Close()
@@ -880,10 +894,13 @@ func ImportHandler(cmd *cobra.Command, args []string) error {
 		// Write the file content
 		_, err = io.Copy(file, tarReader)
 		if err != nil {
+			s.Stop()
 			return fmt.Errorf("failed to write file %s: %w", filePath, err)
 		}
 	}
 
+	s.Stop()
+	fmt.Println("Import completed successfully")
 	return nil
 }
 
