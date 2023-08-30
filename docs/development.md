@@ -1,5 +1,9 @@
 # Development
 
+- Install cmake or (optionally, required tools for GPUs)
+- run `go generate ./...`
+- run `go build .`
+
 Install required tools:
 
 ```
