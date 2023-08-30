@@ -221,8 +221,9 @@ func (ft llamaFileType) String() string {
 }
 
 type Running struct {
-	Port int
-	Cmd  *exec.Cmd
+	Port   int
+	Cmd    *exec.Cmd
+	Cancel context.CancelFunc
 }
 
 type llama struct {
@@ -279,14 +280,16 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 	// start the llama.cpp server with a retry in case the port is already in use
 	for try := 0; try < 3; try++ {
 		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
-		cmd := exec.Command(
+		ctx, cancel := context.WithCancel(context.Background())
+		cmd := exec.CommandContext(
+			ctx,
 			runner.Path,
 			append(params, "--port", strconv.Itoa(port))...,
 		)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 
-		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd}}
+		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd, Cancel: cancel}}
 
 		if err := waitForServer(llm); err != nil {
 			log.Printf("error starting llama.cpp server: %v", err)
@@ -343,8 +346,7 @@ func waitForServer(llm *llama) error {
 }
 
 func (llm *llama) Close() {
-	llm.Running.Cmd.Process.Kill()
-	llm.Running.Cmd.Wait()
+	llm.Running.Cmd.Cancel()
 }
 
 func (llm *llama) SetOptions(opts api.Options) {
