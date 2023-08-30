@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -31,8 +32,8 @@ const ModelFamilyLlama ModelFamily = "llama"
 var llamaCppEmbed embed.FS
 
 var (
-	ggmlGPU = filepath.Join("llama.cpp", "ggml", "build", "gpu", "bin")
-	ggmlCPU = filepath.Join("llama.cpp", "ggml", "build", "cpu", "bin")
+	ggmlGPU = path.Join("llama.cpp", "ggml", "build", "gpu", "bin")
+	ggmlCPU = path.Join("llama.cpp", "ggml", "build", "cpu", "bin")
 )
 
 var (
@@ -40,11 +41,11 @@ var (
 	ggmlRunnerPath string
 )
 
-func osPath(path string) string {
+func osPath(llamaPath string) string {
 	if runtime.GOOS == "windows" {
-		return filepath.Join(path, "Release")
+		return path.Join(llamaPath, "Release")
 	}
-	return path
+	return llamaPath
 }
 
 func initGGML() {
@@ -54,10 +55,10 @@ func initGGML() {
 			log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
 		}
 
-		path := osPath(ggmlGPU)
-		if _, err := fs.Stat(llamaCppEmbed, path); err != nil {
-			path = osPath(ggmlCPU)
-			if _, err := fs.Stat(llamaCppEmbed, path); err != nil {
+		llamaPath := osPath(ggmlGPU)
+		if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
+			llamaPath = osPath(ggmlCPU)
+			if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
 				log.Fatalf("llama.cpp executable not found")
 			}
 		}
@@ -68,7 +69,7 @@ func initGGML() {
 			files = []string{"server.exe"}
 		case "darwin":
 			files = []string{"server"}
-			if path == ggmlGPU {
+			if llamaPath == ggmlGPU {
 				files = append(files, "ggml-metal.metal")
 			}
 		default:
@@ -76,7 +77,7 @@ func initGGML() {
 		}
 
 		for _, f := range files {
-			srcPath := filepath.Join(path, f)
+			srcPath := path.Join(llamaPath, f)
 			destPath := filepath.Join(tmpDir, f)
 
 			srcFile, err := llamaCppEmbed.Open(srcPath)
