@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -371,26 +370,12 @@ func ListModelsHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	err = filepath.Walk(fp, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				log.Printf("manifest file does not exist: %s", fp)
-				return nil
-			}
-			return err
-		}
+
+	walkFunc := func(path string, info os.FileInfo, _ error) error {
 		if !info.IsDir() {
-			fi, err := os.Stat(path)
-			if err != nil {
-				log.Printf("skipping file: %s", fp)
-				return nil
-			}
-			path := path[len(fp)+1:]
-			slashIndex := strings.LastIndex(path, "/")
-			if slashIndex == -1 {
-				return nil
-			}
-			tag := path[:slashIndex] + ":" + path[slashIndex+1:]
+			dir, file := filepath.Split(path)
+			dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
+			tag := strings.Join([]string{dir, file}, ":")
 
 			mp := ParseModelPath(tag)
 			manifest, digest, err := GetManifest(mp)
@@ -398,17 +383,19 @@ func ListModelsHandler(c *gin.Context) {
 				log.Printf("skipping file: %s", fp)
 				return nil
 			}
-			model := api.ModelResponse{
+
+			models = append(models, api.ModelResponse{
 				Name:       mp.GetShortTagname(),
 				Size:       manifest.GetTotalSize(),
 				Digest:     digest,
-				ModifiedAt: fi.ModTime(),
-			}
-			models = append(models, model)
+				ModifiedAt: info.ModTime(),
+			})
 		}
+
 		return nil
-	})
-	if err != nil {
+	}
+
+	if err := filepath.Walk(fp, walkFunc); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
