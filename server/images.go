@@ -430,7 +430,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 			layer.MediaType = mediaType
 			layers = append(layers, layer)
 		default:
-			// runtime parameters, build a list of args for each parameter to allow multiple values to be specified (ex: multiple stop tokens)
+			// runtime parameters, build a list of args for each parameter to allow multiple values to be specified (ex: multiple stop sequences)
 			params[c.Name] = append(params[c.Name], c.Args)
 		}
 	}
