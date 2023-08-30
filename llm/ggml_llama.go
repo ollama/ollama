@@ -63,17 +63,12 @@ func initGGML() {
 			}
 		}
 
-		var files []string
+		files := []string{"server"}
 		switch runtime.GOOS {
 		case "windows":
 			files = []string{"server.exe"}
 		case "darwin":
-			files = []string{"server"}
-			if llamaPath == ggmlGPU {
-				files = append(files, "ggml-metal.metal")
-			}
-		default:
-			files = []string{filepath.Join(tmpDir, "server")}
+			files = append(files, "ggml-metal.metal")
 		}
 
 		for _, f := range files {
