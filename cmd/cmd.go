@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"archive/tar"
 	"bufio"
 	"context"
 	"crypto/ed25519"
@@ -721,6 +722,171 @@ func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+func handleFile(tarWriter *tar.Writer, filePath string, tarPath string) error {
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	// Get the file info
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to get file info for %s: %w", filePath, err)
+	}
+
+	// Create a tar header from the file info
+	header, err := tar.FileInfoHeader(info, info.Name())
+	if err != nil {
+		return fmt.Errorf("failed to create tar header for file %s: %w", filePath, err)
+	}
+	header.Name = tarPath
+
+	// Write the header to the tarball
+	err = tarWriter.WriteHeader(header)
+	if err != nil {
+		return fmt.Errorf("failed to write tar header for file %s: %w", filePath, err)
+	}
+
+	// Write the file content to the tarball
+	_, err = io.Copy(tarWriter, file)
+	if err != nil {
+		return fmt.Errorf("failed to write file %s to tarball: %w", filePath, err)
+	}
+
+	return nil
+}
+
+func ExportHandler(cmd *cobra.Command, args []string) error {
+	modelName := args[0]
+	filePath := args[1]
+
+	// Get the manifest for the model
+	mp := server.ParseModelPath(modelName)
+	mf, err := server.GetManifest(mp)
+	if err != nil {
+		return fmt.Errorf("failed to get manifest for model %s: %w", modelName, err)
+	}
+
+	// Derive the manifest path
+	manifestPath, err := mp.GetManifestPath(false)
+	if err != nil {
+		return fmt.Errorf("failed to get manifest path for model %s: %w", modelName, err)
+	}
+
+	tarFile, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create tar file at %s: %w", filePath, err)
+	}
+	defer tarFile.Close()
+
+	tarWriter := tar.NewWriter(tarFile)
+	defer tarWriter.Close()
+
+	// Add the manifest to the tarball
+	err = handleFile(tarWriter, manifestPath, "manifest.json")
+	if err != nil {
+		return err
+	}
+
+	// Get the home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	// Add each blob to the tarball
+	for _, layer := range mf.Layers {
+		blobPath := filepath.Join(home, ".ollama/models/blobs", layer.Digest)
+		err = handleFile(tarWriter, blobPath, "blobs/"+layer.Digest)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ImportHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 2 {
+		return errors.New("incorrect number of arguments. Expected MODELNAME:TAG and FILEPATH")
+	}
+
+	modelTag := strings.Split(args[0], ":")
+	if len(modelTag) != 2 {
+		return errors.New("incorrect format for MODELNAME:TAG. It should be in the format 'model:tag'")
+	}
+
+	newModelName := modelTag[0]
+	newVariant := modelTag[1]
+	filePath := args[1]
+
+	// Open the tar file
+	tarFile, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open tar file at %s: %w", filePath, err)
+	}
+	defer tarFile.Close()
+
+	// Create a tar reader
+	tarReader := tar.NewReader(tarFile)
+
+	// Get the home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	// Extract each file from the tarball
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return fmt.Errorf("failed to read next file from tarball: %w", err)
+		}
+
+		// Derive the file path based on whether the file is a blob or the manifest
+		var filePath string
+		if strings.HasPrefix(header.Name, "blobs/") {
+			blobName := strings.TrimPrefix(header.Name, "blobs/")
+			// This is a blob, place it in the blobs directory
+			filePath = filepath.Join(home, ".ollama/models/blobs", blobName)
+		} else if header.Name == "manifest.json" {
+			// This is the manifest, place it in the manifests directory and rename it to the variant
+			filePath = filepath.Join(home, ".ollama/models/manifests/registry.ollama.ai/library", newModelName, newVariant)
+		} else {
+			// Unexpected file, skip it
+			continue
+		}
+
+		// Create the directory if it doesn't exist
+		dir := filepath.Dir(filePath)
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			err = os.MkdirAll(dir, 0755)
+			if err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			}
+		}
+
+		// Create the file
+		file, err := os.Create(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %w", filePath, err)
+		}
+		defer file.Close()
+
+		// Write the file content
+		_, err = io.Copy(file, tarReader)
+		if err != nil {
+			return fmt.Errorf("failed to write file %s: %w", filePath, err)
+		}
+	}
+
+	return nil
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
@@ -809,6 +975,26 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	exportCmd := &cobra.Command{
+		Use:   "export MODEL:TAG FILEPATH",
+		Short: "Export a model to a file.",
+		Long: `Use this to transfer a model between Ollama installations. 
+The export bundle destination can be any valid file path, but must end with .ollamabundle.
+
+  Example: ollama export llama2:7b /path/to/myExportedLlama-7b.ollamabundle`,
+		Args:    cobra.ExactArgs(2),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ExportHandler,
+	}
+
+	importCmd := &cobra.Command{
+		Use:     "import MODELNAME:TAG FILEPATH",
+		Short:   "Import a model from a file",
+		Args:    cobra.ExactArgs(2),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ImportHandler,
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
@@ -818,6 +1004,8 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		copyCmd,
 		deleteCmd,
+		importCmd,
+		exportCmd,
 	)
 
 	return rootCmd
