@@ -62,11 +62,19 @@ func initGGML() {
 			}
 		}
 
-		files := []string{"server"}
-		if path == ggmlGPU {
-			// TODO: this should be an OS specific check for the relevant GPU libraries
-			files = append(files, "ggml-metal.metal")
+		var files []string
+		switch runtime.GOOS {
+		case "windows":
+			files = []string{"server.exe"}
+		case "darwin":
+			files = []string{"server"}
+			if path == ggmlGPU {
+				files = append(files, "ggml-metal.metal")
+			}
+		default:
+			files = []string{filepath.Join(tmpDir, "server")}
 		}
+
 		for _, f := range files {
 			srcPath := filepath.Join(path, f)
 			destPath := filepath.Join(tmpDir, f)
@@ -88,11 +96,9 @@ func initGGML() {
 			}
 		}
 
-		switch runtime.GOOS {
-		case "windows":
+		ggmlRunnerPath = filepath.Join(tmpDir, "server")
+		if runtime.GOOS == "windows" {
 			ggmlRunnerPath = filepath.Join(tmpDir, "server.exe")
-		default:
-			ggmlRunnerPath = filepath.Join(tmpDir, "server")
 		}
 	})
 }
@@ -302,7 +308,7 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 			}
 		}()
 
-		expiresAt := time.Now().Add(3 * time.Second)
+		expiresAt := time.Now().Add(10 * time.Second)
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 	next:
