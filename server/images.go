@@ -235,8 +235,8 @@ func GetModel(name string) (*Model, error) {
 
 func filenameWithPath(path, f string) (string, error) {
 	// if filePath starts with ~/, replace it with the user's home directory.
-	if strings.HasPrefix(f, "~/") {
-		parts := strings.Split(f, "/")
+	if strings.HasPrefix(f, fmt.Sprintf("~%s", string(os.PathSeparator))) {
+		parts := strings.Split(f, string(os.PathSeparator))
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("failed to open file: %v", err)
@@ -374,20 +374,9 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 		case "adapter":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
 
-			fp := c.Args
-			if strings.HasPrefix(fp, "~/") {
-				parts := strings.Split(fp, "/")
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return fmt.Errorf("failed to open file: %v", err)
-				}
-
-				fp = filepath.Join(home, filepath.Join(parts[1:]...))
-			}
-
-			// If filePath is not an absolute path, make it relative to the modelfile path
-			if !filepath.IsAbs(fp) {
-				fp = filepath.Join(filepath.Dir(path), fp)
+			fp, err := filenameWithPath(path, c.Args)
+			if err != nil {
+				return err
 			}
 
 			// create a model from this specified file
