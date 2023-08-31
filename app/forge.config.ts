@@ -27,7 +27,6 @@ const config: ForgeConfig = {
       path.join(__dirname, './assets/iconDarkTemplate@2x.png'),
       path.join(__dirname, './assets/iconDarkUpdateTemplate.png'),
       path.join(__dirname, './assets/iconDarkUpdateTemplate@2x.png'),
-      ...(process.platform === 'darwin' ? ['../llm/ggml-metal.metal'] : []),
     ],
     ...(process.env.SIGN
       ? {
