@@ -281,12 +281,19 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 
 		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd, Cancel: cancel}}
 
+		log.Print("starting llama.cpp server")
+		if err := llm.Cmd.Start(); err != nil {
+			log.Printf("error starting the external llama.cpp server: %v", err)
+			continue
+		}
+
 		if err := waitForServer(llm); err != nil {
 			log.Printf("error starting llama.cpp server: %v", err)
 			llm.Close()
 			// try again
 			continue
 		}
+
 		// server started successfully
 		return llm, nil
 	}
@@ -295,48 +302,31 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 }
 
 func waitForServer(llm *llama) error {
-	log.Print("starting llama.cpp server")
-	var stderr bytes.Buffer
-	llm.Cmd.Stderr = &stderr
-	err := llm.Cmd.Start()
-	if err != nil {
-		return fmt.Errorf("error starting the external llama.cpp server: %w", err)
-	}
-
-	exitChan := make(chan error, 1)
-
-	// the server is a long running process, watch for it exiting to keep track of something going wrong
-	go func() {
-		err := llm.Cmd.Wait()
-		log.Print(stderr.String())
-		exitChan <- err
-	}()
-
 	// wait for the server to start responding
 	start := time.Now()
 	expiresAt := time.Now().Add(30 * time.Second)
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(200 * time.Millisecond)
 
 	log.Print("waiting for llama.cpp server to start responding")
+	for range ticker.C {
+		if time.Now().After(expiresAt) {
+			return fmt.Errorf("llama.cpp server did not start within alloted time, retrying")
+		}
 
-	for {
-		select {
-		case <-ticker.C:
-			if time.Now().After(expiresAt) {
-				return fmt.Errorf("llama.cpp server did not start responding within 30 seconds, retrying")
-			}
-			if err := llm.Ping(context.Background()); err == nil {
-				log.Printf("llama.cpp server started in %f seconds", time.Since(start).Seconds())
-				return nil
-			}
-		case err := <-exitChan:
-			return fmt.Errorf("llama.cpp server exited unexpectedly: %w", err)
+		if err := llm.Ping(context.Background()); err == nil {
+			break
 		}
 	}
+
+	log.Printf("llama.cpp server started in %f seconds", time.Since(start).Seconds())
+	return nil
 }
 
 func (llm *llama) Close() {
-	llm.Running.Cmd.Cancel()
+	llm.Cancel()
+	if err := llm.Cmd.Wait(); err != nil {
+		log.Printf("llama.cpp server exited with error: %v", err)
+	}
 }
 
 func (llm *llama) SetOptions(opts api.Options) {
@@ -663,7 +653,7 @@ func (llm *llama) Embedding(ctx context.Context, input string) ([]float64, error
 
 // Ping checks that the server subprocess is still running and responding to requests
 func (llm *llama) Ping(ctx context.Context) error {
-	resp, err := http.Head(fmt.Sprintf("http://127.0.0.1:%d", llm.Running.Port))
+	resp, err := http.Head(fmt.Sprintf("http://127.0.0.1:%d", llm.Port))
 	if err != nil {
 		return fmt.Errorf("ping resp: %w", err)
 	}
