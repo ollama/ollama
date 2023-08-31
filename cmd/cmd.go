@@ -196,6 +196,10 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	for _, m := range models.Models {
 		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
+			if len(m.Digest) == 0 {
+				fmt.Fprintf(os.Stderr, "warning: no digest for %s\n", m.Name)
+				continue
+			}
 			data = append(data, []string{m.Name, m.Digest[:12], humanize.Bytes(uint64(m.Size)), format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
