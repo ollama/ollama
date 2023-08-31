@@ -261,13 +261,9 @@ var (
 	ggufRunnerPath string
 )
 
-func initGGUF() {
+func ggufRunner() ModelRunner {
 	ggufInit.Do(func() {
 		ggufRunnerPath = chooseRunner(ggufGPU, ggufCPU)
 	})
-}
-
-func ggufRunner() ModelRunner {
-	initGGUF()
 	return ModelRunner{Path: ggufRunnerPath}
 }

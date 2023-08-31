@@ -153,14 +153,10 @@ var (
 	ggmlRunnerPath string
 )
 
-func initGGML() {
+func ggmlRunner() ModelRunner {
 	ggmlInit.Do(func() {
 		ggmlRunnerPath = chooseRunner(ggmlGPU, ggmlCPU)
 	})
-}
-
-func ggmlRunner() ModelRunner {
-	initGGML()
 	return ModelRunner{Path: ggmlRunnerPath}
 }
 
