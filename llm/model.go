@@ -23,8 +23,8 @@ const (
 	FILE_MAGIC_GGUF = 0x46554747
 )
 
-func DecodeModel(r io.ReadSeeker) (*ModelFile, error) {
-	var mf ModelFile
+func DecodeModel(r io.ReadSeeker) (*GGML, error) {
+	var mf GGML
 	binary.Read(r, binary.LittleEndian, &mf.magic)
 
 	switch mf.magic {

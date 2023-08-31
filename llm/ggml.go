@@ -46,7 +46,7 @@ type FileType interface {
 	String() string
 }
 
-type ModelFile struct {
+type GGML struct {
 	magic uint32
 	container
 	model
