@@ -209,6 +209,10 @@ type Running struct {
 	Cancel context.CancelFunc
 }
 
+type ModelRunner struct {
+	Path string // path to the model runner executable
+}
+
 type llama struct {
 	api.Options
 	Running
