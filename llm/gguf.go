@@ -12,9 +12,17 @@ import (
 )
 
 type containerGGUF struct {
-	Version    uint32
-	NumTensors uint32
-	NumKV      uint32
+	Version uint32
+
+	V1 struct {
+		NumTensor uint32
+		NumKV     uint32
+	}
+
+	V2 struct {
+		NumTensor uint64
+		NumKV     uint64
+	}
 }
 
 func (c *containerGGUF) Name() string {
@@ -22,15 +30,18 @@ func (c *containerGGUF) Name() string {
 }
 
 func (c *containerGGUF) Decode(r io.Reader) (model, error) {
-	binary.Read(r, binary.LittleEndian, c)
+	binary.Read(r, binary.LittleEndian, &c.Version)
 
 	switch c.Version {
-	case 1, 2:
+	case 1:
+		binary.Read(r, binary.LittleEndian, &c.V1)
+	case 2:
+		binary.Read(r, binary.LittleEndian, &c.V2)
 	default:
 		return nil, errors.New("invalid version")
 	}
 
-	model := newGGUFModel(c.NumTensors, c.NumKV)
+	model := newGGUFModel(c)
 	if err := model.Decode(r); err != nil {
 		return nil, err
 	}
@@ -49,22 +60,31 @@ const (
 	ggufTypeBool
 	ggufTypeString
 	ggufTypeArray
+	ggufTypeUint64
+	ggufTypeInt64
+	ggufTypeFloat64
 )
 
 type kv map[string]any
 
 type ggufModel struct {
-	numTensors uint32
-	numKV      uint32
+	*containerGGUF
 	kv
 }
 
-func newGGUFModel(numTensors, numKV uint32) *ggufModel {
+func newGGUFModel(container *containerGGUF) *ggufModel {
 	return &ggufModel{
-		numTensors: numTensors,
-		numKV:      numKV,
-		kv:         make(kv),
+		containerGGUF: container,
+		kv:            make(kv),
 	}
+}
+
+func (llm *ggufModel) NumKV() uint64 {
+	if llm.Version == 1 {
+		return uint64(llm.V1.NumKV)
+	}
+
+	return llm.V2.NumKV
 }
 
 func (llm *ggufModel) ModelFamily() ModelFamily {
@@ -102,7 +122,7 @@ func (llm *ggufModel) FileType() FileType {
 }
 
 func (llm *ggufModel) Decode(r io.Reader) error {
-	for i := 0; uint32(i) < llm.numKV; i++ {
+	for i := 0; uint64(i) < llm.NumKV(); i++ {
 		k, err := llm.readString(r)
 		if err != nil {
 			return err
@@ -124,19 +144,35 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 			v = llm.readU32(r)
 		case ggufTypeInt32:
 			v = llm.readI32(r)
+		case ggufTypeUint64:
+			v = llm.readU64(r)
+		case ggufTypeInt64:
+			v = llm.readI64(r)
 		case ggufTypeFloat32:
 			v = llm.readF32(r)
+		case ggufTypeFloat64:
+			v = llm.readF64(r)
 		case ggufTypeBool:
 			v = llm.readBool(r)
 		case ggufTypeString:
-			s, err := llm.readString(r)
+			fn := llm.readString
+			if llm.Version == 1 {
+				fn = llm.readStringV1
+			}
+
+			s, err := fn(r)
 			if err != nil {
 				return err
 			}
 
 			v = s
 		case ggufTypeArray:
-			a, err := llm.readArray(r)
+			fn := llm.readArray
+			if llm.Version == 1 {
+				fn = llm.readArrayV1
+			}
+
+			a, err := fn(r)
 			if err != nil {
 				return err
 			}
@@ -188,10 +224,28 @@ func (ggufModel) readI32(r io.Reader) int32 {
 	return i32
 }
 
+func (ggufModel) readU64(r io.Reader) uint64 {
+	var u64 uint64
+	binary.Read(r, binary.LittleEndian, &u64)
+	return u64
+}
+
+func (ggufModel) readI64(r io.Reader) int64 {
+	var i64 int64
+	binary.Read(r, binary.LittleEndian, &i64)
+	return i64
+}
+
 func (ggufModel) readF32(r io.Reader) float32 {
 	var f32 float32
 	binary.Read(r, binary.LittleEndian, &f32)
 	return f32
+}
+
+func (ggufModel) readF64(r io.Reader) float64 {
+	var f64 float64
+	binary.Read(r, binary.LittleEndian, &f64)
+	return f64
 }
 
 func (ggufModel) readBool(r io.Reader) bool {
@@ -200,7 +254,7 @@ func (ggufModel) readBool(r io.Reader) bool {
 	return b
 }
 
-func (ggufModel) readString(r io.Reader) (string, error) {
+func (ggufModel) readStringV1(r io.Reader) (string, error) {
 	var nameLength uint32
 	binary.Read(r, binary.LittleEndian, &nameLength)
 
@@ -209,12 +263,25 @@ func (ggufModel) readString(r io.Reader) (string, error) {
 		return "", err
 	}
 
-	// gguf strings are null-terminated
+	// gguf v1 strings are null-terminated
 	b.Truncate(b.Len() - 1)
+
 	return b.String(), nil
 }
 
-func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
+func (ggufModel) readString(r io.Reader) (string, error) {
+	var nameLength uint64
+	binary.Read(r, binary.LittleEndian, &nameLength)
+
+	var b bytes.Buffer
+	if _, err := io.CopyN(&b, r, int64(nameLength)); err != nil {
+		return "", err
+	}
+
+	return b.String(), nil
+}
+
+func (llm *ggufModel) readArrayV1(r io.Reader) (arr []any, err error) {
 	atype := llm.readU32(r)
 	n := llm.readU32(r)
 
@@ -251,6 +318,49 @@ func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
 	return
 }
 
+func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
+	atype := llm.readU32(r)
+	n := llm.readU64(r)
+
+	for i := 0; uint64(i) < n; i++ {
+		switch atype {
+		case ggufTypeUint8:
+			arr = append(arr, llm.readU8(r))
+		case ggufTypeInt8:
+			arr = append(arr, llm.readU8(r))
+		case ggufTypeUint16:
+			arr = append(arr, llm.readU16(r))
+		case ggufTypeInt16:
+			arr = append(arr, llm.readI16(r))
+		case ggufTypeUint32:
+			arr = append(arr, llm.readU32(r))
+		case ggufTypeInt32:
+			arr = append(arr, llm.readI32(r))
+		case ggufTypeUint64:
+			arr = append(arr, llm.readU64(r))
+		case ggufTypeInt64:
+			arr = append(arr, llm.readI64(r))
+		case ggufTypeFloat32:
+			arr = append(arr, llm.readF32(r))
+		case ggufTypeFloat64:
+			arr = append(arr, llm.readF64(r))
+		case ggufTypeBool:
+			arr = append(arr, llm.readBool(r))
+		case ggufTypeString:
+			s, err := llm.readString(r)
+			if err != nil {
+				return nil, err
+			}
+
+			arr = append(arr, s)
+		default:
+			return nil, fmt.Errorf("invalid array type: %d", atype)
+		}
+	}
+
+	return
+}
+
 var (
 	ggufGPU = path.Join("llama.cpp", "gguf", "build", "gpu", "bin")
 	ggufCPU = path.Join("llama.cpp", "gguf", "build", "cpu", "bin")
@@ -265,5 +375,6 @@ func ggufRunner() ModelRunner {
 	ggufInit.Do(func() {
 		ggufRunnerPath = chooseRunner(ggufGPU, ggufCPU)
 	})
+
 	return ModelRunner{Path: ggufRunnerPath}
 }
