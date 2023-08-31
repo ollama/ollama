@@ -32,12 +32,12 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 	}
 	defer f.Close()
 
-	mf, err := DecodeGGML(f)
+	ggml, err := DecodeGGML(f)
 	if err != nil {
 		return nil, err
 	}
 
-	switch mf.FileType().String() {
+	switch ggml.FileType().String() {
 	case "F32", "Q5_0", "Q5_1", "Q8_0":
 		if opts.NumGPU != 0 {
 			// F32, Q5_0, Q5_1, and Q8_0 do not support Metal API and will
@@ -48,40 +48,40 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 	}
 
 	totalResidentMemory := memory.TotalMemory()
-	switch mf.ModelType() {
+	switch ggml.ModelType() {
 	case ModelType3B, ModelType7B:
-		if mf.FileType().String() == "F16" && totalResidentMemory < 16*1024*1024 {
+		if ggml.FileType().String() == "F16" && totalResidentMemory < 16*1024*1024 {
 			return nil, fmt.Errorf("F16 model requires at least 16GB of memory")
 		} else if totalResidentMemory < 8*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 8GB of memory")
 		}
 	case ModelType13B:
-		if mf.FileType().String() == "F16" && totalResidentMemory < 32*1024*1024 {
+		if ggml.FileType().String() == "F16" && totalResidentMemory < 32*1024*1024 {
 			return nil, fmt.Errorf("F16 model requires at least 32GB of memory")
 		} else if totalResidentMemory < 16*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 16GB of memory")
 		}
 	case ModelType30B, ModelType34B:
-		if mf.FileType().String() == "F16" && totalResidentMemory < 64*1024*1024 {
+		if ggml.FileType().String() == "F16" && totalResidentMemory < 64*1024*1024 {
 			return nil, fmt.Errorf("F16 model requires at least 64GB of memory")
 		} else if totalResidentMemory < 32*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 32GB of memory")
 		}
 	case ModelType65B:
-		if mf.FileType().String() == "F16" && totalResidentMemory < 128*1024*1024 {
+		if ggml.FileType().String() == "F16" && totalResidentMemory < 128*1024*1024 {
 			return nil, fmt.Errorf("F16 model requires at least 128GB of memory")
 		} else if totalResidentMemory < 64*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 64GB of memory")
 		}
 	}
 
-	switch mf.Name() {
+	switch ggml.Name() {
 	case "gguf":
 		opts.NumGQA = 0 // TODO: remove this when llama.cpp runners differ enough to need separate newLlama functions
 		return newLlama(model, adapters, ggufRunner(), opts)
 	case "ggml", "ggmf", "ggjt", "ggla":
 		return newLlama(model, adapters, ggmlRunner(), opts)
 	default:
-		return nil, fmt.Errorf("unknown ggml type: %s", mf.ModelFamily())
+		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
 	}
 }

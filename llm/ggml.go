@@ -174,31 +174,31 @@ const (
 )
 
 func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
-	var mf GGML
-	binary.Read(r, binary.LittleEndian, &mf.magic)
+	var ggml GGML
+	binary.Read(r, binary.LittleEndian, &ggml.magic)
 
-	switch mf.magic {
+	switch ggml.magic {
 	case FILE_MAGIC_GGML:
-		mf.container = &containerGGML{}
+		ggml.container = &containerGGML{}
 	case FILE_MAGIC_GGMF:
-		mf.container = &containerGGMF{}
+		ggml.container = &containerGGMF{}
 	case FILE_MAGIC_GGJT:
-		mf.container = &containerGGJT{}
+		ggml.container = &containerGGJT{}
 	case FILE_MAGIC_GGLA:
-		mf.container = &containerLORA{}
+		ggml.container = &containerLORA{}
 	case FILE_MAGIC_GGUF:
-		mf.container = &containerGGUF{}
+		ggml.container = &containerGGUF{}
 	default:
 		return nil, errors.New("invalid file magic")
 	}
 
-	model, err := mf.Decode(r)
+	model, err := ggml.Decode(r)
 	if err != nil {
 		return nil, err
 	}
 
-	mf.model = model
+	ggml.model = model
 
 	// final model type
-	return &mf, nil
+	return &ggml, nil
 }
