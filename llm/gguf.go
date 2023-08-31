@@ -25,7 +25,7 @@ func (c *containerGGUF) Decode(r io.Reader) (model, error) {
 	binary.Read(r, binary.LittleEndian, c)
 
 	switch c.Version {
-	case 1:
+	case 1, 2:
 	default:
 		return nil, errors.New("invalid version")
 	}
