@@ -46,7 +46,7 @@ func ParseModelPath(name string) ModelPath {
 		name = after
 	}
 
-	parts := strings.Split(name, "/")
+	parts := strings.Split(name, string(os.PathSeparator))
 	switch len(parts) {
 	case 3:
 		mp.Registry = parts[0]

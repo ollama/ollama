@@ -235,8 +235,8 @@ func GetModel(name string) (*Model, error) {
 
 func filenameWithPath(path, f string) (string, error) {
 	// if filePath starts with ~/, replace it with the user's home directory.
-	if strings.HasPrefix(f, "~/") {
-		parts := strings.Split(f, "/")
+	if strings.HasPrefix(f, fmt.Sprintf("~%s", string(os.PathSeparator))) {
+		parts := strings.Split(f, string(os.PathSeparator))
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("failed to open file: %v", err)
@@ -374,20 +374,9 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 		case "adapter":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
 
-			fp := c.Args
-			if strings.HasPrefix(fp, "~/") {
-				parts := strings.Split(fp, "/")
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return fmt.Errorf("failed to open file: %v", err)
-				}
-
-				fp = filepath.Join(home, filepath.Join(parts[1:]...))
-			}
-
-			// If filePath is not an absolute path, make it relative to the modelfile path
-			if !filepath.IsAbs(fp) {
-				fp = filepath.Join(filepath.Dir(path), fp)
+			fp, err := filenameWithPath(path, c.Args)
+			if err != nil {
+				return err
 			}
 
 			// create a model from this specified file
@@ -859,38 +848,38 @@ func DeleteModel(name string) error {
 	if err != nil {
 		return err
 	}
-	err = filepath.Walk(fp, func(path string, info os.FileInfo, err error) error {
+
+	walkFunc := func(path string, info os.FileInfo, _ error) error {
+		if info.IsDir() {
+			return nil
+		}
+
+		dir, file := filepath.Split(path)
+		dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
+		tag := strings.Join([]string{dir, file}, ":")
+		fmp := ParseModelPath(tag)
+
+		// skip the manifest we're trying to delete
+		if mp.GetFullTagname() == fmp.GetFullTagname() {
+			return nil
+		}
+
+		// save (i.e. delete from the deleteMap) any files used in other manifests
+		manifest, _, err := GetManifest(fmp)
 		if err != nil {
-			return err
+			log.Printf("skipping file: %s", fp)
+			return nil
 		}
-		if !info.IsDir() {
-			path := path[len(fp)+1:]
-			slashIndex := strings.LastIndex(path, "/")
-			if slashIndex == -1 {
-				return nil
-			}
-			tag := path[:slashIndex] + ":" + path[slashIndex+1:]
-			fmp := ParseModelPath(tag)
 
-			// skip the manifest we're trying to delete
-			if mp.GetFullTagname() == fmp.GetFullTagname() {
-				return nil
-			}
-
-			// save (i.e. delete from the deleteMap) any files used in other manifests
-			manifest, _, err := GetManifest(fmp)
-			if err != nil {
-				log.Printf("skipping file: %s", fp)
-				return nil
-			}
-			for _, layer := range manifest.Layers {
-				delete(deleteMap, layer.Digest)
-			}
-			delete(deleteMap, manifest.Config.Digest)
+		for _, layer := range manifest.Layers {
+			delete(deleteMap, layer.Digest)
 		}
+
+		delete(deleteMap, manifest.Config.Digest)
 		return nil
-	})
-	if err != nil {
+	}
+
+	if err := filepath.Walk(fp, walkFunc); err != nil {
 		return err
 	}
 
