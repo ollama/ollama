@@ -279,6 +279,9 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
 
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+
 		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd, Cancel: cancel}}
 
 		log.Print("starting llama.cpp server")
