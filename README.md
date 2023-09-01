@@ -50,6 +50,14 @@ Here are some example open-source models that can be downloaded:
 
 ## Examples
 
+### Pull a public model
+
+```
+ollama pull llama2
+```
+
+> This command can also be used to update a local model. Only updated changes will be pulled.
+
 ### Run a model
 
 ```
@@ -67,15 +75,13 @@ For multiline input, you can wrap text with `"""`:
 I'm a basic program that prints the famous "Hello, world!" message to the console.
 ```
 
-### Create a custom model
+### Customize a model
 
 Pull a base model:
 
 ```
 ollama pull llama2
 ```
-
-> To update a model to the latest version, run `ollama pull llama2` again. The model will be updated (if necessary).
 
 Create a `Modelfile`:
 
@@ -102,23 +108,23 @@ Hello! It's your friend Mario.
 
 For more examples, see the [examples](./examples) directory. For more information on creating a Modelfile, see the [Modelfile](./docs/modelfile.md) documentation.
 
-### Pull a model from the registry
-
-```
-ollama pull orca-mini
-```
-
 ### Listing local models
 
 ```
 ollama list
 ```
 
+### Removing local models
+
+```
+ollama rm llama2
+```
+
 ## Model packages
 
 ### Overview
 
-Ollama bundles model weights, configuration, and data into a single package, defined by a [Modelfile](./docs/modelfile.md).
+Ollama bundles model weights, configurations, and data into a single package, defined by a [Modelfile](./docs/modelfile.md).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" height="480" srcset="https://github.com/jmorganca/ollama/assets/251292/2fd96b5f-191b-45c1-9668-941cfad4eb70">
@@ -146,7 +152,7 @@ Next, start the server:
 ./ollama serve
 ```
 
-Finally, run a model (in another shell):
+Finally, in a separate shell, run a model:
 
 ```
 ./ollama run llama2
