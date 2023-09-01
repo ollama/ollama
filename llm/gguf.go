@@ -122,8 +122,13 @@ func (llm *ggufModel) FileType() FileType {
 }
 
 func (llm *ggufModel) Decode(r io.Reader) error {
+	read := llm.readString
+	if llm.Version == 1 {
+		read = llm.readStringV1
+	}
+
 	for i := 0; uint64(i) < llm.NumKV(); i++ {
-		k, err := llm.readString(r)
+		k, err := read(r)
 		if err != nil {
 			return err
 		}
@@ -269,7 +274,7 @@ func (ggufModel) readStringV1(r io.Reader) (string, error) {
 	return b.String(), nil
 }
 
-func (ggufModel) readString(r io.Reader) (string, error) {
+func (llm ggufModel) readString(r io.Reader) (string, error) {
 	var nameLength uint64
 	binary.Read(r, binary.LittleEndian, &nameLength)
 
@@ -304,7 +309,7 @@ func (llm *ggufModel) readArrayV1(r io.Reader) (arr []any, err error) {
 		case ggufTypeBool:
 			arr = append(arr, llm.readBool(r))
 		case ggufTypeString:
-			s, err := llm.readString(r)
+			s, err := llm.readStringV1(r)
 			if err != nil {
 				return nil, err
 			}
