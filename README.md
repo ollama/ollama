@@ -171,7 +171,7 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }'
 ```
 
-## Tools using Ollama
+## Community Projects using Ollama
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with a question-answering [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa).
 - [Continue](https://github.com/continuedev/continue) - embeds Ollama inside Visual Studio Code. The extension lets you highlight code to add to the prompt, ask questions in the sidebar, and generate code inline.
