@@ -58,7 +58,7 @@ ollama pull llama2
 
 > This command can also be used to update a local model. Only updated changes will be pulled.
 
-### Run a model
+### Run a model interactively
 
 ```
 ollama run llama2
@@ -73,6 +73,38 @@ For multiline input, you can wrap text with `"""`:
 ... world!
 ... """
 I'm a basic program that prints the famous "Hello, world!" message to the console.
+```
+
+### Run a model non-interactively
+
+```
+$ ollama run llama2 'tell me a joke'
+ Sure! Here's a quick one:
+ Why did the scarecrow win an award? Because he was outstanding in his field!
+```
+
+```
+$ cat <<EOF >prompts.txt
+tell me a joke about llamas
+tell me another one
+EOF
+$ ollama run llama2 <prompts.txt
+>>> tell me a joke about llamas
+ Why did the llama refuse to play hide-and-seek?
+ nobody likes to be hided!
+
+>>> tell me another one
+ Sure, here's another one:
+
+Why did the llama go to the bar?
+To have a hay-often good time!
+```
+
+### Run a model on contents of a text file
+
+```
+$ ollama run llama2 "summarize this file:" "$(cat README.md)"
+ Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
 ### Customize a model
@@ -171,7 +203,7 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }'
 ```
 
-## Tools using Ollama
+## Community Projects using Ollama
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with a question-answering [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa).
 - [Continue](https://github.com/continuedev/continue) - embeds Ollama inside Visual Studio Code. The extension lets you highlight code to add to the prompt, ask questions in the sidebar, and generate code inline.
