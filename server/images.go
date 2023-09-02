@@ -22,6 +22,8 @@ import (
 	"strings"
 	"text/template"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
@@ -427,6 +429,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 	// Create a single layer for the parameters
 	if len(params) > 0 {
 		fn(api.ProgressResponse{Status: "creating parameter layer"})
+
 		layers = removeLayerFromLayers(layers, "application/vnd.ollama.image.params")
 		formattedParams, err := formatParams(params)
 		if err != nil {
@@ -630,14 +633,9 @@ func existingFileEmbeddings(digest string) (map[string][]float64, error) {
 }
 
 func removeLayerFromLayers(layers []*LayerReader, mediaType string) []*LayerReader {
-	j := 0
-	for _, l := range layers {
-		if l.MediaType != mediaType {
-			layers[j] = l
-			j++
-		}
-	}
-	return layers[:j]
+	return slices.DeleteFunc(layers, func(layer *LayerReader) bool {
+		return layer.MediaType == mediaType
+	})
 }
 
 func SaveLayers(layers []*LayerReader, fn func(resp api.ProgressResponse), force bool) error {
