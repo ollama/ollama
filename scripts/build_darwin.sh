@@ -6,8 +6,10 @@ GO_LDFLAGS="-X github.com/jmorganca/ollama/version.Version=$VERSION"
 GO_LDFLAGS="$GO_LDFLAGS -X github.com/jmorganca/ollama/server.mode=release"
 
 # build universal binary
-CGO_ENABLED=1 GOARCH=arm64 go build -ldflags "$GO_LDFLAGS" -o dist/ollama-darwin-arm64
-CGO_ENABLED=1 GOARCH=amd64 go build -ldflags "$GO_LDFLAGS" -o dist/ollama-darwin-amd64
+GOARCH=arm64 go generate ./...
+GOARCH=arm64 go build -ldflags "$GO_LDFLAGS" -o dist/ollama-darwin-arm64
+GOARCH=amd64 go generate ./...
+GOARCH=amd64 go build -ldflags "$GO_LDFLAGS" -o dist/ollama-darwin-amd64
 lipo -create -output dist/ollama dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
 rm dist/ollama-darwin-amd64 dist/ollama-darwin-arm64
 codesign --deep --force --options=runtime --sign "$APPLE_IDENTITY" --timestamp dist/ollama
