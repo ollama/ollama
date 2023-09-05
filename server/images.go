@@ -22,6 +22,8 @@ import (
 	"strings"
 	"text/template"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
@@ -274,6 +276,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 
 	var layers []*LayerReader
 	params := make(map[string][]string)
+	var sourceParams map[string]any
 	embed := EmbeddingParams{fn: fn}
 	for _, c := range commands {
 		log.Printf("[%s] - %s\n", c.Name, c.Args)
@@ -357,6 +360,23 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 				config.FileType = source.FileType
 
 				for _, l := range mf.Layers {
+					if l.MediaType == "application/vnd.ollama.image.params" {
+						sourceParamsBlobPath, err := GetBlobsPath(l.Digest)
+						if err != nil {
+							return err
+						}
+
+						sourceParamsBlob, err := os.Open(sourceParamsBlobPath)
+						if err != nil {
+							return err
+						}
+						defer sourceParamsBlob.Close()
+
+						if err := json.NewDecoder(sourceParamsBlob).Decode(&sourceParams); err != nil {
+							return err
+						}
+					}
+
 					newLayer, err := GetLayerWithBufferFromLayer(l)
 					if err != nil {
 						return err
@@ -427,10 +447,17 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 	// Create a single layer for the parameters
 	if len(params) > 0 {
 		fn(api.ProgressResponse{Status: "creating parameter layer"})
+
 		layers = removeLayerFromLayers(layers, "application/vnd.ollama.image.params")
 		formattedParams, err := formatParams(params)
 		if err != nil {
 			return fmt.Errorf("couldn't create params json: %v", err)
+		}
+
+		for k, v := range sourceParams {
+			if _, ok := formattedParams[k]; !ok {
+				formattedParams[k] = v
+			}
 		}
 
 		bts, err := json.Marshal(formattedParams)
@@ -630,14 +657,9 @@ func existingFileEmbeddings(digest string) (map[string][]float64, error) {
 }
 
 func removeLayerFromLayers(layers []*LayerReader, mediaType string) []*LayerReader {
-	j := 0
-	for _, l := range layers {
-		if l.MediaType != mediaType {
-			layers[j] = l
-			j++
-		}
-	}
-	return layers[:j]
+	return slices.DeleteFunc(layers, func(layer *LayerReader) bool {
+		return layer.MediaType == mediaType
+	})
 }
 
 func SaveLayers(layers []*LayerReader, fn func(resp api.ProgressResponse), force bool) error {
