@@ -291,7 +291,7 @@ func DefaultOptions() Options {
 		NumCtx:             2048,
 		NumKeep:            -1,
 		NumBatch:           512,
-		NumGPU:             1,
+		NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
 		NumGQA:             1,
 		LowVRAM:            false,
 		F16KV:              true,
