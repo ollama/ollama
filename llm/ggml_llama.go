@@ -497,8 +497,10 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
 				}
 
-				fn(api.GenerateResponse{Response: p.Content})
-				nextContext.WriteString(p.Content)
+				if p.Content != "" {
+					fn(api.GenerateResponse{Response: p.Content})
+					nextContext.WriteString(p.Content)
+				}
 
 				if p.Stop {
 					embd, err := llm.Encode(ctx, nextContext.String())
