@@ -276,6 +276,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 
 	var layers []*LayerReader
 	params := make(map[string][]string)
+	var sourceParams map[string]any
 	embed := EmbeddingParams{fn: fn}
 	for _, c := range commands {
 		log.Printf("[%s] - %s\n", c.Name, c.Args)
@@ -359,6 +360,23 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 				config.FileType = source.FileType
 
 				for _, l := range mf.Layers {
+					if l.MediaType == "application/vnd.ollama.image.params" {
+						sourceParamsBlobPath, err := GetBlobsPath(l.Digest)
+						if err != nil {
+							return err
+						}
+
+						sourceParamsBlob, err := os.Open(sourceParamsBlobPath)
+						if err != nil {
+							return err
+						}
+						defer sourceParamsBlob.Close()
+
+						if err := json.NewDecoder(sourceParamsBlob).Decode(&sourceParams); err != nil {
+							return err
+						}
+					}
+
 					newLayer, err := GetLayerWithBufferFromLayer(l)
 					if err != nil {
 						return err
@@ -434,6 +452,12 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 		formattedParams, err := formatParams(params)
 		if err != nil {
 			return fmt.Errorf("couldn't create params json: %v", err)
+		}
+
+		for k, v := range sourceParams {
+			if _, ok := formattedParams[k]; !ok {
+				formattedParams[k] = v
+			}
 		}
 
 		bts, err := json.Marshal(formattedParams)
