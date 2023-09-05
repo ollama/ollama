@@ -276,8 +276,6 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 			runner.Path,
 			append(params, "--port", strconv.Itoa(port))...,
 		)
-		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
 
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
