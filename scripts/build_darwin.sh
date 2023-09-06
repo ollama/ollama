@@ -8,6 +8,7 @@ GO_LDFLAGS="$GO_LDFLAGS -X github.com/jmorganca/ollama/server.mode=release"
 # build universal binary
 GOARCH=arm64 go generate ./...
 GOARCH=arm64 go build -ldflags "$GO_LDFLAGS" -o dist/ollama-darwin-arm64
+rm -rf llm/llama.cpp/ggml/build/*/bin
 GOARCH=amd64 go generate ./...
 GOARCH=amd64 go build -ldflags "$GO_LDFLAGS" -o dist/ollama-darwin-amd64
 lipo -create -output dist/ollama dist/ollama-darwin-arm64 dist/ollama-darwin-amd64

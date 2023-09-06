@@ -45,6 +45,7 @@ func osPath(llamaPath string) string {
 	if runtime.GOOS == "windows" {
 		return path.Join(llamaPath, "Release")
 	}
+
 	return llamaPath
 }
 
@@ -68,7 +69,9 @@ func initGGML() {
 		case "windows":
 			files = []string{"server.exe"}
 		case "darwin":
-			files = append(files, "ggml-metal.metal")
+			if llamaPath == ggmlGPU {
+				files = append(files, "ggml-metal.metal")
+			}
 		}
 
 		for _, f := range files {
