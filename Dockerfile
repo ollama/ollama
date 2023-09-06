@@ -1,15 +1,21 @@
-FROM golang:1.20
+FROM golang:alpine
+
 WORKDIR /go/src/github.com/jmorganca/ollama
+RUN apk add --no-cache git build-base cmake
+
 COPY . .
-RUN CGO_ENABLED=1 go build -ldflags '-linkmode external -extldflags "-static"' .
+RUN go generate ./... && go build -ldflags '-linkmode external -extldflags "-static"' .
 
 FROM alpine
-COPY --from=0 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
-EXPOSE 11434
+ENV OLLAMA_HOST 0.0.0.0
+RUN apk add --no-cache libstdc++
+
 ARG USER=ollama
 ARG GROUP=ollama
-RUN addgroup -g 1000 $GROUP && adduser -u 1000 -DG $GROUP $USER
+RUN addgroup $GROUP && adduser -D -G $GROUP $USER
+
+COPY --from=0 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
+
 USER $USER:$GROUP
 ENTRYPOINT ["/bin/ollama"]
-ENV OLLAMA_HOST 0.0.0.0
 CMD ["serve"]
