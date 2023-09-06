@@ -281,9 +281,9 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagsSet > 1 {
-		return errors.New("only one of 'license', 'modelfile', 'parameters', 'system', or 'template' can be set")
+		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	} else if flagsSet == 0 {
-		return errors.New("one of 'license', 'modelfile', 'parameters', 'system', or 'template' must be set")
+		return errors.New("one of '--license', '--modelfile', '--parameters', '--system', or '--template' must be specified")
 	}
 
 	req := api.ShowRequest{Name: args[0]}
