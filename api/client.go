@@ -255,6 +255,14 @@ func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
 	return nil
 }
 
+func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, error) {
+	var resp ShowResponse
+	if err := c.do(ctx, http.MethodPost, "/api/show", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) Heartbeat(ctx context.Context) error {
 	if err := c.do(ctx, http.MethodHead, "/", nil, nil); err != nil {
 		return err

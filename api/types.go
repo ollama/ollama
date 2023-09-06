@@ -61,6 +61,19 @@ type DeleteRequest struct {
 	Name string `json:"name"`
 }
 
+type ShowRequest struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type ShowResponse struct {
+	License    string `json:"license,omitempty"`
+	Modelfile  string `json:"modelfile,omitempty"`
+	Parameters string `json:"parameters,omitempty"`
+	Template   string `json:"template,omitempty"`
+	System     string `json:"system,omitempty"`
+}
+
 type CopyRequest struct {
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
