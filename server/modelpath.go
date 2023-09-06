@@ -115,7 +115,7 @@ func GetManifestPath() (string, error) {
 	}
 
 	path := filepath.Join(home, ".ollama", "models", "manifests")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(path, 0o755); err != nil {
 		return "", err
 	}
 
