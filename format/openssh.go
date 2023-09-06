@@ -10,15 +10,11 @@ package format
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"encoding/binary"
 	"encoding/pem"
 	"fmt"
-	"math/big"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -39,25 +35,6 @@ type openSSHPrivateKey struct {
 	Check2  uint32
 	Keytype string
 	Rest    []byte `ssh:"rest"`
-}
-
-type openSSHRSAPrivateKey struct {
-	N       *big.Int
-	E       *big.Int
-	D       *big.Int
-	Iqmp    *big.Int
-	P       *big.Int
-	Q       *big.Int
-	Comment string
-	Pad     []byte `ssh:"rest"`
-}
-
-type openSSHECDSAPrivateKey struct {
-	Curve   string
-	Pub     []byte
-	D       *big.Int
-	Comment string
-	Pad     []byte `ssh:"rest"`
 }
 
 type openSSHEd25519PrivateKey struct {
@@ -85,64 +62,6 @@ func OpenSSHPrivateKey(key crypto.PrivateKey, comment string) (*pem.Block, error
 	}
 
 	switch k := key.(type) {
-	case *rsa.PrivateKey:
-		e := new(big.Int).SetInt64(int64(k.E))
-
-		key := openSSHRSAPrivateKey{
-			N:       k.N,
-			E:       e,
-			D:       k.D,
-			Iqmp:    k.Precomputed.Qinv,
-			P:       k.Primes[0],
-			Q:       k.Primes[1],
-			Comment: comment,
-		}
-
-		pk1.Keytype = ssh.KeyAlgoRSA
-		pk1.Rest = ssh.Marshal(key)
-
-		w.PubKey = ssh.Marshal(struct {
-			KeyType string
-			E       *big.Int
-			N       *big.Int
-		}{
-			ssh.KeyAlgoRSA, e, k.N,
-		})
-	case *ecdsa.PrivateKey:
-		var curve, keytype string
-		switch name := k.Curve.Params().Name; name {
-		case "P-256":
-			curve = "nistp256"
-			keytype = ssh.KeyAlgoECDSA256
-		case "P-384":
-			curve = "nistp384"
-			keytype = ssh.KeyAlgoECDSA384
-		case "P-521":
-			curve = "nistp521"
-			keytype = ssh.KeyAlgoECDSA521
-		default:
-			return nil, fmt.Errorf("ssh: unknown curve %q", name)
-		}
-
-		pub := elliptic.Marshal(k.Curve, k.X, k.Y)
-
-		key := openSSHECDSAPrivateKey{
-			Curve:   curve,
-			Pub:     pub,
-			D:       k.D,
-			Comment: comment,
-		}
-
-		pk1.Keytype = keytype
-		pk1.Rest = ssh.Marshal(key)
-
-		w.PubKey = ssh.Marshal(struct {
-			KeyType string
-			Curve   string
-			Pub     []byte
-		}{
-			keytype, curve, pub,
-		})
 	case ed25519.PrivateKey:
 		pub, priv := k[32:], k
 		key := openSSHEd25519PrivateKey{
