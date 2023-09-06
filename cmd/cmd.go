@@ -286,7 +286,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("one of 'license', 'modelfile', 'parameters', 'system', or 'template' must be set")
 	}
 
-	req := api.ShowRequest{Name: args[0], Type: showType}
+	req := api.ShowRequest{Name: args[0]}
 	resp, err := client.Show(context.Background(), &req)
 	if err != nil {
 		return err
@@ -588,13 +588,27 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		case strings.HasPrefix(line, "/show"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
-				data, err := server.GetModelInfo(args[1], model)
+				resp, err := server.GetModelInfo(model)
 				if err != nil {
 					fmt.Println("error: couldn't get model")
 					continue
 				}
 
-				fmt.Println(data)
+				switch args[1] {
+				case "license":
+					fmt.Println(resp.License)
+				case "modelfile":
+					fmt.Println(resp.Modelfile)
+				case "parameters":
+					fmt.Println(resp.Parameters)
+				case "system":
+					fmt.Println(resp.System)
+				case "template":
+					fmt.Println(resp.Template)
+				default:
+					fmt.Println("error: unknown command")
+				}
+
 				continue
 			} else {
 				usage()

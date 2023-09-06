@@ -63,7 +63,6 @@ type DeleteRequest struct {
 
 type ShowRequest struct {
 	Name string `json:"name"`
-	Type string `json:"type"`
 }
 
 type ShowResponse struct {

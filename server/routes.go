@@ -372,9 +372,7 @@ func ShowModelHandler(c *gin.Context) {
 		return
 	}
 
-	resp := &api.ShowResponse{}
-
-	data, err := GetModelInfo(req.Type, req.Name)
+	resp, err := GetModelInfo(req.Name)
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Name)})
@@ -384,73 +382,58 @@ func ShowModelHandler(c *gin.Context) {
 		return
 	}
 
-	switch req.Type {
-	case "license":
-		resp.License = data
-	case "modelfile":
-		resp.Modelfile = data
-	case "parameters":
-		resp.Parameters = data
-	case "system":
-		resp.System = data
-	case "template":
-		resp.Template = data
-	}
-
 	c.JSON(http.StatusOK, resp)
 }
 
-func GetModelInfo(reqType, name string) (string, error) {
+func GetModelInfo(name string) (*api.ShowResponse, error) {
 	model, err := GetModel(name)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	switch reqType {
-	case "license":
-		return strings.Join(model.License, "\n"), nil
-	case "modelfile":
-		mf, err := ShowModelfile(model)
-		if err != nil {
-			return "", err
-		}
-		return mf, nil
-	case "parameters":
-		var params []string
-		cs := 30
-		for k, v := range model.Options {
-			switch val := v.(type) {
-			case string:
-				params = append(params, fmt.Sprintf("%-*s %s", cs, k, val))
-			case int:
-				params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(val)))
-			case float64:
-				params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(val, 'f', 0, 64)))
-			case bool:
-				params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(val)))
-			case []interface{}:
-				for _, nv := range val {
-					switch nval := nv.(type) {
-					case string:
-						params = append(params, fmt.Sprintf("%-*s %s", cs, k, nval))
-					case int:
-						params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(nval)))
-					case float64:
-						params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
-					case bool:
-						params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(nval)))
-					}
+	resp := &api.ShowResponse{
+		License:  strings.Join(model.License, "\n"),
+		System:   model.System,
+		Template: model.Template,
+	}
+
+	mf, err := ShowModelfile(model)
+	if err != nil {
+		return nil, err
+	}
+
+	resp.Modelfile = mf
+
+	var params []string
+	cs := 30
+	for k, v := range model.Options {
+		switch val := v.(type) {
+		case string:
+			params = append(params, fmt.Sprintf("%-*s %s", cs, k, val))
+		case int:
+			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(val)))
+		case float64:
+			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(val, 'f', 0, 64)))
+		case bool:
+			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(val)))
+		case []interface{}:
+			for _, nv := range val {
+				switch nval := nv.(type) {
+				case string:
+					params = append(params, fmt.Sprintf("%-*s %s", cs, k, nval))
+				case int:
+					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(nval)))
+				case float64:
+					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
+				case bool:
+					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(nval)))
 				}
 			}
 		}
-		return strings.Join(params, "\n"), nil
-	case "system":
-		return model.System, nil
-	case "template":
-		return model.Template, nil
 	}
+	resp.Parameters = strings.Join(params, "\n")
 
-	return "", fmt.Errorf("unknown type '%s'. should be one of ['license', 'modelfile', 'system', 'template']", reqType)
+	return resp, nil
 }
 
 func ListModelsHandler(c *gin.Context) {
