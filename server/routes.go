@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -364,6 +365,77 @@ func DeleteModelHandler(c *gin.Context) {
 	}
 }
 
+func ShowModelHandler(c *gin.Context) {
+	var req api.ShowRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	resp, err := GetModelInfo(req.Name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Name)})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func GetModelInfo(name string) (*api.ShowResponse, error) {
+	model, err := GetModel(name)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &api.ShowResponse{
+		License:  strings.Join(model.License, "\n"),
+		System:   model.System,
+		Template: model.Template,
+	}
+
+	mf, err := ShowModelfile(model)
+	if err != nil {
+		return nil, err
+	}
+
+	resp.Modelfile = mf
+
+	var params []string
+	cs := 30
+	for k, v := range model.Options {
+		switch val := v.(type) {
+		case string:
+			params = append(params, fmt.Sprintf("%-*s %s", cs, k, val))
+		case int:
+			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(val)))
+		case float64:
+			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(val, 'f', 0, 64)))
+		case bool:
+			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(val)))
+		case []interface{}:
+			for _, nv := range val {
+				switch nval := nv.(type) {
+				case string:
+					params = append(params, fmt.Sprintf("%-*s %s", cs, k, nval))
+				case int:
+					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(nval)))
+				case float64:
+					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
+				case bool:
+					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(nval)))
+				}
+			}
+		}
+	}
+	resp.Parameters = strings.Join(params, "\n")
+
+	return resp, nil
+}
+
 func ListModelsHandler(c *gin.Context) {
 	var models []api.ModelResponse
 	fp, err := GetManifestPath()
@@ -457,6 +529,7 @@ func Serve(ln net.Listener, origins []string) error {
 	r.POST("/api/copy", CopyModelHandler)
 	r.GET("/api/tags", ListModelsHandler)
 	r.DELETE("/api/delete", DeleteModelHandler)
+	r.POST("/api/show", ShowModelHandler)
 
 	log.Printf("Listening on %s", ln.Addr())
 	s := &http.Server{

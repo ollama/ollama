@@ -230,6 +230,84 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func ShowHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.FromEnv()
+	if err != nil {
+		return err
+	}
+
+	if len(args) != 1 {
+		return errors.New("missing model name")
+	}
+
+	license, errLicense := cmd.Flags().GetBool("license")
+	modelfile, errModelfile := cmd.Flags().GetBool("modelfile")
+	parameters, errParams := cmd.Flags().GetBool("parameters")
+	system, errSystem := cmd.Flags().GetBool("system")
+	template, errTemplate := cmd.Flags().GetBool("template")
+
+	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate} {
+		if boolErr != nil {
+			return errors.New("error retrieving flags")
+		}
+	}
+
+	flagsSet := 0
+	showType := ""
+
+	if license {
+		flagsSet++
+		showType = "license"
+	}
+
+	if modelfile {
+		flagsSet++
+		showType = "modelfile"
+	}
+
+	if parameters {
+		flagsSet++
+		showType = "parameters"
+	}
+
+	if system {
+		flagsSet++
+		showType = "system"
+	}
+
+	if template {
+		flagsSet++
+		showType = "template"
+	}
+
+	if flagsSet > 1 {
+		return errors.New("only one of 'license', 'modelfile', 'parameters', 'system', or 'template' can be set")
+	} else if flagsSet == 0 {
+		return errors.New("one of 'license', 'modelfile', 'parameters', 'system', or 'template' must be set")
+	}
+
+	req := api.ShowRequest{Name: args[0]}
+	resp, err := client.Show(context.Background(), &req)
+	if err != nil {
+		return err
+	}
+
+	switch showType {
+	case "license":
+		fmt.Println(resp.License)
+	case "modelfile":
+		fmt.Println(resp.Modelfile)
+	case "parameters":
+		fmt.Println(resp.Parameters)
+	case "system":
+		fmt.Println(resp.System)
+	case "template":
+		fmt.Println(resp.Template)
+	}
+
+	return nil
+}
+
 func CopyHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.FromEnv()
 	if err != nil {
@@ -377,20 +455,6 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 	return nil
 }
 
-func showLayer(l *server.Layer) {
-	filename, err := server.GetBlobsPath(l.Digest)
-	if err != nil {
-		fmt.Println("Couldn't get layer's path")
-		return
-	}
-	bts, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Println("Couldn't read layer")
-		return
-	}
-	fmt.Println(string(bts))
-}
-
 func generateInteractive(cmd *cobra.Command, model string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -413,6 +477,8 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		),
 		readline.PcItem("/show",
 			readline.PcItem("license"),
+			readline.PcItem("modelfile"),
+			readline.PcItem("parameters"),
 			readline.PcItem("system"),
 			readline.PcItem("template"),
 		),
@@ -522,42 +588,28 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		case strings.HasPrefix(line, "/show"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
-				mp := server.ParseModelPath(model)
+				resp, err := server.GetModelInfo(model)
 				if err != nil {
-					return err
+					fmt.Println("error: couldn't get model")
+					continue
 				}
 
-				manifest, _, err := server.GetManifest(mp)
-				if err != nil {
-					fmt.Println("error: couldn't get a manifest for this model")
-					continue
-				}
 				switch args[1] {
 				case "license":
-					for _, l := range manifest.Layers {
-						if l.MediaType == "application/vnd.ollama.image.license" {
-							showLayer(l)
-						}
-					}
-					continue
+					fmt.Println(resp.License)
+				case "modelfile":
+					fmt.Println(resp.Modelfile)
+				case "parameters":
+					fmt.Println(resp.Parameters)
 				case "system":
-					for _, l := range manifest.Layers {
-						if l.MediaType == "application/vnd.ollama.image.system" {
-							showLayer(l)
-						}
-					}
-					continue
+					fmt.Println(resp.System)
 				case "template":
-					for _, l := range manifest.Layers {
-						if l.MediaType == "application/vnd.ollama.image.template" {
-							showLayer(l)
-						}
-					}
-					continue
+					fmt.Println(resp.Template)
 				default:
-					usage()
-					continue
+					fmt.Println("error: unknown command")
 				}
+
+				continue
 			} else {
 				usage()
 				continue
@@ -749,6 +801,20 @@ func NewCLI() *cobra.Command {
 
 	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
 
+	showCmd := &cobra.Command{
+		Use:     "show MODEL",
+		Short:   "Show information for a model",
+		Args:    cobra.MinimumNArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ShowHandler,
+	}
+
+	showCmd.Flags().Bool("license", false, "Show license of a model")
+	showCmd.Flags().Bool("modelfile", false, "Show Modelfile of a model")
+	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")
+	showCmd.Flags().Bool("template", false, "Show template of a model")
+	showCmd.Flags().Bool("system", false, "Show system prompt of a model")
+
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",
 		Short:   "Run a model",
@@ -814,6 +880,7 @@ func NewCLI() *cobra.Command {
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
+		showCmd,
 		runCmd,
 		pullCmd,
 		pushCmd,
