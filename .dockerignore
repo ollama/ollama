@@ -1,8 +1,4 @@
-build
-llama/build
-.venv
 .vscode
 ollama
 app
-web
-.env
+llm/llama.cpp/ggml
