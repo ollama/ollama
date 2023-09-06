@@ -238,6 +238,10 @@ Generate embeddings from a model
 - `model`: name of model to generate embeddings from
 - `prompt`: text to generate embeddings for
 
+Advanced parameters:
+
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+
 ### Request
 
 ```
