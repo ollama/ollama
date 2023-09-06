@@ -69,7 +69,7 @@ func initGGML() {
 		case "windows":
 			files = []string{"server.exe"}
 		case "darwin":
-			if llamaPath == ggmlGPU {
+			if llamaPath == osPath(ggmlGPU) {
 				files = append(files, "ggml-metal.metal")
 			}
 		}
