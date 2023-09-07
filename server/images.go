@@ -328,7 +328,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 					}
 					defer file.Close()
 
-					ggml, err := llm.DecodeGGML(file, llm.ModelFamilyLlama)
+					ggml, err := llm.DecodeGGML(file)
 					if err != nil {
 						return err
 					}
