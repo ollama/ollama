@@ -363,6 +363,7 @@ func DeleteModelHandler(c *gin.Context) {
 		}
 		return
 	}
+	c.JSON(http.StatusOK, nil)
 }
 
 func ShowModelHandler(c *gin.Context) {

@@ -268,6 +268,24 @@ func filenameWithPath(path, f string) (string, error) {
 }
 
 func CreateModel(ctx context.Context, name string, path string, fn func(resp api.ProgressResponse)) error {
+	mp := ParseModelPath(name)
+
+	// build deleteMap to prune unused layers
+	deleteMap := make(map[string]bool)
+	manifest, _, err := GetManifest(mp)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+
+	if manifest != nil {
+		for _, l := range manifest.Layers {
+			deleteMap[l.Digest] = true
+		}
+		deleteMap[manifest.Config.Digest] = true
+	}
+
 	mf, err := os.Open(path)
 	if err != nil {
 		fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't open modelfile '%s'", path)})
@@ -503,6 +521,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 	var manifestLayers []*Layer
 	for _, l := range layers {
 		manifestLayers = append(manifestLayers, &l.Layer)
+		delete(deleteMap, l.Layer.Digest)
 	}
 
 	// Create a layer for the config object
@@ -512,6 +531,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 		return err
 	}
 	layers = append(layers, cfg)
+	delete(deleteMap, cfg.Layer.Digest)
 
 	if err := SaveLayers(layers, fn, false); err != nil {
 		return err
@@ -520,6 +540,12 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 	// Create the manifest
 	fn(api.ProgressResponse{Status: "writing manifest"})
 	err = CreateManifest(name, cfg, manifestLayers)
+	if err != nil {
+		return err
+	}
+
+	fn(api.ProgressResponse{Status: "pruning any unused layers"})
+	err = deleteUnusedLayers(nil, deleteMap, false)
 	if err != nil {
 		return err
 	}
@@ -866,18 +892,7 @@ func CopyModel(src, dest string) error {
 	return nil
 }
 
-func DeleteModel(name string) error {
-	mp := ParseModelPath(name)
-	manifest, _, err := GetManifest(mp)
-	if err != nil {
-		return err
-	}
-	deleteMap := make(map[string]bool)
-	for _, layer := range manifest.Layers {
-		deleteMap[layer.Digest] = true
-	}
-	deleteMap[manifest.Config.Digest] = true
-
+func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]bool, dryRun bool) error {
 	fp, err := GetManifestPath()
 	if err != nil {
 		return err
@@ -894,14 +909,13 @@ func DeleteModel(name string) error {
 		fmp := ParseModelPath(tag)
 
 		// skip the manifest we're trying to delete
-		if mp.GetFullTagname() == fmp.GetFullTagname() {
+		if skipModelPath != nil && skipModelPath.GetFullTagname() == fmp.GetFullTagname() {
 			return nil
 		}
 
 		// save (i.e. delete from the deleteMap) any files used in other manifests
 		manifest, _, err := GetManifest(fmp)
 		if err != nil {
-			log.Printf("skipping file: %s", fp)
 			return nil
 		}
 
@@ -925,14 +939,72 @@ func DeleteModel(name string) error {
 				log.Printf("couldn't get file path for '%s': %v", k, err)
 				continue
 			}
-			if err := os.Remove(fp); err != nil {
-				log.Printf("couldn't remove file '%s': %v", fp, err)
-				continue
+			if !dryRun {
+				if err := os.Remove(fp); err != nil {
+					log.Printf("couldn't remove file '%s': %v", fp, err)
+					continue
+				}
+			} else {
+				log.Printf("wanted to remove: %s", fp)
 			}
 		}
 	}
 
-	fp, err = mp.GetManifestPath(false)
+	return nil
+}
+
+func PruneLayers(dryRun bool) error {
+	deleteMap := make(map[string]bool)
+	p, err := GetBlobsPath("")
+	if err != nil {
+		return err
+	}
+
+	blobs, err := os.ReadDir(p)
+	if err != nil {
+		log.Printf("couldn't read dir '%s': %v", p, err)
+		return err
+	}
+
+	for _, blob := range blobs {
+		name := blob.Name()
+		if runtime.GOOS == "windows" {
+			name = strings.ReplaceAll(name, "-", ":")
+		}
+		deleteMap[name] = true
+	}
+
+	log.Printf("total blobs: %d", len(deleteMap))
+
+	err = deleteUnusedLayers(nil, deleteMap, dryRun)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("total unused blobs removed: %d", len(deleteMap))
+
+	return nil
+}
+
+func DeleteModel(name string) error {
+	mp := ParseModelPath(name)
+	manifest, _, err := GetManifest(mp)
+	if err != nil {
+		return err
+	}
+
+	deleteMap := make(map[string]bool)
+	for _, layer := range manifest.Layers {
+		deleteMap[layer.Digest] = true
+	}
+	deleteMap[manifest.Config.Digest] = true
+
+	err = deleteUnusedLayers(&mp, deleteMap, false)
+	if err != nil {
+		return err
+	}
+
+	fp, err := mp.GetManifestPath(false)
 	if err != nil {
 		return err
 	}
@@ -1111,13 +1183,29 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
+	// build deleteMap to prune unused layers
+	deleteMap := make(map[string]bool)
+	manifest, _, err := GetManifest(mp)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+
+	if manifest != nil {
+		for _, l := range manifest.Layers {
+			deleteMap[l.Digest] = true
+		}
+		deleteMap[manifest.Config.Digest] = true
+	}
+
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
 		return fmt.Errorf("insecure protocol http")
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
 
-	manifest, err := pullModelManifest(ctx, mp, regOpts)
+	manifest, err = pullModelManifest(ctx, mp, regOpts)
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
@@ -1137,7 +1225,9 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 			}); err != nil {
 			return err
 		}
+		delete(deleteMap, layer.Digest)
 	}
+	delete(deleteMap, manifest.Config.Digest)
 
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
 	for _, layer := range layers {
@@ -1172,6 +1262,12 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	err = os.WriteFile(fp, manifestJSON, 0o644)
 	if err != nil {
 		log.Printf("couldn't write to %s", fp)
+		return err
+	}
+
+	fn(api.ProgressResponse{Status: "pruning any unused layers"})
+	err = deleteUnusedLayers(nil, deleteMap, false)
+	if err != nil {
 		return err
 	}
 
