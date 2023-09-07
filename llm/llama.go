@@ -236,14 +236,19 @@ func CheckVRAM() (int, error) {
 		return 0, errNoGPU
 	}
 
-	// extract the available VRAM from the output
-	output := strings.TrimSpace(stdout.String())
-	vram, err := strconv.Atoi(output)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
+	var total int
+	scanner := bufio.NewScanner(&stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		vram, err := strconv.Atoi(line)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
+		}
+
+		total += vram
 	}
 
-	return vram, nil
+	return total, nil
 }
 
 func NumGPU(opts api.Options) int {
