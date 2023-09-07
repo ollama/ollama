@@ -165,10 +165,11 @@ Ollama bundles model weights, configurations, and data into a single package, de
 
 ## Building
 
-Install `cmake`:
+Install `cmake` and `go`:
 
 ```
 brew install cmake
+brew install go
 ```
 
 Then generate dependencies and build:
