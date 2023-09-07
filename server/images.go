@@ -27,6 +27,7 @@ import (
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
+	"github.com/jmorganca/ollama/util"
 	"github.com/jmorganca/ollama/vector"
 	"github.com/jmorganca/ollama/version"
 )
@@ -251,7 +252,7 @@ func filenameWithPath(path, f string) (string, error) {
 	// if filePath starts with ~/, replace it with the user's home directory.
 	if strings.HasPrefix(f, fmt.Sprintf("~%s", string(os.PathSeparator))) {
 		parts := strings.Split(f, string(os.PathSeparator))
-		home, err := os.UserHomeDir()
+		home, err := util.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("failed to open file: %v", err)
 		}

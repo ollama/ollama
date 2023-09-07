@@ -30,6 +30,7 @@ import (
 	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/progressbar"
 	"github.com/jmorganca/ollama/server"
+	"github.com/jmorganca/ollama/util"
 	"github.com/jmorganca/ollama/version"
 )
 
@@ -418,7 +419,7 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 		if err := client.Generate(context.Background(), &request, fn); err != nil {
 			if strings.Contains(err.Error(), "failed to load model") {
 				// tell the user to check the server log, if it exists locally
-				home, nestedErr := os.UserHomeDir()
+				home, nestedErr := util.UserHomeDir()
 				if nestedErr != nil {
 					// return the original error
 					return err
@@ -456,7 +457,7 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 }
 
 func generateInteractive(cmd *cobra.Command, model string) error {
-	home, err := os.UserHomeDir()
+	home, err := util.UserHomeDir()
 	if err != nil {
 		return err
 	}
@@ -676,7 +677,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 }
 
 func initializeKeypair() error {
-	home, err := os.UserHomeDir()
+	home, err := util.UserHomeDir()
 	if err != nil {
 		return err
 	}
