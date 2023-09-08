@@ -1300,7 +1300,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 }
 
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
-	if requestURL.Scheme != "http" && regOpts.Insecure {
+	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
 	}
 
