@@ -1,5 +1,7 @@
 package llm
 
+//go:generate -command cmake-toolchain cmake --toolchain ../cmake/$GOOS-$GOARCH-toolchain.cmake -DCMAKE_POLICY_DEFAULT_CMP0077=NEW
+
 //go:generate git submodule init
 
 //go:generate git submodule update --force ggml
@@ -8,9 +10,9 @@ package llm
 //go:generate git-apply ../ggml_patch/0002-34B-model-support.patch
 //go:generate git-apply ../ggml_patch/0003-metal-fix-synchronization-in-new-matrix-multiplicati.patch
 //go:generate git-apply ../ggml_patch/0004-metal-add-missing-barriers-for-mul-mat-2699.patch
-//go:generate cmake -S ggml -B ggml/build/gpu -DLLAMA_METAL=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DCMAKE_SYSTEM_PROCESSOR=arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+//go:generate cmake-toolchain -S ggml -B ggml/build/gpu
 //go:generate cmake --build ggml/build/gpu --target server --config Release
 
 //go:generate git submodule update --force gguf
-//go:generate cmake -S gguf -B gguf/build/gpu -DLLAMA_METAL=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DCMAKE_SYSTEM_PROCESSOR=arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+//go:generate cmake-toolchain -S gguf -B gguf/build/gpu
 //go:generate cmake --build gguf/build/gpu --target server --config Release

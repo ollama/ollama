@@ -1,0 +1,9 @@
+set(CMAKE_SYSTEM_NAME       Darwin)
+set(CMAKE_SYSTEM_PROCESSOR  arm64)
+
+set(CMAKE_OSX_ARCHITECTURES     arm64)
+set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
+
+include(${CMAKE_CURRENT_LIST_DIR}/toolchain.cmake)
+
+set(LLAMA_METAL ON)
