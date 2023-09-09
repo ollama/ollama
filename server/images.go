@@ -116,6 +116,7 @@ type LayerReader struct {
 type ConfigV2 struct {
 	ModelFamily llm.ModelFamily `json:"model_family"`
 	ModelType   string          `json:"model_type"`
+	ModelFormat string          `json:"model_format"`
 	FileType    string          `json:"file_type"`
 	RootFS      RootFS          `json:"rootfs"`
 
@@ -335,6 +336,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 
 					config.ModelFamily = ggml.ModelFamily()
 					config.ModelType = ggml.ModelType().String()
+					config.ModelFormat = ggml.Name()
 					config.FileType = ggml.FileType().String()
 
 					// reset the file
@@ -369,6 +371,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 				// copie the model metadata
 				config.ModelFamily = source.ModelFamily
 				config.ModelType = source.ModelType
+				config.ModelFormat = source.ModelFormat
 				config.FileType = source.FileType
 
 				for _, l := range mf.Layers {
