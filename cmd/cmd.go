@@ -672,6 +672,12 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		origins = strings.Split(o, ",")
 	}
 
+	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+		if err := server.PruneLayers(); err != nil {
+			return err
+		}
+	}
+
 	return server.Serve(ln, origins)
 }
 
