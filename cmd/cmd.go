@@ -673,7 +673,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 	}
 
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
-		if err := server.PruneLayers(false); err != nil {
+		if err := server.PruneLayers(); err != nil {
 			return err
 		}
 	}

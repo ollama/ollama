@@ -270,20 +270,25 @@ func filenameWithPath(path, f string) (string, error) {
 func CreateModel(ctx context.Context, name string, path string, fn func(resp api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
+	var manifest *ManifestV2
+	var err error
+	var noprune string
+
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]bool)
-	manifest, _, err := GetManifest(mp)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+
+	if noprune = os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+		manifest, _, err = GetManifest(mp)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-	}
 
-	if manifest != nil {
-		for _, l := range manifest.Layers {
-			deleteMap[l.Digest] = true
+		if manifest != nil {
+			for _, l := range manifest.Layers {
+				deleteMap[l.Digest] = true
+			}
+			deleteMap[manifest.Config.Digest] = true
 		}
-		deleteMap[manifest.Config.Digest] = true
 	}
 
 	mf, err := os.Open(path)
@@ -544,10 +549,12 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 		return err
 	}
 
-	fn(api.ProgressResponse{Status: "pruning any unused layers"})
-	err = deleteUnusedLayers(nil, deleteMap, false)
-	if err != nil {
-		return err
+	if noprune == "" {
+		fn(api.ProgressResponse{Status: "removing any unused layers"})
+		err = deleteUnusedLayers(nil, deleteMap, false)
+		if err != nil {
+			return err
+		}
 	}
 
 	fn(api.ProgressResponse{Status: "success"})
@@ -953,7 +960,7 @@ func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]bool, dry
 	return nil
 }
 
-func PruneLayers(dryRun bool) error {
+func PruneLayers() error {
 	deleteMap := make(map[string]bool)
 	p, err := GetBlobsPath("")
 	if err != nil {
@@ -976,7 +983,7 @@ func PruneLayers(dryRun bool) error {
 
 	log.Printf("total blobs: %d", len(deleteMap))
 
-	err = deleteUnusedLayers(nil, deleteMap, dryRun)
+	err = deleteUnusedLayers(nil, deleteMap, false)
 	if err != nil {
 		return err
 	}
@@ -1183,20 +1190,25 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
+	var manifest *ManifestV2
+	var err error
+	var noprune string
+
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]bool)
-	manifest, _, err := GetManifest(mp)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+
+	if noprune = os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+		manifest, _, err = GetManifest(mp)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-	}
 
-	if manifest != nil {
-		for _, l := range manifest.Layers {
-			deleteMap[l.Digest] = true
+		if manifest != nil {
+			for _, l := range manifest.Layers {
+				deleteMap[l.Digest] = true
+			}
+			deleteMap[manifest.Config.Digest] = true
 		}
-		deleteMap[manifest.Config.Digest] = true
 	}
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
@@ -1265,10 +1277,12 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 		return err
 	}
 
-	fn(api.ProgressResponse{Status: "pruning any unused layers"})
-	err = deleteUnusedLayers(nil, deleteMap, false)
-	if err != nil {
-		return err
+	if noprune == "" {
+		fn(api.ProgressResponse{Status: "removing any unused layers"})
+		err = deleteUnusedLayers(nil, deleteMap, false)
+		if err != nil {
+			return err
+		}
 	}
 
 	fn(api.ProgressResponse{Status: "success"})
