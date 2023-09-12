@@ -85,13 +85,28 @@ func (mp ModelPath) GetShortTagname() string {
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
+func GetOllamaHomeDirectory() (string, error) {
+	baseDir := os.Getenv("OLLAMA_HOME")
+	
+	if baseDir == "" {
+		var err error
+		baseDir, err = os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		baseDir = filepath.Join(baseDir, ".ollama")
+	}
+
+	return baseDir, nil
+}
+
 func (mp ModelPath) GetManifestPath(createDir bool) (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := GetOllamaHomeDirectory()
 	if err != nil {
 		return "", err
 	}
 
-	path := filepath.Join(home, ".ollama", "models", "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
+	path := filepath.Join(home, "models", "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 	if createDir {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return "", err
@@ -109,12 +124,12 @@ func (mp ModelPath) BaseURL() *url.URL {
 }
 
 func GetManifestPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := GetOllamaHomeDirectory()
 	if err != nil {
 		return "", err
 	}
 
-	path := filepath.Join(home, ".ollama", "models", "manifests")
+	path := filepath.Join(home, "models", "manifests")
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return "", err
 	}
@@ -122,17 +137,21 @@ func GetManifestPath() (string, error) {
 	return path, nil
 }
 
+
+
 func GetBlobsPath(digest string) (string, error) {
-	home, err := os.UserHomeDir()
+	baseDir, err := GetOllamaHomeDirectory()
 	if err != nil {
 		return "", err
 	}
+
+	baseDir = filepath.Join(baseDir, "models", "blobs")
 
 	if runtime.GOOS == "windows" {
 		digest = strings.ReplaceAll(digest, ":", "-")
 	}
 
-	path := filepath.Join(home, ".ollama", "models", "blobs", digest)
+	path := filepath.Join(baseDir, digest)
 	dirPath := filepath.Dir(path)
 	if digest == "" {
 		dirPath = path
