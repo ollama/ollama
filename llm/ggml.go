@@ -8,54 +8,77 @@ import (
 	"sync"
 )
 
-type ModelFamily string
-
-const ModelFamilyUnknown ModelFamily = "unknown"
-
-type ModelType uint32
-
-const (
-	ModelType3B  ModelType = 26
-	ModelType7B  ModelType = 32
-	ModelType13B ModelType = 40
-	ModelType34B ModelType = 48
-	ModelType30B ModelType = 60
-	ModelType65B ModelType = 80
-)
-
-func (mt ModelType) String() string {
-	switch mt {
-	case ModelType3B:
-		return "3B"
-	case ModelType7B:
-		return "7B"
-	case ModelType13B:
-		return "13B"
-	case ModelType34B:
-		return "34B"
-	case ModelType30B:
-		return "30B"
-	case ModelType65B:
-		return "65B"
-	default:
-		return "Unknown"
-	}
-}
-
-type FileType interface {
-	String() string
-}
-
 type GGML struct {
 	magic uint32
 	container
 	model
 }
 
+const (
+	fileTypeF32 uint32 = iota
+	fileTypeF16
+	fileTypeQ4_0
+	fileTypeQ4_1
+	fileTypeQ4_1_F16
+	fileTypeQ8_0 uint32 = iota + 2
+	fileTypeQ5_0
+	fileTypeQ5_1
+	fileTypeQ2_K
+	fileTypeQ3_K_S
+	fileTypeQ3_K_M
+	fileTypeQ3_K_L
+	fileTypeQ4_K_S
+	fileTypeQ4_K_M
+	fileTypeQ5_K_S
+	fileTypeQ5_K_M
+	fileTypeQ6_K
+)
+
+func fileType(fileType uint32) string {
+	switch fileType {
+	case fileTypeF32:
+		return "F32"
+	case fileTypeF16:
+		return "F16"
+	case fileTypeQ4_0:
+		return "Q4_0"
+	case fileTypeQ4_1:
+		return "Q4_1"
+	case fileTypeQ4_1_F16:
+		return "Q4_1_F16"
+	case fileTypeQ8_0:
+		return "Q8_0"
+	case fileTypeQ5_0:
+		return "Q5_0"
+	case fileTypeQ5_1:
+		return "Q5_1"
+	case fileTypeQ2_K:
+		return "Q2_K"
+	case fileTypeQ3_K_S:
+		return "Q3_K_S"
+	case fileTypeQ3_K_M:
+		return "Q3_K_M"
+	case fileTypeQ3_K_L:
+		return "Q3_K_L"
+	case fileTypeQ4_K_S:
+		return "Q4_K_S"
+	case fileTypeQ4_K_M:
+		return "Q4_K_M"
+	case fileTypeQ5_K_S:
+		return "Q5_K_S"
+	case fileTypeQ5_K_M:
+		return "Q5_K_M"
+	case fileTypeQ6_K:
+		return "Q6_K"
+	default:
+		return "Unknown"
+	}
+}
+
 type model interface {
-	ModelFamily() ModelFamily
-	ModelType() ModelType
-	FileType() FileType
+	ModelFamily() string
+	ModelType() string
+	FileType() string
 }
 
 type container interface {
