@@ -498,6 +498,12 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 			}
 		}
 
+		if config.ModelType == "65B" {
+			if numGQA, ok := formattedParams["num_gqa"].(int); ok && numGQA == 8 {
+				config.ModelType = "70B"
+			}
+		}
+
 		bts, err := json.Marshal(formattedParams)
 		if err != nil {
 			return err
@@ -815,14 +821,14 @@ func formatParams(params map[string][]string) (map[string]interface{}, error) {
 						return nil, fmt.Errorf("invalid float value %s", vals)
 					}
 
-					out[key] = floatVal
+					out[key] = float32(floatVal)
 				case reflect.Int:
-					intVal, err := strconv.ParseInt(vals[0], 10, 0)
+					intVal, err := strconv.ParseInt(vals[0], 10, 64)
 					if err != nil {
 						return nil, fmt.Errorf("invalid int value %s", vals)
 					}
 
-					out[key] = intVal
+					out[key] = int(intVal)
 				case reflect.Bool:
 					boolVal, err := strconv.ParseBool(vals[0])
 					if err != nil {
