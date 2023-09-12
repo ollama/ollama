@@ -1,0 +1,103 @@
+name: Release Linux
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  cuda-build:
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        cuda: ['11.7.0', '12.1.0']
+    steps:
+      - uses: jimver/cuda-toolkit@v0.2.11
+        with:
+          cuda: ${{ matrix.cuda }}
+          method: network
+
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Setup Go environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.21
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      - name: Generate CUDA runner
+        run: |
+          go generate ./...
+
+      - name: Prepare CUDA output for upload
+        run: |
+          tar -czvf artifact-${{ matrix.cuda }}.tar.gz ./llm/llama.cpp
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: cuda-${{ matrix.cuda }}
+          path: artifact-${{ matrix.cuda }}.tar.gz
+
+  ollama-build:
+    needs: [cuda-build]
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Go environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.21
+
+      - name: Generate CPU runners
+        run: |
+          go generate ./...
+
+      - name: Download CUDA 11 runner
+        uses: actions/download-artifact@v2
+        with:
+          name: cuda-11.7.0
+          path: ./artifacts/
+
+      - name: Download CUDA 12 runner
+        uses: actions/download-artifact@v2
+        with:
+          name: cuda-12.1.0
+          path: ./artifacts/
+
+      - run: |
+          tar -xzvf ./artifacts/artifact-11.7.0.tar.gz -C ./artifacts/
+          mkdir -p ./llm/llama.cpp/ggml/build/cuda-11/bin
+          mkdir -p ./llm/llama.cpp/gguf/build/cuda-11/bin
+          mv ./artifacts/llm/llama.cpp/ggml/build/cuda-11/bin/server ./llm/llama.cpp/ggml/build/cuda-11/bin/server
+          mv ./artifacts/llm/llama.cpp/gguf/build/cuda-11/bin/server ./llm/llama.cpp/gguf/build/cuda-11/bin/server
+          rm -rf ./artifacts/llm
+          tar -xzvf ./artifacts/artifact-12.1.0.tar.gz -C ./artifacts/
+          mkdir -p ./llm/llama.cpp/ggml/build/cuda-12/bin
+          mkdir -p ./llm/llama.cpp/gguf/build/cuda-12/bin
+          mv ./artifacts/llm/llama.cpp/ggml/build/cuda-12/bin/server ./llm/llama.cpp/ggml/build/cuda-12/bin/server
+          mv ./artifacts/llm/llama.cpp/gguf/build/cuda-12/bin/server ./llm/llama.cpp/gguf/build/cuda-12/bin/server
+          rm -rf ./artifacts/llm
+
+      - name: Build with all packaged in runners
+        run: go build -o ollama -ldflags="-w -s -X github.com/brucemacd/ollama/version.Version=${{ github.ref_name }}"
+        env:
+          GOFLAGS: >-
+            '-ldflags=-w -s
+              "-X=github.com/jmorganca/ollama/version.Version=${{ github.ref_name }}"
+              "-X=github.com/jmorganca/ollama/server.mode=release"'
+
+      - name: Package the binary
+        run: tar -czvf ollama-amd64-linux.tar.gz ollama
+
+      - run: |
+          gh release view $GITHUB_REF_NAME || exit 1
+          gh release upload $GITHUB_REF_NAME *.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
