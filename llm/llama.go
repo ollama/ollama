@@ -38,8 +38,26 @@ func osPath(llamaPath string) string {
 }
 
 func cudaVersion() (int, error) {
-	cmd := exec.Command("nvidia-smi")
+	// first try nvcc, it gives the most accurate version if available
+	cmd := exec.Command("nvcc", "--version")
 	output, err := cmd.CombinedOutput()
+	if err == nil {
+		// regex to match the CUDA version line in nvcc --version output
+		re := regexp.MustCompile(`release (\d+\.\d+),`)
+		matches := re.FindStringSubmatch(string(output))
+		if len(matches) >= 2 {
+			cudaVersion := matches[1]
+			cudaVersionParts := strings.Split(cudaVersion, ".")
+			cudaMajorVersion, err := strconv.Atoi(cudaVersionParts[0])
+			if err == nil {
+				return cudaMajorVersion, nil
+			}
+		}
+	}
+
+	// fallback to nvidia-smi
+	cmd = exec.Command("nvidia-smi")
+	output, err = cmd.CombinedOutput()
 	if err != nil {
 		return -1, err
 	}
