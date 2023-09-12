@@ -35,5 +35,5 @@ Now you can run `ollama`:
 ## Building on Linux with GPU support
 
 - Install cmake and nvidia-cuda-toolkit
-- run `go generate ./... -tags gpu`
+- run `go generate ./...`
 - run `go build .`
