@@ -6,6 +6,8 @@ package llm
 //go:generate -command git-apply git -C ggml apply
 //go:generate git-apply ../ggml_patch/0001-add-detokenize-endpoint.patch
 //go:generate git-apply ../ggml_patch/0002-34B-model-support.patch
+//go:generate git-apply ../ggml_patch/0005-ggml-support-CUDA-s-half-type-for-aarch64-1455-2670.patch
+
 //go:generate cmake -S ggml -B ggml/build/cpu -DLLAMA_K_QUANTS=on
 //go:generate cmake --build ggml/build/cpu --target server --config Release
 
