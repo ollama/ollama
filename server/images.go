@@ -114,11 +114,11 @@ type LayerReader struct {
 }
 
 type ConfigV2 struct {
-	ModelFamily llm.ModelFamily `json:"model_family"`
-	ModelType   string          `json:"model_type"`
-	ModelFormat string          `json:"model_format"`
-	FileType    string          `json:"file_type"`
-	RootFS      RootFS          `json:"rootfs"`
+	ModelFormat string `json:"model_format"`
+	ModelFamily string `json:"model_family"`
+	ModelType   string `json:"model_type"`
+	FileType    string `json:"file_type"`
+	RootFS      RootFS `json:"rootfs"`
 
 	// required by spec
 	Architecture string `json:"architecture"`
@@ -357,10 +357,10 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 						return err
 					}
 
-					config.ModelFamily = ggml.ModelFamily()
-					config.ModelType = ggml.ModelType().String()
 					config.ModelFormat = ggml.Name()
-					config.FileType = ggml.FileType().String()
+					config.ModelFamily = ggml.ModelFamily()
+					config.ModelType = ggml.ModelType()
+					config.FileType = ggml.FileType()
 
 					// reset the file
 					file.Seek(0, io.SeekStart)
@@ -495,6 +495,12 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 		for k, v := range sourceParams {
 			if _, ok := formattedParams[k]; !ok {
 				formattedParams[k] = v
+			}
+		}
+
+		if config.ModelType == "65B" {
+			if numGQA, ok := formattedParams["num_gqa"].(int); ok && numGQA == 8 {
+				config.ModelType = "70B"
 			}
 		}
 
@@ -815,14 +821,14 @@ func formatParams(params map[string][]string) (map[string]interface{}, error) {
 						return nil, fmt.Errorf("invalid float value %s", vals)
 					}
 
-					out[key] = floatVal
+					out[key] = float32(floatVal)
 				case reflect.Int:
-					intVal, err := strconv.ParseInt(vals[0], 10, 0)
+					intVal, err := strconv.ParseInt(vals[0], 10, 64)
 					if err != nil {
 						return nil, fmt.Errorf("invalid int value %s", vals)
 					}
 
-					out[key] = intVal
+					out[key] = int(intVal)
 				case reflect.Bool:
 					boolVal, err := strconv.ParseBool(vals[0])
 					if err != nil {

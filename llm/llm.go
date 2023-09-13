@@ -37,7 +37,7 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 		return nil, err
 	}
 
-	switch ggml.FileType().String() {
+	switch ggml.FileType() {
 	case "Q8_0":
 		if ggml.Name() != "gguf" && opts.NumGPU != 0 {
 			// GGML Q8_0 do not support Metal API and will
@@ -56,29 +56,35 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 
 	totalResidentMemory := memory.TotalMemory()
 	switch ggml.ModelType() {
-	case ModelType3B, ModelType7B:
-		if ggml.FileType().String() == "F16" && totalResidentMemory < 16*1024*1024 {
+	case "3B", "7B":
+		if ggml.FileType() == "F16" && totalResidentMemory < 16*1024*1024 {
 			return nil, fmt.Errorf("F16 model requires at least 16GB of memory")
 		} else if totalResidentMemory < 8*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 8GB of memory")
 		}
-	case ModelType13B:
-		if ggml.FileType().String() == "F16" && totalResidentMemory < 32*1024*1024 {
+	case "13B":
+		if ggml.FileType() == "F16" && totalResidentMemory < 32*1024*1024 {
 			return nil, fmt.Errorf("F16 model requires at least 32GB of memory")
 		} else if totalResidentMemory < 16*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 16GB of memory")
 		}
-	case ModelType30B, ModelType34B:
-		if ggml.FileType().String() == "F16" && totalResidentMemory < 64*1024*1024 {
+	case "30B", "34B", "40B":
+		if ggml.FileType() == "F16" && totalResidentMemory < 64*1024*1024 {
 			return nil, fmt.Errorf("F16 model requires at least 64GB of memory")
 		} else if totalResidentMemory < 32*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 32GB of memory")
 		}
-	case ModelType65B:
-		if ggml.FileType().String() == "F16" && totalResidentMemory < 128*1024*1024 {
+	case "65B", "70B":
+		if ggml.FileType() == "F16" && totalResidentMemory < 128*1024*1024 {
 			return nil, fmt.Errorf("F16 model requires at least 128GB of memory")
 		} else if totalResidentMemory < 64*1024*1024 {
 			return nil, fmt.Errorf("model requires at least 64GB of memory")
+		}
+	case "180B":
+		if ggml.FileType() == "F16" && totalResidentMemory < 512*1024*1024 {
+			return nil, fmt.Errorf("F16 model requires at least 512GB of memory")
+		} else if totalResidentMemory < 128*1024*1024 {
+			return nil, fmt.Errorf("model requires at least 128GB of memory")
 		}
 	}
 

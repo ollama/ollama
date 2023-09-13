@@ -95,38 +95,39 @@ func chooseRunner(gpuPath, cpuPath string) string {
 	return runPath
 }
 
-const ModelFamilyLlama ModelFamily = "llama"
-
 type llamaModel struct {
 	hyperparameters llamaHyperparameters
 }
 
-func (llm *llamaModel) ModelFamily() ModelFamily {
-	return ModelFamilyLlama
+func (llm *llamaModel) ModelFamily() string {
+	return "llama"
 }
 
-func (llm *llamaModel) ModelType() ModelType {
-	switch llm.hyperparameters.NumLayer {
+func llamaModelType(numLayer uint32) string {
+	switch numLayer {
 	case 26:
-		return ModelType3B
+		return "3B"
 	case 32:
-		return ModelType7B
+		return "7B"
 	case 40:
-		return ModelType13B
+		return "13B"
 	case 48:
-		return ModelType34B
+		return "34B"
 	case 60:
-		return ModelType30B
+		return "30B"
 	case 80:
-		return ModelType65B
+		return "65B"
+	default:
+		return "Unknown"
 	}
-
-	// TODO: find a better default
-	return ModelType7B
 }
 
-func (llm *llamaModel) FileType() FileType {
-	return llm.hyperparameters.FileType
+func (llm *llamaModel) ModelType() string {
+	return llamaModelType(llm.hyperparameters.NumLayer)
+}
+
+func (llm *llamaModel) FileType() string {
+	return fileType(llm.hyperparameters.FileType)
 }
 
 type llamaHyperparameters struct {
@@ -143,70 +144,7 @@ type llamaHyperparameters struct {
 	NumRot   uint32
 
 	// FileType describes the quantization level of the model, e.g. Q4_0, Q5_K, etc.
-	FileType llamaFileType
-}
-
-type llamaFileType uint32
-
-const (
-	llamaFileTypeF32 llamaFileType = iota
-	llamaFileTypeF16
-	llamaFileTypeQ4_0
-	llamaFileTypeQ4_1
-	llamaFileTypeQ4_1_F16
-	llamaFileTypeQ8_0 llamaFileType = iota + 2
-	llamaFileTypeQ5_0
-	llamaFileTypeQ5_1
-	llamaFileTypeQ2_K
-	llamaFileTypeQ3_K_S
-	llamaFileTypeQ3_K_M
-	llamaFileTypeQ3_K_L
-	llamaFileTypeQ4_K_S
-	llamaFileTypeQ4_K_M
-	llamaFileTypeQ5_K_S
-	llamaFileTypeQ5_K_M
-	llamaFileTypeQ6_K
-)
-
-func (ft llamaFileType) String() string {
-	switch ft {
-	case llamaFileTypeF32:
-		return "F32"
-	case llamaFileTypeF16:
-		return "F16"
-	case llamaFileTypeQ4_0:
-		return "Q4_0"
-	case llamaFileTypeQ4_1:
-		return "Q4_1"
-	case llamaFileTypeQ4_1_F16:
-		return "Q4_1_F16"
-	case llamaFileTypeQ8_0:
-		return "Q8_0"
-	case llamaFileTypeQ5_0:
-		return "Q5_0"
-	case llamaFileTypeQ5_1:
-		return "Q5_1"
-	case llamaFileTypeQ2_K:
-		return "Q2_K"
-	case llamaFileTypeQ3_K_S:
-		return "Q3_K_S"
-	case llamaFileTypeQ3_K_M:
-		return "Q3_K_M"
-	case llamaFileTypeQ3_K_L:
-		return "Q3_K_L"
-	case llamaFileTypeQ4_K_S:
-		return "Q4_K_S"
-	case llamaFileTypeQ4_K_M:
-		return "Q4_K_M"
-	case llamaFileTypeQ5_K_S:
-		return "Q5_K_S"
-	case llamaFileTypeQ5_K_M:
-		return "Q5_K_M"
-	case llamaFileTypeQ6_K:
-		return "Q6_K"
-	default:
-		return "Unknown"
-	}
+	FileType uint32
 }
 
 type Running struct {
