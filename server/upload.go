@@ -125,7 +125,7 @@ func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, r
 
 				auth := resp.Header.Get("www-authenticate")
 				authRedir := ParseAuthRedirectString(auth)
-				token, err := getAuthToken(ctx, authRedir, regOpts)
+				token, err := getAuthToken(ctx, authRedir)
 				if err != nil {
 					return err
 				}

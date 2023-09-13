@@ -1394,7 +1394,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		case resp.StatusCode == http.StatusUnauthorized:
 			auth := resp.Header.Get("www-authenticate")
 			authRedir := ParseAuthRedirectString(auth)
-			token, err := getAuthToken(ctx, authRedir, regOpts)
+			token, err := getAuthToken(ctx, authRedir)
 			if err != nil {
 				return nil, err
 			}

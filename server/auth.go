@@ -71,7 +71,7 @@ func (r AuthRedirect) URL() (*url.URL, error) {
 	return redirectURL, nil
 }
 
-func getAuthToken(ctx context.Context, redirData AuthRedirect, regOpts *RegistryOptions) (string, error) {
+func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 	redirectURL, err := redirData.URL()
 	if err != nil {
 		return "", err
