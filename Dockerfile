@@ -1,10 +1,13 @@
 FROM golang:alpine
 
+ARG VERSION=0.0.0
+
 WORKDIR /go/src/github.com/jmorganca/ollama
 RUN apk add --no-cache git build-base cmake
 
 COPY . .
-RUN go generate ./... && go build -ldflags '-linkmode external -extldflags "-static"' .
+RUN go generate ./... \
+    && go build -ldflags "-linkmode=external -extldflags='-static' -X=github.com/jmorganca/ollama/version.Version=$VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
 
 FROM alpine
 ENV OLLAMA_HOST 0.0.0.0
