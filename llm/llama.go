@@ -352,7 +352,8 @@ func newLlama(model string, adapters []string, runners []ModelRunner, opts api.O
 	// start the llama.cpp server with a retry in case the port is already in use
 	for _, runner := range runners {
 		if _, err := os.Stat(runner.Path); err != nil {
-			return nil, err
+			log.Printf("llama runner not found: %v", err)
+			continue
 		}
 
 		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
