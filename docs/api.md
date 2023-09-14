@@ -235,7 +235,7 @@ curl -X DELETE http://localhost:11434/api/delete -d '{
 POST /api/pull
 ```
 
-Download a model from a model registry. Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress.
+Download a model from the ollama.ai registry. Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress.
 
 ### Parameters
 
