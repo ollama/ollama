@@ -263,7 +263,7 @@ curl -X POST http://localhost:11434/api/pull -d '{
 ## Push a Model
 
 ```shell
-POST /api/pull
+POST /api/push
 ```
 
 Upload a model to a model registry. Requires your public key to be added to the registry first.
