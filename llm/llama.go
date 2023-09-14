@@ -374,6 +374,16 @@ func newLlama(model string, adapters []string, runners []ModelRunner, opts api.O
 			continue
 		}
 
+		// monitor the command, it is blocking, so if it exits we need to capture that
+		go func() {
+			err := llm.Cmd.Wait() // this will block until the command exits
+			if err != nil {
+				log.Printf("llama runner exited with error: %v", err)
+			} else {
+				log.Printf("llama runner exited")
+			}
+		}()
+
 		if err := waitForServer(llm); err != nil {
 			log.Printf("error starting llama runner: %v", err)
 			llm.Close()
@@ -416,9 +426,6 @@ func waitForServer(llm *llama) error {
 
 func (llm *llama) Close() {
 	llm.Cancel()
-	if err := llm.Cmd.Wait(); err != nil {
-		log.Printf("llama.cpp server exited with error: %v", err)
-	}
 }
 
 func (llm *llama) SetOptions(opts api.Options) {
