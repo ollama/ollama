@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"path"
 	"sync"
 )
 
@@ -167,18 +166,13 @@ func (c *containerLORA) Decode(r io.Reader) (model, error) {
 }
 
 var (
-	ggmlGPU = path.Join("llama.cpp", "ggml", "build", "gpu", "bin")
-	ggmlCPU = path.Join("llama.cpp", "ggml", "build", "cpu", "bin")
-)
-
-var (
 	ggmlInit       sync.Once
 	ggmlRunnerPath string
 )
 
 func ggmlRunner() ModelRunner {
 	ggmlInit.Do(func() {
-		ggmlRunnerPath = chooseRunner(ggmlGPU, ggmlCPU)
+		ggmlRunnerPath = chooseRunner("ggml")
 	})
 	return ModelRunner{Path: ggmlRunnerPath}
 }

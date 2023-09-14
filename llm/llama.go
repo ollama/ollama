@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -36,36 +37,99 @@ func osPath(llamaPath string) string {
 	return llamaPath
 }
 
-func chooseRunner(gpuPath, cpuPath string) string {
+func cudaVersion() (int, error) {
+	// first try nvcc, it gives the most accurate version if available
+	cmd := exec.Command("nvcc", "--version")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		// regex to match the CUDA version line in nvcc --version output
+		re := regexp.MustCompile(`release (\d+\.\d+),`)
+		matches := re.FindStringSubmatch(string(output))
+		if len(matches) >= 2 {
+			cudaVersion := matches[1]
+			cudaVersionParts := strings.Split(cudaVersion, ".")
+			cudaMajorVersion, err := strconv.Atoi(cudaVersionParts[0])
+			if err == nil {
+				return cudaMajorVersion, nil
+			}
+		}
+	}
+
+	// fallback to nvidia-smi
+	cmd = exec.Command("nvidia-smi")
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return -1, err
+	}
+
+	re := regexp.MustCompile(`CUDA Version: (\d+\.\d+)`)
+	matches := re.FindStringSubmatch(string(output))
+	if len(matches) < 2 {
+		return -1, errors.New("could not find CUDA version")
+	}
+
+	cudaVersion := matches[1]
+	cudaVersionParts := strings.Split(cudaVersion, ".")
+	cudaMajorVersion, err := strconv.Atoi(cudaVersionParts[0])
+	if err != nil {
+		return -1, err
+	}
+	return cudaMajorVersion, nil
+}
+
+func chooseRunner(runnerType string) string {
 	tmpDir, err := os.MkdirTemp("", "llama-*")
 	if err != nil {
 		log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
 	}
 
-	llamaPath := osPath(gpuPath)
+	cpuPath := osPath(path.Join("llama.cpp", runnerType, "build", "cpu", "bin"))
+	llamaPath := cpuPath
+	files := []string{"server"}
+
+	// Set OS specific llama.cpp runner paths
+	switch runtime.GOOS {
+	case "darwin":
+		// TODO: change to check metal version
+		llamaPath = osPath(path.Join("llama.cpp", runnerType, "build", "gpu", "bin"))
+		files = append(files, "ggml-metal.metal")
+	case "linux":
+		cudaVersion, err := cudaVersion()
+		if err != nil {
+			// fallback to CPU runner in the following the CUDA version check
+			log.Printf("failed to get CUDA version: %v", err)
+		}
+
+		switch cudaVersion {
+		case 11, 12:
+			cudaDir := fmt.Sprintf("cuda-%d", cudaVersion)
+			llamaPath = osPath(path.Join("llama.cpp", runnerType, "build", cudaDir, "bin"))
+		default:
+			if cudaVersion != -1 {
+				// a valid version was returned but it is not supported
+				log.Printf("CUDA version %d not supported, falling back to CPU", cudaVersion)
+			}
+			llamaPath = cpuPath
+		}
+	case "windows":
+		// TODO: select windows GPU runner here when available
+		files = []string{"server.exe"}
+	default:
+		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
+	}
+
+	// check if the runner exists, if not fallback to CPU runner
 	if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-		llamaPath = osPath(cpuPath)
+		// fallback to CPU runner
+		llamaPath = cpuPath
+		files = []string{"server"}
 		if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
 			log.Fatalf("llama.cpp executable not found")
 		}
+		log.Printf("llama.cpp %s executable not found, falling back to cpu", runnerType)
 	}
 
-	files := []string{"server"}
-	switch runtime.GOOS {
-	case "windows":
-		files = []string{"server.exe"}
-	case "darwin":
-		if llamaPath == osPath(gpuPath) {
-			files = append(files, "ggml-metal.metal")
-		}
-	case "linux":
-		// check if there is a GPU available
-		if _, err := CheckVRAM(); errors.Is(err, errNoGPU) {
-			// this error was logged on start-up, so we don't need to log it again
-			llamaPath = osPath(cpuPath)
-		}
-	}
-
+	// copy the files locally to run the llama.cpp server
 	for _, f := range files {
 		srcPath := path.Join(llamaPath, f)
 		destPath := filepath.Join(tmpDir, f)

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
 	"sync"
 )
 
@@ -371,18 +370,13 @@ func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
 }
 
 var (
-	ggufGPU = path.Join("llama.cpp", "gguf", "build", "gpu", "bin")
-	ggufCPU = path.Join("llama.cpp", "gguf", "build", "cpu", "bin")
-)
-
-var (
 	ggufInit       sync.Once
 	ggufRunnerPath string
 )
 
 func ggufRunner() ModelRunner {
 	ggufInit.Do(func() {
-		ggufRunnerPath = chooseRunner(ggufGPU, ggufCPU)
+		ggufRunnerPath = chooseRunner("gguf")
 	})
 
 	return ModelRunner{Path: ggufRunnerPath}
