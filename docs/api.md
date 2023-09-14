@@ -20,6 +20,10 @@ Model names follow a `model:tag` format. Some examples are `orca-mini:3b-q4_1` a
 
 All durations are returned in nanoseconds.
 
+### Streams
+
+Many API responses are streams of JSON objects showing the current status. For examples of working with streams in various languages, see [streaming.md](./streaming.md)
+
 ## Generate a completion
 
 ```
