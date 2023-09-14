@@ -235,12 +235,12 @@ curl -X DELETE http://localhost:11434/api/delete -d '{
 POST /api/pull
 ```
 
-Download a model from the ollama.ai registry. Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress.
+Download a model from the ollama library. Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress.
 
 ### Parameters
 
 - `name`: name of the model to pull
-- `insecure`: (optional) allow insecure connections to the registry. Only use this if you are pulling from your own registry during development.
+- `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
 
 ### Request
 
@@ -266,12 +266,12 @@ curl -X POST http://localhost:11434/api/pull -d '{
 POST /api/push
 ```
 
-Upload a model to a model registry. Requires registering for ollama.ai and adding a public key first.
+Upload a model to a model library. Requires registering for ollama.ai and adding a public key first.
 
 ### Parameters
 
 - `name`: name of the model to push in the form of `<namespace>/<model>:<tag>`
-- `insecure`: (optional) allow insecure connections to the registry. Only use this if you are pushing to your registry during development.  
+- `insecure`: (optional) allow insecure connections to the library. Only use this if you are pushing to your library during development.  
 
 ### Request
 
