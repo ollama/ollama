@@ -266,7 +266,7 @@ curl -X POST http://localhost:11434/api/pull -d '{
 POST /api/push
 ```
 
-Upload a model to a model registry. Requires your public key to be added to the registry first.
+Upload a model to a model registry. Requires registering for ollama.ai and adding a public key first.
 
 ### Parameters
 
