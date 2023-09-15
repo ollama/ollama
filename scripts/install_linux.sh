@@ -95,8 +95,6 @@ WantedBy=default.target
 EOF
 fi
 
-
-
 # Reload systemd, enable and start the service
 echo "Reloading systemd and enabling ollama service..."
 if [ $IS_ROOT -eq 1 ]; then
