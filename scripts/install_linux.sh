@@ -82,7 +82,7 @@ EOF
     echo "Reloading systemd and enabling ollama service..."
     sudo systemctl daemon-reload
     sudo systemctl enable ollama
-    sudo systemctl start ollama
+    sudo systemctl restart ollama
 else
     mv $TEMP/ollama /usr/local/bin/
     echo "Creating systemd service file for ollama..."
