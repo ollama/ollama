@@ -75,29 +75,40 @@ type ModelRunner struct {
 
 func chooseRunners(runnerType string) []ModelRunner {
 	buildPath := path.Join("llama.cpp", runnerType, "build")
-	var files []string
+	var runners []string
 
+	// set the runners based on the OS
+	// IMPORTANT: the order of the runners in the array is the priority order
 	switch runtime.GOOS {
 	case "darwin":
-		files = []string{
+		runners = []string{
 			path.Join(buildPath, "metal", "bin", "server"),
-			path.Join(buildPath, "metal", "bin", "ggml-metal.metal"),
 			path.Join(buildPath, "cpu", "bin", "server"),
 		}
 	case "linux":
-		files = []string{
-			path.Join(buildPath, "cuda-12", "bin", "server"),
-			path.Join(buildPath, "cuda-11", "bin", "server"),
-			path.Join(buildPath, "cpu", "bin", "server"),
+		cuda := cudaVersion()
+		if cuda == 11 {
+			// prioritize CUDA 11 runner
+			runners = []string{
+				path.Join(buildPath, "cuda-11", "bin", "server"),
+				path.Join(buildPath, "cuda-12", "bin", "server"),
+				path.Join(buildPath, "cpu", "bin", "server"),
+			}
+		} else {
+			runners = []string{
+				path.Join(buildPath, "cuda-12", "bin", "server"),
+				path.Join(buildPath, "cuda-11", "bin", "server"),
+				path.Join(buildPath, "cpu", "bin", "server"),
+			}
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
-		files = []string{
+		runners = []string{
 			path.Join(buildPath, "cpu", "bin", "Release", "server.exe"),
 		}
 	default:
 		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
-		files = []string{
+		runners = []string{
 			path.Join(buildPath, "cpu", "bin", "server"),
 		}
 	}
@@ -108,33 +119,37 @@ func chooseRunners(runnerType string) []ModelRunner {
 		log.Fatalf("load llama runner: failed to create temp dir: %v", err)
 	}
 	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
-	for _, f := range files {
-		if _, err := fs.Stat(llamaCppEmbed, f); err != nil {
+	for _, r := range runners {
+		// find all the files in the runner's bin directory
+		files, err := fs.Glob(llamaCppEmbed, filepath.Join(filepath.Dir(r), "*"))
+		if err != nil {
 			// this is expected, ollama may be compiled without all runners packed in
-			log.Printf("%s runner not found: %v", f, err)
+			log.Printf("%s runner not found: %v", r, err)
 			continue
 		}
 		runnerAvailable = true
 
-		srcFile, err := llamaCppEmbed.Open(f)
-		if err != nil {
-			log.Fatalf("read llama runner %s: %v", f, err)
-		}
-		defer srcFile.Close()
+		for _, f := range files {
+			srcFile, err := llamaCppEmbed.Open(f)
+			if err != nil {
+				log.Fatalf("read llama runner %s: %v", f, err)
+			}
+			defer srcFile.Close()
 
-		// create the directory in case it does not exist
-		destPath := filepath.Join(tmpDir, strings.TrimPrefix(f, buildPath))
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			log.Fatalf("create runner temp dir %s: %v", filepath.Dir(f), err)
-		}
-		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-		if err != nil {
-			log.Fatalf("write llama runner %s: %v", f, err)
-		}
-		defer destFile.Close()
+			// create the directory in case it does not exist
+			destPath := filepath.Join(tmpDir, filepath.Dir(f))
+			if err := os.MkdirAll(destPath, 0o755); err != nil {
+				log.Fatalf("create runner temp dir %s: %v", filepath.Dir(f), err)
+			}
+			destFile, err := os.OpenFile(filepath.Join(destPath, filepath.Base(f)), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+			if err != nil {
+				log.Fatalf("write llama runner %s: %v", f, err)
+			}
+			defer destFile.Close()
 
-		if _, err := io.Copy(destFile, srcFile); err != nil {
-			log.Fatalf("copy llama runner %s: %v", f, err)
+			if _, err := io.Copy(destFile, srcFile); err != nil {
+				log.Fatalf("copy llama runner %s: %v", f, err)
+			}
 		}
 	}
 	if !runnerAvailable {
@@ -142,37 +157,12 @@ func chooseRunners(runnerType string) []ModelRunner {
 	}
 
 	// return the runners to try in priority order
-	switch runtime.GOOS {
-	case "darwin":
-		return []ModelRunner{
-			{Path: path.Join(tmpDir, "metal", "bin", "server")},
-			{Path: path.Join(tmpDir, "cpu", "bin", "server")},
-		}
-	case "linux":
-		cuda := cudaVersion()
-		if cuda == 11 {
-			// prioritize CUDA 11 runner
-			return []ModelRunner{
-				{Path: path.Join(tmpDir, "cuda-11", "bin", "server")},
-				{Path: path.Join(tmpDir, "cuda-12", "bin", "server")},
-				{Path: path.Join(tmpDir, "cpu", "bin", "server")},
-			}
-		}
-		return []ModelRunner{
-			{Path: path.Join(tmpDir, "cuda-12", "bin", "server")},
-			{Path: path.Join(tmpDir, "cuda-11", "bin", "server")},
-			{Path: path.Join(tmpDir, "cpu", "bin", "server")},
-		}
-	case "windows":
-		// TODO: select windows GPU runner here when available
-		return []ModelRunner{
-			{Path: path.Join(tmpDir, "cpu", "bin", "Release", "server.exe")},
-		}
+	localRunnersByPriority := []ModelRunner{}
+	for _, r := range runners {
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(tmpDir, r)})
 	}
 
-	return []ModelRunner{
-		{Path: path.Join(tmpDir, "cpu", "bin", "server")},
-	}
+	return localRunnersByPriority
 }
 
 type llamaModel struct {
