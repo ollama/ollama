@@ -77,6 +77,11 @@ RestartSec=3
 [Install]
 WantedBy=default.target
 EOF
+    # Reload systemd, enable and start the service
+    echo "Reloading systemd and enabling ollama service..."
+    sudo systemctl daemon-reload
+    sudo systemctl enable ollama
+    sudo systemctl start ollama
 else
     mv $TEMP/ollama /usr/local/bin/
     echo "Creating systemd service file for ollama..."
@@ -93,15 +98,7 @@ RestartSec=3
 [Install]
 WantedBy=default.target
 EOF
-fi
-
-# Reload systemd, enable and start the service
-echo "Reloading systemd and enabling ollama service..."
-if [ $IS_ROOT -eq 1 ]; then
-    sudo systemctl daemon-reload
-    sudo systemctl enable ollama
-    sudo systemctl start ollama
-else
+    echo "Reloading systemd and enabling ollama service..."
     systemctl daemon-reload
     systemctl enable ollama
     systemctl start ollama
