@@ -64,7 +64,7 @@ if [ $IS_ROOT -eq 1 ]; then
     sudo mv $TEMP/ollama /usr/local/bin/
     # Create a systemd service file to auto-start ollama
     echo "Creating systemd service file for ollama..."
-    cat <<EOF | sudo tee /etc/systemd/system/ollama.service
+    cat <<EOF | sudo tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
 After=network.target
@@ -86,7 +86,7 @@ EOF
 else
     mv $TEMP/ollama /usr/local/bin/
     echo "Creating systemd service file for ollama..."
-    cat <<EOF | tee /etc/systemd/system/ollama.service
+    cat <<EOF | tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
 After=network.target
