@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/jmorganca/ollama/paths"
 )
 
 type ModelPath struct {
@@ -86,7 +88,7 @@ func (mp ModelPath) GetShortTagname() string {
 }
 
 func (mp ModelPath) GetManifestPath(createDir bool) (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := paths.OllamaHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -109,7 +111,7 @@ func (mp ModelPath) BaseURL() *url.URL {
 }
 
 func GetManifestPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := paths.OllamaHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +125,7 @@ func GetManifestPath() (string, error) {
 }
 
 func GetBlobsPath(digest string) (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := paths.OllamaHomeDir()
 	if err != nil {
 		return "", err
 	}
