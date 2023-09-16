@@ -78,6 +78,8 @@ func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, r
 				Total:     layer.Size,
 				Completed: int(offset),
 			})
+
+			return err
 		}
 
 		offset += chunk
