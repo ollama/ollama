@@ -33,6 +33,16 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
+type Painter struct{}
+
+func (p Painter) Paint(line []rune, l int) []rune {
+	if len(line) == 0 {
+		prompt := "Send a message (/? for help)"
+		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
+	}
+	return line
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
 	filename, err := filepath.Abs(filename)
@@ -460,12 +470,9 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 
 	// load the model
-	fmt.Printf("Ollama %s\n", version.Version)
-	fmt.Printf("Loading %s\n", model)
 	if err := generate(cmd, model, ""); err != nil {
 		return err
 	}
-	fmt.Printf("Type /? for help\n")
 
 	completer := readline.NewPrefixCompleter(
 		readline.PcItem("/help"),
@@ -498,6 +505,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 
 	config := readline.Config{
+		Painter:      Painter{},
 		Prompt:       ">>> ",
 		HistoryFile:  filepath.Join(home, ".ollama", "history"),
 		AutoComplete: completer,
