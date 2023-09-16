@@ -204,6 +204,10 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }'
 ```
 
+## Chat Interface
+
+Ollama has a simple HTML UI for chatting, please see: https://github.com/ollama-ui/ollama-ui.
+
 ## Community Projects using Ollama
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with a question-answering [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa).
