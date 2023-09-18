@@ -36,7 +36,8 @@ import (
 type Painter struct{}
 
 func (p Painter) Paint(line []rune, l int) []rune {
-	if len(line) == 0 {
+	termType := os.Getenv("TERM")
+	if termType == "xterm-256color" && len(line) == 0 {
 		prompt := "Send a message (/? for help)"
 		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
 	}
@@ -440,8 +441,10 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 		return err
 	}
 
-	fmt.Println()
-	fmt.Println()
+	if prompt != "" {
+		fmt.Println()
+		fmt.Println()
+	}
 
 	if !latest.Done {
 		return errors.New("unexpected end of response")
