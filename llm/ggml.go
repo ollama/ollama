@@ -166,15 +166,15 @@ func (c *containerLORA) Decode(r io.Reader) (model, error) {
 }
 
 var (
-	ggmlInit       sync.Once
-	ggmlRunnerPath string
+	ggmlInit    sync.Once
+	ggmlRunners []ModelRunner // a slice of ModelRunners ordered by priority
 )
 
-func ggmlRunner() ModelRunner {
+func ggmlRunner() []ModelRunner {
 	ggmlInit.Do(func() {
-		ggmlRunnerPath = chooseRunner("ggml")
+		ggmlRunners = chooseRunners("ggml")
 	})
-	return ModelRunner{Path: ggmlRunnerPath}
+	return ggmlRunners
 }
 
 const (

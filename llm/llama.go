@@ -29,15 +29,7 @@ import (
 //go:embed llama.cpp/*/build/*/bin/*
 var llamaCppEmbed embed.FS
 
-func osPath(llamaPath string) string {
-	if runtime.GOOS == "windows" {
-		return path.Join(llamaPath, "Release")
-	}
-
-	return llamaPath
-}
-
-func cudaVersion() (int, error) {
+func cudaVersion() int {
 	// first try nvcc, it gives the most accurate version if available
 	cmd := exec.Command("nvcc", "--version")
 	output, err := cmd.CombinedOutput()
@@ -50,7 +42,7 @@ func cudaVersion() (int, error) {
 			cudaVersionParts := strings.Split(cudaVersion, ".")
 			cudaMajorVersion, err := strconv.Atoi(cudaVersionParts[0])
 			if err == nil {
-				return cudaMajorVersion, nil
+				return cudaMajorVersion
 			}
 		}
 	}
@@ -59,104 +51,118 @@ func cudaVersion() (int, error) {
 	cmd = exec.Command("nvidia-smi")
 	output, err = cmd.CombinedOutput()
 	if err != nil {
-		return -1, err
+		return -1
 	}
 
 	re := regexp.MustCompile(`CUDA Version: (\d+\.\d+)`)
 	matches := re.FindStringSubmatch(string(output))
 	if len(matches) < 2 {
-		return -1, errors.New("could not find CUDA version")
+		return -1
 	}
 
 	cudaVersion := matches[1]
 	cudaVersionParts := strings.Split(cudaVersion, ".")
 	cudaMajorVersion, err := strconv.Atoi(cudaVersionParts[0])
 	if err != nil {
-		return -1, err
+		return -1
 	}
-	return cudaMajorVersion, nil
+	return cudaMajorVersion
 }
 
-func chooseRunner(runnerType string) string {
-	tmpDir, err := os.MkdirTemp("", "llama-*")
-	if err != nil {
-		log.Fatalf("llama.cpp: failed to create temp dir: %v", err)
-	}
+type ModelRunner struct {
+	Path string // path to the model runner executable
+}
 
-	cpuPath := osPath(path.Join("llama.cpp", runnerType, "build", "cpu", "bin"))
-	llamaPath := cpuPath
-	files := []string{"server"}
+func chooseRunners(runnerType string) []ModelRunner {
+	buildPath := path.Join("llama.cpp", runnerType, "build")
+	var runners []string
 
-	// Set OS specific llama.cpp runner paths
+	// set the runners based on the OS
+	// IMPORTANT: the order of the runners in the array is the priority order
 	switch runtime.GOOS {
 	case "darwin":
-		// TODO: change to check metal version
-		llamaPath = osPath(path.Join("llama.cpp", runnerType, "build", "gpu", "bin"))
-		files = append(files, "ggml-metal.metal")
-	case "linux":
-		cudaVersion, err := cudaVersion()
-		if err != nil {
-			// fallback to CPU runner in the following the CUDA version check
-			log.Printf("failed to get CUDA version: %v", err)
+		runners = []string{
+			path.Join(buildPath, "metal", "bin", "server"),
+			path.Join(buildPath, "cpu", "bin", "server"),
 		}
-
-		switch cudaVersion {
-		case 11, 12:
-			cudaDir := fmt.Sprintf("cuda-%d", cudaVersion)
-			llamaPath = osPath(path.Join("llama.cpp", runnerType, "build", cudaDir, "bin"))
-		default:
-			if cudaVersion != -1 {
-				// a valid version was returned but it is not supported
-				log.Printf("CUDA version %d not supported, falling back to CPU", cudaVersion)
+	case "linux":
+		cuda := cudaVersion()
+		if cuda == 11 {
+			// prioritize CUDA 11 runner
+			runners = []string{
+				path.Join(buildPath, "cuda-11", "bin", "server"),
+				path.Join(buildPath, "cuda-12", "bin", "server"),
+				path.Join(buildPath, "cpu", "bin", "server"),
 			}
-			llamaPath = cpuPath
+		} else {
+			runners = []string{
+				path.Join(buildPath, "cuda-12", "bin", "server"),
+				path.Join(buildPath, "cuda-11", "bin", "server"),
+				path.Join(buildPath, "cpu", "bin", "server"),
+			}
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
-		files = []string{"server.exe"}
+		runners = []string{
+			path.Join(buildPath, "cpu", "bin", "Release", "server.exe"),
+		}
 	default:
 		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
-	}
-
-	// check if the runner exists, if not fallback to CPU runner
-	if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-		// fallback to CPU runner
-		llamaPath = cpuPath
-		files = []string{"server"}
-		if _, err := fs.Stat(llamaCppEmbed, llamaPath); err != nil {
-			log.Fatalf("llama.cpp executable not found")
+		runners = []string{
+			path.Join(buildPath, "cpu", "bin", "server"),
 		}
-		log.Printf("llama.cpp %s executable not found, falling back to cpu", runnerType)
 	}
 
 	// copy the files locally to run the llama.cpp server
-	for _, f := range files {
-		srcPath := path.Join(llamaPath, f)
-		destPath := filepath.Join(tmpDir, f)
-
-		srcFile, err := llamaCppEmbed.Open(srcPath)
+	tmpDir, err := os.MkdirTemp("", "llama-*")
+	if err != nil {
+		log.Fatalf("load llama runner: failed to create temp dir: %v", err)
+	}
+	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
+	for _, r := range runners {
+		// find all the files in the runner's bin directory
+		files, err := fs.Glob(llamaCppEmbed, filepath.Join(filepath.Dir(r), "*"))
 		if err != nil {
-			log.Fatalf("read llama.cpp %s: %v", f, err)
+			// this is expected, ollama may be compiled without all runners packed in
+			log.Printf("%s runner not found: %v", r, err)
+			continue
 		}
-		defer srcFile.Close()
+		runnerAvailable = true
 
-		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-		if err != nil {
-			log.Fatalf("write llama.cpp %s: %v", f, err)
-		}
-		defer destFile.Close()
+		for _, f := range files {
+			srcFile, err := llamaCppEmbed.Open(f)
+			if err != nil {
+				log.Fatalf("read llama runner %s: %v", f, err)
+			}
+			defer srcFile.Close()
 
-		if _, err := io.Copy(destFile, srcFile); err != nil {
-			log.Fatalf("copy llama.cpp %s: %v", f, err)
+			// create the directory in case it does not exist
+			destPath := filepath.Join(tmpDir, filepath.Dir(f))
+			if err := os.MkdirAll(destPath, 0o755); err != nil {
+				log.Fatalf("create runner temp dir %s: %v", filepath.Dir(f), err)
+			}
+			destFile, err := os.OpenFile(filepath.Join(destPath, filepath.Base(f)), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+			if err != nil {
+				log.Fatalf("write llama runner %s: %v", f, err)
+			}
+			defer destFile.Close()
+
+			if _, err := io.Copy(destFile, srcFile); err != nil {
+				log.Fatalf("copy llama runner %s: %v", f, err)
+			}
 		}
 	}
-
-	runPath := filepath.Join(tmpDir, "server")
-	if runtime.GOOS == "windows" {
-		runPath = filepath.Join(tmpDir, "server.exe")
+	if !runnerAvailable {
+		log.Fatalf("%s runner not found", runnerType)
 	}
 
-	return runPath
+	// return the runners to try in priority order
+	localRunnersByPriority := []ModelRunner{}
+	for _, r := range runners {
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(tmpDir, r)})
+	}
+
+	return localRunnersByPriority
 }
 
 type llamaModel struct {
@@ -215,10 +221,6 @@ type Running struct {
 	Port   int
 	Cmd    *exec.Cmd
 	Cancel context.CancelFunc
-}
-
-type ModelRunner struct {
-	Path string // path to the model runner executable
 }
 
 type llama struct {
@@ -292,12 +294,8 @@ func NumGPU(opts api.Options) int {
 	return n
 }
 
-func newLlama(model string, adapters []string, runner ModelRunner, opts api.Options) (*llama, error) {
+func newLlama(model string, adapters []string, runners []ModelRunner, opts api.Options) (*llama, error) {
 	if _, err := os.Stat(model); err != nil {
-		return nil, err
-	}
-
-	if _, err := os.Stat(runner.Path); err != nil {
 		return nil, err
 	}
 
@@ -342,7 +340,12 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 	}
 
 	// start the llama.cpp server with a retry in case the port is already in use
-	for try := 0; try < 3; try++ {
+	for _, runner := range runners {
+		if _, err := os.Stat(runner.Path); err != nil {
+			log.Printf("llama runner not found: %v", err)
+			continue
+		}
+
 		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		ctx, cancel := context.WithCancel(context.Background())
 		cmd := exec.CommandContext(
@@ -356,14 +359,24 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 
 		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd, Cancel: cancel}}
 
-		log.Print("starting llama.cpp server")
+		log.Print("starting llama runner")
 		if err := llm.Cmd.Start(); err != nil {
-			log.Printf("error starting the external llama.cpp server: %v", err)
+			log.Printf("error starting the external llama runner: %v", err)
 			continue
 		}
 
+		// monitor the command, it is blocking, so if it exits we need to capture that
+		go func() {
+			err := llm.Cmd.Wait() // this will block until the command exits
+			if err != nil {
+				log.Printf("llama runner exited with error: %v", err)
+			} else {
+				log.Printf("llama runner exited")
+			}
+		}()
+
 		if err := waitForServer(llm); err != nil {
-			log.Printf("error starting llama.cpp server: %v", err)
+			log.Printf("error starting llama runner: %v", err)
 			llm.Close()
 			// try again
 			continue
@@ -373,19 +386,24 @@ func newLlama(model string, adapters []string, runner ModelRunner, opts api.Opti
 		return llm, nil
 	}
 
-	return nil, fmt.Errorf("max retry exceeded starting llama.cpp")
+	return nil, fmt.Errorf("failed to start a llama runner")
 }
 
 func waitForServer(llm *llama) error {
 	// wait for the server to start responding
 	start := time.Now()
-	expiresAt := time.Now().Add(45 * time.Second)
+	expiresAt := time.Now().Add(2 * time.Minute) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(200 * time.Millisecond)
 
-	log.Print("waiting for llama.cpp server to start responding")
+	log.Print("waiting for llama runner to start responding")
 	for range ticker.C {
 		if time.Now().After(expiresAt) {
-			return fmt.Errorf("llama.cpp server did not start within alloted time, retrying")
+			return fmt.Errorf("llama runner did not start within alloted time, retrying")
+		}
+
+		// check if the server process has terminated
+		if llm.Cmd.ProcessState != nil && llm.Cmd.ProcessState.Exited() {
+			return fmt.Errorf("llama runner process has terminated")
 		}
 
 		if err := llm.Ping(context.Background()); err == nil {
@@ -393,15 +411,12 @@ func waitForServer(llm *llama) error {
 		}
 	}
 
-	log.Printf("llama.cpp server started in %f seconds", time.Since(start).Seconds())
+	log.Printf("llama runner started in %f seconds", time.Since(start).Seconds())
 	return nil
 }
 
 func (llm *llama) Close() {
 	llm.Cancel()
-	if err := llm.Cmd.Wait(); err != nil {
-		log.Printf("llama.cpp server exited with error: %v", err)
-	}
 }
 
 func (llm *llama) SetOptions(opts api.Options) {

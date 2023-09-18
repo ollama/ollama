@@ -370,14 +370,14 @@ func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
 }
 
 var (
-	ggufInit       sync.Once
-	ggufRunnerPath string
+	ggufInit    sync.Once
+	ggufRunners []ModelRunner // a slice of ModelRunners ordered by priority
 )
 
-func ggufRunner() ModelRunner {
+func ggufRunner() []ModelRunner {
 	ggufInit.Do(func() {
-		ggufRunnerPath = chooseRunner("gguf")
+		ggufRunners = chooseRunners("gguf")
 	})
 
-	return ModelRunner{Path: ggufRunnerPath}
+	return ggufRunners
 }
