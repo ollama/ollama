@@ -206,10 +206,16 @@ curl -X POST http://localhost:11434/api/generate -d '{
 
 ## Community Projects using Ollama
 
-- [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with a question-answering [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa).
-- [Continue](https://github.com/continuedev/continue) - embeds Ollama inside Visual Studio Code. The extension lets you highlight code to add to the prompt, ask questions in the sidebar, and generate code inline.
-- [LiteLLM](https://github.com/BerriAI/litellm) a lightweight python package to simplify LLM API calls
-- [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot) - interact with Ollama as a chatbot on Discord.
-- [Raycast Ollama](https://github.com/MassimilianoPasquini97/raycast_ollama) - Raycast extension to use Ollama for local llama inference on Raycast.
-- [Simple HTML UI for Ollama](https://github.com/rtcfirefly/ollama-ui)
-- [Emacs client](https://github.com/zweifisch/ollama) for Ollama
+| Project                                                                    | Description                                                                                                                                                  |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [LangChain][1] and [LangChain.js][2]                                       | Also, there is a question-answering [example][3].                                                                                                            |
+| [Continue](https://github.com/continuedev/continue)                        | Embeds Ollama inside Visual Studio Code. The extension lets you highlight code to add to the prompt, ask questions in the sidebar, and generate code inline. |
+| [LiteLLM](https://github.com/BerriAI/litellm)                              | Lightweight Python package to simplify LLM API calls.                                                                                                        |
+| [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)            | Interact with Ollama as a chatbot on Discord.                                                                                                                |
+| [Raycast Ollama](https://github.com/MassimilianoPasquini97/raycast_ollama) | Raycast extension to use Ollama for local llama inference on Raycast.                                                                                        |
+| [Simple HTML UI](https://github.com/rtcfirefly/ollama-ui)                  | Also, there is a Chrome extension.                                                                                                                           |
+| [Emacs client](https://github.com/zweifisch/ollama)                        |                                                                                                                                                              |
+
+[1]: https://python.langchain.com/docs/integrations/llms/ollama
+[2]: https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama
+[3]: https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa
