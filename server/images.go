@@ -391,7 +391,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 					return err
 				}
 
-				// copie the model metadata
+				// copy the model metadata
 				config.ModelFamily = source.ModelFamily
 				config.ModelType = source.ModelType
 				config.ModelFormat = source.ModelFormat
@@ -461,8 +461,10 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 				return err
 			}
 
-			layer.MediaType = mediaType
-			layers = append(layers, layer)
+			if layer.Size > 0 {
+				layer.MediaType = mediaType
+				layers = append(layers, layer)
+			}
 		case "template", "system", "prompt":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
 			// remove the layer if one exists
@@ -474,8 +476,10 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 				return err
 			}
 
-			layer.MediaType = mediaType
-			layers = append(layers, layer)
+			if layer.Size > 0 {
+				layer.MediaType = mediaType
+				layers = append(layers, layer)
+			}
 		default:
 			// runtime parameters, build a list of args for each parameter to allow multiple values to be specified (ex: multiple stop sequences)
 			params[c.Name] = append(params[c.Name], c.Args)
