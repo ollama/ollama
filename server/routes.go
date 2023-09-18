@@ -218,8 +218,12 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := loaded.llm.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+		if req.Prompt == "" {
+			ch <- api.GenerateResponse{Model: req.Model, Done: true}
+		} else {
+			if err := loaded.llm.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
+				ch <- gin.H{"error": err.Error()}
+			}
 		}
 	}()
 
