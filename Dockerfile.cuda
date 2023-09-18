@@ -4,14 +4,17 @@ ARG TARGETARCH
 ARG VERSION=0.0.0
 
 WORKDIR /go/src/github.com/jmorganca/ollama
-RUN apt-get update && apt-get install -y git build-essential cmake
+RUN apt-get update && apt-get install -y git build-essential cmake nvidia-cuda-toolkit
 ADD https://dl.google.com/go/go1.21.1.linux-$TARGETARCH.tar.gz /tmp/go1.21.1.tar.gz
 RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go1.21.1.tar.gz
 
 COPY . .
 ENV GOARCH=$TARGETARCH
-RUN /usr/local/go/bin/go generate ./... \
+RUN CUDA_VERSION=$(nvcc --version | sed -n 's/^.*release \([0-9]\+\)\.\([0-9]\+\).*$/\1/p') && \
+    /usr/local/go/bin/go generate ./... \
     && /usr/local/go/bin/go build -ldflags "-linkmode=external -extldflags='-static' -X=github.com/jmorganca/ollama/version.Version=$VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
+
+RUN gcc --version
 
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 ENV OLLAMA_HOST 0.0.0.0
@@ -21,6 +24,8 @@ ARG GROUP=ollama
 RUN groupadd $GROUP && useradd -m -g $GROUP $USER
 
 COPY --from=0 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
+
+EXPOSE 11434
 
 USER $USER:$GROUP
 ENTRYPOINT ["/bin/ollama"]
