@@ -1161,8 +1161,8 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 			return err
 		}
 
-		if strings.HasPrefix(path.Base(location.Path), "sha256:") {
-			layer.Digest = path.Base(location.Path)
+		if strings.HasPrefix(filepath.Base(location.Path), "sha256:") {
+			layer.Digest = filepath.Base(location.Path)
 			fn(api.ProgressResponse{
 				Status:    "using existing layer",
 				Digest:    layer.Digest,
