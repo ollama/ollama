@@ -8,7 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -173,7 +173,7 @@ func doDownload(ctx context.Context, opts downloadOpts, f *FileDownload) error {
 		return fmt.Errorf("%w: on download registry responded with code %d: %v", errDownload, resp.StatusCode, string(body))
 	}
 
-	err = os.MkdirAll(path.Dir(f.FilePath), 0o700)
+	err = os.MkdirAll(filepath.Dir(f.FilePath), 0o700)
 	if err != nil {
 		return fmt.Errorf("make blobs directory: %w", err)
 	}

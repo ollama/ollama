@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -82,7 +82,7 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 		return "", err
 	}
 
-	keyPath := path.Join(home, ".ollama", "id_ed25519")
+	keyPath := filepath.Join(home, ".ollama", "id_ed25519")
 
 	rawKey, err := os.ReadFile(keyPath)
 	if err != nil {

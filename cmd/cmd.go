@@ -722,7 +722,7 @@ func initializeKeypair() error {
 			return err
 		}
 
-		err = os.MkdirAll(path.Dir(privKeyPath), 0o700)
+		err = os.MkdirAll(filepath.Dir(privKeyPath), 0o755)
 		if err != nil {
 			return fmt.Errorf("could not create directory %w", err)
 		}
