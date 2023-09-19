@@ -14,7 +14,12 @@ import (
 	"github.com/jmorganca/ollama/api"
 )
 
-func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *RegistryOptions) (*url.URL, error) {
+const (
+	redirectChunkSize = 1024 * 1024 * 1024
+	regularChunkSize  = 95 * 1024 * 1024
+)
+
+func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *RegistryOptions) (*url.URL, int64, error) {
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs/uploads/")
 	if layer.From != "" {
@@ -27,20 +32,26 @@ func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *Regis
 	resp, err := makeRequestWithRetry(ctx, "POST", requestURL, nil, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't start upload: %v", err)
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	// Extract UUID location from header
-	location := resp.Header.Get("Location")
+	location := resp.Header.Get("Docker-Upload-Location")
+	chunkSize := redirectChunkSize
 	if location == "" {
-		return nil, fmt.Errorf("location header is missing in response")
+		location = resp.Header.Get("Location")
+		chunkSize = regularChunkSize
 	}
 
-	return url.Parse(location)
+	locationURL, err := url.Parse(location)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return locationURL, int64(chunkSize), nil
 }
 
-func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func uploadBlob(ctx context.Context, requestURL *url.URL, layer *Layer, chunkSize int64, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	// TODO allow resumability
 	// TODO allow canceling uploads via DELETE
 
@@ -55,8 +66,6 @@ func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, r
 	}
 	defer f.Close()
 
-	// 95MiB chunk size
-	chunkSize := 95 * 1024 * 1024
 	pw := ProgressWriter{
 		status: fmt.Sprintf("uploading %s", layer.Digest),
 		digest: layer.Digest,
