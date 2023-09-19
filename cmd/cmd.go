@@ -23,6 +23,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
@@ -400,6 +401,20 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 		generateContext = []int{}
 	}
 
+	var wrapTerm bool
+	termType := os.Getenv("TERM")
+	if termType == "xterm-256color" {
+		wrapTerm = true
+	}
+
+	termWidth, _, err := term.GetSize(int(0))
+	if err != nil {
+		wrapTerm = false
+	}
+
+	var currentLineLength int
+	var wordBuffer string
+
 	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext}
 	fn := func(response api.GenerateResponse) error {
 		if !spinner.IsFinished() {
@@ -408,7 +423,31 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 
 		latest = response
 
-		fmt.Print(response.Response)
+		if wrapTerm {
+			for _, ch := range response.Response {
+				if currentLineLength+1 > termWidth-5 {
+					// backtrack the length of the last word and clear to the end of the line
+					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
+					fmt.Printf("%s%c", wordBuffer, ch)
+					currentLineLength = len(wordBuffer) + 1
+				} else {
+					fmt.Print(string(ch))
+					currentLineLength += 1
+
+					switch ch {
+					case ' ':
+						wordBuffer = ""
+					case '\n':
+						currentLineLength = 0
+					default:
+						wordBuffer += string(ch)
+					}
+				}
+			}
+		} else {
+			fmt.Print(response.Response)
+		}
+
 		return nil
 	}
 
@@ -427,7 +466,6 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 		}
 		return err
 	}
-
 	if prompt != "" {
 		fmt.Println()
 		fmt.Println()
