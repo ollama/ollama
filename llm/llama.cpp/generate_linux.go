@@ -19,8 +19,7 @@ package llm
 //go:generate cmake --build ggml/build/cuda --target server --config Release
 //go:generate cmake -S gguf -B gguf/build/cuda -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on
 //go:generate cmake --build gguf/build/cuda --target server --config Release
-//go:generate cp --dereference ${CUDA_PATH} ggml/build/cuda/bin/libcuda.so
-//go:generate cp --dereference ${CUDA_PATH} gguf/build/cuda/bin/libcuda.so
+
 //go:generate cp --dereference ${CUBLAS_PATH} ggml/build/cuda/bin/libcublas.so.11
 //go:generate cp --dereference ${CUBLAS_PATH} gguf/build/cuda/bin/libcublas.so.11
 //go:generate cp --dereference ${CUDART_PATH} ggml/build/cuda/bin/libcudart.so.11.0

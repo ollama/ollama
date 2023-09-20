@@ -35,5 +35,5 @@ Now you can run `ollama`:
 ## Building on Linux with GPU support
 
 - Install cmake and nvidia-cuda-toolkit
-- run `CUDA_PATH=/path/to/libcuda.so CUBLAS_PATH=/path/to/libcublas.so CUDART_PATH=/path/to/libcudart.so CUBLASLT_PATH=/path/to/libcublasLt.so go generate ./...`
+- run `CUBLAS_PATH=/path/to/libcublas.so CUDART_PATH=/path/to/libcudart.so CUBLASLT_PATH=/path/to/libcublasLt.so go generate ./...`
 - run `go build .`
