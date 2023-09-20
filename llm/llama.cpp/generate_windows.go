@@ -1,6 +1,3 @@
-//go:build !darwin
-// +build !darwin
-
 package llm
 
 //go:generate git submodule init
