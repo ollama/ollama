@@ -3,13 +3,11 @@
 
 set -eu
 
-# Check for jq, systemd, and systemctl dependencies
-for cmd in "jq" "systemd" "systemctl"; do
-    if ! command -v $cmd > /dev/null 2>&1; then
-        echo "Error: $cmd is not installed, and this script requires it. Please install $cmd and try again."
-        exit 1
-    fi
-done
+os=$(uname -s)
+if [ "$os" != "Linux" ]; then
+    echo "This script is intended to run on Linux only."
+    exit 1
+fi
 
 # Determine the system architecture
 ARCH=$(uname -m)
@@ -28,30 +26,6 @@ case $ARCH in
         ;;
 esac
 
-# Fetch the latest release information from GitHub API
-RELEASE_INFO=$(curl -s "https://api.github.com/repos/jmorganca/ollama/releases/latest")
-
-# Extract the tag name for the latest release
-TAG_NAME=$(echo "$RELEASE_INFO" | jq -r '.tag_name')
-
-# Extract the download URL for the tarball (.tar.gz) using jq
-TARBALL_URL=$(echo "$RELEASE_INFO" | jq -r --arg ARCH_SUFFIX "$ARCH_SUFFIX" '.assets[] | select(.name | endswith($ARCH_SUFFIX+".tar.gz")) | .browser_download_url')
-
-# Download the tarball
-if [ -z "$TARBALL_URL" ]; then
-    echo "Failed to fetch the latest release information."
-    exit 1
-fi
-
-# Create a temporary directory and clean it up when script exits
-TEMP=$(mktemp -d)
-cleanup() { rm -rf $TEMP; }
-trap cleanup 0
-
-echo "Downloading and unpacking from $TARBALL_URL..."
-curl -sSfL "$TARBALL_URL" | tar zx -C $TEMP
-echo "Download and unpack complete."
-
 # Check if the user is root
 IS_ROOT=0
 if [ "$(id -u)" -ne 0 ]; then
@@ -60,8 +34,9 @@ fi
 
 # Conditionally show the sudo warning and use sudo for the move operation
 if [ $IS_ROOT -eq 1 ]; then
-    echo "Moving the ollama executable to the PATH, this will require sudo permissions."
-    sudo mv $TEMP/ollama /usr/local/bin/
+    echo "Downloading the ollama executable to the PATH, this will require sudo permissions."
+    sudo mkdir -p /usr/bin
+    sudo curl https://ollama.ai/download/latest/ollama-linux-$ARCH > /usr/bin/ollama
     # Create a systemd service file to auto-start ollama
     echo "Creating systemd service file for ollama..."
     cat <<EOF | sudo tee /etc/systemd/system/ollama.service >/dev/null
@@ -84,7 +59,8 @@ EOF
     sudo systemctl enable ollama
     sudo systemctl restart ollama
 else
-    mv $TEMP/ollama /usr/local/bin/
+    mkdir -p /usr/bin
+    curl https://ollama.ai/download/latest/ollama-linux-$ARCH > /usr/bin/ollama
     echo "Creating systemd service file for ollama..."
     cat <<EOF | tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
