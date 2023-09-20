@@ -605,6 +605,7 @@ func cleanupServer() {
 		tmpDir := filepath.Dir(llm.GGMLRunners()[0].Path)
 		index := strings.LastIndex(tmpDir, "llama.cpp")
 		if index != -1 {
+			// add the add the llama-* temp directory to the list of directories to remove, it is one dir above the llama.cpp dir
 			tmpDir = tmpDir[:index]
 		}
 		tmpDirs = append(tmpDirs, tmpDir)
