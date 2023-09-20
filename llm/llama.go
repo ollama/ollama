@@ -32,7 +32,30 @@ type ModelRunner struct {
 	Path string // path to the model runner executable
 }
 
+func cleanupOldTempDirs() error {
+	tmpDir := os.TempDir()
+	files, err := os.ReadDir(tmpDir)
+	if err != nil {
+		return fmt.Errorf("failed to read temp dir: %v", err)
+	}
+
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), "ollama-") {
+			fullPath := filepath.Join(tmpDir, f.Name())
+			err := os.RemoveAll(fullPath)
+			if err != nil {
+				log.Printf("Failed to remove old temp directory: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func chooseRunners(runnerType string) []ModelRunner {
+	if err := cleanupOldTempDirs(); err != nil {
+		log.Printf("Failed to clean up temp directories: %v", err)
+	}
 	buildPath := path.Join("llama.cpp", runnerType, "build")
 	var runners []string
 
@@ -62,7 +85,7 @@ func chooseRunners(runnerType string) []ModelRunner {
 	}
 
 	// copy the files locally to run the llama.cpp server
-	tmpDir, err := os.MkdirTemp("", "llama-*")
+	tmpDir, err := os.MkdirTemp("", "ollama-*")
 	if err != nil {
 		log.Fatalf("load llama runner: failed to create temp dir: %v", err)
 	}
