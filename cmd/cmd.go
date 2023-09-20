@@ -114,10 +114,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	mp := server.ParseModelPath(args[0])
-	if err != nil {
-		return err
-	}
-
 	if mp.ProtocolScheme == "http" && !insecure {
 		return fmt.Errorf("insecure protocol http")
 	}
