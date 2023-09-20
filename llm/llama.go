@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -28,46 +27,6 @@ import (
 
 //go:embed llama.cpp/*/build/*/bin/*
 var llamaCppEmbed embed.FS
-
-func cudaVersion() int {
-	// first try nvcc, it gives the most accurate version if available
-	cmd := exec.Command("nvcc", "--version")
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		// regex to match the CUDA version line in nvcc --version output
-		re := regexp.MustCompile(`release (\d+\.\d+),`)
-		matches := re.FindStringSubmatch(string(output))
-		if len(matches) >= 2 {
-			cudaVersion := matches[1]
-			cudaVersionParts := strings.Split(cudaVersion, ".")
-			cudaMajorVersion, err := strconv.Atoi(cudaVersionParts[0])
-			if err == nil {
-				return cudaMajorVersion
-			}
-		}
-	}
-
-	// fallback to nvidia-smi
-	cmd = exec.Command("nvidia-smi")
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		return -1
-	}
-
-	re := regexp.MustCompile(`CUDA Version: (\d+\.\d+)`)
-	matches := re.FindStringSubmatch(string(output))
-	if len(matches) < 2 {
-		return -1
-	}
-
-	cudaVersion := matches[1]
-	cudaVersionParts := strings.Split(cudaVersion, ".")
-	cudaMajorVersion, err := strconv.Atoi(cudaVersionParts[0])
-	if err != nil {
-		return -1
-	}
-	return cudaMajorVersion
-}
 
 type ModelRunner struct {
 	Path string // path to the model runner executable
@@ -86,20 +45,9 @@ func chooseRunners(runnerType string) []ModelRunner {
 			path.Join(buildPath, "cpu", "bin", "server"),
 		}
 	case "linux":
-		cuda := cudaVersion()
-		if cuda == 11 {
-			// prioritize CUDA 11 runner
-			runners = []string{
-				path.Join(buildPath, "cuda-11", "bin", "server"),
-				path.Join(buildPath, "cuda-12", "bin", "server"),
-				path.Join(buildPath, "cpu", "bin", "server"),
-			}
-		} else {
-			runners = []string{
-				path.Join(buildPath, "cuda-12", "bin", "server"),
-				path.Join(buildPath, "cuda-11", "bin", "server"),
-				path.Join(buildPath, "cpu", "bin", "server"),
-			}
+		runners = []string{
+			path.Join(buildPath, "cuda", "bin", "server"),
+			path.Join(buildPath, "cpu", "bin", "server"),
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
