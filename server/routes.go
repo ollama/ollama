@@ -546,12 +546,10 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 
 	// listen for a ctrl+c and stop any loaded llm
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		if loaded.llm != nil {
-			loaded.llm.Close()
-		}
+		cleanupServer()
 		os.Exit(0)
 	}()
 
@@ -561,6 +559,9 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 			log.Printf("Warning: GPU support may not enabled, check you have installed install GPU drivers: %v", err)
 		}
 	}
+
+	initServer()
+	defer cleanupServer()
 
 	return s.Serve(ln)
 }
@@ -587,4 +588,38 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 		return true
 	})
+}
+
+func initServer() {
+	// calling these loads the runners into a temporary directory
+	llm.GGMLRunners()
+	llm.GGUFRunners()
+}
+
+func cleanupServer() {
+	if loaded.llm != nil {
+		loaded.llm.Close()
+	}
+	tmpDirs := []string{}
+	if len(llm.GGMLRunners()) > 0 {
+		tmpDir := filepath.Dir(llm.GGMLRunners()[0].Path)
+		index := strings.LastIndex(tmpDir, "llama.cpp")
+		if index != -1 {
+			tmpDir = tmpDir[:index]
+		}
+		tmpDirs = append(tmpDirs, tmpDir)
+	}
+	if len(llm.GGUFRunners()) > 0 {
+		tmpDir := filepath.Dir(llm.GGUFRunners()[0].Path)
+		index := strings.LastIndex(tmpDir, "llama.cpp")
+		if index != -1 {
+			tmpDir = tmpDir[:index]
+		}
+		tmpDirs = append(tmpDirs, tmpDir)
+	}
+	for _, dir := range tmpDirs {
+		if err := os.RemoveAll(dir); err != nil {
+			log.Printf("cleanupServer: os.RemoveAll failed with %s", err)
+		}
+	}
 }

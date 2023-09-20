@@ -374,7 +374,7 @@ var (
 	ggufRunners []ModelRunner // a slice of ModelRunners ordered by priority
 )
 
-func ggufRunner() []ModelRunner {
+func GGUFRunners() []ModelRunner {
 	ggufInit.Do(func() {
 		ggufRunners = chooseRunners("gguf")
 	})

@@ -170,7 +170,7 @@ var (
 	ggmlRunners []ModelRunner // a slice of ModelRunners ordered by priority
 )
 
-func ggmlRunner() []ModelRunner {
+func GGMLRunners() []ModelRunner {
 	ggmlInit.Do(func() {
 		ggmlRunners = chooseRunners("ggml")
 	})
