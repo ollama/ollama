@@ -14,7 +14,12 @@ import (
 	"github.com/jmorganca/ollama/api"
 )
 
-func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *RegistryOptions) (*url.URL, error) {
+const (
+	redirectChunkSize = 1024 * 1024 * 1024
+	regularChunkSize  = 95 * 1024 * 1024
+)
+
+func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *RegistryOptions) (*url.URL, int64, error) {
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs/uploads/")
 	if layer.From != "" {
@@ -27,20 +32,26 @@ func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *Regis
 	resp, err := makeRequestWithRetry(ctx, "POST", requestURL, nil, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't start upload: %v", err)
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	// Extract UUID location from header
-	location := resp.Header.Get("Location")
+	location := resp.Header.Get("Docker-Upload-Location")
+	chunkSize := redirectChunkSize
 	if location == "" {
-		return nil, fmt.Errorf("location header is missing in response")
+		location = resp.Header.Get("Location")
+		chunkSize = regularChunkSize
 	}
 
-	return url.Parse(location)
+	locationURL, err := url.Parse(location)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return locationURL, int64(chunkSize), nil
 }
 
-func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func uploadBlob(ctx context.Context, requestURL *url.URL, layer *Layer, chunkSize int64, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	// TODO allow resumability
 	// TODO allow canceling uploads via DELETE
 
@@ -55,8 +66,6 @@ func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, r
 	}
 	defer f.Close()
 
-	// 95MB chunk size
-	chunkSize := 95 * 1024 * 1024
 	pw := ProgressWriter{
 		status: fmt.Sprintf("uploading %s", layer.Digest),
 		digest: layer.Digest,
@@ -70,10 +79,10 @@ func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, r
 			chunk = int64(chunkSize)
 		}
 
-		resp, err := uploadBlobChunk(ctx, requestURL, f, offset, chunk, regOpts, &pw)
+		resp, err := uploadBlobChunk(ctx, http.MethodPatch, requestURL, f, offset, chunk, regOpts, &pw)
 		if err != nil {
 			fn(api.ProgressResponse{
-				Status:    fmt.Sprintf("error uploading limit: %v", err),
+				Status:    fmt.Sprintf("error uploading chunk: %v", err),
 				Digest:    layer.Digest,
 				Total:     layer.Size,
 				Completed: int(offset),
@@ -83,12 +92,15 @@ func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, r
 		}
 
 		offset += chunk
-		location, err := resp.Location()
+		location := resp.Header.Get("Docker-Upload-Location")
+		if location == "" {
+			location = resp.Header.Get("Location")
+		}
+
+		requestURL, err = url.Parse(location)
 		if err != nil {
 			return err
 		}
-
-		requestURL = location
 	}
 
 	values := requestURL.Query()
@@ -114,22 +126,40 @@ func uploadBlobChunked(ctx context.Context, requestURL *url.URL, layer *Layer, r
 	return nil
 }
 
-func uploadBlobChunk(ctx context.Context, requestURL *url.URL, r io.ReaderAt, offset, limit int64, opts *RegistryOptions, pw *ProgressWriter) (*http.Response, error) {
+func uploadBlobChunk(ctx context.Context, method string, requestURL *url.URL, r io.ReaderAt, offset, limit int64, opts *RegistryOptions, pw *ProgressWriter) (*http.Response, error) {
 	sectionReader := io.NewSectionReader(r, int64(offset), limit)
 
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/octet-stream")
 	headers.Set("Content-Length", strconv.Itoa(int(limit)))
-	headers.Set("Content-Range", fmt.Sprintf("%d-%d", offset, offset+sectionReader.Size()-1))
+	headers.Set("X-Redirect-Uploads", "1")
+
+	if method == http.MethodPatch {
+		headers.Set("Content-Range", fmt.Sprintf("%d-%d", offset, offset+sectionReader.Size()-1))
+	}
 
 	for try := 0; try < MaxRetries; try++ {
-		resp, err := makeRequest(ctx, "PATCH", requestURL, headers, io.TeeReader(sectionReader, pw), opts)
+		resp, err := makeRequest(ctx, method, requestURL, headers, io.TeeReader(sectionReader, pw), opts)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, err
 		}
 		defer resp.Body.Close()
 
 		switch {
+		case resp.StatusCode == http.StatusTemporaryRedirect:
+			location, err := resp.Location()
+			if err != nil {
+				return nil, err
+			}
+
+			pw.completed = int(offset)
+			if _, err := uploadBlobChunk(ctx, http.MethodPut, location, r, offset, limit, nil, pw); err != nil {
+				// retry
+				log.Printf("retrying redirected upload: %v", err)
+				continue
+			}
+
+			return resp, nil
 		case resp.StatusCode == http.StatusUnauthorized:
 			auth := resp.Header.Get("www-authenticate")
 			authRedir := ParseAuthRedirectString(auth)

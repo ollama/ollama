@@ -1154,7 +1154,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 			Total:  layer.Size,
 		})
 
-		location, err := startUpload(ctx, mp, layer, regOpts)
+		location, chunkSize, err := startUpload(ctx, mp, layer, regOpts)
 		if err != nil {
 			log.Printf("couldn't start upload: %v", err)
 			return err
@@ -1171,7 +1171,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 			continue
 		}
 
-		if err := uploadBlobChunked(ctx, location, layer, regOpts, fn); err != nil {
+		if err := uploadBlob(ctx, location, layer, chunkSize, regOpts, fn); err != nil {
 			log.Printf("error uploading blob: %v", err)
 			return err
 		}
