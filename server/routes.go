@@ -600,7 +600,7 @@ func cleanupServer() {
 	if loaded.llm != nil {
 		loaded.llm.Close()
 	}
-	tmpDirs := []string{}
+	var tmpDirs []string
 	if len(llm.GGMLRunners()) > 0 {
 		tmpDir := filepath.Dir(llm.GGMLRunners()[0].Path)
 		index := strings.LastIndex(tmpDir, "llama.cpp")
