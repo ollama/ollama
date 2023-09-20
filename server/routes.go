@@ -556,7 +556,7 @@ func Serve(ln net.Listener, origins []string) error {
 	if runtime.GOOS == "linux" {
 		// check compatibility to log warnings
 		if _, err := llm.CheckVRAM(); err != nil {
-			log.Printf("Warning: GPU support not enabled, you may need to install GPU drivers: %v", err)
+			log.Printf("Warning: GPU support may not enabled, check you have installed install GPU drivers: %v", err)
 		}
 	}
 
