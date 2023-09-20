@@ -353,7 +353,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, opts api.O
 			runner.Path,
 			append(params, "--port", strconv.Itoa(port))...,
 		)
-
+		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", filepath.Dir(runner.Path)))
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
 

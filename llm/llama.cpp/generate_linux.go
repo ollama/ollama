@@ -19,3 +19,11 @@ package llm
 //go:generate cmake --build ggml/build/cuda-${CUDA_VERSION} --target server --config Release
 //go:generate cmake -S gguf -B gguf/build/cuda-${CUDA_VERSION} -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on
 //go:generate cmake --build gguf/build/cuda-${CUDA_VERSION} --target server --config Release
+//go:generate cp --dereference ${CUDA_PATH} ggml/build/cuda-${CUDA_VERSION}/bin/libcuda.so
+//go:generate cp --dereference ${CUDA_PATH} gguf/build/cuda-${CUDA_VERSION}/bin/libcuda.so
+//go:generate cp --dereference ${CUBLAS_PATH} ggml/build/cuda-${CUDA_VERSION}/bin/libcublas.so.11
+//go:generate cp --dereference ${CUBLAS_PATH} gguf/build/cuda-${CUDA_VERSION}/bin/libcublas.so.11
+//go:generate cp --dereference ${CUDART_PATH} ggml/build/cuda-${CUDA_VERSION}/bin/libcudart.so.11.0
+//go:generate cp --dereference ${CUDART_PATH} gguf/build/cuda-${CUDA_VERSION}/bin/libcudart.so.11.0
+//go:generate cp --dereference ${CUBLASLT_PATH} ggml/build/cuda-${CUDA_VERSION}/bin/libcublasLt.so.11
+//go:generate cp --dereference ${CUBLASLT_PATH} gguf/build/cuda-${CUDA_VERSION}/bin/libcublasLt.so.11
