@@ -26,20 +26,26 @@ case $ARCH in
         ;;
 esac
 
-# Check if the user is root
-IS_ROOT=0
-if [ "$(id -u)" -ne 0 ]; then
-    IS_ROOT=1
+if [ $IS_ROOT -eq 1 ]; then
+    sudo_cmd="sudo "
+    echo "Downloading the ollama executable to the PATH, this will require sudo permissions."
+else
+    sudo_cmd=""
 fi
 
-# Conditionally show the sudo warning and use sudo for the move operation
-if [ $IS_ROOT -eq 1 ]; then
-    echo "Downloading the ollama executable to the PATH, this will require sudo permissions."
-    sudo mkdir -p /usr/bin
-    sudo curl https://ollama.ai/download/latest/ollama-linux-$ARCH > /usr/bin/ollama
-    # Create a systemd service file to auto-start ollama
+${sudo_cmd}mkdir -p /usr/bin
+${sudo_cmd}curl https://ollama.ai/download/latest/ollama-linux-$ARCH > /usr/bin/ollama
+
+# Check if CUDA drivers are available
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "Warning: NVIDIA CUDA drivers are not available on this system, install them to enable GPU support."
+    echo "https://developer.nvidia.com/cuda-downloads"
+fi
+
+# Add ollama to start-up
+if command -v systemctl >/dev/null 2>&1; then
     echo "Creating systemd service file for ollama..."
-    cat <<EOF | sudo tee /etc/systemd/system/ollama.service >/dev/null
+    cat <<EOF | ${sudo_cmd}tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
 After=network.target
@@ -53,33 +59,49 @@ Environment="HOME=$HOME"
 [Install]
 WantedBy=default.target
 EOF
-    # Reload systemd, enable and start the service
     echo "Reloading systemd and enabling ollama service..."
-    sudo systemctl daemon-reload
-    sudo systemctl enable ollama
-    sudo systemctl restart ollama
+    ${sudo_cmd}systemctl daemon-reload
+    ${sudo_cmd}systemctl enable ollama
+    ${sudo_cmd}systemctl restart ollama
+elif [ -d "/etc/init.d" ]; then
+    # Create an init.d script
+    echo "Creating init.d script for ollama..."
+    cat <<'EOF' | ${sudo_cmd}tee /etc/init.d/ollama >/dev/null
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          ollama
+# Required-Start:    $network $local_fs $remote_fs
+# Required-Stop:     $network $local_fs $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Description:       Ollama service
+### END INIT INFO
+
+case "$1" in
+  start)
+    /usr/local/bin/ollama serve &
+    ;;
+  stop)
+    killall ollama
+    ;;
+  restart)
+    killall ollama
+    /usr/local/bin/ollama serve &
+    ;;
+  *)
+    echo "Usage: /etc/init.d/ollama {start|stop|restart}"
+    exit 1
+    ;;
+esac
+
+exit 0
+EOF
+    ${sudo_cmd}chmod +x /etc/init.d/ollama
+    ${sudo_cmd}update-rc.d ollama defaults
+    ${sudo_cmd}service ollama start
 else
-    mkdir -p /usr/bin
-    curl https://ollama.ai/download/latest/ollama-linux-$ARCH > /usr/bin/ollama
-    echo "Creating systemd service file for ollama..."
-    cat <<EOF | tee /etc/systemd/system/ollama.service >/dev/null
-[Unit]
-Description=Ollama Service
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/ollama serve
-Restart=always
-RestartSec=3
-Environment="HOME=$HOME"
-
-[Install]
-WantedBy=default.target
-EOF
-    echo "Reloading systemd and enabling ollama service..."
-    systemctl daemon-reload
-    systemctl enable ollama
-    systemctl start ollama
+    echo "Installation complete. Run 'ollama serve' from the command line to start the service."
+    exit 0
 fi
 
 echo "Installation complete. You can now run 'ollama' from the command line."
