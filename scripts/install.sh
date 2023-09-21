@@ -42,18 +42,93 @@ check_sudo() {
 }
 
 install_cuda_drivers() {
+    local os_name os_version
+
+    if command -v lsb_release >/dev/null 2>&1; then
+        os_name=$(lsb_release -is)
+        os_version=$(lsb_release -rs)
+    else
+        # If lsb_release is not available, fall back to /etc/os-release
+        if [ -f "/etc/os-release" ]; then
+            . /etc/os-release
+            os_name=$ID
+            os_version=$VERSION_ID
+        else
+            echo "Unable to detect operating system."
+            return 1
+        fi
+    fi
+
+    # based on https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#package-manager-installation
+    case $os_name in
+        RedHatEnterprise*)
+            version=$(lsb_release -rs | cut -d. -f1)
+            case $version in
+                7)
+                    echo "Red Hat Enterprise Linux 7 not implemented"
+                    ;;
+                8)
+                    echo "Red Hat Enterprise Linux 8 not implemented"
+                    ;;
+                9)
+                    echo "Red Hat Enterprise Linux 9 not implemented"
+                    ;;
+                *)
+                    echo "Unsupported or unknown Red Hat Enterprise Linux version, skipping GPU CUDA driver install: $version"
+                    ;;
+            esac
+            ;;
+        CentOS)
+            sudo yum install yum-utils
+            sudo yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
+            sudo yum clean all
+            sudo yum -y install nvidia-driver-latest-dkms
+            sudo yum -y install cuda-driver
+            sudo yum install kernel-devel-$(uname -r) kernel-headers-$(uname -r)
+            sudo dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 sudo dkms install
+            sudo modprobe nvidia
+            ;;
+        Kylin)
+            echo "Kylin not implemented"
+            ;;
+        Fedora)
+            echo "Fedora not implemented"
+            ;;
+        SLES)
+            echo "SLES not implemented"
+            ;;
+        openSUSE*)
+            echo "OpenSUSE not implemented"
+            ;;
+        Microsoft)
+            # WSL
+            echo "WSL not implemented"
+            ;;
+        Ubuntu)
+            echo "Ubuntu not implemented"
+            ;;
+        Debian)
+            echo "Debian not implemented"
+            ;;
+        *)
+            echo "Unsupported or unknown distribution, skipping GPU CUDA driver install: $os_name"
+            ;;
+    esac
+}
+
+check_install_cuda_drivers() {
     if command -v nvidia-smi >/dev/null 2>&1; then
         CUDA_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")
         if [ -z "$CUDA_VERSION" ]; then
             echo "Warning: NVIDIA-SMI is available, but the CUDA version cannot be detected. Installing CUDA drivers..."
-            curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD} sh -s -- --silent --driver
+            install_cuda_drivers
         else
             echo "Detected CUDA version $CUDA_VERSION"
         fi
     else
         if lspci | grep -i "nvidia" >/dev/null 2>&1; then
             echo "Warning: NVIDIA GPU detected but NVIDIA-SMI is not available. Installing CUDA drivers..."
-            curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD} sh -s -- --silent --driver
+            install_cuda_drivers
         else
             echo "No NVIDIA GPU detected. Skipping driver installation."
         fi
@@ -96,7 +171,7 @@ main() {
     check_os
     determine_architecture
     check_sudo
-    install_cuda_drivers
+    check_install_cuda_drivers
     download_ollama
     configure_systemd
     echo "Installation complete. You can now run 'ollama' from the command line."
