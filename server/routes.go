@@ -499,23 +499,25 @@ func CopyModelHandler(c *gin.Context) {
 	}
 }
 
-func Serve(ln net.Listener, origins []string) error {
+var defaultAllowOrigins = []string{
+	"localhost",
+	"127.0.0.1",
+	"0.0.0.0",
+}
+
+func Serve(ln net.Listener, allowOrigins []string) error {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
-	config.AllowOrigins = append(origins, []string{
-		"http://localhost",
-		"http://localhost:*",
-		"https://localhost",
-		"https://localhost:*",
-		"http://127.0.0.1",
-		"http://127.0.0.1:*",
-		"https://127.0.0.1",
-		"https://127.0.0.1:*",
-		"http://0.0.0.0",
-		"http://0.0.0.0:*",
-		"https://0.0.0.0",
-		"https://0.0.0.0:*",
-	}...)
+
+	config.AllowOrigins = allowOrigins
+	for _, allowOrigin := range defaultAllowOrigins {
+		config.AllowOrigins = append(config.AllowOrigins,
+			fmt.Sprintf("http://%s", allowOrigin),
+			fmt.Sprintf("https://%s", allowOrigin),
+			fmt.Sprintf("http://%s:*", allowOrigin),
+			fmt.Sprintf("https://%s:*", allowOrigin),
+		)
+	}
 
 	r := gin.Default()
 	r.Use(cors.New(config))

@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,35 +107,28 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
-	insecure, err := cmd.Flags().GetBool("insecure")
+	client, err := api.FromEnv()
 	if err != nil {
 		return err
 	}
 
-	mp := server.ParseModelPath(args[0])
-	if mp.ProtocolScheme == "http" && !insecure {
-		return fmt.Errorf("insecure protocol http")
-	}
-
-	fp, err := mp.GetManifestPath(false)
+	models, err := client.List(context.Background())
 	if err != nil {
 		return err
 	}
 
-	_, err = os.Stat(fp)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		if err := pull(args[0], insecure); err != nil {
-			var apiStatusError api.StatusError
-			if !errors.As(err, &apiStatusError) {
-				return err
-			}
+	modelName, modelTag, ok := strings.Cut(args[0], ":")
+	if !ok {
+		modelTag = "latest"
+	}
 
-			if apiStatusError.StatusCode != http.StatusBadGateway {
-				return err
-			}
+	for _, model := range models.Models {
+		if model.Name == strings.Join([]string{modelName, modelTag}, ":") {
+			return RunGenerate(cmd, args)
 		}
-	case err != nil:
+	}
+
+	if err := PullHandler(cmd, args); err != nil {
 		return err
 	}
 
