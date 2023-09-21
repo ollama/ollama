@@ -42,17 +42,15 @@ check_sudo() {
 }
 
 install_cuda_drivers() {
-    local os_name os_version
+    local os_name
 
     if command -v lsb_release >/dev/null 2>&1; then
         os_name=$(lsb_release -is)
-        os_version=$(lsb_release -rs)
     else
         # If lsb_release is not available, fall back to /etc/os-release
         if [ -f "/etc/os-release" ]; then
             . /etc/os-release
             os_name=$ID
-            os_version=$VERSION_ID
         else
             echo "Unable to detect operating system."
             return 1
@@ -61,23 +59,6 @@ install_cuda_drivers() {
 
     # based on https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#package-manager-installation
     case $os_name in
-        RedHatEnterprise*)
-            version=$(lsb_release -rs | cut -d. -f1)
-            case $version in
-                7)
-                    echo "Red Hat Enterprise Linux 7 not implemented"
-                    ;;
-                8)
-                    echo "Red Hat Enterprise Linux 8 not implemented"
-                    ;;
-                9)
-                    echo "Red Hat Enterprise Linux 9 not implemented"
-                    ;;
-                *)
-                    echo "Unsupported or unknown Red Hat Enterprise Linux version, skipping GPU CUDA driver install: $version"
-                    ;;
-            esac
-            ;;
         CentOS)
             sudo yum install yum-utils
             sudo yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
@@ -88,27 +69,8 @@ install_cuda_drivers() {
             sudo dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 sudo dkms install
             sudo modprobe nvidia
             ;;
-        Kylin)
-            echo "Kylin not implemented"
-            ;;
-        Fedora)
-            echo "Fedora not implemented"
-            ;;
-        SLES)
-            echo "SLES not implemented"
-            ;;
-        openSUSE*)
-            echo "OpenSUSE not implemented"
-            ;;
-        Microsoft)
-            # WSL
-            echo "WSL not implemented"
-            ;;
-        Ubuntu)
-            echo "Ubuntu not implemented"
-            ;;
-        Debian)
-            echo "Debian not implemented"
+        RedHatEnterprise*|Kylin|Fedora|SLES|openSUSE*|Microsoft|Ubuntu|Debian)
+            echo "NVIDIA CUDA drivers may not be installed, you can install them from: https://developer.nvidia.com/cuda-downloads"
             ;;
         *)
             echo "Unsupported or unknown distribution, skipping GPU CUDA driver install: $os_name"
