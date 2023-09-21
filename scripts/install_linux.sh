@@ -34,26 +34,22 @@ else
 fi
 
 # Check if CUDA drivers are available
-if command -v gcc >/dev/null 2>&1; then
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        CUDA_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")
-        if [ -z "$CUDA_VERSION" ]; then
-            echo "Warning: NVIDIA-SMI is available, but the CUDA version cannot be detected. Installing CUDA drivers..."
-            curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${sudo_cmd}sh -s -- --silent --driver
-        else
-            echo "Detected CUDA version $CUDA_VERSION"
-        fi
+if command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")
+    if [ -z "$CUDA_VERSION" ]; then
+        echo "Warning: NVIDIA-SMI is available, but the CUDA version cannot be detected. Installing CUDA drivers..."
+        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${sudo_cmd}sh -s -- --silent --driver
     else
-        # Check for the presence of an NVIDIA GPU using lspci
-        if lspci | grep -i "nvidia" >/dev/null 2>&1; then
-            echo "Warning: NVIDIA GPU detected but NVIDIA-SMI is not available. Installing CUDA drivers..."
-            curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${sudo_cmd}sh -s -- --silent --driver
-        else
-            echo "No NVIDIA GPU detected. Skipping driver installation."
-        fi
+        echo "Detected CUDA version $CUDA_VERSION"
     fi
 else
-    echo "Warning: gcc is not installed. CUDA graphics driver requires gcc for installation. Ollama will run on CPU."
+    # Check for the presence of an NVIDIA GPU using lspci
+    if lspci | grep -i "nvidia" >/dev/null 2>&1; then
+        echo "Warning: NVIDIA GPU detected but NVIDIA-SMI is not available. Installing CUDA drivers..."
+        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${sudo_cmd}sh -s -- --silent --driver
+    else
+        echo "No NVIDIA GPU detected. Skipping driver installation."
+    fi
 fi
 
 ${sudo_cmd}mkdir -p /usr/bin
