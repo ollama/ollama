@@ -2,7 +2,6 @@ ARG VERSION=0.0.0
 
 # centos7 amd64 dependencies
 FROM --platform=linux/amd64 nvidia/cuda:11.8.0-devel-centos7 AS base-amd64
-ARG TARGETARCH
 RUN yum install -y https://repo.ius.io/ius-release-el7.rpm centos-release-scl
 RUN yum update -y
 RUN yum install -y devtoolset-10-gcc devtoolset-10-gcc-c++ git236 wget
@@ -11,7 +10,6 @@ ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 
 # centos8 arm64 dependencies
 FROM --platform=linux/arm64 nvidia/cuda:11.4.3-devel-centos8 AS base-arm64
-ARG TARGETARCH
 RUN sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
 RUN sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
 RUN yum install -y git cmake
