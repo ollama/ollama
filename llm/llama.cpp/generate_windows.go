@@ -9,5 +9,6 @@ package llm
 //go:generate cmake --build ggml/build/cpu --target server --config Release
 
 //go:generate git submodule update --force gguf
+//go:generate git -C gguf apply ../patches/0001-remove-warm-up-logging.patch
 //go:generate cmake -S gguf -B gguf/build/cpu -DLLAMA_K_QUANTS=on
 //go:generate cmake --build gguf/build/cpu --target server --config Release

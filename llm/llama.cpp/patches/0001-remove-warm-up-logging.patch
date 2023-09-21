@@ -1,0 +1,25 @@
+From 07993bdc35345b67b27aa649a7c099ad42d80c4c Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Thu, 21 Sep 2023 14:43:21 -0700
+Subject: [PATCH] remove warm up logging
+
+---
+ common/common.cpp | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/common/common.cpp b/common/common.cpp
+index 2597ba0..b56549b 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -780,8 +780,6 @@ std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_par
+     }
+ 
+     {
+-        LOG("warming up the model with an empty run\n");
+-
+         const std::vector<llama_token> tmp = { llama_token_bos(lctx), llama_token_eos(lctx), };
+         llama_eval(lctx, tmp.data(), std::min(tmp.size(), (size_t) params.n_batch), 0, params.n_threads);
+         llama_reset_timings(lctx);
+-- 
+2.42.0
+
