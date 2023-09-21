@@ -48,7 +48,7 @@ else
     # Check for the presence of an NVIDIA GPU using lspci
     if lspci | grep -i "nvidia" >/dev/null 2>&1; then
         echo "Warning: NVIDIA GPU detected but NVIDIA-SMI is not available. Installing CUDA drivers..."
-        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD}sh -s -- --silent --driver
+        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD} sh -s -- --silent --driver
     else
         echo "No NVIDIA GPU detected. Skipping driver installation."
     fi
