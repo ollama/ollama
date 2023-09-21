@@ -64,7 +64,7 @@ Description=Ollama Service
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/ollama serve
+ExecStart=/usr/bin/ollama serve
 Restart=always
 RestartSec=3
 Environment="HOME=$HOME"
@@ -92,14 +92,14 @@ elif [ -d "/etc/init.d" ]; then
 
 case "$1" in
   start)
-    /usr/local/bin/ollama serve &
+    /usr/bin/ollama serve &
     ;;
   stop)
     killall ollama
     ;;
   restart)
     killall ollama
-    /usr/local/bin/ollama serve &
+    /usr/bin/ollama serve &
     ;;
   *)
     echo "Usage: /etc/init.d/ollama {start|stop|restart}"
