@@ -133,9 +133,9 @@ main() {
     check_os
     determine_architecture
     check_sudo
-    check_install_cuda_drivers
     download_ollama
     configure_systemd
+    check_install_cuda_drivers
     echo "Installation complete. You can now run 'ollama' from the command line."
 }
 
