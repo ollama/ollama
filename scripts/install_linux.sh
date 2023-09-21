@@ -33,13 +33,27 @@ else
     sudo_cmd=""
 fi
 
+# Check if CUDA drivers are available
+if command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")
+    if [ -z "$CUDA_VERSION" ]; then
+        echo "Warning: NVIDIA-SMI is available, but the CUDA version cannot be detected. Installing CUDA drivers..."
+        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${sudo_cmd}sh -s -- --silent --driver
+    else
+        echo "Detected CUDA version $CUDA_VERSION"
+    fi
+else
+    # Check for the presence of an NVIDIA GPU using lspci
+    if lspci | grep -i "nvidia" >/dev/null 2>&1; then
+        echo "Warning: NVIDIA GPU detected but NVIDIA-SMI is not available. Installing CUDA drivers..."
+        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${sudo_cmd}sh -s -- --silent --driver
+    else
+        echo "No NVIDIA GPU detected. Skipping driver installation."
+    fi
+fi
+
 ${sudo_cmd}mkdir -p /usr/bin
 ${sudo_cmd}curl https://ollama.ai/download/latest/ollama-linux-$ARCH > /usr/bin/ollama
-
-# Check if CUDA drivers are available
-if ! command -v nvidia-smi >/dev/null 2>&1; then
-    echo "Warning: NVIDIA CUDA drivers are not available on this system, install them to enable GPU support. For more information see: https://developer.nvidia.com/cuda-downloads"
-fi
 
 # Add ollama to start-up
 if command -v systemctl >/dev/null 2>&1; then
