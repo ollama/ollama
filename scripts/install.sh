@@ -4,8 +4,7 @@
 
 set -eu
 
-os=$(uname -s)
-if [ "$os" != "Linux" ]; then
+if [ "$(uname -s)" != "Linux" ]; then
     echo "This script is intended to run on Linux only."
     exit 1
 fi
