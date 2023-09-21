@@ -543,12 +543,11 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		},
 	)
 
-	r.GET("/", func(c *gin.Context) {
-		c.String(http.StatusOK, "Ollama is running")
-	})
-	r.HEAD("/", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		r.Handle(method, "/", func(c *gin.Context) {
+			c.String(http.StatusOK, "Ollama is running")
+		})
+	}
 
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
