@@ -655,28 +655,19 @@ func generateBatch(cmd *cobra.Command, model string) error {
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port := "127.0.0.1", "11434"
-
-	parts := strings.Split(os.Getenv("OLLAMA_HOST"), ":")
-	if ip := net.ParseIP(parts[0]); ip != nil {
-		host = ip.String()
-	}
-
-	if len(parts) > 1 {
-		port = parts[1]
-	}
-
-	// deprecated: include port in OLLAMA_HOST
-	if p := os.Getenv("OLLAMA_PORT"); p != "" {
-		port = p
-	}
-
-	err := initializeKeypair()
+	host, port, err := net.SplitHostPort(os.Getenv("OLLAMA_HOST"))
 	if err != nil {
+		host, port = "127.0.0.1", "11434"
+		if ip := net.ParseIP(os.Getenv("OLLAMA_HOST")); ip != nil {
+			host = ip.String()
+		}
+	}
+
+	if err := initializeKeypair(); err != nil {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%s", host, port))
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		return err
 	}
