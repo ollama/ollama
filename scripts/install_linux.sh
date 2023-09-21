@@ -76,44 +76,8 @@ EOF
     ${sudo_cmd}systemctl daemon-reload
     ${sudo_cmd}systemctl enable ollama
     ${sudo_cmd}systemctl restart ollama
-elif [ -d "/etc/init.d" ]; then
-    # Create an init.d script
-    echo "Creating init.d script for ollama..."
-    cat <<'EOF' | ${sudo_cmd}tee /etc/init.d/ollama >/dev/null
-#!/bin/sh
-### BEGIN INIT INFO
-# Provides:          ollama
-# Required-Start:    $network $local_fs $remote_fs
-# Required-Stop:     $network $local_fs $remote_fs
-# Default-Start:     2 3 4 5
-# Default-Stop:      0 1 6
-# Description:       Ollama service
-### END INIT INFO
-
-case "$1" in
-  start)
-    /usr/bin/ollama serve &
-    ;;
-  stop)
-    killall ollama
-    ;;
-  restart)
-    killall ollama
-    /usr/bin/ollama serve &
-    ;;
-  *)
-    echo "Usage: /etc/init.d/ollama {start|stop|restart}"
-    exit 1
-    ;;
-esac
-
-exit 0
-EOF
-    ${sudo_cmd}chmod +x /etc/init.d/ollama
-    ${sudo_cmd}update-rc.d ollama defaults
-    ${sudo_cmd}service ollama start
 else
-    echo "Installation complete. Run 'ollama serve' from the command line to start the service."
+    echo "Installation complete. Run 'ollama serve' from the command line to start the service. Use 'ollama run' to query a model."
     exit 0
 fi
 
