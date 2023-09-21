@@ -27,11 +27,13 @@ case $ARCH in
 esac
 
 SUDO_CMD=""
-
 if [ "$(id -u)" -ne 0 ]; then
     if command -v sudo >/dev/null 2>&1; then
         SUDO_CMD="sudo"
         echo "Downloading the ollama executable to the PATH, this will require sudo permissions."
+    else
+        echo "Error: sudo is not available. Please run as root or install sudo."
+        exit 1
     fi
 fi
 
