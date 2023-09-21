@@ -55,7 +55,7 @@ else
 fi
 
 ${SUDO_CMD} mkdir -p /usr/bin
-${SUDO_CMD} curl https://ollama.ai/download/latest/ollama-linux-$ARCH > /usr/bin/ollama
+${SUDO_CMD} curl -fsSL -o /usr/bin/ollama https://ollama.ai/download/latest/ollama-linux-$ARCH
 
 # Add ollama to start-up
 if command -v systemctl >/dev/null 2>&1; then
