@@ -267,7 +267,7 @@ func filenameWithPath(path, f string) (string, error) {
 	return f, nil
 }
 
-func CreateModel(ctx context.Context, name string, path string, fn func(resp api.ProgressResponse)) error {
+func CreateModel(ctx context.Context, workDir, name string, path string, fn func(resp api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	var manifest *ManifestV2
@@ -524,7 +524,7 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 	}
 
 	// generate the embedding layers
-	embeddingLayers, err := embeddingLayers(embed)
+	embeddingLayers, err := embeddingLayers(workDir, embed)
 	if err != nil {
 		return err
 	}
@@ -581,7 +581,7 @@ type EmbeddingParams struct {
 }
 
 // embeddingLayers loads the associated LLM and generates the embeddings to be stored from an input file
-func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
+func embeddingLayers(workDir string, e EmbeddingParams) ([]*LayerReader, error) {
 	layers := []*LayerReader{}
 	if len(e.files) > 0 {
 		// check if the model is a file path or a model name
@@ -594,7 +594,7 @@ func embeddingLayers(e EmbeddingParams) ([]*LayerReader, error) {
 			model = &Model{ModelPath: e.model}
 		}
 
-		if err := load(context.Background(), model, e.opts, defaultSessionDuration); err != nil {
+		if err := load(context.Background(), workDir, model, e.opts, defaultSessionDuration); err != nil {
 			return nil, fmt.Errorf("load model to generate embeddings: %v", err)
 		}
 

@@ -21,7 +21,7 @@ type LLM interface {
 	Ping(context.Context) error
 }
 
-func New(model string, adapters []string, opts api.Options) (LLM, error) {
+func New(workDir, model string, adapters []string, opts api.Options) (LLM, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -91,9 +91,9 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 	switch ggml.Name() {
 	case "gguf":
 		opts.NumGQA = 0 // TODO: remove this when llama.cpp runners differ enough to need separate newLlama functions
-		return newLlama(model, adapters, ggufRunner(), opts)
+		return newLlama(model, adapters, chooseRunners(workDir, "gguf"), opts)
 	case "ggml", "ggmf", "ggjt", "ggla":
-		return newLlama(model, adapters, ggmlRunner(), opts)
+		return newLlama(model, adapters, chooseRunners(workDir, "ggml"), opts)
 	default:
 		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
 	}

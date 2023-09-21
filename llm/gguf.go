@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 )
 
 type containerGGUF struct {
@@ -367,17 +366,4 @@ func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
 	}
 
 	return
-}
-
-var (
-	ggufInit    sync.Once
-	ggufRunners []ModelRunner // a slice of ModelRunners ordered by priority
-)
-
-func ggufRunner() []ModelRunner {
-	ggufInit.Do(func() {
-		ggufRunners = chooseRunners("gguf")
-	})
-
-	return ggufRunners
 }

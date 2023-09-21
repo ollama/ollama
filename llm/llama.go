@@ -32,7 +32,7 @@ type ModelRunner struct {
 	Path string // path to the model runner executable
 }
 
-func chooseRunners(runnerType string) []ModelRunner {
+func chooseRunners(workDir, runnerType string) []ModelRunner {
 	buildPath := path.Join("llama.cpp", runnerType, "build")
 	var runners []string
 
@@ -61,11 +61,6 @@ func chooseRunners(runnerType string) []ModelRunner {
 		}
 	}
 
-	// copy the files locally to run the llama.cpp server
-	tmpDir, err := os.MkdirTemp("", "llama-*")
-	if err != nil {
-		log.Fatalf("load llama runner: failed to create temp dir: %v", err)
-	}
 	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
 	for _, r := range runners {
 		// find all the files in the runner's bin directory
@@ -85,18 +80,27 @@ func chooseRunners(runnerType string) []ModelRunner {
 			defer srcFile.Close()
 
 			// create the directory in case it does not exist
-			destPath := filepath.Join(tmpDir, filepath.Dir(f))
+			destPath := filepath.Join(workDir, filepath.Dir(f))
 			if err := os.MkdirAll(destPath, 0o755); err != nil {
 				log.Fatalf("create runner temp dir %s: %v", filepath.Dir(f), err)
 			}
-			destFile, err := os.OpenFile(filepath.Join(destPath, filepath.Base(f)), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-			if err != nil {
-				log.Fatalf("write llama runner %s: %v", f, err)
-			}
-			defer destFile.Close()
 
-			if _, err := io.Copy(destFile, srcFile); err != nil {
-				log.Fatalf("copy llama runner %s: %v", f, err)
+			destFile := filepath.Join(destPath, filepath.Base(f))
+
+			_, err = os.Stat(destFile)
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+				if err != nil {
+					log.Fatalf("write llama runner %s: %v", f, err)
+				}
+				defer destFile.Close()
+
+				if _, err := io.Copy(destFile, srcFile); err != nil {
+					log.Fatalf("copy llama runner %s: %v", f, err)
+				}
+			case err != nil:
+				log.Fatalf("stat llama runner %s: %v", f, err)
 			}
 		}
 	}
@@ -107,7 +111,7 @@ func chooseRunners(runnerType string) []ModelRunner {
 	// return the runners to try in priority order
 	localRunnersByPriority := []ModelRunner{}
 	for _, r := range runners {
-		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(tmpDir, r)})
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(workDir, r)})
 	}
 
 	return localRunnersByPriority
