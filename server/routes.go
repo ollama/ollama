@@ -543,21 +543,22 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		},
 	)
 
-	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		r.Handle(method, "/", func(c *gin.Context) {
-			c.String(http.StatusOK, "Ollama is running")
-		})
-	}
-
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/embeddings", EmbeddingHandler)
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)
-	r.GET("/api/tags", ListModelsHandler)
 	r.DELETE("/api/delete", DeleteModelHandler)
 	r.POST("/api/show", ShowModelHandler)
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		r.Handle(method, "/", func(c *gin.Context) {
+			c.String(http.StatusOK, "Ollama is running")
+		})
+
+		r.Handle(method, "/api/tags", ListModelsHandler)
+	}
 
 	log.Printf("Listening on %s", ln.Addr())
 	s := &http.Server{
