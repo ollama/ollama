@@ -60,14 +60,14 @@ install_cuda_drivers() {
     # based on https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#package-manager-installation
     case $os_name in
         CentOS)
-            sudo yum install yum-utils
-            sudo yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
-            sudo yum clean all
-            sudo yum -y install nvidia-driver-latest-dkms
-            sudo yum -y install cuda-driver
-            sudo yum install kernel-devel-$(uname -r) kernel-headers-$(uname -r)
-            sudo dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 sudo dkms install
-            sudo modprobe nvidia
+            {$SUDO} yum install yum-utils
+            {$SUDO} yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
+            {$SUDO} yum clean all
+            {$SUDO} yum -y install nvidia-driver-latest-dkms
+            {$SUDO} yum -y install cuda-driver
+            {$SUDO} yum install kernel-devel-$(uname -r) kernel-headers-$(uname -r)
+            {$SUDO} dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 {$SUDO} dkms install
+            {$SUDO} modprobe nvidia
             ;;
         RedHatEnterprise*|Kylin|Fedora|SLES|openSUSE*|Microsoft|Ubuntu|Debian)
             echo "NVIDIA CUDA drivers may not be installed, you can install them from: https://developer.nvidia.com/cuda-downloads"
