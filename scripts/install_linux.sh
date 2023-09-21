@@ -26,7 +26,7 @@ case $ARCH in
         ;;
 esac
 
-if [ $IS_ROOT -eq 1 ]; then
+if [ "$(id -u)" -ne 0 ]; then
     sudo_cmd="sudo "
     echo "Downloading the ollama executable to the PATH, this will require sudo permissions."
 else
@@ -38,8 +38,7 @@ ${sudo_cmd}curl https://ollama.ai/download/latest/ollama-linux-$ARCH > /usr/bin/
 
 # Check if CUDA drivers are available
 if ! command -v nvidia-smi >/dev/null 2>&1; then
-    echo "Warning: NVIDIA CUDA drivers are not available on this system, install them to enable GPU support."
-    echo "https://developer.nvidia.com/cuda-downloads"
+    echo "Warning: NVIDIA CUDA drivers are not available on this system, install them to enable GPU support. For more information see: https://developer.nvidia.com/cuda-downloads"
 fi
 
 # Add ollama to start-up
