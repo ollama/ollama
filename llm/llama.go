@@ -84,14 +84,23 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 			if err := os.MkdirAll(destPath, 0o755); err != nil {
 				log.Fatalf("create runner temp dir %s: %v", filepath.Dir(f), err)
 			}
-			destFile, err := os.OpenFile(filepath.Join(destPath, filepath.Base(f)), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-			if err != nil {
-				log.Fatalf("write llama runner %s: %v", f, err)
-			}
-			defer destFile.Close()
 
-			if _, err := io.Copy(destFile, srcFile); err != nil {
-				log.Fatalf("copy llama runner %s: %v", f, err)
+			destFile := filepath.Join(destPath, filepath.Base(f))
+
+			_, err = os.Stat(destFile)
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+				if err != nil {
+					log.Fatalf("write llama runner %s: %v", f, err)
+				}
+				defer destFile.Close()
+
+				if _, err := io.Copy(destFile, srcFile); err != nil {
+					log.Fatalf("copy llama runner %s: %v", f, err)
+				}
+			case err != nil:
+				log.Fatalf("stat llama runner %s: %v", f, err)
 			}
 		}
 	}
