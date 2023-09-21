@@ -40,7 +40,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     CUDA_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")
     if [ -z "$CUDA_VERSION" ]; then
         echo "Warning: NVIDIA-SMI is available, but the CUDA version cannot be detected. Installing CUDA drivers..."
-        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD}sh -s -- --silent --driver
+        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD} sh -s -- --silent --driver
     else
         echo "Detected CUDA version $CUDA_VERSION"
     fi
