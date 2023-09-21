@@ -428,6 +428,7 @@ type PredictRequest struct {
 	Mirostat         int             `json:"mirostat,omitempty"`
 	MirostatTau      float32         `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32         `json:"mirostat_eta,omitempty"`
+	Grammar          string          `json:"grammar,omitempty"`
 	PenalizeNl       bool            `json:"penalize_nl,omitempty"`
 	NKeep            int             `json:"n_keep,omitempty"`
 	Seed             int             `json:"seed,omitempty"`
@@ -466,6 +467,7 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		Mirostat:         llm.Mirostat,
 		MirostatTau:      llm.MirostatTau,
 		MirostatEta:      llm.MirostatEta,
+		Grammar:          llm.Grammar,
 		PenalizeNl:       llm.PenalizeNewline,
 		Stop:             llm.Stop,
 	}

@@ -127,6 +127,7 @@ PARAMETER <parameter> <parametervalue>
 | tfs_z          | Tail free sampling is used to reduce the impact of less probable tokens from the output. A higher value (e.g., 2.0) will reduce the impact more, while a value of 1.0 disables this setting. (default: 1)                                               | float      | tfs_z 1              |
 | top_k          | Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)                                                                        | int        | top_k 40             |
 | top_p          | Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)                                                                 | float      | top_p 0.9            |
+| grammar        | The [GBNF](https://github.com/ggerganov/llama.cpp/tree/master/grammars) grammar used to constrain the model output. | string | grammar "root ::= [0-9]+" |
 
 ### TEMPLATE
 
