@@ -4,65 +4,71 @@
 
 set -eu
 
-if [ "$(uname -s)" != "Linux" ]; then
-    echo "This script is intended to run on Linux only."
-    exit 1
-fi
-
-# Determine the system architecture
-ARCH=$(uname -m)
-
-# Map architecture to the possible suffixes/names supported
-case $ARCH in
-    x86_64)
-        ARCH_SUFFIX="amd64"
-        ;;
-    aarch64|arm64)
-        ARCH_SUFFIX="arm64"
-        ;;
-    *)
-        echo "Unsupported architecture: $ARCH"
-        exit 1
-        ;;
-esac
-
-SUDO_CMD=""
-if [ "$(id -u)" -ne 0 ]; then
-    if command -v sudo >/dev/null 2>&1; then
-        SUDO_CMD="sudo"
-        echo "Downloading the ollama executable to the PATH, this will require sudo permissions."
-    else
-        echo "Error: sudo is not available. Please run as root or install sudo."
+check_os() {
+    if [ "$(uname -s)" != "Linux" ]; then
+        echo "This script is intended to run on Linux only."
         exit 1
     fi
-fi
+}
 
-# Check if CUDA drivers are available
-if command -v nvidia-smi >/dev/null 2>&1; then
-    CUDA_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")
-    if [ -z "$CUDA_VERSION" ]; then
-        echo "Warning: NVIDIA-SMI is available, but the CUDA version cannot be detected. Installing CUDA drivers..."
-        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD} sh -s -- --silent --driver
+determine_architecture() {
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64)
+            ARCH_SUFFIX="amd64"
+            ;;
+        aarch64|arm64)
+            ARCH_SUFFIX="arm64"
+            ;;
+        *)
+            echo "Unsupported architecture: $ARCH"
+            exit 1
+            ;;
+    esac
+}
+
+check_sudo() {
+    if [ "$(id -u)" -ne 0 ]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO_CMD="sudo"
+            echo "Downloading the ollama executable to the PATH, this will require sudo permissions."
+        else
+            echo "Error: sudo is not available. Please run as root or install sudo."
+            exit 1
+        fi
     else
-        echo "Detected CUDA version $CUDA_VERSION"
+        SUDO_CMD=""
     fi
-else
-    # Check for the presence of an NVIDIA GPU using lspci
-    if lspci | grep -i "nvidia" >/dev/null 2>&1; then
-        echo "Warning: NVIDIA GPU detected but NVIDIA-SMI is not available. Installing CUDA drivers..."
-        curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD} sh -s -- --silent --driver
+}
+
+install_cuda_drivers() {
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        CUDA_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")
+        if [ -z "$CUDA_VERSION" ]; then
+            echo "Warning: NVIDIA-SMI is available, but the CUDA version cannot be detected. Installing CUDA drivers..."
+            curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD} sh -s -- --silent --driver
+        else
+            echo "Detected CUDA version $CUDA_VERSION"
+        fi
     else
-        echo "No NVIDIA GPU detected. Skipping driver installation."
+        if lspci | grep -i "nvidia" >/dev/null 2>&1; then
+            echo "Warning: NVIDIA GPU detected but NVIDIA-SMI is not available. Installing CUDA drivers..."
+            curl https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run | ${SUDO_CMD} sh -s -- --silent --driver
+        else
+            echo "No NVIDIA GPU detected. Skipping driver installation."
+        fi
     fi
-fi
+}
 
-${SUDO_CMD} mkdir -p /usr/bin
-${SUDO_CMD} curl -fsSL -o /usr/bin/ollama https://ollama.ai/download/latest/ollama-linux-$ARCH
+download_ollama() {
+    ${SUDO_CMD} mkdir -p /usr/bin
+    ${SUDO_CMD} curl -fsSL -o /usr/bin/ollama "https://ollama.ai/download/latest/ollama-linux-$ARCH_SUFFIX"
+}
 
-# Add ollama to start-up
-if command -v systemctl >/dev/null 2>&1; then
-    echo "Creating systemd service file for ollama..."
-    cat <<EOF | ${SUDO_CMD} tee /etc/systemd/system/ollama.service >/dev/null
+configure_systemd() {
+    if command -v systemctl >/dev/null 2>&1; then
+        echo "Creating systemd service file for ollama..."
+        cat <<EOF | ${SUDO_CMD} tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
 After=network.target
@@ -76,13 +82,24 @@ Environment="HOME=$HOME"
 [Install]
 WantedBy=default.target
 EOF
-    echo "Reloading systemd and enabling ollama service..."
-    ${SUDO_CMD} systemctl daemon-reload
-    ${SUDO_CMD} systemctl enable ollama
-    ${SUDO_CMD} systemctl restart ollama
-else
-    echo "Installation complete. Run 'ollama serve' from the command line to start the service. Use 'ollama run' to query a model."
-    exit 0
-fi
+        echo "Reloading systemd and enabling ollama service..."
+        ${SUDO_CMD} systemctl daemon-reload
+        ${SUDO_CMD} systemctl enable ollama
+        ${SUDO_CMD} systemctl restart ollama
+    else
+        echo "Installation complete. Run 'ollama serve' from the command line to start the service. Use 'ollama run' to query a model."
+        exit 0
+    fi
+}
 
-echo "Installation complete. You can now run 'ollama' from the command line."
+main() {
+    check_os
+    determine_architecture
+    check_sudo
+    install_cuda_drivers
+    download_ollama
+    configure_systemd
+    echo "Installation complete. You can now run 'ollama' from the command line."
+}
+
+main
