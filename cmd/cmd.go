@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -486,6 +488,10 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				readline.PcItem("default"),
 			),
 		),
+		readline.PcItem("/context",
+			readline.PcItem("load", readline.PcItemDynamic(nil)),
+			readline.PcItem("save", readline.PcItemDynamic(nil)),
+		),
 		readline.PcItem("/show",
 			readline.PcItem("license"),
 			readline.PcItem("modelfile"),
@@ -557,8 +563,85 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			if err := ListHandler(cmd, args[1:]); err != nil {
 				return err
 			}
-
 			continue
+		case strings.HasPrefix(line, "/context"):
+			args := strings.Fields(line)
+			if len(args) > 2 {
+				switch args[1] {
+				case "save":
+					ctx := cmd.Context().Value(generateContextKey("context")).([]int)
+					if len(ctx) == 0 {
+						fmt.Println("no context to save")
+						continue
+					}
+					path := args[2]
+					{
+						var _, err = os.Stat(path)
+						// create file if not exists
+						if !os.IsNotExist(err) {
+							scanner.SetPrompt("file already exists, overwrite it? [y/n] ");
+							line, err := scanner.ReadlineWithDefault("n")
+							scanner.SetPrompt(">>> ");
+							if err != nil {
+								fmt.Println(err.Error())
+								continue
+							}
+							if line != "y" {
+								fmt.Println("context not saved")
+								continue
+							}
+						}
+						buffer := new(bytes.Buffer)
+						encoder := json.NewEncoder(buffer)
+						err = encoder.Encode(ctx)
+						if err != nil {
+							fmt.Println(err.Error())
+							continue
+						}
+						file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+						if err != nil {
+							fmt.Println(err.Error())
+							continue
+						}
+						defer file.Close()
+						_, err = file.Write(buffer.Bytes())
+						if err != nil {
+							fmt.Println(err.Error())
+							continue
+						}
+						err = file.Sync()
+						if err != nil {
+							fmt.Println(err.Error())
+							continue
+						}
+					}
+					fmt.Println("context saved to", path)
+					continue
+				case "load":
+					path := args[2]
+					{
+						var file, err = os.Open(path)
+						if err != nil {
+							fmt.Println(err.Error())
+							continue
+						}
+						defer file.Close()
+						decoder := json.NewDecoder(file)
+						var ctx []int
+						err = decoder.Decode(&ctx)
+						if err != nil {
+							fmt.Println(err.Error())
+							continue
+						}
+						cmd.SetContext(context.WithValue(cmd.Context(), generateContextKey("context"), ctx))
+						fmt.Println("context loaded from", path)
+						continue
+					}
+				}
+			} else {
+				fmt.Println("error: missing file name")
+				continue
+			}
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
