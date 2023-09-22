@@ -99,6 +99,8 @@ download_ollama() {
 
 configure_systemd() {
     if command -v systemctl >/dev/null 2>&1; then
+        $SUDO_CMD useradd -r -s /bin/false -m -d /home/ollama ollama 2>/dev/null 
+
         echo "Creating systemd service file for ollama..."
         cat <<EOF | $SUDO_CMD tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
@@ -107,9 +109,11 @@ After=network-online.target
 
 [Service]
 ExecStart=/usr/bin/ollama serve
+User=ollama
+Group=ollama
 Restart=always
 RestartSec=3
-Environment="HOME=$HOME"
+Environment="HOME=/home/ollama"
 
 [Install]
 WantedBy=default.target
@@ -121,8 +125,7 @@ EOF
             $SUDO_CMD systemctl restart ollama
         fi
     else
-        echo "Installation complete. Run 'ollama serve' from the command line to start the service. Use 'ollama run' to query a model."
-        exit 0
+        echo "Run 'ollama serve' from the command line to start the service."
     fi
 }
 
