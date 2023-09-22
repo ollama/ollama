@@ -610,7 +610,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 					fmt.Println("Set 'nowordwrap' mode.")
 				case "verbose":
 					cmd.Flags().Set("verbose", "true")
-					fmt.Println("Set 'versbose' mode.")
+					fmt.Println("Set 'verbose' mode.")
 				case "quiet":
 					cmd.Flags().Set("verbose", "false")
 					fmt.Println("Set 'quiet' mode.")
