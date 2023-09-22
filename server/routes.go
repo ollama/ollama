@@ -570,6 +570,9 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
+		if loaded.llm != nil {
+			loaded.llm.Close()
+		}
 		os.RemoveAll(workDir)
 		os.Exit(0)
 	}()
