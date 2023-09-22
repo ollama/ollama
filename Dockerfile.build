@@ -2,9 +2,9 @@ ARG VERSION=0.0.0
 
 # centos7 amd64 dependencies
 FROM --platform=linux/amd64 nvidia/cuda:11.8.0-devel-centos7 AS base-amd64
-RUN yum install -y https://repo.ius.io/ius-release-el7.rpm centos-release-scl
-RUN yum update -y
-RUN yum install -y devtoolset-10-gcc devtoolset-10-gcc-c++ git236 wget
+RUN yum install -y https://repo.ius.io/ius-release-el7.rpm centos-release-scl && \
+    yum update -y && \
+    yum install -y devtoolset-10-gcc devtoolset-10-gcc-c++ git236 wget
 RUN wget "https://github.com/Kitware/CMake/releases/download/v3.27.6/cmake-3.27.6-linux-x86_64.sh" -O cmake-installer.sh && chmod +x cmake-installer.sh && ./cmake-installer.sh --skip-license --prefix=/usr/local
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 
