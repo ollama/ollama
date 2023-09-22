@@ -1,4 +1,6 @@
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+ARG CUDA_VERSION=12.2.0
+
+FROM nvidia/cuda:$CUDA_VERSION-devel-ubuntu22.04
 
 ARG TARGETARCH
 ARG VERSION=0.0.0
@@ -13,8 +15,10 @@ ENV GOARCH=$TARGETARCH
 RUN /usr/local/go/bin/go generate ./... \
     && /usr/local/go/bin/go build -ldflags "-linkmode=external -extldflags='-static' -X=github.com/jmorganca/ollama/version.Version=$VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
 
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+FROM ubuntu:22.04
 ENV OLLAMA_HOST 0.0.0.0
+
+RUN apt-get update && apt-get install -y ca-certificates
 
 ARG USER=ollama
 ARG GROUP=ollama
