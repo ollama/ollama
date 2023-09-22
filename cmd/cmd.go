@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chzyer/readline"
+	"github.com/pdevine/readline"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
