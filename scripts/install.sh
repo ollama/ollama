@@ -42,10 +42,11 @@ check_sudo() {
 }
 
 install_cuda_drivers() {
-    local os_name
+    local os_name os_version
     if [ -f "/etc/os-release" ]; then
         . /etc/os-release
         os_name=$ID
+        os_version=$VERSION_ID
     else
         echo "Unable to detect operating system. Skipping CUDA installation."
         return 1
@@ -63,7 +64,24 @@ install_cuda_drivers() {
             $SUDO_CMD dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 $SUDO_CMD dkms install
             $SUDO_CMD modprobe nvidia
             ;;
-        RedHatEnterprise*|Kylin|Fedora|SLES|openSUSE*|Microsoft|Ubuntu|Debian)
+        ubuntu)
+            case $os_version in
+                20.04)
+                    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
+                ;;
+                22.04)
+                    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+                ;;
+                *)
+                    echo "Skipping automatic CUDA installation, not supported for Ubuntu ($os_version)."
+                    return
+                ;;
+            esac
+            $SUDO_CMD dpkg -i cuda-keyring_1.1-1_all.deb
+            $SUDO_CMD apt-get update
+            $SUDO_CMD apt-get -y install cuda-drivers
+            ;;
+        RedHatEnterprise*|Kylin|Fedora|SLES|openSUSE*|Microsoft|Debian)
             echo "NVIDIA CUDA drivers may not be installed, you can install them from: https://developer.nvidia.com/cuda-downloads"
             ;;
         *)
