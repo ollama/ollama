@@ -125,17 +125,18 @@ install_cuda_driver_yum() {
         rhel)
             status 'Installing EPEL repository...'
             # EPEL is required for third-party dependencies such as dkms and libvdpau
-            $SUDO $PACKAGE_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-$2.noarch.rpm
+            $SUDO $PACKAGE_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-$2.noarch.rpm || true
             ;;
     esac
 
     status 'Installing CUDA driver...'
     $SUDO $PACKAGE_MANAGER -y update
-    $SUDO $PACKAGE_MANAGER -y install cuda-drivers
 
     if [ "$1" = 'centos' ] || [ "$1$2" = 'rhel7' ]; then
         $SUDO $PACKAGE_MANAGER -y install nvidia-driver-latest-dkms
     fi
+
+    $SUDO $PACKAGE_MANAGER -y install cuda-drivers
 }
 
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#ubuntu
