@@ -32,11 +32,13 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
-type Painter struct{}
+type Painter struct {
+	HideHint bool
+}
 
-func (p Painter) Paint(line []rune, l int) []rune {
+func (p Painter) Paint(line []rune, _ int) []rune {
 	termType := os.Getenv("TERM")
-	if termType == "xterm-256color" && len(line) == 0 {
+	if termType == "xterm-256color" && len(line) == 0 && !p.HideHint {
 		prompt := "Send a message (/? for help)"
 		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
 	}
@@ -538,8 +540,10 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		fmt.Fprintln(os.Stderr, completer.Tree("  "))
 	}
 
+	var painter Painter
+
 	config := readline.Config{
-		Painter:      Painter{},
+		Painter:      &painter,
 		Prompt:       ">>> ",
 		HistoryFile:  filepath.Join(home, ".ollama", "history"),
 		AutoComplete: completer,
@@ -575,11 +579,10 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		case isMultiLine:
 			if strings.HasSuffix(line, `"""`) {
 				isMultiLine = false
+				painter.HideHint = false
 				multiLineBuffer += strings.TrimSuffix(line, `"""`)
-				line = multiLineBuffer
 				multiLineBuffer = ""
 				scanner.SetPrompt(">>> ")
-				continue
 			} else {
 				multiLineBuffer += line + " "
 				continue
@@ -588,6 +591,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			isMultiLine = true
 			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
 			scanner.SetPrompt("... ")
+			painter.HideHint = true
 			continue
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
