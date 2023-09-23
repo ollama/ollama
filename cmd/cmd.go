@@ -42,6 +42,7 @@ func (p Painter) Paint(line []rune, _ int) []rune {
 		prompt := "Send a message (/? for help)"
 		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
 	}
+	line = append(line, []rune(" \b")...)
 	return line
 }
 
