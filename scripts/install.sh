@@ -4,123 +4,65 @@
 
 set -eu
 
-check_os() {
-    if [ "$(uname -s)" != "Linux" ]; then
-        echo "This script is intended to run on Linux only."
-        exit 1
-    fi
-}
+status() { echo ">>> $*" >&2; }
+error() { echo "ERROR $*"; exit 1; }
 
-determine_architecture() {
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64)
-            ARCH_SUFFIX="amd64"
-            ;;
-        aarch64|arm64)
-            ARCH_SUFFIX="arm64"
-            ;;
-        *)
-            echo "Unsupported architecture: $ARCH"
-            exit 1
-            ;;
-    esac
-}
+TEMP_DIR=$(mktemp -d)
+cleanup() { rm -rf $TEMP_DIR; }
+trap cleanup EXIT
 
-check_sudo() {
-    if [ "$(id -u)" -ne 0 ]; then
-        if command -v sudo >/dev/null 2>&1; then
-            SUDO_CMD="sudo"
-            echo "Downloading the ollama executable to the PATH, this will require sudo permissions."
-        else
-            echo "Error: sudo is not available. Please run as root or install sudo."
-            exit 1
+required_tools() {
+    local MISSING=''
+    for TOOL in $*; do
+        if ! command -v $TOOL >/dev/null; then
+            MISSING="$MISSING $TOOL"
         fi
-    else
-        SUDO_CMD=""
+    done
+
+    echo $MISSING
+}
+
+[ "$(uname -s)" = "Linux" ] || error 'This script is intended to run on Linux only.'
+
+case "$(uname -m)" in
+    x86_64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *) error "Unsupported architecture: $ARCH" ;;
+esac
+
+SUDO_CMD=
+if [ "$(id -u)" -ne 0 ]; then
+    # Running as root, no need for sudo
+    if ! command -v sudo >/dev/null; then
+        error "Ollama install.sh requires elevated privileges. Please re-run as root."
     fi
-}
+fi
 
-install_cuda_drivers() {
-    local os_name os_version
-    if [ -f "/etc/os-release" ]; then
-        . /etc/os-release
-        os_name=$ID
-        os_version=$VERSION_ID
-    else
-        echo "Unable to detect operating system. Skipping CUDA installation."
-        return 1
-    fi
+MISSING_TOOLS=$(required_tools curl awk grep sed tee xargs)
+if [ -n "$MISSING_TOOLS" ]; then
+    error "The following tools are required but missing: $MISSING_TOOLS"
+fi
 
-    # based on https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#package-manager-installation
-    case $os_name in
-        CentOS)
-            $SUDO_CMD yum install yum-utils
-            $SUDO_CMD yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
-            $SUDO_CMD yum clean all
-            $SUDO_CMD yum -y install nvidia-driver-latest-dkms
-            $SUDO_CMD yum -y install cuda-driver
-            $SUDO_CMD yum install kernel-devel-$(uname -r) kernel-headers-$(uname -r)
-            $SUDO_CMD dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 $SUDO_CMD dkms install
-            $SUDO_CMD modprobe nvidia
-            ;;
-        ubuntu)
-            case $os_version in
-                20.04)
-                    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
-                ;;
-                22.04)
-                    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-                ;;
-                *)
-                    echo "Skipping automatic CUDA installation, not supported for Ubuntu ($os_version)."
-                    return
-                ;;
-            esac
-            $SUDO_CMD dpkg -i cuda-keyring_1.1-1_all.deb
-            $SUDO_CMD apt-get update
-            $SUDO_CMD apt-get -y install cuda-drivers
-            ;;
-        RedHatEnterprise*|Kylin|Fedora|SLES|openSUSE*|Microsoft|Debian)
-            echo "NVIDIA CUDA drivers may not be installed, you can install them from: https://developer.nvidia.com/cuda-downloads"
-            ;;
-        *)
-            echo "Unsupported or unknown distribution, skipping GPU CUDA driver install: $os_name"
-            ;;
-    esac
-}
+status "Downloading ollama..."
+$SUDO_CMD curl -fsSL -o $TEMP_DIR/ollama "https://ollama.ai/download/ollama-linux-$ARCH"
 
-check_install_cuda_drivers() {
-    if lspci -d '10de:' | grep 'NVIDIA' >/dev/null; then
-        # NVIDIA Corporation [10de] device is available
-        if command -v nvidia-smi >/dev/null 2>&1; then
-            CUDA_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")
-            if [ -z "$CUDA_VERSION" ]; then
-                echo "Warning: NVIDIA-SMI is available, but the CUDA version cannot be detected. Installing CUDA drivers..."
-                install_cuda_drivers
-            else
-                echo "Detected CUDA version $CUDA_VERSION"
-            fi
-        else
-            echo "Warning: NVIDIA GPU detected but NVIDIA-SMI is not available. Installing CUDA drivers..."
-            install_cuda_drivers
-        fi
-    else
-        echo "No NVIDIA GPU detected. Skipping driver installation."
-    fi
-}
+status "Installing ollama to /usr/bin..."
+$SUDO_CMD install -o0 -g0 -m755 -d /usr/bin
+$SUDO_CMD install -o0 -g0 -m755 $TEMP_DIR/ollama /usr/bin/ollama
 
-download_ollama() {
-    $SUDO_CMD mkdir -p /usr/bin
-    $SUDO_CMD curl -fsSL -o /usr/bin/ollama "https://ollama.ai/download/ollama-linux-$ARCH_SUFFIX"
-}
+install_success() { status 'Install complete. Run "ollama" from the command line.'; }
+trap install_success EXIT
+
+# Everything from this point onwards is optional.
 
 configure_systemd() {
-    if command -v systemctl >/dev/null 2>&1; then
-        $SUDO_CMD useradd -r -s /bin/false -m -d /home/ollama ollama 2>/dev/null 
+    if ! id ollama >/dev/null 2>&1; then
+        status "Creating ollama user..."
+        $SUDO_CMD useradd -r -s /bin/false -m -d /usr/share/ollama ollama
+    fi
 
-        echo "Creating systemd service file for ollama..."
-        cat <<EOF | $SUDO_CMD tee /etc/systemd/system/ollama.service >/dev/null
+    status "Creating ollama systemd service..."
+    cat <<EOF | $SUDO_CMD tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
 After=network-online.target
@@ -131,30 +73,124 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
-Environment="HOME=/home/ollama"
+Environment="HOME=/usr/share/ollama"
 
 [Install]
 WantedBy=default.target
 EOF
-        echo "Reloading systemd and enabling ollama service..."
-        if [ "$(systemctl is-system-running || echo 'not running')" = 'running' ]; then 
-            $SUDO_CMD systemctl daemon-reload
-            $SUDO_CMD systemctl enable ollama
-            $SUDO_CMD systemctl restart ollama
-        fi
-    else
-        echo "Run 'ollama serve' from the command line to start the service."
+    if [ "$(systemctl is-system-running || echo 'not running')" = 'running' ]; then 
+        status "Enabling and starting ollama service..."
+        $SUDO_CMD systemctl daemon-reload
+        $SUDO_CMD systemctl enable ollama
+        $SUDO_CMD systemctl restart ollama
     fi
 }
 
-main() {
-    check_os
-    determine_architecture
-    check_sudo
-    download_ollama
+if command -v systemctl >/dev/null; then
     configure_systemd
-    check_install_cuda_drivers
-    echo "Installation complete. You can now run 'ollama' from the command line."
+fi
+
+check_gpu() {
+    case $1 in
+        lspci) command -v lspci >/dev/null && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
+        lshw) command -v lshw >/dev/null && lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
+        nvidia-smi) command -v nvidia-smi >/dev/null || return 1 ;;
+    esac
 }
 
-main
+if ! check_gpu lspci && ! check_gpu lshw; then
+    warning "No NVIDIA GPU detected. Ollama will run in CPU-only mode."
+    exit 0
+fi
+
+# ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-7-centos-7
+# ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-8-rocky-8
+# ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-9-rocky-9
+# ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#fedora
+install_cuda_driver_yum() {
+    status 'Installing NVIDIA repository...'
+    case $PACKAGE_MANAGER in
+        yum)
+            $SUDO_CMD $PACKAGE_MANAGER -y install yum-utils
+            $SUDO_CMD $PACKAGE_MANAGER-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
+            ;;
+        dnf)
+            $SUDO_CMD dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
+            ;;
+    esac
+
+    case $1 in
+        rhel)
+            status 'Installing EPEL repository...'
+            # EPEL is required for third-party dependencies such as dkms and libvdpau
+            $SUDO_CMD $PACKAGE_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-$2.noarch.rpm
+            ;;
+    esac
+
+    status 'Installing CUDA driver...'
+    $SUDO_CMD $PACKAGE_MANAGER -y update
+    $SUDO_CMD $PACKAGE_MANAGER -y install cuda-drivers
+
+    if [ "$1" = 'centos' ] || [ "$1$2" = 'rhel7' ]; then
+        $SUDO_CMD $PACKAGE_MANAGER -y install nvidia-driver-latest-dkms
+    fi
+}
+
+# ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#ubuntu
+# ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#debian
+install_cuda_driver_apt() {
+    status 'Installing NVIDIA repository...'
+    curl -fsSL -o $TEMP_DIR/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-keyring_1.1-1_all.deb
+
+    case $1 in
+        debian)
+            status 'Enabling contrib sources...'
+            sed 's/main/contrib/' </etc/apt/sources.list >/etc/apt/sources.list.d/contrib.list
+            ;;
+    esac
+
+    status 'Installing CUDA driver...'
+    $SUDO_CMD dpkg -i $TEMP_DIR/cuda-keyring.deb
+    $SUDO_CMD apt-get update
+    $SUDO_CMD apt-get -y install cuda-drivers
+}
+
+if [ ! -f "/etc/os-release" ]; then
+    error "Unknown distribution. Skipping CUDA installation."
+fi
+
+. /etc/os-release
+
+OS_NAME=$ID
+OS_VERSION=$VERSION_ID
+
+PACKAGE_MANAGER=
+for PACKAGE_MANAGER in dnf yum apt-get; do
+    if command -v $PACKAGE_MANAGER >/dev/null; then
+        break
+    fi
+done
+
+if [ -z "$PACKAGE_MANAGER" ]; then
+    error "Unknown package manager. Skipping CUDA installation."
+fi
+
+if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
+    case $OS_NAME in
+        centos|rhel) install_cuda_driver_yum 'rhel' $OS_VERSION ;;
+        rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
+        fedora) install_cuda_driver_dnf $OS_NAME $OS_VERSION ;;
+        debian|ubuntu) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
+    esac
+fi
+
+if ! lsmod | grep -q nvidia; then
+    KERNEL_RELEASE="$(uname -r)"
+    case $OS_NAME in
+        centos|rhel|rocky|fedora) $SUDO_CMD $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        debian|ubuntu) $SUDO_CMD apt-get -y install linux-headers-$KERNEL_RELEASE ;;
+    esac
+
+    $SUDO_CMD dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 $SUDO_CMD dkms install
+    $SUDO_CMD modprobe nvidia
+fi
