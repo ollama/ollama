@@ -30,12 +30,14 @@ case "$(uname -m)" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
-SUDO_CMD=
+SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
     if ! command -v sudo >/dev/null; then
         error "Ollama install.sh requires elevated privileges. Please re-run as root."
     fi
+
+    SUDO="sudo"
 fi
 
 MISSING_TOOLS=$(required_tools curl awk grep sed tee xargs)
@@ -44,11 +46,11 @@ if [ -n "$MISSING_TOOLS" ]; then
 fi
 
 status "Downloading ollama..."
-$SUDO_CMD curl -fsSL -o $TEMP_DIR/ollama "https://ollama.ai/download/ollama-linux-$ARCH"
+$SUDO curl -fsSL -o $TEMP_DIR/ollama "https://ollama.ai/download/ollama-linux-$ARCH"
 
 status "Installing ollama to /usr/bin..."
-$SUDO_CMD install -o0 -g0 -m755 -d /usr/bin
-$SUDO_CMD install -o0 -g0 -m755 $TEMP_DIR/ollama /usr/bin/ollama
+$SUDO install -o0 -g0 -m755 -d /usr/bin
+$SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama /usr/bin/ollama
 
 install_success() { status 'Install complete. Run "ollama" from the command line.'; }
 trap install_success EXIT
@@ -58,11 +60,11 @@ trap install_success EXIT
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
-        $SUDO_CMD useradd -r -s /bin/false -m -d /usr/share/ollama ollama
+        $SUDO useradd -r -s /bin/false -m -d /usr/share/ollama ollama
     fi
 
     status "Creating ollama systemd service..."
-    cat <<EOF | $SUDO_CMD tee /etc/systemd/system/ollama.service >/dev/null
+    cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
 After=network-online.target
@@ -80,9 +82,9 @@ WantedBy=default.target
 EOF
     if [ "$(systemctl is-system-running || echo 'not running')" = 'running' ]; then 
         status "Enabling and starting ollama service..."
-        $SUDO_CMD systemctl daemon-reload
-        $SUDO_CMD systemctl enable ollama
-        $SUDO_CMD systemctl restart ollama
+        $SUDO systemctl daemon-reload
+        $SUDO systemctl enable ollama
+        $SUDO systemctl restart ollama
     fi
 }
 
@@ -111,11 +113,11 @@ install_cuda_driver_yum() {
     status 'Installing NVIDIA repository...'
     case $PACKAGE_MANAGER in
         yum)
-            $SUDO_CMD $PACKAGE_MANAGER -y install yum-utils
-            $SUDO_CMD $PACKAGE_MANAGER-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
+            $SUDO $PACKAGE_MANAGER -y install yum-utils
+            $SUDO $PACKAGE_MANAGER-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
             ;;
         dnf)
-            $SUDO_CMD dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
+            $SUDO dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
             ;;
     esac
 
@@ -123,16 +125,16 @@ install_cuda_driver_yum() {
         rhel)
             status 'Installing EPEL repository...'
             # EPEL is required for third-party dependencies such as dkms and libvdpau
-            $SUDO_CMD $PACKAGE_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-$2.noarch.rpm
+            $SUDO $PACKAGE_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-$2.noarch.rpm
             ;;
     esac
 
     status 'Installing CUDA driver...'
-    $SUDO_CMD $PACKAGE_MANAGER -y update
-    $SUDO_CMD $PACKAGE_MANAGER -y install cuda-drivers
+    $SUDO $PACKAGE_MANAGER -y update
+    $SUDO $PACKAGE_MANAGER -y install cuda-drivers
 
     if [ "$1" = 'centos' ] || [ "$1$2" = 'rhel7' ]; then
-        $SUDO_CMD $PACKAGE_MANAGER -y install nvidia-driver-latest-dkms
+        $SUDO $PACKAGE_MANAGER -y install nvidia-driver-latest-dkms
     fi
 }
 
@@ -145,14 +147,14 @@ install_cuda_driver_apt() {
     case $1 in
         debian)
             status 'Enabling contrib sources...'
-            sed 's/main/contrib/' </etc/apt/sources.list >/etc/apt/sources.list.d/contrib.list
+            $SUDO sed 's/main/contrib/' < /etc/apt/sources.list | sudo tee /etc/apt/sources.list.d/contrib.list > /dev/null
             ;;
     esac
 
     status 'Installing CUDA driver...'
-    $SUDO_CMD dpkg -i $TEMP_DIR/cuda-keyring.deb
-    $SUDO_CMD apt-get update
-    $SUDO_CMD apt-get -y install cuda-drivers
+    $SUDO dpkg -i $TEMP_DIR/cuda-keyring.deb
+    $SUDO apt-get update
+    DEBIAN_FRONTEND=noninteractive $SUDO apt-get -y install cuda-drivers -q
 }
 
 if [ ! -f "/etc/os-release" ]; then
@@ -187,10 +189,10 @@ fi
 if ! lsmod | grep -q nvidia; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
-        centos|rhel|rocky|fedora) $SUDO_CMD $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
-        debian|ubuntu) $SUDO_CMD apt-get -y install linux-headers-$KERNEL_RELEASE ;;
+        centos|rhel|rocky|fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
     esac
 
-    $SUDO_CMD dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 $SUDO_CMD dkms install
-    $SUDO_CMD modprobe nvidia
+    $SUDO dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 $SUDO dkms install
+    $SUDO modprobe nvidia
 fi
