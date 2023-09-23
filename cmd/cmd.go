@@ -581,6 +581,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				isMultiLine = false
 				painter.HideHint = false
 				multiLineBuffer += strings.TrimSuffix(line, `"""`)
+				line = multiLineBuffer
 				multiLineBuffer = ""
 				scanner.SetPrompt(">>> ")
 			} else {
