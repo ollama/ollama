@@ -112,7 +112,7 @@ check_install_cuda_drivers() {
 
 download_ollama() {
     $SUDO_CMD mkdir -p /usr/bin
-    $SUDO_CMD curl -fsSL -o /usr/bin/ollama "https://ollama.ai/download/latest/ollama-linux-$ARCH_SUFFIX"
+    $SUDO_CMD curl -fsSL -o /usr/bin/ollama "https://ollama.ai/download/ollama-linux-$ARCH_SUFFIX"
 }
 
 configure_systemd() {
