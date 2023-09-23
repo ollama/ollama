@@ -223,7 +223,8 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if req.Prompt == "" {
+		// an empty request loads the model
+		if req.Prompt == "" && req.Template == "" && req.System == "" {
 			ch <- api.GenerateResponse{Model: req.Model, Done: true}
 		} else {
 			if err := loaded.llm.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
