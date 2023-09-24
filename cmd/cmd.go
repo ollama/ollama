@@ -33,15 +33,22 @@ import (
 )
 
 type Painter struct {
-	HideHint bool
+	IsMultiLine bool
 }
 
 func (p Painter) Paint(line []rune, _ int) []rune {
 	termType := os.Getenv("TERM")
-	if termType == "xterm-256color" && len(line) == 0 && !p.HideHint {
-		prompt := "Send a message (/? for help)"
+	if termType == "xterm-256color" && len(line) == 0 {
+		var prompt string
+		if p.IsMultiLine {
+			prompt = "Use \"\"\" to end multi-line input"
+		} else {
+			prompt = "Send a message (/? for help)"
+		}
 		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
 	}
+	// add a space and a backspace to prevent the cursor from walking up the screen
+	line = append(line, []rune(" \b")...)
 	return line
 }
 
@@ -579,7 +586,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		case isMultiLine:
 			if strings.HasSuffix(line, `"""`) {
 				isMultiLine = false
-				painter.HideHint = false
+				painter.IsMultiLine = isMultiLine
 				multiLineBuffer += strings.TrimSuffix(line, `"""`)
 				line = multiLineBuffer
 				multiLineBuffer = ""
@@ -590,9 +597,9 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			}
 		case strings.HasPrefix(line, `"""`):
 			isMultiLine = true
+			painter.IsMultiLine = isMultiLine
 			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
 			scanner.SetPrompt("... ")
-			painter.HideHint = true
 			continue
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
