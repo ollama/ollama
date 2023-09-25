@@ -155,7 +155,7 @@ install_cuda_driver_apt() {
     status 'Installing CUDA driver...'
     $SUDO dpkg -i $TEMP_DIR/cuda-keyring.deb
     $SUDO apt-get update
-    DEBIAN_FRONTEND=noninteractive $SUDO apt-get -y install cuda-drivers -q
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get -y install cuda-drivers -q
 }
 
 if [ ! -f "/etc/os-release" ]; then
