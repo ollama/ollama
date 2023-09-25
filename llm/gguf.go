@@ -201,7 +201,8 @@ func (llm *ggufModel) NumLayers() int64 {
 		return 0
 	}
 
-	return value.(int64)
+	v := value.(uint32)
+	return int64(v)
 }
 
 func (ggufModel) readU8(r io.Reader) uint8 {
