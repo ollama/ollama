@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -152,6 +153,10 @@ func (llm *llamaModel) FileType() string {
 	return fileType(llm.hyperparameters.FileType)
 }
 
+func (llm *llamaModel) NumLayers() int {
+	return int(llm.hyperparameters.NumLayer)
+}
+
 type llamaHyperparameters struct {
 	// NumVocab is the size of the model's vocabulary.
 	NumVocab uint32
@@ -207,7 +212,7 @@ func CheckVRAM() (int, error) {
 	return total, nil
 }
 
-func NumGPU(opts api.Options) int {
+func NumGPU(numLayer int, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
@@ -221,32 +226,14 @@ func NumGPU(opts api.Options) int {
 			// nvidia driver not installed or no nvidia GPU found
 			return 0
 		}
-		// TODO: this is a very rough heuristic, better would be to calculate this based on number of layers and context size
-		switch {
-		case vram < 500:
-			log.Printf("WARNING: Low VRAM detected, disabling GPU")
-			n = 0
-		case vram < 1000:
-			n = 4
-		case vram < 2000:
-			n = 8
-		case vram < 4000:
-			n = 12
-		case vram < 8000:
-			n = 16
-		case vram < 12000:
-			n = 24
-		case vram < 16000:
-			n = 32
-		default:
-			n = 48
-		}
-		log.Printf("%d MB VRAM available, loading %d GPU layers", vram, n)
+		// TODO: this is a very rough heuristic that assumes one layer of a model corresponds to 200MB of memory, better would be to calculate this based on number of layers and context size
+		n = vram / 200
+		log.Printf("%d MB VRAM available, loading %d GPU layers", vram, int(math.Max(float64(numLayer), float64(n))))
 	}
 	return n
 }
 
-func newLlama(model string, adapters []string, runners []ModelRunner, opts api.Options) (*llama, error) {
+func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int, opts api.Options) (*llama, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -261,7 +248,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, opts api.O
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
-		"--n-gpu-layers", fmt.Sprintf("%d", NumGPU(opts)),
+		"--n-gpu-layers", fmt.Sprintf("%d", NumGPU(numLayers, opts)),
 		"--embedding",
 	}
 
