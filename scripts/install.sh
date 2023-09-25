@@ -35,7 +35,7 @@ SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
     if ! command -v sudo >/dev/null; then
-        error "Ollama install.sh requires elevated privileges. Please re-run as root."
+        error "This script requires superuser permissions. Please re-run as root."
     fi
 
     SUDO="sudo"
@@ -43,7 +43,11 @@ fi
 
 MISSING_TOOLS=$(required_tools curl awk grep sed tee xargs)
 if [ -n "$MISSING_TOOLS" ]; then
-    error "The following tools are required but missing: $MISSING_TOOLS"
+    status "ERROR: The following tools are required but missing:"
+    for MISSING_TOOL in $MISSING_TOOLS; do
+        echo "  - $MISSING_TOOL"
+    done
+    exit 1
 fi
 
 status "Downloading ollama..."
@@ -81,12 +85,15 @@ Environment="HOME=/usr/share/ollama"
 [Install]
 WantedBy=default.target
 EOF
-    if [ "$(systemctl is-system-running || echo 'not running')" = 'running' ]; then 
-        status "Enabling and starting ollama service..."
-        $SUDO systemctl daemon-reload
-        $SUDO systemctl enable ollama
-        $SUDO systemctl restart ollama
-    fi
+    SYSTEMCTL_RUNNING="$(systemctl is-system-running)"
+    case $SYSTEMCTL_RUNNING in
+        running|degraded)
+            status "Enabling and starting ollama service..."
+            $SUDO systemctl daemon-reload
+            $SUDO systemctl enable ollama
+            $SUDO systemctl restart ollama
+            ;;
+    esac
 }
 
 if command -v systemctl >/dev/null; then
@@ -118,7 +125,7 @@ install_cuda_driver_yum() {
             $SUDO $PACKAGE_MANAGER-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
             ;;
         dnf)
-            $SUDO dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
+            $SUDO $PACKAGE_MANAGER config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
             ;;
     esac
 
@@ -156,7 +163,9 @@ install_cuda_driver_apt() {
     status 'Installing CUDA driver...'
     $SUDO dpkg -i $TEMP_DIR/cuda-keyring.deb
     $SUDO apt-get update
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get -y install cuda-drivers -q
+
+    [ -n "$SUDO" ] && SUDO_E="$SUDO -E" || SUDO_E=
+    DEBIAN_FRONTEND=noninteractive $SUDO_E apt-get -y install cuda-drivers -q
 }
 
 if [ ! -f "/etc/os-release" ]; then
@@ -184,7 +193,8 @@ if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\
         centos|rhel) install_cuda_driver_yum 'rhel' $OS_VERSION ;;
         rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
         fedora) install_cuda_driver_dnf $OS_NAME $OS_VERSION ;;
-        debian|ubuntu) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
+        debian) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
+        ubuntu) install_cuda_driver_apt $OS_NAME $(echo $OS_VERSION | sed 's/\.//') ;;
     esac
 fi
 
