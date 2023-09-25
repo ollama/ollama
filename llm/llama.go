@@ -237,7 +237,8 @@ func NumGPU(numLayer int64, fileSizeBytes int64, opts api.Options) int {
 
 		log.Printf("%d MiB VRAM available, loading up to %d GPU layers", vramMib, n)
 	}
-	return n
+	// default to enable metal on macOS
+	return 1
 }
 
 func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
