@@ -235,7 +235,7 @@ func NumGPU(numLayer int64, fileSizeBytes int64, opts api.Options) int {
 		// set n to the max number of layers we can fit in VRAM
 		n = int(totalVramBytes / bytesPerLayer)
 
-		log.Printf("%d MiB VRAM available, loading a maximum of %d GPU layers", vramMib, n)
+		log.Printf("%d MiB VRAM available, loading up to %d GPU layers", vramMib, n)
 	}
 	return n
 }
