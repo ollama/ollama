@@ -12,9 +12,24 @@ Ollama is distributed as a self-contained binary. Download it to a directory in 
 
 ```
 sudo curl -L https://ollama.ai/download/ollama-linux-amd64 -o /usr/bin/ollama
+sudo chmod +x /usr/bin/ollama
 ```
 
-## Install CUDA drivers (optional for Nvidia GPUs)
+## Start Ollama
+
+Start Ollama by running `ollama serve`:
+
+```
+ollama serve
+```
+
+Once Ollama is running, run a model:
+
+```
+ollama run llama2
+```
+
+## Install CUDA drivers (optional – for Nvidia GPUs)
 
 [Download and install](https://developer.nvidia.com/cuda-downloads) CUDA.
 
@@ -24,7 +39,7 @@ Verify that the drivers are installed by running the following command, which sh
 nvidia-smi
 ```
 
-## Adding Ollama as a startup service
+## Adding Ollama as a startup service (optional)
 
 Create a user for Ollama:
 
