@@ -43,7 +43,7 @@ func (p Painter) Paint(line []rune, _ int) []rune {
 		if p.IsMultiLine {
 			prompt = "Use \"\"\" to end multi-line input"
 		} else {
-			prompt = "Send a message (/? for help)"
+			prompt = "Send a message (/? for help, /bye to exit)"
 		}
 		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
 	}
