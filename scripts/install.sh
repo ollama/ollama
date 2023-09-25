@@ -204,7 +204,7 @@ if ! lsmod | grep -q nvidia; then
         debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
     esac
 
-    NVIDIA_CUDA_VERSION=$(dkms status | awk -F: '/added/ { print $1 }')
+    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
