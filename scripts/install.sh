@@ -6,6 +6,7 @@ set -eu
 
 status() { echo ">>> $*" >&2; }
 error() { echo "ERROR $*"; exit 1; }
+warning() { echo "WARNING: $*"; }
 
 TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf $TEMP_DIR; }
@@ -95,7 +96,7 @@ fi
 check_gpu() {
     case $1 in
         lspci) command -v lspci >/dev/null && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
-        lshw) command -v lshw >/dev/null && lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
+        lshw) command -v lshw >/dev/null && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
         nvidia-smi) command -v nvidia-smi >/dev/null || return 1 ;;
     esac
 }
