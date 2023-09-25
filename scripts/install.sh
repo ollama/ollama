@@ -92,7 +92,9 @@ EOF
             status "Enabling and starting ollama service..."
             $SUDO systemctl daemon-reload
             $SUDO systemctl enable ollama
-            $SUDO systemctl restart ollama
+
+            start_service() { $SUDO systemctl restart ollama; }
+            trap start_service EXIT
             ;;
     esac
 }
