@@ -195,6 +195,16 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 	return nil
 }
 
+func (llm *ggufModel) NumLayers() int64 {
+	value, exists := llm.kv[fmt.Sprintf("%s.block_count", llm.ModelFamily())]
+	if !exists {
+		return 0
+	}
+
+	v := value.(uint32)
+	return int64(v)
+}
+
 func (ggufModel) readU8(r io.Reader) uint8 {
 	var u8 uint8
 	binary.Read(r, binary.LittleEndian, &u8)

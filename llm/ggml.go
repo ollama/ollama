@@ -77,6 +77,7 @@ type model interface {
 	ModelFamily() string
 	ModelType() string
 	FileType() string
+	NumLayers() int64
 }
 
 type container interface {
