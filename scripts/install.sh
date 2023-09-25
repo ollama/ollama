@@ -86,7 +86,7 @@ Environment="HOME=/usr/share/ollama"
 [Install]
 WantedBy=default.target
 EOF
-    SYSTEMCTL_RUNNING="$(systemctl is-system-running)"
+    SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
             status "Enabling and starting ollama service..."
