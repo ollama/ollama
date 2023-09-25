@@ -138,7 +138,6 @@ install_cuda_driver_yum() {
     esac
 
     status 'Installing CUDA driver...'
-    $SUDO $PACKAGE_MANAGER -y update
 
     if [ "$1" = 'centos' ] || [ "$1$2" = 'rhel7' ]; then
         $SUDO $PACKAGE_MANAGER -y install nvidia-driver-latest-dkms
@@ -192,7 +191,7 @@ if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\
     case $OS_NAME in
         centos|rhel) install_cuda_driver_yum 'rhel' $OS_VERSION ;;
         rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
-        fedora) install_cuda_driver_dnf $OS_NAME $OS_VERSION ;;
+        fedora) install_cuda_driver_yum $OS_NAME $OS_VERSION ;;
         debian) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
         ubuntu) install_cuda_driver_apt $OS_NAME $(echo $OS_VERSION | sed 's/\.//') ;;
     esac
@@ -205,6 +204,10 @@ if ! lsmod | grep -q nvidia; then
         debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
     esac
 
-    $SUDO dkms status | awk -F: '/added/ { print $1 }' | xargs -n1 $SUDO dkms install
+    NVIDIA_CUDA_VERSION=$(dkms status | awk -F: '/added/ { print $1 }')
+    if [ -n "$NVIDIA_CUDA_VERSION" ]; then
+        $SUDO dkms install $NVIDIA_CUDA_VERSION
+    fi
+
     $SUDO modprobe nvidia
 fi
