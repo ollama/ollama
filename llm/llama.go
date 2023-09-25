@@ -211,7 +211,7 @@ func CheckVRAM() (int, error) {
 	return total, nil
 }
 
-func NumGPU(numLayer int64, fileSizeBytes int64, opts api.Options) int {
+func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
