@@ -23,7 +23,7 @@ Start Ollama by running `ollama serve`:
 ollama serve
 ```
 
-Once Ollama is running, run a model:
+Once Ollama is running, run a model in another terminal session:
 
 ```
 ollama run llama2
