@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"strconv"
 )
 
 type containerGGUF struct {
@@ -196,7 +198,27 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 }
 
 func (llm *ggufModel) NumLayers() int {
-	return llm.kv[fmt.Sprintf("%s.block_count", llm.ModelFamily())].(int)
+	value, exists := llm.kv[fmt.Sprintf("%s.block_count", llm.ModelFamily())]
+	if !exists {
+		return 0
+	}
+
+	// this should be uint32, but handle other types just in case
+	switch v := value.(type) {
+	case uint32:
+		return int(v)
+	case uint64:
+		return int(v)
+	case string:
+		if intValue, err := strconv.Atoi(v); err == nil {
+			return intValue
+		}
+	}
+
+	log.Printf("unknown block_count type: %T", value)
+
+	// If none of the cases match or conversion fails
+	return 0
 }
 
 func (ggufModel) readU8(r io.Reader) uint8 {
