@@ -152,8 +152,8 @@ func (llm *llamaModel) FileType() string {
 	return fileType(llm.hyperparameters.FileType)
 }
 
-func (llm *llamaModel) NumLayers() int {
-	return int(llm.hyperparameters.NumLayer)
+func (llm *llamaModel) NumLayers() int64 {
+	return int64(llm.hyperparameters.NumLayer)
 }
 
 type llamaHyperparameters struct {
@@ -211,7 +211,7 @@ func CheckVRAM() (int, error) {
 	return total, nil
 }
 
-func NumGPU(numLayer int, fileSizeBytes int64, opts api.Options) int {
+func NumGPU(numLayer int64, fileSizeBytes int64, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
@@ -230,7 +230,7 @@ func NumGPU(numLayer int, fileSizeBytes int64, opts api.Options) int {
 
 		// Calculate bytes per layer
 		// TODO: this is a rough heuristic, better would be to calculate this based on number of layers and context size
-		bytesPerLayer := fileSizeBytes / int64(numLayer)
+		bytesPerLayer := fileSizeBytes / numLayer
 
 		// set n to the max number of layers we can fit in VRAM
 		n = int(totalVramBytes / bytesPerLayer)
@@ -240,7 +240,7 @@ func NumGPU(numLayer int, fileSizeBytes int64, opts api.Options) int {
 	return n
 }
 
-func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int, opts api.Options) (*llama, error) {
+func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
 	fileInfo, err := os.Stat(model)
 	if err != nil {
 		return nil, err

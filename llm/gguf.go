@@ -195,13 +195,13 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 	return nil
 }
 
-func (llm *ggufModel) NumLayers() int {
+func (llm *ggufModel) NumLayers() int64 {
 	value, exists := llm.kv[fmt.Sprintf("%s.block_count", llm.ModelFamily())]
 	if !exists {
 		return 0
 	}
 
-	return value.(int)
+	return value.(int64)
 }
 
 func (ggufModel) readU8(r io.Reader) uint8 {
