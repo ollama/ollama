@@ -198,16 +198,19 @@ if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\
         centos|rhel) install_cuda_driver_yum 'rhel' $OS_VERSION ;;
         rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
         fedora) install_cuda_driver_yum $OS_NAME $OS_VERSION ;;
+        amzn) install_cuda_driver_yum 'fedora' '35' ;;
         debian) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
         ubuntu) install_cuda_driver_apt $OS_NAME $(echo $OS_VERSION | sed 's/\.//') ;;
+        *) exit ;;
     esac
 fi
 
 if ! lsmod | grep -q nvidia; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
-        centos|rhel|rocky|fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        centos|rhel|rocky|fedora|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
         debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
+        *) exit ;;
     esac
 
     NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
