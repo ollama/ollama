@@ -72,3 +72,12 @@ Then start the service:
 sudo systemctl daemon-reload
 sudo systemctl enable ollama
 ```
+
+### Viewing logs
+
+To view logs of Ollama running as a startup service, run:
+
+```
+journalctl -u ollama
+```
+
