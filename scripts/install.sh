@@ -12,10 +12,11 @@ TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf $TEMP_DIR; }
 trap cleanup EXIT
 
-required_tools() {
+available() { command -v $1 >/dev/null; }
+require() {
     local MISSING=''
     for TOOL in $*; do
-        if ! command -v $TOOL >/dev/null; then
+        if ! available $TOOL; then
             MISSING="$MISSING $TOOL"
         fi
     done
@@ -34,24 +35,24 @@ esac
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
-    if ! command -v sudo >/dev/null; then
+    if ! available sudo; then
         error "This script requires superuser permissions. Please re-run as root."
     fi
 
     SUDO="sudo"
 fi
 
-MISSING_TOOLS=$(required_tools curl awk grep sed tee xargs)
-if [ -n "$MISSING_TOOLS" ]; then
+NEEDS=$(require curl awk grep sed tee xargs)
+if [ -n "$NEEDS" ]; then
     status "ERROR: The following tools are required but missing:"
-    for MISSING_TOOL in $MISSING_TOOLS; do
-        echo "  - $MISSING_TOOL"
+    for NEED in $NEEDS; do
+        echo "  - $NEED"
     done
     exit 1
 fi
 
 status "Downloading ollama..."
-$SUDO curl -fsSL -o $TEMP_DIR/ollama "https://ollama.ai/download/ollama-linux-$ARCH"
+$SUDO curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.ai/download/ollama-linux-$ARCH"
 
 status "Installing ollama to /usr/bin..."
 $SUDO install -o0 -g0 -m755 -d /usr/bin
@@ -96,15 +97,20 @@ EOF
     esac
 }
 
-if command -v systemctl >/dev/null; then
+if available systemctl; then
     configure_systemd
+fi
+
+if ! available lspci && ! available lshw; then
+    warning "Unable to detect NVIDIA GPU. Install lspci or lshw to automatically detect and install NVIDIA CUDA drivers."
+    exit 0
 fi
 
 check_gpu() {
     case $1 in
-        lspci) command -v lspci >/dev/null && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
-        lshw) command -v lshw >/dev/null && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
-        nvidia-smi) command -v nvidia-smi >/dev/null || return 1 ;;
+        lspci) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
+        lshw) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
+        nvidia-smi) available nvidia-smi || return 1 ;;
     esac
 }
 
@@ -178,7 +184,7 @@ OS_VERSION=$VERSION_ID
 
 PACKAGE_MANAGER=
 for PACKAGE_MANAGER in dnf yum apt-get; do
-    if command -v $PACKAGE_MANAGER >/dev/null; then
+    if available $PACKAGE_MANAGER; then
         break
     fi
 done
@@ -207,6 +213,11 @@ if ! lsmod | grep -q nvidia; then
     NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
+    fi
+
+    if lsmod | grep -q nouveau; then
+        status "Removing nouveau..."
+        $SUDO rmmod nouveau
     fi
 
     $SUDO modprobe nvidia
