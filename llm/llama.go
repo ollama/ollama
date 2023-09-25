@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -212,13 +211,13 @@ func CheckVRAM() (int, error) {
 	return total, nil
 }
 
-func NumGPU(numLayer int, opts api.Options) int {
+func NumGPU(numLayer int, fileSizeBytes int64, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
 	n := 1 // default to enable metal on macOS
 	if runtime.GOOS == "linux" {
-		vram, err := CheckVRAM()
+		vramMib, err := CheckVRAM()
 		if err != nil {
 			if err.Error() != "nvidia-smi command failed" {
 				log.Print(err.Error())
@@ -226,15 +225,24 @@ func NumGPU(numLayer int, opts api.Options) int {
 			// nvidia driver not installed or no nvidia GPU found
 			return 0
 		}
-		// TODO: this is a very rough heuristic that assumes one layer of a model corresponds to 200MB of memory, better would be to calculate this based on number of layers and context size
-		n = vram / 200
-		log.Printf("%d MB VRAM available, loading %d GPU layers", vram, int(math.Max(float64(numLayer), float64(n))))
+
+		totalVramBytes := int64(vramMib) * 1024 * 1024 // 1 MiB = 1024^2 bytes
+
+		// Calculate bytes per layer
+		// TODO: this is a rough heuristic, better would be to calculate this based on number of layers and context size
+		bytesPerLayer := fileSizeBytes / int64(numLayer)
+
+		// set n to the max number of layers we can fit in VRAM
+		n := int(totalVramBytes / bytesPerLayer)
+
+		log.Printf("%d MiB VRAM available, loading %d GPU layers", vramMib, n)
 	}
 	return n
 }
 
 func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int, opts api.Options) (*llama, error) {
-	if _, err := os.Stat(model); err != nil {
+	fileInfo, err := os.Stat(model)
+	if err != nil {
 		return nil, err
 	}
 
@@ -248,7 +256,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
-		"--n-gpu-layers", fmt.Sprintf("%d", NumGPU(numLayers, opts)),
+		"--n-gpu-layers", fmt.Sprintf("%d", NumGPU(numLayers, fileInfo.Size(), opts)),
 		"--embedding",
 	}
 
