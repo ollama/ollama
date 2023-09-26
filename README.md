@@ -59,7 +59,7 @@ Here are some example open-source models that can be downloaded:
 
 Ollama supports importing GGUF and GGML file formats in the Modelfile. This means if you have a model that is not in the Ollama library, you can create it, iterate on it, and upload it to the Ollama library to share with others when you are ready.
 
-1. Create a file named Modelfile, and add a `from` tag with the local filepath to the model you want to import.
+1. Create a file named Modelfile, and add a `FROM` instruction with the local filepath to the model you want to import.
 
    ```
    FROM ./ollama-model.bin
