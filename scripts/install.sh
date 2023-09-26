@@ -227,12 +227,12 @@ if ! lsmod | grep -q nvidia; then
     fi
 
     if lsmod | grep -q nouveau; then
-        status "Removing nouveau..."
-        $SUDO rmmod nouveau
+        status 'Reboot to complete NVIDIA CUDA driver install.'
+        exit 0
     fi
 
     $SUDO modprobe nvidia
 fi
 
 
-status "NVIDIA GPU installed."
+status "NVIDIA CUDA drivers installed."
