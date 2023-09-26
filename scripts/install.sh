@@ -52,7 +52,7 @@ if [ -n "$NEEDS" ]; then
 fi
 
 status "Downloading ollama..."
-$SUDO curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.ai/download/ollama-linux-$ARCH"
+curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.ai/download/ollama-linux-$ARCH"
 
 status "Installing ollama to /usr/bin..."
 $SUDO install -o0 -g0 -m755 -d /usr/bin
