@@ -1,12 +1,15 @@
-#!/bin/bash
+#!/bin/sh
 
-set -e
+set -eu
+
+export VERSION=${VERSION:-0.0.0}
+export GOFLAGS="'-ldflags=-w -s \"-X=github.com/jmorganca/ollama/version.Version=$VERSION\" \"-X=github.com/jmorganca/ollama/server.mode=release\"'"
 
 mkdir -p dist
 
-for ARCH in arm64 amd64; do
-    docker buildx build --platform=linux/$ARCH -f Dockerfile.build . -t builder:$ARCH --load
-    docker create --platform linux/$ARCH --name builder builder:$ARCH
-    docker cp builder:/go/src/github.com/jmorganca/ollama/ollama ./dist/ollama-linux-$ARCH
-    docker rm builder
+for TARGETARCH in arm64 amd64; do
+    docker buildx build --load --platform=linux/$TARGETARCH --build-arg=VERSION --build-arg=GOFLAGS -f Dockerfile.build -t builder:$TARGETARCH .
+    docker create --platform linux/$TARGETARCH --name builder-$TARGETARCH builder:$TARGETARCH
+    docker cp builder-$TARGETARCH:/go/src/github.com/jmorganca/ollama/ollama ./dist/ollama-linux-$TARGETARCH
+    docker rm builder-$TARGETARCH
 done
