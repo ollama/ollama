@@ -117,6 +117,11 @@ check_gpu() {
     esac
 }
 
+if check_gpu nvidia-smi; then
+    status "NVIDIA GPU installed."
+    exit 0
+fi
+
 if ! check_gpu lspci && ! check_gpu lshw; then
     warning "No NVIDIA GPU detected. Ollama will run in CPU-only mode."
     exit 0
@@ -228,3 +233,6 @@ if ! lsmod | grep -q nvidia; then
 
     $SUDO modprobe nvidia
 fi
+
+
+status "NVIDIA GPU installed."
