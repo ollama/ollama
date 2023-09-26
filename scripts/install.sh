@@ -57,6 +57,7 @@ curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://
 status "Installing ollama to /usr/bin..."
 $SUDO install -o0 -g0 -m755 -d /usr/bin
 $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama /usr/bin/ollama
+$SUDO rm $TEMP_DIR/ollama
 
 install_success() { status 'Install complete. Run "ollama" from the command line.'; }
 trap install_success EXIT
@@ -216,12 +217,13 @@ fi
 if ! lsmod | grep -q nvidia; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
-        centos|rhel|rocky|fedora|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        centos|rhel|rocky|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
         debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
         *) exit ;;
     esac
 
-    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
+    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/nvidia/ { print $1 }')
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
