@@ -82,6 +82,7 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="HOME=/usr/share/ollama"
+Environment="PATH=$PATH"
 
 [Install]
 WantedBy=default.target
@@ -92,7 +93,9 @@ EOF
             status "Enabling and starting ollama service..."
             $SUDO systemctl daemon-reload
             $SUDO systemctl enable ollama
-            $SUDO systemctl restart ollama
+
+            start_service() { $SUDO systemctl restart ollama; }
+            trap start_service EXIT
             ;;
     esac
 }
@@ -113,6 +116,11 @@ check_gpu() {
         nvidia-smi) available nvidia-smi || return 1 ;;
     esac
 }
+
+if check_gpu nvidia-smi; then
+    status "NVIDIA GPU installed."
+    exit 0
+fi
 
 if ! check_gpu lspci && ! check_gpu lshw; then
     warning "No NVIDIA GPU detected. Ollama will run in CPU-only mode."
@@ -225,3 +233,6 @@ if ! lsmod | grep -q nvidia; then
 
     $SUDO modprobe nvidia
 fi
+
+
+status "NVIDIA GPU installed."
