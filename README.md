@@ -162,7 +162,7 @@ ollama list
 
 ### Start Ollama
 
-`ollama serve` used when you want to start ollama without running the desktop application.
+`ollama serve` is used when you want to start ollama without running the desktop application.
 
 ## Building
 
