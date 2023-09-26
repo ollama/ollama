@@ -1,6 +1,4 @@
-ARG CUDA_VERSION=12.2.0
-
-FROM nvidia/cuda:$CUDA_VERSION-devel-ubuntu22.04
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 ARG TARGETARCH
 ARG VERSION=0.0.0
@@ -19,13 +17,10 @@ FROM ubuntu:22.04
 ENV OLLAMA_HOST 0.0.0.0
 
 RUN apt-get update && apt-get install -y ca-certificates
-
-ARG USER=ollama
-ARG GROUP=ollama
-RUN groupadd $GROUP && useradd -m -g $GROUP $USER
+RUN groupadd ollama && useradd -m -g ollama ollama
 
 COPY --from=0 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
 
-USER $USER:$GROUP
+USER ollama:ollama
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
