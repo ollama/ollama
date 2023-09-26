@@ -62,7 +62,7 @@ Ollama supports importing GGUF and GGML file formats in the Modelfile. This mean
 1. Create a file named Modelfile, and add a `FROM` instruction with the local filepath to the model you want to import.
 
    ```
-   FROM ./ollama-model.bin
+   FROM ./vicuna-33b.Q4_0.gguf
    ```
 
 3. Create the model in Ollama
