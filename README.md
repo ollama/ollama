@@ -53,7 +53,7 @@ Here are some example open-source models that can be downloaded:
 
 > Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
 
-## Customize your own models
+## Customize your own model
 
 ### Import from GGUF or GGML
 
