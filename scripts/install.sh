@@ -216,12 +216,13 @@ fi
 if ! lsmod | grep -q nvidia; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
-        centos|rhel|rocky|fedora|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        centos|rhel|rocky|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
         debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
         *) exit ;;
     esac
 
-    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
+    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/nvidia|added/ { print $1 }')
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
