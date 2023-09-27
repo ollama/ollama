@@ -57,7 +57,6 @@ curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://
 status "Installing ollama to /usr/bin..."
 $SUDO install -o0 -g0 -m755 -d /usr/bin
 $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama /usr/bin/ollama
-$SUDO rm $TEMP_DIR/ollama
 
 install_success() { status 'Install complete. Run "ollama" from the command line.'; }
 trap install_success EXIT
@@ -223,7 +222,7 @@ if ! lsmod | grep -q nvidia; then
         *) exit ;;
     esac
 
-    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/nvidia/ { print $1 }')
+    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/nvidia|added/ { print $1 }')
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
