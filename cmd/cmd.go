@@ -127,13 +127,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	modelName, modelTag, ok := strings.Cut(args[0], ":")
-	if !ok {
-		modelTag = "latest"
-	}
-
+	canonicalModelPath := server.ParseModelPath(args[0])
 	for _, model := range models.Models {
-		if model.Name == strings.Join([]string{modelName, modelTag}, ":") {
+		if model.Name == canonicalModelPath.GetShortTagname() {
 			return RunGenerate(cmd, args)
 		}
 	}
