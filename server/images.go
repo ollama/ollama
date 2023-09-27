@@ -1005,6 +1005,39 @@ func PruneLayers() error {
 	return nil
 }
 
+func PruneDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+
+		for _, entry := range entries {
+			if err := PruneDirectory(filepath.Join(path, entry.Name())); err != nil {
+				return err
+			}
+		}
+
+		entries, err = os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+
+		if len(entries) > 0 {
+			return nil
+		}
+
+		return os.Remove(path)
+	}
+
+	return nil
+}
+
 func DeleteModel(name string) error {
 	mp := ParseModelPath(name)
 	manifest, _, err := GetManifest(mp)
