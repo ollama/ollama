@@ -10,6 +10,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pdevine/readline v1.5.2
 	github.com/spf13/cobra v1.7.0
+	golang.org/x/sync v0.3.0
 )
 
 require github.com/rivo/uniseg v0.2.0 // indirect
