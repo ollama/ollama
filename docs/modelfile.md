@@ -94,6 +94,7 @@ This bin file location should be specified as an absolute path or relative to th
 ### EMBED
 
 The EMBED instruction is used to add embeddings of files to a model. This is useful for adding custom data that the model can reference when generating an answer. Note that currently only text files are supported, formatted with each line as one embedding.
+
 ```
 FROM <model name>:<tag>
 EMBED <file path>.txt
@@ -125,11 +126,9 @@ PARAMETER <parameter> <parametervalue>
 | temperature    | The temperature of the model. Increasing the temperature will make the model answer more creatively. (Default: 0.8)                                                                                                                                     | float      | temperature 0.7      |
 | stop           | Sets the stop sequences to use.                                                                                                                                                                                                                         | string     | stop "AI assistant:" |
 | tfs_z          | Tail free sampling is used to reduce the impact of less probable tokens from the output. A higher value (e.g., 2.0) will reduce the impact more, while a value of 1.0 disables this setting. (default: 1)                                               | float      | tfs_z 1              |
-| num_predict    | Number of tokens to predict when generating text (see [Llama.cpp `--n-predict`][2]). (Default: 128, -1 = infinite generation, -2 = fill context)                                                                                                        | int        | num_predict 42       |
+| num_predict    | Maximum number of tokens to predict when generating text. (Default: 128, -1 = infinite generation, -2 = fill context)                                                                                                                                   | int        | num_predict 42       |
 | top_k          | Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)                                                                        | int        | top_k 40             |
 | top_p          | Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)                                                                 | float      | top_p 0.9            |
-
-The source code on `main` branch corresponding with this table is [`Options`][1].
 
 ### TEMPLATE
 
@@ -189,6 +188,3 @@ LICENSE """
 
 - the **modelfile is not case sensitive**. In the examples, we use uppercase for instructions to make it easier to distinguish it from arguments.
 - Instructions can be in any order. In the examples, we start with FROM instruction to keep it easily readable.
-
-[1]: https://github.com/jmorganca/ollama/blob/main/api/types.go#L161
-[2]: https://github.com/ggerganov/llama.cpp/tree/master/examples/main#number-of-tokens-to-predict
