@@ -639,6 +639,8 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 					} else {
 						usage()
 					}
+				default:
+					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
 			} else {
 				usage()
@@ -663,7 +665,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				case "template":
 					fmt.Println(resp.Template)
 				default:
-					fmt.Println("error: unknown command")
+					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
 				}
 			} else {
 				usage()
