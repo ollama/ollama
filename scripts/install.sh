@@ -222,7 +222,7 @@ if ! lsmod | grep -q nvidia; then
         *) exit ;;
     esac
 
-    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/nvidia|added/ { print $1 }')
+    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
