@@ -58,7 +58,7 @@ var loaded struct {
 var defaultSessionDuration = 5 * time.Minute
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
-func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, sessionDuration time.Duration) error {
+func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]interface{}, sessionDuration time.Duration) error {
 	opts := api.DefaultOptions()
 	if err := opts.FromMap(model.Options); err != nil {
 		log.Printf("could not load model options: %v", err)
@@ -94,7 +94,7 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 			loaded.Embeddings = model.Embeddings
 		}
 
-		llmModel, err := llm.New(model.ModelPath, model.AdapterPaths, opts)
+		llmModel, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, opts)
 		if err != nil {
 			return err
 		}
@@ -130,6 +130,7 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 			llmModel.SetOptions(opts)
 		}
 	}
+
 	loaded.expireAt = time.Now().Add(sessionDuration)
 
 	if loaded.expireTimer == nil {
@@ -150,6 +151,7 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 			loaded.digest = ""
 		})
 	}
+
 	loaded.expireTimer.Reset(sessionDuration)
 	return nil
 }
@@ -172,8 +174,11 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	sessionDuration := defaultSessionDuration // TODO: set this duration from the request if specified
-	if err := load(c.Request.Context(), model, req.Options, sessionDuration); err != nil {
+	workDir := c.GetString("workDir")
+
+	// TODO: set this duration from the request if specified
+	sessionDuration := defaultSessionDuration
+	if err := load(c.Request.Context(), workDir, model, req.Options, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -218,7 +223,8 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if req.Prompt == "" {
+		// an empty request loads the model
+		if req.Prompt == "" && req.Template == "" && req.System == "" {
 			ch <- api.GenerateResponse{Model: req.Model, Done: true}
 		} else {
 			if err := loaded.llm.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
@@ -245,7 +251,9 @@ func EmbeddingHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := load(c.Request.Context(), model, req.Options, 5*time.Minute); err != nil {
+
+	workDir := c.GetString("workDir")
+	if err := load(c.Request.Context(), workDir, model, req.Options, 5*time.Minute); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -335,6 +343,8 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
+	workDir := c.GetString("workDir")
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -345,7 +355,7 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, req.Name, req.Path, fn); err != nil {
+		if err := CreateModel(ctx, workDir, req.Name, req.Path, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -499,33 +509,40 @@ func CopyModelHandler(c *gin.Context) {
 	}
 }
 
-func Serve(ln net.Listener, origins []string) error {
+var defaultAllowOrigins = []string{
+	"localhost",
+	"127.0.0.1",
+	"0.0.0.0",
+}
+
+func Serve(ln net.Listener, allowOrigins []string) error {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
-	config.AllowOrigins = append(origins, []string{
-		"http://localhost",
-		"http://localhost:*",
-		"https://localhost",
-		"https://localhost:*",
-		"http://127.0.0.1",
-		"http://127.0.0.1:*",
-		"https://127.0.0.1",
-		"https://127.0.0.1:*",
-		"http://0.0.0.0",
-		"http://0.0.0.0:*",
-		"https://0.0.0.0",
-		"https://0.0.0.0:*",
-	}...)
+
+	config.AllowOrigins = allowOrigins
+	for _, allowOrigin := range defaultAllowOrigins {
+		config.AllowOrigins = append(config.AllowOrigins,
+			fmt.Sprintf("http://%s", allowOrigin),
+			fmt.Sprintf("https://%s", allowOrigin),
+			fmt.Sprintf("http://%s:*", allowOrigin),
+			fmt.Sprintf("https://%s:*", allowOrigin),
+		)
+	}
+
+	workDir, err := os.MkdirTemp("", "ollama")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(workDir)
 
 	r := gin.Default()
-	r.Use(cors.New(config))
-
-	r.GET("/", func(c *gin.Context) {
-		c.String(http.StatusOK, "Ollama is running")
-	})
-	r.HEAD("/", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
+	r.Use(
+		cors.New(config),
+		func(c *gin.Context) {
+			c.Set("workDir", workDir)
+			c.Next()
+		},
+	)
 
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
@@ -533,9 +550,16 @@ func Serve(ln net.Listener, origins []string) error {
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)
-	r.GET("/api/tags", ListModelsHandler)
 	r.DELETE("/api/delete", DeleteModelHandler)
 	r.POST("/api/show", ShowModelHandler)
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		r.Handle(method, "/", func(c *gin.Context) {
+			c.String(http.StatusOK, "Ollama is running")
+		})
+
+		r.Handle(method, "/api/tags", ListModelsHandler)
+	}
 
 	log.Printf("Listening on %s", ln.Addr())
 	s := &http.Server{
@@ -544,12 +568,13 @@ func Serve(ln net.Listener, origins []string) error {
 
 	// listen for a ctrl+c and stop any loaded llm
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
 		if loaded.llm != nil {
 			loaded.llm.Close()
 		}
+		os.RemoveAll(workDir)
 		os.Exit(0)
 	}()
 

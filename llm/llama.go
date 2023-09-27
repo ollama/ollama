@@ -32,7 +32,7 @@ type ModelRunner struct {
 	Path string // path to the model runner executable
 }
 
-func chooseRunners(runnerType string) []ModelRunner {
+func chooseRunners(workDir, runnerType string) []ModelRunner {
 	buildPath := path.Join("llama.cpp", runnerType, "build")
 	var runners []string
 
@@ -61,11 +61,6 @@ func chooseRunners(runnerType string) []ModelRunner {
 		}
 	}
 
-	// copy the files locally to run the llama.cpp server
-	tmpDir, err := os.MkdirTemp("", "llama-*")
-	if err != nil {
-		log.Fatalf("load llama runner: failed to create temp dir: %v", err)
-	}
 	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
 	for _, r := range runners {
 		// find all the files in the runner's bin directory
@@ -85,18 +80,27 @@ func chooseRunners(runnerType string) []ModelRunner {
 			defer srcFile.Close()
 
 			// create the directory in case it does not exist
-			destPath := filepath.Join(tmpDir, filepath.Dir(f))
+			destPath := filepath.Join(workDir, filepath.Dir(f))
 			if err := os.MkdirAll(destPath, 0o755); err != nil {
 				log.Fatalf("create runner temp dir %s: %v", filepath.Dir(f), err)
 			}
-			destFile, err := os.OpenFile(filepath.Join(destPath, filepath.Base(f)), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-			if err != nil {
-				log.Fatalf("write llama runner %s: %v", f, err)
-			}
-			defer destFile.Close()
 
-			if _, err := io.Copy(destFile, srcFile); err != nil {
-				log.Fatalf("copy llama runner %s: %v", f, err)
+			destFile := filepath.Join(destPath, filepath.Base(f))
+
+			_, err = os.Stat(destFile)
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+				if err != nil {
+					log.Fatalf("write llama runner %s: %v", f, err)
+				}
+				defer destFile.Close()
+
+				if _, err := io.Copy(destFile, srcFile); err != nil {
+					log.Fatalf("copy llama runner %s: %v", f, err)
+				}
+			case err != nil:
+				log.Fatalf("stat llama runner %s: %v", f, err)
 			}
 		}
 	}
@@ -107,7 +111,7 @@ func chooseRunners(runnerType string) []ModelRunner {
 	// return the runners to try in priority order
 	localRunnersByPriority := []ModelRunner{}
 	for _, r := range runners {
-		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(tmpDir, r)})
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(workDir, r)})
 	}
 
 	return localRunnersByPriority
@@ -146,6 +150,10 @@ func (llm *llamaModel) ModelType() string {
 
 func (llm *llamaModel) FileType() string {
 	return fileType(llm.hyperparameters.FileType)
+}
+
+func (llm *llamaModel) NumLayers() int64 {
+	return int64(llm.hyperparameters.NumLayer)
 }
 
 type llamaHyperparameters struct {
@@ -203,13 +211,13 @@ func CheckVRAM() (int, error) {
 	return total, nil
 }
 
-func NumGPU(opts api.Options) int {
+func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
 	n := 1 // default to enable metal on macOS
 	if runtime.GOOS == "linux" {
-		vram, err := CheckVRAM()
+		vramMib, err := CheckVRAM()
 		if err != nil {
 			if err.Error() != "nvidia-smi command failed" {
 				log.Print(err.Error())
@@ -217,33 +225,25 @@ func NumGPU(opts api.Options) int {
 			// nvidia driver not installed or no nvidia GPU found
 			return 0
 		}
-		// TODO: this is a very rough heuristic, better would be to calculate this based on number of layers and context size
-		switch {
-		case vram < 500:
-			log.Printf("WARNING: Low VRAM detected, disabling GPU")
-			n = 0
-		case vram < 1000:
-			n = 4
-		case vram < 2000:
-			n = 8
-		case vram < 4000:
-			n = 12
-		case vram < 8000:
-			n = 16
-		case vram < 12000:
-			n = 24
-		case vram < 16000:
-			n = 32
-		default:
-			n = 48
-		}
-		log.Printf("%d MB VRAM available, loading %d GPU layers", vram, n)
+
+		totalVramBytes := int64(vramMib) * 1024 * 1024 // 1 MiB = 1024^2 bytes
+
+		// Calculate bytes per layer
+		// TODO: this is a rough heuristic, better would be to calculate this based on number of layers and context size
+		bytesPerLayer := fileSizeBytes / numLayer
+
+		// set n to the max number of layers we can fit in VRAM
+		return int(totalVramBytes / bytesPerLayer)
+
+		log.Printf("%d MiB VRAM available, loading up to %d GPU layers", vramMib, n)
 	}
-	return n
+	// default to enable metal on macOS
+	return 1
 }
 
-func newLlama(model string, adapters []string, runners []ModelRunner, opts api.Options) (*llama, error) {
-	if _, err := os.Stat(model); err != nil {
+func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
+	fileInfo, err := os.Stat(model)
+	if err != nil {
 		return nil, err
 	}
 
@@ -257,7 +257,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, opts api.O
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
-		"--n-gpu-layers", fmt.Sprintf("%d", NumGPU(opts)),
+		"--n-gpu-layers", fmt.Sprintf("%d", NumGPU(numLayers, fileInfo.Size(), opts)),
 		"--embedding",
 	}
 

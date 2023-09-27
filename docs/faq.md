@@ -14,4 +14,6 @@ OLLAMA_ORIGINS=http://192.168.1.1:*,https://example.com ollama serve
 
 ## Where are models stored?
 
-Raw model data is stored under `~/.ollama/models`.
+* macOS: Raw model data is stored under `~/.ollama/models`.
+* Linux: Raw model data is stored under `/usr/share/ollama/.ollama/models`
+
