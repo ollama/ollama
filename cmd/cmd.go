@@ -407,8 +407,17 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 
 	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
 	if !ok {
+		generateContext, err = cmd.Flags().GetIntSlice("context")
+		if err != nil {
+			return err
+		}
+	}
+	if generateContext == nil {
 		generateContext = []int{}
 	}
+
+	template, _ := cmd.Flags().GetString("template")
+	stop, _ := cmd.Flags().GetStringSlice("stop")
 
 	var wrapTerm bool
 	termType := os.Getenv("TERM")
@@ -433,7 +442,13 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 	var currentLineLength int
 	var wordBuffer string
 
-	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext}
+	request := api.GenerateRequest{
+		Model:    model,
+		Prompt:   prompt,
+		Context:  generateContext,
+		Template: template,
+		Options:  map[string]any{"stop": stop},
+	}
 	fn := func(response api.GenerateResponse) error {
 		if !spinner.IsFinished() {
 			spinner.Finish()
@@ -878,6 +893,9 @@ func NewCLI() *cobra.Command {
 		RunE:    RunHandler,
 	}
 
+	runCmd.Flags().IntSlice("context", nil, "Context tokens from previous request (for conversational memory)")
+	runCmd.Flags().String("template", "", "Prompt template")
+	runCmd.Flags().StringSlice("stop", nil, "Stop sequences")
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
