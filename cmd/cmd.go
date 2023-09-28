@@ -43,7 +43,7 @@ func (p Painter) Paint(line []rune, _ int) []rune {
 		if p.IsMultiLine {
 			prompt = "Use \"\"\" to end multi-line input"
 		} else {
-			prompt = "Send a message (/? for help, /bye to exit)"
+			prompt = "Send a message (/? for help)"
 		}
 		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
 	}
@@ -518,7 +518,6 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 
 	completer := readline.NewPrefixCompleter(
 		readline.PcItem("/help"),
-		readline.PcItem("/list"),
 		readline.PcItem("/set",
 			readline.PcItem("history"),
 			readline.PcItem("nohistory"),
@@ -597,11 +596,6 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
 			scanner.SetPrompt("... ")
 			continue
-		case strings.HasPrefix(line, "/list"):
-			args := strings.Fields(line)
-			if err := ListHandler(cmd, args[1:]); err != nil {
-				return err
-			}
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
