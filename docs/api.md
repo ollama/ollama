@@ -23,6 +23,10 @@ Model names follow a `model:tag` format. Some examples are `orca-mini:3b-q4_1` a
 
 All durations are returned in nanoseconds.
 
+### Progress responses
+
+Ollama streams progress responses for some of the endpoints. The progress response chunks are delineated with new-line (`\n`) delimiter.
+
 ## Generate a completion
 
 ```shell
