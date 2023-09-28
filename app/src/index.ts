@@ -5,7 +5,7 @@ import winston from 'winston'
 import 'winston-daily-rotate-file'
 import * as path from 'path'
 
-import { analytics, id } from './telemetry'
+import { v4 as uuidv4 } from 'uuid'
 import { installed } from './install'
 
 require('@electron/remote/main').initialize()
@@ -164,11 +164,11 @@ app.on('before-quit', () => {
 
 function init() {
   if (app.isPackaged) {
-    heartbeat()
     autoUpdater.checkForUpdates()
     setInterval(() => {
-      heartbeat()
-      autoUpdater.checkForUpdates()
+      if (!updateAvailable) {
+        autoUpdater.checkForUpdates()
+      }
     }, 60 * 60 * 1000)
   }
 
@@ -234,28 +234,26 @@ app.on('window-all-closed', () => {
   }
 })
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.
-let aid = ''
-try {
-  aid = id()
-} catch (e) {}
+function id(): string {
+  const id = store.get('id') as string
 
-autoUpdater.setFeedURL({
-  url: `https://ollama.ai/api/update?os=${process.platform}&arch=${process.arch}&version=${app.getVersion()}&id=${aid}`,
-})
+  if (id) {
+    return id
+  }
 
-async function heartbeat() {
-  analytics.track({
-    anonymousId: aid,
-    event: 'heartbeat',
-    properties: {
-      version: app.getVersion(),
-    },
-  })
+  const uuid = uuidv4()
+  store.set('id', uuid)
+  return uuid
 }
 
+autoUpdater.setFeedURL({
+  url: `https://ollama.ai/api/update?os=${process.platform}&arch=${
+    process.arch
+  }&version=${app.getVersion()}&id=${id()}`,
+})
+
 autoUpdater.on('error', e => {
+  logger.error(`update check failed - ${e.message}`)
   console.error(`update check failed - ${e.message}`)
 })
 
