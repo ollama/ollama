@@ -46,8 +46,8 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 		// we already have the file, so return
 		opts.fn(api.ProgressResponse{
 			Digest:    opts.digest,
-			Total:     int(fi.Size()),
-			Completed: int(fi.Size()),
+			Total:     fi.Size(),
+			Completed: fi.Size(),
 		})
 
 		return nil
@@ -93,8 +93,8 @@ func monitorDownload(ctx context.Context, opts downloadOpts, f *FileDownload) er
 					// successful download while monitoring
 					opts.fn(api.ProgressResponse{
 						Digest:    f.Digest,
-						Total:     int(fi.Size()),
-						Completed: int(fi.Size()),
+						Total:     fi.Size(),
+						Completed: fi.Size(),
 					})
 					return true, false, nil
 				}
@@ -109,8 +109,8 @@ func monitorDownload(ctx context.Context, opts downloadOpts, f *FileDownload) er
 			opts.fn(api.ProgressResponse{
 				Status:    fmt.Sprintf("downloading %s", f.Digest),
 				Digest:    f.Digest,
-				Total:     int(f.Total),
-				Completed: int(f.Completed),
+				Total:     f.Total,
+				Completed: f.Completed,
 			})
 			return false, false, nil
 		}()
@@ -129,8 +129,8 @@ func monitorDownload(ctx context.Context, opts downloadOpts, f *FileDownload) er
 }
 
 var (
-	chunkSize   = 1024 * 1024 // 1 MiB in bytes
-	errDownload = fmt.Errorf("download failed")
+	chunkSize   int64 = 1024 * 1024 // 1 MiB in bytes
+	errDownload       = fmt.Errorf("download failed")
 )
 
 // doDownload downloads a blob from the registry and stores it in the blobs directory
@@ -147,7 +147,7 @@ func doDownload(ctx context.Context, opts downloadOpts, f *FileDownload) error {
 	default:
 		size = fi.Size()
 		// Ensure the size is divisible by the chunk size by removing excess bytes
-		size -= size % int64(chunkSize)
+		size -= size % chunkSize
 
 		err := os.Truncate(f.FilePath+"-partial", size)
 		if err != nil {
@@ -200,8 +200,8 @@ outerLoop:
 			opts.fn(api.ProgressResponse{
 				Status:    fmt.Sprintf("downloading %s", f.Digest),
 				Digest:    f.Digest,
-				Total:     int(f.Total),
-				Completed: int(f.Completed),
+				Total:     f.Total,
+				Completed: f.Completed,
 			})
 
 			if f.Completed >= f.Total {
@@ -213,8 +213,8 @@ outerLoop:
 					opts.fn(api.ProgressResponse{
 						Status:    fmt.Sprintf("error renaming file: %v", err),
 						Digest:    f.Digest,
-						Total:     int(f.Total),
-						Completed: int(f.Completed),
+						Total:     f.Total,
+						Completed: f.Completed,
 					})
 					return err
 				}
@@ -223,7 +223,7 @@ outerLoop:
 			}
 		}
 
-		n, err := io.CopyN(out, resp.Body, int64(chunkSize))
+		n, err := io.CopyN(out, resp.Body, chunkSize)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return fmt.Errorf("%w: %w", errDownload, err)
 		}

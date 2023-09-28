@@ -4,9 +4,9 @@ import "testing"
 
 func TestParseModelPath(t *testing.T) {
 	tests := []struct {
-		name    string
-		arg    string
-		want    ModelPath
+		name string
+		arg  string
+		want ModelPath
 	}{
 		{
 			"full path https",
