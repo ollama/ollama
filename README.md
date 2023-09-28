@@ -48,6 +48,7 @@ Here are some example open-source models that can be downloaded:
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
 | Llama 2 13B        | 13B        | 7.3GB | `ollama run llama2:13b`        |
 | Llama 2 70B        | 70B        | 39GB  | `ollama run llama2:70b`        |
+| Mistral 7B         | 7B         | 4.1GB  | `ollama run mistral`          |
 | Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | Vicuna             | 7B         | 3.8GB | `ollama run vicuna`            |
 
