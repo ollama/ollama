@@ -168,7 +168,9 @@ function init() {
     autoUpdater.checkForUpdates()
     setInterval(() => {
       heartbeat()
-      autoUpdater.checkForUpdates()
+      if (!updateAvailable) {
+        autoUpdater.checkForUpdates()
+      }
     }, 60 * 60 * 1000)
   }
 
@@ -256,6 +258,7 @@ async function heartbeat() {
 }
 
 autoUpdater.on('error', e => {
+  logger.error(`update check failed - ${e.message}`)
   console.error(`update check failed - ${e.message}`)
 })
 
