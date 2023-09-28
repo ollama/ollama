@@ -113,7 +113,7 @@ type TokenResponse struct {
 type GenerateResponse struct {
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response,omitempty"`
+	Response  string    `json:"response"`
 
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`
