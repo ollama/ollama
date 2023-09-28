@@ -36,17 +36,17 @@ type RegistryOptions struct {
 }
 
 type Model struct {
-	Name          string `json:"name"`
-	ShortName     string
-	ModelPath     string
-	OriginalModel string
-	AdapterPaths  []string
-	Template      string
-	System        string
-	License       []string
-	Digest        string
-	ConfigDigest  string
-	Options       map[string]interface{}
+	Name         string   `json:"-"`
+	ShortName    string   `json:"-"`
+	ModelPath    string   `json:"-"`
+	Template     string   `json:"-"`
+	System       string   `json:"-"`
+	License      []string `json:"-"`
+	RunnerDigest string   // RunnerDigest is used to identify when the loaded model should be changed
+	// these fields are used to determine the RunnerDigest
+	OriginalModel string                 `json:"originalModel"`
+	AdapterPaths  []string               `json:"adapterPaths"`
+	Options       map[string]interface{} `json:"options"`
 }
 
 func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
@@ -149,29 +149,26 @@ func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
 	}
 
 	shaSum := sha256.Sum256(bts)
-	shaStr := hex.EncodeToString(shaSum[:])
 
 	if err := json.Unmarshal(bts, &manifest); err != nil {
 		return nil, "", err
 	}
 
-	return manifest, shaStr, nil
+	return manifest, hex.EncodeToString(shaSum[:]), nil
 }
 
 func GetModel(name string) (*Model, error) {
 	mp := ParseModelPath(name)
-	manifest, digest, err := GetManifest(mp)
+	manifest, _, err := GetManifest(mp)
 	if err != nil {
 		return nil, err
 	}
 
 	model := &Model{
-		Name:         mp.GetFullTagname(),
-		ShortName:    mp.GetShortTagname(),
-		Digest:       digest,
-		ConfigDigest: manifest.Config.Digest,
-		Template:     "{{ .Prompt }}",
-		License:      []string{},
+		Name:      mp.GetFullTagname(),
+		ShortName: mp.GetShortTagname(),
+		Template:  "{{ .Prompt }}",
+		License:   []string{},
 	}
 
 	for _, layer := range manifest.Layers {
@@ -231,7 +228,22 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
+	runnerDigest, err := runnerDigest(model)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate runner digest: %v", err)
+	}
+	model.RunnerDigest = runnerDigest
+
 	return model, nil
+}
+
+func runnerDigest(m *Model) (string, error) {
+	encodedModel, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode model: %v", err)
+	}
+	hash := sha256.Sum256(encodedModel)
+	return hex.EncodeToString(hash[:]), nil
 }
 
 func filenameWithPath(path, f string) (string, error) {

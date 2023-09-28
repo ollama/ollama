@@ -50,8 +50,9 @@ var loaded struct {
 	expireAt    time.Time
 	expireTimer *time.Timer
 
-	digest  string
-	options api.Options
+	runnerDigest string
+	system       string // TODO: this shouldn't be something this is set one time and then never changed
+	options      api.Options
 }
 
 var defaultSessionDuration = 5 * time.Minute
@@ -72,19 +73,18 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 	if loaded.llm != nil {
 		if err := loaded.llm.Ping(ctx); err != nil {
 			log.Print("loaded llm process not responding, closing now")
-			// the subprocess is no longer running, so close it
 			loaded.llm.Close()
 			loaded.llm = nil
-			loaded.digest = ""
+			loaded.runnerDigest = ""
 		}
 	}
 
-	if model.Digest != loaded.digest || !reflect.DeepEqual(loaded.options, opts) {
+	if model.RunnerDigest != loaded.runnerDigest || !reflect.DeepEqual(loaded.options, opts) {
 		if loaded.llm != nil {
 			log.Println("changing loaded model")
 			loaded.llm.Close()
 			loaded.llm = nil
-			loaded.digest = ""
+			loaded.runnerDigest = ""
 		}
 
 		llmModel, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, opts)
@@ -94,34 +94,8 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 
 		// set cache values before modifying opts
 		loaded.llm = llmModel
-		loaded.digest = model.Digest
+		loaded.runnerDigest = model.RunnerDigest
 		loaded.options = opts
-
-		if opts.NumKeep < 0 {
-			promptWithSystem, err := model.Prompt(api.GenerateRequest{})
-			if err != nil {
-				return err
-			}
-
-			promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}})
-			if err != nil {
-				return err
-			}
-
-			tokensWithSystem, err := llmModel.Encode(ctx, promptWithSystem)
-			if err != nil {
-				return err
-			}
-
-			tokensNoSystem, err := llmModel.Encode(ctx, promptNoSystem)
-			if err != nil {
-				return err
-			}
-
-			opts.NumKeep = len(tokensWithSystem) - len(tokensNoSystem)
-
-			llmModel.SetOptions(opts)
-		}
 	}
 
 	loaded.expireAt = time.Now().Add(sessionDuration)
@@ -141,8 +115,36 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 
 			loaded.llm.Close()
 			loaded.llm = nil
-			loaded.digest = ""
+			loaded.runnerDigest = ""
 		})
+	}
+
+	if loaded.system != model.System && loaded.options.NumKeep < 0 {
+		// keep the system prompt in the context to preserve behavior, it is assmed to be at the beginning of the prompt
+		promptWithSystem, err := model.Prompt(api.GenerateRequest{})
+		if err != nil {
+			return err
+		}
+
+		promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}})
+		if err != nil {
+			return err
+		}
+
+		tokensWithSystem, err := loaded.llm.Encode(ctx, promptWithSystem)
+		if err != nil {
+			return err
+		}
+
+		tokensNoSystem, err := loaded.llm.Encode(ctx, promptNoSystem)
+		if err != nil {
+			return err
+		}
+
+		opts.NumKeep = len(tokensWithSystem) - len(tokensNoSystem)
+
+		loaded.system = model.System
+		loaded.llm.SetOptions(opts)
 	}
 
 	loaded.expireTimer.Reset(sessionDuration)
