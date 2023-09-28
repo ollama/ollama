@@ -240,7 +240,7 @@ func GenerateHandler(c *gin.Context) {
 		}
 	}()
 
-	if c.GetHeader("X-Streamed") == "false" {
+	if c.GetHeader("X-Stream") == "false" {
 		var response api.GenerateResponse
 		generated := ""
 		for resp := range ch {

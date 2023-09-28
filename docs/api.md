@@ -48,7 +48,7 @@ Advanced parameters:
 
 ### Headers
 
-- `X-Streamed`: By default, this endpoint streams its response. If you'd prefer to receive only a single response instead of a stream, set this header to false.
+- `X-Stream`: By default, this endpoint streams its response. If you'd prefer to receive only a single response instead of a stream, set this header to false.
 
 ### Request
 
@@ -64,7 +64,7 @@ curl -X POST http://localhost:11434/api/generate -d '{
 Single response:
 
 ```shell
-curl -X POST http://localhost:11434/api/generate -H "X-Streamed: false" -d '{
+curl -X POST http://localhost:11434/api/generate -H "X-Stream: false" -d '{
   "model": "llama2:7b",
   "prompt": "Why is the sky blue?"
 }'
