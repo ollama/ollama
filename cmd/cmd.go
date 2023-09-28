@@ -647,6 +647,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				resp, err := server.GetModelInfo(model)
 				if err != nil {
 					fmt.Println("error: couldn't get model")
+					return err
 				}
 
 				switch args[1] {
