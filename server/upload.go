@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	redirectChunkSize = 1024 * 1024 * 1024
-	regularChunkSize  = 95 * 1024 * 1024
+	redirectChunkSize int64 = 1024 * 1024 * 1024
+	regularChunkSize  int64 = 95 * 1024 * 1024
 )
 
 func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *RegistryOptions) (*url.URL, int64, error) {
@@ -48,7 +48,7 @@ func startUpload(ctx context.Context, mp ModelPath, layer *Layer, regOpts *Regis
 		return nil, 0, err
 	}
 
-	return locationURL, int64(chunkSize), nil
+	return locationURL, chunkSize, nil
 }
 
 func uploadBlob(ctx context.Context, requestURL *url.URL, layer *Layer, chunkSize int64, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
@@ -73,10 +73,10 @@ func uploadBlob(ctx context.Context, requestURL *url.URL, layer *Layer, chunkSiz
 		fn:     fn,
 	}
 
-	for offset := int64(0); offset < int64(layer.Size); {
-		chunk := int64(layer.Size) - offset
-		if chunk > int64(chunkSize) {
-			chunk = int64(chunkSize)
+	for offset := int64(0); offset < layer.Size; {
+		chunk := layer.Size - offset
+		if chunk > chunkSize {
+			chunk = chunkSize
 		}
 
 		resp, err := uploadBlobChunk(ctx, http.MethodPatch, requestURL, f, offset, chunk, regOpts, &pw)
@@ -85,7 +85,7 @@ func uploadBlob(ctx context.Context, requestURL *url.URL, layer *Layer, chunkSiz
 				Status:    fmt.Sprintf("error uploading chunk: %v", err),
 				Digest:    layer.Digest,
 				Total:     layer.Size,
-				Completed: int(offset),
+				Completed: offset,
 			})
 
 			return err
@@ -127,7 +127,7 @@ func uploadBlob(ctx context.Context, requestURL *url.URL, layer *Layer, chunkSiz
 }
 
 func uploadBlobChunk(ctx context.Context, method string, requestURL *url.URL, r io.ReaderAt, offset, limit int64, opts *RegistryOptions, pw *ProgressWriter) (*http.Response, error) {
-	sectionReader := io.NewSectionReader(r, int64(offset), limit)
+	sectionReader := io.NewSectionReader(r, offset, limit)
 
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/octet-stream")
@@ -152,7 +152,7 @@ func uploadBlobChunk(ctx context.Context, method string, requestURL *url.URL, r 
 				return nil, err
 			}
 
-			pw.completed = int(offset)
+			pw.completed = offset
 			if _, err := uploadBlobChunk(ctx, http.MethodPut, location, r, offset, limit, nil, pw); err != nil {
 				// retry
 				log.Printf("retrying redirected upload: %v", err)
@@ -170,7 +170,7 @@ func uploadBlobChunk(ctx context.Context, method string, requestURL *url.URL, r 
 
 			opts.Token = token
 
-			pw.completed = int(offset)
+			pw.completed = offset
 			sectionReader = io.NewSectionReader(r, offset, limit)
 			continue
 		case resp.StatusCode >= http.StatusBadRequest:
@@ -187,19 +187,19 @@ func uploadBlobChunk(ctx context.Context, method string, requestURL *url.URL, r 
 type ProgressWriter struct {
 	status    string
 	digest    string
-	bucket    int
-	completed int
-	total     int
+	bucket    int64
+	completed int64
+	total     int64
 	fn        func(api.ProgressResponse)
 }
 
 func (pw *ProgressWriter) Write(b []byte) (int, error) {
 	n := len(b)
-	pw.bucket += n
-	pw.completed += n
+	pw.bucket += int64(n)
 
 	// throttle status updates to not spam the client
-	if pw.bucket >= 1024*1024 || pw.completed >= pw.total {
+	if pw.bucket >= 1024*1024 || pw.completed+pw.bucket >= pw.total {
+		pw.completed += pw.bucket
 		pw.fn(api.ProgressResponse{
 			Status:    pw.status,
 			Digest:    pw.digest,

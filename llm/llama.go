@@ -187,7 +187,7 @@ type llama struct {
 var errNoGPU = errors.New("nvidia-smi command failed")
 
 // CheckVRAM returns the available VRAM in MiB on Linux machines with NVIDIA GPUs
-func CheckVRAM() (int, error) {
+func CheckVRAM() (int64, error) {
 	cmd := exec.Command("nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -196,11 +196,11 @@ func CheckVRAM() (int, error) {
 		return 0, errNoGPU
 	}
 
-	var total int
+	var total int64
 	scanner := bufio.NewScanner(&stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
-		vram, err := strconv.Atoi(line)
+		vram, err := strconv.ParseInt(strings.TrimSpace(line), 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
 		}

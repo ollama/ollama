@@ -88,8 +88,8 @@ type PullRequest struct {
 type ProgressResponse struct {
 	Status    string `json:"status"`
 	Digest    string `json:"digest,omitempty"`
-	Total     int    `json:"total,omitempty"`
-	Completed int    `json:"completed,omitempty"`
+	Total     int64  `json:"total,omitempty"`
+	Completed int64  `json:"completed,omitempty"`
 }
 
 type PushRequest struct {
@@ -106,7 +106,7 @@ type ListResponse struct {
 type ModelResponse struct {
 	Name       string    `json:"name"`
 	ModifiedAt time.Time `json:"modified_at"`
-	Size       int       `json:"size"`
+	Size       int64     `json:"size"`
 	Digest     string    `json:"digest"`
 }
 

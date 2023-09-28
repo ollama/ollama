@@ -103,7 +103,7 @@ type ManifestV2 struct {
 type Layer struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
-	Size      int    `json:"size"`
+	Size      int64  `json:"size"`
 	From      string `json:"from,omitempty"`
 }
 
@@ -129,11 +129,11 @@ type RootFS struct {
 	DiffIDs []string `json:"diff_ids"`
 }
 
-func (m *ManifestV2) GetTotalSize() int {
-	var total int
+func (m *ManifestV2) GetTotalSize() (total int64) {
 	for _, layer := range m.Layers {
 		total += layer.Size
 	}
+
 	total += m.Config.Size
 	return total
 }
@@ -649,8 +649,8 @@ func embeddingLayers(workDir string, e EmbeddingParams) ([]*LayerReader, error) 
 					e.fn(api.ProgressResponse{
 						Status:    fmt.Sprintf("creating embeddings for file %s", filePath),
 						Digest:    fileDigest,
-						Total:     len(data) - 1,
-						Completed: i,
+						Total:     int64(len(data) - 1),
+						Completed: int64(i),
 					})
 					if len(existing[d]) > 0 {
 						// already have an embedding for this line
@@ -675,7 +675,7 @@ func embeddingLayers(workDir string, e EmbeddingParams) ([]*LayerReader, error) 
 					Layer: Layer{
 						MediaType: "application/vnd.ollama.image.embed",
 						Digest:    digest,
-						Size:      r.Len(),
+						Size:      r.Size(),
 					},
 					Reader: r,
 				}
@@ -1356,14 +1356,14 @@ func createConfigLayer(config ConfigV2, layers []string) (*LayerReader, error) {
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer
-func GetSHA256Digest(r io.Reader) (string, int) {
+func GetSHA256Digest(r io.Reader) (string, int64) {
 	h := sha256.New()
 	n, err := io.Copy(h, r)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return fmt.Sprintf("sha256:%x", h.Sum(nil)), int(n)
+	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
 // Function to check if a blob already exists in the Docker registry
