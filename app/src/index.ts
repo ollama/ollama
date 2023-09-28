@@ -243,7 +243,6 @@ function id(): string {
 
   const uuid = uuidv4()
   store.set('id', uuid)
-  logger.info(`[UUID] ${uuid}`)
   return uuid
 }
 
