@@ -80,12 +80,13 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 			}
 			defer srcFile.Close()
 
-			// create the directory in case it does not exist
+			// create the directory in case it does not exist, filepath.Dir() converts the file path to the OS's format
 			destPath := filepath.Join(workDir, filepath.Dir(f))
 			if err := os.MkdirAll(destPath, 0o755); err != nil {
 				log.Fatalf("create runner temp dir %s: %v", filepath.Dir(f), err)
 			}
 
+			// create the path to the destination file, filepath.Base() converts the file path to the OS's format
 			destFile := filepath.Join(destPath, filepath.Base(f))
 
 			_, err = os.Stat(destFile)
@@ -112,9 +113,8 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	// return the runners to try in priority order
 	localRunnersByPriority := []ModelRunner{}
 	for _, r := range runners {
-		p := path.Join(workDir, r)
-		p = filepath.FromSlash(p)
-		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: p})
+		// clean the ModelRunner paths so that they match the OS we are running on
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: filepath.Clean(path.Join(workDir, r))})
 	}
 
 	return localRunnersByPriority
