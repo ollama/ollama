@@ -111,7 +111,9 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	// return the runners to try in priority order
 	localRunnersByPriority := []ModelRunner{}
 	for _, r := range runners {
-		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(workDir, r)})
+		p := path.Join(workDir, r)
+		p = filepath.FromSlash(p)
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: p})
 	}
 
 	return localRunnersByPriority
