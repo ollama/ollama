@@ -64,15 +64,16 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
 	for _, r := range runners {
 		// find all the files in the runner's bin directory
-		files, err := fs.Glob(llamaCppEmbed, filepath.Join(filepath.Dir(r), "*"))
+		files, err := fs.Glob(llamaCppEmbed, path.Join(path.Dir(r), "*"))
 		if err != nil {
 			// this is expected, ollama may be compiled without all runners packed in
 			log.Printf("%s runner not found: %v", r, err)
 			continue
 		}
-		runnerAvailable = true
 
 		for _, f := range files {
+			runnerAvailable = true
+
 			srcFile, err := llamaCppEmbed.Open(f)
 			if err != nil {
 				log.Fatalf("read llama runner %s: %v", f, err)
