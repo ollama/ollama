@@ -658,7 +658,6 @@ func waitForStream(c *gin.Context, ch chan interface{}) {
 		}
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected end of progress response"})
-	return
 }
 
 func streamResponse(c *gin.Context, ch chan any) {
