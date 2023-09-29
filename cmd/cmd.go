@@ -745,6 +745,15 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		if err := server.PruneLayers(); err != nil {
 			return err
 		}
+
+		manifestsPath, err := server.GetManifestPath()
+		if err != nil {
+			return err
+		}
+
+		if err := server.PruneDirectory(manifestsPath); err != nil {
+			return err
+		}
 	}
 
 	return server.Serve(ln, origins)
