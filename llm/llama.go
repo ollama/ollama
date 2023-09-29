@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -184,16 +185,62 @@ type llama struct {
 	Running
 }
 
-var errNoGPU = errors.New("nvidia-smi command failed")
+var errNoNVIDIAGPU = errors.New("nvidia-smi command failed")
+var errNoAMDGPU = errors.New("rocm-smi command failed")
+var errNoSupportedGPU = errors.New("no supported GPU found")
 
-// CheckVRAM returns the available VRAM in MiB on Linux machines with NVIDIA GPUs
+// CheckVRAM returns the available VRAM in MiB on Linux machines with nVidia or AMD GPUs.
 func CheckVRAM() (int64, error) {
+	for _, f := range []func() (int64, error){CheckVRAMNVIDIA, CheckVRAMAMD} {
+		if vram, err := f(); err == nil && vram > 0 {
+			return vram, nil
+		}
+	}
+	return 0, errNoSupportedGPU
+}
+
+// CheckVRAMAMD returns the available VRAM in MiB on Linux machines with AMD GPUs
+func CheckVRAMAMD() (int64, error) {
+	rocmHome := os.Getenv("ROCM_HOME")
+	if rocmHome == "" {
+		rocmHome = "/opt/rocm"
+	}
+	cmd := exec.Command(filepath.Join(rocmHome, "bin/rocm-smi"), "--showmeminfo", "VRAM", "--csv")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	if err != nil {
+		return 0, errNoAMDGPU
+	}
+	csvData := csv.NewReader(&stdout)
+	total := int64(0)
+	for {
+		record, err := csvData.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
+		}
+		if !strings.HasPrefix(record[0], "card") {
+			continue
+		}
+		// We could subtract record[2] here and be aware of other GPU users.
+		if vram, err := strconv.Atoi(record[1]); err == nil {
+			total += int64(vram)
+		}
+	}
+	return total, nil
+}
+
+// CheckVRAMNVIDIA returns the available VRAM in MiB on Linux machines with NVIDIA GPUs
+func CheckVRAMNVIDIA() (int64, error) {
 	cmd := exec.Command("nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	err := cmd.Run()
 	if err != nil {
-		return 0, errNoGPU
+		return 0, errNoNVIDIAGPU
 	}
 
 	var total int64
@@ -215,14 +262,10 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
-	n := 1 // default to enable metal on macOS
 	if runtime.GOOS == "linux" {
 		vramMib, err := CheckVRAM()
 		if err != nil {
-			if err.Error() != "nvidia-smi command failed" {
-				log.Print(err.Error())
-			}
-			// nvidia driver not installed or no nvidia GPU found
+			log.Print(err.Error())
 			return 0
 		}
 
@@ -231,11 +274,9 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 		// Calculate bytes per layer
 		// TODO: this is a rough heuristic, better would be to calculate this based on number of layers and context size
 		bytesPerLayer := fileSizeBytes / numLayer
-
-		// set n to the max number of layers we can fit in VRAM
-		return int(totalVramBytes / bytesPerLayer)
-
-		log.Printf("%d MiB VRAM available, loading up to %d GPU layers", vramMib, n)
+		layers := int(totalVramBytes / bytesPerLayer)
+		log.Printf("%d MiB VRAM available, loading up to %d GPU layers", vramMib, layers)
+		return layers
 	}
 	// default to enable metal on macOS
 	return 1
@@ -342,6 +383,7 @@ func waitForServer(llm *llama) error {
 	start := time.Now()
 	expiresAt := time.Now().Add(2 * time.Minute) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 
 	log.Print("waiting for llama runner to start responding")
 	for range ticker.C {
