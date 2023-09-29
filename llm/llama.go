@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -32,7 +33,7 @@ type ModelRunner struct {
 }
 
 func chooseRunners(workDir, runnerType string) []ModelRunner {
-	buildPath := filepath.Join("llama.cpp", runnerType, "build")
+	buildPath := path.Join("llama.cpp", runnerType, "build")
 	var runners []string
 
 	// set the runners based on the OS
@@ -40,44 +41,38 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	switch runtime.GOOS {
 	case "darwin":
 		runners = []string{
-			filepath.Join(buildPath, "metal", "bin", "server"),
-			filepath.Join(buildPath, "cpu", "bin", "server"),
+			path.Join(buildPath, "metal", "bin", "server"),
+			path.Join(buildPath, "cpu", "bin", "server"),
 		}
 	case "linux":
 		runners = []string{
-			filepath.Join(buildPath, "cuda", "bin", "server"),
-			filepath.Join(buildPath, "cpu", "bin", "server"),
+			path.Join(buildPath, "cuda", "bin", "server"),
+			path.Join(buildPath, "cpu", "bin", "server"),
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
 		runners = []string{
-			filepath.Join(buildPath, "cpu", "bin", "Release", "server.exe"),
+			path.Join(buildPath, "cpu", "bin", "Release", "server.exe"),
 		}
 	default:
 		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
 		runners = []string{
-			filepath.Join(buildPath, "cpu", "bin", "server"),
+			path.Join(buildPath, "cpu", "bin", "server"),
 		}
 	}
 
 	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
 	for _, r := range runners {
 		// find all the files in the runner's bin directory
-		embeddedRunnerDir := filepath.Join(filepath.Dir(r), "*")
-		if runtime.GOOS == "windows" {
-			// in this case we need to convert the filepath to a unix filepath, since that is how go embeds the files
-			embeddedRunnerDir = strings.ReplaceAll(embeddedRunnerDir, "\\", "/")
-		}
-		files, err := fs.Glob(llamaCppEmbed, embeddedRunnerDir)
+		files, err := fs.Glob(llamaCppEmbed, filepath.Join(filepath.Dir(r), "*"))
 		if err != nil {
 			// this is expected, ollama may be compiled without all runners packed in
 			log.Printf("%s runner not found: %v", r, err)
 			continue
 		}
+		runnerAvailable = true
 
 		for _, f := range files {
-			runnerAvailable = true
-
 			srcFile, err := llamaCppEmbed.Open(f)
 			if err != nil {
 				log.Fatalf("read llama runner %s: %v", f, err)
@@ -116,7 +111,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	// return the runners to try in priority order
 	localRunnersByPriority := []ModelRunner{}
 	for _, r := range runners {
-		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: filepath.Join(workDir, r)})
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(workDir, r)})
 	}
 
 	return localRunnersByPriority
