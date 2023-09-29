@@ -292,8 +292,6 @@ func PullModelHandler(c *gin.Context) {
 
 		regOpts := &RegistryOptions{
 			Insecure: req.Insecure,
-			Username: req.Username,
-			Password: req.Password,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())
@@ -323,8 +321,6 @@ func PushModelHandler(c *gin.Context) {
 
 		regOpts := &RegistryOptions{
 			Insecure: req.Insecure,
-			Username: req.Username,
-			Password: req.Password,
 		}
 
 		ctx := context.Background()
