@@ -240,7 +240,7 @@ func GenerateHandler(c *gin.Context) {
 		}
 	}()
 
-	if c.GetHeader("X-Stream") == "false" {
+	if req.Stream != nil && !*req.Stream {
 		var response api.GenerateResponse
 		generated := ""
 		for resp := range ch {
@@ -326,6 +326,11 @@ func PullModelHandler(c *gin.Context) {
 		}
 	}()
 
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
+
 	streamResponse(c, ch)
 }
 
@@ -353,6 +358,11 @@ func PushModelHandler(c *gin.Context) {
 		}
 	}()
 
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
+
 	streamResponse(c, ch)
 }
 
@@ -379,6 +389,11 @@ func CreateModelHandler(c *gin.Context) {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
+
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
 
 	streamResponse(c, ch)
 }
@@ -618,6 +633,32 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	}
 
 	return s.Serve(ln)
+}
+
+func waitForStream(c *gin.Context, ch chan interface{}) {
+	c.Header("Content-Type", "application/json")
+	for resp := range ch {
+		switch r := resp.(type) {
+		case api.ProgressResponse:
+			if r.Status == "success" {
+				c.JSON(http.StatusOK, r)
+				return
+			}
+		case gin.H:
+			if errorMsg, ok := r["error"].(string); ok {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+				return
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in progress response"})
+				return
+			}
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected progress response"})
+			return
+		}
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected end of progress response"})
+	return
 }
 
 func streamResponse(c *gin.Context, ch chan any) {

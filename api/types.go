@@ -37,6 +37,7 @@ type GenerateRequest struct {
 	System   string `json:"system"`
 	Template string `json:"template"`
 	Context  []int  `json:"context,omitempty"`
+	Stream   *bool  `json:"stream,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -53,8 +54,9 @@ type EmbeddingResponse struct {
 }
 
 type CreateRequest struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Stream *bool  `json:"stream,omitempty"`
 }
 
 type DeleteRequest struct {
@@ -81,6 +83,9 @@ type CopyRequest struct {
 type PullRequest struct {
 	Name     string `json:"name"`
 	Insecure bool   `json:"insecure,omitempty"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Stream   *bool  `json:"stream,omitempty"`
 }
 
 type ProgressResponse struct {
@@ -93,6 +98,9 @@ type ProgressResponse struct {
 type PushRequest struct {
 	Name     string `json:"name"`
 	Insecure bool   `json:"insecure,omitempty"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Stream   *bool  `json:"stream,omitempty"`
 }
 
 type ListResponse struct {

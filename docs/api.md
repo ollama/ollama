@@ -39,32 +39,18 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
 
-Advanced parameters:
+Advanced parameters (optional):
 
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system prompt to (overrides what is defined in the `Modelfile`)
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
-
-### Headers
-
-- `X-Stream`: By default, this endpoint streams its response. If you'd prefer to receive only a single response instead of a stream, set this header to false.
+- `stream`: if `false` the response will be be returned as a single response object, rather than a stream of objects
 
 ### Request
 
-Streamed:
-
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{
-  "model": "llama2:7b",
-  "prompt": "Why is the sky blue?"
-}'
-```
-
-Single response:
-
-```shell
-curl -X POST http://localhost:11434/api/generate -H "X-Stream: false" -d '{
   "model": "llama2:7b",
   "prompt": "Why is the sky blue?"
 }'
@@ -128,6 +114,7 @@ Create a model from a [`Modelfile`](./modelfile.md)
 
 - `name`: name of the model to create
 - `path`: path to the Modelfile
+- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
 
 ### Request
 
@@ -261,6 +248,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 - `name`: name of the model to pull
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
+- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
 
 ### Request
 
@@ -292,6 +280,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 - `name`: name of the model to push in the form of `<namespace>/<model>:<tag>`
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pushing to your library during development.
+- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
 
 ### Request
 
