@@ -1,4 +1,3 @@
-ARG VERSION=0.0.0
 
 # centos7 amd64 dependencies
 FROM --platform=linux/amd64 nvidia/cuda:11.8.0-devel-centos7 AS base-amd64
@@ -23,7 +22,11 @@ RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go1.21.1.tar.gz
 # build the final binary
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
+ENV GOOS=linux
 ENV GOARCH=$TARGETARCH
 
+ARG VERSION=0.0.0
+ARG GOFLAGS="'-ldflags -w -s'"
+
 RUN /usr/local/go/bin/go generate ./... && \
-    /usr/local/go/bin/go build -ldflags "-X=github.com/jmorganca/ollama/version.Version=$VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
+    /usr/local/go/bin/go build .
