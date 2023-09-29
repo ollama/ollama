@@ -64,27 +64,29 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
 	for _, r := range runners {
 		// find all the files in the runner's bin directory
-		files, err := fs.Glob(llamaCppEmbed, filepath.Join(filepath.Dir(r), "*"))
+		files, err := fs.Glob(llamaCppEmbed, path.Join(path.Dir(r), "*"))
 		if err != nil {
 			// this is expected, ollama may be compiled without all runners packed in
 			log.Printf("%s runner not found: %v", r, err)
 			continue
 		}
-		runnerAvailable = true
 
 		for _, f := range files {
+			runnerAvailable = true
+
 			srcFile, err := llamaCppEmbed.Open(f)
 			if err != nil {
 				log.Fatalf("read llama runner %s: %v", f, err)
 			}
 			defer srcFile.Close()
 
-			// create the directory in case it does not exist
+			// create the directory in case it does not exist, filepath.Dir() converts the file path to the OS's format
 			destPath := filepath.Join(workDir, filepath.Dir(f))
 			if err := os.MkdirAll(destPath, 0o755); err != nil {
 				log.Fatalf("create runner temp dir %s: %v", filepath.Dir(f), err)
 			}
 
+			// create the path to the destination file, filepath.Base() converts the file path to the OS's format
 			destFile := filepath.Join(destPath, filepath.Base(f))
 
 			_, err = os.Stat(destFile)
@@ -111,7 +113,8 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	// return the runners to try in priority order
 	localRunnersByPriority := []ModelRunner{}
 	for _, r := range runners {
-		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: path.Join(workDir, r)})
+		// clean the ModelRunner paths so that they match the OS we are running on
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: filepath.Clean(path.Join(workDir, r))})
 	}
 
 	return localRunnersByPriority
