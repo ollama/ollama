@@ -27,6 +27,11 @@ curl https://ollama.ai/install.sh | sh
 
 coming soon
 
+### Docker Hub
+
+The Ollama Docker image is available on Docker hub:
+[`ollama/ollama`](https://hub.docker.com/r/ollama/ollama)
+
 ## Quickstart
 
 To run and chat with [Llama 2](https://ollama.ai/library/llama2):
