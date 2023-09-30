@@ -18,7 +18,7 @@ elif [ -d "$ROCM_PATH" ]; then
 fi
 
 if [ -n "$CMAKE_GGUF_ARGS" ]; then
-    cmake -S gguf clean
+    cmake -S gguf -B gguf/build/cuda clean
     cmake -S gguf -B gguf/build/cuda -DLLAMA_K_QUANTS=on -DLLAMA_ACCELERATE=on $CMAKE_GGUF_ARGS
     cmake --build gguf/build/cuda --target server --config Release
 else
@@ -26,7 +26,7 @@ else
 fi
 
 if [ -n "$CMAKE_GGML_ARGS" ]; then
-    cmake -S ggml clean
+    cmake -S ggml -B gguf/build/cuda clean
     cmake -S ggml -B ggml/build/cuda -DLLAMA_K_QUANTS=on -DLLAMA_ACCELERATE=on $CMAKE_GGML_ARGS
     cmake --build ggml/build/cuda --target server --config Release
 else
