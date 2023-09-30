@@ -5,6 +5,8 @@
   </picture>
 </div>
 
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1jlOWKFFYHXuoASl6jkxZzxNHAq-omIf9?usp=sharing)
 # Ollama
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
