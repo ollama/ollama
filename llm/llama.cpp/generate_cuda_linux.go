@@ -83,7 +83,7 @@ func findOpenCL() bool {
 func findCUDA() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(10)*time.Second)
 	defer cancel()
-	_, err := exec.CommandContext(ctx, "nvidia-smi").CombinedOutput()
+	_, err := exec.CommandContext(ctx, "nvcc").CombinedOutput()
 	return err == nil
 }
 
