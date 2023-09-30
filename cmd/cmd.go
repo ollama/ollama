@@ -380,7 +380,20 @@ func pull(model string, insecure bool) error {
 func RunGenerate(cmd *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		// join all args into a single prompt
-		return generate(cmd, args[0], strings.Join(args[1:], " "))
+		wordWrap := false
+		if term.IsTerminal(int(os.Stdout.Fd())) {
+			wordWrap = true
+		}
+
+		nowrap, err := cmd.Flags().GetBool("nowordwrap")
+		if err != nil {
+			return err
+		}
+		if nowrap {
+			wordWrap = false
+		}
+
+		return generate(cmd, args[0], strings.Join(args[1:], " "), wordWrap)
 	}
 
 	if readline.IsTerminal(int(os.Stdin.Fd())) {
@@ -392,7 +405,7 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 
 type generateContextKey string
 
-func generate(cmd *cobra.Command, model, prompt string) error {
+func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
 	client, err := api.FromEnv()
 	if err != nil {
 		return err
@@ -408,24 +421,9 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 		generateContext = []int{}
 	}
 
-	var wrapTerm bool
-	termType := os.Getenv("TERM")
-	if termType == "xterm-256color" {
-		wrapTerm = true
-	}
-
 	termWidth, _, err := term.GetSize(int(0))
 	if err != nil {
-		wrapTerm = false
-	}
-
-	// override wrapping if the user turned it off
-	nowrap, err := cmd.Flags().GetBool("nowordwrap")
-	if err != nil {
-		return err
-	}
-	if nowrap {
-		wrapTerm = false
+		wordWrap = false
 	}
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
@@ -452,7 +450,7 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 
 		latest = response
 
-		if wrapTerm {
+		if wordWrap {
 			for _, ch := range response.Response {
 				if currentLineLength+1 > termWidth-5 {
 					// backtrack the length of the last word and clear to the end of the line
@@ -533,7 +531,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 
 	// load the model
-	if err := generate(cmd, model, ""); err != nil {
+	if err := generate(cmd, model, "", false); err != nil {
 		return err
 	}
 
@@ -578,6 +576,21 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		return err
 	}
 	defer scanner.Close()
+
+	var wordWrap bool
+	termType := os.Getenv("TERM")
+	if termType == "xterm-256color" {
+		wordWrap = true
+	}
+
+	// override wrapping if the user turned it off
+	nowrap, err := cmd.Flags().GetBool("nowordwrap")
+	if err != nil {
+		return err
+	}
+	if nowrap {
+		wordWrap = false
+	}
 
 	var multiLineBuffer string
 	var isMultiLine bool
@@ -632,10 +645,10 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				case "nohistory":
 					scanner.HistoryDisable()
 				case "wordwrap":
-					cmd.Flags().Set("nowordwrap", "false")
+					wordWrap = true
 					fmt.Println("Set 'wordwrap' mode.")
 				case "nowordwrap":
-					cmd.Flags().Set("nowordwrap", "true")
+					wordWrap = false
 					fmt.Println("Set 'nowordwrap' mode.")
 				case "verbose":
 					cmd.Flags().Set("verbose", "true")
@@ -698,7 +711,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		}
 
 		if len(line) > 0 && line[0] != '/' {
-			if err := generate(cmd, model, line); err != nil {
+			if err := generate(cmd, model, line, wordWrap); err != nil {
 				return err
 			}
 		}
@@ -710,7 +723,7 @@ func generateBatch(cmd *cobra.Command, model string) error {
 	for scanner.Scan() {
 		prompt := scanner.Text()
 		fmt.Printf(">>> %s\n", prompt)
-		if err := generate(cmd, model, prompt); err != nil {
+		if err := generate(cmd, model, prompt, false); err != nil {
 			return err
 		}
 	}
