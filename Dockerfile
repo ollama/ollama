@@ -2,7 +2,7 @@ FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 ARG TARGETARCH
 ARG VERSION=0.0.0
-ARG GOFLAGS="'-ldflags -w -s'"
+ARG GOFLAGS="'-ldflags=-w -s'"
 
 WORKDIR /go/src/github.com/jmorganca/ollama
 RUN apt-get update && apt-get install -y git build-essential cmake
