@@ -23,6 +23,10 @@ Model names follow a `model:tag` format. Some examples are `orca-mini:3b-q4_1` a
 
 All durations are returned in nanoseconds.
 
+### Streaming responses
+
+Certain endpoints stream responses as JSON objects delineated with the newline (`\n`) character.
+
 ## Generate a completion
 
 ```shell

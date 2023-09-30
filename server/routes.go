@@ -610,6 +610,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 			return false
 		}
 
+		// Delineate chunks with new-line delimiter
 		bts = append(bts, '\n')
 		if _, err := w.Write(bts); err != nil {
 			log.Printf("streamResponse: w.Write failed with %s", err)
