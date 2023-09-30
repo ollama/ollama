@@ -16,6 +16,4 @@ package llm
 //go:generate cmake -S gguf -B gguf/build/cpu -DLLAMA_K_QUANTS=on
 //go:generate cmake --build gguf/build/cpu --target server --config Release
 
-//go:generate go run generate_cuda_linux.go
-//go:generate cmake --build ggml/build/cuda --target server --config Release
-//go:generate cmake --build gguf/build/cuda --target server --config Release
+//go:generate sh build_linux_cuda.sh
