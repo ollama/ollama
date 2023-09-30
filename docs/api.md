@@ -25,7 +25,7 @@ All durations are returned in nanoseconds.
 
 ### Streaming responses
 
-Ollama streams progress responses for certain endpoints. Streaming responses are returned as JSON objects delineated with the newline (`\n`) character.
+Certain endpoints stream responses as JSON objects delineated with the newline (`\n`) character.
 
 ## Generate a completion
 
