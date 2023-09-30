@@ -194,6 +194,8 @@ func CheckVRAM() (int64, error) {
 	for _, f := range []func() (int64, error){CheckVRAMNVIDIA, CheckVRAMAMD} {
 		if vram, err := f(); err == nil && vram > 0 {
 			return vram, nil
+		} else if err != nil {
+			log.Printf("A VRAM check was skipped because it returned an error: %v", err)
 		}
 	}
 	return 0, errNoSupportedGPU
@@ -251,7 +253,6 @@ func CheckVRAMNVIDIA() (int64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
 		}
-
 		total += vram
 	}
 
