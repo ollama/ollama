@@ -424,7 +424,7 @@ type PredictRequest struct {
 	TfsZ             float32         `json:"tfs_z,omitempty"`
 	TypicalP         float32         `json:"typical_p,omitempty"`
 	RepeatLastN      int             `json:"repeat_last_n,omitempty"`
-	Temperature      float32         `json:"temperature,omitempty"`
+	Temperature      float32         `json:"temperature"`
 	RepeatPenalty    float32         `json:"repeat_penalty,omitempty"`
 	PresencePenalty  float32         `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32         `json:"frequency_penalty,omitempty"`
@@ -470,8 +470,10 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		MirostatTau:      llm.MirostatTau,
 		MirostatEta:      llm.MirostatEta,
 		PenalizeNl:       llm.PenalizeNewline,
+		Seed:             llm.Seed,
 		Stop:             llm.Stop,
 	}
+
 	data, err := json.Marshal(predReq)
 	if err != nil {
 		return fmt.Errorf("error marshaling data: %v", err)
