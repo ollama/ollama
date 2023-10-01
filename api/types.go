@@ -31,6 +31,22 @@ func (e StatusError) Error() string {
 	}
 }
 
+// /api/chat
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type ChatRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+}
+
+type ChatResponse struct {
+	CreatedAt time.Time `json:"created_at"`
+	Message   Message   `json:"message"`
+}
+
 type GenerateRequest struct {
 	Model    string `json:"model"`
 	Prompt   string `json:"prompt"`

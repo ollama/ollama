@@ -54,6 +54,54 @@ type Model struct {
 	Embeddings    []vector.Embedding
 }
 
+func (m *Model) ChatPrompt(messages []api.Message) (string, error) {
+	tmpl, err := template.New("").Parse(m.Template)
+	if err != nil {
+		return "", err
+	}
+
+	var vars struct {
+		System string
+		Prompt string
+		First  bool
+	}
+
+	vars.First = true
+
+	var sb strings.Builder
+	flush := func() {
+		tmpl.Execute(&sb, vars)
+		vars.System = ""
+		vars.Prompt = ""
+	}
+
+	// build the chat history from messages
+	for _, m := range messages {
+		if m.Role == "system" {
+			if vars.System != "" {
+				flush()
+			}
+			vars.System = m.Content
+		}
+
+		if m.Role == "user" {
+			if vars.Prompt != "" {
+				flush()
+			}
+			vars.Prompt = m.Content
+		}
+
+		if m.Role == "assistant" {
+			flush()
+			sb.Write([]byte(m.Content))
+		}
+	}
+
+	flush()
+
+	return sb.String(), nil
+}
+
 func (m *Model) Prompt(request api.GenerateRequest, embedding string) (string, error) {
 	t := m.Template
 	if request.Template != "" {
