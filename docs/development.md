@@ -10,25 +10,25 @@ Install required tools:
 - go version 1.20 or higher
 - gcc version 11.4.0 or higher
 
-```
+```bash
 brew install go cmake gcc
 ```
 
 Get the required libraries:
 
-```
+```bash
 go generate ./...
 ```
 
 Then build ollama:
 
-```
+```bash
 go build .
 ```
 
 Now you can run `ollama`:
 
-```
+```bash
 ./ollama
 ```
 

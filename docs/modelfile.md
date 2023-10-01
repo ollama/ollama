@@ -44,7 +44,7 @@ INSTRUCTION arguments
 
 An example of a model file creating a mario blueprint:
 
-```
+```modelfile
 FROM llama2
 # sets the temperature to 1 [higher is more creative, lower is more coherent]
 PARAMETER temperature 1
@@ -70,13 +70,13 @@ More examples are available in the [examples directory](../examples).
 
 The FROM instruction defines the base model to use when creating a model.
 
-```
+```modelfile
 FROM <model name>:<tag>
 ```
 
 #### Build from llama2
 
-```
+```modelfile
 FROM llama2
 ```
 
@@ -85,7 +85,7 @@ A list of available base models:
 
 #### Build from a bin file
 
-```
+```modelfile
 FROM ./ollama-model.bin
 ```
 
@@ -95,7 +95,7 @@ This bin file location should be specified as an absolute path or relative to th
 
 The EMBED instruction is used to add embeddings of files to a model. This is useful for adding custom data that the model can reference when generating an answer. Note that currently only text files are supported, formatted with each line as one embedding.
 
-```
+```modelfile
 FROM <model name>:<tag>
 EMBED <file path>.txt
 EMBED <different file path>.txt
@@ -106,7 +106,7 @@ EMBED <path to directory>/*.txt
 
 The `PARAMETER` instruction defines a parameter that can be set when the model is run.
 
-```
+```modelfile
 PARAMETER <parameter> <parametervalue>
 ```
 
@@ -142,7 +142,7 @@ PARAMETER <parameter> <parametervalue>
 | `{{ .Prompt }}` | The incoming prompt, this is not specified in the model file and will be set based on input.                 |
 | `{{ .First }}`  | A boolean value used to render specific template information for the first generation of a session.          |
 
-```
+```modelfile
 TEMPLATE """
 {{- if .First }}
 ### System:
@@ -162,7 +162,7 @@ SYSTEM """<system message>"""
 
 The `SYSTEM` instruction specifies the system prompt to be used in the template, if applicable.
 
-```
+```modelfile
 SYSTEM """<system message>"""
 ```
 
@@ -170,7 +170,7 @@ SYSTEM """<system message>"""
 
 The `ADAPTER` instruction specifies the LoRA adapter to apply to the base model. The value of this instruction should be an absolute path or a path relative to the Modelfile and the file must be in a GGML file format. The adapter should be tuned from the base model otherwise the behaviour is undefined.
 
-```
+```modelfile
 ADAPTER ./ollama-lora.bin
 ```
 
@@ -178,7 +178,7 @@ ADAPTER ./ollama-lora.bin
 
 The `LICENSE` instruction allows you to specify the legal license under which the model used with this Modelfile is shared or distributed.
 
-```
+```modelfile
 LICENSE """
 <license text>
 """
