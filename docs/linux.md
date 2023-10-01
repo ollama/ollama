@@ -2,7 +2,7 @@
 
 > Note: A one line installer for Ollama is available by running:
 >
-> ```
+> ```bash
 > curl https://ollama.ai/install.sh | sh
 > ```
 
@@ -10,7 +10,7 @@
 
 Ollama is distributed as a self-contained binary. Download it to a directory in your PATH:
 
-```
+```bash
 sudo curl -L https://ollama.ai/download/ollama-linux-amd64 -o /usr/bin/ollama
 sudo chmod +x /usr/bin/ollama
 ```
@@ -19,13 +19,13 @@ sudo chmod +x /usr/bin/ollama
 
 Start Ollama by running `ollama serve`:
 
-```
+```bash
 ollama serve
 ```
 
 Once Ollama is running, run a model in another terminal session:
 
-```
+```bash
 ollama run llama2
 ```
 
@@ -35,7 +35,7 @@ ollama run llama2
 
 Verify that the drivers are installed by running the following command, which should print details about your GPU:
 
-```
+```bash
 nvidia-smi
 ```
 
@@ -43,7 +43,7 @@ nvidia-smi
 
 Create a user for Ollama:
 
-```
+```bash
 sudo useradd -r -s /bin/false -m -d /usr/share/ollama ollama
 ```
 
@@ -68,7 +68,7 @@ WantedBy=default.target
 
 Then start the service:
 
-```
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable ollama
 ```
@@ -77,7 +77,7 @@ sudo systemctl enable ollama
 
 To view logs of Ollama running as a startup service, run:
 
-```
+```bash
 journalctl -u ollama
 ```
 
