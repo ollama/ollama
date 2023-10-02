@@ -831,7 +831,7 @@ func formatParams(params map[string][]string) (map[string]interface{}, error) {
 						return nil, fmt.Errorf("invalid int value %s", vals)
 					}
 
-					out[key] = int(intVal)
+					out[key] = intVal
 				case reflect.Bool:
 					boolVal, err := strconv.ParseBool(vals[0])
 					if err != nil {

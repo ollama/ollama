@@ -227,12 +227,12 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 						// when JSON unmarshals numbers, it uses float64, not int
 						field.SetInt(int64(t))
 					default:
-						log.Printf("could not convert model parameter %v to int, skipped", key)
+						log.Printf("could not convert model parameter %v of type %T to int, skipped", key, val)
 					}
 				case reflect.Bool:
 					val, ok := val.(bool)
 					if !ok {
-						log.Printf("could not convert model parameter %v to bool, skipped", key)
+						log.Printf("could not convert model parameter %v of type %T to bool, skipped", key, val)
 						continue
 					}
 					field.SetBool(val)
@@ -240,14 +240,14 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					// JSON unmarshals to float64
 					val, ok := val.(float64)
 					if !ok {
-						log.Printf("could not convert model parameter %v to float32, skipped", key)
+						log.Printf("could not convert model parameter %v of type %T to float32, skipped", key, val)
 						continue
 					}
 					field.SetFloat(val)
 				case reflect.String:
 					val, ok := val.(string)
 					if !ok {
-						log.Printf("could not convert model parameter %v to string, skipped", key)
+						log.Printf("could not convert model parameter %v of type %T to string, skipped", key, val)
 						continue
 					}
 					field.SetString(val)
@@ -255,7 +255,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					// JSON unmarshals to []interface{}, not []string
 					val, ok := val.([]interface{})
 					if !ok {
-						log.Printf("could not convert model parameter %v to slice, skipped", key)
+						log.Printf("could not convert model parameter %v of type %T to slice, skipped", key, val)
 						continue
 					}
 					// convert []interface{} to []string
@@ -263,7 +263,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					for i, item := range val {
 						str, ok := item.(string)
 						if !ok {
-							log.Printf("could not convert model parameter %v to slice of strings, skipped", key)
+							log.Printf("could not convert model parameter %v of type %T to slice of strings, skipped", key, item)
 							continue
 						}
 						slice[i] = str
