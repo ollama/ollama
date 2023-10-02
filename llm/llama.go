@@ -435,7 +435,7 @@ type PredictRequest struct {
 	MirostatEta      float32  `json:"mirostat_eta"`
 	PenalizeNl       bool     `json:"penalize_nl"`
 	Seed             int      `json:"seed"`
-	Stop             []string `json:"stop"`
+	Stop             []string `json:"stop,omitempty"`
 }
 
 func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
