@@ -234,10 +234,10 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 		// TODO: this is a rough heuristic, better would be to calculate this based on number of layers and context size
 		bytesPerLayer := fileSizeBytes / numLayer
 
+		// max number of layers we can fit in VRAM
 		layers := int(totalVramBytes / bytesPerLayer)
 		log.Printf("%d MiB VRAM available, loading up to %d GPU layers", vramMib, layers)
 
-		// set n to the max number of layers we can fit in VRAM
 		return layers
 	}
 	// default to enable metal on macOS
