@@ -217,6 +217,7 @@ curl -X POST http://localhost:11434/api/generate -d '{
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
+- [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Dumbar](https://github.com/JerrySievert/Dumbar)
