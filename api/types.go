@@ -280,38 +280,38 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 
 func DefaultOptions() Options {
 	return Options{
-		Seed: -1,
-
-		UseNUMA: false,
-
-		NumCtx:             2048,
-		NumKeep:            -1,
-		NumBatch:           512,
-		NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
-		NumGQA:             1,
-		LowVRAM:            false,
-		F16KV:              true,
-		UseMMap:            true,
-		UseMLock:           false,
-		RopeFrequencyBase:  10000.0,
-		RopeFrequencyScale: 1.0,
-		EmbeddingOnly:      true,
-
-		RepeatLastN:      64,
-		RepeatPenalty:    1.1,
-		FrequencyPenalty: 0.0,
-		PresencePenalty:  0.0,
+		// options set on request to runner
+		NumPredict:       -1,
+		NumKeep:          -1,
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,
 		TFSZ:             1.0,
 		TypicalP:         1.0,
+		RepeatLastN:      64,
+		RepeatPenalty:    1.1,
+		PresencePenalty:  0.0,
+		FrequencyPenalty: 0.0,
 		Mirostat:         0,
 		MirostatTau:      5.0,
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
+		Seed:             -1,
 
-		NumThread: 0, // let the runtime decide
+		// options set when the model is loaded
+		NumCtx:             2048,
+		RopeFrequencyBase:  10000.0,
+		RopeFrequencyScale: 1.0,
+		NumBatch:           512,
+		NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
+		NumGQA:             1,
+		NumThread:          0, // let the runtime decide
+		LowVRAM:            false,
+		F16KV:              true,
+		UseMLock:           false,
+		UseMMap:            true,
+		UseNUMA:            false,
+		EmbeddingOnly:      true,
 	}
 }
 
