@@ -686,15 +686,31 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 
 				switch args[1] {
 				case "license":
-					fmt.Println(resp.License)
+					if resp.License == "" {
+						fmt.Println("No license was specified for this model.\n")
+					} else {
+						fmt.Println(resp.License)
+					}
 				case "modelfile":
 					fmt.Println(resp.Modelfile)
 				case "parameters":
-					fmt.Println(resp.Parameters)
+					if resp.Parameters == "" {
+						fmt.Println("No parameters were specified for this model.\n")
+					} else {
+						fmt.Println(resp.Parameters)
+					}
 				case "system":
-					fmt.Println(resp.System)
+					if resp.System == "" {
+						fmt.Println("No system prompt was specified for this model.\n")
+					} else {
+						fmt.Println(resp.System)
+					}
 				case "template":
-					fmt.Println(resp.Template)
+					if resp.Template == "" {
+						fmt.Println("No prompt template was specified for this model.\n")
+					} else {
+						fmt.Println(resp.Template)
+					}
 				default:
 					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
 				}
