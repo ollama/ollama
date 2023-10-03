@@ -78,6 +78,11 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *R
 		}
 		defer resp.Body.Close()
 
+		if resp.StatusCode >= http.StatusBadRequest {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
+		}
+
 		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
 		var offset int64
