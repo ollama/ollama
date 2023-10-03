@@ -1,7 +1,6 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 ARG TARGETARCH
-ARG VERSION=0.0.0
 ARG GOFLAGS="'-ldflags=-w -s'"
 
 WORKDIR /go/src/github.com/jmorganca/ollama
@@ -11,6 +10,7 @@ RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go1.21.1.tar.gz
 
 COPY . .
 ENV GOARCH=$TARGETARCH
+ENV GOFLAGS=$GOFLAGS
 RUN /usr/local/go/bin/go generate ./... \
     && /usr/local/go/bin/go build .
 

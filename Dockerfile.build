@@ -14,6 +14,7 @@ RUN yum install -y git cmake
 
 FROM base-${TARGETARCH}
 ARG TARGETARCH
+ARG GOFLAGS="'-ldflags -w -s'"
 
 # install go
 ADD https://dl.google.com/go/go1.21.1.linux-$TARGETARCH.tar.gz /tmp/go1.21.1.tar.gz
@@ -22,11 +23,10 @@ RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go1.21.1.tar.gz
 # build the final binary
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
+
 ENV GOOS=linux
 ENV GOARCH=$TARGETARCH
-
-ARG VERSION=0.0.0
-ARG GOFLAGS="'-ldflags -w -s'"
+ENV GOFLAGS=$GOFLAGS
 
 RUN /usr/local/go/bin/go generate ./... && \
     /usr/local/go/bin/go build .
