@@ -109,9 +109,13 @@ func (llm *ggufModel) ModelType() string {
 		if blocks, ok := llm.kv["falcon.block_count"].(uint32); ok {
 			return falconModelType(blocks)
 		}
+	case "starcoder":
+		if blocks, ok := llm.kv["starcoder.block_count"].(uint32); ok {
+			return starCoderModelType(blocks)
+		}
 	}
 
-	return "Unknown"
+	return "unknown"
 }
 
 func (llm *ggufModel) FileType() string {
@@ -120,7 +124,7 @@ func (llm *ggufModel) FileType() string {
 		return fileType(t)
 	}
 
-	return "Unknown"
+	return "unknown"
 }
 
 func (llm *ggufModel) Decode(r io.Reader) error {

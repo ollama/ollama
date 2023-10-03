@@ -69,7 +69,7 @@ func fileType(fileType uint32) string {
 	case fileTypeQ6_K:
 		return "Q6_K"
 	default:
-		return "Unknown"
+		return "unknown"
 	}
 }
 

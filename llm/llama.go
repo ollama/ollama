@@ -143,7 +143,7 @@ func llamaModelType(numLayer uint32) string {
 	case 80:
 		return "65B"
 	default:
-		return "Unknown"
+		return "unknown"
 	}
 }
 
