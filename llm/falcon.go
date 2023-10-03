@@ -1,7 +1,5 @@
 package llm
 
-const ModelFamilyFalcon = "falcon"
-
 const (
 	falconModelType7B   = 32
 	falconModelType40B  = 60
@@ -17,6 +15,6 @@ func falconModelType(numLayer uint32) string {
 	case 80:
 		return "180B"
 	default:
-		return "Unknown"
+		return "unknown"
 	}
 }
