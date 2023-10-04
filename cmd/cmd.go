@@ -687,7 +687,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				switch args[1] {
 				case "license":
 					if resp.License == "" {
-						fmt.Println("No license was specified for this model.\n")
+						fmt.Print("No license was specified for this model.\n\n")
 					} else {
 						fmt.Println(resp.License)
 					}
@@ -695,19 +695,19 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 					fmt.Println(resp.Modelfile)
 				case "parameters":
 					if resp.Parameters == "" {
-						fmt.Println("No parameters were specified for this model.\n")
+						fmt.Print("No parameters were specified for this model.\n\n")
 					} else {
 						fmt.Println(resp.Parameters)
 					}
 				case "system":
 					if resp.System == "" {
-						fmt.Println("No system prompt was specified for this model.\n")
+						fmt.Print("No system prompt was specified for this model.\n\n")
 					} else {
 						fmt.Println(resp.System)
 					}
 				case "template":
 					if resp.Template == "" {
-						fmt.Println("No prompt template was specified for this model.\n")
+						fmt.Print("No prompt template was specified for this model.\n\n")
 					} else {
 						fmt.Println(resp.Template)
 					}
