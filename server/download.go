@@ -308,17 +308,17 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 		return nil
 	}
 
-	value, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
-	blobDownload := value.(*blobDownload)
+	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
+	download := data.(*blobDownload)
 	if !ok {
 		requestURL := opts.mp.BaseURL()
 		requestURL = requestURL.JoinPath("v2", opts.mp.GetNamespaceRepository(), "blobs", opts.digest)
-		if err := blobDownload.Prepare(ctx, requestURL, opts.regOpts); err != nil {
+		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
 			return err
 		}
 
-		go blobDownload.Run(context.Background(), requestURL, opts.regOpts)
+		go download.Run(context.Background(), requestURL, opts.regOpts)
 	}
 
-	return blobDownload.Wait(ctx, opts.fn)
+	return download.Wait(ctx, opts.fn)
 }
