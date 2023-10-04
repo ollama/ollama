@@ -438,6 +438,8 @@ type PredictRequest struct {
 	Stop             []string `json:"stop,omitempty"`
 }
 
+const maxBufferSize = 512 * 1024 // 512KB
+
 func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
 	prevConvo, err := llm.Decode(ctx, prevContext)
 	if err != nil {
@@ -498,6 +500,9 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	// increase the buffer size to avoid running out of space
+	buf := make([]byte, 0, maxBufferSize)
+	scanner.Buffer(buf, maxBufferSize)
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():

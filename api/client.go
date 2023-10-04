@@ -18,9 +18,7 @@ import (
 
 const DefaultHost = "127.0.0.1:11434"
 
-var (
-	envHost = os.Getenv("OLLAMA_HOST")
-)
+var envHost = os.Getenv("OLLAMA_HOST")
 
 type Client struct {
 	Base    url.URL
@@ -123,6 +121,8 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	return nil
 }
 
+const maxBufferSize = 512 * 1024 // 512KB
+
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
 	var buf *bytes.Buffer
 	if data != nil {
@@ -151,6 +151,9 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	defer response.Body.Close()
 
 	scanner := bufio.NewScanner(response.Body)
+	// increase the buffer size to avoid running out of space
+	scanBuf := make([]byte, 0, maxBufferSize)
+	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
 		var errorResponse struct {
 			Error string `json:"error,omitempty"`
