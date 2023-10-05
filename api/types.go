@@ -197,6 +197,8 @@ type Options struct {
 	NumThread int `json:"num_thread,omitempty"`
 }
 
+var ErrInvalidOpts = fmt.Errorf("invalid options")
+
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct
@@ -210,6 +212,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 		}
 	}
 
+	invalidOpts := []string{}
 	for key, val := range m {
 		if opt, ok := jsonOpts[key]; ok {
 			field := valueOpts.FieldByName(opt.Name)
@@ -273,7 +276,13 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 				}
 			}
+		} else {
+			invalidOpts = append(invalidOpts, key)
 		}
+	}
+
+	if len(invalidOpts) > 0 {
+		return fmt.Errorf("%w: %v", ErrInvalidOpts, strings.Join(invalidOpts, ", "))
 	}
 	return nil
 }
