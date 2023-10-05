@@ -1,4 +1,4 @@
-FROM golang:1.20
+FROM golang:1.21
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
 RUN CGO_ENABLED=1 go build -ldflags '-linkmode external -extldflags "-static"' .
