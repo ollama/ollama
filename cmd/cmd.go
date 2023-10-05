@@ -558,8 +558,35 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	)
 
 	usage := func() {
-		fmt.Fprintln(os.Stderr, "commands:")
-		fmt.Fprintln(os.Stderr, completer.Tree("  "))
+		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /set         Set session variables")
+		fmt.Fprintln(os.Stderr, "  /show        Show model information")
+		fmt.Fprintln(os.Stderr, "  /bye         Exit")
+		fmt.Fprintln(os.Stderr, "  /?, /help    Help for a command")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	usageSet := func() {
+		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /set history      Enable history")
+		fmt.Fprintln(os.Stderr, "  /set nohistory    Disable history")
+		fmt.Fprintln(os.Stderr, "  /set wordwrap     Enable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set nowordwrap   Disable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set verbose      Show LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set quiet        Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	usageShow := func() {
+		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /show license      Show model license")
+		fmt.Fprintln(os.Stderr, "  /show modelfile    Show Modelfile for this model")
+		fmt.Fprintln(os.Stderr, "  /show parameters   Show parameters for this model")
+		fmt.Fprintln(os.Stderr, "  /show system       Show system prompt")
+		fmt.Fprintln(os.Stderr, "  /show template     Show prompt template")
+		fmt.Fprintln(os.Stderr, "")
 	}
 
 	var painter Painter
@@ -673,7 +700,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
 			} else {
-				usage()
+				usageSet()
 			}
 		case strings.HasPrefix(line, "/show"):
 			args := strings.Fields(line)
@@ -715,10 +742,20 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
 				}
 			} else {
+				usageShow()
+			}
+		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
+			args := strings.Fields(line)
+			if len(args) > 1 {
+				switch args[1] {
+				case "set", "/set":
+					usageSet()
+				case "show", "/show":
+					usageShow()
+				}
+			} else {
 				usage()
 			}
-		case line == "/help", line == "/?":
-			usage()
 		case line == "/exit", line == "/bye":
 			return nil
 		case strings.HasPrefix(line, "/"):
