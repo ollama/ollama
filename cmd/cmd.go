@@ -524,29 +524,16 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
 	return nil
 }
 
-// loadModel loads a model by sending a generate request with an empty prompt
-func loadModel(model string) {
-	client, err := api.FromEnv()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create client: %s", err)
-		return
-	}
-	fn := func(response api.GenerateResponse) error {
-		return nil // ignore
-	}
-	if err := client.Generate(context.Background(), &api.GenerateRequest{Model: model, Prompt: ""}, fn); err != nil {
-		fmt.Println("failed to load model: ", err.Error())
-	}
-}
-
 func generateInteractive(cmd *cobra.Command, model string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 
-	// load the model async so it's ready when the user sends a prompt
-	go loadModel(model)
+	// load the model
+	if err := generate(cmd, model, "", false); err != nil {
+		return err
+	}
 
 	completer := readline.NewPrefixCompleter(
 		readline.PcItem("/help"),
@@ -700,7 +687,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				switch args[1] {
 				case "license":
 					if resp.License == "" {
-						fmt.Println("No license was specified for this model.")
+						fmt.Println("No license was specified for this model.\n")
 					} else {
 						fmt.Println(resp.License)
 					}
@@ -708,19 +695,19 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 					fmt.Println(resp.Modelfile)
 				case "parameters":
 					if resp.Parameters == "" {
-						fmt.Println("No parameters were specified for this model.")
+						fmt.Println("No parameters were specified for this model.\n")
 					} else {
 						fmt.Println(resp.Parameters)
 					}
 				case "system":
 					if resp.System == "" {
-						fmt.Println("No system prompt was specified for this model.")
+						fmt.Println("No system prompt was specified for this model.\n")
 					} else {
 						fmt.Println(resp.System)
 					}
 				case "template":
 					if resp.Template == "" {
-						fmt.Println("No prompt template was specified for this model.")
+						fmt.Println("No prompt template was specified for this model.\n")
 					} else {
 						fmt.Println(resp.Template)
 					}
