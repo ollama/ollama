@@ -414,6 +414,21 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
 	spinner := NewSpinner("")
 	go spinner.Spin(60 * time.Millisecond)
 
+	loaded := make(chan bool) // Signals when the llm is ready to generate responses
+
+	// display a message if the model takes a while to load
+	go func() {
+		<-time.After(30 * time.Second)
+		select {
+		case <-loaded:
+			// do nothing
+		default:
+			spinner.Describe("please wait...")
+		}
+	}()
+
+	time.Sleep(10 * time.Second)
+
 	var latest api.GenerateResponse
 
 	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
@@ -479,6 +494,7 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
 	}
 
 	if err := client.Generate(cancelCtx, &request, fn); err != nil {
+		loaded <- true
 		if strings.Contains(err.Error(), "failed to load model") {
 			// tell the user to check the server log, if it exists locally
 			home, nestedErr := os.UserHomeDir()
