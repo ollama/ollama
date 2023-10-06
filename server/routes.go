@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -170,6 +172,11 @@ func GenerateHandler(c *gin.Context) {
 
 	model, err := GetModel(req.Model)
 	if err != nil {
+		var pErr *fs.PathError
+		if errors.As(err, &pErr) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
