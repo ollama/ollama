@@ -248,6 +248,26 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	return 1
 }
 
+// StatusWriter is a writer that captures error messages from the llama runner process
+type StatusWriter struct {
+	ErrCh chan error
+}
+
+func NewStatusWriter() *StatusWriter {
+	return &StatusWriter{
+		ErrCh: make(chan error, 1),
+	}
+}
+
+func (w *StatusWriter) Write(b []byte) (int, error) {
+	if _, after, ok := bytes.Cut(b, []byte("error:")); ok {
+		err := fmt.Errorf("llama runner: %s", after)
+		w.ErrCh <- err
+		return os.Stderr.Write(b)
+	}
+	return os.Stderr.Write(b)
+}
+
 func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
 	fileInfo, err := os.Stat(model)
 	if err != nil {
@@ -294,6 +314,8 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		params = append(params, "--numa")
 	}
 
+	var runnerErr error
+
 	// start the llama.cpp server with a retry in case the port is already in use
 	for _, runner := range runners {
 		if _, err := os.Stat(runner.Path); err != nil {
@@ -310,7 +332,8 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		)
 		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", filepath.Dir(runner.Path)))
 		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
+		statusWriter := NewStatusWriter()
+		cmd.Stderr = statusWriter
 
 		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd, Cancel: cancel, exitCh: make(chan error)}}
 
@@ -333,6 +356,14 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		if err := waitForServer(llm); err != nil {
 			log.Printf("error starting llama runner: %v", err)
 			llm.Close()
+
+			// capture the error runner process, if any
+			select {
+			case runnerErr = <-statusWriter.ErrCh:
+			default:
+				// the runner process probably timed out
+			}
+
 			// try again
 			continue
 		}
@@ -341,6 +372,12 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		return llm, nil
 	}
 
+	if runnerErr != nil {
+		// this is the error returned from the llama runner process that failed most recently
+		return nil, runnerErr
+	}
+
+	// if you update this error message, also update the error check in cmd.generate()
 	return nil, fmt.Errorf("failed to start a llama runner")
 }
 
