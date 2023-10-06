@@ -191,7 +191,7 @@ var errNoGPU = errors.New("nvidia-smi command failed")
 
 // CheckVRAM returns the available VRAM in MiB on Linux machines with NVIDIA GPUs
 func CheckVRAM() (int64, error) {
-	cmd := exec.Command("nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits")
+	cmd := exec.Command("nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	err := cmd.Run()
