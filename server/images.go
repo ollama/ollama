@@ -30,8 +30,6 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
-const MaxRetries = 3
-
 type RegistryOptions struct {
 	Insecure bool
 	Username string
@@ -1417,7 +1415,7 @@ func checkBlobExistence(ctx context.Context, mp ModelPath, digest string, regOpt
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
 	var status string
-	for try := 0; try < MaxRetries; try++ {
+	for try := 0; try < maxRetries; try++ {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
 			log.Printf("couldn't start upload: %v", err)
@@ -1487,17 +1485,7 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("too many redirects")
-			}
-			log.Printf("redirected to: %s\n", req.URL)
-			return nil
-		},
-	}
-
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/jmorganca/ollama/api"
 )
@@ -138,7 +139,7 @@ func uploadBlobChunk(ctx context.Context, method string, requestURL *url.URL, r 
 		headers.Set("Content-Range", fmt.Sprintf("%d-%d", offset, offset+sectionReader.Size()-1))
 	}
 
-	for try := 0; try < MaxRetries; try++ {
+	for try := 0; try < maxRetries; try++ {
 		resp, err := makeRequest(ctx, method, requestURL, headers, io.TeeReader(sectionReader, pw), opts)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, err
@@ -191,9 +192,13 @@ type ProgressWriter struct {
 	completed int64
 	total     int64
 	fn        func(api.ProgressResponse)
+	mu        sync.Mutex
 }
 
 func (pw *ProgressWriter) Write(b []byte) (int, error) {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+
 	n := len(b)
 	pw.bucket += int64(n)
 
