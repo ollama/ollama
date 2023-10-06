@@ -41,23 +41,23 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	switch runtime.GOOS {
 	case "darwin":
 		runners = []string{
-			path.Join(buildPath, "metal", "bin", "server"),
-			path.Join(buildPath, "cpu", "bin", "server"),
+			path.Join(buildPath, "metal", "bin", "ollama-runner"),
+			path.Join(buildPath, "cpu", "bin", "ollama-runner"),
 		}
 	case "linux":
 		runners = []string{
-			path.Join(buildPath, "cuda", "bin", "server"),
-			path.Join(buildPath, "cpu", "bin", "server"),
+			path.Join(buildPath, "cuda", "bin", "ollama-runner"),
+			path.Join(buildPath, "cpu", "bin", "ollama-runner"),
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
 		runners = []string{
-			path.Join(buildPath, "cpu", "bin", "Release", "server.exe"),
+			path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe"),
 		}
 	default:
 		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
 		runners = []string{
-			path.Join(buildPath, "cpu", "bin", "server"),
+			path.Join(buildPath, "cpu", "bin", "ollama-runner"),
 		}
 	}
 
