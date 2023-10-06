@@ -1,6 +1,6 @@
 # Ollama Model File
 
-> Note: this model file syntax is in development
+> Note: this `Modelfile` syntax is in development
 
 A model file is the blueprint to create and share models with Ollama.
 
@@ -24,7 +24,7 @@ A model file is the blueprint to create and share models with Ollama.
 
 ## Format
 
-The format of the Modelfile:
+The format of the `Modelfile`:
 
 ```modelfile
 # comment
@@ -42,7 +42,7 @@ INSTRUCTION arguments
 
 ## Examples
 
-An example of a model file creating a mario blueprint:
+An example of a `Modelfile` creating a mario blueprint:
 
 ```modelfile
 FROM llama2
@@ -57,9 +57,9 @@ SYSTEM You are Mario from super mario bros, acting as an assistant.
 
 To use this:
 
-1. Save it as a file (eg. `Modelfile`)
-2. `ollama create NAME -f <location of the file eg. ./Modelfile>'`
-3. `ollama run NAME`
+1. Save it as a file (e.g. `Modelfile`)
+2. `ollama create choose-a-model-name -f <location of the file e.g. ./Modelfile>'`
+3. `ollama run choose-a-model-name`
 4. Start using the model!
 
 More examples are available in the [examples directory](../examples).
@@ -68,7 +68,7 @@ More examples are available in the [examples directory](../examples).
 
 ### FROM (Required)
 
-The FROM instruction defines the base model to use when creating a model.
+The `FROM` instruction defines the base model to use when creating a model.
 
 ```modelfile
 FROM <model name>:<tag>
@@ -83,17 +83,17 @@ FROM llama2
 A list of available base models:
 <https://github.com/jmorganca/ollama#model-library>
 
-#### Build from a bin file
+#### Build from a `bin` file
 
 ```modelfile
 FROM ./ollama-model.bin
 ```
 
-This bin file location should be specified as an absolute path or relative to the Modelfile location.
+This bin file location should be specified as an absolute path or relative to the `Modelfile` location.
 
 ### EMBED
 
-The EMBED instruction is used to add embeddings of files to a model. This is useful for adding custom data that the model can reference when generating an answer. Note that currently only text files are supported, formatted with each line as one embedding.
+The `EMBED` instruction is used to add embeddings of files to a model. This is useful for adding custom data that the model can reference when generating an answer. Note that currently only text files are supported, formatted with each line as one embedding.
 
 ```modelfile
 FROM <model name>:<tag>
@@ -186,5 +186,5 @@ LICENSE """
 
 ## Notes
 
-- the **modelfile is not case sensitive**. In the examples, we use uppercase for instructions to make it easier to distinguish it from arguments.
+- the **`Modelfile` is not case sensitive**. In the examples, we use uppercase for instructions to make it easier to distinguish it from arguments.
 - Instructions can be in any order. In the examples, we start with FROM instruction to keep it easily readable.
