@@ -372,6 +372,7 @@ func CreateModel(ctx context.Context, workDir, name string, path string, fn func
 			}
 
 			if mf != nil {
+				fn(api.ProgressResponse{Status: "reading model metadata"})
 				sourceBlobPath, err := GetBlobsPath(mf.Config.Digest)
 				if err != nil {
 					return err
