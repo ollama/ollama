@@ -15,4 +15,4 @@ package llm
 //go:generate git -C gguf apply ../patches/0001-remove-warm-up-logging.patch
 //go:generate cmake -S gguf -B gguf/build/cpu -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 //go:generate cmake --build gguf/build/cpu --target server --config Release
-//go:generate mv gguf/build/metal/bin/server gguf/build/metal/bin/ollama-runner
+//go:generate mv gguf/build/cpu/bin/server gguf/build/cpu/bin/ollama-runner
