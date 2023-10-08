@@ -147,7 +147,18 @@
 
 				<div class=" h-full mb-32 w-full flex flex-col">
 					{#if Object.keys(chatHistory).length == 0}
-						<div class="m-auto text-4xl text-gray-600 font-bold text-center">Ollama</div>
+						<div class="m-auto text-center max-w-md">
+							<div class="flex justify-center">
+								<img src="/ollama.png" class="w-16 invert-[80%]" />
+							</div>
+							<div class="mt-6 text-3xl text-gray-500 font-semibold">
+								Get up and running with large language models, locally.
+							</div>
+
+							<div class=" mt-4 text-gray-600">
+								Run Llama 2, Code Llama, and other models. <br /> Customize and create your own.
+							</div>
+						</div>
 					{:else}
 						{#each Object.keys(chatHistory) as messageIdx}
 							<div class=" w-full {chatHistory[messageIdx].role == 'user' ? '' : ' bg-gray-700'}">
