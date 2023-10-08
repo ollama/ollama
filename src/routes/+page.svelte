@@ -258,7 +258,7 @@
 						</form>
 
 						<div class="mt-2.5 text-xs text-gray-500 text-center">
-							LLM models may produce inaccurate information about people, places, or facts.
+							LLMs may produce inaccurate information about people, places, or facts.
 						</div>
 					</div>
 				</div>
