@@ -61,7 +61,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -221,7 +221,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 }
 
 func DeleteHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -237,7 +237,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ShowHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -315,7 +315,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -338,7 +338,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 }
 
 func pull(model string, insecure bool) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -406,7 +406,7 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 type generateContextKey string
 
 func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -906,7 +906,7 @@ func startMacApp(client *api.Client) error {
 }
 
 func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
