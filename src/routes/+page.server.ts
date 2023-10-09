@@ -1,7 +1,7 @@
 import { ENDPOINT } from '$lib/contants';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ url, fetch }) => {
+export const load: PageServerLoad = async ({ url }) => {
 	const models = await fetch(`${ENDPOINT}/api/tags`, {
 		method: 'GET',
 		headers: {
