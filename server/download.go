@@ -30,6 +30,7 @@ type blobDownload struct {
 
 	Total     int64
 	Completed atomic.Int64
+	done      bool
 
 	Parts []*blobDownloadPart
 
@@ -124,7 +125,7 @@ func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *Regis
 
 	file.Truncate(b.Total)
 
-	g, ctx := errgroup.WithContext(ctx)
+	g, _ := errgroup.WithContext(ctx)
 	// TODO(mxyng): download concurrency should be configurable
 	g.SetLimit(64)
 	for i := range b.Parts {
@@ -168,7 +169,12 @@ func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *Regis
 		}
 	}
 
-	return os.Rename(file.Name(), b.Name)
+	if err := os.Rename(file.Name(), b.Name); err != nil {
+		return err
+	}
+
+	b.done = true
+	return nil
 }
 
 func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *RegistryOptions) error {
@@ -267,11 +273,8 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 			Completed: b.Completed.Load(),
 		})
 
-		if b.Completed.Load() >= b.Total {
-			// wait for the file to get renamed
-			if _, err := os.Stat(b.Name); err == nil {
-				return nil
-			}
+		if b.done {
+			return nil
 		}
 	}
 }
