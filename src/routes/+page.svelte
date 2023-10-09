@@ -181,14 +181,14 @@
 				<div class=" h-full mb-32 w-full flex flex-col">
 					{#if Object.keys(chatHistory).length == 0}
 						<div class="m-auto text-center max-w-md">
-							<div class="flex justify-center">
+							<div class="flex justify-center mt-8">
 								<img src="/ollama.png" class="w-16 invert-[80%]" />
 							</div>
 							<div class="mt-6 text-3xl text-gray-500 font-semibold">
 								Get up and running with large language models, locally.
 							</div>
 
-							<div class=" mt-4 text-gray-600">
+							<div class=" my-4 text-gray-600">
 								Run Llama 2, Code Llama, and other models. <br /> Customize and create your own.
 							</div>
 						</div>
