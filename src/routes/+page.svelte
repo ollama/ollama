@@ -18,18 +18,40 @@
 
 	let textareaElement = '';
 
+	const splitStream = (splitOn) => {
+		let buffer = '';
+		return new TransformStream({
+			transform(chunk, controller) {
+				buffer += chunk;
+				const parts = buffer.split(splitOn);
+				parts.slice(0, -1).forEach((part) => controller.enqueue(part));
+				buffer = parts[parts.length - 1];
+			},
+			flush(controller) {
+				if (buffer) controller.enqueue(buffer);
+			}
+		});
+	};
+
 	const submitPrompt = async () => {
 		console.log('submitPrompt');
+
 		if (selectedModel !== '') {
 			console.log(prompt);
 
 			let user_prompt = prompt;
+
 			chatHistory[Object.keys(chatHistory).length] = {
 				role: 'user',
 				content: user_prompt
 			};
+
 			prompt = '';
 			textareaElement.style.height = '';
+
+			setTimeout(() => {
+				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+			}, 50);
 
 			const res = await fetch(`${ENDPOINT}/api/generate`, {
 				method: 'POST',
@@ -47,36 +69,47 @@
 				role: 'assistant',
 				content: ''
 			};
+			window.scrollTo({ top: document.body.scrollHeight });
 
-			const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
 			while (true) {
 				const { value, done } = await reader.read();
 				if (done) break;
 
-				// toast.success(value);
 				try {
-					let data = JSON.parse(value);
-					console.log(data);
+					let lines = value.split('\n');
 
-					if (data.done == false) {
-						if (
-							chatHistory[Object.keys(chatHistory).length - 1].content == '' &&
-							data.response == '\n'
-						) {
-							continue;
-						} else {
-							chatHistory[Object.keys(chatHistory).length - 1].content += data.response;
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							let data = JSON.parse(line);
+
+							if (data.done == false) {
+								if (
+									chatHistory[Object.keys(chatHistory).length - 1].content == '' &&
+									data.response == '\n'
+								) {
+									continue;
+								} else {
+									chatHistory[Object.keys(chatHistory).length - 1].content += data.response;
+								}
+							} else {
+								context = data.context;
+								console.log(context);
+								chatHistory[Object.keys(chatHistory).length - 1].done = true;
+							}
 						}
-					} else {
-						context = data.context;
-						console.log(context);
-						chatHistory[Object.keys(chatHistory).length - 1].done = true;
 					}
 				} catch (error) {
 					console.log(error);
 				}
-				window.scrollTo(0, document.body.scrollHeight);
+				window.scrollTo({ top: document.body.scrollHeight });
 			}
+
+			window.scrollTo({ top: document.body.scrollHeight });
 		} else {
 			toast.error('Model not selected');
 		}
