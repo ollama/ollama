@@ -47,7 +47,7 @@ Feel free to contribute and help us make Ollama Web UI even better! 🙌
 
 A big shoutout to our amazing contributors who have helped make this project possible! 🙏
 
-- [Jeffrey Morgan (Creator of Ollama)](https://github.com/jmorganca)
+- [Ollama Team](https://github.com/jmorganca/ollama)
 - [Timothy J. Baek](https://github.com/tjbck)
 
 ## License 📜
