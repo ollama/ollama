@@ -199,7 +199,7 @@ func CheckVRAM() (int64, error) {
 		return 0, errNoGPU
 	}
 
-	var total int64
+	var free int64
 	scanner := bufio.NewScanner(&stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -208,10 +208,10 @@ func CheckVRAM() (int64, error) {
 			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
 		}
 
-		total += vram
+		free += vram
 	}
 
-	return total, nil
+	return free, nil
 }
 
 func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
@@ -367,7 +367,24 @@ func waitForServer(llm *llama) error {
 }
 
 func (llm *llama) Close() {
+	// signal the sub-process to terminate
 	llm.Cancel()
+
+	// wait for the command to exit to prevent race conditions with the next run
+	done := make(chan error, 1)
+	go func() {
+		done <- llm.Cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("llama runner exited with error: %v", err)
+		} else {
+			log.Printf("llama runner exited gracefully")
+		}
+	case <-time.After(5 * time.Second):
+		log.Printf("waiting for llama runner to close timed out after 5 seconds")
+	}
 }
 
 func (llm *llama) SetOptions(opts api.Options) {
