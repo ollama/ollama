@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jmorganca/ollama/api"
@@ -316,16 +317,6 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 			continue
 		}
 
-		// monitor the command, it is blocking, so if it exits we need to capture that
-		go func() {
-			err := llm.Cmd.Wait() // this will block until the command exits
-			if err != nil {
-				log.Printf("llama runner exited with error: %v", err)
-			} else {
-				log.Printf("llama runner exited")
-			}
-		}()
-
 		if err := waitForServer(llm); err != nil {
 			log.Printf("error starting llama runner: %v", err)
 			llm.Close()
@@ -370,9 +361,19 @@ func (llm *llama) Close() {
 	// signal the sub-process to terminate
 	llm.Cancel()
 
-	// wait for the command to exit to prevent race conditions with the next run
-	if err := llm.Cmd.Wait(); err != nil {
-		log.Printf("llama runner exited: %v", err)
+	// check if the process is still running
+	process, err := os.FindProcess(llm.Cmd.Process.Pid)
+	if err != nil {
+		log.Printf("could not check llama runner process: %v", err)
+		return
+	}
+
+	// send signal 0 (does not kill the process) to check if it's active
+	if process.Signal(syscall.Signal(0)) == nil {
+		// wait for the command to exit to prevent race conditions with the next run
+		if err := llm.Cmd.Wait(); err != nil {
+			log.Printf("llama runner exited: %v", err)
+		}
 	}
 }
 
