@@ -371,19 +371,8 @@ func (llm *llama) Close() {
 	llm.Cancel()
 
 	// wait for the command to exit to prevent race conditions with the next run
-	done := make(chan error, 1)
-	go func() {
-		done <- llm.Cmd.Wait()
-	}()
-	select {
-	case err := <-done:
-		msg := "llama runner exited"
-		if err != nil {
-			msg = fmt.Sprintf("%s: %v", msg, err)
-		}
-		log.Print(msg)
-	case <-time.After(5 * time.Second):
-		log.Printf("waiting for llama runner to close timed out after 5 seconds")
+	if err := llm.Cmd.Wait(); err != nil {
+		log.Printf("llama runner exited: %v", err)
 	}
 }
 
