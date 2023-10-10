@@ -377,11 +377,11 @@ func (llm *llama) Close() {
 	}()
 	select {
 	case err := <-done:
+		msg := "llama runner exited"
 		if err != nil {
-			log.Printf("llama runner exited with error: %v", err)
-		} else {
-			log.Printf("llama runner exited gracefully")
+			msg = fmt.Sprintf("%s: %v", msg, err)
 		}
+		log.Print(msg)
 	case <-time.After(5 * time.Second):
 		log.Printf("waiting for llama runner to close timed out after 5 seconds")
 	}
