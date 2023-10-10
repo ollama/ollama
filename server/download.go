@@ -314,6 +314,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 		requestURL := opts.mp.BaseURL()
 		requestURL = requestURL.JoinPath("v2", opts.mp.GetNamespaceRepository(), "blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
+			blobDownloadManager.Delete(opts.digest)
 			return err
 		}
 
