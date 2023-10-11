@@ -52,7 +52,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 			command.Name = string(fields[0])
 			command.Args = string(fields[1])
 		case "EMBED":
-			return nil, fmt.Errorf("deprecated command: %s", fields[0])
+			return nil, fmt.Errorf("deprecated command: EMBED is no longer supported, use the /embed API endpoint instead")
 		default:
 			if !bytes.HasPrefix(fields[0], []byte("#")) {
 				// log a warning for unknown commands
