@@ -12,7 +12,6 @@ A model file is the blueprint to create and share models with Ollama.
   - [FROM (Required)](#from-required)
     - [Build from llama2](#build-from-llama2)
     - [Build from a bin file](#build-from-a-bin-file)
-  - [EMBED](#embed)
   - [PARAMETER](#parameter)
     - [Valid Parameters and Values](#valid-parameters-and-values)
   - [TEMPLATE](#template)
@@ -90,17 +89,6 @@ FROM ./ollama-model.bin
 ```
 
 This bin file location should be specified as an absolute path or relative to the `Modelfile` location.
-
-### EMBED
-
-The `EMBED` instruction is used to add embeddings of files to a model. This is useful for adding custom data that the model can reference when generating an answer. Note that currently only text files are supported, formatted with each line as one embedding.
-
-```modelfile
-FROM <model name>:<tag>
-EMBED <file path>.txt
-EMBED <different file path>.txt
-EMBED <path to directory>/*.txt
-```
 
 ### PARAMETER
 
