@@ -454,7 +454,7 @@ type PredictRequest struct {
 	Stop             []string `json:"stop,omitempty"`
 }
 
-const maxBufferSize = 512 * 1024 // 512KB
+const maxBufferSize = 512 * 1000 // 512KB
 
 func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
 	prevConvo, err := llm.Decode(ctx, prevContext)
