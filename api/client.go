@@ -127,7 +127,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	return nil
 }
 
-const maxBufferSize = 512 * 1024 // 512KB
+const maxBufferSize = 512 * 1000 // 512KB
 
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
 	var buf *bytes.Buffer
