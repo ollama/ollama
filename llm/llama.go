@@ -263,7 +263,6 @@ func (w *StatusWriter) Write(b []byte) (int, error) {
 	if _, after, ok := bytes.Cut(b, []byte("error:")); ok {
 		err := fmt.Errorf("llama runner: %s", after)
 		w.ErrCh <- err
-		return os.Stderr.Write(b)
 	}
 	return os.Stderr.Write(b)
 }
