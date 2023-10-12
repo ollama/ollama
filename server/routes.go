@@ -782,6 +782,9 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		})
 
 		r.Handle(method, "/api/tags", ListModelsHandler)
+		r.Handle(method, "/api/version", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"version": version.Version})
+		})
 	}
 
 	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
