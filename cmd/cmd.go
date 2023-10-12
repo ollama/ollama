@@ -479,18 +479,7 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
 	}
 
 	if err := client.Generate(cancelCtx, &request, fn); err != nil {
-		if strings.Contains(err.Error(), "failed to load model") {
-			// tell the user to check the server log, if it exists locally
-			home, nestedErr := os.UserHomeDir()
-			if nestedErr != nil {
-				// return the original error
-				return err
-			}
-			logPath := filepath.Join(home, ".ollama", "logs", "server.log")
-			if _, nestedErr := os.Stat(logPath); nestedErr == nil {
-				err = fmt.Errorf("%w\nFor more details, check the error logs at %s", err, logPath)
-			}
-		} else if strings.Contains(err.Error(), "context canceled") && abort {
+		if strings.Contains(err.Error(), "context canceled") && abort {
 			spinner.Finish()
 			return nil
 		}
