@@ -37,7 +37,6 @@ Here are some exciting tasks on our to-do list:
 - ⚙️ **Advanced Parameters Support**: Harness the power of advanced settings for fine-tuned control.
 - 📚 **Enhanced Documentation**: Elevate your setup and customization experience with improved, comprehensive documentation.
 - 🌟 **User Interface Enhancement**: Elevate the user interface to deliver a smoother, more enjoyable interaction.
-- 📲🖥️ **Cross-Device Responsiveness**: Seamlessly transition between desktop and mobile for a consistent experience.
 - 🚀 **Integration with Messaging Platforms**: Explore possibilities for integrating with popular messaging platforms like Slack and Discord.
 - 🧐 **User Testing and Feedback Gathering**: Conduct thorough user testing to gather insights and refine our offerings based on valuable user feedback.
 
