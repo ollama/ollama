@@ -356,7 +356,10 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 			log.Printf("error starting llama runner: %v", err)
 			llm.Close()
 
-			// capture the error runner process, if any
+			// default the runnerErr to the error returned by the most recent llama runner process
+			runnerErr = err
+
+			// capture the error directly from the runner process, if any
 			select {
 			case runnerErr = <-statusWriter.ErrCh:
 			default:
@@ -381,7 +384,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 
 func waitForServer(llm *llama) error {
 	start := time.Now()
-	expiresAt := time.Now().Add(2 * time.Minute) // be generous with timeout, large models can take a while to load
+	expiresAt := time.Now().Add(3 * time.Minute) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -394,7 +397,7 @@ func waitForServer(llm *llama) error {
 		case <-ticker.C:
 			if time.Now().After(expiresAt) {
 				// timeout
-				return fmt.Errorf("llama runner did not start within allotted time, retrying")
+				return fmt.Errorf("timed out waiting for llama runner to start")
 			}
 
 			if err := llm.Ping(context.Background()); err == nil {
