@@ -21,17 +21,32 @@ Not all models will work with Ollama. There are a number of factors that go into
 7. If the answer is yes, then there is a good chance the model will run after being converted and quantized.
 8. An alternative to this process is to visit [https://caniquant.tvl.st](https://caniquant.tvl.st) and enter the org/modelname in the box and submit.
 
-## Clone llama.cpp to your machine
+At this point there are two processes you can use. You can either use a Docker container to convert and quantize, OR you can manually run the scripts. The Docker container is the easiest way to do it, but it requires you to have Docker installed on your machine. If you don't have Docker installed, you can follow the manual process.
+
+## Convert and Quantize with Docker
+
+Run `docker run --rm -v /path/to/model/repo:/repo ollama/quantize -q quantlevel /repo`. For instance, if you have downloaded the latest Mistral 7B model, then clone it to your machine. Then change into that directory and you can run 
+```shell 
+docker run --rm -v .:/repo ollama/quantize -q q4_0 /repo
+```
+
+You can find the different quantization levels below under **Quantize the Model**.
+
+This will output two files into the directory. First is a f16.bin file that is the model converted to GGUF. The second file is a q4_0.bin file which is the model quantized to a 4 bit quantization. You should rename it to something more descriptive.
+
+## Convert and Quantize Manually
+
+### Clone llama.cpp to your machine
 
 If we know the model has a chance of working, then we need to convert and quantize. This is a matter of running two separate scripts in the llama.cpp project.
 
 1. Decide where you want the llama.cpp repository on your machine.
 2. Navigate to that location and then run:
  [`git clone https://github.com/ggerganov/llama.cpp.git`](https://github.com/ggerganov/llama.cpp.git)
-    1. If you don’t have git installed, download this zip file and unzip it to that location: https://github.com/ggerganov/llama.cpp/archive/refs/heads/master.zip
+    1. If you don't have git installed, download this zip file and unzip it to that location: https://github.com/ggerganov/llama.cpp/archive/refs/heads/master.zip
 3. Install the Python dependencies: `pip install torch transformers sentencepiece`
 
-## Convert the model to GGUF
+### Convert the model to GGUF
 
 1. Decide on the right convert script to run. What was the model architecture you found in the first section.
     1. LlamaForCausalLM or MistralForCausalLM: 
@@ -47,7 +62,7 @@ If we know the model has a chance of working, then we need to convert and quanti
     run `python3 convert-starcoder-hf-to-gguf.py <modelfilename> <fpsize>`
     fpsize depends on the weight size. 1 for fp16, 0 for fp32
 
-## Quantize the model
+### Quantize the model
 
 If the model converted successfully, there is a good chance it will also quantize successfully. Now you need to decide on the quantization to use. We will always try to create all the quantizations and upload them to the library. You should decide which level is more important to you and quantize accordingly.
 
