@@ -36,7 +36,14 @@
 	const submitPrompt = async () => {
 		console.log('submitPrompt');
 
-		if (selectedModel !== '') {
+		if (selectedModel === '') {
+			toast.error('Model not selected');
+		} else if (
+			Object.keys(chatHistory).length != 0 &&
+			chatHistory[Object.keys(chatHistory).length - 1].done != true
+		) {
+			console.log('wait');
+		} else {
 			console.log(prompt);
 
 			let user_prompt = prompt;
@@ -53,6 +60,12 @@
 				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 			}, 50);
 
+			chatHistory[Object.keys(chatHistory).length] = {
+				role: 'assistant',
+				content: ''
+			};
+			window.scrollTo({ top: document.body.scrollHeight });
+
 			const res = await fetch(`${ENDPOINT}/api/generate`, {
 				method: 'POST',
 				headers: {
@@ -64,12 +77,6 @@
 					context: context != '' ? context : undefined
 				})
 			});
-
-			chatHistory[Object.keys(chatHistory).length] = {
-				role: 'assistant',
-				content: ''
-			};
-			window.scrollTo({ top: document.body.scrollHeight });
 
 			const reader = res.body
 				.pipeThrough(new TextDecoderStream())
@@ -110,8 +117,6 @@
 			}
 
 			window.scrollTo({ top: document.body.scrollHeight });
-		} else {
-			toast.error('Model not selected');
 		}
 	};
 
@@ -196,7 +201,7 @@
 						{#each Object.keys(chatHistory) as messageIdx}
 							<div class=" w-full {chatHistory[messageIdx].role == 'user' ? '' : ' bg-gray-700'}">
 								<div class="flex justify-between p-5 py-10 max-w-3xl mx-auto rounded-lg">
-									<div class="space-x-7 flex">
+									<div class="space-x-7 flex w-full">
 										<div class="">
 											<img
 												src="/{chatHistory[messageIdx].role == 'user' ? 'user' : 'favicon'}.png"
@@ -204,10 +209,32 @@
 											/>
 										</div>
 
-										<div class="whitespace-pre-line">
-											{@html marked.parse(chatHistory[messageIdx].content)}
-											<!-- {} -->
-										</div>
+										{#if chatHistory[messageIdx].role != 'user' && chatHistory[messageIdx].content == ''}
+											<div class="w-full pr-28">
+												<div class="animate-pulse flex w-full">
+													<div class="space-y-2 w-full">
+														<div class="h-2 bg-gray-600 rounded mr-14" />
+
+														<div class="grid grid-cols-3 gap-4">
+															<div class="h-2 bg-gray-600 rounded col-span-2" />
+															<div class="h-2 bg-gray-600 rounded col-span-1" />
+														</div>
+														<div class="grid grid-cols-4 gap-4">
+															<div class="h-2 bg-gray-600 rounded col-span-1" />
+															<div class="h-2 bg-gray-600 rounded col-span-2" />
+															<div class="h-2 bg-gray-600 rounded col-span-1 mr-4" />
+														</div>
+
+														<div class="h-2 bg-gray-600 rounded" />
+													</div>
+												</div>
+											</div>
+										{:else}
+											<div class="whitespace-pre-line">
+												{@html marked.parse(chatHistory[messageIdx].content)}
+											</div>
+										{/if}
+										<!-- {} -->
 									</div>
 
 									<div>
@@ -269,23 +296,27 @@
 							/>
 							<div class=" absolute right-0 bottom-0">
 								<div class="pr-3 pb-2">
-									<button
-										class="{prompt !== ''
-											? 'bg-emerald-600 text-gray-100 hover:bg-emerald-700 '
-											: 'text-gray-600 disabled'} transition rounded p-2"
-										type="submit"
-									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 16 16"
-											fill="none"
-											class="w-4 h-4"
-											><path
-												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
-												fill="currentColor"
-											/></svg
+									{#if Object.keys(chatHistory).length == 0 || chatHistory[Object.keys(chatHistory).length - 1].done == true}
+										<button
+											class="{prompt !== ''
+												? 'bg-emerald-600 text-gray-100 hover:bg-emerald-700 '
+												: 'text-gray-600 disabled'} transition rounded p-2"
+											type="submit"
 										>
-									</button>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 16 16"
+												fill="none"
+												class="w-4 h-4"
+												><path
+													d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
+													fill="currentColor"
+												/></svg
+											>
+										</button>
+									{:else}
+										<div class="loading mb-1.5 mr-1 font-semibold text-lg">...</div>
+									{/if}
 								</div>
 							</div>
 						</form>
@@ -303,3 +334,18 @@
 		</main> -->
 	</div>
 </div>
+
+<style>
+	.loading {
+		display: inline-block;
+		clip-path: inset(0 1ch 0 0);
+		animation: l 1s steps(3) infinite;
+		letter-spacing: -0.5px;
+	}
+
+	@keyframes l {
+		to {
+			clip-path: inset(0 -1ch 0 0);
+		}
+	}
+</style>
