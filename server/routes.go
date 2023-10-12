@@ -68,7 +68,6 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 	}
 
 	if err := opts.FromMap(reqOpts); err != nil {
-		log.Printf("could not merge model options: %v", err)
 		return err
 	}
 
@@ -186,6 +185,10 @@ func GenerateHandler(c *gin.Context) {
 	// TODO: set this duration from the request if specified
 	sessionDuration := defaultSessionDuration
 	if err := load(c.Request.Context(), workDir, model, req.Options, sessionDuration); err != nil {
+		if errors.Is(err, api.ErrInvalidOpts) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
