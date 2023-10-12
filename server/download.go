@@ -144,7 +144,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 
 	file.Truncate(b.Total)
 
-	g, _ := errgroup.WithContext(ctx)
+	g, inner := errgroup.WithContext(ctx)
 	g.SetLimit(numDownloadParts)
 	for i := range b.Parts {
 		part := b.Parts[i]
@@ -156,7 +156,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 		g.Go(func() error {
 			for try := 0; try < maxRetries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
-				err := b.downloadChunk(ctx, requestURL, w, part, opts)
+				err := b.downloadChunk(inner, requestURL, w, part, opts)
 				switch {
 				case errors.Is(err, context.Canceled):
 					return err
