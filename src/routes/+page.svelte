@@ -6,17 +6,19 @@
 
 	import type { PageData } from './$types';
 	import { ENDPOINT } from '$lib/contants';
+	import { tick } from 'svelte';
 
 	export let data: PageData;
 	$: ({ models } = data);
+	let textareaElement;
 
 	let selectedModel = '';
 	let prompt = '';
-	let context = '';
+	let messages = [];
 
-	let chatHistory = {};
-
-	let textareaElement = '';
+	//////////////////////////
+	// Helper functions
+	//////////////////////////
 
 	const splitStream = (splitOn) => {
 		let buffer = '';
@@ -31,93 +33,6 @@
 				if (buffer) controller.enqueue(buffer);
 			}
 		});
-	};
-
-	const submitPrompt = async () => {
-		console.log('submitPrompt');
-
-		if (selectedModel === '') {
-			toast.error('Model not selected');
-		} else if (
-			Object.keys(chatHistory).length != 0 &&
-			chatHistory[Object.keys(chatHistory).length - 1].done != true
-		) {
-			console.log('wait');
-		} else {
-			console.log(prompt);
-
-			let user_prompt = prompt;
-
-			chatHistory[Object.keys(chatHistory).length] = {
-				role: 'user',
-				content: user_prompt
-			};
-
-			prompt = '';
-			textareaElement.style.height = '';
-
-			setTimeout(() => {
-				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-			}, 50);
-
-			chatHistory[Object.keys(chatHistory).length] = {
-				role: 'assistant',
-				content: ''
-			};
-			window.scrollTo({ top: document.body.scrollHeight });
-
-			const res = await fetch(`${ENDPOINT}/api/generate`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'text/event-stream'
-				},
-				body: JSON.stringify({
-					model: selectedModel,
-					prompt: user_prompt,
-					context: context != '' ? context : undefined
-				})
-			});
-
-			const reader = res.body
-				.pipeThrough(new TextDecoderStream())
-				.pipeThrough(splitStream('\n'))
-				.getReader();
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
-
-				try {
-					let lines = value.split('\n');
-
-					for (const line of lines) {
-						if (line !== '') {
-							console.log(line);
-							let data = JSON.parse(line);
-
-							if (data.done == false) {
-								if (
-									chatHistory[Object.keys(chatHistory).length - 1].content == '' &&
-									data.response == '\n'
-								) {
-									continue;
-								} else {
-									chatHistory[Object.keys(chatHistory).length - 1].content += data.response;
-								}
-							} else {
-								context = data.context;
-								console.log(context);
-								chatHistory[Object.keys(chatHistory).length - 1].done = true;
-							}
-						}
-					}
-				} catch (error) {
-					console.log(error);
-				}
-				window.scrollTo({ top: document.body.scrollHeight });
-			}
-
-			window.scrollTo({ top: document.body.scrollHeight });
-		}
 	};
 
 	const copyToClipboard = (text) => {
@@ -155,6 +70,172 @@
 			}
 		);
 	};
+
+	//////////////////////////
+	// Ollama functions
+	//////////////////////////
+
+	const submitPrompt = async () => {
+		console.log('submitPrompt');
+
+		if (selectedModel === '') {
+			toast.error('Model not selected');
+		} else if (messages.length != 0 && messages.at(-1).done != true) {
+			console.log('wait');
+		} else {
+			console.log(prompt);
+
+			let user_prompt = prompt;
+			messages = [
+				...messages,
+				{
+					role: 'user',
+					content: user_prompt
+				}
+			];
+			prompt = '';
+
+			textareaElement.style.height = '';
+			setTimeout(() => {
+				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+			}, 50);
+
+			let responseMessage = {
+				role: 'assistant',
+				content: ''
+			};
+
+			messages = [...messages, responseMessage];
+			window.scrollTo({ top: document.body.scrollHeight });
+
+			const res = await fetch(`${ENDPOINT}/api/generate`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'text/event-stream'
+				},
+				body: JSON.stringify({
+					model: selectedModel,
+					prompt: user_prompt,
+					context:
+						messages.length > 3 && messages.at(-3).context != undefined
+							? messages.at(-3).context
+							: undefined
+				})
+			});
+
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
+
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+
+				try {
+					let lines = value.split('\n');
+
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							let data = JSON.parse(line);
+							if (data.done == false) {
+								if (responseMessage.content == '' && data.response == '\n') {
+									continue;
+								} else {
+									responseMessage.content += data.response;
+									messages = messages;
+								}
+							} else {
+								responseMessage.done = true;
+								responseMessage.context = data.context;
+								messages = messages;
+							}
+						}
+					}
+				} catch (error) {
+					console.log(error);
+				}
+				window.scrollTo({ top: document.body.scrollHeight });
+			}
+
+			window.scrollTo({ top: document.body.scrollHeight });
+		}
+	};
+
+	const regenerateResponse = async () => {
+		console.log('regenerateResponse');
+
+		if (messages.length != 0 && messages.at(-1).done == true) {
+			messages.splice(messages.length - 1, 1);
+			messages = messages;
+
+			let lastUserMessage = messages.at(-1);
+
+			let responseMessage = {
+				role: 'assistant',
+				content: ''
+			};
+
+			messages = [...messages, responseMessage];
+			window.scrollTo({ top: document.body.scrollHeight });
+
+			const res = await fetch(`${ENDPOINT}/api/generate`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'text/event-stream'
+				},
+				body: JSON.stringify({
+					model: selectedModel,
+					prompt: lastUserMessage.content,
+					context:
+						messages.length > 3 && messages.at(-3).context != undefined
+							? messages.at(-3).context
+							: undefined
+				})
+			});
+
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
+
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+
+				try {
+					let lines = value.split('\n');
+
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							let data = JSON.parse(line);
+							if (data.done == false) {
+								if (responseMessage.content == '' && data.response == '\n') {
+									continue;
+								} else {
+									responseMessage.content += data.response;
+									messages = messages;
+								}
+							} else {
+								responseMessage.done = true;
+								responseMessage.context = data.context;
+								messages = messages;
+							}
+						}
+					}
+				} catch (error) {
+					console.log(error);
+				}
+				window.scrollTo({ top: document.body.scrollHeight });
+			}
+
+			window.scrollTo({ top: document.body.scrollHeight });
+		}
+
+		console.log(messages);
+	};
 </script>
 
 <div class="app text-gray-100">
@@ -171,7 +252,7 @@
 								id="models"
 								class="outline-none border border-gray-600 bg-gray-700 text-gray-200 text-sm rounded-lg block w-full p-2.5 placeholder-gray-400"
 								bind:value={selectedModel}
-								disabled={Object.keys(chatHistory).length != 0}
+								disabled={messages.length != 0}
 							>
 								<option value="" selected>Select a model</option>
 
@@ -183,8 +264,8 @@
 					</div>
 				</div>
 
-				<div class=" h-full mb-32 w-full flex flex-col">
-					{#if Object.keys(chatHistory).length == 0}
+				<div class=" h-full mb-44 w-full flex flex-col">
+					{#if messages.length == 0}
 						<div class="m-auto text-center max-w-md">
 							<div class="flex justify-center mt-8">
 								<img src="/ollama.png" class="w-16 invert-[80%]" />
@@ -198,18 +279,18 @@
 							</div>
 						</div>
 					{:else}
-						{#each Object.keys(chatHistory) as messageIdx}
-							<div class=" w-full {chatHistory[messageIdx].role == 'user' ? '' : ' bg-gray-700'}">
+						{#each messages as message, messageIdx}
+							<div class=" w-full {message.role == 'user' ? '' : ' bg-gray-700'}">
 								<div class="flex justify-between p-5 py-10 max-w-3xl mx-auto rounded-lg">
 									<div class="space-x-7 flex w-full">
 										<div class="">
 											<img
-												src="/{chatHistory[messageIdx].role == 'user' ? 'user' : 'favicon'}.png"
+												src="/{message.role == 'user' ? 'user' : 'favicon'}.png"
 												class=" max-w-[32px] object-cover rounded"
 											/>
 										</div>
 
-										{#if chatHistory[messageIdx].role != 'user' && chatHistory[messageIdx].content == ''}
+										{#if message.role != 'user' && message.content == ''}
 											<div class="w-full pr-28">
 												<div class="animate-pulse flex w-full">
 													<div class="space-y-2 w-full">
@@ -231,18 +312,18 @@
 											</div>
 										{:else}
 											<div class="whitespace-pre-line">
-												{@html marked.parse(chatHistory[messageIdx].content)}
+												{@html marked.parse(message.content)}
 											</div>
 										{/if}
 										<!-- {} -->
 									</div>
 
 									<div>
-										{#if chatHistory[messageIdx].role != 'user' && chatHistory[messageIdx].done}
+										{#if message.role != 'user' && message.done}
 											<button
 												class="p-1 rounded hover:bg-gray-700 transition"
 												on:click={() => {
-													copyToClipboard(chatHistory[messageIdx].content);
+													copyToClipboard(message.content);
 												}}
 											>
 												<svg
@@ -274,6 +355,30 @@
 
 				<div class=" bg-gradient-to-t from-gray-900 pt-5">
 					<div class="max-w-3xl p-2.5 -mb-0.5 mx-auto inset-x-0">
+						{#if messages.length != 0 && messages.at(-1).role == 'assistant' && messages.at(-1).done == true}
+							<div class=" flex justify-end mb-2.5">
+								<button
+									class=" flex px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded"
+									on:click={regenerateResponse}
+								>
+									<div class=" self-center mr-1">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</div>
+									<div class=" self-center text-sm">Regenerate</div>
+								</button>
+							</div>
+						{/if}
 						<form class=" flex shadow-sm relative w-full" on:submit|preventDefault={submitPrompt}>
 							<textarea
 								class="rounded-xl bg-gray-700 outline-none w-full py-3 px-5 pr-12 resize-none"
@@ -296,7 +401,7 @@
 							/>
 							<div class=" absolute right-0 bottom-0">
 								<div class="pr-3 pb-2">
-									{#if Object.keys(chatHistory).length == 0 || chatHistory[Object.keys(chatHistory).length - 1].done == true}
+									{#if messages.length == 0 || messages.at(-1).done == true}
 										<button
 											class="{prompt !== ''
 												? 'bg-emerald-600 text-gray-100 hover:bg-emerald-700 '
