@@ -30,42 +30,43 @@ import (
 var llamaCppEmbed embed.FS
 
 type ModelRunner struct {
-	Path string // path to the model runner executable
+	Path        string // path to the model runner executable
+	Accelerated bool
 }
 
 func chooseRunners(workDir, runnerType string) []ModelRunner {
 	buildPath := path.Join("llama.cpp", runnerType, "build")
-	var runners []string
+	var runners []ModelRunner
 
 	// set the runners based on the OS
 	// IMPORTANT: the order of the runners in the array is the priority order
 	switch runtime.GOOS {
 	case "darwin":
-		runners = []string{
-			path.Join(buildPath, "metal", "bin", "ollama-runner"),
-			path.Join(buildPath, "cpu", "bin", "ollama-runner"),
+		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "metal", "bin", "ollama-runner")},
+			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	case "linux":
-		runners = []string{
-			path.Join(buildPath, "cuda", "bin", "ollama-runner"),
-			path.Join(buildPath, "cpu", "bin", "ollama-runner"),
+		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cuda", "bin", "ollama-runner"), Accelerated: true},
+			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
-		runners = []string{
-			path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe"),
+		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
 		}
 	default:
 		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
-		runners = []string{
-			path.Join(buildPath, "cpu", "bin", "ollama-runner"),
+		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	}
 
 	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
 	for _, r := range runners {
 		// find all the files in the runner's bin directory
-		files, err := fs.Glob(llamaCppEmbed, path.Join(path.Dir(r), "*"))
+		files, err := fs.Glob(llamaCppEmbed, path.Join(path.Dir(r.Path), "*"))
 		if err != nil {
 			// this is expected, ollama may be compiled without all runners packed in
 			log.Printf("%s runner not found: %v", r, err)
@@ -115,7 +116,10 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	localRunnersByPriority := []ModelRunner{}
 	for _, r := range runners {
 		// clean the ModelRunner paths so that they match the OS we are running on
-		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: filepath.Clean(path.Join(workDir, r))})
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{
+			Path:        filepath.Clean(path.Join(workDir, r.Path)),
+			Accelerated: r.Accelerated,
+		})
 	}
 
 	return localRunnersByPriority
@@ -282,14 +286,18 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
+	numGPU := NumGPU(numLayers, fileInfo.Size(), opts)
 	params := []string{
 		"--model", model,
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
-		"--n-gpu-layers", fmt.Sprintf("%d", NumGPU(numLayers, fileInfo.Size(), opts)),
 		"--embedding",
+	}
+
+	if numGPU > 0 {
+		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", numGPU))
 	}
 
 	if opts.NumGQA > 0 {
@@ -322,6 +330,11 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 
 	// start the llama.cpp server with a retry in case the port is already in use
 	for _, runner := range runners {
+		if runner.Accelerated && numGPU == 0 {
+			log.Printf("skipping accelerated runner because num_gpu=0")
+			continue
+		}
+
 		if _, err := os.Stat(runner.Path); err != nil {
 			log.Printf("llama runner not found: %v", err)
 			continue
