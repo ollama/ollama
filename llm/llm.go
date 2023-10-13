@@ -56,38 +56,31 @@ func New(workDir, model string, adapters []string, opts api.Options) (LLM, error
 				opts.NumGPU = 0
 			}
 		}
-	}
 
-	var requiredMemory int64
-	var f16Multiplier int64 = 2
+		var requiredMemory int64
+		var f16Multiplier int64 = 2
 
-	switch ggml.ModelType() {
-	case "3B", "7B":
-		requiredMemory = 8 * format.GigaByte
-	case "13B":
-		requiredMemory = 16 * format.GigaByte
-	case "30B", "34B", "40B":
-		requiredMemory = 32 * format.GigaByte
-	case "65B", "70B":
-		requiredMemory = 64 * format.GigaByte
-	case "180B":
-		requiredMemory = 128 * format.GigaByte
-		f16Multiplier = 4
-	}
+		switch ggml.ModelType() {
+		case "3B", "7B":
+			requiredMemory = 8 * format.GigaByte
+		case "13B":
+			requiredMemory = 16 * format.GigaByte
+		case "30B", "34B", "40B":
+			requiredMemory = 32 * format.GigaByte
+		case "65B", "70B":
+			requiredMemory = 64 * format.GigaByte
+		case "180B":
+			requiredMemory = 128 * format.GigaByte
+			f16Multiplier = 4
+		}
 
-	systemMemory := int64(memory.TotalMemory())
+		systemMemory := int64(memory.TotalMemory())
 
-	videoMemory, err := CheckVRAM()
-	if err != nil{
-		videoMemory = 0
-	}
-
-	totalMemory := systemMemory + videoMemory
-
-	if ggml.FileType() == "F16" && requiredMemory*f16Multiplier > totalMemory {
-		return nil, fmt.Errorf("F16 model requires at least %s of total memory", format.HumanBytes(requiredMemory))
-	} else if requiredMemory > totalMemory {
-		return nil, fmt.Errorf("model requires at least %s of total memory", format.HumanBytes(requiredMemory))
+		if ggml.FileType() == "F16" && requiredMemory*f16Multiplier > systemMemory {
+			return nil, fmt.Errorf("F16 model requires at least %s of total memory", format.HumanBytes(requiredMemory))
+		} else if requiredMemory > systemMemory {
+			return nil, fmt.Errorf("model requires at least %s of total memory", format.HumanBytes(requiredMemory))
+		}
 	}
 
 	switch ggml.Name() {
