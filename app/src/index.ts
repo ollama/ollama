@@ -162,7 +162,7 @@ app.on('before-quit', () => {
   }
 })
 
-interface ReleaseData {
+interface Release {
   url: string
 }
 
