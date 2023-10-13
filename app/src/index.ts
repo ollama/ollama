@@ -190,13 +190,12 @@ async function checkNewRelease() {
   }
 }
 
-function checkUpdate() {
-  checkNewRelease().then(check => {
-    if (check) {
-      logger.info('update available')
-      autoUpdater.checkForUpdates()
-    }
-  })
+async function checkUpdate() {
+  const check = await checkNewRelease()
+  if (check) {
+    logger.info('update available')
+    autoUpdater.checkForUpdates()
+  }
 }
 
 function init() {
