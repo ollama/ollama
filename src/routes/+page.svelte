@@ -6,15 +6,29 @@
 
 	import type { PageData } from './$types';
 	import { ENDPOINT } from '$lib/contants';
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 
 	export let data: PageData;
 	$: ({ models } = data);
 	let textareaElement;
 
 	let selectedModel = '';
+	let systemPrompt = '';
+	let temperature = '';
 	let prompt = '';
 	let messages = [];
+
+	onMount(() => {
+		let settings = localStorage.getItem('settings');
+		if (settings) {
+			settings = JSON.parse(settings);
+			console.log(settings);
+
+			selectedModel = settings.model ?? '';
+			systemPrompt = settings.systemPrompt ?? '';
+			temperature = settings.temperature ?? '';
+		}
+	});
 
 	//////////////////////////
 	// Helper functions
@@ -69,6 +83,22 @@
 				console.error('Async: Could not copy text: ', err);
 			}
 		);
+	};
+
+	//////////////////////////
+	// Web functions
+	//////////////////////////
+
+	const saveDefaultModel = () => {
+		let settings = localStorage.getItem('settings') ?? '{}';
+		if (settings) {
+			settings = JSON.parse(settings);
+			settings.model = selectedModel;
+			localStorage.setItem('settings', JSON.stringify(settings));
+		}
+
+		console.log('saved');
+		toast.success('Default model updated');
 	};
 
 	//////////////////////////
@@ -248,18 +278,24 @@
 					<div class="p-3 rounded-lg bg-gray-900">
 						<div>
 							<label for="models" class="block mb-2 text-sm font-medium text-gray-200">Model</label>
-							<select
-								id="models"
-								class="outline-none border border-gray-600 bg-gray-700 text-gray-200 text-sm rounded-lg block w-full p-2.5 placeholder-gray-400"
-								bind:value={selectedModel}
-								disabled={messages.length != 0}
-							>
-								<option value="" selected>Select a model</option>
 
-								{#each models.models as model}
-									<option value={model.name}>{model.name}</option>
-								{/each}
-							</select>
+							<div>
+								<select
+									id="models"
+									class="outline-none border border-gray-600 bg-gray-700 text-gray-200 text-sm rounded-lg block w-full p-2.5 placeholder-gray-400"
+									bind:value={selectedModel}
+									disabled={messages.length != 0}
+								>
+									<option value="" selected>Select a model</option>
+
+									{#each models.models as model}
+										<option value={model.name}>{model.name}</option>
+									{/each}
+								</select>
+								<div class="text-right mt-1.5 text-xs text-gray-500">
+									<button on:click={saveDefaultModel}> Set as default</button>
+								</div>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -358,7 +394,7 @@
 						{#if messages.length != 0 && messages.at(-1).role == 'assistant' && messages.at(-1).done == true}
 							<div class=" flex justify-end mb-2.5">
 								<button
-									class=" flex px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded"
+									class=" flex px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg"
 									on:click={regenerateResponse}
 								>
 									<div class=" self-center mr-1">
