@@ -164,22 +164,22 @@ app.on('before-quit', () => {
 
 let currentReleaseURL = ''
 
-async function checkNewRelease() {
+async function isNewReleaseAvailable() {
   try {
     const response = await fetch('https://ollama.ai/api/update')
 
-    if (!response.ok) {
-      logger.error(`update server responded with ${response.status}`)
+    if (response.status === 204) {
       return false
     }
 
     const data = await response.json()
-    const fetchedURL = data.url
 
-    const newRelease = currentReleaseURL === '' || currentReleaseURL !== fetchedURL
-    currentReleaseURL = fetchedURL
+    if (currentReleaseURL === data.url) {
+      return false
+    }
 
-    return newRelease
+    currentReleaseURL = data.url
+    return true
   } catch (error) {
     logger.error(`update check failed - ${error}`)
     return false
@@ -187,9 +187,9 @@ async function checkNewRelease() {
 }
 
 async function checkUpdate() {
-  const check = await checkNewRelease()
-  if (check) {
-    logger.info('update available')
+  const available = await isNewReleaseAvailable()
+  if (available) {
+    logger.info('checking for update')
     autoUpdater.checkForUpdates()
   }
 }
