@@ -1,4 +1,4 @@
-# amd64 dependencies
+# centos7 amd64 dependencies
 FROM --platform=linux/amd64 nvidia/cuda:11.3.1-devel-centos7 AS base-amd64
 RUN yum install -y https://repo.ius.io/ius-release-el7.rpm centos-release-scl && \
     yum update -y && \
@@ -6,16 +6,10 @@ RUN yum install -y https://repo.ius.io/ius-release-el7.rpm centos-release-scl &&
 RUN wget "https://github.com/Kitware/CMake/releases/download/v3.27.6/cmake-3.27.6-linux-x86_64.sh" -O cmake-installer.sh && chmod +x cmake-installer.sh && ./cmake-installer.sh --skip-license --prefix=/usr/local
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 
-# arm64 dependencies
-FROM --platform=linux/arm64 nvidia/cuda:11.3.1-devel-ubuntu18.04 AS base-arm64
-RUN apt-get update && \
-    apt-get install -y git build-essential wget software-properties-common && \
-    add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
-    apt-get update && \
-    apt-get install -y gcc-9 g++-9 && \
-    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 60 --slave /usr/bin/g++ g++ /usr/bin/g++-9 && \
-    update-alternatives --config gcc
-RUN wget "https://github.com/Kitware/CMake/releases/download/v3.27.6/cmake-3.27.6-linux-aarch64.sh" -O cmake-installer.sh && chmod +x cmake-installer.sh && ./cmake-installer.sh --skip-license --prefix=/usr/local
+# centos8 arm64 dependencies
+FROM --platform=linux/arm64 nvidia/cuda-arm64:11.3.1-devel-centos8 AS base-arm64
+RUN sed -i -e 's/mirrorlist/#mirrorlist/g' -e 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+RUN yum install -y git cmake
 
 FROM base-${TARGETARCH}
 ARG TARGETARCH
