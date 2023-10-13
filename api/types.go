@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"reflect"
@@ -238,44 +237,39 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 						// when JSON unmarshals numbers, it uses float64, not int
 						field.SetInt(int64(t))
 					default:
-						log.Printf("could not convert model parameter %v of type %T to int, skipped", key, val)
+						return fmt.Errorf("option %q must be of type integer", key)
 					}
 				case reflect.Bool:
 					val, ok := val.(bool)
 					if !ok {
-						log.Printf("could not convert model parameter %v of type %T to bool, skipped", key, val)
-						continue
+						return fmt.Errorf("option %q must be of type boolean", key)
 					}
 					field.SetBool(val)
 				case reflect.Float32:
 					// JSON unmarshals to float64
 					val, ok := val.(float64)
 					if !ok {
-						log.Printf("could not convert model parameter %v of type %T to float32, skipped", key, val)
-						continue
+						return fmt.Errorf("option %q must be of type float32", key)
 					}
 					field.SetFloat(val)
 				case reflect.String:
 					val, ok := val.(string)
 					if !ok {
-						log.Printf("could not convert model parameter %v of type %T to string, skipped", key, val)
-						continue
+						return fmt.Errorf("option %q must be of type string", key)
 					}
 					field.SetString(val)
 				case reflect.Slice:
 					// JSON unmarshals to []interface{}, not []string
 					val, ok := val.([]interface{})
 					if !ok {
-						log.Printf("could not convert model parameter %v of type %T to slice, skipped", key, val)
-						continue
+						return fmt.Errorf("option %q must be of type array", key)
 					}
 					// convert []interface{} to []string
 					slice := make([]string, len(val))
 					for i, item := range val {
 						str, ok := item.(string)
 						if !ok {
-							log.Printf("could not convert model parameter %v of type %T to slice of strings, skipped", key, item)
-							continue
+							return fmt.Errorf("option %q must be of an array of strings", key)
 						}
 						slice[i] = str
 					}
