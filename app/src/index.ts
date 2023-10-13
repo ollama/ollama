@@ -162,13 +162,43 @@ app.on('before-quit', () => {
   }
 })
 
+let currentReleaseURL = ''
+
+async function isNewReleaseAvailable() {
+  try {
+    const response = await fetch('https://ollama.ai/api/update')
+
+    if (response.status === 204) {
+      return false
+    }
+
+    const data = await response.json()
+
+    if (currentReleaseURL === data.url) {
+      return false
+    }
+
+    currentReleaseURL = data.url
+    return true
+  } catch (error) {
+    logger.error(`update check failed - ${error}`)
+    return false
+  }
+}
+
+async function checkUpdate() {
+  const available = await isNewReleaseAvailable()
+  if (available) {
+    logger.info('checking for update')
+    autoUpdater.checkForUpdates()
+  }
+}
+
 function init() {
   if (app.isPackaged) {
-    autoUpdater.checkForUpdates()
+    checkUpdate()
     setInterval(() => {
-      if (!updateAvailable) {
-        autoUpdater.checkForUpdates()
-      }
+      checkUpdate()
     }, 60 * 60 * 1000)
   }
 
