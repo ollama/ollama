@@ -5,17 +5,17 @@
   </picture>
 </div>
 
-# Ollama
+# Ollama 🦙
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
 Get up and running with large language models locally.
 
-### macOS
+### macOS 🍎
 
 [Download](https://ollama.ai/download/Ollama-darwin.zip)
 
-### Linux & WSL2
+### Linux & WSL2 🐧
 
 ```
 curl https://ollama.ai/install.sh | sh
@@ -23,11 +23,11 @@ curl https://ollama.ai/install.sh | sh
 
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
 
-### Windows
+### Windows 🐌
 
 coming soon
 
-## Quickstart
+## Quickstart 🏃
 
 To run and chat with [Llama 2](https://ollama.ai/library/llama2):
 
@@ -35,7 +35,7 @@ To run and chat with [Llama 2](https://ollama.ai/library/llama2):
 ollama run llama2
 ```
 
-## Model library
+## Model library 📚
 
 Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
 
@@ -54,7 +54,7 @@ Here are some example open-source models that can be downloaded:
 
 > Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
 
-## Customize your own model
+## Customize your own model 🖋️
 
 ### Import from GGUF or GGML
 
@@ -78,7 +78,7 @@ Ollama supports importing GGUF and GGML file formats in the Modelfile. This mean
    ollama run name
    ```
 
-### Customize a prompt
+### Customize a prompt 💬
 
 Models from the Ollama library can be customized with a prompt. The example
 
@@ -111,7 +111,7 @@ Hello! It's your friend Mario.
 
 For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
 
-## CLI Reference
+## CLI Reference 👨‍💻
 
 ### Create a model
 
@@ -165,7 +165,7 @@ ollama list
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
 
-## Building
+## Building 🛠️
 
 Install `cmake` and `go`:
 
@@ -193,7 +193,7 @@ Finally, in a separate shell, run a model:
 ./ollama run llama2
 ```
 
-## REST API
+## REST API 💤
 
 > See the [API documentation](docs/api.md) for all endpoints.
 
@@ -206,7 +206,7 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }'
 ```
 
-## Community Integrations
+## Community Integrations 👨‍👧‍👦
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
