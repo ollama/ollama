@@ -168,17 +168,26 @@ async function isNewReleaseAvailable() {
   try {
     const response = await fetch('https://ollama.ai/api/update')
 
+    if (!response.ok) {
+      return false
+    }
+
     if (response.status === 204) {
       return false
     }
 
     const data = await response.json()
 
-    if (currentReleaseURL === data.url) {
+    const url = data?.url
+    if (!url) {
       return false
     }
 
-    currentReleaseURL = data.url
+    if (url === currentReleaseURL) {
+      return false
+    }
+
+    currentReleaseURL = url
     return true
   } catch (error) {
     logger.error(`update check failed - ${error}`)
