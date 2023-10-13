@@ -26,6 +26,7 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
+	"github.com/jmorganca/ollama/version"
 )
 
 var mode string = gin.DebugMode
@@ -588,7 +589,7 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		r.Handle(method, "/api/tags", ListModelsHandler)
 	}
 
-	log.Printf("Listening on %s", ln.Addr())
+	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
 	s := &http.Server{
 		Handler: r,
 	}
