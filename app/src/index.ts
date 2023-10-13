@@ -168,7 +168,7 @@ interface Release {
 
 let currentReleaseURL = ''
 
-async function checkNewRelease(): Promise<boolean> {
+async function checkNewRelease() {
   try {
     const response = await fetch('https://ollama.ai/api/update')
 
