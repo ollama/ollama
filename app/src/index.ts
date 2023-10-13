@@ -177,11 +177,11 @@ async function checkNewRelease(): Promise<boolean> {
       return false
     }
 
-    const data: ReleaseData = await response.json()
+    const data: Release = await response.json()
     const fetchedURL = data.url
 
-    const newRelease = currentRelesaseURL === '' || currentRelesaseURL !== fetchedURL
-    currentRelesaseURL = fetchedURL
+    const newRelease = currentReleaseURL === '' || currentReleaseURL !== fetchedURL
+    currentReleaseURL = fetchedURL
 
     return newRelease
   } catch (error) {
