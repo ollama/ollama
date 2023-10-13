@@ -215,6 +215,11 @@ func CheckVRAM() (int64, error) {
 		free += vram
 	}
 
+	if free*1024*1024 < 2*1000*1000*1000 {
+		log.Printf("less than 2 GB VRAM available, falling back to CPU only")
+		free = 0
+	}
+
 	return free, nil
 }
 
