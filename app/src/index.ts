@@ -162,10 +162,6 @@ app.on('before-quit', () => {
   }
 })
 
-interface Release {
-  url: string
-}
-
 let currentReleaseURL = ''
 
 async function checkNewRelease() {
@@ -177,7 +173,7 @@ async function checkNewRelease() {
       return false
     }
 
-    const data: Release = await response.json()
+    const data = await response.json()
     const fetchedURL = data.url
 
     const newRelease = currentReleaseURL === '' || currentReleaseURL !== fetchedURL
