@@ -166,7 +166,7 @@ interface Release {
   url: string
 }
 
-var currentRelesaseURL = ''
+let currentReleaseURL = ''
 
 async function checkNewRelease(): Promise<boolean> {
   try {
