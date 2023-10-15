@@ -6,10 +6,9 @@ This guide walks through creating an Ollama model from an existing model on Hugg
 
 Ollama supports a set of model architectures, with support for more coming soon:
 
-- Llama
-- Mistral
+- Llama & Mistral
 - Falcon & RW
-- GPTNeoX
+- GPT-NeoX
 - BigCode
 
 To view a model's architecture, check its `config.json` file. You should see an entry under `architecture` (e.g. `LlamaForCausalLM`).
