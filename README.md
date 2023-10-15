@@ -29,12 +29,7 @@ curl https://ollama.ai/install.sh | sh
 
 ### Docker
 
-```
-docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
-docker exec -it ollama ollama run llama2
-```
-
-For GPU support, use `--gpus=all`. See the Docker [image](https://hub.docker.com/r/ollama/ollama) for more information.
+See the official [Docker image](https://hub.docker.com/r/ollama/ollama).
 
 ## Quickstart
 
