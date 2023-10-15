@@ -23,7 +23,7 @@ git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
 cd Mistral-7B-Instruct-v0.1
 ```
 
-### Step 2: Convert and quantize (PyTorch and Safetensors)
+### Step 2: Convert and quantize (for PyTorch and Safetensors)
 
 A [Docker image](https://hub.docker.com/r/ollama/quantize) with the tooling required to convert and quantize models is available.
 
