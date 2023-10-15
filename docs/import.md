@@ -25,11 +25,11 @@ cd Mistral-7B-Instruct-v0.1
 
 ### Step 2: Convert and quantize
 
-- Install [Docker](https://www.docker.com/get-started/)
+A [Docker image](https://hub.docker.com/r/ollama/quantize) with the tooling required to convert and quantize models is available.
 
-Until Ollama supports conversion and quantization as a built-in feature, a [Docker image](https://hub.docker.com/r/ollama/quantize) with this tooling built-in is available.
+First, Install [Docker](https://www.docker.com/get-started/).
 
-To convert and quantize your model, run:
+Next, to convert and quantize your model, run:
 
 ```
 docker run --rm -v .:/model ollama/quantize -q q4_0 /model
@@ -38,7 +38,7 @@ docker run --rm -v .:/model ollama/quantize -q q4_0 /model
 This will output two files into the directory:
 
 - `f16.bin`: the model converted to GGUF
-- `q4_0.bin` the model quantized to a 4-bit quantization
+- `q4_0.bin` the model quantized to a 4-bit quantization (we will use this file to create the Ollama model)
 
 ### Step 3: Write a `Modelfile`
 
@@ -142,16 +142,16 @@ Run the correct conversion script for your model architecture:
 
 ```shell
 # LlamaForCausalLM or MistralForCausalLM
-python3 convert.py <path to model directory>
+python convert.py <path to model directory>
 
 # FalconForCausalLM
-python3 convert-falcon-hf-to-gguf.py <path to model directory>
+python convert-falcon-hf-to-gguf.py <path to model directory>
 
 # GPTNeoXForCausalLM
-python3 convert-falcon-hf-to-gguf.py <path to model directory>
+python convert-falcon-hf-to-gguf.py <path to model directory>
 
 # GPTBigCodeForCausalLM
-python3 convert-starcoder-hf-to-gguf.py <path to model directory>
+python convert-starcoder-hf-to-gguf.py <path to model directory>
 ```
 
 ### Quantize the model
