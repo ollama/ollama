@@ -80,4 +80,3 @@ To view logs of Ollama running as a startup service, run:
 ```bash
 journalctl -u ollama
 ```
-

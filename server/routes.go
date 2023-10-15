@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -66,7 +68,6 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 	}
 
 	if err := opts.FromMap(reqOpts); err != nil {
-		log.Printf("could not merge model options: %v", err)
 		return err
 	}
 
@@ -170,6 +171,11 @@ func GenerateHandler(c *gin.Context) {
 
 	model, err := GetModel(req.Model)
 	if err != nil {
+		var pErr *fs.PathError
+		if errors.As(err, &pErr) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -179,6 +185,10 @@ func GenerateHandler(c *gin.Context) {
 	// TODO: set this duration from the request if specified
 	sessionDuration := defaultSessionDuration
 	if err := load(c.Request.Context(), workDir, model, req.Options, sessionDuration); err != nil {
+		if errors.Is(err, api.ErrInvalidOpts) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -232,6 +242,23 @@ func GenerateHandler(c *gin.Context) {
 			}
 		}
 	}()
+
+	if req.Stream != nil && !*req.Stream {
+		var response api.GenerateResponse
+		generated := ""
+		for resp := range ch {
+			if r, ok := resp.(api.GenerateResponse); ok {
+				generated += r.Response
+				response = r
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		response.Response = generated
+		c.JSON(http.StatusOK, response)
+		return
+	}
 
 	streamResponse(c, ch)
 }
@@ -302,6 +329,11 @@ func PullModelHandler(c *gin.Context) {
 		}
 	}()
 
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
+
 	streamResponse(c, ch)
 }
 
@@ -329,6 +361,11 @@ func PushModelHandler(c *gin.Context) {
 		}
 	}()
 
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
+
 	streamResponse(c, ch)
 }
 
@@ -355,6 +392,11 @@ func CreateModelHandler(c *gin.Context) {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
+
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
 
 	streamResponse(c, ch)
 }
@@ -594,6 +636,31 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	}
 
 	return s.Serve(ln)
+}
+
+func waitForStream(c *gin.Context, ch chan interface{}) {
+	c.Header("Content-Type", "application/json")
+	for resp := range ch {
+		switch r := resp.(type) {
+		case api.ProgressResponse:
+			if r.Status == "success" {
+				c.JSON(http.StatusOK, r)
+				return
+			}
+		case gin.H:
+			if errorMsg, ok := r["error"].(string); ok {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+				return
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in progress response"})
+				return
+			}
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected progress response"})
+			return
+		}
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected end of progress response"})
 }
 
 func streamResponse(c *gin.Context, ch chan any) {

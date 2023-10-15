@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmorganca/ollama/api"
@@ -29,42 +30,43 @@ import (
 var llamaCppEmbed embed.FS
 
 type ModelRunner struct {
-	Path string // path to the model runner executable
+	Path        string // path to the model runner executable
+	Accelerated bool
 }
 
 func chooseRunners(workDir, runnerType string) []ModelRunner {
 	buildPath := path.Join("llama.cpp", runnerType, "build")
-	var runners []string
+	var runners []ModelRunner
 
 	// set the runners based on the OS
 	// IMPORTANT: the order of the runners in the array is the priority order
 	switch runtime.GOOS {
 	case "darwin":
-		runners = []string{
-			path.Join(buildPath, "metal", "bin", "server"),
-			path.Join(buildPath, "cpu", "bin", "server"),
+		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "metal", "bin", "ollama-runner")},
+			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	case "linux":
-		runners = []string{
-			path.Join(buildPath, "cuda", "bin", "server"),
-			path.Join(buildPath, "cpu", "bin", "server"),
+		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cuda", "bin", "ollama-runner"), Accelerated: true},
+			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
-		runners = []string{
-			path.Join(buildPath, "cpu", "bin", "Release", "server.exe"),
+		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
 		}
 	default:
 		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
-		runners = []string{
-			path.Join(buildPath, "cpu", "bin", "server"),
+		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	}
 
 	runnerAvailable := false // if no runner files are found in the embed, this flag will cause a fast fail
 	for _, r := range runners {
 		// find all the files in the runner's bin directory
-		files, err := fs.Glob(llamaCppEmbed, path.Join(path.Dir(r), "*"))
+		files, err := fs.Glob(llamaCppEmbed, path.Join(path.Dir(r.Path), "*"))
 		if err != nil {
 			// this is expected, ollama may be compiled without all runners packed in
 			log.Printf("%s runner not found: %v", r, err)
@@ -114,7 +116,10 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	localRunnersByPriority := []ModelRunner{}
 	for _, r := range runners {
 		// clean the ModelRunner paths so that they match the OS we are running on
-		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{Path: filepath.Clean(path.Join(workDir, r))})
+		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{
+			Path:        filepath.Clean(path.Join(workDir, r.Path)),
+			Accelerated: r.Accelerated,
+		})
 	}
 
 	return localRunnersByPriority
@@ -177,9 +182,12 @@ type llamaHyperparameters struct {
 }
 
 type Running struct {
-	Port   int
-	Cmd    *exec.Cmd
-	Cancel context.CancelFunc
+	Port     int
+	Cmd      *exec.Cmd
+	Cancel   context.CancelFunc
+	exitOnce sync.Once
+	exitCh   chan error // channel to receive the exit status of the subprocess
+	exitErr  error      // error returned by the subprocess
 }
 
 type llama struct {
@@ -191,7 +199,7 @@ var errNoGPU = errors.New("nvidia-smi command failed")
 
 // CheckVRAM returns the available VRAM in MiB on Linux machines with NVIDIA GPUs
 func CheckVRAM() (int64, error) {
-	cmd := exec.Command("nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits")
+	cmd := exec.Command("nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	err := cmd.Run()
@@ -199,7 +207,7 @@ func CheckVRAM() (int64, error) {
 		return 0, errNoGPU
 	}
 
-	var total int64
+	var free int64
 	scanner := bufio.NewScanner(&stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -208,10 +216,15 @@ func CheckVRAM() (int64, error) {
 			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
 		}
 
-		total += vram
+		free += vram
 	}
 
-	return total, nil
+	if free*1024*1024 < 2*1000*1000*1000 {
+		log.Printf("less than 2 GB VRAM available, falling back to CPU only")
+		free = 0
+	}
+
+	return free, nil
 }
 
 func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
@@ -228,20 +241,38 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 			return 0
 		}
 
-		totalVramBytes := int64(vramMib) * 1024 * 1024 // 1 MiB = 1024^2 bytes
+		freeVramBytes := int64(vramMib) * 1024 * 1024 // 1 MiB = 1024^2 bytes
 
 		// Calculate bytes per layer
 		// TODO: this is a rough heuristic, better would be to calculate this based on number of layers and context size
 		bytesPerLayer := fileSizeBytes / numLayer
 
-		// max number of layers we can fit in VRAM
-		layers := int(totalVramBytes / bytesPerLayer)
+		// max number of layers we can fit in VRAM, subtract 8% to prevent consuming all available VRAM and running out of memory
+		layers := int(freeVramBytes/bytesPerLayer) * 92 / 100
 		log.Printf("%d MiB VRAM available, loading up to %d GPU layers", vramMib, layers)
 
 		return layers
 	}
 	// default to enable metal on macOS
 	return 1
+}
+
+// StatusWriter is a writer that captures error messages from the llama runner process
+type StatusWriter struct {
+	ErrCh chan error
+}
+
+func NewStatusWriter() *StatusWriter {
+	return &StatusWriter{
+		ErrCh: make(chan error, 1),
+	}
+}
+
+func (w *StatusWriter) Write(b []byte) (int, error) {
+	if _, after, ok := bytes.Cut(b, []byte("error:")); ok {
+		w.ErrCh <- fmt.Errorf("llama runner: %s", bytes.TrimSpace(after))
+	}
+	return os.Stderr.Write(b)
 }
 
 func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
@@ -254,14 +285,18 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
+	numGPU := NumGPU(numLayers, fileInfo.Size(), opts)
 	params := []string{
 		"--model", model,
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
-		"--n-gpu-layers", fmt.Sprintf("%d", NumGPU(numLayers, fileInfo.Size(), opts)),
 		"--embedding",
+	}
+
+	if numGPU > 0 {
+		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", numGPU))
 	}
 
 	if opts.NumGQA > 0 {
@@ -290,8 +325,15 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		params = append(params, "--numa")
 	}
 
+	var runnerErr error
+
 	// start the llama.cpp server with a retry in case the port is already in use
 	for _, runner := range runners {
+		if runner.Accelerated && numGPU == 0 {
+			log.Printf("skipping accelerated runner because num_gpu=0")
+			continue
+		}
+
 		if _, err := os.Stat(runner.Path); err != nil {
 			log.Printf("llama runner not found: %v", err)
 			continue
@@ -306,9 +348,10 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		)
 		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", filepath.Dir(runner.Path)))
 		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
+		statusWriter := NewStatusWriter()
+		cmd.Stderr = statusWriter
 
-		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd, Cancel: cancel}}
+		llm := &llama{Options: opts, Running: Running{Port: port, Cmd: cmd, Cancel: cancel, exitCh: make(chan error)}}
 
 		log.Print("starting llama runner")
 		if err := llm.Cmd.Start(); err != nil {
@@ -316,19 +359,30 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 			continue
 		}
 
-		// monitor the command, it is blocking, so if it exits we need to capture that
+		// monitor the llama runner process and signal when it exits
 		go func() {
-			err := llm.Cmd.Wait() // this will block until the command exits
-			if err != nil {
-				log.Printf("llama runner exited with error: %v", err)
-			} else {
-				log.Printf("llama runner exited")
-			}
+			err := llm.Cmd.Wait()
+			llm.exitErr = err
+			// llm.Cmd.Wait() can only be called once, use this exit channel to signal that the process has exited
+			llm.exitOnce.Do(func() {
+				close(llm.exitCh)
+			})
 		}()
 
 		if err := waitForServer(llm); err != nil {
 			log.Printf("error starting llama runner: %v", err)
 			llm.Close()
+
+			// default the runnerErr to the error returned by the most recent llama runner process
+			runnerErr = err
+
+			// capture the error directly from the runner process, if any
+			select {
+			case runnerErr = <-statusWriter.ErrCh:
+			default:
+				// the runner process probably timed out
+			}
+
 			// try again
 			continue
 		}
@@ -337,37 +391,54 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		return llm, nil
 	}
 
+	if runnerErr != nil {
+		// this is the error returned from the llama runner process that failed most recently
+		return nil, runnerErr
+	}
+
 	return nil, fmt.Errorf("failed to start a llama runner")
 }
 
 func waitForServer(llm *llama) error {
-	// wait for the server to start responding
 	start := time.Now()
-	expiresAt := time.Now().Add(2 * time.Minute) // be generous with timeout, large models can take a while to load
+	expiresAt := time.Now().Add(3 * time.Minute) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 
 	log.Print("waiting for llama runner to start responding")
-	for range ticker.C {
-		if time.Now().After(expiresAt) {
-			return fmt.Errorf("llama runner did not start within alloted time, retrying")
-		}
-
-		// check if the server process has terminated
-		if llm.Cmd.ProcessState != nil && llm.Cmd.ProcessState.Exited() {
+	for {
+		select {
+		case <-llm.exitCh:
+			// failed to start subprocess
 			return fmt.Errorf("llama runner process has terminated")
-		}
+		case <-ticker.C:
+			if time.Now().After(expiresAt) {
+				// timeout
+				return fmt.Errorf("timed out waiting for llama runner to start")
+			}
 
-		if err := llm.Ping(context.Background()); err == nil {
-			break
+			if err := llm.Ping(context.Background()); err == nil {
+				// success
+				log.Printf("llama runner started in %f seconds", time.Since(start).Seconds())
+				return nil
+			}
 		}
 	}
-
-	log.Printf("llama runner started in %f seconds", time.Since(start).Seconds())
-	return nil
 }
 
 func (llm *llama) Close() {
+	// signal the sub-process to terminate
 	llm.Cancel()
+
+	// wait for the command to exit to prevent race conditions with the next run
+	<-llm.exitCh
+	err := llm.exitErr
+
+	if err != nil {
+		log.Printf("llama runner stopped with error: %v", err)
+	} else {
+		log.Print("llama runner stopped successfully")
+	}
 }
 
 func (llm *llama) SetOptions(opts api.Options) {
@@ -438,7 +509,7 @@ type PredictRequest struct {
 	Stop             []string `json:"stop,omitempty"`
 }
 
-const maxBufferSize = 512 * 1024 // 512KB
+const maxBufferSize = 512 * 1000 // 512KB
 
 func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
 	prevConvo, err := llm.Decode(ctx, prevContext)
