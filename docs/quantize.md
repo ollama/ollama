@@ -1,6 +1,6 @@
 # How to Quantize a Model
 
-Sometimes the model you want to work with is not available at [https://ollama.ai/library](https://ollama.ai/library). If you want to try out that model before we have a chance to quantize it, you can use this process.
+Sometimes the model you want to work with is not available at [https://ollama.ai/library](https://ollama.ai/library).
 
 ## Figure out if we can run the model?
 
@@ -37,6 +37,20 @@ This will output two files into the directory. First is a f16.bin file that is t
 
 You can find the repository for the Docker container here: [https://github.com/mxyng/quantize](https://github.com/mxyng/quantize)
 
+For instance, if you wanted to convert the Mistral 7B model to a Q4 quantized model, then you could go through the following steps:
+
+1. First verify the model will potentially work.
+2. Now clone Mistral 7B to your machine. You can find the command to run when you click the three vertical dots button on the model page, then click **Clone Repository**.
+   1. For this repo, the command is:
+
+      ```shell
+      git lfs install
+      git clone https://huggingface.co/mistralai/Mistral-7B-v0.1
+      ```
+
+   2. Navigate into the new directory and run `docker run --rm -v .:/repo ollama/quantize -q q4_0 /repo`
+   3. Now you can create a modelfile using the q4_0.bin file that was created.
+
 ## Convert and Quantize Manually
 
 ### Clone llama.cpp to your machine
@@ -48,6 +62,7 @@ If we know the model has a chance of working, then we need to convert and quanti
  [`git clone https://github.com/ggerganov/llama.cpp.git`](https://github.com/ggerganov/llama.cpp.git)
     1. If you don't have git installed, download this zip file and unzip it to that location: https://github.com/ggerganov/llama.cpp/archive/refs/heads/master.zip
 3. Install the Python dependencies: `pip install torch transformers sentencepiece`
+4. Run 'make' to build the project and the quantize executable.
 
 ### Convert the model to GGUF
 
