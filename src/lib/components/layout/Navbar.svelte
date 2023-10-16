@@ -159,7 +159,7 @@
 		</div>
 
 		<div class="">
-			<hr class=" border-gray-800 mb-2" />
+			<hr class=" border-gray-800 mb-2 w-full" />
 
 			<div class="flex flex-col">
 				<!-- <div class="flex">
