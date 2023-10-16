@@ -162,13 +162,56 @@ app.on('before-quit', () => {
   }
 })
 
+const updateURL = `https://ollama.ai/api/update?os=${process.platform}&arch=${
+  process.arch
+}&version=${app.getVersion()}&id=${id()}`
+
+let latest = ''
+async function isNewReleaseAvailable() {
+  try {
+    const response = await fetch(updateURL)
+
+    if (!response.ok) {
+      return false
+    }
+
+    if (response.status === 204) {
+      return false
+    }
+
+    const data = await response.json()
+
+    const url = data?.url
+    if (!url) {
+      return false
+    }
+
+    if (latest === url) {
+      return false
+    }
+
+    latest = url
+
+    return true
+  } catch (error) {
+    logger.error(`update check failed - ${error}`)
+    return false
+  }
+}
+
+async function checkUpdate() {
+  const available = await isNewReleaseAvailable()
+  if (available) {
+    logger.info('checking for update')
+    autoUpdater.checkForUpdates()
+  }
+}
+
 function init() {
   if (app.isPackaged) {
-    autoUpdater.checkForUpdates()
+    checkUpdate()
     setInterval(() => {
-      if (!updateAvailable) {
-        autoUpdater.checkForUpdates()
-      }
+      checkUpdate()
     }, 60 * 60 * 1000)
   }
 
@@ -246,11 +289,7 @@ function id(): string {
   return uuid
 }
 
-autoUpdater.setFeedURL({
-  url: `https://ollama.ai/api/update?os=${process.platform}&arch=${
-    process.arch
-  }&version=${app.getVersion()}&id=${id()}`,
-})
+autoUpdater.setFeedURL({ url: updateURL })
 
 autoUpdater.on('error', e => {
   logger.error(`update check failed - ${e.message}`)

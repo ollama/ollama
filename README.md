@@ -13,7 +13,11 @@ Get up and running with large language models locally.
 
 ### macOS
 
-[Download](https://ollama.ai/download/Ollama-darwin.zip) 
+[Download](https://ollama.ai/download/Ollama-darwin.zip)
+
+### Windows
+
+Coming soon!
 
 ### Linux & WSL2
 
@@ -23,9 +27,9 @@ curl https://ollama.ai/install.sh | sh
 
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
 
-### Windows 
+### Docker
 
-coming soon
+See the official [Docker image](https://hub.docker.com/r/ollama/ollama).
 
 ## Quickstart
 
@@ -37,7 +41,7 @@ ollama run llama2
 
 ## Model library
 
-Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library "ollama model library")
+Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
 
 Here are some example open-source models that can be downloaded:
 
@@ -56,27 +60,31 @@ Here are some example open-source models that can be downloaded:
 
 ## Customize your own model
 
-### Import from GGUF or GGML
+### Import from GGUF
 
-Ollama supports importing GGUF and GGML file formats in the Modelfile. This means if you have a model that is not in the Ollama library, you can create it, iterate on it, and upload it to the Ollama library to share with others when you are ready.
+Ollama supports importing GGUF models in the Modelfile:
 
-1. Create a file named Modelfile, and add a `FROM` instruction with the local filepath to the model you want to import.
+1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
 
    ```
    FROM ./vicuna-33b.Q4_0.gguf
    ```
 
-3. Create the model in Ollama
+2. Create the model in Ollama
 
    ```
-   ollama create name -f path_to_modelfile
+   ollama create example -f Modelfile
    ```
 
-5. Run the model
+3. Run the model
 
    ```
-   ollama run name
+   ollama run example
    ```
+
+### Import from PyTorch or Safetensors
+
+See the [guide](docs/import.md) on importing models for more information.
 
 ### Customize a prompt
 
@@ -109,7 +117,7 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-For more examples, see the [examples](./examples) directory. For more information on working with a Modelfile, see the [Modelfile](./docs/modelfile.md) documentation.
+For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
 
 ## CLI Reference
 
@@ -195,7 +203,7 @@ Finally, in a separate shell, run a model:
 
 ## REST API
 
-> See the [API documentation](./docs/api.md) for all endpoints.
+> See the [API documentation](docs/api.md) for all endpoints.
 
 Ollama has an API for running and managing models. For example to generate text from a model:
 
