@@ -1050,7 +1050,9 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 		return
 	}
 
-	fmt.Printf("server version %s\n", serverVersion)
+	if serverVersion != version.Version {
+		fmt.Printf("ollama host version %s\n", serverVersion)
+	}
 }
 
 func NewCLI() *cobra.Command {
