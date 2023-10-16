@@ -24,13 +24,13 @@ func TestModelPrompt(t *testing.T) {
 
 func TestRunnerDigest_Success(t *testing.T) {
 	model := &Model{
-		Name:          "TestModel",
-		ShortName:     "TM",
-		ModelPath:     "/path/to/model",
-		OriginalModel: "Original",
-		AdapterPaths:  []string{"/path/1", "/path/2"},
-		License:       []string{"MIT"},
-		Options:       map[string]interface{}{"key": "value"},
+		Name:         "TestModel",
+		ShortName:    "TM",
+		ModelPath:    "/path/to/model",
+		BaseModel:    "Original",
+		AdapterPaths: []string{"/path/1", "/path/2"},
+		License:      []string{"MIT"},
+		Options:      map[string]interface{}{"key": "value"},
 	}
 
 	_, err := runnerDigest(model)
@@ -41,23 +41,23 @@ func TestRunnerDigest_Success(t *testing.T) {
 
 func TestRunnerDigest_DifferentModels(t *testing.T) {
 	model1 := &Model{
-		Name:          "TestModel",
-		ShortName:     "TM",
-		ModelPath:     "/path/to/model",
-		OriginalModel: "Original",
-		AdapterPaths:  []string{"/path/1", "/path/2"},
-		License:       []string{"MIT"},
-		Options:       map[string]interface{}{"key": "value"},
+		Name:         "TestModel",
+		ShortName:    "TM",
+		ModelPath:    "/path/to/model",
+		BaseModel:    "Original",
+		AdapterPaths: []string{"/path/1", "/path/2"},
+		License:      []string{"MIT"},
+		Options:      map[string]interface{}{"key": "value"},
 	}
 
 	model2 := &Model{
-		Name:          "AnotherModel",
-		ShortName:     "AM",
-		ModelPath:     "/another/path",
-		OriginalModel: "DifferentOriginal",
-		AdapterPaths:  []string{"/path/3"},
-		License:       []string{"Apache"},
-		Options:       map[string]interface{}{"newKey": "newValue"},
+		Name:         "AnotherModel",
+		ShortName:    "AM",
+		ModelPath:    "/another/path",
+		BaseModel:    "DifferentOriginal",
+		AdapterPaths: []string{"/path/3"},
+		License:      []string{"Apache"},
+		Options:      map[string]interface{}{"newKey": "newValue"},
 	}
 
 	digest1, _ := runnerDigest(model1)

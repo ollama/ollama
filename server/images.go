@@ -44,9 +44,9 @@ type Model struct {
 	License      []string `json:"-"`
 	RunnerDigest string   // RunnerDigest is used to identify when the loaded model should be changed
 	// these fields are used to determine the RunnerDigest
-	OriginalModel string                 `json:"originalModel"`
-	AdapterPaths  []string               `json:"adapterPaths"`
-	Options       map[string]interface{} `json:"options"`
+	BaseModel    string                 `json:"baseModel"`
+	AdapterPaths []string               `json:"adapterPaths"`
+	Options      map[string]interface{} `json:"options"`
 }
 
 func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
@@ -180,7 +180,12 @@ func GetModel(name string) (*Model, error) {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
-			model.OriginalModel = layer.From
+			if layer.From == "" {
+				// this is a base model
+				model.BaseModel = ParseModelPath(name).GetFullTagname()
+			} else {
+				model.BaseModel = ParseModelPath(layer.From).GetFullTagname()
+			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -949,7 +954,7 @@ func ShowModelfile(model *Model) (string, error) {
 
 	mt := modelTemplate{
 		Model:  model,
-		From:   model.OriginalModel,
+		From:   model.BaseModel,
 		Params: strings.Join(params, "\n"),
 	}
 
