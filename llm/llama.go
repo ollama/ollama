@@ -531,16 +531,14 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 			// This handles the request cancellation
 			return ctx.Err()
 		default:
-			line := scanner.Text()
-			if line == "" {
+			line := scanner.Bytes()
+			if len(line) == 0 {
 				continue
 			}
 
-			// Read data from the server-side event stream
-			if strings.HasPrefix(line, "data: ") {
-				evt := line[6:]
+			if evt, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
 				var p prediction
-				if err := json.Unmarshal([]byte(evt), &p); err != nil {
+				if err := json.Unmarshal(evt, &p); err != nil {
 					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
 				}
 
