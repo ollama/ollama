@@ -2,7 +2,6 @@
 	import { Toaster } from 'svelte-french-toast';
 
 	import '../app.css';
-
 	import '../tailwind.css';
 </script>
 

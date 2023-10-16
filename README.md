@@ -11,6 +11,8 @@ ChatGPT-Style Web Interface for Ollama 🦙
 - ⚡ **Swift Responsiveness**: Enjoy fast and responsive performance.
 - 🚀 **Effortless Setup**: Install seamlessly using Docker for a hassle-free experience.
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
+- 📜 **Chat History**: Effortlessly access and manage your conversation history.
+- 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
 ## How to Install 🚀
@@ -30,14 +32,14 @@ Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localh
 
 Here are some exciting tasks on our to-do list:
 
-- 📜 **Chat History**: Effortlessly access and manage your conversation history.
 - 📤📥 **Import/Export Chat History**: Seamlessly move your chat data in and out of the platform.
+- 🌐 **Web Browser Extension**: Seamlessly integrate our services into your browsing experience with our convenient browser extension.
+- 🚀 **Integration with Messaging Platforms**: Explore possibilities for integrating with popular messaging platforms like Slack and Discord.
 - 🎨 **Customization**: Tailor your chat environment with personalized themes and styles.
 - 📥🗑️ **Download/Delete Models**: Easily acquire or remove models directly from the web UI.
 - ⚙️ **Advanced Parameters Support**: Harness the power of advanced settings for fine-tuned control.
 - 📚 **Enhanced Documentation**: Elevate your setup and customization experience with improved, comprehensive documentation.
 - 🌟 **User Interface Enhancement**: Elevate the user interface to deliver a smoother, more enjoyable interaction.
-- 🚀 **Integration with Messaging Platforms**: Explore possibilities for integrating with popular messaging platforms like Slack and Discord.
 - 🧐 **User Testing and Feedback Gathering**: Conduct thorough user testing to gather insights and refine our offerings based on valuable user feedback.
 
 Feel free to contribute and help us make Ollama Web UI even better! 🙌

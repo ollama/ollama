@@ -2,23 +2,33 @@
 	import toast from 'svelte-french-toast';
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 
+	import { v4 as uuidv4 } from 'uuid';
 	import { marked } from 'marked';
+	import hljs from 'highlight.js';
+	import 'highlight.js/styles/dark.min.css';
 
 	import type { PageData } from './$types';
 	import { ENDPOINT } from '$lib/contants';
 	import { onMount, tick } from 'svelte';
 
+	import { openDB, deleteDB } from 'idb';
+
 	export let data: PageData;
 	$: ({ models } = data);
 	let textareaElement;
+	let db;
 
 	let selectedModel = '';
 	let systemPrompt = '';
 	let temperature = '';
+
+	let chats = [];
+	let chatId = uuidv4();
+	let title = ``;
 	let prompt = '';
 	let messages = [];
 
-	onMount(() => {
+	onMount(async () => {
 		let settings = localStorage.getItem('settings');
 		if (settings) {
 			settings = JSON.parse(settings);
@@ -28,6 +38,20 @@
 			systemPrompt = settings.systemPrompt ?? '';
 			temperature = settings.temperature ?? '';
 		}
+
+		db = await openDB('Chats', 1, {
+			upgrade(db) {
+				const store = db.createObjectStore('chats', {
+					keyPath: 'id',
+					autoIncrement: true
+				});
+				store.createIndex('timestamp', 'timestamp');
+			}
+		});
+
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+		console.log(chats);
+		console.log(chatId);
 	});
 
 	//////////////////////////
@@ -101,11 +125,32 @@
 		toast.success('Default model updated');
 	};
 
+	const createNewChat = () => {
+		if (messages.length > 0) {
+			messages = [];
+			title = '';
+			chatId = uuidv4();
+		}
+	};
+
+	const loadChat = async (id) => {
+		const chat = await db.get('chats', id);
+		messages = chat.messages;
+		title = chat.title;
+		chatId = chat.id;
+	};
+
+	const deleteChatHistory = async () => {
+		const tx = db.transaction('chats', 'readwrite');
+		await Promise.all([tx.store.clear(), tx.done]);
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+	};
+
 	//////////////////////////
 	// Ollama functions
 	//////////////////////////
 
-	const submitPrompt = async () => {
+	const submitPrompt = async (user_prompt) => {
 		console.log('submitPrompt');
 
 		if (selectedModel === '') {
@@ -113,9 +158,15 @@
 		} else if (messages.length != 0 && messages.at(-1).done != true) {
 			console.log('wait');
 		} else {
-			console.log(prompt);
-
-			let user_prompt = prompt;
+			if (messages.length == 0) {
+				await db.put('chats', {
+					id: chatId,
+					title: 'New Chat',
+					timestamp: Date.now(),
+					messages: messages
+				});
+				chats = await db.getAllFromIndex('chats', 'timestamp');
+			}
 			messages = [
 				...messages,
 				{
@@ -180,6 +231,7 @@
 								responseMessage.done = true;
 								responseMessage.context = data.context;
 								messages = messages;
+								hljs.highlightAll();
 							}
 						}
 					}
@@ -190,6 +242,17 @@
 			}
 
 			window.scrollTo({ top: document.body.scrollHeight });
+
+			if (messages.length == 2) {
+				await generateTitle(user_prompt);
+			}
+			await db.put('chats', {
+				id: chatId,
+				title: title,
+				timestamp: Date.now(),
+				messages: messages
+			});
+			chats = await db.getAllFromIndex('chats', 'timestamp');
 		}
 	};
 
@@ -252,6 +315,7 @@
 								responseMessage.done = true;
 								responseMessage.context = data.context;
 								messages = messages;
+								hljs.highlightAll();
 							}
 						}
 					}
@@ -262,15 +326,51 @@
 			}
 
 			window.scrollTo({ top: document.body.scrollHeight });
+			await db.put('chats', {
+				id: chatId,
+				title: title,
+				timestamp: Date.now(),
+				messages: messages
+			});
+			chats = await db.getAllFromIndex('chats', 'timestamp');
 		}
 
 		console.log(messages);
+	};
+
+	const generateTitle = async (user_prompt) => {
+		console.log('generateTitle');
+
+		const res = await fetch(`${ENDPOINT}/api/generate`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'text/event-stream'
+			},
+			body: JSON.stringify({
+				model: selectedModel,
+				prompt: `Create an extremely short title for the following question with 3-5 words without using the word 'title.': ${user_prompt}`,
+				stream: false
+			})
+		})
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((error) => {
+				console.log(error);
+				return null;
+			});
+
+		if (res) {
+			console.log(res);
+			title = res.response;
+		}
 	};
 </script>
 
 <div class="app text-gray-100">
 	<div class=" bg-gray-800 min-h-screen overflow-auto flex flex-row">
-		<Navbar />
+		<Navbar {chats} {title} {loadChat} {createNewChat} {deleteChatHistory} />
 
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">
@@ -300,9 +400,9 @@
 					</div>
 				</div>
 
-				<div class=" h-full mb-44 w-full flex flex-col">
+				<div class=" h-full mb-48 w-full flex flex-col">
 					{#if messages.length == 0}
-						<div class="m-auto text-center max-w-md">
+						<div class="m-auto text-center max-w-md pb-16">
 							<div class="flex justify-center mt-8">
 								<img src="/ollama.png" class="w-16 invert-[80%]" />
 							</div>
@@ -391,6 +491,113 @@
 
 				<div class=" bg-gradient-to-t from-gray-900 pt-5">
 					<div class="max-w-3xl p-2.5 -mb-0.5 mx-auto inset-x-0">
+						{#if messages.length == 0}
+							<div class=" grid sm:grid-cols-2 gap-2.5 mb-4 md:p-2 text-left">
+								<button
+									class=" flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
+									on:click={() => {
+										submitPrompt(`Tell me a random fun fact about the Roman Empire`);
+									}}
+								>
+									<div class="flex flex-col text-left">
+										<div class="text-sm font-medium text-gray-300">Tell me a fun fact</div>
+										<div class="text-sm text-gray-500">about the Roman Empire</div>
+									</div>
+
+									<div class="self-center group-hover:text-gray-300 text-gray-800 transition">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="none"
+											class="w-4 h-4"
+											><path
+												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
+												fill="currentColor"
+											/></svg
+										>
+									</div>
+								</button>
+
+								<button
+									class="flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
+									on:click={() => {
+										submitPrompt(
+											`Show me a code snippet of a website's sticky header in CSS and JavaScript.`
+										);
+									}}
+								>
+									<div class="flex flex-col text-left">
+										<div class="text-sm font-medium text-gray-300">Show me a code snippet</div>
+										<div class="text-sm text-gray-500">of a website's sticky header</div>
+									</div>
+									<div class="self-center group-hover:text-gray-300 text-gray-800 transition">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="none"
+											class="w-4 h-4"
+											><path
+												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
+												fill="currentColor"
+											/></svg
+										>
+									</div>
+								</button>
+
+								<button
+									class=" hidden sm:flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
+									on:click={() => {
+										submitPrompt(
+											`Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.`
+										);
+									}}
+								>
+									<div class="flex flex-col text-left">
+										<div class="text-sm font-medium text-gray-300">Help me study</div>
+										<div class="text-sm text-gray-500">vocabulary for a college entrance exam</div>
+									</div>
+									<div class="self-center group-hover:text-gray-300 text-gray-800 transition">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="none"
+											class="w-4 h-4"
+											><path
+												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
+												fill="currentColor"
+											/></svg
+										>
+									</div>
+								</button>
+
+								<button
+									class="  hidden sm:flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
+									on:click={() => {
+										submitPrompt(
+											`What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.`
+										);
+									}}
+								>
+									<div class="flex flex-col text-left">
+										<div class="text-sm font-medium text-gray-300">Give me ideas</div>
+										<div class="text-sm text-gray-500">for what to do with my kids' art</div>
+									</div>
+									<div class="self-center group-hover:text-gray-300 text-gray-800 transition">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="none"
+											class="w-4 h-4"
+											><path
+												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
+												fill="currentColor"
+											/></svg
+										>
+									</div>
+								</button>
+							</div>
+						{/if}
+
 						{#if messages.length != 0 && messages.at(-1).role == 'assistant' && messages.at(-1).done == true}
 							<div class=" flex justify-end mb-2.5">
 								<button
@@ -415,7 +622,12 @@
 								</button>
 							</div>
 						{/if}
-						<form class=" flex shadow-sm relative w-full" on:submit|preventDefault={submitPrompt}>
+						<form
+							class=" flex shadow-sm relative w-full"
+							on:submit|preventDefault={() => {
+								submitPrompt(prompt);
+							}}
+						>
 							<textarea
 								class="rounded-xl bg-gray-700 outline-none w-full py-3 px-5 pr-12 resize-none"
 								placeholder="Send a message"
@@ -426,7 +638,7 @@
 										e.preventDefault();
 									}
 									if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
-										submitPrompt();
+										submitPrompt(prompt);
 									}
 								}}
 								rows="1"

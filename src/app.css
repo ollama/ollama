@@ -8,6 +8,10 @@ html {
 	@apply bg-gray-800;
 }
 
+.hljs {
+	@apply rounded-lg;
+}
+
 ::-webkit-scrollbar-thumb {
 	--tw-border-opacity: 1;
 	background-color: rgba(217, 217, 227, 0.8);
