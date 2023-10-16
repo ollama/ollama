@@ -26,7 +26,8 @@ require() {
 
 [ "$(uname -s)" = "Linux" ] || error 'This script is intended to run on Linux only.'
 
-case "$(uname -m)" in
+ARCH=$(uname -m)
+case "$ARCH" in
     x86_64) ARCH="amd64" ;;
     aarch64|arm64) ARCH="arm64" ;;
     *) error "Unsupported architecture: $ARCH" ;;

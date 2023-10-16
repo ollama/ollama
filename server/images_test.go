@@ -12,7 +12,7 @@ func TestModelPrompt(t *testing.T) {
 		Template: "a{{ .Prompt }}b",
 		Prompt:   "<h1>",
 	}
-	s, err := m.Prompt(req, "")
+	s, err := m.Prompt(req)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -231,3 +231,4 @@ curl -X POST http://localhost:11434/api/generate -d '{
 - [Dumbar](https://github.com/JerrySievert/Dumbar)
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [oterm](https://github.com/ggozad/oterm)
+- [Ellama Emacs client](https://github.com/s-kostyaev/ellama)

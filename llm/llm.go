@@ -10,6 +10,7 @@ import (
 	"github.com/pbnjay/memory"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/format"
 )
 
 type LLM interface {
@@ -55,39 +56,30 @@ func New(workDir, model string, adapters []string, opts api.Options) (LLM, error
 				opts.NumGPU = 0
 			}
 		}
-	}
 
-	totalResidentMemory := memory.TotalMemory()
-	switch ggml.ModelType() {
-	case "3B", "7B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 16*1000*1000 {
-			return nil, fmt.Errorf("F16 model requires at least 16 GB of memory")
-		} else if totalResidentMemory < 8*1000*1000 {
-			return nil, fmt.Errorf("model requires at least 8 GB of memory")
+		var requiredMemory int64
+		var f16Multiplier int64 = 2
+
+		switch ggml.ModelType() {
+		case "3B", "7B":
+			requiredMemory = 8 * format.GigaByte
+		case "13B":
+			requiredMemory = 16 * format.GigaByte
+		case "30B", "34B", "40B":
+			requiredMemory = 32 * format.GigaByte
+		case "65B", "70B":
+			requiredMemory = 64 * format.GigaByte
+		case "180B":
+			requiredMemory = 128 * format.GigaByte
+			f16Multiplier = 4
 		}
-	case "13B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 32*1000*1000 {
-			return nil, fmt.Errorf("F16 model requires at least 32 GB of memory")
-		} else if totalResidentMemory < 16*1000*1000 {
-			return nil, fmt.Errorf("model requires at least 16 GB of memory")
-		}
-	case "30B", "34B", "40B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 64*1000*1000 {
-			return nil, fmt.Errorf("F16 model requires at least 64 GB of memory")
-		} else if totalResidentMemory < 32*1000*1000 {
-			return nil, fmt.Errorf("model requires at least 32 GB of memory")
-		}
-	case "65B", "70B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 128*1000*1000 {
-			return nil, fmt.Errorf("F16 model requires at least 128 GB of memory")
-		} else if totalResidentMemory < 64*1000*1000 {
-			return nil, fmt.Errorf("model requires at least 64 GB of memory")
-		}
-	case "180B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 512*1000*1000 {
-			return nil, fmt.Errorf("F16 model requires at least 512GB of memory")
-		} else if totalResidentMemory < 128*1000*1000 {
-			return nil, fmt.Errorf("model requires at least 128GB of memory")
+
+		systemMemory := int64(memory.TotalMemory())
+
+		if ggml.FileType() == "F16" && requiredMemory*f16Multiplier > systemMemory {
+			return nil, fmt.Errorf("F16 model requires at least %s of total memory", format.HumanBytes(requiredMemory))
+		} else if requiredMemory > systemMemory {
+			return nil, fmt.Errorf("model requires at least %s of total memory", format.HumanBytes(requiredMemory))
 		}
 	}
 
