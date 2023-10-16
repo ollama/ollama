@@ -230,3 +230,4 @@ curl -X POST http://localhost:11434/api/generate -d '{
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Dumbar](https://github.com/JerrySievert/Dumbar)
 - [Emacs client](https://github.com/zweifisch/ollama)
+- [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
