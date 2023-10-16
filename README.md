@@ -17,6 +17,10 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 ## How to Install 🚀
 
+### Prerequisites
+
+Make sure you have the latest version of Ollama installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
+
 ### Using Docker 🐳
 
 ```bash
