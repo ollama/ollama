@@ -545,18 +545,15 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
-	buf := &bytes.Buffer{}
-	enc := json.NewEncoder(buf)
+	buffer := &bytes.Buffer{}
+	enc := json.NewEncoder(buffer)
 	enc.SetEscapeHTML(false)
 
 	if err := enc.Encode(predReq); err != nil {
 		return fmt.Errorf("failed to marshal data: %v", err)
 	}
 
-	// Remove trailing newline added by Encode.
-	data := buf.Bytes()[:buf.Len()-1]
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
 		return fmt.Errorf("error creating POST request: %v", err)
 	}
