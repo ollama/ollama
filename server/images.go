@@ -901,18 +901,17 @@ func ShowModelfile(model *Model) (string, error) {
 	var mt struct {
 		*Model
 		From       string
-		Parameters []string
+		Parameters map[string][]any
 	}
 
+	mt.Parameters = make(map[string][]any)
 	for k, v := range model.Options {
-		switch v := v.(type) {
-		case []interface{}:
-			for _, nv := range v {
-				mt.Parameters = append(mt.Parameters, fmt.Sprintf("%s %v", k, nv))
-			}
-		default:
-			mt.Parameters = append(mt.Parameters, fmt.Sprintf("%s %v", k, v))
+		if s, ok := v.([]any); ok {
+			mt.Parameters[k] = s
+			continue
 		}
+
+		mt.Parameters[k] = []any{v}
 	}
 
 	mt.Model = model
@@ -937,8 +936,10 @@ SYSTEM """{{ .System }}"""
 ADAPTER {{ $adapter }}
 {{- end }}
 
-{{- range $parameter := .Parameters }}
-PARAMETER {{ $parameter }}
+{{- range $k, $v := .Parameters }}
+{{- range $parameter := $v }}
+PARAMETER {{ $k }} {{ printf "%#v" $parameter }}
+{{- end }}
 {{- end }}`
 
 	tmpl, err := template.New("").Parse(modelFile)
