@@ -55,6 +55,10 @@ func (p Painter) Paint(line []rune, _ int) []rune {
 }
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
+	// TODO: this check can be removed when the create endpoint does not read from the local filesystem
+	if os.Getuid() == 0 {
+		fmt.Println("WARNING: Running create as root is not recommended, ollama may not be able to access the model file.")
+	}
 	filename, _ := cmd.Flags().GetString("file")
 	filename, err := filepath.Abs(filename)
 	if err != nil {
@@ -878,6 +882,49 @@ func startMacApp(client *api.Client) error {
 	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
 		return err
 	}
+	return waitForServer(client)
+}
+
+func executeServer(client *api.Client) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to find ollama exe: %w", err)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to find home directory: %w", err)
+	}
+
+	path := filepath.Join(home, ".ollama", "logs")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
+
+	logPath := filepath.Join(home, "server.log")
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to open the log file: %w", err)
+	}
+	defer logFile.Close()
+
+	cmd := exec.Command(exePath, "serve")
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	// This detaches the child process from the parent
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start ollama server: %w", err)
+	}
+	return waitForServer(client)
+}
+
+func waitForServer(client *api.Client) error {
 	// wait for the server to start
 	timeout := time.After(5 * time.Second)
 	tick := time.Tick(500 * time.Millisecond)
@@ -893,7 +940,7 @@ func startMacApp(client *api.Client) error {
 	}
 }
 
-func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
+func checkServerHeartbeat(command *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -902,11 +949,20 @@ func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
 		if !strings.Contains(err.Error(), "connection refused") {
 			return err
 		}
-		if runtime.GOOS == "darwin" {
+		switch runtime.GOOS {
+		case "darwin":
 			if err := startMacApp(client); err != nil {
 				return fmt.Errorf("could not connect to ollama app, is it running?")
 			}
-		} else {
+		case "linux":
+			if !client.IsLocal() {
+				return fmt.Errorf("could not connect to remote ollama server")
+			}
+			if err := executeServer(client); err != nil {
+				fmt.Println(err)
+				return fmt.Errorf("could not connect to ollama server, run 'ollama serve' to start it")
+			}
+		default:
 			return fmt.Errorf("could not connect to ollama server, run 'ollama serve' to start it")
 		}
 	}
