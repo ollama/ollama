@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/format"
 )
 
 //go:embed llama.cpp/*/build/*/bin/*
@@ -471,6 +472,15 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		PenalizeNl:       llm.PenalizeNewline,
 		Stop:             llm.Stop,
 	}
+
+	// if json schema is provided, convert it to a grammar
+	if llm.Schema != "" {
+		grammar := format.SchemaToGrammar(llm.Schema, nil)
+		if grammar != "" {
+			predReq.Grammar = grammar
+		}
+	}
+
 	data, err := json.Marshal(predReq)
 	if err != nil {
 		return fmt.Errorf("error marshaling data: %v", err)

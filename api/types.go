@@ -198,6 +198,7 @@ type Options struct {
 	Grammar          string   `json:"grammar,omitempty"`
 	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+	Schema           string   `json:"schema,omitempty"`
 
 	NumThread int `json:"num_thread,omitempty"`
 }
