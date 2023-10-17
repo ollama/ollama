@@ -94,24 +94,31 @@ func (llm *ggufModel) ModelFamily() string {
 }
 
 func (llm *ggufModel) ModelType() string {
-	switch llm.ModelFamily() {
-	case "llama":
-		if blocks, ok := llm.kv["llama.block_count"].(uint32); ok {
+	if blocks, ok := llm.kv[fmt.Sprintf("%s.block_count", llm.ModelFamily())].(uint32); ok {
+		switch llm.ModelFamily() {
+		case "llama":
 			heads, headsOK := llm.kv["llama.head_count"].(uint32)
 			headKVs, headsKVsOK := llm.kv["llama.head_count_kv"].(uint32)
-			if headsOK && headsKVsOK && heads/headKVs == 8 {
+			if blocks == 80 && headsOK && headsKVsOK && heads/headKVs == 8 {
 				return "70B"
 			}
 
 			return llamaModelType(blocks)
-		}
-	case "falcon":
-		if blocks, ok := llm.kv["falcon.block_count"].(uint32); ok {
+		case "falcon":
 			return falconModelType(blocks)
-		}
-	case "starcoder":
-		if blocks, ok := llm.kv["starcoder.block_count"].(uint32); ok {
+		case "starcoder":
 			return starCoderModelType(blocks)
+		case "mpt":
+			return mptModelType(blocks)
+		case "bloom":
+			embds, ok := llm.kv["bloom.embedding_length"].(uint32)
+			if ok {
+				return bloomModelType(blocks, embds)
+			}
+		case "refact":
+			return refactModelType(blocks)
+		case "persimmon":
+			return persimmonModelType(blocks)
 		}
 	}
 

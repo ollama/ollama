@@ -1,20 +1,14 @@
 package llm
 
-const (
-	falconModelType7B   = 32
-	falconModelType40B  = 60
-	falconModelType180B = 80
-)
-
-func falconModelType(numLayer uint32) string {
-	switch numLayer {
+func falconModelType(layers uint32) string {
+	switch layers {
 	case 32:
 		return "7B"
 	case 60:
 		return "40B"
 	case 80:
 		return "180B"
-	default:
-		return "unknown"
 	}
+
+	return "unknown"
 }

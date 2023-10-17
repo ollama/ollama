@@ -134,8 +134,8 @@ func (llm *llamaModel) ModelFamily() string {
 	return "llama"
 }
 
-func llamaModelType(numLayer uint32) string {
-	switch numLayer {
+func llamaModelType(layers uint32) string {
+	switch layers {
 	case 26:
 		return "3B"
 	case 32:
@@ -148,9 +148,9 @@ func llamaModelType(numLayer uint32) string {
 		return "30B"
 	case 80:
 		return "65B"
-	default:
-		return "unknown"
 	}
+
+	return "unknown"
 }
 
 func (llm *llamaModel) ModelType() string {
