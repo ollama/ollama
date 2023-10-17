@@ -70,7 +70,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 		files, err := fs.Glob(llamaCppEmbed, path.Join(path.Dir(r.Path), "*"))
 		if err != nil {
 			// this is expected, ollama may be compiled without all runners packed in
-			log.Printf("%s runner not found: %v", r, err)
+			log.Printf("%s runner not found: %v", r.Path, err)
 			continue
 		}
 
