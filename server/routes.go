@@ -51,7 +51,6 @@ var loaded struct {
 	expireTimer *time.Timer
 
 	runnerDigest string
-	system       string // TODO: this shouldn't be something this is set one time and then never changed
 	options      api.Options
 }
 
@@ -79,7 +78,7 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 		}
 	}
 
-	if model.RunnerDigest != loaded.runnerDigest || !reflect.DeepEqual(loaded.options, opts) {
+	if model.Digest != loaded.runnerDigest || !reflect.DeepEqual(loaded.options, opts) {
 		if loaded.llm != nil {
 			log.Println("changing loaded model")
 			loaded.llm.Close()
@@ -94,7 +93,7 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 
 		// set cache values before modifying opts
 		loaded.llm = llmModel
-		loaded.runnerDigest = model.RunnerDigest
+		loaded.runnerDigest = model.Digest
 		loaded.options = opts
 	}
 
@@ -117,34 +116,6 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 			loaded.llm = nil
 			loaded.runnerDigest = ""
 		})
-	}
-
-	if loaded.system != model.System && loaded.options.NumKeep < 0 {
-		// keep the system prompt in the context to preserve behavior, it is assmed to be at the beginning of the prompt
-		promptWithSystem, err := model.Prompt(api.GenerateRequest{})
-		if err != nil {
-			return err
-		}
-
-		promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}})
-		if err != nil {
-			return err
-		}
-
-		tokensWithSystem, err := loaded.llm.Encode(ctx, promptWithSystem)
-		if err != nil {
-			return err
-		}
-
-		tokensNoSystem, err := loaded.llm.Encode(ctx, promptNoSystem)
-		if err != nil {
-			return err
-		}
-
-		opts.NumKeep = len(tokensWithSystem) - len(tokensNoSystem)
-
-		loaded.system = model.System
-		loaded.llm.SetOptions(opts)
 	}
 
 	loaded.expireTimer.Reset(sessionDuration)

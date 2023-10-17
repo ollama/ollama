@@ -36,13 +36,13 @@ type RegistryOptions struct {
 }
 
 type Model struct {
-	Name         string   `json:"-"`
-	ShortName    string   `json:"-"`
-	ModelPath    string   `json:"-"`
-	Template     string   `json:"-"`
-	System       string   `json:"-"`
-	License      []string `json:"-"`
-	RunnerDigest string   // RunnerDigest is used to identify when the loaded model should be changed
+	Name      string   `json:"-"`
+	ShortName string   `json:"-"`
+	ModelPath string   `json:"-"`
+	Template  string   `json:"-"`
+	System    string   `json:"-"`
+	License   []string `json:"-"`
+	Digest    string   // used to identify when the loaded model should be changed
 	// these fields are used to determine the RunnerDigest
 	BaseModel    string                 `json:"baseModel"`
 	AdapterPaths []string               `json:"adapterPaths"`
@@ -233,16 +233,16 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
-	runnerDigest, err := runnerDigest(model)
+	digest, err := digest(model)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate runner digest: %v", err)
 	}
-	model.RunnerDigest = runnerDigest
+	model.Digest = digest
 
 	return model, nil
 }
 
-func runnerDigest(m *Model) (string, error) {
+func digest(m *Model) (string, error) {
 	encodedModel, err := json.Marshal(m)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode model: %v", err)

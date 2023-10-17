@@ -33,7 +33,7 @@ func TestRunnerDigest_Success(t *testing.T) {
 		Options:      map[string]interface{}{"key": "value"},
 	}
 
-	_, err := runnerDigest(model)
+	_, err := digest(model)
 	if err != nil {
 		t.Errorf("Failed to create digest: %v", err)
 	}
@@ -60,8 +60,8 @@ func TestRunnerDigest_DifferentModels(t *testing.T) {
 		Options:      map[string]interface{}{"newKey": "newValue"},
 	}
 
-	digest1, _ := runnerDigest(model1)
-	digest2, _ := runnerDigest(model2)
+	digest1, _ := digest(model1)
+	digest2, _ := digest(model2)
 
 	if digest1 == digest2 {
 		t.Error("Different models should have different digests")
@@ -73,10 +73,10 @@ func TestRunnerDigest_SameDigestDifferentTemplate(t *testing.T) {
 		Name:     "TestModel",
 		Template: "Template1",
 	}
-	digest1, _ := runnerDigest(model)
+	digest1, _ := digest(model)
 
 	model.Template = "Template2"
-	digest2, _ := runnerDigest(model)
+	digest2, _ := digest(model)
 
 	if digest1 != digest2 {
 		t.Error("Changing only the Template should not change the digest")
@@ -88,10 +88,10 @@ func TestRunnerDigest_SameDigestDifferentSystem(t *testing.T) {
 		Name:   "TestModel",
 		System: "System1",
 	}
-	digest1, _ := runnerDigest(model)
+	digest1, _ := digest(model)
 
 	model.System = "System2"
-	digest2, _ := runnerDigest(model)
+	digest2, _ := digest(model)
 
 	if digest1 != digest2 {
 		t.Error("Changing only the System should not change the digest")
