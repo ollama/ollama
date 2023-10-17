@@ -11,8 +11,8 @@ RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go1.21.3.tar.gz
 COPY . .
 ENV GOARCH=$TARGETARCH
 ENV GOFLAGS=$GOFLAGS
-RUN /usr/local/go/bin/go generate ./... \
-    && /usr/local/go/bin/go build .
+RUN /usr/local/go/bin/go generate -tags cuda ./... \
+    && /usr/local/go/bin/go build -tags cuda .
 
 FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y ca-certificates
@@ -21,3 +21,5 @@ EXPOSE 11434
 ENV OLLAMA_HOST 0.0.0.0
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
+
+
