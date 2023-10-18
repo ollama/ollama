@@ -388,7 +388,7 @@
 								>
 									<option value="" selected>Select a model</option>
 
-									{#each models.models as model}
+									{#each models as model}
 										<option value={model.name}>{model.name}</option>
 									{/each}
 								</select>
@@ -447,7 +447,7 @@
 												</div>
 											</div>
 										{:else}
-											<div class="whitespace-pre-line">
+											<div class="markdown-body whitespace-pre-line">
 												{@html marked.parse(message.content)}
 											</div>
 										{/if}
