@@ -214,6 +214,39 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }'
 ```
 
+## Edit the modelfile to customize the llama.cpp settings
+
+* Step 1. get the model file for an existing model 
+
+assuming that your model name is `nous-hermes:13b` -- replace this with your model name
+
+
+```bash
+ollama show --modelfile nous-hermes:13b > custom.modelfile
+```
+
+* Step 2. Add the settings you want to change to the modelfile using your favorite editor
+
+for example, to attempt to load 20 layers into the GPU, and leave the rest of them to the CPU; and to use only 4 CPU threads, add the following lines to the modelfile:
+
+```yaml
+PARAMETER num_gpu 20
+PARAMETER num_thread 4
+```
+
+* Step 3. Create a new model from the modelfile
+
+```bash
+ollama create hermes13-g20-c4 -f custom.modelfile
+```
+
+* Step 4. Run the model
+
+```bash
+ollama run hermes13-g20-c4
+```
+
+
 ## Community Integrations
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
