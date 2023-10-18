@@ -43,6 +43,15 @@ docker run -d -p 3000:3000 --add-host=host.docker.internal:host-gateway --name o
 
 Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000). Enjoy! 😄
 
+#### Connecting to Ollama on a Different Server
+
+If Ollama is hosted on a server other than your local machine, you can connect to it using the following environment variable:
+
+```bash
+docker build -t ollama-webui .
+docker run -d -p 3000:3000 --add-host=host.docker.internal:host-gateway -e OLLAMA_ENDPOINT="http://[insert your ollama url]" --name ollama-webui --restart always ollama-webui
+```
+
 ## What's Next? 🚀
 
 ### To-Do List 📝
