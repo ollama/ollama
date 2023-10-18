@@ -13,6 +13,7 @@ ChatGPT-Style Web Interface for Ollama 🦙
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
 - 📜 **Chat History**: Effortlessly access and manage your conversation history.
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
+- 🔗 **External Server Connection**: Link to the model when Ollama is hosted on a different server via the environment variable -e OLLAMA_ENDPOINT="http://[insert your Ollama address]".
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
 ## How to Install 🚀

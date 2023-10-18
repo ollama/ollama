@@ -8,13 +8,12 @@
 	import 'highlight.js/styles/dark.min.css';
 
 	import type { PageData } from './$types';
-	import { ENDPOINT } from '$lib/contants';
 	import { onMount, tick } from 'svelte';
 
 	import { openDB, deleteDB } from 'idb';
 
 	export let data: PageData;
-	$: ({ models } = data);
+	$: ({ models, ENDPOINT } = data);
 	let textareaElement;
 	let db;
 
