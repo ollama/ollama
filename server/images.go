@@ -955,11 +955,12 @@ TEMPLATE """{{ .Template }}"""
 {{- if .System }}
 SYSTEM """{{ .System }}"""
 {{- end }}
+
+{{- range $adapter := .AdapterPaths }}
+ADAPTER {{ $adapter }}
+{{- end }}
 {{ .Params }}
 `
-	for _, l := range mt.Model.AdapterPaths {
-		modelFile += fmt.Sprintf("ADAPTER %s\n", l)
-	}
 
 	tmpl, err := template.New("").Parse(modelFile)
 	if err != nil {
