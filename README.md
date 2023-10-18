@@ -21,11 +21,11 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 Make sure you have the latest version of Ollama installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
 
-### Checking Ollama
+#### Checking Ollama
 
 After installing, verify that Ollama is running by accessing the following link in your web browser: [http://127.0.0.1:11434/](http://127.0.0.1:11434/). Note that the port number may differ based on your system configuration.
 
-### Accessing Ollama Web Interface over LAN
+#### Accessing Ollama Web Interface over LAN
 
 If you want to access the Ollama web interface over LAN, for example, from your phone, run Ollama using the following command:
 
