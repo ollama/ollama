@@ -58,7 +58,7 @@ Here are some example open-source models that can be downloaded:
 
 > Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
 
-## Customize your own model
+## Customize settings or run your own model
 
 ### Import from GGUF
 
@@ -117,18 +117,18 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-### Edit existing modelfile to customize the settings
+### Edit existing modelfile to reduce VRAM usage
 
-* Step 1. get the model file for an existing model 
+1. Get the model file for an existing model 
 
-assuming that your model name is `nous-hermes:13b` -- replace this with your model name
+Assuming that your model name is `nous-hermes:13b` -- replace this with your model name
 
 
 ```bash
 ollama show --modelfile nous-hermes:13b > custom.modelfile
 ```
 
-* Step 2. Add the settings you want to change to the modelfile using your favorite editor
+2. Add the settings you want to change to the modelfile using your favorite editor
 
 For example, to attempt to load 20 layers into the GPU, and leave the rest of them to the CPU; and to use only 4 CPU threads, add the following lines to the modelfile:
 
@@ -139,13 +139,13 @@ PARAMETER num_thread 4
 
 see [Modelfile](docs/modelfile.md) for more information on the modelfile format.
 
-* Step 3. Create a new model from the modelfile
+3. Create a new model from the modelfile
 
 ```bash
 ollama create hermes13-g20-c4 -f custom.modelfile
 ```
 
-* Step 4. Run the model
+4. Run the model
 
 ```bash
 ollama run hermes13-g20-c4
