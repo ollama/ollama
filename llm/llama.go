@@ -475,10 +475,14 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 
 	// if json schema is provided, convert it to a grammar
 	if llm.Schema != "" {
-		grammar := format.SchemaToGrammar(llm.Schema, nil)
-		if grammar != "" {
-			predReq.Grammar = grammar
+		if llm.Grammar != "" {
+			return fmt.Errorf("cannot use both a grammar and a json schema, please provide only one")
 		}
+		grammar, err := format.SchemaToGrammar(llm.Schema, nil)
+		if err != nil {
+			return fmt.Errorf("error converting json schema to grammar: %v", err)
+		}
+		predReq.Grammar = grammar
 	}
 
 	data, err := json.Marshal(predReq)

@@ -121,9 +121,19 @@ func assertGrammaticallyEqual(t *testing.T, actual, expected string) {
 
 func TestGrammar(t *testing.T) {
     t.Run("object schema to grammar", func(t *testing.T) {
-    	assertGrammaticallyEqual(t, SchemaToGrammar(objectSchema, []string{"foo", "bar"}), objectGrammar)
+        grammar, err := SchemaToGrammar(objectSchema, []string{"foo", "bar"})
+        if err != nil {
+            t.Errorf("Error converting schema to grammar: %s", err)
+            return
+        }
+    	assertGrammaticallyEqual(t, grammar, objectGrammar)
     })
     t.Run("array schema to grammar", func(t *testing.T) {
-        assertGrammaticallyEqual(t, SchemaToGrammar(arraySchema, []string{"address", "age", "email", "firstname", "isMember", "lastname"}), arrayGrammar)
+        grammar, err := SchemaToGrammar(arraySchema, []string{"address", "age", "email", "firstname", "isMember", "lastname"})
+        if err != nil {
+            t.Errorf("Error converting schema to grammar: %s", err)
+            return
+        }
+        assertGrammaticallyEqual(t, grammar, arrayGrammar)
     })
 }

@@ -44,10 +44,10 @@ func newSchemaConverter(propOrder []string) *schemaConverter {
     }
 }
 
-func (sc *schemaConverter) formatLiteral(literal any) string {
+func (sc *schemaConverter) formatLiteral(literal any) (string, error) {
     literalBytes, err := json.Marshal(literal)
     if err != nil {
-        panic(err)
+        return "", err
     }
     escapedBytes := make([]byte, 0, len(literalBytes)+2)
     escapedBytes = append(escapedBytes, '"')
@@ -59,7 +59,7 @@ func (sc *schemaConverter) formatLiteral(literal any) string {
         }
     }
     escapedBytes = append(escapedBytes, '"')
-    return string(escapedBytes)
+    return string(escapedBytes), nil
 }
 
 func (sc *schemaConverter) addRule(name string, rule string) string {
@@ -82,7 +82,7 @@ func (sc *schemaConverter) addRule(name string, rule string) string {
     return key
 }
 
-func (sc *schemaConverter) visit(schema map[string]interface{}, name string) string {
+func (sc *schemaConverter) visit(schema map[string]interface{}, name string) (string, error) {
     schemaType := schema["type"].(string)
     ruleName := name
     if ruleName == "" {
@@ -95,7 +95,11 @@ func (sc *schemaConverter) visit(schema map[string]interface{}, name string) str
     case schema["anyOf"] != nil:
         return sc.compileOneOfAnyOf(schema["anyOf"].([]interface{}), ruleName, name)
     case schema["const"] != nil:
-        return sc.addRule(ruleName, sc.formatLiteral(schema["const"]))
+        rule, err := sc.formatLiteral(schema["const"])
+        if err != nil {
+            return "", err
+        }
+        return sc.addRule(ruleName, rule), nil
     case schema["enum"] != nil:
         return sc.compileEnum(schema["enum"].([]interface{}), ruleName)
     case schemaType == "object" && schema["properties"] != nil:
@@ -104,16 +108,16 @@ func (sc *schemaConverter) visit(schema map[string]interface{}, name string) str
         return sc.compileArray(schema["items"].(map[string]interface{}), ruleName, name)
     default:
         if primitiveRules[schemaType] == "" {
-            panic(fmt.Sprintf("Unknown schema type: %s", schemaType))
+            return "", fmt.Errorf("unknown schema type: %s", schemaType)
         }
         if ruleName != "root" {
             ruleName = schemaType
         }
-        return sc.addRule(ruleName, primitiveRules[schemaType])
+        return sc.addRule(ruleName, primitiveRules[schemaType]), nil
     }
 }
 
-func (sc *schemaConverter) compileOneOfAnyOf(schemas []interface{}, ruleName, name string) string {
+func (sc *schemaConverter) compileOneOfAnyOf(schemas []interface{}, ruleName, name string) (string, error) {
     var rules = make([]string, len(schemas))
     for i, altSchema := range schemas {
         var key string
@@ -122,20 +126,28 @@ func (sc *schemaConverter) compileOneOfAnyOf(schemas []interface{}, ruleName, na
         } else {
             key = fmt.Sprintf("%s-%d", name, i)
         }
-        rules[i] = sc.visit(altSchema.(map[string]interface{}), key)
+        rule, err := sc.visit(altSchema.(map[string]interface{}), key)
+        if err != nil {
+            return "", err
+        }
+        rules[i] = rule
     }
-    return sc.addRule(ruleName, strings.Join(rules, " | "))
+    return sc.addRule(ruleName, strings.Join(rules, " | ")), nil
 }
 
-func (sc *schemaConverter) compileEnum(literals []interface{}, ruleName string) string {
+func (sc *schemaConverter) compileEnum(literals []interface{}, ruleName string) (string, error) {
     var rules = make([]string, len(literals))
     for i, literal := range literals {
-        rules[i] = sc.formatLiteral(literal)
+        rule, err := sc.formatLiteral(literal)
+        if err != nil {
+            return "", err
+        }
+        rules[i] = rule
     }
-    return sc.addRule(ruleName, strings.Join(rules, " | "))
+    return sc.addRule(ruleName, strings.Join(rules, " | ")), nil
 }
 
-func (sc *schemaConverter) compileObject(properties map[string]interface{}, ruleName, name string) string {
+func (sc *schemaConverter) compileObject(properties map[string]interface{}, ruleName, name string) (string, error) {
     propOrder := sc.propOrder
     propPairs := make([][2]any, 0, len(properties))
     for k, v := range properties {
@@ -165,27 +177,37 @@ func (sc *schemaConverter) compileObject(properties map[string]interface{}, rule
         } else {
             key = fmt.Sprintf("%s-%s", name, propName)
         }
-        propRuleName := sc.visit(propSchema, key)
+        propRuleName, err := sc.visit(propSchema, key)
+        if err != nil {
+            return "", err
+        }
         if i > 0 {
             rule.WriteString(` "," space`)
         }
-        fmt.Fprintf(&rule, ` %s space ":" space %s`, sc.formatLiteral(propName), propRuleName)
+        propNameLiteral, err := sc.formatLiteral(propName)
+        if err != nil {
+            return "", err
+        }
+        fmt.Fprintf(&rule, ` %s space ":" space %s`, propNameLiteral, propRuleName)
         i++
     }
 
     rule.WriteString(` "}" space`)
-    return sc.addRule(ruleName, rule.String())
+    return sc.addRule(ruleName, rule.String()), nil
 }
 
-func (sc *schemaConverter) compileArray(items map[string]interface{}, ruleName, name string) string {
+func (sc *schemaConverter) compileArray(items map[string]interface{}, ruleName, name string) (string, error) {
     var key string
     if name == "" {
         key = "item"
     } else {
         key = fmt.Sprintf("%s-item", name)
     }
-    itemRuleName := sc.visit(items, key)
-    return sc.addRule(ruleName, fmt.Sprintf(`"[" space (%s ("," space %s)*)? "]" space`, itemRuleName, itemRuleName))
+    itemRuleName, err := sc.visit(items, key)
+    if err != nil {
+        return "", err
+    }
+    return sc.addRule(ruleName, fmt.Sprintf(`"[" space (%s ("," space %s)*)? "]" space`, itemRuleName, itemRuleName)), nil
 }
 
 func (sc *schemaConverter) formatGrammar() string {
@@ -198,13 +220,13 @@ func (sc *schemaConverter) formatGrammar() string {
 
 // SchemaToGrammar converts a JSON schema to a GNBF grammar,
 // with the given property order (optional).
-func SchemaToGrammar(schema string, propOrder []string) string {
+func SchemaToGrammar(schema string, propOrder []string) (string, error) {
     sc := newSchemaConverter(propOrder)
     var schemaObject map[string]interface{}
     err := json.Unmarshal([]byte(schema), &schemaObject)
     if err != nil {
-        return ""
+        return "", err
     }
     sc.visit(schemaObject, "")
-    return sc.formatGrammar()
+    return sc.formatGrammar(), nil
 }
