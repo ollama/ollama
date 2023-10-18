@@ -464,6 +464,11 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		return err
 	}
 
+	// Remove first leading space from prevConvo if present
+	if len(prevConvo) > 0 && prevConvo[0] == ' ' {
+		prevConvo = prevConvo[1:]
+	}
+
 	var nextContext strings.Builder
 	nextContext.WriteString(prevConvo)
 	nextContext.WriteString(prompt)
@@ -666,7 +671,7 @@ func (llm *llama) Decode(ctx context.Context, tokens []int) (string, error) {
 	}
 
 	// decoded content contains a leading whitespace
-	decoded.Content, _ = strings.CutPrefix(decoded.Content, " ")
+	decoded.Content, _ = strings.CutPrefix(decoded.Content, "")
 
 	return decoded.Content, nil
 }
