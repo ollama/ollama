@@ -479,6 +479,9 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		return err
 	}
 
+	// Remove leading spaces from prevConvo if present
+	prevConvo = strings.TrimPrefix(prevConvo, " ")
+
 	var nextContext strings.Builder
 	nextContext.WriteString(prevConvo)
 	nextContext.WriteString(prompt)
@@ -687,9 +690,6 @@ func (llm *llama) Decode(ctx context.Context, tokens []int) (string, error) {
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return "", fmt.Errorf("unmarshal encode response: %w", err)
 	}
-
-	// decoded content contains a leading whitespace
-	decoded.Content, _ = strings.CutPrefix(decoded.Content, "")
 
 	return decoded.Content, nil
 }
