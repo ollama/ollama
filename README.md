@@ -137,6 +137,25 @@ PARAMETER num_gpu 20
 PARAMETER num_thread 4
 ```
 
+Note that if you use a non-dedicated GPU (e.g. a laptop GPU), you may need to leave some free VRAM for other applications to use, 
+otherwise you will encounter frequent crashes. 
+
+For a 13b, Q4_0 model with 43 layers, example VRAM usage and performance effects may be as follows:
+
+```bash
+ollama run test --verbose "tell me a story"
+```
+
+| num_gpu   | VRAM usage   | generation performance     |
+|-----------|--------------|----------------------------|
+| 0         | ____0MiB     | (_3.41, _3.32) tokens/s    |
+| 10        | _3606MiB     | (_4.09, _4.06) tokens/s    |
+| 20        | _5386MiB     | (_4.87, _4.78) tokens/s    |
+| 30        | _7168MiB     | (_6.95, _8.16) tokens/s    |
+| 40        | _8932MiB     | (18.89, 18.81) tokens/s    |
+| all       | 10620MiB     | (29.95, 27.04) tokens/s    |
+| --------- | ------------ | -------------------------- |
+
 see [Modelfile](docs/modelfile.md) for more information on the modelfile format.
 
 3. Create a new model from the modelfile
