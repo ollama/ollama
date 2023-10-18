@@ -37,7 +37,7 @@ OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
 
 ```bash
 docker build -t ollama-webui .
-docker run -d -p 3000:3000 --name ollama-webui --restart always ollama-webui
+docker run -d -p 3000:3000 --name ollama-webui --restart always ollama-webui --add-host=host.docker.internal:host-gateway
 ```
 
 Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000). Enjoy! 😄
