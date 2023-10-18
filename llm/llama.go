@@ -666,7 +666,7 @@ func (llm *llama) Decode(ctx context.Context, tokens []int) (string, error) {
 	}
 
 	// decoded content contains a leading whitespace
-	decoded.Content, _ = strings.CutPrefix(decoded.Content, "")
+	decoded.Content, _ = strings.CutPrefix(decoded.Content, " ")
 
 	return decoded.Content, nil
 }
