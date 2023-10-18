@@ -19,6 +19,6 @@ export const load: PageServerLoad = async ({ url }) => {
 		});
 
 	return {
-		models: models
+		models: models ? models.models : []
 	};
 };
