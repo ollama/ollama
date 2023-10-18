@@ -488,9 +488,9 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
-    "grammar":           llm.Grammar,
+        "grammar":           llm.Grammar,
 	}
-    
+
   // If json schema is provided, convert it to a grammar
 	if llm.Schema != "" {
 		if llm.Grammar != "" {
@@ -500,7 +500,7 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		if err != nil {
 			return fmt.Errorf("error converting json schema to grammar: %v", err)
 		}
-		request.grammar = grammar
+		request["grammar"] = grammar
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
