@@ -465,7 +465,7 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 	}
 
 	// Remove leading spaces from prevConvo if present
-	prevConvo = strings.TrimLeft(prevConvo, " ")
+	prevConvo = strings.TrimPrefix(prevConvo, " ")
 
 	var nextContext strings.Builder
 	nextContext.WriteString(prevConvo)
