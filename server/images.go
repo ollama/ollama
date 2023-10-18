@@ -951,7 +951,10 @@ func ShowModelfile(model *Model) (string, error) {
 
 FROM {{ .From }}
 TEMPLATE """{{ .Template }}"""
+
+{{- if .System }}
 SYSTEM """{{ .System }}"""
+{{- end }}
 {{ .Params }}
 `
 	for _, l := range mt.Model.AdapterPaths {
