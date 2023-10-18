@@ -668,9 +668,6 @@ func (llm *llama) Decode(ctx context.Context, tokens []int) (string, error) {
 		return "", fmt.Errorf("unmarshal encode response: %w", err)
 	}
 
-	// decoded content contains a leading whitespace
-	decoded.Content, _ = strings.CutPrefix(decoded.Content, "")
-
 	return decoded.Content, nil
 }
 
