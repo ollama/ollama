@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 )
 
 type containerGGUF struct {
@@ -110,9 +109,13 @@ func (llm *ggufModel) ModelType() string {
 		if blocks, ok := llm.kv["falcon.block_count"].(uint32); ok {
 			return falconModelType(blocks)
 		}
+	case "starcoder":
+		if blocks, ok := llm.kv["starcoder.block_count"].(uint32); ok {
+			return starCoderModelType(blocks)
+		}
 	}
 
-	return "Unknown"
+	return "unknown"
 }
 
 func (llm *ggufModel) FileType() string {
@@ -121,7 +124,7 @@ func (llm *ggufModel) FileType() string {
 		return fileType(t)
 	}
 
-	return "Unknown"
+	return "unknown"
 }
 
 func (llm *ggufModel) Decode(r io.Reader) error {
@@ -194,6 +197,16 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 	}
 
 	return nil
+}
+
+func (llm *ggufModel) NumLayers() int64 {
+	value, exists := llm.kv[fmt.Sprintf("%s.block_count", llm.ModelFamily())]
+	if !exists {
+		return 0
+	}
+
+	v := value.(uint32)
+	return int64(v)
 }
 
 func (ggufModel) readU8(r io.Reader) uint8 {
@@ -367,17 +380,4 @@ func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
 	}
 
 	return
-}
-
-var (
-	ggufInit    sync.Once
-	ggufRunners []ModelRunner // a slice of ModelRunners ordered by priority
-)
-
-func ggufRunner() []ModelRunner {
-	ggufInit.Do(func() {
-		ggufRunners = chooseRunners("gguf")
-	})
-
-	return ggufRunners
 }

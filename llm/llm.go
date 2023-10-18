@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/pbnjay/memory"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/format"
 )
 
 type LLM interface {
@@ -21,7 +23,7 @@ type LLM interface {
 	Ping(context.Context) error
 }
 
-func New(model string, adapters []string, opts api.Options) (LLM, error) {
+func New(workDir, model string, adapters []string, opts api.Options) (LLM, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -37,63 +39,56 @@ func New(model string, adapters []string, opts api.Options) (LLM, error) {
 		return nil, err
 	}
 
-	switch ggml.FileType() {
-	case "Q8_0":
-		if ggml.Name() != "gguf" && opts.NumGPU != 0 {
-			// GGML Q8_0 do not support Metal API and will
-			// cause the runner to segmentation fault so disable GPU
-			log.Printf("WARNING: GPU disabled for F32, Q5_0, Q5_1, and Q8_0")
-			opts.NumGPU = 0
+	if runtime.GOOS == "darwin" {
+		switch ggml.FileType() {
+		case "Q8_0":
+			if ggml.Name() != "gguf" && opts.NumGPU != 0 {
+				// GGML Q8_0 do not support Metal API and will
+				// cause the runner to segmentation fault so disable GPU
+				log.Printf("WARNING: GPU disabled for F32, Q5_0, Q5_1, and Q8_0")
+				opts.NumGPU = 0
+			}
+		case "F32", "Q5_0", "Q5_1":
+			if opts.NumGPU != 0 {
+				// F32, Q5_0, Q5_1, and Q8_0 do not support Metal API and will
+				// cause the runner to segmentation fault so disable GPU
+				log.Printf("WARNING: GPU disabled for F32, Q5_0, Q5_1, and Q8_0")
+				opts.NumGPU = 0
+			}
 		}
-	case "F32", "Q5_0", "Q5_1":
-		if opts.NumGPU != 0 {
-			// F32, Q5_0, Q5_1, and Q8_0 do not support Metal API and will
-			// cause the runner to segmentation fault so disable GPU
-			log.Printf("WARNING: GPU disabled for F32, Q5_0, Q5_1, and Q8_0")
-			opts.NumGPU = 0
-		}
-	}
 
-	totalResidentMemory := memory.TotalMemory()
-	switch ggml.ModelType() {
-	case "3B", "7B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 16*1024*1024 {
-			return nil, fmt.Errorf("F16 model requires at least 16GB of memory")
-		} else if totalResidentMemory < 8*1024*1024 {
-			return nil, fmt.Errorf("model requires at least 8GB of memory")
+		var requiredMemory int64
+		var f16Multiplier int64 = 2
+
+		switch ggml.ModelType() {
+		case "3B", "7B":
+			requiredMemory = 8 * format.GigaByte
+		case "13B":
+			requiredMemory = 16 * format.GigaByte
+		case "30B", "34B", "40B":
+			requiredMemory = 32 * format.GigaByte
+		case "65B", "70B":
+			requiredMemory = 64 * format.GigaByte
+		case "180B":
+			requiredMemory = 128 * format.GigaByte
+			f16Multiplier = 4
 		}
-	case "13B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 32*1024*1024 {
-			return nil, fmt.Errorf("F16 model requires at least 32GB of memory")
-		} else if totalResidentMemory < 16*1024*1024 {
-			return nil, fmt.Errorf("model requires at least 16GB of memory")
-		}
-	case "30B", "34B", "40B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 64*1024*1024 {
-			return nil, fmt.Errorf("F16 model requires at least 64GB of memory")
-		} else if totalResidentMemory < 32*1024*1024 {
-			return nil, fmt.Errorf("model requires at least 32GB of memory")
-		}
-	case "65B", "70B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 128*1024*1024 {
-			return nil, fmt.Errorf("F16 model requires at least 128GB of memory")
-		} else if totalResidentMemory < 64*1024*1024 {
-			return nil, fmt.Errorf("model requires at least 64GB of memory")
-		}
-	case "180B":
-		if ggml.FileType() == "F16" && totalResidentMemory < 512*1024*1024 {
-			return nil, fmt.Errorf("F16 model requires at least 512GB of memory")
-		} else if totalResidentMemory < 128*1024*1024 {
-			return nil, fmt.Errorf("model requires at least 128GB of memory")
+
+		systemMemory := int64(memory.TotalMemory())
+
+		if ggml.FileType() == "F16" && requiredMemory*f16Multiplier > systemMemory {
+			return nil, fmt.Errorf("F16 model requires at least %s of total memory", format.HumanBytes(requiredMemory))
+		} else if requiredMemory > systemMemory {
+			return nil, fmt.Errorf("model requires at least %s of total memory", format.HumanBytes(requiredMemory))
 		}
 	}
 
 	switch ggml.Name() {
 	case "gguf":
 		opts.NumGQA = 0 // TODO: remove this when llama.cpp runners differ enough to need separate newLlama functions
-		return newLlama(model, adapters, ggufRunner(), opts)
+		return newLlama(model, adapters, chooseRunners(workDir, "gguf"), ggml.NumLayers(), opts)
 	case "ggml", "ggmf", "ggjt", "ggla":
-		return newLlama(model, adapters, ggmlRunner(), opts)
+		return newLlama(model, adapters, chooseRunners(workDir, "ggml"), ggml.NumLayers(), opts)
 	default:
 		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
 	}

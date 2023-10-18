@@ -40,7 +40,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 			command.Args = string(fields[1])
 			// copy command for validation
 			modelCommand = command
-		case "LICENSE", "TEMPLATE", "SYSTEM", "PROMPT", "EMBED", "ADAPTER":
+		case "LICENSE", "TEMPLATE", "SYSTEM", "PROMPT", "ADAPTER":
 			command.Name = string(bytes.ToLower(fields[0]))
 			command.Args = string(fields[1])
 		case "PARAMETER":
@@ -51,6 +51,8 @@ func Parse(reader io.Reader) ([]Command, error) {
 
 			command.Name = string(fields[0])
 			command.Args = string(fields[1])
+		case "EMBED":
+			return nil, fmt.Errorf("deprecated command: EMBED is no longer supported, use the /embed API endpoint instead")
 		default:
 			if !bytes.HasPrefix(fields[0], []byte("#")) {
 				// log a warning for unknown commands

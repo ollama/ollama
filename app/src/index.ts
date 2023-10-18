@@ -5,7 +5,7 @@ import winston from 'winston'
 import 'winston-daily-rotate-file'
 import * as path from 'path'
 
-import { analytics, id } from './telemetry'
+import { v4 as uuidv4 } from 'uuid'
 import { installed } from './install'
 
 require('@electron/remote/main').initialize()
@@ -162,13 +162,56 @@ app.on('before-quit', () => {
   }
 })
 
+const updateURL = `https://ollama.ai/api/update?os=${process.platform}&arch=${
+  process.arch
+}&version=${app.getVersion()}&id=${id()}`
+
+let latest = ''
+async function isNewReleaseAvailable() {
+  try {
+    const response = await fetch(updateURL)
+
+    if (!response.ok) {
+      return false
+    }
+
+    if (response.status === 204) {
+      return false
+    }
+
+    const data = await response.json()
+
+    const url = data?.url
+    if (!url) {
+      return false
+    }
+
+    if (latest === url) {
+      return false
+    }
+
+    latest = url
+
+    return true
+  } catch (error) {
+    logger.error(`update check failed - ${error}`)
+    return false
+  }
+}
+
+async function checkUpdate() {
+  const available = await isNewReleaseAvailable()
+  if (available) {
+    logger.info('checking for update')
+    autoUpdater.checkForUpdates()
+  }
+}
+
 function init() {
   if (app.isPackaged) {
-    heartbeat()
-    autoUpdater.checkForUpdates()
+    checkUpdate()
     setInterval(() => {
-      heartbeat()
-      autoUpdater.checkForUpdates()
+      checkUpdate()
     }, 60 * 60 * 1000)
   }
 
@@ -234,28 +277,22 @@ app.on('window-all-closed', () => {
   }
 })
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.
-let aid = ''
-try {
-  aid = id()
-} catch (e) {}
+function id(): string {
+  const id = store.get('id') as string
 
-autoUpdater.setFeedURL({
-  url: `https://ollama.ai/api/update?os=${process.platform}&arch=${process.arch}&version=${app.getVersion()}&id=${aid}`,
-})
+  if (id) {
+    return id
+  }
 
-async function heartbeat() {
-  analytics.track({
-    anonymousId: aid,
-    event: 'heartbeat',
-    properties: {
-      version: app.getVersion(),
-    },
-  })
+  const uuid = uuidv4()
+  store.set('id', uuid)
+  return uuid
 }
 
+autoUpdater.setFeedURL({ url: updateURL })
+
 autoUpdater.on('error', e => {
+  logger.error(`update check failed - ${e.message}`)
   console.error(`update check failed - ${e.message}`)
 })
 

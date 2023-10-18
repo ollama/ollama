@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -21,11 +23,10 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"gonum.org/v1/gonum/mat"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
-	"github.com/jmorganca/ollama/vector"
+	"github.com/jmorganca/ollama/version"
 )
 
 var mode string = gin.DebugMode
@@ -45,8 +46,7 @@ func init() {
 var loaded struct {
 	mu sync.Mutex
 
-	llm        llm.LLM
-	Embeddings []vector.Embedding
+	llm llm.LLM
 
 	expireAt    time.Time
 	expireTimer *time.Timer
@@ -58,7 +58,7 @@ var loaded struct {
 var defaultSessionDuration = 5 * time.Minute
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
-func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, sessionDuration time.Duration) error {
+func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]interface{}, sessionDuration time.Duration) error {
 	opts := api.DefaultOptions()
 	if err := opts.FromMap(model.Options); err != nil {
 		log.Printf("could not load model options: %v", err)
@@ -66,7 +66,6 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 	}
 
 	if err := opts.FromMap(reqOpts); err != nil {
-		log.Printf("could not merge model options: %v", err)
 		return err
 	}
 
@@ -89,12 +88,7 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 			loaded.digest = ""
 		}
 
-		if model.Embeddings != nil && len(model.Embeddings) > 0 {
-			opts.EmbeddingOnly = true // this is requried to generate embeddings, completions will still work
-			loaded.Embeddings = model.Embeddings
-		}
-
-		llmModel, err := llm.New(model.ModelPath, model.AdapterPaths, opts)
+		llmModel, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, opts)
 		if err != nil {
 			return err
 		}
@@ -105,12 +99,12 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 		loaded.options = opts
 
 		if opts.NumKeep < 0 {
-			promptWithSystem, err := model.Prompt(api.GenerateRequest{}, "")
+			promptWithSystem, err := model.Prompt(api.GenerateRequest{})
 			if err != nil {
 				return err
 			}
 
-			promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}}, "")
+			promptNoSystem, err := model.Prompt(api.GenerateRequest{Context: []int{0}})
 			if err != nil {
 				return err
 			}
@@ -130,6 +124,7 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 			llmModel.SetOptions(opts)
 		}
 	}
+
 	loaded.expireAt = time.Now().Add(sessionDuration)
 
 	if loaded.expireTimer == nil {
@@ -150,6 +145,7 @@ func load(ctx context.Context, model *Model, reqOpts map[string]interface{}, ses
 			loaded.digest = ""
 		})
 	}
+
 	loaded.expireTimer.Reset(sessionDuration)
 	return nil
 }
@@ -168,34 +164,31 @@ func GenerateHandler(c *gin.Context) {
 
 	model, err := GetModel(req.Model)
 	if err != nil {
+		var pErr *fs.PathError
+		if errors.As(err, &pErr) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	sessionDuration := defaultSessionDuration // TODO: set this duration from the request if specified
-	if err := load(c.Request.Context(), model, req.Options, sessionDuration); err != nil {
+	workDir := c.GetString("workDir")
+
+	// TODO: set this duration from the request if specified
+	sessionDuration := defaultSessionDuration
+	if err := load(c.Request.Context(), workDir, model, req.Options, sessionDuration); err != nil {
+		if errors.Is(err, api.ErrInvalidOpts) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	checkpointLoaded := time.Now()
 
-	embedding := ""
-	if model.Embeddings != nil && len(model.Embeddings) > 0 {
-		promptEmbed, err := loaded.llm.Embedding(c.Request.Context(), req.Prompt)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		// TODO: set embed_top from specified parameters in modelfile
-		embed_top := 3
-		topK := vector.TopK(embed_top, mat.NewVecDense(len(promptEmbed), promptEmbed), loaded.Embeddings)
-		for _, e := range topK {
-			embedding = fmt.Sprintf("%s %s", embedding, e.Embedding.Data)
-		}
-	}
-
-	prompt, err := model.Prompt(req, embedding)
+	prompt, err := model.Prompt(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -218,7 +211,8 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if req.Prompt == "" {
+		// an empty request loads the model
+		if req.Prompt == "" && req.Template == "" && req.System == "" {
 			ch <- api.GenerateResponse{Model: req.Model, Done: true}
 		} else {
 			if err := loaded.llm.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
@@ -226,6 +220,23 @@ func GenerateHandler(c *gin.Context) {
 			}
 		}
 	}()
+
+	if req.Stream != nil && !*req.Stream {
+		var response api.GenerateResponse
+		generated := ""
+		for resp := range ch {
+			if r, ok := resp.(api.GenerateResponse); ok {
+				generated += r.Response
+				response = r
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		response.Response = generated
+		c.JSON(http.StatusOK, response)
+		return
+	}
 
 	streamResponse(c, ch)
 }
@@ -245,7 +256,9 @@ func EmbeddingHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := load(c.Request.Context(), model, req.Options, 5*time.Minute); err != nil {
+
+	workDir := c.GetString("workDir")
+	if err := load(c.Request.Context(), workDir, model, req.Options, 5*time.Minute); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -284,8 +297,6 @@ func PullModelHandler(c *gin.Context) {
 
 		regOpts := &RegistryOptions{
 			Insecure: req.Insecure,
-			Username: req.Username,
-			Password: req.Password,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())
@@ -295,6 +306,11 @@ func PullModelHandler(c *gin.Context) {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
+
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
 
 	streamResponse(c, ch)
 }
@@ -315,8 +331,6 @@ func PushModelHandler(c *gin.Context) {
 
 		regOpts := &RegistryOptions{
 			Insecure: req.Insecure,
-			Username: req.Username,
-			Password: req.Password,
 		}
 
 		ctx := context.Background()
@@ -324,6 +338,11 @@ func PushModelHandler(c *gin.Context) {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
+
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
 
 	streamResponse(c, ch)
 }
@@ -335,6 +354,8 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
+	workDir := c.GetString("workDir")
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -345,10 +366,15 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, req.Name, req.Path, fn); err != nil {
+		if err := CreateModel(ctx, workDir, req.Name, req.Path, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
+
+	if req.Stream != nil && !*req.Stream {
+		waitForStream(c, ch)
+		return
+	}
 
 	streamResponse(c, ch)
 }
@@ -368,6 +394,18 @@ func DeleteModelHandler(c *gin.Context) {
 		}
 		return
 	}
+
+	manifestsPath, err := GetManifestPath()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := PruneDirectory(manifestsPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	c.JSON(http.StatusOK, nil)
 }
 
@@ -499,33 +537,40 @@ func CopyModelHandler(c *gin.Context) {
 	}
 }
 
-func Serve(ln net.Listener, origins []string) error {
+var defaultAllowOrigins = []string{
+	"localhost",
+	"127.0.0.1",
+	"0.0.0.0",
+}
+
+func Serve(ln net.Listener, allowOrigins []string) error {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
-	config.AllowOrigins = append(origins, []string{
-		"http://localhost",
-		"http://localhost:*",
-		"https://localhost",
-		"https://localhost:*",
-		"http://127.0.0.1",
-		"http://127.0.0.1:*",
-		"https://127.0.0.1",
-		"https://127.0.0.1:*",
-		"http://0.0.0.0",
-		"http://0.0.0.0:*",
-		"https://0.0.0.0",
-		"https://0.0.0.0:*",
-	}...)
+
+	config.AllowOrigins = allowOrigins
+	for _, allowOrigin := range defaultAllowOrigins {
+		config.AllowOrigins = append(config.AllowOrigins,
+			fmt.Sprintf("http://%s", allowOrigin),
+			fmt.Sprintf("https://%s", allowOrigin),
+			fmt.Sprintf("http://%s:*", allowOrigin),
+			fmt.Sprintf("https://%s:*", allowOrigin),
+		)
+	}
+
+	workDir, err := os.MkdirTemp("", "ollama")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(workDir)
 
 	r := gin.Default()
-	r.Use(cors.New(config))
-
-	r.GET("/", func(c *gin.Context) {
-		c.String(http.StatusOK, "Ollama is running")
-	})
-	r.HEAD("/", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
+	r.Use(
+		cors.New(config),
+		func(c *gin.Context) {
+			c.Set("workDir", workDir)
+			c.Next()
+		},
+	)
 
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
@@ -533,23 +578,31 @@ func Serve(ln net.Listener, origins []string) error {
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)
-	r.GET("/api/tags", ListModelsHandler)
 	r.DELETE("/api/delete", DeleteModelHandler)
 	r.POST("/api/show", ShowModelHandler)
 
-	log.Printf("Listening on %s", ln.Addr())
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		r.Handle(method, "/", func(c *gin.Context) {
+			c.String(http.StatusOK, "Ollama is running")
+		})
+
+		r.Handle(method, "/api/tags", ListModelsHandler)
+	}
+
+	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
 	s := &http.Server{
 		Handler: r,
 	}
 
 	// listen for a ctrl+c and stop any loaded llm
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
 		if loaded.llm != nil {
 			loaded.llm.Close()
 		}
+		os.RemoveAll(workDir)
 		os.Exit(0)
 	}()
 
@@ -561,6 +614,31 @@ func Serve(ln net.Listener, origins []string) error {
 	}
 
 	return s.Serve(ln)
+}
+
+func waitForStream(c *gin.Context, ch chan interface{}) {
+	c.Header("Content-Type", "application/json")
+	for resp := range ch {
+		switch r := resp.(type) {
+		case api.ProgressResponse:
+			if r.Status == "success" {
+				c.JSON(http.StatusOK, r)
+				return
+			}
+		case gin.H:
+			if errorMsg, ok := r["error"].(string); ok {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+				return
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in progress response"})
+				return
+			}
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected progress response"})
+			return
+		}
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected end of progress response"})
 }
 
 func streamResponse(c *gin.Context, ch chan any) {
@@ -577,6 +655,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 			return false
 		}
 
+		// Delineate chunks with new-line delimiter
 		bts = append(bts, '\n')
 		if _, err := w.Write(bts); err != nil {
 			log.Printf("streamResponse: w.Write failed with %s", err)

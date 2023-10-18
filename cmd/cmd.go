@@ -11,19 +11,21 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/chzyer/readline"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/tablewriter"
+	"github.com/pdevine/readline"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
@@ -32,14 +34,23 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
-type Painter struct{}
+type Painter struct {
+	IsMultiLine bool
+}
 
-func (p Painter) Paint(line []rune, l int) []rune {
+func (p Painter) Paint(line []rune, _ int) []rune {
 	termType := os.Getenv("TERM")
 	if termType == "xterm-256color" && len(line) == 0 {
-		prompt := "Send a message (/? for help)"
+		var prompt string
+		if p.IsMultiLine {
+			prompt = "Use \"\"\" to end multi-line input"
+		} else {
+			prompt = "Send a message (/? for help)"
+		}
 		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
 	}
+	// add a space and a backspace to prevent the cursor from walking up the screen
+	line = append(line, []rune(" \b")...)
 	return line
 }
 
@@ -50,7 +61,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -67,20 +78,14 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				spinner.Stop()
 			}
 			currentDigest = resp.Digest
-			switch {
-			case strings.Contains(resp.Status, "embeddings"):
-				bar = progressbar.Default(int64(resp.Total), resp.Status)
-				bar.Set(resp.Completed)
-			default:
-				// pulling
-				bar = progressbar.DefaultBytes(
-					int64(resp.Total),
-					resp.Status,
-				)
-				bar.Set(resp.Completed)
-			}
+			// pulling
+			bar = progressbar.DefaultBytes(
+				resp.Total,
+				resp.Status,
+			)
+			bar.Set64(resp.Completed)
 		} else if resp.Digest == currentDigest && resp.Digest != "" {
-			bar.Set(resp.Completed)
+			bar.Set64(resp.Completed)
 		} else {
 			currentDigest = ""
 			if spinner != nil {
@@ -108,35 +113,24 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
-	insecure, err := cmd.Flags().GetBool("insecure")
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	mp := server.ParseModelPath(args[0])
-	if mp.ProtocolScheme == "http" && !insecure {
-		return fmt.Errorf("insecure protocol http")
-	}
-
-	fp, err := mp.GetManifestPath(false)
+	models, err := client.List(context.Background())
 	if err != nil {
 		return err
 	}
 
-	_, err = os.Stat(fp)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		if err := pull(args[0], insecure); err != nil {
-			var apiStatusError api.StatusError
-			if !errors.As(err, &apiStatusError) {
-				return err
-			}
-
-			if apiStatusError.StatusCode != http.StatusBadGateway {
-				return err
-			}
+	canonicalModelPath := server.ParseModelPath(args[0])
+	for _, model := range models.Models {
+		if model.Name == canonicalModelPath.GetShortTagname() {
+			return RunGenerate(cmd, args)
 		}
-	case err != nil:
+	}
+
+	if err := PullHandler(cmd, args); err != nil {
 		return err
 	}
 
@@ -144,7 +138,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -162,13 +156,13 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		if resp.Digest != currentDigest && resp.Digest != "" {
 			currentDigest = resp.Digest
 			bar = progressbar.DefaultBytes(
-				int64(resp.Total),
+				resp.Total,
 				fmt.Sprintf("pushing %s...", resp.Digest[7:19]),
 			)
 
-			bar.Set(resp.Completed)
+			bar.Set64(resp.Completed)
 		} else if resp.Digest == currentDigest && resp.Digest != "" {
-			bar.Set(resp.Completed)
+			bar.Set64(resp.Completed)
 		} else {
 			currentDigest = ""
 			fmt.Println(resp.Status)
@@ -188,7 +182,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -221,7 +215,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 }
 
 func DeleteHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -237,7 +231,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ShowHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -315,7 +309,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -338,7 +332,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 }
 
 func pull(model string, insecure bool) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -351,13 +345,13 @@ func pull(model string, insecure bool) error {
 		if resp.Digest != currentDigest && resp.Digest != "" {
 			currentDigest = resp.Digest
 			bar = progressbar.DefaultBytes(
-				int64(resp.Total),
+				resp.Total,
 				fmt.Sprintf("pulling %s...", resp.Digest[7:19]),
 			)
 
-			bar.Set(resp.Completed)
+			bar.Set64(resp.Completed)
 		} else if resp.Digest == currentDigest && resp.Digest != "" {
-			bar.Set(resp.Completed)
+			bar.Set64(resp.Completed)
 		} else {
 			currentDigest = ""
 			fmt.Println(resp.Status)
@@ -380,7 +374,20 @@ func pull(model string, insecure bool) error {
 func RunGenerate(cmd *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		// join all args into a single prompt
-		return generate(cmd, args[0], strings.Join(args[1:], " "))
+		wordWrap := false
+		if term.IsTerminal(int(os.Stdout.Fd())) {
+			wordWrap = true
+		}
+
+		nowrap, err := cmd.Flags().GetBool("nowordwrap")
+		if err != nil {
+			return err
+		}
+		if nowrap {
+			wordWrap = false
+		}
+
+		return generate(cmd, args[0], strings.Join(args[1:], " "), wordWrap)
 	}
 
 	if readline.IsTerminal(int(os.Stdin.Fd())) {
@@ -392,8 +399,8 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 
 type generateContextKey string
 
-func generate(cmd *cobra.Command, model, prompt string) error {
-	client, err := api.FromEnv()
+func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -408,6 +415,27 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 		generateContext = []int{}
 	}
 
+	termWidth, _, err := term.GetSize(int(0))
+	if err != nil {
+		wordWrap = false
+	}
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+	var abort bool
+
+	go func() {
+		<-sigChan
+		cancel()
+		abort = true
+	}()
+
+	var currentLineLength int
+	var wordBuffer string
+
 	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext}
 	fn := func(response api.GenerateResponse) error {
 		if !spinner.IsFinished() {
@@ -416,32 +444,50 @@ func generate(cmd *cobra.Command, model, prompt string) error {
 
 		latest = response
 
-		fmt.Print(response.Response)
+		if wordWrap {
+			for _, ch := range response.Response {
+				if currentLineLength+1 > termWidth-5 {
+					// backtrack the length of the last word and clear to the end of the line
+					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
+					fmt.Printf("%s%c", wordBuffer, ch)
+					currentLineLength = len(wordBuffer) + 1
+				} else {
+					fmt.Print(string(ch))
+					currentLineLength += 1
+
+					switch ch {
+					case ' ':
+						wordBuffer = ""
+					case '\n':
+						currentLineLength = 0
+					default:
+						wordBuffer += string(ch)
+					}
+				}
+			}
+		} else {
+			fmt.Print(response.Response)
+		}
+
 		return nil
 	}
 
-	if err := client.Generate(context.Background(), &request, fn); err != nil {
-		if strings.Contains(err.Error(), "failed to load model") {
-			// tell the user to check the server log, if it exists locally
-			home, nestedErr := os.UserHomeDir()
-			if nestedErr != nil {
-				// return the original error
-				return err
-			}
-			logPath := filepath.Join(home, ".ollama", "logs", "server.log")
-			if _, nestedErr := os.Stat(logPath); nestedErr == nil {
-				err = fmt.Errorf("%w\nFor more details, check the error logs at %s", err, logPath)
-			}
+	if err := client.Generate(cancelCtx, &request, fn); err != nil {
+		if strings.Contains(err.Error(), "context canceled") && abort {
+			spinner.Finish()
+			return nil
 		}
 		return err
 	}
-
 	if prompt != "" {
 		fmt.Println()
 		fmt.Println()
 	}
 
 	if !latest.Done {
+		if abort {
+			return nil
+		}
 		return errors.New("unexpected end of response")
 	}
 
@@ -468,7 +514,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 
 	// load the model
-	if err := generate(cmd, model, ""); err != nil {
+	if err := generate(cmd, model, "", false); err != nil {
 		return err
 	}
 
@@ -478,13 +524,10 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		readline.PcItem("/set",
 			readline.PcItem("history"),
 			readline.PcItem("nohistory"),
+			readline.PcItem("wordwrap"),
+			readline.PcItem("nowordwrap"),
 			readline.PcItem("verbose"),
 			readline.PcItem("quiet"),
-			readline.PcItem("mode",
-				readline.PcItem("vim"),
-				readline.PcItem("emacs"),
-				readline.PcItem("default"),
-			),
 		),
 		readline.PcItem("/show",
 			readline.PcItem("license"),
@@ -498,12 +541,41 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	)
 
 	usage := func() {
-		fmt.Fprintln(os.Stderr, "commands:")
-		fmt.Fprintln(os.Stderr, completer.Tree("  "))
+		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /set         Set session variables")
+		fmt.Fprintln(os.Stderr, "  /show        Show model information")
+		fmt.Fprintln(os.Stderr, "  /bye         Exit")
+		fmt.Fprintln(os.Stderr, "  /?, /help    Help for a command")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
+		fmt.Fprintln(os.Stderr, "")
 	}
 
+	usageSet := func() {
+		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /set history      Enable history")
+		fmt.Fprintln(os.Stderr, "  /set nohistory    Disable history")
+		fmt.Fprintln(os.Stderr, "  /set wordwrap     Enable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set nowordwrap   Disable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set verbose      Show LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set quiet        Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	usageShow := func() {
+		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /show license      Show model license")
+		fmt.Fprintln(os.Stderr, "  /show modelfile    Show Modelfile for this model")
+		fmt.Fprintln(os.Stderr, "  /show parameters   Show parameters for this model")
+		fmt.Fprintln(os.Stderr, "  /show system       Show system prompt")
+		fmt.Fprintln(os.Stderr, "  /show template     Show prompt template")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	var painter Painter
+
 	config := readline.Config{
-		Painter:      Painter{},
+		Painter:      &painter,
 		Prompt:       ">>> ",
 		HistoryFile:  filepath.Join(home, ".ollama", "history"),
 		AutoComplete: completer,
@@ -515,6 +587,21 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 	defer scanner.Close()
 
+	var wordWrap bool
+	termType := os.Getenv("TERM")
+	if termType == "xterm-256color" {
+		wordWrap = true
+	}
+
+	// override wrapping if the user turned it off
+	nowrap, err := cmd.Flags().GetBool("nowordwrap")
+	if err != nil {
+		return err
+	}
+	if nowrap {
+		wordWrap = false
+	}
+
 	var multiLineBuffer string
 	var isMultiLine bool
 
@@ -525,7 +612,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			return nil
 		case errors.Is(err, readline.ErrInterrupt):
 			if line == "" {
-				return nil
+				fmt.Println("Use Ctrl-D or /bye to exit.")
 			}
 
 			continue
@@ -539,6 +626,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		case isMultiLine:
 			if strings.HasSuffix(line, `"""`) {
 				isMultiLine = false
+				painter.IsMultiLine = isMultiLine
 				multiLineBuffer += strings.TrimSuffix(line, `"""`)
 				line = multiLineBuffer
 				multiLineBuffer = ""
@@ -549,6 +637,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			}
 		case strings.HasPrefix(line, `"""`):
 			isMultiLine = true
+			painter.IsMultiLine = isMultiLine
 			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
 			scanner.SetPrompt("... ")
 			continue
@@ -557,84 +646,113 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			if err := ListHandler(cmd, args[1:]); err != nil {
 				return err
 			}
-
-			continue
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
 				switch args[1] {
 				case "history":
 					scanner.HistoryEnable()
-					continue
 				case "nohistory":
 					scanner.HistoryDisable()
-					continue
+				case "wordwrap":
+					wordWrap = true
+					fmt.Println("Set 'wordwrap' mode.")
+				case "nowordwrap":
+					wordWrap = false
+					fmt.Println("Set 'nowordwrap' mode.")
 				case "verbose":
 					cmd.Flags().Set("verbose", "true")
-					continue
+					fmt.Println("Set 'verbose' mode.")
 				case "quiet":
 					cmd.Flags().Set("verbose", "false")
-					continue
+					fmt.Println("Set 'quiet' mode.")
 				case "mode":
 					if len(args) > 2 {
 						switch args[2] {
 						case "vim":
 							scanner.SetVimMode(true)
-							continue
 						case "emacs", "default":
 							scanner.SetVimMode(false)
-							continue
 						default:
 							usage()
-							continue
 						}
 					} else {
 						usage()
-						continue
 					}
+				default:
+					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
 			} else {
-				usage()
-				continue
+				usageSet()
 			}
 		case strings.HasPrefix(line, "/show"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
-				resp, err := server.GetModelInfo(model)
+				client, err := api.ClientFromEnvironment()
+				if err != nil {
+					fmt.Println("error: couldn't connect to ollama server")
+					return err
+				}
+				resp, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model})
 				if err != nil {
 					fmt.Println("error: couldn't get model")
-					continue
+					return err
 				}
 
 				switch args[1] {
 				case "license":
-					fmt.Println(resp.License)
+					if resp.License == "" {
+						fmt.Print("No license was specified for this model.\n\n")
+					} else {
+						fmt.Println(resp.License)
+					}
 				case "modelfile":
 					fmt.Println(resp.Modelfile)
 				case "parameters":
-					fmt.Println(resp.Parameters)
+					if resp.Parameters == "" {
+						fmt.Print("No parameters were specified for this model.\n\n")
+					} else {
+						fmt.Println(resp.Parameters)
+					}
 				case "system":
-					fmt.Println(resp.System)
+					if resp.System == "" {
+						fmt.Print("No system prompt was specified for this model.\n\n")
+					} else {
+						fmt.Println(resp.System)
+					}
 				case "template":
-					fmt.Println(resp.Template)
+					if resp.Template == "" {
+						fmt.Print("No prompt template was specified for this model.\n\n")
+					} else {
+						fmt.Println(resp.Template)
+					}
 				default:
-					fmt.Println("error: unknown command")
+					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
 				}
-
-				continue
+			} else {
+				usageShow()
+			}
+		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
+			args := strings.Fields(line)
+			if len(args) > 1 {
+				switch args[1] {
+				case "set", "/set":
+					usageSet()
+				case "show", "/show":
+					usageShow()
+				}
 			} else {
 				usage()
-				continue
 			}
-		case line == "/help", line == "/?":
-			usage()
-			continue
 		case line == "/exit", line == "/bye":
 			return nil
+		case strings.HasPrefix(line, "/"):
+			args := strings.Fields(line)
+			fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
 		}
 
 		if len(line) > 0 && line[0] != '/' {
-			if err := generate(cmd, model, line); err != nil {
+			if err := generate(cmd, model, line, wordWrap); err != nil {
 				return err
 			}
 		}
@@ -646,7 +764,7 @@ func generateBatch(cmd *cobra.Command, model string) error {
 	for scanner.Scan() {
 		prompt := scanner.Text()
 		fmt.Printf(">>> %s\n", prompt)
-		if err := generate(cmd, model, prompt); err != nil {
+		if err := generate(cmd, model, prompt, false); err != nil {
 			return err
 		}
 	}
@@ -658,7 +776,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 	host, port, err := net.SplitHostPort(os.Getenv("OLLAMA_HOST"))
 	if err != nil {
 		host, port = "127.0.0.1", "11434"
-		if ip := net.ParseIP(os.Getenv("OLLAMA_HOST")); ip != nil {
+		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
 			host = ip.String()
 		}
 	}
@@ -679,6 +797,15 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		if err := server.PruneLayers(); err != nil {
+			return err
+		}
+
+		manifestsPath, err := server.GetManifestPath()
+		if err != nil {
+			return err
+		}
+
+		if err := server.PruneDirectory(manifestsPath); err != nil {
 			return err
 		}
 	}
@@ -767,7 +894,7 @@ func startMacApp(client *api.Client) error {
 }
 
 func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
-	client, err := api.FromEnv()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -836,6 +963,7 @@ func NewCLI() *cobra.Command {
 
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 
 	serveCmd := &cobra.Command{
 		Use:     "serve",

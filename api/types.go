@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"reflect"
@@ -37,6 +36,7 @@ type GenerateRequest struct {
 	System   string `json:"system"`
 	Template string `json:"template"`
 	Context  []int  `json:"context,omitempty"`
+	Stream   *bool  `json:"stream,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -53,8 +53,9 @@ type EmbeddingResponse struct {
 }
 
 type CreateRequest struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Stream *bool  `json:"stream,omitempty"`
 }
 
 type DeleteRequest struct {
@@ -83,13 +84,14 @@ type PullRequest struct {
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Stream   *bool  `json:"stream,omitempty"`
 }
 
 type ProgressResponse struct {
 	Status    string `json:"status"`
 	Digest    string `json:"digest,omitempty"`
-	Total     int    `json:"total,omitempty"`
-	Completed int    `json:"completed,omitempty"`
+	Total     int64  `json:"total,omitempty"`
+	Completed int64  `json:"completed,omitempty"`
 }
 
 type PushRequest struct {
@@ -97,6 +99,7 @@ type PushRequest struct {
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Stream   *bool  `json:"stream,omitempty"`
 }
 
 type ListResponse struct {
@@ -106,7 +109,7 @@ type ListResponse struct {
 type ModelResponse struct {
 	Name       string    `json:"name"`
 	ModifiedAt time.Time `json:"modified_at"`
-	Size       int       `json:"size"`
+	Size       int64     `json:"size"`
 	Digest     string    `json:"digest"`
 }
 
@@ -117,7 +120,7 @@ type TokenResponse struct {
 type GenerateResponse struct {
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response,omitempty"`
+	Response  string    `json:"response"`
 
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`
@@ -203,6 +206,8 @@ type Options struct {
 	NumThread int `json:"num_thread,omitempty"`
 }
 
+var ErrInvalidOpts = fmt.Errorf("invalid options")
+
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct
@@ -216,6 +221,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 		}
 	}
 
+	invalidOpts := []string{}
 	for key, val := range m {
 		if opt, ok := jsonOpts[key]; ok {
 			field := valueOpts.FieldByName(opt.Name)
@@ -233,44 +239,39 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 						// when JSON unmarshals numbers, it uses float64, not int
 						field.SetInt(int64(t))
 					default:
-						log.Printf("could not convert model parameter %v to int, skipped", key)
+						return fmt.Errorf("option %q must be of type integer", key)
 					}
 				case reflect.Bool:
 					val, ok := val.(bool)
 					if !ok {
-						log.Printf("could not convert model parameter %v to bool, skipped", key)
-						continue
+						return fmt.Errorf("option %q must be of type boolean", key)
 					}
 					field.SetBool(val)
 				case reflect.Float32:
 					// JSON unmarshals to float64
 					val, ok := val.(float64)
 					if !ok {
-						log.Printf("could not convert model parameter %v to float32, skipped", key)
-						continue
+						return fmt.Errorf("option %q must be of type float32", key)
 					}
 					field.SetFloat(val)
 				case reflect.String:
 					val, ok := val.(string)
 					if !ok {
-						log.Printf("could not convert model parameter %v to string, skipped", key)
-						continue
+						return fmt.Errorf("option %q must be of type string", key)
 					}
 					field.SetString(val)
 				case reflect.Slice:
 					// JSON unmarshals to []interface{}, not []string
 					val, ok := val.([]interface{})
 					if !ok {
-						log.Printf("could not convert model parameter %v to slice, skipped", key)
-						continue
+						return fmt.Errorf("option %q must be of type array", key)
 					}
 					// convert []interface{} to []string
 					slice := make([]string, len(val))
 					for i, item := range val {
 						str, ok := item.(string)
 						if !ok {
-							log.Printf("could not convert model parameter %v to slice of strings, skipped", key)
-							continue
+							return fmt.Errorf("option %q must be of an array of strings", key)
 						}
 						slice[i] = str
 					}
@@ -279,45 +280,51 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 				}
 			}
+		} else {
+			invalidOpts = append(invalidOpts, key)
 		}
+	}
+
+	if len(invalidOpts) > 0 {
+		return fmt.Errorf("%w: %v", ErrInvalidOpts, strings.Join(invalidOpts, ", "))
 	}
 	return nil
 }
 
 func DefaultOptions() Options {
 	return Options{
-		Seed: -1,
-
-		UseNUMA: false,
-
-		NumCtx:             2048,
-		NumKeep:            -1,
-		NumBatch:           512,
-		NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
-		NumGQA:             1,
-		LowVRAM:            false,
-		F16KV:              true,
-		UseMMap:            true,
-		UseMLock:           false,
-		RopeFrequencyBase:  10000.0,
-		RopeFrequencyScale: 1.0,
-		EmbeddingOnly:      true,
-
-		RepeatLastN:      64,
-		RepeatPenalty:    1.1,
-		FrequencyPenalty: 0.0,
-		PresencePenalty:  0.0,
+		// options set on request to runner
+		NumPredict:       -1,
+		NumKeep:          -1,
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,
 		TFSZ:             1.0,
 		TypicalP:         1.0,
+		RepeatLastN:      64,
+		RepeatPenalty:    1.1,
+		PresencePenalty:  0.0,
+		FrequencyPenalty: 0.0,
 		Mirostat:         0,
 		MirostatTau:      5.0,
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
+		Seed:             -1,
 
-		NumThread: 0, // let the runtime decide
+		// options set when the model is loaded
+		NumCtx:             2048,
+		RopeFrequencyBase:  10000.0,
+		RopeFrequencyScale: 1.0,
+		NumBatch:           512,
+		NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
+		NumGQA:             1,
+		NumThread:          0, // let the runtime decide
+		LowVRAM:            false,
+		F16KV:              true,
+		UseMLock:           false,
+		UseMMap:            true,
+		UseNUMA:            false,
+		EmbeddingOnly:      true,
 	}
 }
 

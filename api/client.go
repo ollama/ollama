@@ -7,25 +7,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"runtime"
 	"strings"
 
+	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/version"
 )
 
 const DefaultHost = "127.0.0.1:11434"
 
-var (
-	envHost = os.Getenv("OLLAMA_HOST")
-)
+var envHost = os.Getenv("OLLAMA_HOST")
 
 type Client struct {
-	Base    url.URL
-	HTTP    http.Client
-	Headers http.Header
+	base *url.URL
+	http http.Client
 }
 
 func checkError(resp *http.Response, body []byte) error {
@@ -44,34 +43,44 @@ func checkError(resp *http.Response, body []byte) error {
 	return apiError
 }
 
-// Host returns the default host to use for the client. It is determined in the following order:
-// 1. The OLLAMA_HOST environment variable
-// 2. The default host (localhost:11434)
-func Host() string {
-	if envHost != "" {
-		return envHost
-	}
-	return DefaultHost
-}
-
-// FromEnv creates a new client using Host() as the host. An error is returns
-// if the host is invalid.
-func FromEnv() (*Client, error) {
-	h := Host()
-	if !strings.HasPrefix(h, "http://") && !strings.HasPrefix(h, "https://") {
-		h = "http://" + h
+func ClientFromEnvironment() (*Client, error) {
+	scheme, hostport, ok := strings.Cut(os.Getenv("OLLAMA_HOST"), "://")
+	if !ok {
+		scheme, hostport = "http", os.Getenv("OLLAMA_HOST")
 	}
 
-	u, err := url.Parse(h)
+	host, port, err := net.SplitHostPort(hostport)
 	if err != nil {
-		return nil, fmt.Errorf("could not parse host: %w", err)
+		host, port = "127.0.0.1", "11434"
+		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
+			host = ip.String()
+		}
 	}
 
-	if u.Port() == "" {
-		u.Host += ":11434"
+	client := Client{
+		base: &url.URL{
+			Scheme: scheme,
+			Host:   net.JoinHostPort(host, port),
+		},
 	}
 
-	return &Client{Base: *u, HTTP: http.Client{}}, nil
+	mockRequest, err := http.NewRequest("HEAD", client.base.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	proxyURL, err := http.ProxyFromEnvironment(mockRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	client.http = http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+	}
+
+	return &client, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
@@ -86,7 +95,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 		reqBody = bytes.NewReader(data)
 	}
 
-	requestURL := c.Base.JoinPath(path)
+	requestURL := c.base.JoinPath(path)
 	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), reqBody)
 	if err != nil {
 		return err
@@ -96,11 +105,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 
-	for k, v := range c.Headers {
-		request.Header[k] = v
-	}
-
-	respObj, err := c.HTTP.Do(request)
+	respObj, err := c.http.Do(request)
 	if err != nil {
 		return err
 	}
@@ -123,6 +128,8 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	return nil
 }
 
+const maxBufferSize = 512 * format.KiloByte
+
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
 	var buf *bytes.Buffer
 	if data != nil {
@@ -134,23 +141,26 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		buf = bytes.NewBuffer(bts)
 	}
 
-	requestURL := c.Base.JoinPath(path)
+	requestURL := c.base.JoinPath(path)
 	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), buf)
 	if err != nil {
 		return err
 	}
 
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept", "application/x-ndjson")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 
-	response, err := http.DefaultClient.Do(request)
+	response, err := c.http.Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
 
 	scanner := bufio.NewScanner(response.Body)
+	// increase the buffer size to avoid running out of space
+	scanBuf := make([]byte, 0, maxBufferSize)
+	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
 		var errorResponse struct {
 			Error string `json:"error,omitempty"`
