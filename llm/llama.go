@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/format"
 )
 
 //go:embed llama.cpp/*/build/*/bin/*
@@ -69,7 +70,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 		files, err := fs.Glob(llamaCppEmbed, path.Join(path.Dir(r.Path), "*"))
 		if err != nil {
 			// this is expected, ollama may be compiled without all runners packed in
-			log.Printf("%s runner not found: %v", r, err)
+			log.Printf("%s runner not found: %v", r.Path, err)
 			continue
 		}
 
@@ -197,7 +198,7 @@ type llama struct {
 
 var errNoGPU = errors.New("nvidia-smi command failed")
 
-// CheckVRAM returns the available VRAM in MiB on Linux machines with NVIDIA GPUs
+// CheckVRAM returns the free VRAM in bytes on Linux machines with NVIDIA GPUs
 func CheckVRAM() (int64, error) {
 	cmd := exec.Command("nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits")
 	var stdout bytes.Buffer
@@ -207,7 +208,7 @@ func CheckVRAM() (int64, error) {
 		return 0, errNoGPU
 	}
 
-	var free int64
+	var freeMiB int64
 	scanner := bufio.NewScanner(&stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -216,15 +217,16 @@ func CheckVRAM() (int64, error) {
 			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
 		}
 
-		free += vram
+		freeMiB += vram
 	}
 
-	if free*1024*1024 < 2*1000*1000*1000 {
+	freeBytes := freeMiB * 1024 * 1024
+	if freeBytes < 2*format.GigaByte {
 		log.Printf("less than 2 GB VRAM available, falling back to CPU only")
-		free = 0
+		freeMiB = 0
 	}
 
-	return free, nil
+	return freeBytes, nil
 }
 
 func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
@@ -232,7 +234,7 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 		return opts.NumGPU
 	}
 	if runtime.GOOS == "linux" {
-		vramMib, err := CheckVRAM()
+		freeBytes, err := CheckVRAM()
 		if err != nil {
 			if err.Error() != "nvidia-smi command failed" {
 				log.Print(err.Error())
@@ -241,15 +243,13 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 			return 0
 		}
 
-		freeVramBytes := int64(vramMib) * 1024 * 1024 // 1 MiB = 1024^2 bytes
-
 		// Calculate bytes per layer
 		// TODO: this is a rough heuristic, better would be to calculate this based on number of layers and context size
 		bytesPerLayer := fileSizeBytes / numLayer
 
 		// max number of layers we can fit in VRAM, subtract 8% to prevent consuming all available VRAM and running out of memory
-		layers := int(freeVramBytes/bytesPerLayer) * 92 / 100
-		log.Printf("%d MiB VRAM available, loading up to %d GPU layers", vramMib, layers)
+		layers := int(freeBytes/bytesPerLayer) * 92 / 100
+		log.Printf("%d MB VRAM available, loading up to %d GPU layers", freeBytes/(1024*1024), layers)
 
 		return layers
 	}
@@ -292,11 +292,8 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
 		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
+		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
 		"--embedding",
-	}
-
-	if numGPU > 0 {
-		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", numGPU))
 	}
 
 	if opts.NumGQA > 0 {
@@ -445,71 +442,21 @@ func (llm *llama) SetOptions(opts api.Options) {
 	llm.Options = opts
 }
 
-type GenerationSettings struct {
-	FrequencyPenalty float64       `json:"frequency_penalty"`
-	IgnoreEOS        bool          `json:"ignore_eos"`
-	LogitBias        []interface{} `json:"logit_bias"`
-	Mirostat         int           `json:"mirostat"`
-	MirostatEta      float64       `json:"mirostat_eta"`
-	MirostatTau      float64       `json:"mirostat_tau"`
-	Model            string        `json:"model"`
-	NCtx             int           `json:"n_ctx"`
-	NKeep            int           `json:"n_keep"`
-	NPredict         int           `json:"n_predict"`
-	NProbs           int           `json:"n_probs"`
-	PenalizeNl       bool          `json:"penalize_nl"`
-	PresencePenalty  float64       `json:"presence_penalty"`
-	RepeatLastN      int           `json:"repeat_last_n"`
-	RepeatPenalty    float64       `json:"repeat_penalty"`
-	Seed             uint32        `json:"seed"`
-	Stop             []string      `json:"stop"`
-	Stream           bool          `json:"stream"`
-	Temp             float64       `json:"temp"`
-	TfsZ             float64       `json:"tfs_z"`
-	TopK             int           `json:"top_k"`
-	TopP             float64       `json:"top_p"`
-	TypicalP         float64       `json:"typical_p"`
-}
-
-type Timings struct {
-	PredictedN  int     `json:"predicted_n"`
-	PredictedMS float64 `json:"predicted_ms"`
-	PromptN     int     `json:"prompt_n"`
-	PromptMS    float64 `json:"prompt_ms"`
-}
-
-type Prediction struct {
+type prediction struct {
 	Content string `json:"content"`
 	Model   string `json:"model"`
 	Prompt  string `json:"prompt"`
 	Stop    bool   `json:"stop"`
 
-	Timings `json:"timings"`
+	Timings struct {
+		PredictedN  int     `json:"predicted_n"`
+		PredictedMS float64 `json:"predicted_ms"`
+		PromptN     int     `json:"prompt_n"`
+		PromptMS    float64 `json:"prompt_ms"`
+	}
 }
 
-type PredictRequest struct {
-	Prompt           string   `json:"prompt"`
-	Stream           bool     `json:"stream"`
-	NPredict         int      `json:"n_predict"`
-	NKeep            int      `json:"n_keep"`
-	Temperature      float32  `json:"temperature"`
-	TopK             int      `json:"top_k"`
-	TopP             float32  `json:"top_p"`
-	TfsZ             float32  `json:"tfs_z"`
-	TypicalP         float32  `json:"typical_p"`
-	RepeatLastN      int      `json:"repeat_last_n"`
-	RepeatPenalty    float32  `json:"repeat_penalty"`
-	PresencePenalty  float32  `json:"presence_penalty"`
-	FrequencyPenalty float32  `json:"frequency_penalty"`
-	Mirostat         int      `json:"mirostat"`
-	MirostatTau      float32  `json:"mirostat_tau"`
-	MirostatEta      float32  `json:"mirostat_eta"`
-	PenalizeNl       bool     `json:"penalize_nl"`
-	Seed             int      `json:"seed"`
-	Stop             []string `json:"stop,omitempty"`
-}
-
-const maxBufferSize = 512 * 1000 // 512KB
+const maxBufferSize = 512 * format.KiloByte
 
 func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
 	prevConvo, err := llm.Decode(ctx, prevContext)
@@ -521,35 +468,39 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 	nextContext.WriteString(prevConvo)
 	nextContext.WriteString(prompt)
 
+	request := map[string]any{
+		"prompt":            nextContext.String(),
+		"stream":            true,
+		"n_predict":         llm.NumPredict,
+		"n_keep":            llm.NumKeep,
+		"temperature":       llm.Temperature,
+		"top_k":             llm.TopK,
+		"top_p":             llm.TopP,
+		"tfs_z":             llm.TFSZ,
+		"typical_p":         llm.TypicalP,
+		"repeat_last_n":     llm.RepeatLastN,
+		"repeat_penalty":    llm.RepeatPenalty,
+		"presence_penalty":  llm.PresencePenalty,
+		"frequency_penalty": llm.FrequencyPenalty,
+		"mirostat":          llm.Mirostat,
+		"mirostat_tau":      llm.MirostatTau,
+		"mirostat_eta":      llm.MirostatEta,
+		"penalize_nl":       llm.PenalizeNewline,
+		"seed":              llm.Seed,
+		"stop":              llm.Stop,
+	}
+
+	// Handling JSON marshaling with special characters unescaped.
+	buffer := &bytes.Buffer{}
+	enc := json.NewEncoder(buffer)
+	enc.SetEscapeHTML(false)
+
+	if err := enc.Encode(request); err != nil {
+		return fmt.Errorf("failed to marshal data: %v", err)
+	}
+
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
-	predReq := PredictRequest{
-		Prompt:           nextContext.String(),
-		Stream:           true,
-		NPredict:         llm.NumPredict,
-		NKeep:            llm.NumKeep,
-		Temperature:      llm.Temperature,
-		TopK:             llm.TopK,
-		TopP:             llm.TopP,
-		TfsZ:             llm.TFSZ,
-		TypicalP:         llm.TypicalP,
-		RepeatLastN:      llm.RepeatLastN,
-		RepeatPenalty:    llm.RepeatPenalty,
-		PresencePenalty:  llm.PresencePenalty,
-		FrequencyPenalty: llm.FrequencyPenalty,
-		Mirostat:         llm.Mirostat,
-		MirostatTau:      llm.MirostatTau,
-		MirostatEta:      llm.MirostatEta,
-		PenalizeNl:       llm.PenalizeNewline,
-		Seed:             llm.Seed,
-		Stop:             llm.Stop,
-	}
-
-	data, err := json.Marshal(predReq)
-	if err != nil {
-		return fmt.Errorf("error marshaling data: %v", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
 		return fmt.Errorf("error creating POST request: %v", err)
 	}
@@ -580,16 +531,14 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 			// This handles the request cancellation
 			return ctx.Err()
 		default:
-			line := scanner.Text()
-			if line == "" {
+			line := scanner.Bytes()
+			if len(line) == 0 {
 				continue
 			}
 
-			// Read data from the server-side event stream
-			if strings.HasPrefix(line, "data: ") {
-				evt := line[6:]
-				var p Prediction
-				if err := json.Unmarshal([]byte(evt), &p); err != nil {
+			if evt, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
+				var p prediction
+				if err := json.Unmarshal(evt, &p); err != nil {
 					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
 				}
 
@@ -607,10 +556,10 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 					fn(api.GenerateResponse{
 						Done:               true,
 						Context:            embd,
-						PromptEvalCount:    p.PromptN,
-						PromptEvalDuration: parseDurationMs(p.PromptMS),
-						EvalCount:          p.PredictedN,
-						EvalDuration:       parseDurationMs(p.PredictedMS),
+						PromptEvalCount:    p.Timings.PromptN,
+						PromptEvalDuration: parseDurationMs(p.Timings.PromptMS),
+						EvalCount:          p.Timings.PredictedN,
+						EvalDuration:       parseDurationMs(p.Timings.PredictedMS),
 					})
 
 					return nil

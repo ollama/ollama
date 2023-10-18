@@ -1,6 +1,6 @@
-From 07993bdc35345b67b27aa649a7c099ad42d80c4c Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Thu, 21 Sep 2023 14:43:21 -0700
+From 8dbb5449db259a9c24796e7927d89bee98b6c8f5 Mon Sep 17 00:00:00 2001
+From: Bruce MacDonald <brucewmacdonald@gmail.com>
+Date: Thu, 5 Oct 2023 11:21:12 -0400
 Subject: [PATCH] remove warm up logging
 
 ---
@@ -8,18 +8,18 @@ Subject: [PATCH] remove warm up logging
  1 file changed, 2 deletions(-)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index 2597ba0..b56549b 100644
+index 7370017..c4433fe 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -780,8 +780,6 @@ std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_par
+@@ -839,8 +839,6 @@ std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_par
      }
  
      {
 -        LOG("warming up the model with an empty run\n");
 -
-         const std::vector<llama_token> tmp = { llama_token_bos(lctx), llama_token_eos(lctx), };
-         llama_eval(lctx, tmp.data(), std::min(tmp.size(), (size_t) params.n_batch), 0, params.n_threads);
-         llama_reset_timings(lctx);
+         std::vector<llama_token> tmp = { llama_token_bos(lctx), llama_token_eos(lctx), };
+         llama_decode(lctx, llama_batch_get_one(tmp.data(), std::min(tmp.size(), (size_t) params.n_batch), 0, 0));
+         llama_kv_cache_tokens_rm(lctx, -1, -1);
 -- 
-2.42.0
+2.39.2 (Apple Git-143)
 

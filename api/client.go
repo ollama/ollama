@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/version"
 )
 
@@ -127,7 +128,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	return nil
 }
 
-const maxBufferSize = 512 * 1000 // 512KB
+const maxBufferSize = 512 * format.KiloByte
 
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
 	var buf *bytes.Buffer

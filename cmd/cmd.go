@@ -78,18 +78,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				spinner.Stop()
 			}
 			currentDigest = resp.Digest
-			switch {
-			case strings.Contains(resp.Status, "embeddings"):
-				bar = progressbar.Default(resp.Total, resp.Status)
-				bar.Set64(resp.Completed)
-			default:
-				// pulling
-				bar = progressbar.DefaultBytes(
-					resp.Total,
-					resp.Status,
-				)
-				bar.Set64(resp.Completed)
-			}
+			// pulling
+			bar = progressbar.DefaultBytes(
+				resp.Total,
+				resp.Status,
+			)
+			bar.Set64(resp.Completed)
 		} else if resp.Digest == currentDigest && resp.Digest != "" {
 			bar.Set64(resp.Completed)
 		} else {
@@ -694,7 +688,12 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		case strings.HasPrefix(line, "/show"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
-				resp, err := server.GetModelInfo(model)
+				client, err := api.ClientFromEnvironment()
+				if err != nil {
+					fmt.Println("error: couldn't connect to ollama server")
+					return err
+				}
+				resp, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model})
 				if err != nil {
 					fmt.Println("error: couldn't get model")
 					return err
