@@ -12,11 +12,12 @@
 
 	import { openDB, deleteDB } from 'idb';
 	import { ENDPOINT as SERVER_ENDPOINT } from '$lib/contants';
+	import Error from './+error.svelte';
 
 	export let data: PageData;
 	$: ({ models, OLLAMA_ENDPOINT } = data);
 
-	const ENDPOINT = OLLAMA_ENDPOINT ? OLLAMA_ENDPOINT : SERVER_ENDPOINT;
+	let ENDPOINT;
 	let textareaElement;
 	let db;
 
@@ -31,6 +32,11 @@
 	let messages = [];
 
 	onMount(async () => {
+		ENDPOINT = OLLAMA_ENDPOINT ? OLLAMA_ENDPOINT : SERVER_ENDPOINT;
+		console.log(OLLAMA_ENDPOINT);
+		console.log(SERVER_ENDPOINT);
+		console.log(ENDPOINT);
+
 		let settings = localStorage.getItem('settings');
 		if (settings) {
 			settings = JSON.parse(settings);
