@@ -154,7 +154,6 @@ ollama run test --verbose "tell me a story"
 | 30        | _7168MiB     | (_6.95, _8.16) tokens/s    |
 | 40        | _8932MiB     | (18.89, 18.81) tokens/s    |
 | all       | 10620MiB     | (29.95, 27.04) tokens/s    |
-| --------- | ------------ | -------------------------- |
 
 see [Modelfile](docs/modelfile.md) for more information on the modelfile format.
 
