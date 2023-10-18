@@ -348,7 +348,7 @@
 			},
 			body: JSON.stringify({
 				model: selectedModel,
-				prompt: `Create an extremely short title for the following question with 3-5 words without using the word 'title.': ${user_prompt}`,
+				prompt: `Generate a brief 3-5 word title for this question, excluding the term 'title.' Then, please reply with only the title: ${user_prompt}`,
 				stream: false
 			})
 		})
