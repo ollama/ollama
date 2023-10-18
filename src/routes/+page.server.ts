@@ -20,6 +20,6 @@ export const load: PageServerLoad = async ({ url }) => {
 
 	return {
 		models: models?.models ?? [],
-		ENDPOINT: ENDPOINT
+		OLLAMA_ENDPOINT: process.env.OLLAMA_ENDPOINT
 	};
 };

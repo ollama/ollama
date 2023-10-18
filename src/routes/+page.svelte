@@ -11,9 +11,12 @@
 	import { onMount, tick } from 'svelte';
 
 	import { openDB, deleteDB } from 'idb';
+	import { ENDPOINT as SERVER_ENDPOINT } from '$lib/contants';
 
 	export let data: PageData;
-	$: ({ models, ENDPOINT } = data);
+	$: ({ models, OLLAMA_ENDPOINT } = data);
+
+	const ENDPOINT = OLLAMA_ENDPOINT ? OLLAMA_ENDPOINT : SERVER_ENDPOINT;
 	let textareaElement;
 	let db;
 
