@@ -252,7 +252,7 @@ curl -X POST http://localhost:11434/api/generate -d '{
 
 ### CUDA not enough memory
 
-See the "Edit existing modelfile to customize the settings" section above. Reduce the number of layers to load into the GPU.
+See the "Edit existing modelfile to reduce VRAM usage" section above. Reduce the number of layers to load into the GPU.
 
 ## Community Integrations
 
