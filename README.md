@@ -117,6 +117,40 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
+### Edit existing modelfile to customize the settings
+
+* Step 1. get the model file for an existing model 
+
+assuming that your model name is `nous-hermes:13b` -- replace this with your model name
+
+
+```bash
+ollama show --modelfile nous-hermes:13b > custom.modelfile
+```
+
+* Step 2. Add the settings you want to change to the modelfile using your favorite editor
+
+For example, to attempt to load 20 layers into the GPU, and leave the rest of them to the CPU; and to use only 4 CPU threads, add the following lines to the modelfile:
+
+```yaml
+PARAMETER num_gpu 20
+PARAMETER num_thread 4
+```
+
+see [Modelfile](docs/modelfile.md) for more information on the modelfile format.
+
+* Step 3. Create a new model from the modelfile
+
+```bash
+ollama create hermes13-g20-c4 -f custom.modelfile
+```
+
+* Step 4. Run the model
+
+```bash
+ollama run hermes13-g20-c4
+```
+
 For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
 
 ## CLI Reference
@@ -214,38 +248,11 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }'
 ```
 
-## Edit the modelfile to customize the llama.cpp settings
+## FAQ
 
-* Step 1. get the model file for an existing model 
+### CUDA not enough memory
 
-assuming that your model name is `nous-hermes:13b` -- replace this with your model name
-
-
-```bash
-ollama show --modelfile nous-hermes:13b > custom.modelfile
-```
-
-* Step 2. Add the settings you want to change to the modelfile using your favorite editor
-
-for example, to attempt to load 20 layers into the GPU, and leave the rest of them to the CPU; and to use only 4 CPU threads, add the following lines to the modelfile:
-
-```yaml
-PARAMETER num_gpu 20
-PARAMETER num_thread 4
-```
-
-* Step 3. Create a new model from the modelfile
-
-```bash
-ollama create hermes13-g20-c4 -f custom.modelfile
-```
-
-* Step 4. Run the model
-
-```bash
-ollama run hermes13-g20-c4
-```
-
+See the "Edit existing modelfile to customize the settings" section above. Reduce the number of layers to load into the GPU.
 
 ## Community Integrations
 
