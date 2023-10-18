@@ -252,7 +252,7 @@ func filenameWithPath(path, f string) (string, error) {
 	return f, nil
 }
 
-func CreateModel(ctx context.Context, workDir, name string, path string, fn func(resp api.ProgressResponse)) error {
+func CreateModel(ctx context.Context, name string, path string, fn func(resp api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	var manifest *ManifestV2

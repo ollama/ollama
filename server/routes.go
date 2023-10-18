@@ -334,8 +334,6 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	workDir := c.GetString("workDir")
-
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -346,7 +344,7 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, workDir, req.Name, req.Path, fn); err != nil {
+		if err := CreateModel(ctx, req.Name, req.Path, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
