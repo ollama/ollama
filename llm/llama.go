@@ -411,7 +411,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, ggml *GGML
 		// falcon and starcoder model families are not compatible with older versions of llama.cpp
 		families := []string{"falcon", "starcoder"}
 		if strings.Contains(runnerErr.Error(), "failed to load model") && slices.Contains(families, ggml.ModelFamily()) {
-			return nil, fmt.Errorf("%v: %s", runnerErr, "this model may be incompatible with your version of Ollama. Please run `ollama pull` to get the update to the latest version of this model.")
+			return nil, fmt.Errorf("%v: %s", runnerErr, "this model may be incompatible with your version of Ollama. Please run `ollama pull` to get the latest version of this model.")
 		}
 
 		return nil, runnerErr
