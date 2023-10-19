@@ -29,7 +29,7 @@ func TestHumanTime(t *testing.T) {
 	})
 
 	t.Run("soon", func(t *testing.T) {
-		v := now.Add(800*time.Millisecond)
+		v := now.Add(800 * time.Millisecond)
 		assertEqual(t, HumanTime(v, ""), "Less than a second from now")
 	})
 }
