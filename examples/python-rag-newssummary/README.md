@@ -17,6 +17,6 @@ This example lets you pick from a few different topic areas, then summarize the 
 You can run the example like this:
 
 ```bash
-python3 -m pip install -r requirements.txt
-python3 summ.py
+pip install -r requirements.txt
+python summ.py
 ```
