@@ -12,8 +12,9 @@ ChatGPT-Style Web Interface for Ollama 🦙
 - 🚀 **Effortless Setup**: Install seamlessly using Docker for a hassle-free experience.
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
 - 📜 **Chat History**: Effortlessly access and manage your conversation history.
+- 📤📥 **Import/Export Chat History**: Seamlessly move your chat data in and out of the platform.
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
-- 🔗 **External Server Connection**: Link to the model when Ollama is hosted on a different server via the environment variable -e OLLAMA_ENDPOINT="http://[insert your Ollama address]".
+- 🔗 **External Ollama Server Connection**: Link to the model when Ollama is hosted on a different server via the environment variable -e OLLAMA_ENDPOINT="http://[insert your Ollama address]".
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
 ## How to Install 🚀
@@ -58,7 +59,6 @@ docker run -d -p 3000:3000 --add-host=host.docker.internal:host-gateway -e OLLAM
 
 Here are some exciting tasks on our to-do list:
 
-- 📤📥 **Import/Export Chat History**: Seamlessly move your chat data in and out of the platform.
 - 🌐 **Web Browser Extension**: Seamlessly integrate our services into your browsing experience with our convenient browser extension.
 - 🚀 **Integration with Messaging Platforms**: Explore possibilities for integrating with popular messaging platforms like Slack and Discord.
 - 🎨 **Customization**: Tailor your chat environment with personalized themes and styles.
