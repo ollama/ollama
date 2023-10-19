@@ -18,6 +18,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -285,7 +286,7 @@ func (w *StatusWriter) Write(b []byte) (int, error) {
 	return os.Stderr.Write(b)
 }
 
-func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
+func newLlama(model string, adapters []string, runners []ModelRunner, ggml *GGML, opts api.Options) (*llama, error) {
 	fileInfo, err := os.Stat(model)
 	if err != nil {
 		return nil, err
@@ -295,7 +296,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	numGPU := NumGPU(numLayers, fileInfo.Size(), opts)
+	numGPU := NumGPU(ggml.NumLayers(), fileInfo.Size(), opts)
 	params := []string{
 		"--model", model,
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
@@ -406,6 +407,13 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 
 	if runnerErr != nil {
 		// this is the error returned from the llama runner process that failed most recently
+
+		// falcon and starcoder model families are not compatible with older versions of llama.cpp
+		families := []string{"falcon", "starcoder"}
+		if strings.Contains(runnerErr.Error(), "failed to load model") && slices.Contains(families, ggml.ModelFamily()) {
+			return nil, fmt.Errorf("%v: %s", runnerErr, "this model may be incompatible with your version of Ollama. Please run `ollama pull` to get the latest version of this model.")
+		}
+
 		return nil, runnerErr
 	}
 
