@@ -1,13 +1,34 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+
 	let show = false;
 	let navElement;
+	let importFileInputElement;
+	let importFiles;
 
 	export let title: string = 'Ollama Web UI';
 	export let chats = [];
 
 	export let createNewChat: Function;
 	export let loadChat: Function;
+	export let importChatHistory: Function;
+	export let exportChatHistory: Function;
 	export let deleteChatHistory: Function;
+
+	onMount(() => {});
+
+	$: if (importFiles) {
+		console.log(importFiles);
+
+		let reader = new FileReader();
+		reader.onload = (event) => {
+			let chats = JSON.parse(event.target.result);
+			console.log(chats);
+			importChatHistory(chats);
+		};
+
+		reader.readAsText(importFiles[0]);
+	}
 </script>
 
 <div
@@ -162,8 +183,15 @@
 			<hr class=" border-gray-800 mb-2 w-full" />
 
 			<div class="flex flex-col">
-				<!-- <div class="flex">
-					<button class=" flex rounded-md p-4 w-full hover:bg-gray-800 transition">
+				<div class="flex">
+					<input bind:this={importFileInputElement} bind:files={importFiles} type="file" hidden />
+					<button
+						class=" flex rounded-md p-4 w-full hover:bg-gray-800 transition"
+						on:click={() => {
+							importFileInputElement.click();
+							// importChatHistory();
+						}}
+					>
 						<div class=" self-center mr-3">
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
@@ -182,7 +210,12 @@
 						</div>
 						<div class=" self-center">Import</div>
 					</button>
-					<button class=" flex rounded-md p-4 w-full hover:bg-gray-800 transition">
+					<button
+						class=" flex rounded-md p-4 w-full hover:bg-gray-800 transition"
+						on:click={() => {
+							exportChatHistory();
+						}}
+					>
 						<div class=" self-center mr-3">
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
@@ -201,7 +234,7 @@
 						</div>
 						<div class=" self-center">Export</div>
 					</button>
-				</div> -->
+				</div>
 				<button
 					class=" flex rounded-md p-4 w-full hover:bg-gray-800 transition"
 					on:click={() => {

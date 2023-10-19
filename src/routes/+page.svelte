@@ -4,6 +4,7 @@
 
 	import { v4 as uuidv4 } from 'uuid';
 	import { marked } from 'marked';
+	import { saveAs } from 'file-saver';
 	import hljs from 'highlight.js';
 	import 'highlight.js/styles/dark.min.css';
 
@@ -12,7 +13,6 @@
 
 	import { openDB, deleteDB } from 'idb';
 	import { ENDPOINT as SERVER_ENDPOINT } from '$lib/contants';
-	import Error from './+error.svelte';
 
 	export let data: PageData;
 	$: ({ models, OLLAMA_ENDPOINT } = data);
@@ -22,8 +22,8 @@
 	let db;
 
 	let selectedModel = '';
-	let systemPrompt = '';
-	let temperature = '';
+	let system = null;
+	let temperature = null;
 
 	let chats = [];
 	let chatId = uuidv4();
@@ -43,8 +43,8 @@
 			console.log(settings);
 
 			selectedModel = settings.model ?? '';
-			systemPrompt = settings.systemPrompt ?? '';
-			temperature = settings.temperature ?? '';
+			system = settings.system ?? null;
+			temperature = settings.temperature ?? null;
 		}
 
 		db = await openDB('Chats', 1, {
@@ -135,9 +135,21 @@
 
 	const createNewChat = () => {
 		if (messages.length > 0) {
+			chatId = uuidv4();
+
 			messages = [];
 			title = '';
-			chatId = uuidv4();
+			console.log(localStorage.settings.model);
+
+			let settings = localStorage.getItem('settings');
+			if (settings) {
+				settings = JSON.parse(settings);
+				console.log(settings);
+
+				selectedModel = settings.model ?? selectedModel;
+				system = settings.system ?? system;
+				temperature = settings.temperature ?? temperature;
+			}
 		}
 	};
 
@@ -146,12 +158,40 @@
 		messages = chat.messages;
 		title = chat.title;
 		chatId = chat.id;
+		selectedModel = chat.model ?? selectedModel;
+		system = chat.system ?? system;
+		temperature = chat.temperature ?? temperature;
 	};
 
 	const deleteChatHistory = async () => {
 		const tx = db.transaction('chats', 'readwrite');
 		await Promise.all([tx.store.clear(), tx.done]);
 		chats = await db.getAllFromIndex('chats', 'timestamp');
+	};
+
+	const importChatHistory = async (results) => {
+		for (const chat of results) {
+			console.log(chat);
+
+			await db.put('chats', {
+				id: chat.id,
+				model: chat.model,
+				system: chat.system,
+				options: chat.options,
+				title: chat.title,
+				timestamp: chat.timestamp,
+				messages: chat.messages
+			});
+		}
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+
+		console.log(chats);
+	};
+
+	const exportChatHistory = async () => {
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+		let blob = new Blob([JSON.stringify(chats)], { type: 'application/json' });
+		saveAs(blob, `chat-export-${Date.now()}.json`);
 	};
 
 	//////////////////////////
@@ -169,6 +209,11 @@
 			if (messages.length == 0) {
 				await db.put('chats', {
 					id: chatId,
+					model: selectedModel,
+					system: system,
+					options: {
+						temperature: temperature
+					},
 					title: 'New Chat',
 					timestamp: Date.now(),
 					messages: messages
@@ -205,6 +250,13 @@
 				body: JSON.stringify({
 					model: selectedModel,
 					prompt: user_prompt,
+					system: system ?? undefined,
+					options:
+						temperature != null
+							? {
+									temperature: temperature
+							  }
+							: undefined,
 					context:
 						messages.length > 3 && messages.at(-3).context != undefined
 							? messages.at(-3).context
@@ -257,6 +309,11 @@
 			await db.put('chats', {
 				id: chatId,
 				title: title,
+				model: selectedModel,
+				system: system,
+				options: {
+					temperature: temperature
+				},
 				timestamp: Date.now(),
 				messages: messages
 			});
@@ -289,6 +346,13 @@
 				body: JSON.stringify({
 					model: selectedModel,
 					prompt: lastUserMessage.content,
+					system: system ?? undefined,
+					options:
+						temperature != null
+							? {
+									temperature: temperature
+							  }
+							: undefined,
 					context:
 						messages.length > 3 && messages.at(-3).context != undefined
 							? messages.at(-3).context
@@ -337,6 +401,11 @@
 			await db.put('chats', {
 				id: chatId,
 				title: title,
+				model: selectedModel,
+				system: system,
+				options: {
+					temperature: temperature
+				},
 				timestamp: Date.now(),
 				messages: messages
 			});
@@ -378,7 +447,15 @@
 
 <div class="app text-gray-100">
 	<div class=" bg-gray-800 min-h-screen overflow-auto flex flex-row">
-		<Navbar {chats} {title} {loadChat} {createNewChat} {deleteChatHistory} />
+		<Navbar
+			{chats}
+			{title}
+			{loadChat}
+			{createNewChat}
+			{importChatHistory}
+			{exportChatHistory}
+			{deleteChatHistory}
+		/>
 
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">
