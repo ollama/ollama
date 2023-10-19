@@ -533,8 +533,10 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 
 	prompt := readline.Prompt{
-		Prompt:      ">>> ",
-		Placeholder: "Send a message (/? for help)",
+		Prompt:         ">>> ",
+		AltPrompt:      "... ",
+		Placeholder:    "Send a message (/? for help)",
+		AltPlaceholder: "Use \"\"\" to end multi-line input",
 	}
 
 	scanner, err := readline.New(prompt)
@@ -560,7 +562,6 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 
 	var multiLineBuffer string
-	var isMultiLine bool
 
 	for {
 		line, err := scanner.Readline()
@@ -580,23 +581,19 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		line = strings.TrimSpace(line)
 
 		switch {
-		case isMultiLine:
+		case scanner.Prompt.UseAlt:
 			if strings.HasSuffix(line, `"""`) {
-				isMultiLine = false
-				//painter.IsMultiLine = isMultiLine
+				scanner.Prompt.UseAlt = false
 				multiLineBuffer += strings.TrimSuffix(line, `"""`)
 				line = multiLineBuffer
 				multiLineBuffer = ""
-				//scanner.SetPrompt(">>> ")
 			} else {
 				multiLineBuffer += line + " "
 				continue
 			}
 		case strings.HasPrefix(line, `"""`):
-			isMultiLine = true
-			//painter.IsMultiLine = isMultiLine
+			scanner.Prompt.UseAlt = true
 			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
-			//scanner.SetPrompt("... ")
 			continue
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
