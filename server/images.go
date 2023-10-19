@@ -45,7 +45,6 @@ type Model struct {
 	System        string
 	License       []string
 	Digest        string
-	ConfigDigest  string
 	Options       map[string]interface{}
 }
 
@@ -166,12 +165,11 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	model := &Model{
-		Name:         mp.GetFullTagname(),
-		ShortName:    mp.GetShortTagname(),
-		Digest:       digest,
-		ConfigDigest: manifest.Config.Digest,
-		Template:     "{{ .Prompt }}",
-		License:      []string{},
+		Name:      mp.GetFullTagname(),
+		ShortName: mp.GetShortTagname(),
+		Digest:    digest,
+		Template:  "{{ .Prompt }}",
+		License:   []string{},
 	}
 
 	for _, layer := range manifest.Layers {
