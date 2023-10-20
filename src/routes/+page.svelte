@@ -1,21 +1,20 @@
 <script lang="ts">
 	import toast from 'svelte-french-toast';
-	import Navbar from '$lib/components/layout/Navbar.svelte';
-
+	import { openDB, deleteDB } from 'idb';
 	import { v4 as uuidv4 } from 'uuid';
 	import { marked } from 'marked';
-
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
-
 	import hljs from 'highlight.js';
 	import 'highlight.js/styles/dark.min.css';
 
 	import type { PageData } from './$types';
-	import { onMount, tick } from 'svelte';
-
-	import { openDB, deleteDB } from 'idb';
 	import { ENDPOINT as SERVER_ENDPOINT } from '$lib/contants';
+	import { onMount, tick } from 'svelte';
+	import { page } from '$app/stores';
+	const suggestions = $page.url.searchParams.get('suggestions');
+
+	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 
 	export let data: PageData;
@@ -637,7 +636,7 @@
 
 				<div class=" bg-gradient-to-t from-gray-900 pt-5">
 					<div class="max-w-3xl p-2.5 -mb-0.5 mx-auto inset-x-0">
-						{#if messages.length == 0}
+						{#if messages.length == 0 && suggestions !== 'false'}
 							<div class=" grid sm:grid-cols-2 gap-2.5 mb-4 md:p-2 text-left">
 								<button
 									class=" flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
