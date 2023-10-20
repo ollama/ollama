@@ -747,7 +747,15 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				usage()
 			}
 		case line == "/clear":
-			fmt.Printf("\033[2J")
+			if runtime.GOOS == "windows" {
+				cmd := exec.Command("cmd", "/c", "cls")
+				cmd.Stdout = os.Stdout
+				cmd.Run()
+			} else {
+				cmd := exec.Command("clear")
+				cmd.Stdout = os.Stdout
+				cmd.Run()
+			}
 		case line == "/exit", line == "/bye":
 			return nil
 		case strings.HasPrefix(line, "/"):
