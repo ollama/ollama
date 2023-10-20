@@ -28,7 +28,7 @@
 		}}
 	>
 		<div
-			class="m-auto min-h-52 max-w-full w-[30rem] bg-stone-800 rounded-lg p-5 mx-3 shadow-3xl"
+			class="m-auto min-h-52 max-w-full w-[36rem] mx-2 bg-gray-900 rounded-lg shadow-3xl"
 			transition:fade={{ delay: 100, duration: 200 }}
 			on:click={(e) => {
 				e.stopPropagation();

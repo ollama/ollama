@@ -4,6 +4,10 @@
 
 	import { v4 as uuidv4 } from 'uuid';
 	import { marked } from 'marked';
+
+	import fileSaver from 'file-saver';
+	const { saveAs } = fileSaver;
+
 	import hljs from 'highlight.js';
 	import 'highlight.js/styles/dark.min.css';
 
@@ -12,18 +16,19 @@
 
 	import { openDB, deleteDB } from 'idb';
 	import { ENDPOINT as SERVER_ENDPOINT } from '$lib/contants';
-	import Error from './+error.svelte';
+	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 
 	export let data: PageData;
 	$: ({ models, OLLAMA_ENDPOINT } = data);
 
 	let ENDPOINT;
 	let textareaElement;
+	let showSettings = false;
 	let db;
 
 	let selectedModel = '';
-	let systemPrompt = '';
-	let temperature = '';
+	let system = null;
+	let temperature = null;
 
 	let chats = [];
 	let chatId = uuidv4();
@@ -43,8 +48,8 @@
 			console.log(settings);
 
 			selectedModel = settings.model ?? '';
-			systemPrompt = settings.systemPrompt ?? '';
-			temperature = settings.temperature ?? '';
+			system = settings.system ?? null;
+			temperature = settings.temperature ?? null;
 		}
 
 		db = await openDB('Chats', 1, {
@@ -133,11 +138,40 @@
 		toast.success('Default model updated');
 	};
 
+	const saveSettings = (_system, _temperature) => {
+		system = _system;
+		temperature = _temperature;
+
+		let settings = localStorage.getItem('settings') ?? '{}';
+		if (settings) {
+			settings = JSON.parse(settings);
+			settings.system = system;
+			settings.temperature = temperature;
+			localStorage.setItem('settings', JSON.stringify(settings));
+		}
+
+		console.log(settings);
+
+		console.log('saved');
+	};
+
 	const createNewChat = () => {
 		if (messages.length > 0) {
+			chatId = uuidv4();
+
 			messages = [];
 			title = '';
-			chatId = uuidv4();
+			console.log(localStorage.settings.model);
+
+			let settings = localStorage.getItem('settings');
+			if (settings) {
+				settings = JSON.parse(settings);
+				console.log(settings);
+
+				selectedModel = settings.model ?? selectedModel;
+				system = settings.system ?? system;
+				temperature = settings.temperature ?? temperature;
+			}
 		}
 	};
 
@@ -146,12 +180,44 @@
 		messages = chat.messages;
 		title = chat.title;
 		chatId = chat.id;
+		selectedModel = chat.model ?? selectedModel;
+		system = chat.system ?? system;
+		temperature = chat.temperature ?? temperature;
 	};
 
 	const deleteChatHistory = async () => {
 		const tx = db.transaction('chats', 'readwrite');
 		await Promise.all([tx.store.clear(), tx.done]);
 		chats = await db.getAllFromIndex('chats', 'timestamp');
+	};
+
+	const importChatHistory = async (results) => {
+		for (const chat of results) {
+			console.log(chat);
+
+			await db.put('chats', {
+				id: chat.id,
+				model: chat.model,
+				system: chat.system,
+				options: chat.options,
+				title: chat.title,
+				timestamp: chat.timestamp,
+				messages: chat.messages
+			});
+		}
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+
+		console.log(chats);
+	};
+
+	const exportChatHistory = async () => {
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+		let blob = new Blob([JSON.stringify(chats)], { type: 'application/json' });
+		saveAs(blob, `chat-export-${Date.now()}.json`);
+	};
+
+	const openSettings = async () => {
+		showSettings = true;
 	};
 
 	//////////////////////////
@@ -169,6 +235,11 @@
 			if (messages.length == 0) {
 				await db.put('chats', {
 					id: chatId,
+					model: selectedModel,
+					system: system,
+					options: {
+						temperature: temperature
+					},
 					title: 'New Chat',
 					timestamp: Date.now(),
 					messages: messages
@@ -205,6 +276,13 @@
 				body: JSON.stringify({
 					model: selectedModel,
 					prompt: user_prompt,
+					system: system ?? undefined,
+					options:
+						temperature != null
+							? {
+									temperature: temperature
+							  }
+							: undefined,
 					context:
 						messages.length > 3 && messages.at(-3).context != undefined
 							? messages.at(-3).context
@@ -257,6 +335,11 @@
 			await db.put('chats', {
 				id: chatId,
 				title: title,
+				model: selectedModel,
+				system: system,
+				options: {
+					temperature: temperature
+				},
 				timestamp: Date.now(),
 				messages: messages
 			});
@@ -289,6 +372,13 @@
 				body: JSON.stringify({
 					model: selectedModel,
 					prompt: lastUserMessage.content,
+					system: system ?? undefined,
+					options:
+						temperature != null
+							? {
+									temperature: temperature
+							  }
+							: undefined,
 					context:
 						messages.length > 3 && messages.at(-3).context != undefined
 							? messages.at(-3).context
@@ -337,6 +427,11 @@
 			await db.put('chats', {
 				id: chatId,
 				title: title,
+				model: selectedModel,
+				system: system,
+				options: {
+					temperature: temperature
+				},
 				timestamp: Date.now(),
 				messages: messages
 			});
@@ -378,14 +473,57 @@
 
 <div class="app text-gray-100">
 	<div class=" bg-gray-800 min-h-screen overflow-auto flex flex-row">
-		<Navbar {chats} {title} {loadChat} {createNewChat} {deleteChatHistory} />
+		<Navbar
+			{chats}
+			{title}
+			{loadChat}
+			{createNewChat}
+			{importChatHistory}
+			{exportChatHistory}
+			{deleteChatHistory}
+			{openSettings}
+		/>
+
+		<SettingsModal bind:show={showSettings} {saveSettings} />
 
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">
 				<div class="max-w-2xl mx-auto w-full px-2.5 mt-14">
 					<div class="p-3 rounded-lg bg-gray-900">
 						<div>
-							<label for="models" class="block mb-2 text-sm font-medium text-gray-200">Model</label>
+							<label
+								for="models"
+								class="block mb-2 text-sm font-medium text-gray-200 flex justify-between"
+							>
+								<div class="self-center">Model</div>
+
+								<button
+									class=" self-center hover:text-gray-300"
+									on:click={() => {
+										openSettings();
+									}}
+								>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke-width="1.5"
+										stroke="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
+										/>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+										/>
+									</svg>
+								</button>
+							</label>
 
 							<div>
 								<select
