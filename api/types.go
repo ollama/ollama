@@ -161,6 +161,12 @@ func (r *GenerateResponse) Summary() {
 	}
 }
 
+// Options are all the options
+type Options struct {
+	Runner
+	PredictOptions
+}
+
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
 	UseNUMA            bool    `json:"numa,omitempty"`
@@ -181,8 +187,8 @@ type Runner struct {
 	NumThread          int     `json:"num_thread,omitempty"`
 }
 
-type Options struct {
-	Runner
+// PredictOptions are the options used at runtime
+type PredictOptions struct {
 
 	// Predict options used at runtime
 	NumKeep          int      `json:"num_keep,omitempty"`
@@ -292,22 +298,24 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 func DefaultOptions() Options {
 	return Options{
 		// options set on request to runner
-		NumPredict:       -1,
-		NumKeep:          -1,
-		Temperature:      0.8,
-		TopK:             40,
-		TopP:             0.9,
-		TFSZ:             1.0,
-		TypicalP:         1.0,
-		RepeatLastN:      64,
-		RepeatPenalty:    1.1,
-		PresencePenalty:  0.0,
-		FrequencyPenalty: 0.0,
-		Mirostat:         0,
-		MirostatTau:      5.0,
-		MirostatEta:      0.1,
-		PenalizeNewline:  true,
-		Seed:             -1,
+		PredictOptions: PredictOptions{
+			NumPredict:       -1,
+			NumKeep:          -1,
+			Temperature:      0.8,
+			TopK:             40,
+			TopP:             0.9,
+			TFSZ:             1.0,
+			TypicalP:         1.0,
+			RepeatLastN:      64,
+			RepeatPenalty:    1.1,
+			PresencePenalty:  0.0,
+			FrequencyPenalty: 0.0,
+			Mirostat:         0,
+			MirostatTau:      5.0,
+			MirostatEta:      0.1,
+			PenalizeNewline:  true,
+			Seed:             -1,
+		},
 
 		Runner: Runner{
 			// options set when the model is loaded

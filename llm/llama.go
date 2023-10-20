@@ -473,7 +473,7 @@ type prediction struct {
 
 const maxBufferSize = 512 * format.KiloByte
 
-func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
+func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, options api.PredictOptions, fn func(api.GenerateResponse)) error {
 	prevConvo, err := llm.Decode(ctx, prevContext)
 	if err != nil {
 		return err
@@ -489,23 +489,23 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 	request := map[string]any{
 		"prompt":            nextContext.String(),
 		"stream":            true,
-		"n_predict":         llm.NumPredict,
-		"n_keep":            llm.NumKeep,
-		"temperature":       llm.Temperature,
-		"top_k":             llm.TopK,
-		"top_p":             llm.TopP,
-		"tfs_z":             llm.TFSZ,
-		"typical_p":         llm.TypicalP,
-		"repeat_last_n":     llm.RepeatLastN,
-		"repeat_penalty":    llm.RepeatPenalty,
-		"presence_penalty":  llm.PresencePenalty,
-		"frequency_penalty": llm.FrequencyPenalty,
-		"mirostat":          llm.Mirostat,
-		"mirostat_tau":      llm.MirostatTau,
-		"mirostat_eta":      llm.MirostatEta,
-		"penalize_nl":       llm.PenalizeNewline,
-		"seed":              llm.Seed,
-		"stop":              llm.Stop,
+		"n_predict":         options.NumPredict,
+		"n_keep":            options.NumKeep,
+		"temperature":       options.Temperature,
+		"top_k":             options.TopK,
+		"top_p":             options.TopP,
+		"tfs_z":             options.TFSZ,
+		"typical_p":         options.TypicalP,
+		"repeat_last_n":     options.RepeatLastN,
+		"repeat_penalty":    options.RepeatPenalty,
+		"presence_penalty":  options.PresencePenalty,
+		"frequency_penalty": options.FrequencyPenalty,
+		"mirostat":          options.Mirostat,
+		"mirostat_tau":      options.MirostatTau,
+		"mirostat_eta":      options.MirostatEta,
+		"penalize_nl":       options.PenalizeNewline,
+		"seed":              options.Seed,
+		"stop":              options.Stop,
 	}
 
 	// Handling JSON marshaling with special characters unescaped.

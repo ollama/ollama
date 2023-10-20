@@ -214,7 +214,12 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
+		opts := api.DefaultOptions()
+		if err := opts.FromMap(req.Options); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, opts.PredictOptions, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
