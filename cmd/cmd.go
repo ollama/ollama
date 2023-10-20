@@ -536,6 +536,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			readline.PcItem("system"),
 			readline.PcItem("template"),
 		),
+    readline.PcItem("/clear"),
 		readline.PcItem("/exit"),
 		readline.PcItem("/bye"),
 	)
@@ -544,6 +545,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set         Set session variables")
 		fmt.Fprintln(os.Stderr, "  /show        Show model information")
+    fmt.Fprintln(os.Stderr, "  /clear       Clear the screen")
 		fmt.Fprintln(os.Stderr, "  /bye         Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help    Help for a command")
 		fmt.Fprintln(os.Stderr, "")
@@ -744,6 +746,8 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			} else {
 				usage()
 			}
+    case line == "/clear":
+      fmt.Printf("\033[2J")
 		case line == "/exit", line == "/bye":
 			return nil
 		case strings.HasPrefix(line, "/"):
