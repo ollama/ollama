@@ -1,6 +1,6 @@
 # Import a model
 
-This guide walks through importing a PyTorch, Safetensors or GGUF model from a HuggingFace repo to Ollama.
+This guide walks through importing a PyTorch, Safetensors or GGUF model.
 
 ## Supported models
 
@@ -15,7 +15,9 @@ To view a model's architecture, check the `config.json` file in its HuggingFace 
 
 ## Importing
 
-### Step 1: Clone the HuggingFace repository
+### Step 1: Clone the HuggingFace repository (optional)
+
+If the model is currently hosted in a HuggingFace repository, first clone that repository to download the raw model.
 
 ```
 git lfs install
@@ -23,9 +25,9 @@ git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
 cd Mistral-7B-Instruct-v0.1
 ```
 
-### Step 2: Convert and quantize (for PyTorch and Safetensors)
+### Step 2: Convert and quantize to a `.bin` file (optional, for PyTorch and Safetensors)
 
-A [Docker image](https://hub.docker.com/r/ollama/quantize) with the tooling required to convert and quantize models is available.
+If the model is in PyTorch or Safetensors format, a [Docker image](https://hub.docker.com/r/ollama/quantize) with the tooling required to convert and quantize models is available.
 
 First, Install [Docker](https://www.docker.com/get-started/).
 
