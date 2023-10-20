@@ -52,8 +52,10 @@ func ClientFromEnvironment() (*Client, error) {
 	host, port, err := net.SplitHostPort(hostport)
 	if err != nil {
 		host, port = "127.0.0.1", "11434"
-		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
+		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
 			host = ip.String()
+		} else if hostport != "" {
+			host = hostport
 		}
 	}
 
