@@ -13,6 +13,7 @@ ChatGPT-Style Web Interface for Ollama 🦙
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
 - 📜 **Chat History**: Effortlessly access and manage your conversation history.
 - 📤📥 **Import/Export Chat History**: Seamlessly move your chat data in and out of the platform.
+- ⚙️ **Fine-Tuned Control with Advanced Parameters**: Gain a deeper level of control by adjusting parameters such as temperature and defining your system prompts to tailor the conversation to your specific preferences and needs.
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
 - 🔗 **External Ollama Server Connection**: Link to the model when Ollama is hosted on a different server via the environment variable -e OLLAMA_ENDPOINT="http://[insert your Ollama address]".
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
@@ -63,7 +64,6 @@ Here are some exciting tasks on our to-do list:
 - 🚀 **Integration with Messaging Platforms**: Explore possibilities for integrating with popular messaging platforms like Slack and Discord.
 - 🎨 **Customization**: Tailor your chat environment with personalized themes and styles.
 - 📥🗑️ **Download/Delete Models**: Easily acquire or remove models directly from the web UI.
-- ⚙️ **Advanced Parameters Support**: Harness the power of advanced settings for fine-tuned control.
 - 📚 **Enhanced Documentation**: Elevate your setup and customization experience with improved, comprehensive documentation.
 - 🌟 **User Interface Enhancement**: Elevate the user interface to deliver a smoother, more enjoyable interaction.
 - 🧐 **User Testing and Feedback Gathering**: Conduct thorough user testing to gather insights and refine our offerings based on valuable user feedback.
