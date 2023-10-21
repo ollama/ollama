@@ -1,4 +1,4 @@
-import { ENDPOINT } from '$lib/contants';
+import { ENDPOINT } from '$lib/constants';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ url }) => {
