@@ -9,7 +9,7 @@
 	import 'highlight.js/styles/dark.min.css';
 
 	import type { PageData } from './$types';
-	import { ENDPOINT as SERVER_ENDPOINT } from '$lib/contants';
+	import { ENDPOINT as SERVER_ENDPOINT } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
 	const suggestions = $page.url.searchParams.get('suggestions');
