@@ -25,6 +25,7 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
+	"golang.org/x/sys/cpu"
 )
 
 //go:embed llama.cpp/*/build/*/bin/*
@@ -33,6 +34,7 @@ var llamaCppEmbed embed.FS
 type ModelRunner struct {
 	Path        string // path to the model runner executable
 	Accelerated bool
+	LegacyCPU	bool
 }
 
 func chooseRunners(workDir, runnerType string) []ModelRunner {
@@ -50,7 +52,9 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	case "linux":
 		runners = []ModelRunner{
 			{Path: path.Join(buildPath, "cuda", "bin", "ollama-runner"), Accelerated: true},
+			{Path: path.Join(buildPath, "cuda-legacy-cpu", "bin", "ollama-runner"), Accelerated: true, LegacyCPU: true},
 			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
+			{Path: path.Join(buildPath, "legacy-cpu", "bin", "ollama-runner"), LegacyCPU: true},
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
@@ -120,6 +124,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{
 			Path:        filepath.Clean(path.Join(workDir, r.Path)),
 			Accelerated: r.Accelerated,
+			LegacyCPU:	 r.LegacyCPU,
 		})
 	}
 
@@ -338,6 +343,11 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 	for _, runner := range runners {
 		if runner.Accelerated && numGPU == 0 {
 			log.Printf("skipping accelerated runner because num_gpu=0")
+			continue
+		}
+
+		if !runner.LegacyCPU && (!cpu.X86.HasAVX2 || !cpu.X86.HasFMA) {
+			log.Printf("skipping runner because CPU does not support AVX2 and FMA")
 			continue
 		}
 

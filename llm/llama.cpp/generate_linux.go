@@ -11,6 +11,10 @@ package llm
 //go:generate cmake --build ggml/build/cpu --target server --config Release
 //go:generate mv ggml/build/cpu/bin/server ggml/build/cpu/bin/ollama-runner
 
+//go:generate cmake -S ggml -B ggml/build/legacy-cpu -DLLAMA_K_QUANTS=on -DLLAMA_AVX2=off -DLLAMA_FMA=off
+//go:generate cmake --build ggml/build/legacy-cpu --target server --config Release
+//go:generate mv ggml/build/legacy-cpu/bin/server ggml/build/legacy-cpu/bin/ollama-runner
+
 //go:generate git submodule update --force gguf
 //go:generate git -C gguf apply ../patches/0001-copy-cuda-runtime-libraries.patch
 //go:generate git -C gguf apply ../patches/0001-remove-warm-up-logging.patch
@@ -18,9 +22,22 @@ package llm
 //go:generate cmake --build gguf/build/cpu --target server --config Release
 //go:generate mv gguf/build/cpu/bin/server gguf/build/cpu/bin/ollama-runner
 
+//go:generate cmake -S gguf -B gguf/build/legacy-cpu -DLLAMA_K_QUANTS=on -DLLAMA_AVX2=off -DLLAMA_FMA=off
+//go:generate cmake --build gguf/build/legacy-cpu --target server --config Release
+//go:generate mv gguf/build/legacy-cpu/bin/server gguf/build/legacy-cpu/bin/ollama-runner
+
 //go:generate cmake -S ggml -B ggml/build/cuda -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on
 //go:generate cmake --build ggml/build/cuda --target server --config Release
 //go:generate mv ggml/build/cuda/bin/server ggml/build/cuda/bin/ollama-runner
+
+//go:generate cmake -S ggml -B ggml/build/cuda-legacy-cpu -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DLLAMA_AVX2=off -DLLAMA_FMA=off
+//go:generate cmake --build ggml/build/cuda-legacy-cpu --target server --config Release
+//go:generate mv ggml/build/cuda-legacy-cpu/bin/server ggml/build/cuda-legacy-cpu/bin/ollama-runner
+
 //go:generate cmake -S gguf -B gguf/build/cuda -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on
 //go:generate cmake --build gguf/build/cuda --target server --config Release
 //go:generate mv gguf/build/cuda/bin/server gguf/build/cuda/bin/ollama-runner
+
+//go:generate cmake -S gguf -B gguf/build/cuda-legacy-cpu -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DLLAMA_AVX2=off -DLLAMA_FMA=off
+//go:generate cmake --build gguf/build/cuda-legacy-cpu --target server --config Release
+//go:generate mv gguf/build/cuda-legacy-cpu/bin/server gguf/build/cuda-legacy-cpu/bin/ollama-runner
