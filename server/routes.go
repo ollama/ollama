@@ -55,7 +55,21 @@ var loaded struct {
 	*api.Options
 }
 
-var defaultSessionDuration = 5 * time.Minute
+const defaultSessionDurationEnvVar = "OLLAMA_DEFAULT_SESSION_DURATION_SECONDS"
+
+func defaultSessionDuration() time.Duration {
+	envVarStr := os.Getenv(defaultSessionDurationEnvVar)
+	if len(envVarStr) > 0 {
+		envSessionDurationSeconds, err := strconv.Atoi(envVarStr)
+		if err != nil {
+			log.Printf("could not parse %q : %v", defaultSessionDurationEnvVar, err)
+		} else if envSessionDurationSeconds >= 0 {
+			return time.Duration(envSessionDurationSeconds) * time.Second
+		}
+	}
+
+	return 5 * time.Minute
+}
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
 func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]interface{}, sessionDuration time.Duration) error {
@@ -173,7 +187,7 @@ func GenerateHandler(c *gin.Context) {
 	workDir := c.GetString("workDir")
 
 	// TODO: set this duration from the request if specified
-	sessionDuration := defaultSessionDuration
+	sessionDuration := defaultSessionDuration()
 	if err := load(c.Request.Context(), workDir, model, req.Options, sessionDuration); err != nil {
 		if errors.Is(err, api.ErrInvalidOpts) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -266,7 +280,7 @@ func EmbeddingHandler(c *gin.Context) {
 	}
 
 	workDir := c.GetString("workDir")
-	if err := load(c.Request.Context(), workDir, model, req.Options, 5*time.Minute); err != nil {
+	if err := load(c.Request.Context(), workDir, model, req.Options, defaultSessionDuration()); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
