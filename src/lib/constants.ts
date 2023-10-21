@@ -1,7 +1,7 @@
 import { browser, dev } from '$app/environment';
 
-export const ENDPOINT = browser
-	? `http://${location.hostname}:11434`
+export const API_ENDPOINT = browser
+	? `https://localhost/api`
 	: dev
-	? 'http://127.0.0.1:11434'
-	: 'http://host.docker.internal:11434';
+	? `http://localhost:11434/api`
+	: 'http://host.docker.internal:11434/api';

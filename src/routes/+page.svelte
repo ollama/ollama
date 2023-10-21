@@ -9,18 +9,23 @@
 	import 'highlight.js/styles/dark.min.css';
 
 	import type { PageData } from './$types';
-	import { ENDPOINT as SERVER_ENDPOINT } from '$lib/constants';
+	import { API_ENDPOINT as DEV_API_ENDPOINT } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
-	const suggestions = $page.url.searchParams.get('suggestions');
+	const suggestions = ''; // $page.url.searchParams.get('suggestions');
 
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 
-	export let data: PageData;
-	$: ({ models, OLLAMA_ENDPOINT } = data);
+	/* export let data: PageData; */
+	/* $: ({ API_ENDPOINT } = data); */
+	/* if (!API_ENDPOINT) { */
+	/*     API_ENDPOINT = DEV_API_ENDPOINT; */
+	/* } */
+	/* console.log('API_ENDPOINT',API_ENDPOINT) */
+	/* console.log('DEV_API_ENDPOINT', DEV_API_ENDPOINT) */
 
-	let ENDPOINT;
+	let models = [];
 	let textareaElement;
 	let showSettings = false;
 	let db;
@@ -36,10 +41,21 @@
 	let messages = [];
 
 	onMount(async () => {
-		ENDPOINT = OLLAMA_ENDPOINT ? OLLAMA_ENDPOINT : SERVER_ENDPOINT;
-		console.log(OLLAMA_ENDPOINT);
-		console.log(SERVER_ENDPOINT);
-		console.log(ENDPOINT);
+		/* console.log('API_ENDPOINT 2', API_ENDPOINT) */
+		const resp = await fetch(`${DEV_API_ENDPOINT}/tags`, {
+			method: 'GET',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json'
+			}
+		});
+		if (!resp.ok) {
+			let msg = await resp.text();
+			let err = new Error(msg);
+			throw err;
+		}
+		const data = await resp.json();
+		models = data.models;
 
 		let settings = localStorage.getItem('settings');
 		if (settings) {
@@ -267,7 +283,7 @@
 			messages = [...messages, responseMessage];
 			window.scrollTo({ top: document.body.scrollHeight });
 
-			const res = await fetch(`${ENDPOINT}/api/generate`, {
+			const res = await fetch(`${API_ENDPOINT}/generate`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'text/event-stream'
@@ -363,7 +379,7 @@
 			messages = [...messages, responseMessage];
 			window.scrollTo({ top: document.body.scrollHeight });
 
-			const res = await fetch(`${ENDPOINT}/api/generate`, {
+			const res = await fetch(`${API_ENDPOINT}/generate`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'text/event-stream'
@@ -443,7 +459,7 @@
 	const generateTitle = async (user_prompt) => {
 		console.log('generateTitle');
 
-		const res = await fetch(`${ENDPOINT}/api/generate`, {
+		const res = await fetch(`${API_ENDPOINT}/generate`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'text/event-stream'
