@@ -203,7 +203,7 @@ Finally, in a separate shell, run a model:
 
 ## REST API
 
-> See the [API documentation](docs/api.md) for all endpoints.
+> See the [API documentation](./docs/api.md) for all endpoints.
 
 Ollama has an API for running and managing models. For example to generate text from a model:
 
