@@ -34,7 +34,7 @@ var llamaCppEmbed embed.FS
 type ModelRunner struct {
 	Path        string // path to the model runner executable
 	Accelerated bool
-	LegacyCPU	bool
+	LegacyCPU   bool
 }
 
 func chooseRunners(workDir, runnerType string) []ModelRunner {
@@ -124,7 +124,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{
 			Path:        filepath.Clean(path.Join(workDir, r.Path)),
 			Accelerated: r.Accelerated,
-			LegacyCPU:	 r.LegacyCPU,
+			LegacyCPU:   r.LegacyCPU,
 		})
 	}
 
