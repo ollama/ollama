@@ -17,6 +17,8 @@ sudo chmod +x /usr/bin/ollama
 
 ## Start Ollama
 
+NOTE : If you are trying to run Ollama after fresh installation then you can skip to step running model (Since Ollama server should already be running at port number 11434 after a fresh installation)
+
 Start Ollama by running `ollama serve`:
 
 ```bash
@@ -27,6 +29,14 @@ Once Ollama is running, run a model in another terminal session:
 
 ```bash
 ollama run llama2
+```
+
+## Stop Ollama
+
+Stop Ollama by running `systemctl stop ollama`:
+
+```bash
+systemctl stop ollama
 ```
 
 ## Install CUDA drivers (optional – for Nvidia GPUs)
