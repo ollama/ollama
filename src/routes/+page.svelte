@@ -7,23 +7,13 @@
 	const { saveAs } = fileSaver;
 	import hljs from 'highlight.js';
 	import 'highlight.js/styles/dark.min.css';
-
-	import type { PageData } from './$types';
-	import { API_ENDPOINT as DEV_API_ENDPOINT } from '$lib/constants';
+	import { API_ENDPOINT } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
-	import { page } from '$app/stores';
-	const suggestions = ''; // $page.url.searchParams.get('suggestions');
 
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 
-	/* export let data: PageData; */
-	/* $: ({ API_ENDPOINT } = data); */
-	/* if (!API_ENDPOINT) { */
-	/*     API_ENDPOINT = DEV_API_ENDPOINT; */
-	/* } */
-	/* console.log('API_ENDPOINT',API_ENDPOINT) */
-	/* console.log('DEV_API_ENDPOINT', DEV_API_ENDPOINT) */
+	let suggestions = ''; // $page.url.searchParams.get('suggestions');
 
 	let models = [];
 	let textareaElement;
@@ -41,20 +31,24 @@
 	let messages = [];
 
 	onMount(async () => {
-		/* console.log('API_ENDPOINT 2', API_ENDPOINT) */
-		const resp = await fetch(`${DEV_API_ENDPOINT}/tags`, {
+		console.log(API_ENDPOINT);
+		const res = await fetch(`${API_ENDPOINT}/tags`, {
 			method: 'GET',
 			headers: {
 				Accept: 'application/json',
 				'Content-Type': 'application/json'
 			}
-		});
-		if (!resp.ok) {
-			let msg = await resp.text();
-			let err = new Error(msg);
-			throw err;
-		}
-		const data = await resp.json();
+		})
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((error) => {
+				console.log(error);
+				return { models: [] };
+			});
+
+		const data = res;
 		models = data.models;
 
 		let settings = localStorage.getItem('settings');
