@@ -1,0 +1,64 @@
+# Run with
+#    caddy run --envfile ./example.env --config ./Caddyfile.localhost
+#
+# This is configured for
+#    - Automatic HTTPS (even for localhost)
+#    - Reverse Proxying to Ollama API Base URL (http://localhost:11434/api)
+#    - CORS
+#    - HTTP Basic Auth API Tokens (uncomment basicauth section)
+
+
+# CORS Preflight (OPTIONS) + Request (GET, POST, PATCH, PUT, DELETE)
+(cors-api) {
+	@match-cors-api-preflight method OPTIONS
+	handle @match-cors-api-preflight {
+		header {
+			Access-Control-Allow-Origin "{http.request.header.origin}"
+			Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+			Access-Control-Allow-Headers "Origin, Accept, Authorization, Content-Type, X-Requested-With"
+			Access-Control-Allow-Credentials "true"
+			Access-Control-Max-Age "3600"
+			defer
+		}
+		respond "" 204
+	}
+
+	@match-cors-api-request {
+		not {
+			header Origin "{http.request.scheme}://{http.request.host}"
+		}
+		header Origin "{http.request.header.origin}"
+	}
+	handle @match-cors-api-request {
+		header {
+			Access-Control-Allow-Origin "{http.request.header.origin}"
+			Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+			Access-Control-Allow-Headers "Origin, Accept, Authorization, Content-Type, X-Requested-With"
+			Access-Control-Allow-Credentials "true"
+			Access-Control-Max-Age "3600"
+			defer
+		}
+	}
+}
+
+# replace localhost with example.com or whatever
+localhost {
+	## HTTP Basic Auth
+	## (uncomment to enable)
+	# basicauth {
+	# 	# see .example.env for how to generate tokens
+	# 	{env.OLLAMA_API_ID} {env.OLLAMA_API_TOKEN_DIGEST}
+	# }
+
+	handle /api/* {
+		# Comment to disable CORS
+		import cors-api
+
+		reverse_proxy localhost:11434
+	}
+
+	# Same-Origin Static Web Server
+	file_server {
+		root ./build/
+	}
+}

@@ -3,6 +3,7 @@
 	"version": "0.0.1",
 	"private": true,
 	"scripts": {
+		"start": "http-server ./build",
 		"dev": "vite dev --host",
 		"build": "vite build",
 		"preview": "vite preview",
@@ -17,6 +18,7 @@
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^2.0.0",
+		"@sveltejs/adapter-static": "^2.0.3",
 		"@sveltejs/kit": "^1.20.4",
 		"@typescript-eslint/eslint-plugin": "^6.0.0",
 		"@typescript-eslint/parser": "^6.0.0",
@@ -39,6 +41,7 @@
 		"@sveltejs/adapter-node": "^1.3.1",
 		"file-saver": "^2.0.5",
 		"highlight.js": "^11.9.0",
+		"http-server": "^14.1.1",
 		"idb": "^7.1.1",
 		"marked": "^9.1.0",
 		"svelte-french-toast": "^1.2.0",
