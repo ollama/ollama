@@ -24,7 +24,7 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
 
-- 🔗 **External Ollama Server Connection**: You can seamlessly connect to an external Ollama server hosted on a different address by setting the environment variable during the Docker build process. Execute the following command to include the Ollama API endpoint in the Docker image: `docker build --build-arg OLLAMA_API_ENDPOINT="http://[Your Ollama URL]/api" -t ollama-webui .`.
+- 🔗 **External Ollama Server Connection**: You can seamlessly connect to an external Ollama server hosted on a different address by setting the environment variable during the Docker build process. Execute the following command to include the Ollama API base URL in the Docker image: `docker build --build-arg OLLAMA_API_BASE_URL='http://localhost:11343/api' -t ollama-webui .`.
 
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
@@ -49,7 +49,8 @@ OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
 ### Using Docker 🐳
 
 ```bash
-docker build -t ollama-webui .
+docker build --build-arg OLLAMA_API_BASE_URL='http://localhost:11434/api' -t ollama-webui .
+
 docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
 ```
 
@@ -57,10 +58,10 @@ Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localh
 
 #### Connecting to Ollama on a Different Server
 
-If Ollama is hosted on a server other than your local machine, you can connect to it using the following environment variable:
+If Ollama is hosted on a server other than your local machine, change `OLLAMA_API_BASE_URL` to match:
 
 ```bash
-docker build --build-arg OLLAMA_API_ENDPOINT="http://[Your Ollama URL]/api" -t ollama-webui .
+docker build --build-arg OLLAMA_API_BASE_URL='https://example.com/api' -t ollama-webui .
 docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
 ```
 

@@ -7,7 +7,7 @@
 	const { saveAs } = fileSaver;
 	import hljs from 'highlight.js';
 	import 'highlight.js/styles/dark.min.css';
-	import { API_ENDPOINT } from '$lib/constants';
+	import { API_BASE_URL } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
 
 	import Navbar from '$lib/components/layout/Navbar.svelte';
@@ -31,8 +31,8 @@
 	let messages = [];
 
 	onMount(async () => {
-		console.log(API_ENDPOINT);
-		const res = await fetch(`${API_ENDPOINT}/tags`, {
+		console.log(API_BASE_URL);
+		const res = await fetch(`${API_BASE_URL}/tags`, {
 			method: 'GET',
 			headers: {
 				Accept: 'application/json',
@@ -277,7 +277,7 @@
 			messages = [...messages, responseMessage];
 			window.scrollTo({ top: document.body.scrollHeight });
 
-			const res = await fetch(`${API_ENDPOINT}/generate`, {
+			const res = await fetch(`${API_BASE_URL}/generate`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'text/event-stream'
@@ -373,7 +373,7 @@
 			messages = [...messages, responseMessage];
 			window.scrollTo({ top: document.body.scrollHeight });
 
-			const res = await fetch(`${API_ENDPOINT}/generate`, {
+			const res = await fetch(`${API_BASE_URL}/generate`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'text/event-stream'
@@ -453,7 +453,7 @@
 	const generateTitle = async (user_prompt) => {
 		console.log('generateTitle');
 
-		const res = await fetch(`${API_ENDPOINT}/generate`, {
+		const res = await fetch(`${API_BASE_URL}/generate`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'text/event-stream'
