@@ -46,6 +46,12 @@ If you want to access the Ollama web interface over LAN, for example, from your 
 OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
 ```
 
+If your running Ollama via Docker:
+
+```bash
+docker run -d -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_ORIGINS="*" --name ollama ollama/ollama
+```
+
 ### Using Docker 🐳
 
 If Ollama is hosted on your local machine, run the following command:
