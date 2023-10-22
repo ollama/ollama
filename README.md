@@ -65,6 +65,49 @@ docker build --build-arg OLLAMA_API_BASE_URL='https://example.com/api' -t ollama
 docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
 ```
 
+## How to Build for Static Deployment
+
+1. Install `node`
+
+   ```sh
+   # Mac, Linux
+   curl https://webi.sh/node@lts | sh
+   source ~/.config/envman/PATH.env
+   ```
+
+   ```pwsh
+   # Windows
+   curl.exe https://webi.ms/node@lts | powershell
+   ```
+
+2. Clone & Enter the project
+   ```sh
+   git clone https://github.com/ollama-webui/ollama-webui.git
+   pushd ./ollama-webui/
+   ```
+3. Create and edit `.env`
+   ```sh
+   cp -RPp example.env .env
+   ```
+4. Run in dev mode, or build the site for deployment
+   - Test in Dev mode:
+     ```sh
+     npm run dev
+     ```
+   - Build for Deploy: \
+     (`PUBLIC_API_BASE_URL` will overwrite the value in `.env`)
+     ```sh
+     PUBLIC_API_BASE_URL='https://example.com/api' npm run build
+     ```
+5. Test the build with `caddy` (or the server of your choice)
+
+   ```sh
+   curl https://webi.sh/caddy | sh
+
+   PUBLIC_API_BASE_URL='https://localhost/api' npm run build
+   caddy run --envfile .env --config ./Caddyfile.localhost
+   ```
+
 ## What's Next? 🚀
 
 ### To-Do List 📝
