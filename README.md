@@ -24,7 +24,7 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
 
-- 🔗 **External Ollama Server Connection**: You can seamlessly connect to an external Ollama server hosted on a different address by setting the environment variable during the Docker build process. Execute the following command to include the Ollama API base URL in the Docker image: `docker build --build-arg OLLAMA_API_BASE_URL='http://localhost:11343/api' -t ollama-webui .`.
+- 🔗 **External Ollama Server Connection**: You can seamlessly connect to an external Ollama server hosted on a different address by setting the environment variable during the Docker build process. Execute the following command to include the Ollama API base URL in the Docker image: `docker build --build-arg OLLAMA_API_BASE_URL='http://localhost:11434/api' -t ollama-webui .`.
 
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
@@ -131,6 +131,7 @@ A big shoutout to our amazing contributors who have helped make this project pos
 
 - [Ollama Team](https://github.com/jmorganca/ollama)
 - [Timothy J. Baek](https://github.com/tjbck)
+- [AJ ONeal](https://github.com/coolaj86)
 
 ## License 📜
 
