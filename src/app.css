@@ -6,6 +6,7 @@
 
 html {
 	@apply bg-gray-800;
+	word-break: break-all;
 }
 
 .hljs {
