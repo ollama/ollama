@@ -32,24 +32,7 @@
 
 	onMount(async () => {
 		console.log(API_BASE_URL);
-		const res = await fetch(`${API_BASE_URL}/tags`, {
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json'
-			}
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.catch((error) => {
-				console.log(error);
-				return { models: [] };
-			});
-
-		const data = res;
-		models = data.models;
+		await getModelTags();
 
 		let settings = localStorage.getItem('settings');
 		if (settings) {
@@ -232,6 +215,27 @@
 	//////////////////////////
 	// Ollama functions
 	//////////////////////////
+
+	const getModelTags = async () => {
+		const res = await fetch(`${API_BASE_URL}/tags`, {
+			method: 'GET',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json'
+			}
+		})
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((error) => {
+				console.log(error);
+				return { models: [] };
+			});
+
+		const data = res;
+		models = data.models;
+	};
 
 	const submitPrompt = async (user_prompt) => {
 		console.log('submitPrompt');
@@ -493,7 +497,7 @@
 			{openSettings}
 		/>
 
-		<SettingsModal bind:show={showSettings} {saveSettings} />
+		<SettingsModal bind:show={showSettings} {saveSettings} {getModelTags} />
 
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">

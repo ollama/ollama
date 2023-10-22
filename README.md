@@ -14,6 +14,8 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - 🚀 **Effortless Setup**: Install seamlessly using Docker for a hassle-free experience.
 
+- 📥🗑️ **Download/Delete Models**: Easily download or remove models directly from the web UI.
+
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
 
 - 📜 **Chat History**: Effortlessly access and manage your conversation history.
@@ -124,7 +126,6 @@ Here are some exciting tasks on our to-do list:
 - 🌐 **Web Browser Extension**: Seamlessly integrate our services into your browsing experience with our convenient browser extension.
 - 🚀 **Integration with Messaging Platforms**: Explore possibilities for integrating with popular messaging platforms like Slack and Discord.
 - 🎨 **Customization**: Tailor your chat environment with personalized themes and styles.
-- 📥🗑️ **Download/Delete Models**: Easily acquire or remove models directly from the web UI.
 - 📚 **Enhanced Documentation**: Elevate your setup and customization experience with improved, comprehensive documentation.
 - 🌟 **User Interface Enhancement**: Elevate the user interface to deliver a smoother, more enjoyable interaction.
 - 🧐 **User Testing and Feedback Gathering**: Conduct thorough user testing to gather insights and refine our offerings based on valuable user feedback.

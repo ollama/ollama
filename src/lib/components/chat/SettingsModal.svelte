@@ -1,12 +1,141 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import Modal from '../common/Modal.svelte';
+
+	import { API_BASE_URL } from '$lib/constants';
+	import toast from 'svelte-french-toast';
+
 	export let show = false;
 	export let saveSettings: Function;
+	export let getModelTags: Function;
+
 	let system = '';
 	let temperature = 0.8;
 
 	let selectedMenu = 'general';
+	let modelTag = '';
+	let deleteModelTag = '';
+
+	let digest = '';
+	let pullProgress = '';
+
+	const splitStream = (splitOn) => {
+		let buffer = '';
+		return new TransformStream({
+			transform(chunk, controller) {
+				buffer += chunk;
+				const parts = buffer.split(splitOn);
+				parts.slice(0, -1).forEach((part) => controller.enqueue(part));
+				buffer = parts[parts.length - 1];
+			},
+			flush(controller) {
+				if (buffer) controller.enqueue(buffer);
+			}
+		});
+	};
+
+	const pullModelHandler = async () => {
+		const res = await fetch(`${API_BASE_URL}/pull`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'text/event-stream'
+			},
+			body: JSON.stringify({
+				name: modelTag
+			})
+		});
+
+		const reader = res.body
+			.pipeThrough(new TextDecoderStream())
+			.pipeThrough(splitStream('\n'))
+			.getReader();
+
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+
+			try {
+				let lines = value.split('\n');
+
+				for (const line of lines) {
+					if (line !== '') {
+						console.log(line);
+						let data = JSON.parse(line);
+						console.log(data);
+
+						if (data.error) {
+							throw data.error;
+						}
+						if (data.status) {
+							if (!data.status.includes('downloading')) {
+								toast.success(data.status);
+							} else {
+								digest = data.digest;
+								if (data.completed) {
+									pullProgress = Math.round((data.completed / data.total) * 1000) / 10;
+								} else {
+									pullProgress = 100;
+								}
+							}
+						}
+					}
+				}
+			} catch (error) {
+				console.log(error);
+				toast.error(error);
+			}
+		}
+
+		modelTag = '';
+		await getModelTags();
+	};
+
+	const deleteModelHandler = async () => {
+		const res = await fetch(`${API_BASE_URL}/delete`, {
+			method: 'DELETE',
+			headers: {
+				'Content-Type': 'text/event-stream'
+			},
+			body: JSON.stringify({
+				name: deleteModelTag
+			})
+		});
+
+		const reader = res.body
+			.pipeThrough(new TextDecoderStream())
+			.pipeThrough(splitStream('\n'))
+			.getReader();
+
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+
+			try {
+				let lines = value.split('\n');
+
+				for (const line of lines) {
+					if (line !== '' && line !== 'null') {
+						console.log(line);
+						let data = JSON.parse(line);
+						console.log(data);
+
+						if (data.error) {
+							throw data.error;
+						}
+						if (data.status) {
+						}
+					} else {
+						toast.success(`Deleted ${deleteModelTag}`);
+					}
+				}
+			} catch (error) {
+				console.log(error);
+				toast.error(error);
+			}
+		}
+
+		deleteModelTag = '';
+		await getModelTags();
+	};
 
 	$: if (show) {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
@@ -41,7 +170,7 @@
 
 		<div class="flex flex-col md:flex-row w-full p-4 md:space-x-4">
 			<div
-				class="flex flex-row space-x-1 md:space-x-0 md:space-y-1 md:flex-col flex-1 md:flex-none md:w-36 text-gray-200 text-xs text-left mb-3 md:mb-0"
+				class="flex flex-row space-x-1 md:space-x-0 md:space-y-1 md:flex-col flex-1 md:flex-none md:w-40 text-gray-200 text-xs text-left mb-3 md:mb-0"
 			>
 				<button
 					class="px-2 py-2 rounded flex-1 md:flex-none flex text-right transition {selectedMenu ===
@@ -95,7 +224,7 @@
 					<div class=" self-center">Models</div>
 				</button>
 			</div>
-			<div class="flex-1 md:min-h-[280px]">
+			<div class="flex-1 md:min-h-[300px]">
 				{#if selectedMenu === 'general'}
 					<div class="flex flex-col space-y-3">
 						<div>
@@ -106,6 +235,8 @@
 								rows="4"
 							/>
 						</div>
+
+						<hr class=" border-gray-700" />
 
 						<div>
 							<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
@@ -140,9 +271,96 @@
 						</div>
 					</div>
 				{:else if selectedMenu === 'models'}
-					<div class="text-sm">
+					<div class="flex flex-col space-y-3 text-sm">
 						<div>
-							<div>Pull a model</div>
+							<div class=" mb-2.5 text-sm font-medium">Pull a model</div>
+							<div class="flex w-full">
+								<div class="flex-1 mr-2">
+									<input
+										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+										placeholder="Enter model tag (e.g. mistral:7b)"
+										bind:value={modelTag}
+									/>
+								</div>
+								<button
+									class="px-3 bg-emerald-600 hover:bg-emerald-700 rounded transition"
+									on:click={() => {
+										pullModelHandler();
+									}}
+								>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 20 20"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"
+										/>
+										<path
+											d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"
+										/>
+									</svg>
+								</button>
+							</div>
+
+							<div class="mt-2 text-xs text-gray-500">
+								To access the available model names for downloading, click <a
+									class=" text-gray-300 font-medium"
+									href="https://ollama.ai/library"
+									target="_blank">here</a
+								>.
+							</div>
+
+							{#if pullProgress !== ''}
+								<div class="mt-2">
+									<div class=" mb-2 text-xs">Pull Progress</div>
+									<div class="w-full rounded-full bg-gray-800">
+										<div
+											class="bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+											style="width: {Math.max(10, pullProgress)}%"
+										>
+											{pullProgress}%
+										</div>
+									</div>
+									<div class="mt-1 text-xs text-gray-700" style="font-size: 0.5rem;">
+										{digest}
+									</div>
+								</div>
+							{/if}
+						</div>
+						<hr class=" border-gray-700" />
+
+						<div>
+							<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
+							<div class="flex w-full">
+								<div class="flex-1 mr-2">
+									<input
+										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+										placeholder="Enter model tag (e.g. mistral:7b)"
+										bind:value={deleteModelTag}
+									/>
+								</div>
+								<button
+									class="px-3 bg-red-700 hover:bg-red-800 rounded transition"
+									on:click={() => {
+										deleteModelHandler();
+									}}
+								>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 20 20"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											fill-rule="evenodd"
+											d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
+											clip-rule="evenodd"
+										/>
+									</svg>
+								</button>
+							</div>
 						</div>
 					</div>
 				{/if}
