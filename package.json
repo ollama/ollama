@@ -8,8 +8,12 @@
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"lint": "prettier --plugin-search-dir . --check . && eslint .",
-		"format": "prettier --plugin-search-dir . --write ."
+		"lint": "npm run eslint",
+		"lint:types": "npm run check",
+		"fmt": "npm run prettier:svelte && npm run prettier",
+		"eslint": "npx -p eslint@8 -- eslint .",
+		"prettier:svelte": "npx -p prettier@2 -- prettier --plugin-search-dir . --write .",
+		"prettier": "npx -p prettier@2 -- prettier --write '**/*.{js,css,md,html,json}'"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^2.0.0",
