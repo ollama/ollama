@@ -6,6 +6,8 @@ on:
 jobs:
   build:
     name: 'Fmt, Lint, & Build'
+    env:
+      PUBLIC_API_BASE_URL: ''
     runs-on: ubuntu-latest
     strategy:
       matrix:

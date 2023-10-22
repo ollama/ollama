@@ -7,15 +7,25 @@ ChatGPT-Style Web Interface for Ollama 🦙
 ## Features ⭐
 
 - 🖥️ **Intuitive Interface**: Our chat interface takes inspiration from ChatGPT, ensuring a user-friendly experience.
+
 - 📱 **Responsive Design**: Enjoy a seamless experience on both desktop and mobile devices.
+
 - ⚡ **Swift Responsiveness**: Enjoy fast and responsive performance.
+
 - 🚀 **Effortless Setup**: Install seamlessly using Docker for a hassle-free experience.
+
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
+
 - 📜 **Chat History**: Effortlessly access and manage your conversation history.
+
 - 📤📥 **Import/Export Chat History**: Seamlessly move your chat data in and out of the platform.
+
 - ⚙️ **Fine-Tuned Control with Advanced Parameters**: Gain a deeper level of control by adjusting parameters such as temperature and defining your system prompts to tailor the conversation to your specific preferences and needs.
+
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
-- 🔗 **External Ollama Server Connection**: Link to the model when Ollama is hosted on a different server via the environment variable -e OLLAMA_ENDPOINT="http://[insert your Ollama address]".
+
+- 🔗 **External Ollama Server Connection**: You can seamlessly connect to an external Ollama server hosted on a different address by setting the environment variable during the Docker build process. Execute the following command to include the Ollama API base URL in the Docker image: `docker build --build-arg OLLAMA_API_BASE_URL='http://localhost:11434/api' -t ollama-webui .`.
+
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
 ## How to Install 🚀
@@ -38,21 +48,66 @@ OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
 
 ### Using Docker 🐳
 
+If Ollama is hosted on your local machine, run the following command:
+
 ```bash
-docker build -t ollama-webui .
-docker run -d -p 3000:3000 --add-host=host.docker.internal:host-gateway --name ollama-webui --restart always ollama-webui
+docker build --build-arg OLLAMA_API_BASE_URL='' -t ollama-webui .
+docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
 ```
 
 Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000). Enjoy! 😄
 
 #### Connecting to Ollama on a Different Server
 
-If Ollama is hosted on a server other than your local machine, you can connect to it using the following environment variable:
+If Ollama is hosted on a server other than your local machine, change `OLLAMA_API_BASE_URL` to match:
 
 ```bash
-docker build -t ollama-webui .
-docker run -d -p 3000:3000 --add-host=host.docker.internal:host-gateway -e OLLAMA_ENDPOINT="http://[insert your ollama url]" --name ollama-webui --restart always ollama-webui
+docker build --build-arg OLLAMA_API_BASE_URL='https://example.com/api' -t ollama-webui .
+docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
 ```
+
+## How to Build for Static Deployment
+
+1. Install `node`
+
+   ```sh
+   # Mac, Linux
+   curl https://webi.sh/node@lts | sh
+   source ~/.config/envman/PATH.env
+   ```
+
+   ```pwsh
+   # Windows
+   curl.exe https://webi.ms/node@lts | powershell
+   ```
+
+2. Clone & Enter the project
+   ```sh
+   git clone https://github.com/ollama-webui/ollama-webui.git
+   pushd ./ollama-webui/
+   ```
+3. Create and edit `.env`
+   ```sh
+   cp -RPp example.env .env
+   ```
+4. Run in dev mode, or build the site for deployment
+   - Test in Dev mode:
+     ```sh
+     npm run dev
+     ```
+   - Build for Deploy: \
+     (`PUBLIC_API_BASE_URL` will overwrite the value in `.env`)
+     ```sh
+     PUBLIC_API_BASE_URL='https://example.com/api' npm run build
+     ```
+5. Test the build with `caddy` (or the server of your choice)
+
+   ```sh
+   curl https://webi.sh/caddy | sh
+
+   PUBLIC_API_BASE_URL='https://localhost/api' npm run build
+   caddy run --envfile .env --config ./Caddyfile.localhost
+   ```
 
 ## What's Next? 🚀
 
@@ -76,6 +131,7 @@ A big shoutout to our amazing contributors who have helped make this project pos
 
 - [Ollama Team](https://github.com/jmorganca/ollama)
 - [Timothy J. Baek](https://github.com/tjbck)
+- [AJ ONeal](https://github.com/coolaj86)
 
 ## License 📜
 
