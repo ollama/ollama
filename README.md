@@ -48,9 +48,10 @@ OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
 
 ### Using Docker 🐳
 
-```bash
-docker build --build-arg OLLAMA_API_BASE_URL='http://localhost:11434/api' -t ollama-webui .
+If Ollama is hosted on your local machine, run the following command:
 
+```bash
+docker build --build-arg OLLAMA_API_BASE_URL='' -t ollama-webui .
 docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
 ```
 
