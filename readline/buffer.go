@@ -310,7 +310,7 @@ func (b *Buffer) ClearScreen() {
 		currPos := b.Pos
 		b.Pos = 0
 		b.drawRemaining()
-
+		fmt.Printf(CursorReset + fmt.Sprintf(CursorRightN, len(b.Prompt.Prompt)))
 		if currPos > 0 {
 			targetLine := currPos / b.LineWidth
 			if targetLine > 0 {
@@ -319,7 +319,9 @@ func (b *Buffer) ClearScreen() {
 				}
 			}
 			remainder := currPos % b.LineWidth
-			fmt.Printf(fmt.Sprintf(CursorRightN, remainder))
+			if remainder > 0 {
+				fmt.Printf(fmt.Sprintf(CursorRightN, remainder))
+			}
 			if currPos%b.LineWidth == 0 {
 				fmt.Printf(CursorBOL + b.Prompt.AltPrompt)
 			}
