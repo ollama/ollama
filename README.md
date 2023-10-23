@@ -233,3 +233,4 @@ curl -X POST http://localhost:11434/api/generate -d '{
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
+- [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
