@@ -116,6 +116,18 @@ func (i *Instance) Readline() (string, error) {
 				fmt.Printf("--- %d ", r)
 			}
 			continue
+		} else if esc {
+			switch r {
+			case 'b':
+				buf.MoveLeftWord()
+				esc = false
+			case 'f':
+				buf.MoveRightWord()
+				esc = false
+			case CharEscapeEx:
+				escex = true
+			}
+			continue
 		}
 
 		switch r {
@@ -151,12 +163,6 @@ func (i *Instance) Readline() (string, error) {
 			buf.ClearScreen()
 		case CharCtrlW:
 			buf.DeleteWord()
-		case CharEscapeEx:
-			if esc {
-				escex = true
-			} else {
-				buf.Add(r)
-			}
 		case CharEnter:
 			if !ignoreEnter {
 				output := buf.String()

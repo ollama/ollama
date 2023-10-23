@@ -51,6 +51,27 @@ func (b *Buffer) MoveLeft() {
 	}
 }
 
+func (b *Buffer) MoveLeftWord() {
+	if b.Pos > 0 {
+		var foundNonspace bool
+		for {
+			v, _ := b.Buf.Get(b.Pos - 1)
+			if v == ' ' {
+				if foundNonspace {
+					break
+				}
+			} else {
+				foundNonspace = true
+			}
+			b.MoveLeft()
+
+			if b.Pos == 0 {
+				break
+			}
+		}
+	}
+}
+
 func (b *Buffer) MoveRight() {
 	if b.Pos < b.Size() {
 		b.Pos += 1
@@ -58,6 +79,22 @@ func (b *Buffer) MoveRight() {
 			fmt.Printf(CursorDown + CursorBOL + fmt.Sprintf(CursorRightN, b.PromptSize()))
 		} else {
 			fmt.Printf(CursorRight)
+		}
+	}
+}
+
+func (b *Buffer) MoveRightWord() {
+	if b.Pos < b.Size() {
+		for {
+			b.MoveRight()
+			v, _ := b.Buf.Get(b.Pos)
+			if v == ' ' {
+				break
+			}
+
+			if b.Pos == b.Size() {
+				break
+			}
 		}
 	}
 }
