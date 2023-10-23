@@ -28,6 +28,7 @@ const (
 	CharEscapeEx  = 91
 	CharBackspace = 127
 
+	KeyDel   = 51
 	KeyUp    = 65
 	KeyDown  = 66
 	KeyRight = 67
@@ -46,10 +47,13 @@ const (
 	CursorRightN = "\033[%dC"
 	CursorLeftN  = "\033[%dD"
 
-	CursorEOL = "\033[E"
-	CursorBOL = "\033[1G"
+	CursorEOL  = "\033[E"
+	CursorBOL  = "\033[1G"
+	CursorHide = "\033[?25l"
+	CursorShow = "\033[?25h"
 
 	ClearToEOL  = "\033[K"
+	ClearLine   = "\033[2K"
 	ClearScreen = "\033[2J"
 	CursorReset = "\033[0;0f"
 

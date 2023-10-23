@@ -10,12 +10,11 @@ import (
 )
 
 type Prompt struct {
-	Prompt      string
-	Placeholder string
-}
-
-type Config struct {
-	Prompt *Prompt
+	Prompt         string
+	AltPrompt      string
+	Placeholder    string
+	AltPlaceholder string
+	UseAlt         bool
 }
 
 type Terminal struct {
@@ -27,6 +26,7 @@ type Terminal struct {
 type Instance struct {
 	Prompt   *Prompt
 	Terminal *Terminal
+	History  *History
 }
 
 func New(prompt Prompt) (*Instance, error) {
@@ -35,14 +35,25 @@ func New(prompt Prompt) (*Instance, error) {
 		return nil, err
 	}
 
+	history, err := NewHistory()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Instance{
 		Prompt:   &prompt,
 		Terminal: term,
+		History:  history,
 	}, nil
 }
 
 func (i *Instance) Readline() (string, error) {
-	fmt.Printf(i.Prompt.Prompt)
+	prompt := i.Prompt.Prompt
+	if i.Prompt.UseAlt {
+		prompt = i.Prompt.AltPrompt
+	}
+	fmt.Printf(prompt)
+
 	termios, err := SetRawMode(syscall.Stdin)
 	if err != nil {
 		return "", err
@@ -60,13 +71,16 @@ func (i *Instance) Readline() (string, error) {
 	var ignoreEnter bool
 
 	for {
-		if buf.Empty() {
+		if buf.IsEmpty() {
 			ph := i.Prompt.Placeholder
+			if i.Prompt.UseAlt {
+				ph = i.Prompt.AltPlaceholder
+			}
 			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
 		}
 
 		r := i.Terminal.ReadRune()
-		if buf.Empty() {
+		if buf.IsEmpty() {
 			fmt.Printf(ClearToEOL)
 		}
 
@@ -79,14 +93,25 @@ func (i *Instance) Readline() (string, error) {
 			escex = false
 
 			switch r {
-			case KeyUp, KeyDown:
-				fmt.Printf("")
+			case KeyUp:
+				if i.History.Pos > 0 {
+					buf.Replace(i.History.Prev())
+				}
+			case KeyDown:
+				if i.History.Pos < i.History.Size() {
+					buf.Replace(i.History.Next())
+				}
 			case KeyLeft:
 				buf.MoveLeft()
 			case KeyRight:
 				buf.MoveRight()
 			case CharBracketedPaste:
 				bracketedPaste = true
+			case KeyDel:
+				if buf.Size() > 0 {
+					buf.Delete()
+				}
+				continue
 			default:
 				fmt.Printf("--- %d ", r)
 			}
@@ -100,10 +125,6 @@ func (i *Instance) Readline() (string, error) {
 			}
 		case CharEsc:
 			esc = true
-		case CharEscapeEx:
-			if esc {
-				escex = true
-			}
 		case CharInterrupt:
 			return "", ErrInterrupt
 		case CharLineStart:
@@ -130,11 +151,21 @@ func (i *Instance) Readline() (string, error) {
 			buf.ClearScreen()
 		case CharCtrlW:
 			buf.DeleteWord()
+		case CharEscapeEx:
+			if esc {
+				escex = true
+			} else {
+				buf.Add(r)
+			}
 		case CharEnter:
 			if !ignoreEnter {
+				output := buf.String()
+				if output != "" {
+					i.History.Add([]rune(output))
+				}
 				buf.MoveToEnd()
 				fmt.Println()
-				return buf.String(), nil
+				return output, nil
 			}
 			fallthrough
 		default:

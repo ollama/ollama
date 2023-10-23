@@ -23,13 +23,18 @@ func NewBuffer(prompt *Prompt) (*Buffer, error) {
 		return nil, err
 	}
 
+	lwidth := width - len(prompt.Prompt)
+	if prompt.UseAlt {
+		lwidth = width - len(prompt.AltPrompt)
+	}
+
 	b := &Buffer{
 		Pos:       0,
 		Buf:       arraylist.New(),
 		Prompt:    prompt,
 		Width:     width,
 		Height:    height,
-		LineWidth: width - len(prompt.Prompt),
+		LineWidth: lwidth,
 	}
 
 	return b, nil
@@ -50,7 +55,7 @@ func (b *Buffer) MoveRight() {
 	if b.Pos < b.Size() {
 		b.Pos += 1
 		if b.Pos%b.LineWidth == 0 {
-			fmt.Printf(CursorDown + CursorBOL + fmt.Sprintf(CursorRightN, len(b.Prompt.Prompt)))
+			fmt.Printf(CursorDown + CursorBOL + fmt.Sprintf(CursorRightN, b.PromptSize()))
 		} else {
 			fmt.Printf(CursorRight)
 		}
@@ -65,7 +70,7 @@ func (b *Buffer) MoveToStart() {
 				fmt.Printf(CursorUp)
 			}
 		}
-		fmt.Printf(CursorBOL + fmt.Sprintf(CursorRightN, len(b.Prompt.Prompt)))
+		fmt.Printf(CursorBOL + fmt.Sprintf(CursorRightN, b.PromptSize()))
 		b.Pos = 0
 	}
 }
@@ -79,7 +84,7 @@ func (b *Buffer) MoveToEnd() {
 				fmt.Printf(CursorDown)
 			}
 			remainder := b.Size() % b.LineWidth
-			fmt.Printf(CursorBOL + fmt.Sprintf(CursorRightN, len(b.Prompt.Prompt)+remainder))
+			fmt.Printf(CursorBOL + fmt.Sprintf(CursorRightN, b.PromptSize()+remainder))
 		} else {
 			fmt.Printf(fmt.Sprintf(CursorRightN, b.Size()-b.Pos))
 		}
@@ -99,20 +104,27 @@ func min(n, m int) int {
 	return n
 }
 
+func (b *Buffer) PromptSize() int {
+	if b.Prompt.UseAlt {
+		return len(b.Prompt.AltPrompt)
+	}
+	return len(b.Prompt.Prompt)
+}
+
 func (b *Buffer) Add(r rune) {
 	if b.Pos == b.Buf.Size() {
 		fmt.Printf("%c", r)
 		b.Buf.Add(r)
 		b.Pos += 1
 		if b.Pos > 0 && b.Pos%b.LineWidth == 0 {
-			fmt.Printf("\n... ")
+			fmt.Printf("\n%s", b.Prompt.AltPrompt)
 		}
 	} else {
 		fmt.Printf("%c", r)
 		b.Buf.Insert(b.Pos, r)
 		b.Pos += 1
 		if b.Pos > 0 && b.Pos%b.LineWidth == 0 {
-			fmt.Printf("\n... ")
+			fmt.Printf("\n%s", b.Prompt.AltPrompt)
 		}
 		b.drawRemaining()
 	}
@@ -124,6 +136,8 @@ func (b *Buffer) drawRemaining() {
 	if b.Pos > 0 {
 		place = b.Pos % b.LineWidth
 	}
+
+	fmt.Printf(CursorHide)
 
 	// render the rest of the current line
 	currLine := remainingText[:min(b.LineWidth-place, len(remainingText))]
@@ -141,12 +155,14 @@ func (b *Buffer) drawRemaining() {
 		remaining := []rune(remainingText[len(currLine):])
 		for i, c := range remaining {
 			if i%b.LineWidth == 0 {
-				fmt.Printf("\n... ")
+				fmt.Printf("\n%s", b.Prompt.AltPrompt)
 			}
 			fmt.Printf("%c", c)
 		}
 		fmt.Printf(ClearToEOL + CursorRestore)
 	}
+
+	fmt.Printf(CursorShow)
 }
 
 func (b *Buffer) Remove() {
@@ -250,7 +266,7 @@ func (b *Buffer) DeleteWord() {
 
 func (b *Buffer) ClearScreen() {
 	fmt.Printf(ClearScreen + CursorReset + b.Prompt.Prompt)
-	if b.Empty() {
+	if b.IsEmpty() {
 		ph := b.Prompt.Placeholder
 		fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
 	} else {
@@ -268,16 +284,24 @@ func (b *Buffer) ClearScreen() {
 			remainder := currPos % b.LineWidth
 			fmt.Printf(fmt.Sprintf(CursorRightN, remainder))
 			if currPos%b.LineWidth == 0 {
-				fmt.Printf(CursorBOL + "... ")
+				fmt.Printf(CursorBOL + b.Prompt.AltPrompt)
 			}
 		}
-
 		b.Pos = currPos
 	}
 }
 
-func (b *Buffer) Empty() bool {
+func (b *Buffer) IsEmpty() bool {
 	return b.Buf.Empty()
+}
+
+func (b *Buffer) Replace(r []rune) {
+	b.Pos = 0
+	b.Buf.Clear()
+	fmt.Printf(ClearLine + CursorBOL + b.Prompt.Prompt)
+	for _, c := range r {
+		b.Add(c)
+	}
 }
 
 func (b *Buffer) String() string {
