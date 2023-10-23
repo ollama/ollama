@@ -39,7 +39,10 @@
 			settings = JSON.parse(settings);
 			console.log(settings);
 
-			selectedModel = settings.model ?? '';
+			selectedModel =
+				settings.model && models.map((model) => model.name).includes(settings.model)
+					? settings.model
+					: '';
 			system = settings.system ?? null;
 			temperature = settings.temperature ?? null;
 		}
@@ -233,8 +236,8 @@
 				return { models: [] };
 			});
 
-		const data = res;
-		models = data.models;
+		console.log(res);
+		models = res.models ?? [];
 	};
 
 	const submitPrompt = async (user_prompt) => {
