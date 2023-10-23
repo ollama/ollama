@@ -488,13 +488,6 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
 }
 
 func generateInteractive(cmd *cobra.Command, model string) error {
-	/*
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-	*/
-
 	// load the model
 	if err := generate(cmd, model, "", false); err != nil {
 		return err
