@@ -318,7 +318,7 @@
 									<div class="w-full rounded-full bg-gray-800">
 										<div
 											class="bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
-											style="width: {Math.max(10, pullProgress)}%"
+											style="width: {Math.max(15, pullProgress)}%"
 										>
 											{pullProgress}%
 										</div>
