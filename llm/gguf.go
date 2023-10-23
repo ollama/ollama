@@ -32,7 +32,11 @@ func (c *containerGGUF) Decode(r io.Reader) (model, error) {
 	switch c.Version {
 	case 1:
 		binary.Read(r, binary.LittleEndian, &c.V1)
-	case 2:
+	case 2, 3:
+		// TODO: This workaround allows handling of version 3 by treating it as version 2.
+		// A more comprehensive solution is needed to address any potential differences between versions 2 and 3,
+		// especially if there are updates to the Llama submodule or the GGUF specification in the future.
+		// Consider refactoring this block to properly handle version 3.
 		binary.Read(r, binary.LittleEndian, &c.V2)
 	default:
 		return nil, errors.New("invalid version")
