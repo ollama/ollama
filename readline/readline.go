@@ -149,6 +149,11 @@ func (i *Instance) Readline() (string, error) {
 			buf.MoveRight()
 		case CharBackspace, CharCtrlH:
 			buf.Remove()
+		case CharTab:
+			// todo: convert back to real tabs
+			for cnt := 0; cnt < 8; cnt++ {
+				buf.Add(' ')
+			}
 		case CharDelete:
 			if buf.Size() > 0 {
 				buf.Delete()
