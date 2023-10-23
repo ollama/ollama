@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:latest
+FROM node:alpine
 WORKDIR /app
 
 ARG OLLAMA_API_BASE_URL=''
