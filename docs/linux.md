@@ -80,3 +80,23 @@ To view logs of Ollama running as a startup service, run:
 ```bash
 journalctl -u ollama
 ```
+
+## Uninstall
+
+Remove the ollama service:
+```bash
+systemctl stop ollama
+systemctl disable ollama
+rm /etc/systemd/system/ollama.service
+```
+
+Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr/bin`, or `/bin`):
+```bash
+rm /usr/local/bin/ollama
+```
+
+Remove the downloaded models and Ollama service user:
+```bash
+rm /usr/share/ollama
+userdel ollama
+```

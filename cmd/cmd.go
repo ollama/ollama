@@ -932,7 +932,7 @@ func NewCLI() *cobra.Command {
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
 		Short:   "Create a model from a Modelfile",
-		Args:    cobra.MinimumNArgs(1),
+		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    CreateHandler,
 	}
@@ -942,7 +942,7 @@ func NewCLI() *cobra.Command {
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
 		Short:   "Show information for a model",
-		Args:    cobra.MinimumNArgs(1),
+		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ShowHandler,
 	}
@@ -969,13 +969,14 @@ func NewCLI() *cobra.Command {
 		Use:     "serve",
 		Aliases: []string{"start"},
 		Short:   "Start ollama",
+		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
 		Short:   "Pull a model from a registry",
-		Args:    cobra.MinimumNArgs(1),
+		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PullHandler,
 	}
@@ -985,7 +986,7 @@ func NewCLI() *cobra.Command {
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
 		Short:   "Push a model to a registry",
-		Args:    cobra.MinimumNArgs(1),
+		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PushHandler,
 	}
@@ -1001,15 +1002,15 @@ func NewCLI() *cobra.Command {
 	}
 
 	copyCmd := &cobra.Command{
-		Use:     "cp",
+		Use:     "cp SOURCE TARGET",
 		Short:   "Copy a model",
-		Args:    cobra.MinimumNArgs(2),
+		Args:    cobra.ExactArgs(2),
 		PreRunE: checkServerHeartbeat,
 		RunE:    CopyHandler,
 	}
 
 	deleteCmd := &cobra.Command{
-		Use:     "rm",
+		Use:     "rm MODEL [MODEL...]",
 		Short:   "Remove a model",
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,

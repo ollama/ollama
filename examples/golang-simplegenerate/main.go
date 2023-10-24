@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"net/http"
-	"os"
 	"io"
 	"log"
+	"net/http"
+	"os"
 )
 
 func main() {
@@ -16,7 +16,7 @@ func main() {
 	if err != nil {
 		fmt.Print(err.Error())
 		os.Exit(1)
-	} 
+	}
 
 	responseData, err := io.ReadAll(resp.Body)
 	if err != nil {

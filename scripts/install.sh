@@ -74,6 +74,9 @@ configure_systemd() {
         $SUDO useradd -r -s /bin/false -m -d /usr/share/ollama ollama
     fi
 
+    status "Adding current user to ollama group..."
+    $SUDO usermod -a -G ollama $(whoami)
+
     status "Creating ollama systemd service..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
