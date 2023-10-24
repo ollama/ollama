@@ -13,7 +13,40 @@ Ollama supports a set of model architectures, with support for more coming soon:
 
 To view a model's architecture, check the `config.json` file in its HuggingFace repo. You should see an entry under `architectures` (e.g. `LlamaForCausalLM`).
 
-## Importing
+## Importing (GGUF)
+
+### Step 1: Write a `Modelfile`
+
+Start by creating a `Modelfile`. This file is the blueprint for your model, specifying weights, parameters, prompt templates and more.
+
+```
+FROM ./mistral-7b-v0.1.Q4_0.gguf
+```
+
+(Optional) many chat models require a prompt template in order to answer correctly. A default prompt template can be specified with the `TEMPLATE` instruction in the `Modelfile`:
+
+```
+FROM ./q4_0.bin
+TEMPLATE "[INST] {{ .Prompt }} [/INST]"
+```
+
+### Step 2: Create the Ollama model
+
+Finally, create a model from your `Modelfile`:
+
+```
+ollama create example -f Modelfile
+```
+
+### Step 3: Run your model
+
+Next, test the model with `ollama run`:
+
+```
+ollama run example "What is your favourite condiment?"
+```
+
+## Importing (PyTorch & Safetensors)
 
 ### Step 1: Clone the HuggingFace repository (optional)
 
@@ -44,7 +77,7 @@ This will output two files into the directory:
 
 ### Step 3: Write a `Modelfile`
 
-Next, create a `Modelfile` for your model. This file is the blueprint for your model, specifying weights, parameters, prompt templates and more.
+Next, create a `Modelfile` for your model:
 
 ```
 FROM ./q4_0.bin
@@ -65,13 +98,15 @@ Finally, create a model from your `Modelfile`:
 ollama create example -f Modelfile
 ```
 
+### Step 5: Run your model
+
 Next, test the model with `ollama run`:
 
 ```
 ollama run example "What is your favourite condiment?"
 ```
 
-### Step 5: Publish your model (optional – early alpha)
+## Publishing your model (optional – early alpha)
 
 Publishing models is in early alpha. If you'd like to publish your model to share with others, follow these steps:
 
