@@ -18,10 +18,6 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
-const DefaultHost = "127.0.0.1:11434"
-
-var envHost = os.Getenv("OLLAMA_HOST")
-
 type Client struct {
 	base *url.URL
 	http http.Client

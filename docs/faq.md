@@ -60,3 +60,11 @@ systemctl restart ollama
 
 - macOS: Raw model data is stored under `~/.ollama/models`.
 - Linux: Raw model data is stored under `/usr/share/ollama/.ollama/models`
+
+## How can I change where Ollama stores models?
+
+By default, Ollama stores files in the `~/.ollama/models` directory. To modify this, you can use the `OLLAMA_MODELS` environment variable.
+
+### Setting `OLLAMA_MODELS` in Linux environments
+
+Define `OLLAMA_MODELS` in the `/etc/systemd/system/ollama.service` service file.
