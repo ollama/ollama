@@ -6,13 +6,14 @@
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 	import hljs from 'highlight.js';
-	import 'highlight.js/styles/dark.min.css';
-	import { API_BASE_URL } from '$lib/constants';
+	import 'highlight.js/styles/github-dark.min.css';
+	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
 
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 
+	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
 	let suggestions = ''; // $page.url.searchParams.get('suggestions');
 
 	let models = [];
@@ -31,21 +32,19 @@
 	let messages = [];
 
 	onMount(async () => {
+		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+
+		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
 		console.log(API_BASE_URL);
+		system = settings.system ?? null;
+		temperature = settings.temperature ?? null;
+
 		await getModelTags();
 
-		let settings = localStorage.getItem('settings');
-		if (settings) {
-			settings = JSON.parse(settings);
-			console.log(settings);
-
-			selectedModel =
-				settings.model && models.map((model) => model.name).includes(settings.model)
-					? settings.model
-					: '';
-			system = settings.system ?? null;
-			temperature = settings.temperature ?? null;
-		}
+		selectedModel =
+			settings.model && models.map((model) => model.name).includes(settings.model)
+				? settings.model
+				: '';
 
 		db = await openDB('Chats', 1, {
 			upgrade(db) {
@@ -133,21 +132,23 @@
 		toast.success('Default model updated');
 	};
 
-	const saveSettings = (_system, _temperature) => {
+	const saveSettings = async (_api_base_url, _system, _temperature) => {
+		API_BASE_URL = _api_base_url;
 		system = _system;
 		temperature = _temperature;
 
 		let settings = localStorage.getItem('settings') ?? '{}';
 		if (settings) {
 			settings = JSON.parse(settings);
+
+			settings.API_BASE_URL = API_BASE_URL;
 			settings.system = system;
 			settings.temperature = temperature;
 			localStorage.setItem('settings', JSON.stringify(settings));
 		}
 
 		console.log(settings);
-
-		console.log('saved');
+		await getModelTags();
 	};
 
 	const createNewChat = () => {
@@ -163,7 +164,10 @@
 				settings = JSON.parse(settings);
 				console.log(settings);
 
-				selectedModel = settings.model ?? selectedModel;
+				selectedModel =
+					settings.model && models.map((model) => model.name).includes(settings.model)
+						? settings.model
+						: '';
 				system = settings.system ?? system;
 				temperature = settings.temperature ?? temperature;
 			}
@@ -219,8 +223,8 @@
 	// Ollama functions
 	//////////////////////////
 
-	const getModelTags = async () => {
-		const res = await fetch(`${API_BASE_URL}/tags`, {
+	const getModelTags = async (url = null) => {
+		const res = await fetch(`${url === null ? API_BASE_URL : url}/tags`, {
 			method: 'GET',
 			headers: {
 				Accept: 'application/json',
@@ -233,11 +237,13 @@
 			})
 			.catch((error) => {
 				console.log(error);
-				return { models: [] };
+				toast.error('Server connection failed');
+				return null;
 			});
 
 		console.log(res);
-		models = res.models ?? [];
+		models = res?.models ?? [];
+		return res;
 	};
 
 	const submitPrompt = async (user_prompt) => {
@@ -609,7 +615,7 @@
 												</div>
 											</div>
 										{:else}
-											<div class="markdown-body whitespace-pre-line">
+											<div class="whitespace-pre-line">
 												{@html marked.parse(message.content)}
 											</div>
 										{/if}
