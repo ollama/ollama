@@ -2,6 +2,7 @@ package readline
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -45,6 +46,9 @@ func (h *History) Init() error {
 	//todo check if the file exists
 	f, err := os.OpenFile(path, os.O_RDONLY, 0666)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
 	defer f.Close()
