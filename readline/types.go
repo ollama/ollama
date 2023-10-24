@@ -48,6 +48,8 @@ const (
 	CursorSave    = "\033[s"
 	CursorRestore = "\033[u"
 
+	CursorUpN    = "\033[%dA"
+	CursorDownN  = "\033[%dB"
 	CursorRightN = "\033[%dC"
 	CursorLeftN  = "\033[%dD"
 
