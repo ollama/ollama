@@ -39,6 +39,11 @@
 
 		if (res) {
 			toast.success('Server connection verified');
+			saveSettings(
+				API_BASE_URL === '' ? BUILD_TIME_API_BASE_URL : API_BASE_URL,
+				system != '' ? system : null,
+				temperature != 0.8 ? temperature : null
+			);
 		}
 	};
 
