@@ -563,7 +563,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			return nil
 		case errors.Is(err, readline.ErrInterrupt):
 			if line == "" {
-				fmt.Println("Use Ctrl-D or /bye to exit.")
+				fmt.Println("\nUse Ctrl-D or /bye to exit.")
 			}
 
 			continue

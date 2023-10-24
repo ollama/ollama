@@ -62,11 +62,9 @@ func (i *Instance) Readline() (string, error) {
 
 	buf, _ := NewBuffer(i.Prompt)
 
-	//fmt.Printf(StartBracketedPaste)
-	//defer fmt.Printf(EndBracketedPaste)
-
 	var esc bool
 	var escex bool
+	var metaDel bool
 	var bracketedPaste bool
 	var ignoreEnter bool
 
@@ -88,8 +86,7 @@ func (i *Instance) Readline() (string, error) {
 			break
 		}
 
-		if esc && escex {
-			esc = false
+		if escex {
 			escex = false
 
 			switch r {
@@ -111,19 +108,24 @@ func (i *Instance) Readline() (string, error) {
 				if buf.Size() > 0 {
 					buf.Delete()
 				}
-				continue
+				metaDel = true
+			case MetaStart:
+				buf.MoveToStart()
+			case MetaEnd:
+				buf.MoveToEnd()
 			default:
-				fmt.Printf("--- %d ", r)
+				// skip any keys we don't know about
+				continue
 			}
 			continue
 		} else if esc {
+			esc = false
+
 			switch r {
 			case 'b':
 				buf.MoveLeftWord()
-				esc = false
 			case 'f':
 				buf.MoveRightWord()
-				esc = false
 			case CharEscapeEx:
 				escex = true
 			}
@@ -180,7 +182,13 @@ func (i *Instance) Readline() (string, error) {
 			}
 			fallthrough
 		default:
-			buf.Add(r)
+			if metaDel {
+				metaDel = false
+				continue
+			}
+			if r >= CharSpace || r == CharEnter {
+				buf.Add(r)
+			}
 		}
 	}
 	return "", nil

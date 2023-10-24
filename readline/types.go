@@ -24,15 +24,19 @@ const (
 	CharCtrlY     = 25
 	CharCtrlZ     = 26
 	CharEsc       = 27
-	CharO         = 79
+	CharSpace     = 32
 	CharEscapeEx  = 91
 	CharBackspace = 127
+)
 
-	KeyDel   = 51
-	KeyUp    = 65
-	KeyDown  = 66
-	KeyRight = 67
-	KeyLeft  = 68
+const (
+	KeyDel    = 51
+	KeyUp     = 65
+	KeyDown   = 66
+	KeyRight  = 67
+	KeyLeft   = 68
+	MetaEnd   = 70
+	MetaStart = 72
 )
 
 const (
