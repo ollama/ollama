@@ -46,7 +46,7 @@ echo "Environment=OLLAMA_HOST=0.0.0.0:11434" >>/etc/systemd/system/ollama.servic
 ```
 
 ```bash
-echo "Environment=OLLAMA_HOST=http://129.168.1.1:*,https://example.com" >>/etc/systemd/system/ollama.service.d/environment.conf
+echo "Environment=OLLAMA_ORIGINS=http://129.168.1.1:*,https://example.com" >>/etc/systemd/system/ollama.service.d/environment.conf
 ```
 
 Reload `systemd` and restart Ollama.
