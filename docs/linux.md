@@ -91,12 +91,12 @@ rm /etc/systemd/system/ollama.service
 ```
 
 Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr/bin`, or `/bin`):
-```
+```bash
 rm /usr/local/bin/ollama
 ```
 
 Remove the downloaded models and Ollama service user:
-```
+```bash
 rm /usr/share/ollama
 userdel ollama
 ```
