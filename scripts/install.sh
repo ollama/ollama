@@ -75,8 +75,8 @@ configure_systemd() {
     fi
 
     status "Adding current user to ollama group..."
-    # Add current user to ollama group so they can access the log files, this resolves the user running sudo also
-    $SUDO usermod -aG ollama ${SUDO_USER:-$USER}
+    # Add ollama to the current user's group so the service can read their files (this is needed to create new models)
+    $SUDO usermod -a -G $(id -gn ${SUDO_USER:-$USER}) ollama
 
     status "Creating ollama systemd service..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
