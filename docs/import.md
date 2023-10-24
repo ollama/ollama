@@ -1,17 +1,6 @@
 # Import a model
 
-This guide walks through importing a PyTorch, Safetensors or GGUF model.
-
-## Supported models
-
-Ollama supports a set of model architectures, with support for more coming soon:
-
-- Llama & Mistral
-- Falcon & RW
-- GPT-NeoX
-- BigCode
-
-To view a model's architecture, check the `config.json` file in its HuggingFace repo. You should see an entry under `architectures` (e.g. `LlamaForCausalLM`).
+This guide walks through importing a GGUF, PyTorch or Safetensors model.
 
 ## Importing (GGUF)
 
@@ -47,6 +36,17 @@ ollama run example "What is your favourite condiment?"
 ```
 
 ## Importing (PyTorch & Safetensors)
+
+### Supported models
+
+Ollama supports a set of model architectures, with support for more coming soon:
+
+- Llama & Mistral
+- Falcon & RW
+- GPT-NeoX
+- BigCode
+
+To view a model's architecture, check the `config.json` file in its HuggingFace repo. You should see an entry under `architectures` (e.g. `LlamaForCausalLM`).
 
 ### Step 1: Clone the HuggingFace repository (optional)
 
