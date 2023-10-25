@@ -4,13 +4,14 @@ go 1.20
 
 require (
 	github.com/dustin/go-humanize v1.0.1
+	github.com/emirpasic/gods v1.18.1
 	github.com/gin-gonic/gin v1.9.1
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db
 	github.com/olekukonko/tablewriter v0.0.5
-	github.com/pdevine/readline v1.5.2
 	github.com/spf13/cobra v1.7.0
 	golang.org/x/sync v0.3.0
+	gonum.org/v1/gonum v0.14.0
 )
 
 require github.com/rivo/uniseg v0.2.0 // indirect
