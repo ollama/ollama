@@ -245,9 +245,9 @@ func (b *Buffer) Delete() {
 				fmt.Printf(CursorRight)
 			} else {
 				remainingLines := (b.Size() - b.Pos) / b.LineWidth
-				fmt.Printf(cursorDownN(remainingLines+1) + CursorBOL + ClearToEOL)
+				fmt.Printf(cursorDownN(remainingLines) + CursorBOL + ClearToEOL)
 				place := b.Pos % b.LineWidth
-				fmt.Printf(cursorUpN(remainingLines+1) + cursorRightN(place+len(b.Prompt.Prompt)))
+				fmt.Printf(cursorUpN(remainingLines) + cursorRightN(place+len(b.Prompt.Prompt)))
 			}
 		}
 	}
