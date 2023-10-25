@@ -35,12 +35,15 @@
 	};
 
 	const checkOllamaConnection = async () => {
+		if (API_BASE_URL === '') {
+			API_BASE_URL = BUILD_TIME_API_BASE_URL;
+		}
 		const res = await getModelTags(API_BASE_URL);
 
 		if (res) {
 			toast.success('Server connection verified');
 			saveSettings(
-				API_BASE_URL === '' ? BUILD_TIME_API_BASE_URL : API_BASE_URL,
+				API_BASE_URL,
 				system != '' ? system : null,
 				temperature != 0.8 ? temperature : null
 			);
