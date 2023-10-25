@@ -68,6 +68,8 @@ func (i *Instance) Readline() (string, error) {
 	var bracketedPaste bool
 	var ignoreEnter bool
 
+	var currentLineBuf []rune
+
 	for {
 		if buf.IsEmpty() {
 			ph := i.Prompt.Placeholder
@@ -92,11 +94,17 @@ func (i *Instance) Readline() (string, error) {
 			switch r {
 			case KeyUp:
 				if i.History.Pos > 0 {
+					if i.History.Pos == i.History.Size() {
+						currentLineBuf = []rune(buf.String())
+					}
 					buf.Replace(i.History.Prev())
 				}
 			case KeyDown:
 				if i.History.Pos < i.History.Size() {
 					buf.Replace(i.History.Next())
+					if i.History.Pos == i.History.Size() {
+						buf.Replace(currentLineBuf)
+					}
 				}
 			case KeyLeft:
 				buf.MoveLeft()

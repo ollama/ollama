@@ -241,9 +241,7 @@ func (b *Buffer) Delete() {
 		b.Buf.Remove(b.Pos)
 		b.drawRemaining()
 		if b.Size()%b.LineWidth == 0 {
-			if b.Pos == b.Size() {
-				fmt.Printf(CursorRight)
-			} else {
+			if b.Pos != b.Size() {
 				remainingLines := (b.Size() - b.Pos) / b.LineWidth
 				fmt.Printf(cursorDownN(remainingLines) + CursorBOL + ClearToEOL)
 				place := b.Pos % b.LineWidth
