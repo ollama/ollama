@@ -89,7 +89,6 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
-Environment="HOME=/usr/share/ollama"
 Environment="PATH=$PATH"
 
 [Install]
