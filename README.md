@@ -203,9 +203,9 @@ Finally, in a separate shell, run a model:
 
 ## REST API
 
-See the [API documentation](docs/api.md) for all endpoints.
-
-Ollama has an API for running and managing models. For example to generate text from a model:
+Ollama has a REST API for running and managing models.
+Ollama's API is not compliant with OpenAI's API spec.
+For example, to generate text from a model:
 
 ```
 curl -X POST http://localhost:11434/api/generate -d '{
@@ -213,6 +213,8 @@ curl -X POST http://localhost:11434/api/generate -d '{
   "prompt":"Why is the sky blue?"
 }'
 ```
+
+See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
