@@ -233,11 +233,11 @@ func (t *Terminal) ioloop() {
 }
 
 func (t *Terminal) ReadRune() rune {
-	ch, ok := <-t.outchan
+	r, ok := <-t.outchan
 	if !ok {
 		return rune(0)
 	}
-	return ch
+	return r
 }
 
 func (t *Terminal) Close() error {

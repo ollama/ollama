@@ -43,7 +43,7 @@ func NewBuffer(prompt *Prompt) (*Buffer, error) {
 func (b *Buffer) MoveLeft() {
 	if b.Pos > 0 {
 		if b.Pos%b.LineWidth == 0 {
-			fmt.Printf(CursorUp + CursorBOL + fmt.Sprintf(CursorRightN, b.Width))
+			fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width))
 		} else {
 			fmt.Printf(CursorLeft)
 		}
@@ -76,7 +76,7 @@ func (b *Buffer) MoveRight() {
 	if b.Pos < b.Size() {
 		b.Pos += 1
 		if b.Pos%b.LineWidth == 0 {
-			fmt.Printf(CursorDown + CursorBOL + fmt.Sprintf(CursorRightN, b.PromptSize()))
+			fmt.Printf(CursorDown + CursorBOL + cursorRightN(b.PromptSize()))
 		} else {
 			fmt.Printf(CursorRight)
 		}
@@ -107,7 +107,7 @@ func (b *Buffer) MoveToStart() {
 				fmt.Printf(CursorUp)
 			}
 		}
-		fmt.Printf(CursorBOL + fmt.Sprintf(CursorRightN, b.PromptSize()))
+		fmt.Printf(CursorBOL + cursorRightN(b.PromptSize()))
 		b.Pos = 0
 	}
 }
@@ -121,9 +121,9 @@ func (b *Buffer) MoveToEnd() {
 				fmt.Printf(CursorDown)
 			}
 			remainder := b.Size() % b.LineWidth
-			fmt.Printf(CursorBOL + fmt.Sprintf(CursorRightN, b.PromptSize()+remainder))
+			fmt.Printf(CursorBOL + cursorRightN(b.PromptSize()+remainder))
 		} else {
-			fmt.Printf(fmt.Sprintf(CursorRightN, b.Size()-b.Pos))
+			fmt.Printf(cursorRightN(b.Size() - b.Pos))
 		}
 
 		b.Pos = b.Size()
@@ -179,7 +179,7 @@ func (b *Buffer) drawRemaining() {
 	currLine := remainingText[:min(b.LineWidth-place, len(remainingText))]
 	if len(currLine) > 0 {
 		fmt.Printf(ClearToEOL + currLine)
-		fmt.Printf(fmt.Sprintf(CursorLeftN, len(currLine)))
+		fmt.Printf(cursorLeftN(len(currLine)))
 	} else {
 		fmt.Printf(ClearToEOL)
 	}
@@ -196,8 +196,8 @@ func (b *Buffer) drawRemaining() {
 			fmt.Printf("%c", c)
 		}
 		fmt.Printf(ClearToEOL)
-		fmt.Printf(fmt.Sprintf(CursorUpN, totalLines))
-		fmt.Printf(CursorBOL + fmt.Sprintf(CursorRightN, b.Width-len(currLine)))
+		fmt.Printf(cursorUpN(totalLines))
+		fmt.Printf(CursorBOL + cursorRightN(b.Width-len(currLine)))
 	}
 
 	fmt.Printf(CursorShow)
@@ -209,7 +209,7 @@ func (b *Buffer) Remove() {
 			// if the user backspaces over the word boundary, do this magic to clear the line
 			// and move to the end of the previous line
 			fmt.Printf(CursorBOL + ClearToEOL)
-			fmt.Printf(CursorUp + CursorBOL + fmt.Sprintf(CursorRightN, b.Width) + " " + CursorLeft)
+			fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width) + " " + CursorLeft)
 		} else {
 			fmt.Printf(CursorLeft + " " + CursorLeft)
 		}
@@ -228,9 +228,9 @@ func (b *Buffer) Remove() {
 			// are trailing characters which go over the line width boundary
 			if eraseExtraLine {
 				remainingLines := (b.Size() - b.Pos) / b.LineWidth
-				fmt.Printf(fmt.Sprintf(CursorDownN, remainingLines+1) + CursorBOL + ClearToEOL)
+				fmt.Printf(cursorDownN(remainingLines+1) + CursorBOL + ClearToEOL)
 				place := b.Pos % b.LineWidth
-				fmt.Printf(fmt.Sprintf(CursorUpN, remainingLines+1) + fmt.Sprintf(CursorRightN, place+len(b.Prompt.Prompt)))
+				fmt.Printf(cursorUpN(remainingLines+1) + cursorRightN(place+len(b.Prompt.Prompt)))
 			}
 		}
 	}
@@ -245,9 +245,9 @@ func (b *Buffer) Delete() {
 				fmt.Printf(CursorRight)
 			} else {
 				remainingLines := (b.Size() - b.Pos) / b.LineWidth
-				fmt.Printf(fmt.Sprintf(CursorDownN, remainingLines+1) + CursorBOL + ClearToEOL)
+				fmt.Printf(cursorDownN(remainingLines+1) + CursorBOL + ClearToEOL)
 				place := b.Pos % b.LineWidth
-				fmt.Printf(fmt.Sprintf(CursorUpN, remainingLines+1) + fmt.Sprintf(CursorRightN, place+len(b.Prompt.Prompt)))
+				fmt.Printf(cursorUpN(remainingLines+1) + cursorRightN(place+len(b.Prompt.Prompt)))
 			}
 		}
 	}
@@ -297,12 +297,12 @@ func (b *Buffer) ClearScreen() {
 	fmt.Printf(ClearScreen + CursorReset + b.Prompt.Prompt)
 	if b.IsEmpty() {
 		ph := b.Prompt.Placeholder
-		fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
+		fmt.Printf(ColorGrey + ph + cursorLeftN(len(ph)) + ColorDefault)
 	} else {
 		currPos := b.Pos
 		b.Pos = 0
 		b.drawRemaining()
-		fmt.Printf(CursorReset + fmt.Sprintf(CursorRightN, len(b.Prompt.Prompt)))
+		fmt.Printf(CursorReset + cursorRightN(len(b.Prompt.Prompt)))
 		if currPos > 0 {
 			targetLine := currPos / b.LineWidth
 			if targetLine > 0 {
@@ -312,7 +312,7 @@ func (b *Buffer) ClearScreen() {
 			}
 			remainder := currPos % b.LineWidth
 			if remainder > 0 {
-				fmt.Printf(fmt.Sprintf(CursorRightN, remainder))
+				fmt.Printf(cursorRightN(remainder))
 			}
 			if currPos%b.LineWidth == 0 {
 				fmt.Printf(CursorBOL + b.Prompt.AltPrompt)
@@ -353,4 +353,20 @@ func (b *Buffer) StringNM(n, m int) string {
 		s += string(c.(rune))
 	}
 	return s
+}
+
+func cursorLeftN(n int) string {
+	return fmt.Sprintf(CursorLeftN, n)
+}
+
+func cursorRightN(n int) string {
+	return fmt.Sprintf(CursorRightN, n)
+}
+
+func cursorUpN(n int) string {
+	return fmt.Sprintf(CursorUpN, n)
+}
+
+func cursorDownN(n int) string {
+	return fmt.Sprintf(CursorDownN, n)
 }

@@ -46,7 +46,7 @@ func (h *History) Init() error {
 	h.Filename = path
 
 	//todo check if the file exists
-	f, err := os.OpenFile(path, os.O_RDONLY, 0666)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0600)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil

@@ -529,12 +529,11 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
 		Placeholder:    "Send a message (/? for help)",
-		AltPlaceholder: "Use \"\"\" to end multi-line input",
+		AltPlaceholder: `Use """ to end multi-line input`,
 	}
 
 	scanner, err := readline.New(prompt)
 	if err != nil {
-		fmt.Println(err)
 		return err
 	}
 	defer scanner.Close()
