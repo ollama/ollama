@@ -123,7 +123,8 @@
 
 		blocks.forEach((block) => {
 			// only add button if browser supports Clipboard API
-			if (navigator.clipboard) {
+
+			if (navigator.clipboard && block.childNodes.length < 2) {
 				let button = document.createElement('button');
 
 				button.innerText = 'Copy Code';
@@ -380,6 +381,7 @@
 								responseMessage.context = data.context;
 								messages = messages;
 								hljs.highlightAll();
+								createCopyCodeBlockButton();
 							}
 						}
 					}
@@ -477,6 +479,7 @@
 								responseMessage.context = data.context;
 								messages = messages;
 								hljs.highlightAll();
+								createCopyCodeBlockButton();
 							}
 						}
 					}
@@ -661,7 +664,7 @@
 											</div>
 										{:else}
 											<div
-												class="prose prose-invert prose-headings:my-0 prose-p:my-0 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-2 prose-ol:-my-2 prose-li:-my-2 whitespace-pre-line"
+												class="prose max-w-full prose-invert prose-headings:my-0 prose-p:my-0 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-2 prose-ol:-my-2 prose-li:-my-2 whitespace-pre-line"
 											>
 												{@html marked.parse(message.content)}
 											</div>
