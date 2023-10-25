@@ -1,13 +1,14 @@
 <script lang="ts">
 	import Modal from '../common/Modal.svelte';
 
-	import { API_BASE_URL } from '$lib/constants';
+	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
 
 	export let show = false;
 	export let saveSettings: Function;
 	export let getModelTags: Function;
 
+	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
 	let system = '';
 	let temperature = 0.8;
 
@@ -31,6 +32,22 @@
 				if (buffer) controller.enqueue(buffer);
 			}
 		});
+	};
+
+	const checkOllamaConnection = async () => {
+		if (API_BASE_URL === '') {
+			API_BASE_URL = BUILD_TIME_API_BASE_URL;
+		}
+		const res = await getModelTags(API_BASE_URL);
+
+		if (res) {
+			toast.success('Server connection verified');
+			saveSettings(
+				API_BASE_URL,
+				system != '' ? system : null,
+				temperature != 0.8 ? temperature : null
+			);
+		}
 	};
 
 	const pullModelHandler = async () => {
@@ -139,6 +156,7 @@
 
 	$: if (show) {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
 		system = settings.system ?? '';
 		temperature = settings.temperature ?? 0.8;
 	}
@@ -228,6 +246,50 @@
 				{#if selectedMenu === 'general'}
 					<div class="flex flex-col space-y-3">
 						<div>
+							<div class=" mb-2.5 text-sm font-medium">Ollama Server URL</div>
+							<div class="flex w-full">
+								<div class="flex-1 mr-2">
+									<input
+										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+										placeholder="Enter URL (e.g. http://localhost:11434/api)"
+										bind:value={API_BASE_URL}
+									/>
+								</div>
+								<button
+									class="px-3 bg-gray-600 hover:bg-gray-700 rounded transition"
+									on:click={() => {
+										checkOllamaConnection();
+									}}
+								>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 20 20"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											fill-rule="evenodd"
+											d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
+											clip-rule="evenodd"
+										/>
+									</svg>
+								</button>
+							</div>
+
+							<div class="mt-2 text-xs text-gray-500">
+								Trouble accessing Ollama? <a
+									class=" text-gray-300 font-medium"
+									href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
+									target="_blank"
+								>
+									Click here for help.
+								</a>
+							</div>
+						</div>
+
+						<hr class=" border-gray-700" />
+
+						<div>
 							<div class=" mb-2.5 text-sm font-medium">System Prompt</div>
 							<textarea
 								bind:value={system}
@@ -260,6 +322,7 @@
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
 								on:click={() => {
 									saveSettings(
+										API_BASE_URL === '' ? BUILD_TIME_API_BASE_URL : API_BASE_URL,
 										system != '' ? system : null,
 										temperature != 0.8 ? temperature : null
 									);
@@ -305,11 +368,11 @@
 							</div>
 
 							<div class="mt-2 text-xs text-gray-500">
-								To access the available model names for downloading, click <a
+								To access the available model names for downloading, <a
 									class=" text-gray-300 font-medium"
 									href="https://ollama.ai/library"
-									target="_blank">here</a
-								>.
+									target="_blank">click here.</a
+								>
 							</div>
 
 							{#if pullProgress !== ''}

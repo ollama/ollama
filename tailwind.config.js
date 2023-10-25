@@ -17,8 +17,19 @@ export default {
 					900: '#202123',
 					950: '#050509'
 				}
+			},
+			typography: {
+				DEFAULT: {
+					css: {
+						pre: false,
+						code: false,
+						'pre code': false,
+						'code::before': false,
+						'code::after': false
+					}
+				}
 			}
 		}
 	},
-	plugins: []
+	plugins: [require('@tailwindcss/typography')]
 };
