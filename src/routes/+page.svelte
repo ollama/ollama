@@ -27,7 +27,7 @@
 
 	let chats = [];
 	let chatId = uuidv4();
-	let title = ``;
+	let title = '';
 	let prompt = '';
 	let messages = [];
 
@@ -116,6 +116,40 @@
 		);
 	};
 
+	const createCopyCodeBlockButton = () => {
+		// use a class selector if available
+		let blocks = document.querySelectorAll('pre');
+		console.log(blocks);
+
+		blocks.forEach((block) => {
+			// only add button if browser supports Clipboard API
+			if (navigator.clipboard) {
+				let button = document.createElement('button');
+
+				button.innerText = 'Copy Code';
+				block.appendChild(button);
+
+				button.addEventListener('click', async () => {
+					await copyCode(block, button);
+				});
+			}
+		});
+
+		async function copyCode(block, button) {
+			let code = block.querySelector('code');
+			let text = code.innerText;
+
+			await navigator.clipboard.writeText(text);
+
+			// visual feedback that task is completed
+			button.innerText = 'Code Copied';
+
+			setTimeout(() => {
+				button.innerText = 'Copy Code';
+			}, 700);
+		}
+	};
+
 	//////////////////////////
 	// Web functions
 	//////////////////////////
@@ -176,12 +210,18 @@
 
 	const loadChat = async (id) => {
 		const chat = await db.get('chats', id);
-		messages = chat.messages;
-		title = chat.title;
-		chatId = chat.id;
-		selectedModel = chat.model ?? selectedModel;
-		system = chat.system ?? system;
-		temperature = chat.temperature ?? temperature;
+		if (chatId !== chat.id) {
+			messages = chat.messages;
+			title = chat.title;
+			chatId = chat.id;
+			selectedModel = chat.model ?? selectedModel;
+			system = chat.system ?? system;
+			temperature = chat.temperature ?? temperature;
+
+			await tick();
+			hljs.highlightAll();
+			createCopyCodeBlockButton();
+		}
 	};
 
 	const deleteChatHistory = async () => {
@@ -347,24 +387,25 @@
 					console.log(error);
 				}
 				window.scrollTo({ top: document.body.scrollHeight });
+
+				await db.put('chats', {
+					id: chatId,
+					title: title === '' ? 'New Chat' : title,
+					model: selectedModel,
+					system: system,
+					options: {
+						temperature: temperature
+					},
+					timestamp: Date.now(),
+					messages: messages
+				});
 			}
 
 			window.scrollTo({ top: document.body.scrollHeight });
 
 			if (messages.length == 2) {
-				await generateTitle(user_prompt);
+				await generateTitle(chatId, user_prompt);
 			}
-			await db.put('chats', {
-				id: chatId,
-				title: title,
-				model: selectedModel,
-				system: system,
-				options: {
-					temperature: temperature
-				},
-				timestamp: Date.now(),
-				messages: messages
-			});
 			chats = await db.getAllFromIndex('chats', 'timestamp');
 		}
 	};
@@ -448,7 +489,7 @@
 			window.scrollTo({ top: document.body.scrollHeight });
 			await db.put('chats', {
 				id: chatId,
-				title: title,
+				title: title === '' ? 'New Chat' : title,
 				model: selectedModel,
 				system: system,
 				options: {
@@ -463,7 +504,7 @@
 		console.log(messages);
 	};
 
-	const generateTitle = async (user_prompt) => {
+	const generateTitle = async (_chatId, user_prompt) => {
 		console.log('generateTitle');
 
 		const res = await fetch(`${API_BASE_URL}/generate`, {
@@ -488,7 +529,11 @@
 
 		if (res) {
 			console.log(res);
-			title = res.response;
+			const chat = await db.get('chats', _chatId);
+			await db.put('chats', { ...chat, title: res.response === '' ? 'New Chat' : res.response });
+			if (chat.id === chatId) {
+				title = res.response;
+			}
 		}
 	};
 </script>
@@ -615,7 +660,9 @@
 												</div>
 											</div>
 										{:else}
-											<div class="whitespace-pre-line">
+											<div
+												class="prose prose-invert prose-headings:my-0 prose-p:my-0 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-2 prose-ol:-my-2 prose-li:-my-2 whitespace-pre-line"
+											>
 												{@html marked.parse(message.content)}
 											</div>
 										{/if}
@@ -868,5 +915,34 @@
 		to {
 			clip-path: inset(0 -1ch 0 0);
 		}
+	}
+
+	pre[class*='language-'] {
+		position: relative;
+		overflow: auto;
+
+		/* make space  */
+		margin: 5px 0;
+		padding: 1.75rem 0 1.75rem 1rem;
+		border-radius: 10px;
+	}
+
+	pre[class*='language-'] button {
+		position: absolute;
+		top: 5px;
+		right: 5px;
+
+		font-size: 0.9rem;
+		padding: 0.15rem;
+		background-color: #828282;
+
+		border: ridge 1px #7b7b7c;
+		border-radius: 5px;
+		text-shadow: #c4c4c4 0 0 2px;
+	}
+
+	pre[class*='language-'] button:hover {
+		cursor: pointer;
+		background-color: #bcbabb;
 	}
 </style>
