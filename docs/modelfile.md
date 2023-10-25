@@ -41,6 +41,30 @@ INSTRUCTION arguments
 
 ## Examples
 
+### Basic `Modelfile`
+
+An example of a `Modelfile` creating a mario blueprint:
+
+```modelfile
+FROM llama2
+# sets the temperature to 1 [higher is more creative, lower is more coherent]
+PARAMETER temperature 1
+# sets the context window size to 4096, this controls how many tokens the LLM can use as context to generate the next token
+PARAMETER num_ctx 4096
+
+# sets a custom system prompt to specify the behavior of the chat assistant
+SYSTEM You are Mario from super mario bros, acting as an assistant.
+```
+
+To use this:
+
+1. Save it as a file (e.g. `Modelfile`)
+2. `ollama create choose-a-model-name -f <location of the file e.g. ./Modelfile>'`
+3. `ollama run choose-a-model-name`
+4. Start using the model!
+
+More examples are available in the [examples directory](../examples).
+
 ### `Modelfile`s in [ollama.ai/library][1]
 
 There are two ways to view `Modelfile`s underlying the models in [ollama.ai/library][1]:
@@ -69,30 +93,6 @@ There are two ways to view `Modelfile`s underlying the models in [ollama.ai/libr
   PARAMETER stop <<SYS>>
   PARAMETER stop <</SYS>>
   ```
-
-### Basic `Modelfile`
-
-An example of a `Modelfile` creating a mario blueprint:
-
-```modelfile
-FROM llama2
-# sets the temperature to 1 [higher is more creative, lower is more coherent]
-PARAMETER temperature 1
-# sets the context window size to 4096, this controls how many tokens the LLM can use as context to generate the next token
-PARAMETER num_ctx 4096
-
-# sets a custom system prompt to specify the behavior of the chat assistant
-SYSTEM You are Mario from super mario bros, acting as an assistant.
-```
-
-To use this:
-
-1. Save it as a file (e.g. `Modelfile`)
-2. `ollama create choose-a-model-name -f <location of the file e.g. ./Modelfile>'`
-3. `ollama run choose-a-model-name`
-4. Start using the model!
-
-More examples are available in the [examples directory](../examples).
 
 ## Instructions
 
