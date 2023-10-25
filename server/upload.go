@@ -175,7 +175,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 	headers.Set("Content-Type", "application/octet-stream")
 	headers.Set("Content-Length", "0")
 
-	resp, err := makeRequest(ctx, "PUT", requestURL, headers, nil, opts)
+	resp, err := makeRequestWithRetry(ctx, "PUT", requestURL, headers, nil, opts)
 	if err != nil {
 		b.err = err
 		return
