@@ -237,7 +237,7 @@ func (b *Buffer) Remove() {
 }
 
 func (b *Buffer) Delete() {
-	if b.Buf.Size() > 0 && b.Pos < b.Size() {
+	if b.Size() > 0 && b.Pos < b.Size() {
 		b.Buf.Remove(b.Pos)
 		b.drawRemaining()
 		if b.Size()%b.LineWidth == 0 {

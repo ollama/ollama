@@ -598,9 +598,9 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			if len(args) > 1 {
 				switch args[1] {
 				case "history":
-					//scanner.HistoryEnable()
+					scanner.HistoryEnable()
 				case "nohistory":
-					//scanner.HistoryDisable()
+					scanner.HistoryDisable()
 				case "wordwrap":
 					wordWrap = true
 					fmt.Println("Set 'wordwrap' mode.")

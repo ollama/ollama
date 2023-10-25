@@ -198,6 +198,14 @@ func (i *Instance) Close() error {
 	return i.Terminal.Close()
 }
 
+func (i *Instance) HistoryEnable() {
+	i.History.Enabled = true
+}
+
+func (i *Instance) HistoryDisable() {
+	i.History.Enabled = false
+}
+
 func NewTerminal() (*Terminal, error) {
 	t := &Terminal{
 		outchan: make(chan rune),

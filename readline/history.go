@@ -17,6 +17,7 @@ type History struct {
 	Pos      int
 	Limit    int
 	Filename string
+	Enabled  bool
 }
 
 func NewHistory() (*History, error) {
@@ -24,6 +25,7 @@ func NewHistory() (*History, error) {
 		Buf:      arraylist.New(),
 		Limit:    100, //resizeme
 		Autosave: true,
+		Enabled:  true,
 	}
 
 	err := h.Init()
@@ -121,6 +123,10 @@ func (h *History) Size() int {
 }
 
 func (h *History) Save() error {
+	if !h.Enabled {
+		return nil
+	}
+
 	tmpFile := h.Filename + ".tmp"
 
 	f, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_APPEND, 0666)
