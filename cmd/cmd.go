@@ -22,7 +22,6 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/tablewriter"
-	"github.com/pdevine/readline"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
@@ -30,29 +29,10 @@ import (
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/progressbar"
+	"github.com/jmorganca/ollama/readline"
 	"github.com/jmorganca/ollama/server"
 	"github.com/jmorganca/ollama/version"
 )
-
-type Painter struct {
-	IsMultiLine bool
-}
-
-func (p Painter) Paint(line []rune, _ int) []rune {
-	termType := os.Getenv("TERM")
-	if termType == "xterm-256color" && len(line) == 0 {
-		var prompt string
-		if p.IsMultiLine {
-			prompt = "Use \"\"\" to end multi-line input"
-		} else {
-			prompt = "Send a message (/? for help)"
-		}
-		return []rune(fmt.Sprintf("\033[38;5;245m%s\033[%dD\033[0m", prompt, len(prompt)))
-	}
-	// add a space and a backspace to prevent the cursor from walking up the screen
-	line = append(line, []rune(" \b")...)
-	return line
-}
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
@@ -508,37 +488,10 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool) error {
 }
 
 func generateInteractive(cmd *cobra.Command, model string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
 	// load the model
 	if err := generate(cmd, model, "", false); err != nil {
 		return err
 	}
-
-	completer := readline.NewPrefixCompleter(
-		readline.PcItem("/help"),
-		readline.PcItem("/list"),
-		readline.PcItem("/set",
-			readline.PcItem("history"),
-			readline.PcItem("nohistory"),
-			readline.PcItem("wordwrap"),
-			readline.PcItem("nowordwrap"),
-			readline.PcItem("verbose"),
-			readline.PcItem("quiet"),
-		),
-		readline.PcItem("/show",
-			readline.PcItem("license"),
-			readline.PcItem("modelfile"),
-			readline.PcItem("parameters"),
-			readline.PcItem("system"),
-			readline.PcItem("template"),
-		),
-		readline.PcItem("/exit"),
-		readline.PcItem("/bye"),
-	)
 
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
@@ -572,16 +525,14 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		fmt.Fprintln(os.Stderr, "")
 	}
 
-	var painter Painter
-
-	config := readline.Config{
-		Painter:      &painter,
-		Prompt:       ">>> ",
-		HistoryFile:  filepath.Join(home, ".ollama", "history"),
-		AutoComplete: completer,
+	prompt := readline.Prompt{
+		Prompt:         ">>> ",
+		AltPrompt:      "... ",
+		Placeholder:    "Send a message (/? for help)",
+		AltPlaceholder: `Use """ to end multi-line input`,
 	}
 
-	scanner, err := readline.NewEx(&config)
+	scanner, err := readline.New(prompt)
 	if err != nil {
 		return err
 	}
@@ -603,7 +554,6 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	}
 
 	var multiLineBuffer string
-	var isMultiLine bool
 
 	for {
 		line, err := scanner.Readline()
@@ -612,7 +562,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			return nil
 		case errors.Is(err, readline.ErrInterrupt):
 			if line == "" {
-				fmt.Println("Use Ctrl-D or /bye to exit.")
+				fmt.Println("\nUse Ctrl-D or /bye to exit.")
 			}
 
 			continue
@@ -623,23 +573,19 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		line = strings.TrimSpace(line)
 
 		switch {
-		case isMultiLine:
+		case scanner.Prompt.UseAlt:
 			if strings.HasSuffix(line, `"""`) {
-				isMultiLine = false
-				painter.IsMultiLine = isMultiLine
+				scanner.Prompt.UseAlt = false
 				multiLineBuffer += strings.TrimSuffix(line, `"""`)
 				line = multiLineBuffer
 				multiLineBuffer = ""
-				scanner.SetPrompt(">>> ")
 			} else {
 				multiLineBuffer += line + " "
 				continue
 			}
 		case strings.HasPrefix(line, `"""`):
-			isMultiLine = true
-			painter.IsMultiLine = isMultiLine
+			scanner.Prompt.UseAlt = true
 			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
-			scanner.SetPrompt("... ")
 			continue
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
@@ -666,19 +612,6 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				case "quiet":
 					cmd.Flags().Set("verbose", "false")
 					fmt.Println("Set 'quiet' mode.")
-				case "mode":
-					if len(args) > 2 {
-						switch args[2] {
-						case "vim":
-							scanner.SetVimMode(true)
-						case "emacs", "default":
-							scanner.SetVimMode(false)
-						default:
-							usage()
-						}
-					} else {
-						usage()
-					}
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
