@@ -298,5 +298,4 @@ if ! lsmod | grep -q nvidia; then
     $SUDO modprobe nvidia
 fi
 
-# All done. Notify that the NVIDIA CUDA drivers have been successfully installed.
 status "NVIDIA CUDA drivers installed."
