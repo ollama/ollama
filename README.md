@@ -88,7 +88,7 @@ See the [guide](docs/import.md) on importing models for more information.
 
 ### Customize a prompt
 
-Models from the Ollama library can be customized with a prompt. The example
+Models from the Ollama library can be customized with a prompt. For example, to customize the `llama2` model:
 
 ```
 ollama pull llama2
