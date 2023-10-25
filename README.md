@@ -179,8 +179,7 @@ ollama list
 Install `cmake` and `go`:
 
 ```
-brew install cmake
-brew install go
+brew install cmake go
 ```
 
 Then generate dependencies and build:
