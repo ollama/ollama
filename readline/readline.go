@@ -65,8 +65,7 @@ func (i *Instance) Readline() (string, error) {
 	var esc bool
 	var escex bool
 	var metaDel bool
-	var bracketedPaste bool
-	var ignoreEnter bool
+	var pasteMode PasteMode
 
 	var currentLineBuf []rune
 
@@ -111,7 +110,16 @@ func (i *Instance) Readline() (string, error) {
 			case KeyRight:
 				buf.MoveRight()
 			case CharBracketedPaste:
-				bracketedPaste = true
+				var code string
+				for cnt := 0; cnt < 3; cnt++ {
+					r = i.Terminal.ReadRune()
+					code += string(r)
+				}
+				if code == CharBracketedPasteStart {
+					pasteMode = PasteModeStart
+				} else if code == CharBracketedPasteEnd {
+					pasteMode = PasteModeEnd
+				}
 			case KeyDel:
 				if buf.Size() > 0 {
 					buf.Delete()
@@ -141,10 +149,6 @@ func (i *Instance) Readline() (string, error) {
 		}
 
 		switch r {
-		case CharBracketedPasteStart:
-			if bracketedPaste {
-				ignoreEnter = true
-			}
 		case CharEsc:
 			esc = true
 		case CharInterrupt:
@@ -179,16 +183,19 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharEnter:
-			if !ignoreEnter {
-				output := buf.String()
-				if output != "" {
-					i.History.Add([]rune(output))
-				}
-				buf.MoveToEnd()
-				fmt.Println()
-				return output, nil
+			output := buf.String()
+			if output != "" {
+				i.History.Add([]rune(output))
 			}
-			fallthrough
+			buf.MoveToEnd()
+			fmt.Println()
+			switch pasteMode {
+			case PasteModeStart:
+				output = `"""` + output
+			case PasteModeEnd:
+				output = output + `"""`
+			}
+			return output, nil
 		default:
 			if metaDel {
 				metaDel = false

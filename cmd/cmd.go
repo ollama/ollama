@@ -553,6 +553,9 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		wordWrap = false
 	}
 
+	fmt.Print(readline.StartBracketedPaste)
+	defer fmt.Printf(readline.EndBracketedPaste)
+
 	var multiLineBuffer string
 
 	for {
