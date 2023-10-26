@@ -85,9 +85,9 @@ func (mp ModelPath) GetShortTagname() string {
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
-// ModelsDir returns the value of the OLLAMA_MODELS environment variable or the user's home directory if OLLAMA_MODELS is not set.
+// modelsDir returns the value of the OLLAMA_MODELS environment variable or the user's home directory if OLLAMA_MODELS is not set.
 // The models directory is where Ollama stores its model files and manifests.
-func ModelsDir() (string, error) {
+func modelsDir() (string, error) {
 	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
 		return models, nil
 	}
@@ -100,7 +100,7 @@ func ModelsDir() (string, error) {
 
 // GetManifestPath returns the path to the manifest file for the given model path, it is up to the caller to create the directory if it does not exist.
 func (mp ModelPath) GetManifestPath() (string, error) {
-	dir, err := ModelsDir()
+	dir, err := modelsDir()
 	if err != nil {
 		return "", err
 	}
@@ -116,7 +116,7 @@ func (mp ModelPath) BaseURL() *url.URL {
 }
 
 func GetManifestPath() (string, error) {
-	dir, err := ModelsDir()
+	dir, err := modelsDir()
 	if err != nil {
 		return "", err
 	}
@@ -130,7 +130,7 @@ func GetManifestPath() (string, error) {
 }
 
 func GetBlobsPath(digest string) (string, error) {
-	dir, err := ModelsDir()
+	dir, err := modelsDir()
 	if err != nil {
 		return "", err
 	}

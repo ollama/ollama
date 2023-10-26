@@ -63,4 +63,4 @@ systemctl restart ollama
 
 ### How can I change where Ollama stores models?
 
-To modify where models are stored, you can use the `OLLAMA_MODELS` environment variable. Note that on Linux this means defining `OLLAMA_MODELS` in the `/etc/systemd/system/ollama.service` service file.
+To modify where models are stored, you can use the `OLLAMA_MODELS` environment variable. Note that on Linux this means defining `OLLAMA_MODELS` in a drop-in `/etc/systemd/system/ollama.service.d` service file, reloading systemd, and restarting the ollama service.
