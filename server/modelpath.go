@@ -98,6 +98,7 @@ func ModelsDir() (string, error) {
 	return filepath.Join(home, ".ollama", "models"), nil
 }
 
+// GetManifestPath returns the path to the manifest file for the given model path, it is up to the caller to create the directory if it does not exist.
 func (mp ModelPath) GetManifestPath() (string, error) {
 	dir, err := ModelsDir()
 	if err != nil {
