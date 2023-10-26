@@ -204,7 +204,6 @@ Finally, in a separate shell, run a model:
 ## REST API
 
 Ollama has a REST API for running and managing models.
-Ollama's API is not compliant with OpenAI's API spec.
 For example, to generate text from a model:
 
 ```
