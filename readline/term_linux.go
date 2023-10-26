@@ -1,3 +1,4 @@
+//go:build linux || solaris
 package readline
 
 import (
