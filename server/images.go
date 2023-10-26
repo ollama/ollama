@@ -131,7 +131,7 @@ func (m *ManifestV2) GetTotalSize() (total int64) {
 }
 
 func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
-	fp, err := mp.GetManifestPath(false)
+	fp, err := mp.GetManifestPath()
 	if err != nil {
 		return nil, "", err
 	}
@@ -595,8 +595,11 @@ func CreateManifest(name string, cfg *LayerReader, layers []*Layer) error {
 		return err
 	}
 
-	fp, err := mp.GetManifestPath(true)
+	fp, err := mp.GetManifestPath()
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(fp, manifestJSON, 0o644)
@@ -710,14 +713,17 @@ func CreateLayer(f io.ReadSeeker) (*LayerReader, error) {
 
 func CopyModel(src, dest string) error {
 	srcModelPath := ParseModelPath(src)
-	srcPath, err := srcModelPath.GetManifestPath(false)
+	srcPath, err := srcModelPath.GetManifestPath()
 	if err != nil {
 		return err
 	}
 
 	destModelPath := ParseModelPath(dest)
-	destPath, err := destModelPath.GetManifestPath(true)
+	destPath, err := destModelPath.GetManifestPath()
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return err
 	}
 
@@ -882,7 +888,7 @@ func DeleteModel(name string) error {
 		return err
 	}
 
-	fp, err := mp.GetManifestPath(false)
+	fp, err := mp.GetManifestPath()
 	if err != nil {
 		return err
 	}
@@ -1121,8 +1127,11 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 		return err
 	}
 
-	fp, err := mp.GetManifestPath(true)
+	fp, err := mp.GetManifestPath()
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
 		return err
 	}
 

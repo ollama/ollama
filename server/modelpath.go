@@ -89,17 +89,6 @@ func (mp ModelPath) GetShortTagname() string {
 // The models directory is where Ollama stores its model files and manifests.
 func ModelsDir() (string, error) {
 	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
-		dir, err := os.Stat(models)
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			return "", fmt.Errorf("OLLAMA_MODELS is set to %q but that directory does not exist", models)
-		case errors.Is(err, os.ErrPermission):
-			return "", fmt.Errorf("OLLAMA_MODELS is set to %q but that directory is not accessible", models)
-		case err != nil:
-			return "", fmt.Errorf("failed to validate OLLAMA_MODELS directory %q: %w", models, err)
-		case !dir.IsDir():
-			return "", fmt.Errorf("OLLAMA_MODELS is set to %q but that is not a directory", models)
-		}
 		return models, nil
 	}
 	home, err := os.UserHomeDir()
@@ -109,20 +98,13 @@ func ModelsDir() (string, error) {
 	return filepath.Join(home, ".ollama", "models"), nil
 }
 
-func (mp ModelPath) GetManifestPath(createDir bool) (string, error) {
+func (mp ModelPath) GetManifestPath() (string, error) {
 	dir, err := ModelsDir()
 	if err != nil {
 		return "", err
 	}
 
-	path := filepath.Join(dir, "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
-	if createDir {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return "", err
-		}
-	}
-
-	return path, nil
+	return filepath.Join(dir, "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag), nil
 }
 
 func (mp ModelPath) BaseURL() *url.URL {
