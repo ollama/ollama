@@ -212,6 +212,10 @@ func CheckVRAM() (int64, error) {
 	scanner := bufio.NewScanner(&stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
+		if strings.Contains(line, "[Insufficient Permissions]") {
+			return 0, fmt.Errorf("GPU support may not enabled, check you have installed GPU drivers and have the necessary permissions to run nvidia-smi")
+		}
+
 		vram, err := strconv.ParseInt(strings.TrimSpace(line), 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
