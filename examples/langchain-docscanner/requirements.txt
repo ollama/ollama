@@ -1,0 +1,10 @@
+langchain
+pypdf
+chromadb
+tiktoken
+docx2txt
+unstructured
+gradio
+pillow
+matplotlib==1.5
+Numpy==1.23.5
