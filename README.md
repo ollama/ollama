@@ -29,7 +29,8 @@ curl https://ollama.ai/install.sh | sh
 
 ### Docker
 
-See the official [Docker image](https://hub.docker.com/r/ollama/ollama).
+The official [Ollama Docker image `ollama/ollama`](https://hub.docker.com/r/ollama/ollama)
+is available on Docker Hub.
 
 ## Quickstart
 
@@ -178,8 +179,7 @@ ollama list
 Install `cmake` and `go`:
 
 ```
-brew install cmake
-brew install go
+brew install cmake go
 ```
 
 Then generate dependencies and build:
@@ -203,9 +203,8 @@ Finally, in a separate shell, run a model:
 
 ## REST API
 
-See the [API documentation](docs/api.md) for all endpoints.
-
-Ollama has an API for running and managing models. For example to generate text from a model:
+Ollama has a REST API for running and managing models.
+For example, to generate text from a model:
 
 ```
 curl -X POST http://localhost:11434/api/generate -d '{
@@ -213,6 +212,8 @@ curl -X POST http://localhost:11434/api/generate -d '{
   "prompt":"Why is the sky blue?"
 }'
 ```
+
+See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
