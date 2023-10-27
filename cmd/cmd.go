@@ -98,20 +98,18 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	models, err := client.List(context.Background())
+	name := args[0]
+	// check if the model exists on the server
+	_, err = client.Show(context.Background(), &api.ShowRequest{Name: name})
 	if err != nil {
-		return err
-	}
-
-	canonicalModelPath := server.ParseModelPath(args[0])
-	for _, model := range models.Models {
-		if model.Name == canonicalModelPath.GetShortTagname() {
-			return RunGenerate(cmd, args)
+		if apiErr, ok := err.(api.StatusError); ok && apiErr.StatusCode == 404 {
+			// the model is not stored on the server, so we need to pull it
+			if err := PullHandler(cmd, args); err != nil {
+				return err
+			}
+		} else {
+			return err
 		}
-	}
-
-	if err := PullHandler(cmd, args); err != nil {
-		return err
 	}
 
 	return RunGenerate(cmd, args)
@@ -729,21 +727,6 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 	var origins []string
 	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
 		origins = strings.Split(o, ",")
-	}
-
-	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
-		if err := server.PruneLayers(); err != nil {
-			return err
-		}
-
-		manifestsPath, err := server.GetManifestPath()
-		if err != nil {
-			return err
-		}
-
-		if err := server.PruneDirectory(manifestsPath); err != nil {
-			return err
-		}
 	}
 
 	return server.Serve(ln, origins)
