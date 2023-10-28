@@ -4,16 +4,19 @@ import sys
 import os
 from collections.abc import Iterable
 
-from langchain.document_loaders import PyPDFLoader
-from langchain.document_loaders import Docx2txtLoader
-from langchain.document_loaders import TextLoader
-from langchain.document_loaders import UnstructuredHTMLLoader
+from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader, UnstructuredHTMLLoader
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
 
 from langchain.chains import RetrievalQA
+
 from langchain.llms import Ollama
+
+from langchain.vectorstores import FAISS, Chroma
+
+from langchain.embeddings import GPT4AllEmbeddings, CacheBackedEmbeddings
+
+from langchain.storage import LocalFileStore#, RedisStore, UpstashRedisStore, InMemoryStore
 
 ollama = Ollama(base_url='http://localhost:11434',
 #model="codellama")
@@ -47,16 +50,22 @@ for file in os.listdir(docsUrl):
         print("Found " + htm_path)        
 
 
-text_splitter = CharacterTextSplitter(chunk_size=2000, chunk_overlap=20)
+text_splitter = CharacterTextSplitter(chunk_size=32, chunk_overlap=32)
 all_splits = text_splitter.split_documents(documents)
 
-from langchain.embeddings import GPT4AllEmbeddings
-from langchain.vectorstores import Chroma
-vectorstore = Chroma.from_documents(documents=all_splits, embedding=GPT4AllEmbeddings())
+
+
+#fs = LocalFileStore("/home/gabriele/dev/cache/")
+
+#underlying_embeddings = GPT4AllEmbeddings()
+#cached_embedder = CacheBackedEmbeddings.from_bytes_store(
+#    underlying_embeddings, fs, namespace=underlying_embeddings.model
+#)
 
 
 
-
+vectorstore = Chroma.from_documents(documents=all_splits, embedding=GPT4AllEmbeddings(embeddings_chunk_size=1000))
+#vectorstore = FAISS.from_documents(documents=all_splits, embedding=cached_embedder)
 
 
 def AI_response(question, history):
