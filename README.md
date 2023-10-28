@@ -219,12 +219,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### UI
 #### GUI
-
-- [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
-- [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
-- [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
+- [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
+- [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Web UI](https://github.com/ollama-webui/ollama-webui)
 
 #### Terminal UI
@@ -236,6 +234,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LiteLLM](https://github.com/BerriAI/litellm)
+- [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 
 ### Plugins (Extensions)
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
