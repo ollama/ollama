@@ -76,12 +76,13 @@ func (i *Instance) Readline() (string, error) {
 		}
 
 		r, err := i.Terminal.Read()
-		if err != nil {
-			return "", io.EOF
-		}
 
 		if buf.IsEmpty() {
 			fmt.Print(ClearToEOL)
+		}
+
+		if err != nil {
+			return "", io.EOF
 		}
 
 		if escex {

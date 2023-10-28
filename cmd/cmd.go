@@ -561,6 +561,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		line, err := scanner.Readline()
 		switch {
 		case errors.Is(err, io.EOF):
+			fmt.Println()
 			return nil
 		case errors.Is(err, readline.ErrInterrupt):
 			if line == "" {
