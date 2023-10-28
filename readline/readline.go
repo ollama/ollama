@@ -211,10 +211,6 @@ func (i *Instance) Readline() (string, error) {
 	}
 }
 
-func (i *Instance) Close() {
-	i.Terminal.Close()
-}
-
 func (i *Instance) HistoryEnable() {
 	i.History.Enabled = true
 }
@@ -239,6 +235,7 @@ func (t *Terminal) ioloop() {
 	for {
 		r, _, err := buf.ReadRune()
 		if err != nil {
+			close(t.outchan)
 			break
 		}
 		t.outchan <- r
@@ -252,8 +249,4 @@ func (t *Terminal) Read() (rune, error) {
 	}
 
 	return r, nil
-}
-
-func (t *Terminal) Close() {
-	close(t.outchan)
 }

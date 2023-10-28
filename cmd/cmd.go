@@ -536,7 +536,6 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	if err != nil {
 		return err
 	}
-	defer scanner.Close()
 
 	var wordWrap bool
 	termType := os.Getenv("TERM")
