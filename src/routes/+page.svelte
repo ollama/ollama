@@ -1,5 +1,4 @@
 <script lang="ts">
-	import toast from 'svelte-french-toast';
 	import { openDB, deleteDB } from 'idb';
 	import { v4 as uuidv4 } from 'uuid';
 	import { marked } from 'marked';
@@ -7,9 +6,12 @@
 	const { saveAs } = fileSaver;
 	import hljs from 'highlight.js';
 	import 'highlight.js/styles/github-dark.min.css';
+	import katex from 'katex';
+	import auto_render from 'katex/dist/contrib/auto-render.mjs';
+	import toast from 'svelte-french-toast';
+
 	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
-
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 
@@ -151,6 +153,27 @@
 		}
 	};
 
+	const renderLatex = () => {
+		let chatMessageElements = document.getElementsByClassName('chat-assistant');
+		// let lastChatMessageElement = chatMessageElements[chatMessageElements.length - 1];
+
+		for (const element of chatMessageElements) {
+			auto_render(element, {
+				// customised options
+				// • auto-render specific keys, e.g.:
+				delimiters: [
+					{ left: '$$', right: '$$', display: true },
+					{ left: '$', right: '$', display: false },
+					{ left: '\\(', right: '\\)', display: false },
+					{ left: '\\[', right: '\\]', display: true }
+				],
+				// • rendering keys, e.g.:
+				throwOnError: false,
+				output: 'mathml'
+			});
+		}
+	};
+
 	//////////////////////////
 	// Web functions
 	//////////////////////////
@@ -222,6 +245,7 @@
 			await tick();
 			hljs.highlightAll();
 			createCopyCodeBlockButton();
+			renderLatex();
 		}
 	};
 
@@ -457,6 +481,7 @@
 								messages = messages;
 								hljs.highlightAll();
 								createCopyCodeBlockButton();
+								renderLatex();
 							}
 						}
 					}
@@ -555,6 +580,7 @@
 								messages = messages;
 								hljs.highlightAll();
 								createCopyCodeBlockButton();
+								renderLatex();
 							}
 						}
 					}
@@ -742,7 +768,7 @@
 											</div>
 										{:else}
 											<div
-												class="prose w-full max-w-full prose-invert prose-headings:my-0 prose-p:my-0 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-2 prose-ol:-my-2 prose-li:-my-2 whitespace-pre-line"
+												class="prose chat-{message.role} w-full max-w-full prose-invert prose-headings:my-0 prose-p:my-0 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-2 prose-ol:-my-2 prose-li:-my-2 whitespace-pre-line"
 											>
 												{#if message.role == 'user'}
 													{#if message?.edit === true}
@@ -1090,6 +1116,8 @@
 				</div>
 			</div>
 		</div>
+
+		<div class=" hidden katex" />
 
 		<!-- <main class="w-full flex justify-center">
 			<div class="max-w-lg w-screen p-5" />

@@ -9,6 +9,10 @@ html {
 	word-break: break-word;
 }
 
+math {
+	margin-top: 1rem;
+}
+
 .hljs {
 	@apply rounded-lg;
 }
