@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 	"syscall"
 )
 
@@ -18,8 +17,6 @@ type Prompt struct {
 }
 
 type Terminal struct {
-	m       sync.Mutex
-	wg      sync.WaitGroup
 	outchan chan rune
 }
 
@@ -52,7 +49,7 @@ func (i *Instance) Readline() (string, error) {
 	if i.Prompt.UseAlt {
 		prompt = i.Prompt.AltPrompt
 	}
-	fmt.Printf(prompt)
+	fmt.Print(prompt)
 
 	termios, err := SetRawMode(syscall.Stdin)
 	if err != nil {
@@ -78,13 +75,13 @@ func (i *Instance) Readline() (string, error) {
 			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
 		}
 
-		r := i.Terminal.ReadRune()
-		if buf.IsEmpty() {
-			fmt.Printf(ClearToEOL)
+		r, err := i.Terminal.Read()
+		if err != nil {
+			return "", io.EOF
 		}
 
-		if r == 0 { // io.EOF
-			break
+		if buf.IsEmpty() {
+			fmt.Print(ClearToEOL)
 		}
 
 		if escex {
@@ -112,7 +109,11 @@ func (i *Instance) Readline() (string, error) {
 			case CharBracketedPaste:
 				var code string
 				for cnt := 0; cnt < 3; cnt++ {
-					r = i.Terminal.ReadRune()
+					r, err = i.Terminal.Read()
+					if err != nil {
+						return "", io.EOF
+					}
+
 					code += string(r)
 				}
 				if code == CharBracketedPasteStart {
@@ -149,6 +150,8 @@ func (i *Instance) Readline() (string, error) {
 		}
 
 		switch r {
+		case CharNull:
+			continue
 		case CharEsc:
 			esc = true
 		case CharInterrupt:
@@ -206,11 +209,10 @@ func (i *Instance) Readline() (string, error) {
 			}
 		}
 	}
-	return "", nil
 }
 
-func (i *Instance) Close() error {
-	return i.Terminal.Close()
+func (i *Instance) Close() {
+	i.Terminal.Close()
 }
 
 func (i *Instance) HistoryEnable() {
@@ -240,22 +242,18 @@ func (t *Terminal) ioloop() {
 			break
 		}
 		t.outchan <- r
-		if r == 0 { // EOF
-			break
-		}
 	}
-
 }
 
-func (t *Terminal) ReadRune() rune {
+func (t *Terminal) Read() (rune, error) {
 	r, ok := <-t.outchan
 	if !ok {
-		return rune(0)
+		return 0, io.EOF
 	}
-	return r
+
+	return r, nil
 }
 
-func (t *Terminal) Close() error {
+func (t *Terminal) Close() {
 	close(t.outchan)
-	return nil
 }

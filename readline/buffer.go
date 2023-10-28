@@ -45,7 +45,7 @@ func (b *Buffer) MoveLeft() {
 		if b.Pos%b.LineWidth == 0 {
 			fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width))
 		} else {
-			fmt.Printf(CursorLeft)
+			fmt.Print(CursorLeft)
 		}
 		b.Pos -= 1
 	}
@@ -78,7 +78,7 @@ func (b *Buffer) MoveRight() {
 		if b.Pos%b.LineWidth == 0 {
 			fmt.Printf(CursorDown + CursorBOL + cursorRightN(b.PromptSize()))
 		} else {
-			fmt.Printf(CursorRight)
+			fmt.Print(CursorRight)
 		}
 	}
 }
@@ -104,7 +104,7 @@ func (b *Buffer) MoveToStart() {
 		currLine := b.Pos / b.LineWidth
 		if currLine > 0 {
 			for cnt := 0; cnt < currLine; cnt++ {
-				fmt.Printf(CursorUp)
+				fmt.Print(CursorUp)
 			}
 		}
 		fmt.Printf(CursorBOL + cursorRightN(b.PromptSize()))
@@ -118,12 +118,12 @@ func (b *Buffer) MoveToEnd() {
 		totalLines := b.Size() / b.LineWidth
 		if currLine < totalLines {
 			for cnt := 0; cnt < totalLines-currLine; cnt++ {
-				fmt.Printf(CursorDown)
+				fmt.Print(CursorDown)
 			}
 			remainder := b.Size() % b.LineWidth
 			fmt.Printf(CursorBOL + cursorRightN(b.PromptSize()+remainder))
 		} else {
-			fmt.Printf(cursorRightN(b.Size() - b.Pos))
+			fmt.Print(cursorRightN(b.Size() - b.Pos))
 		}
 
 		b.Pos = b.Size()
@@ -173,15 +173,15 @@ func (b *Buffer) drawRemaining() {
 	if b.Pos > 0 {
 		place = b.Pos % b.LineWidth
 	}
-	fmt.Printf(CursorHide)
+	fmt.Print(CursorHide)
 
 	// render the rest of the current line
 	currLine := remainingText[:min(b.LineWidth-place, len(remainingText))]
 	if len(currLine) > 0 {
 		fmt.Printf(ClearToEOL + currLine)
-		fmt.Printf(cursorLeftN(len(currLine)))
+		fmt.Print(cursorLeftN(len(currLine)))
 	} else {
-		fmt.Printf(ClearToEOL)
+		fmt.Print(ClearToEOL)
 	}
 
 	// render the other lines
@@ -195,12 +195,12 @@ func (b *Buffer) drawRemaining() {
 			}
 			fmt.Printf("%c", c)
 		}
-		fmt.Printf(ClearToEOL)
-		fmt.Printf(cursorUpN(totalLines))
+		fmt.Print(ClearToEOL)
+		fmt.Print(cursorUpN(totalLines))
 		fmt.Printf(CursorBOL + cursorRightN(b.Width-len(currLine)))
 	}
 
-	fmt.Printf(CursorShow)
+	fmt.Print(CursorShow)
 }
 
 func (b *Buffer) Remove() {
@@ -305,12 +305,12 @@ func (b *Buffer) ClearScreen() {
 			targetLine := currPos / b.LineWidth
 			if targetLine > 0 {
 				for cnt := 0; cnt < targetLine; cnt++ {
-					fmt.Printf(CursorDown)
+					fmt.Print(CursorDown)
 				}
 			}
 			remainder := currPos % b.LineWidth
 			if remainder > 0 {
-				fmt.Printf(cursorRightN(remainder))
+				fmt.Print(cursorRightN(remainder))
 			}
 			if currPos%b.LineWidth == 0 {
 				fmt.Printf(CursorBOL + b.Prompt.AltPrompt)

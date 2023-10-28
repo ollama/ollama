@@ -1,6 +1,7 @@
 package readline
 
 const (
+	CharNull      = 0
 	CharLineStart = 1
 	CharBackward  = 2
 	CharInterrupt = 3

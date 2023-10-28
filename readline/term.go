@@ -1,4 +1,6 @@
+//go:build aix || darwin || dragonfly || freebsd || (linux && !appengine) || netbsd || openbsd || os400 || solaris
 // +build aix darwin dragonfly freebsd linux,!appengine netbsd openbsd os400 solaris
+
 package readline
 
 import (
@@ -30,6 +32,6 @@ func UnsetRawMode(fd int, termios *Termios) error {
 
 // IsTerminal returns true if the given file descriptor is a terminal.
 func IsTerminal(fd int) bool {
-        _, err := getTermios(fd)
-        return err == nil
+	_, err := getTermios(fd)
+	return err == nil
 }
