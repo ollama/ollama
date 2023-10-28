@@ -260,6 +260,37 @@
 		showSettings = true;
 	};
 
+	const editMessage = async (messageIdx) => {
+		messages = messages.map((message, idx) => {
+			if (messageIdx === idx) {
+				message.edit = true;
+				message.editedContent = message.content;
+			}
+			return message;
+		});
+	};
+
+	const confirmEditMessage = async (messageIdx) => {
+		let user_prompt = messages.at(messageIdx).editedContent;
+
+		messages.splice(messageIdx, messages.length - messageIdx);
+		messages = messages;
+
+		await submitPrompt(user_prompt);
+	};
+
+	const cancelEditMessage = (messageIdx) => {
+		messages = messages.map((message, idx) => {
+			if (messageIdx === idx) {
+				message.edit = undefined;
+				message.editedContent = undefined;
+			}
+			return message;
+		});
+
+		console.log(messages);
+	};
+
 	//////////////////////////
 	// Ollama functions
 	//////////////////////////
@@ -633,7 +664,7 @@
 					{:else}
 						{#each messages as message, messageIdx}
 							<div class=" w-full {message.role == 'user' ? '' : ' bg-gray-700'}">
-								<div class="flex justify-between p-5 py-10 max-w-3xl mx-auto rounded-lg">
+								<div class="flex justify-between p-5 py-10 max-w-3xl mx-auto rounded-lg group">
 									<div class="space-x-7 flex w-full">
 										<div class="">
 											<img
@@ -664,16 +695,80 @@
 											</div>
 										{:else}
 											<div
-												class="prose max-w-full prose-invert prose-headings:my-0 prose-p:my-0 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-2 prose-ol:-my-2 prose-li:-my-2 whitespace-pre-line"
+												class="prose w-full max-w-full prose-invert prose-headings:my-0 prose-p:my-0 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-2 prose-ol:-my-2 prose-li:-my-2 whitespace-pre-line"
 											>
-												{@html marked.parse(message.content)}
+												{#if message.role == 'user'}
+													{#if message?.edit === true}
+														<div>
+															<textarea
+																class=" bg-transparent outline-none w-full resize-none"
+																bind:value={message.editedContent}
+																on:input={(e) => {
+																	e.target.style.height = '';
+																	e.target.style.height = `${e.target.scrollHeight}px`;
+																}}
+																on:focus={(e) => {
+																	e.target.style.height = '';
+																	e.target.style.height = `${e.target.scrollHeight}px`;
+																}}
+															/>
+
+															<div class=" flex justify-end space-x-2 text-sm text-gray-100">
+																<button
+																	class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 transition rounded-lg"
+																	on:click={() => {
+																		confirmEditMessage(messageIdx);
+																	}}
+																>
+																	Save & Submit
+																</button>
+
+																<button
+																	class=" px-4 py-2.5 bg-gray-800 hover:bg-gray-700 transition outline outline-1 outline-gray-600 rounded-lg"
+																	on:click={() => {
+																		cancelEditMessage(messageIdx);
+																	}}
+																>
+																	Cancel
+																</button>
+															</div>
+														</div>
+													{:else}
+														{message.content}
+													{/if}
+												{:else}
+													{@html marked.parse(message.content)}
+												{/if}
 											</div>
 										{/if}
 										<!-- {} -->
 									</div>
 
 									<div>
-										{#if message.role != 'user' && message.done}
+										{#if message.role == 'user'}
+											{#if message?.edit !== true}
+												<button
+													class="invisible group-hover:visible p-1 rounded hover:bg-gray-700 transition"
+													on:click={() => {
+														editMessage(messageIdx);
+													}}
+												>
+													<svg
+														xmlns="http://www.w3.org/2000/svg"
+														viewBox="0 0 20 20"
+														fill="currentColor"
+														class="w-4 h-4"
+													>
+														<path
+															d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z"
+														/>
+														<path
+															d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z"
+														/>
+													</svg>
+												</button>
+											{/if}
+										{:else if message.done}
 											<button
 												class="p-1 rounded hover:bg-gray-700 transition"
 												on:click={() => {
