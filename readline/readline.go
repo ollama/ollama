@@ -75,7 +75,11 @@ func (i *Instance) Readline() (string, error) {
 			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
 		}
 
-		r := i.Terminal.Read()
+		r, err := i.Terminal.Read()
+		if err != nil {
+			return "", io.EOF
+		}
+
 		if buf.IsEmpty() {
 			fmt.Print(ClearToEOL)
 		}
@@ -105,7 +109,11 @@ func (i *Instance) Readline() (string, error) {
 			case CharBracketedPaste:
 				var code string
 				for cnt := 0; cnt < 3; cnt++ {
-					r = i.Terminal.Read()
+					r, err = i.Terminal.Read()
+					if err != nil {
+						return "", io.EOF
+					}
+
 					code += string(r)
 				}
 				if code == CharBracketedPasteStart {
@@ -237,8 +245,13 @@ func (t *Terminal) ioloop() {
 	}
 }
 
-func (t *Terminal) Read() rune {
-	return <-t.outchan
+func (t *Terminal) Read() (rune, error) {
+	r, ok := <-t.outchan
+	if !ok {
+		return 0, io.EOF
+	}
+
+	return r, nil
 }
 
 func (t *Terminal) Close() error {
