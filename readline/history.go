@@ -78,8 +78,8 @@ func (h *History) Init() error {
 
 func (h *History) Add(l []rune) {
 	h.Buf.Add(l)
-	h.Pos = h.Size()
 	h.Compact()
+	h.Pos = h.Size()
 	if h.Autosave {
 		h.Save()
 	}
