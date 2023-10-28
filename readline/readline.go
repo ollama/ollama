@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 	"syscall"
 )
 
@@ -18,8 +17,6 @@ type Prompt struct {
 }
 
 type Terminal struct {
-	m       sync.Mutex
-	wg      sync.WaitGroup
 	outchan chan rune
 }
 
@@ -52,7 +49,7 @@ func (i *Instance) Readline() (string, error) {
 	if i.Prompt.UseAlt {
 		prompt = i.Prompt.AltPrompt
 	}
-	fmt.Printf(prompt)
+	fmt.Print(prompt)
 
 	termios, err := SetRawMode(syscall.Stdin)
 	if err != nil {
@@ -78,13 +75,9 @@ func (i *Instance) Readline() (string, error) {
 			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
 		}
 
-		r := i.Terminal.ReadRune()
+		r := i.Terminal.Read()
 		if buf.IsEmpty() {
-			fmt.Printf(ClearToEOL)
-		}
-
-		if r == 0 { // io.EOF
-			break
+			fmt.Print(ClearToEOL)
 		}
 
 		if escex {
@@ -112,7 +105,7 @@ func (i *Instance) Readline() (string, error) {
 			case CharBracketedPaste:
 				var code string
 				for cnt := 0; cnt < 3; cnt++ {
-					r = i.Terminal.ReadRune()
+					r = i.Terminal.Read()
 					code += string(r)
 				}
 				if code == CharBracketedPasteStart {
@@ -149,6 +142,8 @@ func (i *Instance) Readline() (string, error) {
 		}
 
 		switch r {
+		case CharNull:
+			continue
 		case CharEsc:
 			esc = true
 		case CharInterrupt:
@@ -206,7 +201,6 @@ func (i *Instance) Readline() (string, error) {
 			}
 		}
 	}
-	return "", nil
 }
 
 func (i *Instance) Close() error {
@@ -240,19 +234,11 @@ func (t *Terminal) ioloop() {
 			break
 		}
 		t.outchan <- r
-		if r == 0 { // EOF
-			break
-		}
 	}
-
 }
 
-func (t *Terminal) ReadRune() rune {
-	r, ok := <-t.outchan
-	if !ok {
-		return rune(0)
-	}
-	return r
+func (t *Terminal) Read() rune {
+	return <-t.outchan
 }
 
 func (t *Terminal) Close() error {
