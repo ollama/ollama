@@ -225,6 +225,27 @@
 		}
 	};
 
+	const editChatTitle = async (id, _title) => {
+		const chat = await db.get('chats', id);
+		console.log(chat);
+
+		await db.put('chats', {
+			...chat,
+			title: _title
+		});
+
+		title = _title;
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+	};
+
+	const deleteChat = async (id) => {
+		createNewChat();
+
+		const chat = await db.delete('chats', id);
+		console.log(chat);
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+	};
+
 	const deleteChatHistory = async () => {
 		const tx = db.transaction('chats', 'readwrite');
 		await Promise.all([tx.store.clear(), tx.done]);
@@ -286,6 +307,29 @@
 				message.editedContent = undefined;
 			}
 			return message;
+		});
+
+		console.log(messages);
+	};
+
+	const rateMessage = async (messageIdx, rating) => {
+		messages = messages.map((message, idx) => {
+			if (messageIdx === idx) {
+				message.rating = rating;
+			}
+			return message;
+		});
+
+		await db.put('chats', {
+			id: chatId,
+			title: title === '' ? 'New Chat' : title,
+			model: selectedModel,
+			system: system,
+			options: {
+				temperature: temperature
+			},
+			timestamp: Date.now(),
+			messages: messages
 		});
 
 		console.log(messages);
@@ -575,9 +619,12 @@
 <div class="app text-gray-100">
 	<div class=" bg-gray-800 min-h-screen overflow-auto flex flex-row">
 		<Navbar
+			selectedChatId={chatId}
 			{chats}
 			{title}
 			{loadChat}
+			{editChatTitle}
+			{deleteChat}
 			{createNewChat}
 			{importChatHistory}
 			{exportChatHistory}
@@ -738,6 +785,55 @@
 													{/if}
 												{:else}
 													{@html marked.parse(message.content)}
+
+													{#if message.done}
+														<div class=" flex justify-end space-x-1 text-gray-400">
+															<button
+																class="p-1 rounded hover:bg-gray-800 {message.rating === 1
+																	? 'bg-gray-800'
+																	: ''} transition"
+																on:click={() => {
+																	rateMessage(messageIdx, 1);
+																}}
+															>
+																<svg
+																	stroke="currentColor"
+																	fill="none"
+																	stroke-width="2"
+																	viewBox="0 0 24 24"
+																	stroke-linecap="round"
+																	stroke-linejoin="round"
+																	class="w-4 h-4"
+																	xmlns="http://www.w3.org/2000/svg"
+																	><path
+																		d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"
+																	/></svg
+																>
+															</button>
+															<button
+																class="p-1 rounded hover:bg-gray-800 {message.rating === -1
+																	? 'bg-gray-800'
+																	: ''} transition"
+																on:click={() => {
+																	rateMessage(messageIdx, -1);
+																}}
+															>
+																<svg
+																	stroke="currentColor"
+																	fill="none"
+																	stroke-width="2"
+																	viewBox="0 0 24 24"
+																	stroke-linecap="round"
+																	stroke-linejoin="round"
+																	class="w-4 h-4"
+																	xmlns="http://www.w3.org/2000/svg"
+																	><path
+																		d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"
+																	/></svg
+																>
+															</button>
+														</div>
+													{/if}
 												{/if}
 											</div>
 										{/if}
