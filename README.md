@@ -32,6 +32,14 @@ curl https://ollama.ai/install.sh | sh
 The official [Ollama Docker image `ollama/ollama`](https://hub.docker.com/r/ollama/ollama)
 is available on Docker Hub.
 
+### Webi
+
+If you prefer to use Webi on your platform of choice, simply:
+
+```
+webi ollama
+```
+
 ## Quickstart
 
 To run and chat with [Llama 2](https://ollama.ai/library/llama2):
