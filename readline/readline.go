@@ -211,8 +211,8 @@ func (i *Instance) Readline() (string, error) {
 	}
 }
 
-func (i *Instance) Close() error {
-	return i.Terminal.Close()
+func (i *Instance) Close() {
+	i.Terminal.Close()
 }
 
 func (i *Instance) HistoryEnable() {
@@ -254,7 +254,6 @@ func (t *Terminal) Read() (rune, error) {
 	return r, nil
 }
 
-func (t *Terminal) Close() error {
+func (t *Terminal) Close() {
 	close(t.outchan)
-	return nil
 }
