@@ -225,6 +225,27 @@
 		}
 	};
 
+	const editChatTitle = async (id, _title) => {
+		const chat = await db.get('chats', id);
+		console.log(chat);
+
+		await db.put('chats', {
+			...chat,
+			title: _title
+		});
+
+		title = _title;
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+	};
+
+	const deleteChat = async (id) => {
+		createNewChat();
+
+		const chat = await db.delete('chats', id);
+		console.log(chat);
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+	};
+
 	const deleteChatHistory = async () => {
 		const tx = db.transaction('chats', 'readwrite');
 		await Promise.all([tx.store.clear(), tx.done]);
@@ -598,9 +619,12 @@
 <div class="app text-gray-100">
 	<div class=" bg-gray-800 min-h-screen overflow-auto flex flex-row">
 		<Navbar
+			selectedChatId={chatId}
 			{chats}
 			{title}
 			{loadChat}
+			{editChatTitle}
+			{deleteChat}
 			{createNewChat}
 			{importChatHistory}
 			{exportChatHistory}
