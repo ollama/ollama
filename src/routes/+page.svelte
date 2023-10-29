@@ -12,6 +12,7 @@
 
 	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
+
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 
@@ -1090,6 +1091,7 @@
 												? 'bg-emerald-600 text-gray-100 hover:bg-emerald-700 '
 												: 'text-gray-600 disabled'} transition rounded p-2"
 											type="submit"
+											disabled={prompt === ''}
 										>
 											<svg
 												xmlns="http://www.w3.org/2000/svg"
