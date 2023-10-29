@@ -236,6 +236,9 @@
 	const loadChat = async (id) => {
 		const chat = await db.get('chats', id);
 		if (chatId !== chat.id) {
+			if (chat.messages.length > 0) {
+				chat.messages.at(-1).done = true;
+			}
 			messages = chat.messages;
 			title = chat.title;
 			chatId = chat.id;
