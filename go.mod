@@ -4,13 +4,14 @@ go 1.20
 
 require (
 	github.com/dustin/go-humanize v1.0.1
+	github.com/emirpasic/gods v1.18.1
 	github.com/gin-gonic/gin v1.9.1
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db
 	github.com/olekukonko/tablewriter v0.0.5
-	github.com/pdevine/readline v1.5.2
 	github.com/spf13/cobra v1.7.0
 	golang.org/x/sync v0.3.0
+	gonum.org/v1/gonum v0.14.0
 )
 
 require github.com/rivo/uniseg v0.2.0 // indirect
@@ -39,12 +40,12 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/crypto v0.10.0
+	golang.org/x/crypto v0.14.0
 	golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63
-	golang.org/x/net v0.10.0 // indirect
-	golang.org/x/sys v0.11.0 // indirect
-	golang.org/x/term v0.10.0
-	golang.org/x/text v0.10.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/term v0.13.0
+	golang.org/x/text v0.13.0 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

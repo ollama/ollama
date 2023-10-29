@@ -1,12 +1,16 @@
-# Installing Ollama on Linux
+# Ollama on Linux
 
-> Note: A one line installer for Ollama is available by running:
+## Install
+
+Install Ollama running this one-liner:
 >
-> ```bash
-> curl https://ollama.ai/install.sh | sh
-> ```
+```bash
+curl https://ollama.ai/install.sh | sh
+```
 
-## Download the `ollama` binary
+## Manual install
+
+### Download the `ollama` binary
 
 Ollama is distributed as a self-contained binary. Download it to a directory in your PATH:
 
@@ -15,31 +19,7 @@ sudo curl -L https://ollama.ai/download/ollama-linux-amd64 -o /usr/bin/ollama
 sudo chmod +x /usr/bin/ollama
 ```
 
-## Start Ollama
-
-Start Ollama by running `ollama serve`:
-
-```bash
-ollama serve
-```
-
-Once Ollama is running, run a model in another terminal session:
-
-```bash
-ollama run llama2
-```
-
-## Install CUDA drivers (optional – for Nvidia GPUs)
-
-[Download and install](https://developer.nvidia.com/cuda-downloads) CUDA.
-
-Verify that the drivers are installed by running the following command, which should print details about your GPU:
-
-```bash
-nvidia-smi
-```
-
-## Adding Ollama as a startup service (optional)
+### Adding Ollama as a startup service (recommended)
 
 Create a user for Ollama:
 
@@ -60,7 +40,6 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
-Environment="HOME=/usr/share/ollama"
 
 [Install]
 WantedBy=default.target
@@ -73,7 +52,40 @@ sudo systemctl daemon-reload
 sudo systemctl enable ollama
 ```
 
-### Viewing logs
+### Install CUDA drivers (optional – for Nvidia GPUs)
+
+[Download and install](https://developer.nvidia.com/cuda-downloads) CUDA.
+
+Verify that the drivers are installed by running the following command, which should print details about your GPU:
+
+```bash
+nvidia-smi
+```
+
+### Start Ollama
+
+Start Ollama using `systemd`:
+
+```bash
+sudo systemctl start ollama
+```
+
+## Update
+
+Update ollama by running the install script again:
+
+```bash
+curl https://ollama.ai/install.sh | sh
+```
+
+Or by downloading the ollama binary:
+
+```bash
+sudo curl -L https://ollama.ai/download/ollama-linux-amd64 -o /usr/bin/ollama
+sudo chmod +x /usr/bin/ollama
+```
+
+## Viewing logs
 
 To view logs of Ollama running as a startup service, run:
 
@@ -84,19 +96,21 @@ journalctl -u ollama
 ## Uninstall
 
 Remove the ollama service:
+
 ```bash
-systemctl stop ollama
-systemctl disable ollama
-rm /etc/systemd/system/ollama.service
+sudo systemctl stop ollama
+sudo systemctl disable ollama
+sudo rm /etc/systemd/system/ollama.service
 ```
 
 Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr/bin`, or `/bin`):
+
 ```bash
-rm /usr/local/bin/ollama
+sudo rm $(which ollama)
 ```
 
 Remove the downloaded models and Ollama service user:
 ```bash
-rm /usr/share/ollama
-userdel ollama
+sudo rm -r /usr/share/ollama
+sudo userdel ollama
 ```

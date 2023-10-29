@@ -18,10 +18,6 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
-const DefaultHost = "127.0.0.1:11434"
-
-var envHost = os.Getenv("OLLAMA_HOST")
-
 type Client struct {
 	base *url.URL
 	http http.Client
@@ -44,14 +40,24 @@ func checkError(resp *http.Response, body []byte) error {
 }
 
 func ClientFromEnvironment() (*Client, error) {
+	defaultPort := "11434"
+
 	scheme, hostport, ok := strings.Cut(os.Getenv("OLLAMA_HOST"), "://")
-	if !ok {
+	switch {
+	case !ok:
 		scheme, hostport = "http", os.Getenv("OLLAMA_HOST")
+	case scheme == "http":
+		defaultPort = "80"
+	case scheme == "https":
+		defaultPort = "443"
 	}
+
+	// trim trailing slashes
+	hostport = strings.TrimRight(hostport, "/")
 
 	host, port, err := net.SplitHostPort(hostport)
 	if err != nil {
-		host, port = "127.0.0.1", "11434"
+		host, port = "127.0.0.1", defaultPort
 		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
 			host = ip.String()
 		} else if hostport != "" {

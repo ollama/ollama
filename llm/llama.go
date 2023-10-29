@@ -212,6 +212,10 @@ func CheckVRAM() (int64, error) {
 	scanner := bufio.NewScanner(&stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
+		if strings.Contains(line, "[Insufficient Permissions]") {
+			return 0, fmt.Errorf("GPU support may not enabled, check you have installed GPU drivers and have the necessary permissions to run nvidia-smi")
+		}
+
 		vram, err := strconv.ParseInt(strings.TrimSpace(line), 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("failed to parse available VRAM: %v", err)
@@ -243,12 +247,15 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 			return 0
 		}
 
-		// Calculate bytes per layer
-		// TODO: this is a rough heuristic, better would be to calculate this based on number of layers and context size
+		/*
+		 Calculate bytes per layer, this will roughly be the size of the model file divided by the number of layers.
+		 We can store the model weights and the kv cache in vram,
+		 to enable kv chache vram storage add two additional layers to the number of layers retrieved from the model file.
+		*/
 		bytesPerLayer := fileSizeBytes / numLayer
 
-		// max number of layers we can fit in VRAM, subtract 8% to prevent consuming all available VRAM and running out of memory
-		layers := int(freeBytes/bytesPerLayer) * 92 / 100
+		// 75% of the absolute max number of layers we can fit in available VRAM, off-loading too many layers to the GPU can cause OOM errors
+		layers := int(freeBytes/bytesPerLayer) * 3 / 4
 		log.Printf("%d MB VRAM available, loading up to %d GPU layers", freeBytes/(1024*1024), layers)
 
 		return layers
