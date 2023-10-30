@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -102,12 +103,13 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	// check if the model exists on the server
 	_, err = client.Show(context.Background(), &api.ShowRequest{Name: name})
 	if err != nil {
-		if apiErr, ok := err.(api.StatusError); ok && apiErr.StatusCode == 404 {
-			// the model is not stored on the server, so we need to pull it
+		var statusError api.StatusError
+		switch {
+		case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
 			if err := PullHandler(cmd, args); err != nil {
 				return err
 			}
-		} else {
+		case err != nil:
 			return err
 		}
 	}
