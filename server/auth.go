@@ -106,6 +106,7 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 	resp, err := makeRequest(ctx, "GET", redirectURL, headers, nil, nil)
 	if err != nil {
 		log.Printf("couldn't get token: %q", err)
+		return "", err
 	}
 	defer resp.Body.Close()
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -158,7 +159,8 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 				w := io.NewOffsetWriter(file, part.StartsAt())
 				err := b.downloadChunk(inner, requestURL, w, part, opts)
 				switch {
-				case errors.Is(err, context.Canceled):
+				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
+					// return immediately if the context is canceled or the device is out of space
 					return err
 				case err != nil:
 					log.Printf("%s part %d attempt %d failed: %v, retrying", b.Digest[7:19], i, try, err)
