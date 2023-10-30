@@ -1,0 +1,38 @@
+version: '3.6'
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - 11434:11434
+    environment:
+      - OLLAMA_ORIGINS="*"
+    container_name: ollama
+    pull_policy: always
+    tty: true
+    restart: unless-stopped
+    image: ollama/ollama:latest
+
+  ollama-webui:
+    restart: unless-stopped
+    build:
+      context: .
+      args:
+        OLLAMA_API_BASE_URL: ''
+      dockerfile: Dockerfile
+    image: ollama-webui:latest
+    container_name: ollama-webui
+    ports:
+      - 3000:8080
+
+volumes:
+  ollama: {}
