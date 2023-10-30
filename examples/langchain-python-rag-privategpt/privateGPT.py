@@ -23,7 +23,6 @@ def main():
     # Parse the command line arguments
     args = parse_arguments()
     embeddings = HuggingFaceEmbeddings(model_name=embeddings_model_name)
-    # db = Chroma(persist_directory=persist_directory, embedding_function=embeddings, client_settings=CHROMA_SETTINGS)
 
     db = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
 
