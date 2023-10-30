@@ -2,20 +2,21 @@ version: '3.6'
 
 services:
   ollama:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities:
-                - gpu
+    # Comment below for GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities:
+    #             - gpu
     volumes:
       - ollama:/root/.ollama
     ports:
       - 11434:11434
     environment:
-      - OLLAMA_ORIGINS="*"
+      - 'OLLAMA_ORIGINS=*'
     container_name: ollama
     pull_policy: always
     tty: true
