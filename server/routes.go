@@ -614,6 +614,22 @@ var defaultAllowOrigins = []string{
 }
 
 func Serve(ln net.Listener, allowOrigins []string) error {
+	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+		// clean up unused layers and manifests
+		if err := PruneLayers(); err != nil {
+			return err
+		}
+
+		manifestsPath, err := GetManifestPath()
+		if err != nil {
+			return err
+		}
+
+		if err := PruneDirectory(manifestsPath); err != nil {
+			return err
+		}
+	}
+
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 

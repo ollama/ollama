@@ -51,11 +51,12 @@ func (i *Instance) Readline() (string, error) {
 	}
 	fmt.Print(prompt)
 
-	termios, err := SetRawMode(syscall.Stdin)
+	fd := int(syscall.Stdin)
+	termios, err := SetRawMode(fd)
 	if err != nil {
 		return "", err
 	}
-	defer UnsetRawMode(syscall.Stdin, termios)
+	defer UnsetRawMode(fd, termios)
 
 	buf, _ := NewBuffer(i.Prompt)
 
