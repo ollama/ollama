@@ -30,17 +30,17 @@ type State struct {
 	mode uint32
 }
 
-// IsTerminal checks if the given file descriptor is associated with a terminal.
+// IsTerminal checks if the given file descriptor is associated with a terminal
 func IsTerminal(fd int) bool {
 	var st uint32
 	r, _, e := syscall.SyscallN(procGetConsoleMode.Addr(), uintptr(fd), uintptr(unsafe.Pointer(&st)), 0)
-	// if the call succeeds and doesn't produce an error, it's a terminal.
+	// if the call succeeds and doesn't produce an error, it's a terminal
 	return r != 0 && e == 0
 }
 
 func SetRawMode(fd int) (*State, error) {
 	var st uint32
-	// retrieve the current mode of the terminal.
+	// retrieve the current mode of the terminal
 	_, _, e := syscall.SyscallN(procGetConsoleMode.Addr(), uintptr(fd), uintptr(unsafe.Pointer(&st)), 0)
 	if e != 0 {
 		return nil, error(e)
@@ -52,7 +52,7 @@ func SetRawMode(fd int) (*State, error) {
 	if e != 0 {
 		return nil, error(e)
 	}
-	// return the original state so that it can be restored later.
+	// return the original state so that it can be restored later
 	return &State{st}, nil
 }
 
