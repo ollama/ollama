@@ -2,7 +2,7 @@ version: '3.6'
 
 services:
   ollama:
-    # Comment below for GPU support
+    # Uncomment below for GPU support
     # deploy:
     #   resources:
     #     reservations:
