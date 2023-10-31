@@ -76,5 +76,5 @@ with gr.Blocks() as demo:
     interface = gr.Interface(fn=greet, inputs=[dropdown], outputs=[textbox], title="Choose a LLM model")
     chat = gr.ChatInterface(AI_response, title="Put your files in folder " + docsUrl)
 
-demo.launch()
+demo.launch(server_name="0.0.0.0", server_port=7860)
 
