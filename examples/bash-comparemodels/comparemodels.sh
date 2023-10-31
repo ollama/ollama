@@ -1,9 +1,14 @@
 #! /usr/bin/env bash
+# Compare multiple models by running them with the same questions
+
 NUMBEROFCHOICES=4
-CHOICES=$(ollama list | awk '{print $1}')
 SELECTIONS=()
 declare -a SUMS=()
 
+# Get the list of models
+CHOICES=$(ollama list | awk '{print $1}')
+
+# Select which models to run as a comparison
 echo "Select $NUMBEROFCHOICES models to compare:"
 select ITEM in $CHOICES; do
     if [[ -n $ITEM ]]; then
@@ -18,6 +23,7 @@ select ITEM in $CHOICES; do
     fi
 done
 
+# Loop through each of the selected models
 for ITEM in "${SELECTIONS[@]}"; do
     echo "--------------------------------------------------------------"
     echo "Loading the model $ITEM into memory"
@@ -26,6 +32,8 @@ for ITEM in "${SELECTIONS[@]}"; do
     echo "Running the questions through the model $ITEM"
     COMMAND_OUTPUT=$(ollama run "$ITEM" --verbose < sourcequestions 2>&1| tee /dev/stderr)
 
+    # eval duration is sometimes listed in seconds and sometimes in milliseconds. 
+    # Add up the values for each model
     SUM=$(echo "$COMMAND_OUTPUT" | awk '
     /eval duration:/ {
         value = $3
