@@ -6,4 +6,4 @@ When calling `ollama`, you can pass it a file to run all the prompts in the file
 `bulkquestions.sh` is a script that runs all the questions in `sourcequestions` using the llama2 model and outputs the answers.
 
 ## Compare Models
-`comparemodels.sh` is a script that runs all the questions in `sourcequestions` using any 4 models you choose that you have already pulled from the registry or have created locally.
+`comparemodels.sh` is a script that runs all the questions in `sourcequestions` using any 4 models you choose that you have already pulled from the Ollama library or have created locally.
