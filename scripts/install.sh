@@ -133,6 +133,7 @@ if check_gpu nvidia-smi; then
 fi
 
 if ! check_gpu lspci && ! check_gpu lshw; then
+    install_success
     warning "No NVIDIA GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
