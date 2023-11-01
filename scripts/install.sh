@@ -63,7 +63,10 @@ status "Installing ollama to $BINDIR..."
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
 
-install_success() { status 'Install complete. Run "ollama" from the command line.'; }
+install_success() { 
+    status 'The Ollama API is now available at 0.0.0.0:11434.'
+    status 'Install complete. Run "ollama" from the command line.'
+}
 trap install_success EXIT
 
 # Everything from this point onwards is optional.
@@ -130,6 +133,7 @@ if check_gpu nvidia-smi; then
 fi
 
 if ! check_gpu lspci && ! check_gpu lshw; then
+    install_success
     warning "No NVIDIA GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
