@@ -360,7 +360,15 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 			runner.Path,
 			append(params, "--port", strconv.Itoa(port))...,
 		)
-		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", filepath.Dir(runner.Path)))
+
+		var libraryPaths []string
+		if libraryPath, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+			libraryPaths = append(libraryPaths, libraryPath)
+		}
+
+		libraryPaths = append(libraryPaths, filepath.Dir(runner.Path))
+
+		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", strings.Join(libraryPaths, ":")))
 		cmd.Stdout = os.Stderr
 		statusWriter := NewStatusWriter()
 		cmd.Stderr = statusWriter
