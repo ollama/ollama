@@ -11,7 +11,6 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.7.0
 	golang.org/x/sync v0.3.0
-	gonum.org/v1/gonum v0.14.0
 )
 
 require github.com/rivo/uniseg v0.2.0 // indirect
