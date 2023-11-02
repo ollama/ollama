@@ -179,13 +179,15 @@ GET /api/tags
 
 List models that are available locally.
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl http://localhost:11434/api/tags
 ```
 
-### Response
+#### Response
 
 A single JSON object will be returned.
 
