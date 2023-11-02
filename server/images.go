@@ -63,15 +63,11 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 		First  bool
 		System string
 		Prompt string
-
-		// deprecated: versions <= 0.0.7 used this to omit the system prompt
-		Context []int
 	}
 
 	vars.First = len(request.Context) == 0
 	vars.System = m.System
 	vars.Prompt = request.Prompt
-	vars.Context = request.Context
 
 	if request.System != "" {
 		vars.System = request.System
