@@ -1120,21 +1120,11 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptio
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequest(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if err != nil {
-		log.Printf("couldn't get manifest: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("model not found")
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("on pull registry responded with code %d: %s", resp.StatusCode, body)
-	}
 
 	var m *ManifestV2
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
