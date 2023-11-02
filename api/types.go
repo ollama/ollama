@@ -293,7 +293,7 @@ func DefaultOptions() Options {
 	return Options{
 		// options set on request to runner
 		NumPredict:       -1,
-		NumKeep:          -1,
+		NumKeep:          0,
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,
