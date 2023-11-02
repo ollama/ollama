@@ -306,11 +306,17 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 	params := []string{
 		"--model", model,
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
-		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
-		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
 		"--embedding",
+	}
+
+	if opts.RopeFrequencyBase > 0 {
+		params = append(params, "--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase))
+	}
+
+	if opts.RopeFrequencyScale > 0 {
+		params = append(params, "--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale))
 	}
 
 	if opts.NumGQA > 0 {
