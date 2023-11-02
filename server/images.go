@@ -998,7 +998,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequestWithRetry(ctx, "PUT", requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
 	if err != nil {
 		return err
 	}
@@ -1120,7 +1120,7 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptio
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequest(ctx, "GET", requestURL, headers, nil, regOpts)
+	resp, err := makeRequest(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if err != nil {
 		log.Printf("couldn't get manifest: %v", err)
 		return nil, err

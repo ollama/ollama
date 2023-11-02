@@ -67,7 +67,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 		requestURL.RawQuery = values.Encode()
 	}
 
-	resp, err := makeRequestWithRetry(ctx, "POST", requestURL, nil, nil, opts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodPost, requestURL, nil, nil, opts)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 	headers.Set("Content-Type", "application/octet-stream")
 	headers.Set("Content-Length", "0")
 
-	resp, err := makeRequestWithRetry(ctx, "PUT", requestURL, headers, nil, opts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, nil, opts)
 	if err != nil {
 		b.err = err
 		return
@@ -334,7 +334,7 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryO
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
 
-	resp, err := makeRequest(ctx, "HEAD", requestURL, nil, nil, opts)
+	resp, err := makeRequest(ctx, http.MethodHead, requestURL, nil, nil, opts)
 	if err != nil {
 		return err
 	}
