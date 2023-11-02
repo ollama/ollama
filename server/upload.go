@@ -67,7 +67,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 		requestURL.RawQuery = values.Encode()
 	}
 
-	resp, err := makeRequestWithRetry(ctx, "POST", requestURL, nil, nil, opts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodPost, requestURL, nil, nil, opts)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 	headers.Set("Content-Type", "application/octet-stream")
 	headers.Set("Content-Length", "0")
 
-	resp, err := makeRequestWithRetry(ctx, "PUT", requestURL, headers, nil, opts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, nil, opts)
 	if err != nil {
 		b.err = err
 		return
@@ -334,15 +334,13 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryO
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
 
-	resp, err := makeRequest(ctx, "HEAD", requestURL, nil, nil, opts)
-	if err != nil {
+	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
 		return err
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusNotFound:
-	case http.StatusOK:
+	default:
+		defer resp.Body.Close()
 		fn(api.ProgressResponse{
 			Status:    fmt.Sprintf("uploading %s", layer.Digest),
 			Digest:    layer.Digest,
@@ -351,8 +349,6 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryO
 		})
 
 		return nil
-	default:
-		return fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
 	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})

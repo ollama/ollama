@@ -1002,7 +1002,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequestWithRetry(ctx, "PUT", requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
 	if err != nil {
 		return err
 	}
@@ -1124,21 +1124,11 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptio
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequest(ctx, "GET", requestURL, headers, nil, regOpts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if err != nil {
-		log.Printf("couldn't get manifest: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("model not found")
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("on pull registry responded with code %d: %s", resp.StatusCode, body)
-	}
 
 	var m *ManifestV2
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
@@ -1202,15 +1192,19 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 			regOpts.Token = token
 			if body != nil {
-				if _, err := body.Seek(0, io.SeekStart); err != nil {
-					return nil, err
-				}
+				body.Seek(0, io.SeekStart)
 			}
 
 			continue
+		case resp.StatusCode == http.StatusNotFound:
+			return nil, os.ErrNotExist
 		case resp.StatusCode >= http.StatusBadRequest:
-			body, _ := io.ReadAll(resp.Body)
-			return nil, fmt.Errorf("on upload registry responded with code %d: %s", resp.StatusCode, body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
+			}
+
+			return nil, fmt.Errorf("%d: %s", resp.StatusCode, body)
 		default:
 			return resp, nil
 		}
