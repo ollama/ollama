@@ -1188,15 +1188,19 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 			regOpts.Token = token
 			if body != nil {
-				if _, err := body.Seek(0, io.SeekStart); err != nil {
-					return nil, err
-				}
+				body.Seek(0, io.SeekStart)
 			}
 
 			continue
+		case resp.StatusCode == http.StatusNotFound:
+			return nil, os.ErrNotExist
 		case resp.StatusCode >= http.StatusBadRequest:
-			body, _ := io.ReadAll(resp.Body)
-			return nil, fmt.Errorf("on upload registry responded with code %d: %s", resp.StatusCode, body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
+			}
+
+			return nil, fmt.Errorf("%d: %s", resp.StatusCode, body)
 		default:
 			return resp, nil
 		}

@@ -334,15 +334,13 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryO
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
 
-	resp, err := makeRequest(ctx, http.MethodHead, requestURL, nil, nil, opts)
-	if err != nil {
+	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
 		return err
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusNotFound:
-	case http.StatusOK:
+	default:
+		defer resp.Body.Close()
 		fn(api.ProgressResponse{
 			Status:    fmt.Sprintf("uploading %s", layer.Digest),
 			Digest:    layer.Digest,
@@ -351,8 +349,6 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryO
 		})
 
 		return nil
-	default:
-		return fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
 	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})
