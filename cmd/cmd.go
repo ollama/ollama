@@ -832,6 +832,48 @@ func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+func GenerateCompletionsHandler(cmd *cobra.Command, args []string) error {
+	file, err := os.OpenFile(args[1], os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "bash":
+		err = cmd.Root().GenBashCompletion(file)
+	case "zsh":
+		err = cmd.Root().GenZshCompletion(file)
+	case "fish":
+		err = cmd.Root().GenFishCompletion(file, true)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+	}
+	return nil
+}
+
+func autocompleteModelName(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+
+	models, err := client.List(context.Background())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+
+	var data []string
+
+	for _, m := range models.Models {
+		log.Printf("model: %s", m.Name)
+		if strings.HasPrefix(m.Name, toComplete) {
+			data = append(data, m.Name[:strings.IndexByte(m.Name, ':')])
+		}
+	}
+
+	return data, cobra.ShellCompDirectiveNoFileComp
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
@@ -859,11 +901,12 @@ func NewCLI() *cobra.Command {
 	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
 
 	showCmd := &cobra.Command{
-		Use:     "show MODEL",
-		Short:   "Show information for a model",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    ShowHandler,
+		Use:               "show MODEL",
+		Short:             "Show information for a model",
+		Args:              cobra.ExactArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              ShowHandler,
+		ValidArgsFunction: autocompleteModelName,
 	}
 
 	showCmd.Flags().Bool("license", false, "Show license of a model")
@@ -873,11 +916,12 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("system", false, "Show system prompt of a model")
 
 	runCmd := &cobra.Command{
-		Use:     "run MODEL [PROMPT]",
-		Short:   "Run a model",
-		Args:    cobra.MinimumNArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    RunHandler,
+		Use:               "run MODEL [PROMPT]",
+		Short:             "Run a model",
+		Args:              cobra.MinimumNArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              RunHandler,
+		ValidArgsFunction: autocompleteModelName,
 	}
 
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
@@ -893,21 +937,23 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
-		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    PullHandler,
+		Use:               "pull MODEL",
+		Short:             "Pull a model from a registry",
+		Args:              cobra.ExactArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              PullHandler,
+		ValidArgsFunction: autocompleteModelName,
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 
 	pushCmd := &cobra.Command{
-		Use:     "push MODEL",
-		Short:   "Push a model to a registry",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    PushHandler,
+		Use:               "push MODEL",
+		Short:             "Push a model to a registry",
+		Args:              cobra.ExactArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              PushHandler,
+		ValidArgsFunction: autocompleteModelName,
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
@@ -921,19 +967,30 @@ func NewCLI() *cobra.Command {
 	}
 
 	copyCmd := &cobra.Command{
-		Use:     "cp SOURCE TARGET",
-		Short:   "Copy a model",
-		Args:    cobra.ExactArgs(2),
-		PreRunE: checkServerHeartbeat,
-		RunE:    CopyHandler,
+		Use:               "cp SOURCE TARGET",
+		Short:             "Copy a model",
+		Args:              cobra.ExactArgs(2),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              CopyHandler,
+		ValidArgsFunction: autocompleteModelName,
 	}
 
 	deleteCmd := &cobra.Command{
-		Use:     "rm MODEL [MODEL...]",
-		Short:   "Remove a model",
-		Args:    cobra.MinimumNArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    DeleteHandler,
+		Use:               "rm MODEL [MODEL...]",
+		Short:             "Remove a model",
+		Args:              cobra.MinimumNArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              DeleteHandler,
+		ValidArgsFunction: autocompleteModelName,
+	}
+
+	generateCompletionsCmd := &cobra.Command{
+		Use:                   "completions [bash|zsh|fish] [PATH]",
+		Short:                 "Generate completion scripts",
+		DisableFlagsInUseLine: true,
+		Hidden:                true,
+		Args:                  cobra.ExactArgs(2),
+		RunE:                  GenerateCompletionsHandler,
 	}
 
 	rootCmd.AddCommand(
@@ -946,6 +1003,7 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		copyCmd,
 		deleteCmd,
+		generateCompletionsCmd,
 	)
 
 	return rootCmd

@@ -32,6 +32,12 @@ curl https://ollama.ai/install.sh | sh
 The official [Ollama Docker image `ollama/ollama`](https://hub.docker.com/r/ollama/ollama)
 is available on Docker Hub.
 
+### Autocompletion
+To enable autocompletion generate autocompletion script for your shell and `source` generated file in your shell config (`~/.bash_profile`, `~/.zshrc`, `~/.profile`, `~/.bashrc`, etc.):
+```
+ollama completions [bash|zsh|fish] /path/to/completion/file
+```
+
 ## Quickstart
 
 To run and chat with [Llama 2](https://ollama.ai/library/llama2):
