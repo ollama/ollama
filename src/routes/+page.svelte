@@ -15,12 +15,14 @@
 
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
+	import Suggestions from '$lib/components/chat/Suggestions.svelte';
 
 	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
 	let suggestions = ''; // $page.url.searchParams.get('suggestions');
 
 	let models = [];
 	let textareaElement;
+
 	let showSettings = false;
 	let db;
 
@@ -33,6 +35,9 @@
 	let title = '';
 	let prompt = '';
 	let messages = [];
+
+	let stopResponseFlag = false;
+	let autoScroll = true;
 
 	onMount(async () => {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
@@ -320,12 +325,12 @@
 	};
 
 	const confirmEditMessage = async (messageIdx) => {
-		let user_prompt = messages.at(messageIdx).editedContent;
+		let userPrompt = messages.at(messageIdx).editedContent;
 
 		messages.splice(messageIdx, messages.length - messageIdx);
 		messages = messages;
 
-		await submitPrompt(user_prompt);
+		await submitPrompt(userPrompt);
 	};
 
 	const cancelEditMessage = (messageIdx) => {
@@ -390,7 +395,109 @@
 		return res;
 	};
 
-	const submitPrompt = async (user_prompt) => {
+	const sendPrompt = async (userPrompt) => {
+		let responseMessage = {
+			role: 'assistant',
+			content: ''
+		};
+
+		messages = [...messages, responseMessage];
+		window.scrollTo({ top: document.body.scrollHeight });
+
+		const res = await fetch(`${API_BASE_URL}/generate`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'text/event-stream'
+			},
+			body: JSON.stringify({
+				model: selectedModel,
+				prompt: userPrompt,
+				system: system ?? undefined,
+				options:
+					temperature != null
+						? {
+								temperature: temperature
+						  }
+						: undefined,
+				context:
+					messages.length > 3 && messages.at(-3).context != undefined
+						? messages.at(-3).context
+						: undefined
+			})
+		});
+
+		const reader = res.body
+			.pipeThrough(new TextDecoderStream())
+			.pipeThrough(splitStream('\n'))
+			.getReader();
+
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done || stopResponseFlag) {
+				if (stopResponseFlag) {
+					responseMessage.done = true;
+					messages = messages;
+					hljs.highlightAll();
+					createCopyCodeBlockButton();
+					renderLatex();
+				}
+
+				break;
+			}
+
+			try {
+				let lines = value.split('\n');
+
+				for (const line of lines) {
+					if (line !== '') {
+						console.log(line);
+						let data = JSON.parse(line);
+						if (data.done == false) {
+							if (responseMessage.content == '' && data.response == '\n') {
+								continue;
+							} else {
+								responseMessage.content += data.response;
+								messages = messages;
+							}
+						} else {
+							responseMessage.done = true;
+							responseMessage.context = data.context;
+							messages = messages;
+							hljs.highlightAll();
+							createCopyCodeBlockButton();
+							renderLatex();
+						}
+					}
+				}
+			} catch (error) {
+				console.log(error);
+			}
+
+			if (autoScroll) {
+				window.scrollTo({ top: document.body.scrollHeight });
+			}
+
+			await db.put('chats', {
+				id: chatId,
+				title: title === '' ? 'New Chat' : title,
+				model: selectedModel,
+				system: system,
+				options: {
+					temperature: temperature
+				},
+				timestamp: Date.now(),
+				messages: messages
+			});
+		}
+
+		stopResponseFlag = false;
+		await tick();
+		if (autoScroll) {
+			window.scrollTo({ top: document.body.scrollHeight });
+		}
+	};
+
+	const submitPrompt = async (userPrompt) => {
 		console.log('submitPrompt');
 
 		if (selectedModel === '') {
@@ -412,105 +519,26 @@
 				});
 				chats = await db.getAllFromIndex('chats', 'timestamp');
 			}
+
 			messages = [
 				...messages,
 				{
 					role: 'user',
-					content: user_prompt
+					content: userPrompt
 				}
 			];
-			prompt = '';
 
+			prompt = '';
 			textareaElement.style.height = '';
+
 			setTimeout(() => {
 				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 			}, 50);
 
-			let responseMessage = {
-				role: 'assistant',
-				content: ''
-			};
-
-			messages = [...messages, responseMessage];
-			window.scrollTo({ top: document.body.scrollHeight });
-
-			const res = await fetch(`${API_BASE_URL}/generate`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'text/event-stream'
-				},
-				body: JSON.stringify({
-					model: selectedModel,
-					prompt: user_prompt,
-					system: system ?? undefined,
-					options:
-						temperature != null
-							? {
-									temperature: temperature
-							  }
-							: undefined,
-					context:
-						messages.length > 3 && messages.at(-3).context != undefined
-							? messages.at(-3).context
-							: undefined
-				})
-			});
-
-			const reader = res.body
-				.pipeThrough(new TextDecoderStream())
-				.pipeThrough(splitStream('\n'))
-				.getReader();
-
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
-
-				try {
-					let lines = value.split('\n');
-
-					for (const line of lines) {
-						if (line !== '') {
-							console.log(line);
-							let data = JSON.parse(line);
-							if (data.done == false) {
-								if (responseMessage.content == '' && data.response == '\n') {
-									continue;
-								} else {
-									responseMessage.content += data.response;
-									messages = messages;
-								}
-							} else {
-								responseMessage.done = true;
-								responseMessage.context = data.context;
-								messages = messages;
-								hljs.highlightAll();
-								createCopyCodeBlockButton();
-								renderLatex();
-							}
-						}
-					}
-				} catch (error) {
-					console.log(error);
-				}
-				window.scrollTo({ top: document.body.scrollHeight });
-
-				await db.put('chats', {
-					id: chatId,
-					title: title === '' ? 'New Chat' : title,
-					model: selectedModel,
-					system: system,
-					options: {
-						temperature: temperature
-					},
-					timestamp: Date.now(),
-					messages: messages
-				});
-			}
-
-			window.scrollTo({ top: document.body.scrollHeight });
+			await sendPrompt(userPrompt);
 
 			if (messages.length == 2) {
-				await generateTitle(chatId, user_prompt);
+				await generateTitle(chatId, userPrompt);
 			}
 			chats = await db.getAllFromIndex('chats', 'timestamp');
 		}
@@ -518,101 +546,23 @@
 
 	const regenerateResponse = async () => {
 		console.log('regenerateResponse');
-
 		if (messages.length != 0 && messages.at(-1).done == true) {
 			messages.splice(messages.length - 1, 1);
 			messages = messages;
 
-			let lastUserMessage = messages.at(-1);
-
-			let responseMessage = {
-				role: 'assistant',
-				content: ''
-			};
-
-			messages = [...messages, responseMessage];
-			window.scrollTo({ top: document.body.scrollHeight });
-
-			const res = await fetch(`${API_BASE_URL}/generate`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'text/event-stream'
-				},
-				body: JSON.stringify({
-					model: selectedModel,
-					prompt: lastUserMessage.content,
-					system: system ?? undefined,
-					options:
-						temperature != null
-							? {
-									temperature: temperature
-							  }
-							: undefined,
-					context:
-						messages.length > 3 && messages.at(-3).context != undefined
-							? messages.at(-3).context
-							: undefined
-				})
-			});
-
-			const reader = res.body
-				.pipeThrough(new TextDecoderStream())
-				.pipeThrough(splitStream('\n'))
-				.getReader();
-
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
-
-				try {
-					let lines = value.split('\n');
-
-					for (const line of lines) {
-						if (line !== '') {
-							console.log(line);
-							let data = JSON.parse(line);
-							if (data.done == false) {
-								if (responseMessage.content == '' && data.response == '\n') {
-									continue;
-								} else {
-									responseMessage.content += data.response;
-									messages = messages;
-								}
-							} else {
-								responseMessage.done = true;
-								responseMessage.context = data.context;
-								messages = messages;
-								hljs.highlightAll();
-								createCopyCodeBlockButton();
-								renderLatex();
-							}
-						}
-					}
-				} catch (error) {
-					console.log(error);
-				}
-				window.scrollTo({ top: document.body.scrollHeight });
-			}
-
-			window.scrollTo({ top: document.body.scrollHeight });
-			await db.put('chats', {
-				id: chatId,
-				title: title === '' ? 'New Chat' : title,
-				model: selectedModel,
-				system: system,
-				options: {
-					temperature: temperature
-				},
-				timestamp: Date.now(),
-				messages: messages
-			});
+			let userMessage = messages.at(-1);
+			let userPrompt = userMessage.content;
+			await sendPrompt(userPrompt);
 			chats = await db.getAllFromIndex('chats', 'timestamp');
 		}
-
-		console.log(messages);
 	};
 
-	const generateTitle = async (_chatId, user_prompt) => {
+	const stopResponse = () => {
+		stopResponseFlag = true;
+		console.log('stopResponse');
+	};
+
+	const generateTitle = async (_chatId, userPrompt) => {
 		console.log('generateTitle');
 
 		const res = await fetch(`${API_BASE_URL}/generate`, {
@@ -622,7 +572,7 @@
 			},
 			body: JSON.stringify({
 				model: selectedModel,
-				prompt: `Generate a brief 3-5 word title for this question, excluding the term 'title.' Then, please reply with only the title: ${user_prompt}`,
+				prompt: `Generate a brief 3-5 word title for this question, excluding the term 'title.' Then, please reply with only the title: ${userPrompt}`,
 				stream: false
 			})
 		})
@@ -645,6 +595,12 @@
 		}
 	};
 </script>
+
+<svelte:window
+	on:scroll={(e) => {
+		autoScroll = window.innerHeight + window.scrollY >= document.body.offsetHeight - 30;
+	}}
+/>
 
 <div class="app text-gray-100">
 	<div class=" bg-gray-800 min-h-screen overflow-auto flex flex-row">
@@ -931,135 +887,57 @@
 				<div class=" bg-gradient-to-t from-gray-900 pt-5">
 					<div class="max-w-3xl p-2.5 -mb-0.5 mx-auto inset-x-0">
 						{#if messages.length == 0 && suggestions !== 'false'}
-							<div class=" grid sm:grid-cols-2 gap-2.5 mb-4 md:p-2 text-left">
-								<button
-									class=" flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
-									on:click={() => {
-										submitPrompt(`Tell me a random fun fact about the Roman Empire`);
-									}}
-								>
-									<div class="flex flex-col text-left">
-										<div class="text-sm font-medium text-gray-300">Tell me a fun fact</div>
-										<div class="text-sm text-gray-500">about the Roman Empire</div>
-									</div>
-
-									<div class="self-center group-hover:text-gray-300 text-gray-800 transition">
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 16 16"
-											fill="none"
-											class="w-4 h-4"
-											><path
-												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
-												fill="currentColor"
-											/></svg
-										>
-									</div>
-								</button>
-
-								<button
-									class="flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
-									on:click={() => {
-										submitPrompt(
-											`Show me a code snippet of a website's sticky header in CSS and JavaScript.`
-										);
-									}}
-								>
-									<div class="flex flex-col text-left">
-										<div class="text-sm font-medium text-gray-300">Show me a code snippet</div>
-										<div class="text-sm text-gray-500">of a website's sticky header</div>
-									</div>
-									<div class="self-center group-hover:text-gray-300 text-gray-800 transition">
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 16 16"
-											fill="none"
-											class="w-4 h-4"
-											><path
-												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
-												fill="currentColor"
-											/></svg
-										>
-									</div>
-								</button>
-
-								<button
-									class=" hidden sm:flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
-									on:click={() => {
-										submitPrompt(
-											`Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.`
-										);
-									}}
-								>
-									<div class="flex flex-col text-left">
-										<div class="text-sm font-medium text-gray-300">Help me study</div>
-										<div class="text-sm text-gray-500">vocabulary for a college entrance exam</div>
-									</div>
-									<div class="self-center group-hover:text-gray-300 text-gray-800 transition">
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 16 16"
-											fill="none"
-											class="w-4 h-4"
-											><path
-												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
-												fill="currentColor"
-											/></svg
-										>
-									</div>
-								</button>
-
-								<button
-									class="  hidden sm:flex justify-between w-full px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg transition group"
-									on:click={() => {
-										submitPrompt(
-											`What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.`
-										);
-									}}
-								>
-									<div class="flex flex-col text-left">
-										<div class="text-sm font-medium text-gray-300">Give me ideas</div>
-										<div class="text-sm text-gray-500">for what to do with my kids' art</div>
-									</div>
-									<div class="self-center group-hover:text-gray-300 text-gray-800 transition">
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 16 16"
-											fill="none"
-											class="w-4 h-4"
-											><path
-												d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
-												fill="currentColor"
-											/></svg
-										>
-									</div>
-								</button>
-							</div>
+							<Suggestions {submitPrompt} />
 						{/if}
 
-						{#if messages.length != 0 && messages.at(-1).role == 'assistant' && messages.at(-1).done == true}
-							<div class=" flex justify-end mb-2.5">
-								<button
-									class=" flex px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg"
-									on:click={regenerateResponse}
-								>
-									<div class=" self-center mr-1">
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 20 20"
-											fill="currentColor"
-											class="w-4 h-4"
-										>
-											<path
-												fill-rule="evenodd"
-												d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-												clip-rule="evenodd"
-											/>
-										</svg>
-									</div>
-									<div class=" self-center text-sm">Regenerate</div>
-								</button>
-							</div>
+						{#if messages.length != 0 && messages.at(-1).role == 'assistant'}
+							{#if messages.at(-1).done == true}
+								<div class=" flex justify-end mb-2.5">
+									<button
+										class=" flex px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg"
+										on:click={regenerateResponse}
+									>
+										<div class=" self-center mr-1">
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													fill-rule="evenodd"
+													d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
+													clip-rule="evenodd"
+												/>
+											</svg>
+										</div>
+										<div class=" self-center text-sm">Regenerate</div>
+									</button>
+								</div>
+							{:else}
+								<div class=" flex justify-end mb-2.5">
+									<button
+										class=" flex px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg"
+										on:click={stopResponse}
+									>
+										<div class=" self-center mr-1">
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													fill-rule="evenodd"
+													d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm5-2.25A.75.75 0 017.75 7h4.5a.75.75 0 01.75.75v4.5a.75.75 0 01-.75.75h-4.5a.75.75 0 01-.75-.75v-4.5z"
+													clip-rule="evenodd"
+												/>
+											</svg>
+										</div>
+										<div class=" self-center text-sm">Stop generating</div>
+									</button>
+								</div>
+							{/if}
 						{/if}
 						<form
 							class=" flex shadow-sm relative w-full"
