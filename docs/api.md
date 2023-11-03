@@ -11,6 +11,8 @@
 - [Pull a Model](#pull-a-model)
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
+- [Encode a prompt](#encode-a-prompt)
+- [Decode tokens](#decode-tokens)
 
 ## Conventions
 
@@ -433,5 +435,77 @@ curl -X POST http://localhost:11434/api/embeddings -d '{
     0.5670403838157654, 0.009260174818336964, 0.23178744316101074, -0.2916173040866852, -0.8924556970596313,
     0.8785552978515625, -0.34576427936553955, 0.5742510557174683, -0.04222835972905159, -0.137906014919281
   ]
+}
+```
+
+## Encode a prompt
+
+```shell
+POST /api/encode
+```
+
+Generate prompt tokens from a model
+
+### Parameters
+
+- `model`: name of model to generate tokens from
+- `prompt`: text to encode
+
+Advanced parameters:
+
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+
+### Request
+
+```shell
+curl -X POST http://localhost:11434/api/encode -d '{
+  "model": "mistral:7b",
+  "prompt": "<|im_start|>system\nHello world<|im_end|>"
+}'
+```
+
+### Response
+
+```json
+{
+  "tokens": [
+    523,28766,321,28730,2521,28766,28767,6574,13,16230,1526,28789,28766,321,28730,416,28766,28767
+  ]
+}
+```
+
+## Decode tokens
+
+```shell
+POST /api/decode
+```
+
+Decode text into tokens from a model
+
+### Parameters
+
+- `model`: name of model to generate tokens from
+- `tokens`: token array
+
+Advanced parameters:
+
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+
+### Request
+
+```shell
+curl -X POST http://localhost:11434/api/decode -d '{
+  "model": "mistral:7b",
+  "tokens": [
+    523,28766,321,28730,2521,28766,28767,6574,13,16230,1526,28789,28766,321,28730,416,28766,28767
+  ]
+}'
+```
+
+### Response
+
+```json
+{
+  "prompt": "<|im_start|>system\nHello world<|im_end|>"
 }
 ```
