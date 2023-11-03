@@ -45,9 +45,11 @@ Advanced parameters (optional):
 - `system`: system prompt to (overrides what is defined in the `Modelfile`)
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
-- `stream`: if `false` the response will be be returned as a single response object, rather than a stream of objects
+- `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{
@@ -56,9 +58,9 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }'
 ```
 
-### Response
+#### Response
 
-A stream of JSON objects:
+A stream of JSON objects is returned:
 
 ```json
 {
@@ -102,6 +104,38 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 }
 ```
 
+#### Request
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "llama2:7b",
+  "prompt": "Why is the sky blue?",
+  "stream": false
+}'
+```
+
+#### Response
+
+If `stream` is set to `false`, the response will be a single JSON object:
+
+```json
+{
+  "model": "llama2:7b",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "response": "The sky is blue because it is the color of the sky.",
+  "context": [1, 2, 3],
+  "done": true,
+  "total_duration": 5589157167,
+  "load_duration": 3013701500,
+  "sample_count": 114,
+  "sample_duration": 81442000,
+  "prompt_eval_count": 46,
+  "prompt_eval_duration": 1160282000,
+  "eval_count": 13,
+  "eval_duration": 1325948000
+}
+```
+
 ## Create a Model
 
 ```shell
@@ -114,9 +148,11 @@ Create a model from a [`Modelfile`](./modelfile.md)
 
 - `name`: name of the model to create
 - `path`: path to the Modelfile
-- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
+- `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/create -d '{
@@ -125,7 +161,7 @@ curl -X POST http://localhost:11434/api/create -d '{
 }'
 ```
 
-### Response
+#### Response
 
 A stream of JSON objects. When finished, `status` is `success`.
 
@@ -143,13 +179,17 @@ GET /api/tags
 
 List models that are available locally.
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl http://localhost:11434/api/tags
 ```
 
-### Response
+#### Response
+
+A single JSON object will be returned.
 
 ```json
 {
@@ -180,7 +220,9 @@ Show details about a model including modelfile, template, parameters, license, a
 
 - `name`: name of the model to show
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl http://localhost:11434/api/show -d '{
@@ -188,7 +230,7 @@ curl http://localhost:11434/api/show -d '{
 }'
 ```
 
-### Response
+#### Response
 
 ```json
 {
@@ -207,7 +249,9 @@ POST /api/copy
 
 Copy a model. Creates a model with another name from an existing model.
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl http://localhost:11434/api/copy -d '{
@@ -215,6 +259,10 @@ curl http://localhost:11434/api/copy -d '{
   "destination": "llama2-backup"
 }'
 ```
+
+#### Response
+
+The only response is a 200 OK if successful.
 
 ## Delete a Model
 
@@ -226,15 +274,21 @@ Delete a model and its data.
 
 ### Parameters
 
-- `model`: model name to delete
+- `name`: model name to delete
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X DELETE http://localhost:11434/api/delete -d '{
   "name": "llama2:13b"
 }'
 ```
+
+#### Response
+
+If successful, the only response is a 200 OK.
 
 ## Pull a Model
 
@@ -248,9 +302,11 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 - `name`: name of the model to pull
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
-- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
+- `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/pull -d '{
@@ -258,13 +314,51 @@ curl -X POST http://localhost:11434/api/pull -d '{
 }'
 ```
 
-### Response
+#### Response
+
+If `stream` is not specified, or set to `true`, a stream of JSON objects is returned:
+
+The first object is the manifest:
+
+```json
+{
+  "status": "pulling manifest"
+}
+```
+
+Then there is a series of downloading responses. Until any of the download is completed, the `completed` key may not be included. The number of files to be downloaded depends on the number of layers specified in the manifest.
 
 ```json
 {
   "status": "downloading digestname",
   "digest": "digestname",
-  "total": 2142590208
+  "total": 2142590208,
+  "completed": 241970
+}
+```
+
+After all the files are downloaded, the final responses are:
+
+```json
+{
+    "status": "verifying sha256 digest"
+}
+{
+    "status": "writing manifest"
+}
+{
+    "status": "removing any unused layers"
+}
+{
+    "status": "success"
+}
+```
+
+if `stream` is set to false, then the response is a single JSON object:
+
+```json
+{
+  "status": "success"
 }
 ```
 
@@ -280,9 +374,11 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 - `name`: name of the model to push in the form of `<namespace>/<model>:<tag>`
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pushing to your library during development.
-- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
+- `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/push -d '{
@@ -290,9 +386,9 @@ curl -X POST http://localhost:11434/api/push -d '{
 }'
 ```
 
-### Response
+#### Response
 
-Streaming response that starts with:
+If `stream` is not specified, or set to `true`, a stream of JSON objects is returned:
 
 ```json
 { "status": "retrieving manifest" }
@@ -325,6 +421,12 @@ Finally, when the upload is complete:
 {"status":"success"}
 ```
 
+If `stream` is set to `false`, then the response is a single JSON object:
+
+```json
+{ "status": "success" }
+```
+
 ## Generate Embeddings
 
 ```shell
@@ -342,7 +444,9 @@ Advanced parameters:
 
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/embeddings -d '{
@@ -351,7 +455,7 @@ curl -X POST http://localhost:11434/api/embeddings -d '{
 }'
 ```
 
-### Response
+#### Response
 
 ```json
 {

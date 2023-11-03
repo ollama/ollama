@@ -91,7 +91,7 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 	}
 
 	s := SignatureData{
-		Method: "GET",
+		Method: http.MethodGet,
 		Path:   redirectURL.String(),
 		Data:   nil,
 	}
@@ -103,7 +103,7 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 
 	headers := make(http.Header)
 	headers.Set("Authorization", sig)
-	resp, err := makeRequest(ctx, "GET", redirectURL, headers, nil, nil)
+	resp, err := makeRequest(ctx, http.MethodGet, redirectURL, headers, nil, nil)
 	if err != nil {
 		log.Printf("couldn't get token: %q", err)
 		return "", err

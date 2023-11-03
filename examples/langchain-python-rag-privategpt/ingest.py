@@ -150,7 +150,7 @@ def main():
         print("Creating new vectorstore")
         texts = process_documents()
         print(f"Creating embeddings. May take some minutes...")
-        db = Chroma.from_documents(texts, embeddings, persist_directory=persist_directory, client_settings=CHROMA_SETTINGS)
+        db = Chroma.from_documents(texts, embeddings, persist_directory=persist_directory)
     db.persist()
     db = None
 
