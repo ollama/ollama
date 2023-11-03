@@ -529,6 +529,8 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"stop":              llm.Stop,
 	}
 
+	fmt.Println(request)
+
 	// Handling JSON marshaling with special characters unescaped.
 	buffer := &bytes.Buffer{}
 	enc := json.NewEncoder(buffer)
