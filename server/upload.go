@@ -135,9 +135,10 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 		case <-inner.Done():
 		case requestURL := <-b.nextURL:
 			g.Go(func() error {
+				var err error
 				for try := 0; try < maxRetries; try++ {
 					part.ReadSeeker = io.NewSectionReader(f, part.Offset, part.Size)
-					err := b.uploadChunk(inner, http.MethodPatch, requestURL, part, opts)
+					err = b.uploadChunk(inner, http.MethodPatch, requestURL, part, opts)
 					switch {
 					case errors.Is(err, context.Canceled):
 						return err
@@ -151,7 +152,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 					return nil
 				}
 
-				return errMaxRetriesExceeded
+				return fmt.Errorf("%w: %w", errMaxRetriesExceeded, err)
 			})
 		}
 	}
@@ -227,7 +228,7 @@ func (b *blobUpload) uploadChunk(ctx context.Context, method string, requestURL 
 		}
 
 		for try := 0; try < maxRetries; try++ {
-			err := b.uploadChunk(ctx, http.MethodPut, redirectURL, part, nil)
+			err = b.uploadChunk(ctx, http.MethodPut, redirectURL, part, nil)
 			switch {
 			case errors.Is(err, context.Canceled):
 				return err
@@ -241,7 +242,7 @@ func (b *blobUpload) uploadChunk(ctx context.Context, method string, requestURL 
 			return nil
 		}
 
-		return errMaxRetriesExceeded
+		return fmt.Errorf("%w: %w", errMaxRetriesExceeded, err)
 
 	case resp.StatusCode == http.StatusUnauthorized:
 		auth := resp.Header.Get("www-authenticate")
