@@ -52,6 +52,28 @@ type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+type EncodeRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+
+	Options map[string]interface{} `json:"options"`
+}
+
+type EncodeResponse struct {
+	Tokens []int `json:"tokens"`
+}
+
+type DecodeRequest struct {
+	Model  string `json:"model"`
+	Tokens []int  `json:"tokens"`
+
+	Options map[string]interface{} `json:"options"`
+}
+
+type DecodeResponse struct {
+	Prompt string `json:"prompt"`
+}
+
 type CreateRequest struct {
 	Name   string `json:"name"`
 	Path   string `json:"path"`

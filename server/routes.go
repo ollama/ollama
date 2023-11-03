@@ -243,6 +243,98 @@ func GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+func EncodeHandler(c *gin.Context) {
+	loaded.mu.Lock()
+	defer loaded.mu.Unlock()
+
+	var req api.EncodeRequest
+	err := c.ShouldBindJSON(&req)
+
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Model == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	model, err := GetModel(req.Model)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	workDir := c.GetString("workDir")
+	if err := load(c.Request.Context(), workDir, model, req.Options, 5*time.Minute); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tokens, err := loaded.runner.Encode(c.Request.Context(), req.Prompt)
+	if err != nil {
+		log.Printf("prompt encoding failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode prompt"})
+		return
+	}
+
+	resp := api.EncodeResponse{
+		Tokens: tokens,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func DecodeHandler(c *gin.Context) {
+	loaded.mu.Lock()
+	defer loaded.mu.Unlock()
+
+	var req api.DecodeRequest
+	err := c.ShouldBindJSON(&req)
+
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Model == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	model, err := GetModel(req.Model)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	workDir := c.GetString("workDir")
+	if err := load(c.Request.Context(), workDir, model, req.Options, 5*time.Minute); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	prompt, err := loaded.runner.Decode(c.Request.Context(), req.Tokens)
+	if err != nil {
+		log.Printf("decoding tokens failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decode tokens"})
+		return
+	}
+
+	resp := api.DecodeResponse{
+		Prompt: prompt,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 func EmbeddingHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -663,6 +755,8 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/embeddings", EmbeddingHandler)
+	r.POST("/api/encode", EncodeHandler)
+	r.POST("/api/decode", DecodeHandler)
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)
