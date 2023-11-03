@@ -69,7 +69,7 @@ func (m *Model) Prompt(request api.GenerateRequest) (string, error) {
 
 	vars.Prompt = request.Prompt
 
-	if len(vars.Context) == 0 {
+	if len(request.Context) == 0 {
 		vars.System = m.System
 	}
 
