@@ -427,7 +427,11 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 
 	// output is being piped
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return generate(cmd, args[0], strings.Join(prompts, " "), false, format)
+		_, err := generate(cmd, args[0], strings.Join(prompts, " "), nil, false, format)
+		if err != nil {
+			return err
+		}
+		return nil
 	}
 
 	wordWrap := os.Getenv("TERM") == "xterm-256color"
@@ -442,18 +446,20 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 
 	// prompts are provided via stdin or args so don't enter interactive mode
 	if len(prompts) > 0 {
-		return generate(cmd, args[0], strings.Join(prompts, " "), wordWrap, format)
+		_, err := generate(cmd, args[0], strings.Join(prompts, " "), nil, wordWrap, format)
+		if err != nil {
+			return err
+		}
+		return nil
 	}
 
 	return generateInteractive(cmd, args[0], wordWrap, format)
 }
 
-type generateContextKey string
-
-func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format string) error {
+func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, wordWrap bool, format string) (*api.Message, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	p := progress.NewProgress(os.Stderr)
@@ -463,11 +469,6 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 	p.Add("", spinner)
 
 	var latest api.GenerateResponse
-
-	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
-	if !ok {
-		generateContext = []int{}
-	}
 
 	termWidth, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
@@ -490,14 +491,16 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 	var currentLineLength int
 	var wordBuffer string
 
-	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext, Format: format}
-	fn := func(response api.GenerateResponse) error {
+	var fullResponse strings.Builder
+	request := api.GenerateRequest{Model: model, Prompt: prompt, Messages: messages, Format: format}
+	fn := func(generated api.GenerateResponse) error {
 		p.StopAndClear()
 
-		latest = response
+		latest = generated
+		fullResponse.WriteString(generated.Response)
 
 		if wordWrap {
-			for _, ch := range response.Response {
+			for _, ch := range generated.Response {
 				if currentLineLength+1 > termWidth-5 {
 					// backtrack the length of the last word and clear to the end of the line
 					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
@@ -518,7 +521,7 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 				}
 			}
 		} else {
-			fmt.Print(response.Response)
+			fmt.Print(generated.Response)
 		}
 
 		return nil
@@ -526,9 +529,12 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 
 	if err := client.Generate(cancelCtx, &request, fn); err != nil {
 		if strings.Contains(err.Error(), "context canceled") && abort {
-			return nil
+			return &api.Message{
+				Prompt:   prompt,
+				Response: fullResponse.String(),
+			}, nil
 		}
-		return err
+		return nil, err
 	}
 	if prompt != "" {
 		fmt.Println()
@@ -537,30 +543,32 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 
 	if !latest.Done {
 		if abort {
-			return nil
+			return &api.Message{
+				Prompt:   prompt,
+				Response: fullResponse.String(),
+			}, nil
 		}
-		return errors.New("unexpected end of response")
+		return nil, errors.New("unexpected end of response")
 	}
 
 	verbose, err := cmd.Flags().GetBool("verbose")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if verbose {
 		latest.Summary()
 	}
 
-	ctx := cmd.Context()
-	ctx = context.WithValue(ctx, generateContextKey("context"), latest.Context)
-	cmd.SetContext(ctx)
-
-	return nil
+	return &api.Message{
+		Prompt:   prompt,
+		Response: fullResponse.String(),
+	}, nil
 }
 
 func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format string) error {
 	// load the model
-	if err := generate(cmd, model, "", false, ""); err != nil {
+	if _, err := generate(cmd, model, "", nil, false, ""); err != nil {
 		return err
 	}
 
@@ -614,6 +622,7 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 	defer fmt.Printf(readline.EndBracketedPaste)
 
 	var multiLineBuffer string
+	messages := make([]api.Message, 0)
 
 	for {
 		line, err := scanner.Readline()
@@ -756,9 +765,11 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 		}
 
 		if len(line) > 0 && line[0] != '/' {
-			if err := generate(cmd, model, line, wordWrap, format); err != nil {
+			message, err := generate(cmd, model, line, messages, wordWrap, format)
+			if err != nil {
 				return err
 			}
+			messages = append(messages, *message)
 		}
 	}
 }

@@ -161,6 +161,8 @@ func GenerateHandler(c *gin.Context) {
 	}
 
 	// validate the request
+	isContextSet := req.Context != nil && len(req.Context) > 0
+	areMessagesSet := req.Messages != nil && len(req.Messages) > 0
 	switch {
 	case req.Model == "":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
@@ -168,9 +170,12 @@ func GenerateHandler(c *gin.Context) {
 	case len(req.Format) > 0 && req.Format != "json":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
 		return
-	case req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0):
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
+	case req.Raw && (req.Template != "" || req.System != "" || isContextSet || areMessagesSet):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, context, or messages"})
 		return
+	case areMessagesSet && isContextSet:
+		// this makes rebuilding the prompt history too complicated, so don't allow it
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "only one of messages or context may be specified"})
 	}
 
 	model, err := GetModel(req.Model)
@@ -199,20 +204,65 @@ func GenerateHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	prompt := req.Prompt
-	if !req.Raw {
-		prompt, err = model.Prompt(req)
+	var prompt strings.Builder
+	if req.Context != nil {
+		// TODO: context is deprecated, at some point the context logic within this conditional should be removed
+		// if the request has a context rather than messages, decode it and add it to the prompt
+		prevCtx, err := loaded.runner.Decode(c.Request.Context(), req.Context)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		// Remove leading spaces from prevCtx if present
+		prevCtx = strings.TrimPrefix(prevCtx, " ")
+		prompt.WriteString(prevCtx)
+	}
+	// build the prompt history from messages
+	for i, m := range req.Messages {
+		// apply the template to the prompt
+		p, err := model.Prompt(PromptVars{
+			First:  i == 0,
+			Prompt: m.Prompt,
+			System: req.System,
+		}, req.Template)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		prompt.WriteString(p)
+		prompt.WriteString(m.Response)
 	}
 
+	// finally, add the current prompt as the most recent message
+	first := !isContextSet && !areMessagesSet
+	if req.Raw {
+		prompt.WriteString(req.Prompt)
+	} else if strings.TrimSpace(req.Prompt) != "" {
+		// template the request prompt before adding it
+		p, err := model.Prompt(PromptVars{
+			First:  first,
+			System: req.System,
+			Prompt: req.Prompt,
+		}, req.Template)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		prompt.WriteString(p)
+	}
+
+	sendContext := first || isContextSet
+	var respCtx strings.Builder
+	if _, err := respCtx.WriteString(prompt.String()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
 		// an empty request loads the model
-		if req.Prompt == "" && req.Template == "" && req.System == "" {
+		if req.Prompt == "" && req.Template == "" && req.System == "" && !areMessagesSet {
 			ch <- api.GenerateResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true}
 			return
 		}
@@ -223,9 +273,26 @@ func GenerateHandler(c *gin.Context) {
 
 			r.Model = req.Model
 			r.CreatedAt = time.Now().UTC()
+			// if the final response expects a context, build the context as we go
+			if sendContext {
+				if _, err := respCtx.WriteString(r.Response); err != nil {
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
+			}
+
 			if r.Done {
 				r.TotalDuration = time.Since(checkpointStart)
 				r.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				// if the response expects a context, encode it and send it back
+				if sendContext {
+					embd, err := loaded.runner.Encode(c.Request.Context(), respCtx.String())
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+						return
+					}
+					r.Context = embd
+				}
 			}
 
 			if req.Raw {
@@ -236,7 +303,7 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, req.Format, fn); err != nil {
+		if err := loaded.runner.Predict(c.Request.Context(), prompt.String(), req.Format, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()

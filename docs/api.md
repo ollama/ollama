@@ -45,9 +45,13 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system prompt to (overrides what is defined in the `Modelfile`)
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
-- `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
+- `messages`: the messages of the conversation until this point, this can be used to keep a conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
-- `raw`: if `true` no formatting will be applied to the prompt and no context will be returned. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API, and are managing history yourself.
+- `raw`: if `true` no formatting will be applied to the prompt, and no context will be returned. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API, and are managing messages yourself.
+
+Deprecated parameters (optional):
+
+- `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 
 ### JSON mode
 
@@ -89,8 +93,8 @@ The final response in the stream also includes additional data about the generat
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
 - `eval_count`: number of tokens the response
 - `eval_duration`: time in nanoseconds spent generating the response
-- `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
+- `context`: optionally, if no messages were specified the context will be returned as an encoding of the conversation used in this response, this field is deprecated and will be removed in a future version
 
 To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration`.
 
@@ -145,6 +149,41 @@ If `stream` is set to `false`, the response will be a single JSON object:
 ```
 
 #### Request (Raw mode)
+
+To continue a conversation, you can provide a `messages` parameter with the conversation so far. This is a list of prompts and responses.
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "mistral",
+  "prompt": "what did I just ask?",
+  "messages": [
+    {
+      "prompt": "why is the sky blue?",
+      "response": "The sky appears blue because of a phenomenon called Rayleigh scattering."
+    }
+  ],
+  "stream": false,
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "mistral",
+  "created_at": "2023-11-03T21:56:04.806917Z",
+  "response": "You asked for an explanation of why the sky is blue.",
+  "done": true,
+  "total_duration": 5211750166,
+  "load_duration": 3714731708,
+  "prompt_eval_count": 44,
+  "prompt_eval_duration": 532827000,
+  "eval_count": 12,
+  "eval_duration": 938680000
+}
+```
+
+#### Request
 
 In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting and context.
 
