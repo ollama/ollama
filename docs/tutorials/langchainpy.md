@@ -48,7 +48,7 @@ It's split up, but we have to find the relevant splits and then submit those to 
 from langchain.embeddings import OllamaEmbeddings
 from langchain.vectorstores import Chroma
 oembed = OllamaEmbeddings(base_url="http://localhost:11434", model="llama2")
-vectorstore = Chroma.from_documents(documents=all_splits, embedding=oembed())
+vectorstore = Chroma.from_documents(documents=all_splits, embedding=oembed)
 ```
 
 Now let's ask a question from the document. **Who was Neleus, and who is in his family?** Neleus is a character in the Odyssey, and the answer can be found in our text.
