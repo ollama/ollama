@@ -334,7 +334,7 @@
 								</div>
 							</div>
 							<div class="mt-2 text-xs text-gray-500">
-								Adds optional support for 'gpt-3.5-turbo'.
+								Adds optional support for 'gpt-*' models available.
 							</div>
 						</div>
 
