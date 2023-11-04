@@ -8,16 +8,21 @@
 	export let saveSettings: Function;
 	export let getModelTags: Function;
 
-	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
-	let system = '';
-	let temperature = 0.8;
+	let selectedTab = 'general';
 
-	let selectedMenu = 'general';
+	// General
+	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
+	let OPENAI_API_KEY = '';
+	let system = '';
+
+	// Models
 	let modelTag = '';
 	let deleteModelTag = '';
-
 	let digest = '';
-	let pullProgress = '';
+	let pullProgress = null;
+
+	// Advanced
+	let temperature = 0.8;
 
 	const splitStream = (splitOn) => {
 		let buffer = '';
@@ -42,11 +47,9 @@
 
 		if (res) {
 			toast.success('Server connection verified');
-			saveSettings(
-				API_BASE_URL,
-				system != '' ? system : null,
-				temperature != 0.8 ? temperature : null
-			);
+			saveSettings({
+				API_BASE_URL: API_BASE_URL
+			});
 		}
 	};
 
@@ -156,7 +159,10 @@
 
 	$: if (show) {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+		console.log(settings);
+
 		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
+		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 		system = settings.system ?? '';
 		temperature = settings.temperature ?? 0.8;
 	}
@@ -191,12 +197,12 @@
 				class="flex flex-row space-x-1 md:space-x-0 md:space-y-1 md:flex-col flex-1 md:flex-none md:w-40 text-gray-200 text-xs text-left mb-3 md:mb-0"
 			>
 				<button
-					class="px-2 py-2 rounded flex-1 md:flex-none flex text-right transition {selectedMenu ===
+					class="px-2.5 py-2.5 rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'general'
 						? 'bg-gray-700'
 						: 'hover:bg-gray-800'}"
 					on:click={() => {
-						selectedMenu = 'general';
+						selectedTab = 'general';
 					}}
 				>
 					<div class=" self-center mr-2">
@@ -217,12 +223,12 @@
 				</button>
 
 				<button
-					class="px-2 py-2 rounded flex-1 md:flex-none flex text-right transition {selectedMenu ===
+					class="px-2.5 py-2.5 rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'models'
 						? 'bg-gray-700'
 						: 'hover:bg-gray-800'}"
 					on:click={() => {
-						selectedMenu = 'models';
+						selectedTab = 'models';
 					}}
 				>
 					<div class=" self-center mr-2">
@@ -241,9 +247,33 @@
 					</div>
 					<div class=" self-center">Models</div>
 				</button>
+
+				<button
+					class="px-2.5 py-2.5 rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'advanced'
+						? 'bg-gray-700'
+						: 'hover:bg-gray-800'}"
+					on:click={() => {
+						selectedTab = 'advanced';
+					}}
+				>
+					<div class=" self-center mr-2">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 20 20"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								d="M12 4.467c0-.405.262-.75.559-1.027.276-.257.441-.584.441-.94 0-.828-.895-1.5-2-1.5s-2 .672-2 1.5c0 .362.171.694.456.953.29.265.544.6.544.994a.968.968 0 01-1.024.974 39.655 39.655 0 01-3.014-.306.75.75 0 00-.847.847c.14.993.242 1.999.306 3.014A.968.968 0 014.447 10c-.393 0-.729-.253-.994-.544C3.194 9.17 2.862 9 2.5 9 1.672 9 1 9.895 1 11s.672 2 1.5 2c.356 0 .683-.165.94-.441.276-.297.622-.559 1.027-.559a.997.997 0 011.004 1.03 39.747 39.747 0 01-.319 3.734.75.75 0 00.64.842c1.05.146 2.111.252 3.184.318A.97.97 0 0010 16.948c0-.394-.254-.73-.545-.995C9.171 15.693 9 15.362 9 15c0-.828.895-1.5 2-1.5s2 .672 2 1.5c0 .356-.165.683-.441.94-.297.276-.559.622-.559 1.027a.998.998 0 001.03 1.005c1.337-.05 2.659-.162 3.961-.337a.75.75 0 00.644-.644c.175-1.302.288-2.624.337-3.961A.998.998 0 0016.967 12c-.405 0-.75.262-1.027.559-.257.276-.584.441-.94.441-.828 0-1.5-.895-1.5-2s.672-2 1.5-2c.362 0 .694.17.953.455.265.291.601.545.995.545a.97.97 0 00.976-1.024 41.159 41.159 0 00-.318-3.184.75.75 0 00-.842-.64c-1.228.164-2.473.271-3.734.319A.997.997 0 0112 4.467z"
+							/>
+						</svg>
+					</div>
+					<div class=" self-center">Advanced</div>
+				</button>
 			</div>
 			<div class="flex-1 md:min-h-[300px]">
-				{#if selectedMenu === 'general'}
+				{#if selectedTab === 'general'}
 					<div class="flex flex-col space-y-3">
 						<div>
 							<div class=" mb-2.5 text-sm font-medium">Ollama Server URL</div>
@@ -290,42 +320,44 @@
 						<hr class=" border-gray-700" />
 
 						<div>
-							<div class=" mb-2.5 text-sm font-medium">System Prompt</div>
-							<textarea
-								bind:value={system}
-								class="w-full rounded p-4 text-sm text-gray-300 bg-gray-800 outline-none"
-								rows="4"
-							/>
+							<div class=" mb-2.5 text-sm font-medium">
+								OpenAI API Key <span class=" text-gray-400 text-sm">(optional)</span>
+							</div>
+							<div class="flex w-full">
+								<div class="flex-1 mr-2">
+									<input
+										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+										placeholder="Enter OpenAI API Key"
+										bind:value={OPENAI_API_KEY}
+										autocomplete="off"
+									/>
+								</div>
+							</div>
+							<div class="mt-2 text-xs text-gray-500">
+								Adds optional support for 'gpt-3.5-turbo'.
+							</div>
 						</div>
 
 						<hr class=" border-gray-700" />
 
 						<div>
-							<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
-								<div>Temperature</div>
-								<div>
-									{temperature}
-								</div></label
-							>
-							<input
-								id="steps-range"
-								type="range"
-								min="0"
-								max="1"
-								bind:value={temperature}
-								step="0.05"
-								class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+							<div class=" mb-2.5 text-sm font-medium">System Prompt</div>
+							<textarea
+								bind:value={system}
+								class="w-full rounded p-4 text-sm text-gray-300 bg-gray-800 outline-none resize-none"
+								rows="4"
 							/>
 						</div>
+
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
 								on:click={() => {
-									saveSettings(
-										API_BASE_URL === '' ? BUILD_TIME_API_BASE_URL : API_BASE_URL,
-										system != '' ? system : null,
-										temperature != 0.8 ? temperature : null
-									);
+									saveSettings({
+										API_BASE_URL: API_BASE_URL === '' ? BUILD_TIME_API_BASE_URL : API_BASE_URL,
+										OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined,
+										system: system !== '' ? system : undefined
+									});
 									show = false;
 								}}
 							>
@@ -333,8 +365,8 @@
 							</button>
 						</div>
 					</div>
-				{:else if selectedMenu === 'models'}
-					<div class="flex flex-col space-y-3 text-sm">
+				{:else if selectedTab === 'models'}
+					<div class="flex flex-col space-y-3 text-sm mb-10">
 						<div>
 							<div class=" mb-2.5 text-sm font-medium">Pull a model</div>
 							<div class="flex w-full">
@@ -375,15 +407,15 @@
 								>
 							</div>
 
-							{#if pullProgress !== ''}
+							{#if pullProgress !== null}
 								<div class="mt-2">
 									<div class=" mb-2 text-xs">Pull Progress</div>
 									<div class="w-full rounded-full bg-gray-800">
 										<div
 											class="bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
-											style="width: {Math.max(15, pullProgress)}%"
+											style="width: {Math.max(15, pullProgress ?? 0)}%"
 										>
-											{pullProgress}%
+											{pullProgress ?? 0}%
 										</div>
 									</div>
 									<div class="mt-1 text-xs text-gray-700" style="font-size: 0.5rem;">
@@ -424,6 +456,40 @@
 									</svg>
 								</button>
 							</div>
+						</div>
+					</div>
+				{:else if selectedTab === 'advanced'}
+					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
+						<div>
+							<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
+								<div>Temperature</div>
+								<div>
+									{temperature}
+								</div></label
+							>
+							<input
+								id="steps-range"
+								type="range"
+								min="0"
+								max="1"
+								bind:value={temperature}
+								step="0.05"
+								class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+							/>
+						</div>
+
+						<div class="flex justify-end pt-3 text-sm font-medium">
+							<button
+								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
+								on:click={() => {
+									saveSettings({
+										temperature: temperature !== 0.8 ? temperature : undefined
+									});
+									show = false;
+								}}
+							>
+								Save
+							</button>
 						</div>
 					</div>
 				{/if}

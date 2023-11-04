@@ -18,55 +18,30 @@
 	import Suggestions from '$lib/components/chat/Suggestions.svelte';
 
 	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
-	let suggestions = ''; // $page.url.searchParams.get('suggestions');
-
-	let models = [];
-	let textareaElement;
-
-	let showSettings = false;
 	let db;
 
 	let selectedModel = '';
-	let system = null;
-	let temperature = null;
+	let settings = {
+		system: null,
+		temperature: null
+	};
 
+	let models = [];
 	let chats = [];
+
 	let chatId = uuidv4();
 	let title = '';
 	let prompt = '';
 	let messages = [];
 
+	let showSettings = false;
 	let stopResponseFlag = false;
 	let autoScroll = true;
+	let suggestions = ''; // $page.url.searchParams.get('suggestions');
 
 	onMount(async () => {
-		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
-
-		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
-		console.log(API_BASE_URL);
-		system = settings.system ?? null;
-		temperature = settings.temperature ?? null;
-
-		await getModelTags();
-
-		selectedModel =
-			settings.model && models.map((model) => model.name).includes(settings.model)
-				? settings.model
-				: '';
-
-		db = await openDB('Chats', 1, {
-			upgrade(db) {
-				const store = db.createObjectStore('chats', {
-					keyPath: 'id',
-					autoIncrement: true
-				});
-				store.createIndex('timestamp', 'timestamp');
-			}
-		});
-
-		chats = await db.getAllFromIndex('chats', 'timestamp');
-		console.log(chats);
-		console.log(chatId);
+		await createNewChat(true);
+		await setDBandLoadChats();
 	});
 
 	//////////////////////////
@@ -184,58 +159,54 @@
 	// Web functions
 	//////////////////////////
 
-	const saveDefaultModel = () => {
-		let settings = localStorage.getItem('settings') ?? '{}';
-		if (settings) {
-			settings = JSON.parse(settings);
-			settings.model = selectedModel;
-			localStorage.setItem('settings', JSON.stringify(settings));
-		}
+	const createNewChat = async (init = false) => {
+		if (init || messages.length > 0) {
+			chatId = uuidv4();
+			messages = [];
+			title = '';
 
-		console.log('saved');
+			settings = JSON.parse(localStorage.getItem('settings') ?? JSON.stringify(settings));
+
+			API_BASE_URL = settings?.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
+			console.log(API_BASE_URL);
+
+			if (models.length === 0) {
+				await getModelTags();
+			}
+
+			selectedModel =
+				settings.model && models.map((model) => model.name).includes(settings.model)
+					? settings.model
+					: '';
+
+			console.log(chatId);
+		}
+	};
+
+	const setDBandLoadChats = async () => {
+		db = await openDB('Chats', 1, {
+			upgrade(db) {
+				const store = db.createObjectStore('chats', {
+					keyPath: 'id',
+					autoIncrement: true
+				});
+				store.createIndex('timestamp', 'timestamp');
+			}
+		});
+
+		chats = await db.getAllFromIndex('chats', 'timestamp');
+	};
+
+	const saveDefaultModel = () => {
+		settings.model = selectedModel;
+		localStorage.setItem('settings', JSON.stringify(settings));
 		toast.success('Default model updated');
 	};
 
-	const saveSettings = async (_api_base_url, _system, _temperature) => {
-		API_BASE_URL = _api_base_url;
-		system = _system;
-		temperature = _temperature;
-
-		let settings = localStorage.getItem('settings') ?? '{}';
-		if (settings) {
-			settings = JSON.parse(settings);
-
-			settings.API_BASE_URL = API_BASE_URL;
-			settings.system = system;
-			settings.temperature = temperature;
-			localStorage.setItem('settings', JSON.stringify(settings));
-		}
-
-		console.log(settings);
+	const saveSettings = async (updated) => {
+		settings = { ...settings, ...updated };
+		localStorage.setItem('settings', JSON.stringify(settings));
 		await getModelTags();
-	};
-
-	const createNewChat = () => {
-		if (messages.length > 0) {
-			chatId = uuidv4();
-
-			messages = [];
-			title = '';
-			console.log(localStorage.settings.model);
-
-			let settings = localStorage.getItem('settings');
-			if (settings) {
-				settings = JSON.parse(settings);
-				console.log(settings);
-
-				selectedModel =
-					settings.model && models.map((model) => model.name).includes(settings.model)
-						? settings.model
-						: '';
-				system = settings.system ?? system;
-				temperature = settings.temperature ?? temperature;
-			}
-		}
 	};
 
 	const loadChat = async (id) => {
@@ -248,8 +219,8 @@
 			title = chat.title;
 			chatId = chat.id;
 			selectedModel = chat.model ?? selectedModel;
-			system = chat.system ?? system;
-			temperature = chat.temperature ?? temperature;
+			settings.system = chat.system ?? settings.system;
+			settings.temperature = chat.temperature ?? settings.temperature;
 
 			await tick();
 			hljs.highlightAll();
@@ -285,8 +256,8 @@
 		chats = await db.getAllFromIndex('chats', 'timestamp');
 	};
 
-	const importChatHistory = async (results) => {
-		for (const chat of results) {
+	const importChatHistory = async (chatHistory) => {
+		for (const chat of chatHistory) {
 			console.log(chat);
 
 			await db.put('chats', {
@@ -357,9 +328,9 @@
 			id: chatId,
 			title: title === '' ? 'New Chat' : title,
 			model: selectedModel,
-			system: system,
+			system: settings.system,
 			options: {
-				temperature: temperature
+				temperature: settings.temperature
 			},
 			timestamp: Date.now(),
 			messages: messages
@@ -391,11 +362,53 @@
 			});
 
 		console.log(res);
-		models = res?.models ?? [];
-		return res;
+
+		if (settings.OPENAI_API_KEY) {
+			// Validate OPENAI_API_KEY
+			const openaiModels = await fetch(`https://api.openai.com/v1/models`, {
+				method: 'GET',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${settings.OPENAI_API_KEY}`
+				}
+			})
+				.then(async (res) => {
+					if (!res.ok) throw await res.json();
+					return res.json();
+				})
+				.catch((error) => {
+					console.log(error);
+					toast.error(`OpenAI: ${error.error.message}`);
+					return null;
+				});
+
+			console.log(openaiModels);
+
+			if (openaiModels) {
+				models = [
+					...(res?.models ?? []),
+					{ name: 'hr' },
+					{ name: 'gpt-3.5-turbo', label: '(OpenAI)' }
+				];
+			} else {
+				models = res?.models ?? [];
+			}
+		} else {
+			models = res?.models ?? [];
+		}
+
+		return models;
 	};
 
 	const sendPrompt = async (userPrompt) => {
+		if (selectedModel === 'gpt-3.5-turbo') {
+			await sendPromptOpenAI(userPrompt);
+		} else {
+			await sendPromptOllama(userPrompt);
+		}
+	};
+
+	const sendPromptOllama = async (userPrompt) => {
 		let responseMessage = {
 			role: 'assistant',
 			content: ''
@@ -412,11 +425,11 @@
 			body: JSON.stringify({
 				model: selectedModel,
 				prompt: userPrompt,
-				system: system ?? undefined,
+				system: settings.system ?? undefined,
 				options:
-					temperature != null
+					settings.temperature != null
 						? {
-								temperature: temperature
+								temperature: settings.temperature
 						  }
 						: undefined,
 				context:
@@ -481,9 +494,9 @@
 				id: chatId,
 				title: title === '' ? 'New Chat' : title,
 				model: selectedModel,
-				system: system,
+				system: settings.system,
 				options: {
-					temperature: temperature
+					temperature: settings.temperature
 				},
 				timestamp: Date.now(),
 				messages: messages
@@ -494,6 +507,111 @@
 		await tick();
 		if (autoScroll) {
 			window.scrollTo({ top: document.body.scrollHeight });
+		}
+
+		if (messages.length == 2) {
+			await generateChatTitle(chatId, userPrompt);
+		}
+	};
+
+	const sendPromptOpenAI = async (userPrompt) => {
+		if (settings.OPENAI_API_KEY) {
+			if (models) {
+				let responseMessage = {
+					role: 'assistant',
+					content: ''
+				};
+
+				messages = [...messages, responseMessage];
+				window.scrollTo({ top: document.body.scrollHeight });
+
+				const res = await fetch(`https://api.openai.com/v1/chat/completions`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${settings.OPENAI_API_KEY}`
+					},
+					body: JSON.stringify({
+						model: 'gpt-3.5-turbo',
+						stream: true,
+						messages: messages.map((message) => ({ ...message, done: undefined }))
+					})
+				});
+
+				const reader = res.body
+					.pipeThrough(new TextDecoderStream())
+					.pipeThrough(splitStream('\n'))
+					.getReader();
+
+				while (true) {
+					const { value, done } = await reader.read();
+					if (done || stopResponseFlag) {
+						if (stopResponseFlag) {
+							responseMessage.done = true;
+							messages = messages;
+						}
+
+						break;
+					}
+
+					try {
+						let lines = value.split('\n');
+
+						for (const line of lines) {
+							if (line !== '') {
+								console.log(line);
+								if (line === 'data: [DONE]') {
+									responseMessage.done = true;
+									messages = messages;
+								} else {
+									let data = JSON.parse(line.replace(/^data: /, ''));
+									console.log(data);
+
+									if (responseMessage.content == '' && data.choices[0].delta.content == '\n') {
+										continue;
+									} else {
+										responseMessage.content += data.choices[0].delta.content ?? '';
+										messages = messages;
+									}
+								}
+							}
+						}
+					} catch (error) {
+						console.log(error);
+					}
+
+					if (autoScroll) {
+						window.scrollTo({ top: document.body.scrollHeight });
+					}
+
+					await db.put('chats', {
+						id: chatId,
+						title: title === '' ? 'New Chat' : title,
+						model: selectedModel,
+						system: settings.system,
+						options: {
+							temperature: settings.temperature
+						},
+						timestamp: Date.now(),
+						messages: messages
+					});
+				}
+
+				stopResponseFlag = false;
+
+				hljs.highlightAll();
+				createCopyCodeBlockButton();
+				renderLatex();
+
+				await tick();
+				if (autoScroll) {
+					window.scrollTo({ top: document.body.scrollHeight });
+				}
+
+				if (messages.length == 2) {
+					await setChatTitle(chatId, userPrompt);
+				}
+			}
 		}
 	};
 
@@ -509,9 +627,9 @@
 				await db.put('chats', {
 					id: chatId,
 					model: selectedModel,
-					system: system,
+					system: settings.system,
 					options: {
-						temperature: temperature
+						temperature: settings.temperature
 					},
 					title: 'New Chat',
 					timestamp: Date.now(),
@@ -529,7 +647,6 @@
 			];
 
 			prompt = '';
-			textareaElement.style.height = '';
 
 			setTimeout(() => {
 				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -537,9 +654,6 @@
 
 			await sendPrompt(userPrompt);
 
-			if (messages.length == 2) {
-				await generateTitle(chatId, userPrompt);
-			}
 			chats = await db.getAllFromIndex('chats', 'timestamp');
 		}
 	};
@@ -552,7 +666,9 @@
 
 			let userMessage = messages.at(-1);
 			let userPrompt = userMessage.content;
+
 			await sendPrompt(userPrompt);
+
 			chats = await db.getAllFromIndex('chats', 'timestamp');
 		}
 	};
@@ -562,8 +678,8 @@
 		console.log('stopResponse');
 	};
 
-	const generateTitle = async (_chatId, userPrompt) => {
-		console.log('generateTitle');
+	const generateChatTitle = async (_chatId, userPrompt) => {
+		console.log('generateChatTitle');
 
 		const res = await fetch(`${API_BASE_URL}/generate`, {
 			method: 'POST',
@@ -586,12 +702,15 @@
 			});
 
 		if (res) {
-			console.log(res);
-			const chat = await db.get('chats', _chatId);
-			await db.put('chats', { ...chat, title: res.response === '' ? 'New Chat' : res.response });
-			if (chat.id === chatId) {
-				title = res.response;
-			}
+			await setChatTitle(_chatId, res.response === '' ? 'New Chat' : res.response);
+		}
+	};
+
+	const setChatTitle = async (_chatId, _title) => {
+		const chat = await db.get('chats', _chatId);
+		await db.put('chats', { ...chat, title: _title });
+		if (chat.id === chatId) {
+			title = _title;
 		}
 	};
 </script>
@@ -669,7 +788,11 @@
 									<option value="" selected>Select a model</option>
 
 									{#each models as model}
-										<option value={model.name}>{model.name}</option>
+										{#if model.name === 'hr'}
+											<hr />
+										{:else}
+											<option value={model.name}>{model.name}</option>
+										{/if}
 									{/each}
 								</select>
 								<div class="text-right mt-1.5 text-xs text-gray-500">
@@ -728,7 +851,7 @@
 											</div>
 										{:else}
 											<div
-												class="prose chat-{message.role} w-full max-w-full prose-invert prose-headings:my-0 prose-p:my-0 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-8 prose-ol:-mb-8 prose-li:-mb-4 whitespace-pre-line"
+												class="prose chat-{message.role} w-full max-w-full prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-8 prose-ol:-mb-8 prose-li:-mb-4 whitespace-pre-line"
 											>
 												{#if message.role == 'user'}
 													{#if message?.edit === true}
@@ -948,7 +1071,6 @@
 							<textarea
 								class="rounded-xl bg-gray-700 outline-none w-full py-3 px-5 pr-12 resize-none"
 								placeholder="Send a message"
-								bind:this={textareaElement}
 								bind:value={prompt}
 								on:keypress={(e) => {
 									if (e.keyCode == 13 && !e.shiftKey) {
@@ -956,12 +1078,13 @@
 									}
 									if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
 										submitPrompt(prompt);
+										e.target.style.height = '';
 									}
 								}}
 								rows="1"
-								on:input={() => {
-									textareaElement.style.height = '';
-									textareaElement.style.height = Math.min(textareaElement.scrollHeight, 200) + 'px';
+								on:input={(e) => {
+									e.target.style.height = '';
+									e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
 								}}
 							/>
 							<div class=" absolute right-0 bottom-0">
