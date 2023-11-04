@@ -14,9 +14,15 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - 🚀 **Effortless Setup**: Install seamlessly using Docker for a hassle-free experience.
 
+- 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
+
+- ✒️🔢 **Full Markdown and LaTeX Support**: Elevate your LLM experience with comprehensive Markdown and LaTeX capabilities for enriched interaction.
+
 - 📥🗑️ **Download/Delete Models**: Easily download or remove models directly from the web UI.
 
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
+
+- 🤝 **OpenAI Model Integration**: Seamlessly utilize OpenAI models alongside Ollama models for a versatile conversational experience.
 
 - 📜 **Chat History**: Effortlessly access and manage your conversation history.
 
@@ -24,9 +30,7 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - ⚙️ **Fine-Tuned Control with Advanced Parameters**: Gain a deeper level of control by adjusting parameters such as temperature and defining your system prompts to tailor the conversation to your specific preferences and needs.
 
-- 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
-
-- 🔗 **External Ollama Server Connection**: Seamlessly link to an external Ollama server hosted on a different address by configuring the environment variable during the Docker build phase. Execute the following command to include the Ollama API base URL in the Docker image: `docker build --build-arg OLLAMA_API_BASE_URL='http://localhost:11434/api' -t ollama-webui .`. Additionally, you can also set the external server connection URL from the web UI post-build.
+- 🔗 **External Ollama Server Connection**: Seamlessly link to an external Ollama server hosted on a different address by configuring the environment variable during the Docker build phase. Additionally, you can also set the external server connection URL from the web UI post-build.
 
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
