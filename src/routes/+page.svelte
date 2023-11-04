@@ -365,7 +365,7 @@
 
 		if (settings.OPENAI_API_KEY) {
 			// Validate OPENAI_API_KEY
-			const openaiModels = await fetch(`https://api.openai.com/v1/models`, {
+			const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
 				method: 'GET',
 				headers: {
 					'Content-Type': 'application/json',
@@ -381,14 +381,16 @@
 					toast.error(`OpenAI: ${error.error.message}`);
 					return null;
 				});
-
-			console.log(openaiModels);
+			const openaiModels = openaiModelRes.data;
 
 			if (openaiModels) {
 				models = [
 					...(res?.models ?? []),
 					{ name: 'hr' },
-					{ name: 'gpt-3.5-turbo', label: '(OpenAI)' }
+
+					...openaiModels
+						.map((model) => ({ name: model.id, label: 'OpenAI' }))
+						.filter((model) => model.name.includes('gpt'))
 				];
 			} else {
 				models = res?.models ?? [];
@@ -401,7 +403,7 @@
 	};
 
 	const sendPrompt = async (userPrompt) => {
-		if (selectedModel === 'gpt-3.5-turbo') {
+		if (selectedModel.includes('gpt-')) {
 			await sendPromptOpenAI(userPrompt);
 		} else {
 			await sendPromptOllama(userPrompt);
@@ -532,7 +534,7 @@
 						Authorization: `Bearer ${settings.OPENAI_API_KEY}`
 					},
 					body: JSON.stringify({
-						model: 'gpt-3.5-turbo',
+						model: selectedModel,
 						stream: true,
 						messages: messages.map((message) => ({ ...message, done: undefined }))
 					})
