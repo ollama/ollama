@@ -234,3 +234,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
+- [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
