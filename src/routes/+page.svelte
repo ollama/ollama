@@ -6,8 +6,8 @@
 	const { saveAs } = fileSaver;
 	import hljs from 'highlight.js';
 	import 'highlight.js/styles/github-dark.min.css';
-	import katex from 'katex';
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
+	import 'katex/dist/katex.min.css';
 	import toast from 'svelte-french-toast';
 
 	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
@@ -144,13 +144,12 @@
 				// • auto-render specific keys, e.g.:
 				delimiters: [
 					{ left: '$$', right: '$$', display: true },
-					{ left: '$', right: '$', display: false },
-					{ left: '\\(', right: '\\)', display: false },
+					{ left: '$', right: '$', display: true },
+					{ left: '\\(', right: '\\)', display: true },
 					{ left: '\\[', right: '\\]', display: true }
 				],
 				// • rendering keys, e.g.:
-				throwOnError: false,
-				output: 'mathml'
+				throwOnError: false
 			});
 		}
 	};
@@ -223,9 +222,10 @@
 			settings.temperature = chat.temperature ?? settings.temperature;
 
 			await tick();
+			renderLatex();
+
 			hljs.highlightAll();
 			createCopyCodeBlockButton();
-			renderLatex();
 		}
 	};
 
@@ -893,7 +893,7 @@
 														{message.content}
 													{/if}
 												{:else}
-													{@html marked.parse(message.content)}
+													{@html marked(message.content.replace('\\\\', '\\\\\\'))}
 
 													{#if message.done}
 														<div class=" flex justify-end space-x-1 text-gray-400">
@@ -1122,12 +1122,6 @@
 				</div>
 			</div>
 		</div>
-
-		<div class=" hidden katex" />
-
-		<!-- <main class="w-full flex justify-center">
-			<div class="max-w-lg w-screen p-5" />
-		</main> -->
 	</div>
 </div>
 
