@@ -378,10 +378,10 @@
 				})
 				.catch((error) => {
 					console.log(error);
-					toast.error(`OpenAI: ${error.error.message}`);
+					toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
 					return null;
 				});
-			const openaiModels = openaiModelRes.data;
+			const openaiModels = openaiModelRes?.data ?? null;
 
 			if (openaiModels) {
 				models = [
