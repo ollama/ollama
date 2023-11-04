@@ -1,4 +1,4 @@
-# Ollama Web UI 👋
+# Ollama Web UI: A User-Friendly Web Interface for Chat Interactions 👋
 
 ChatGPT-Style Web Interface for Ollama 🦙
 
