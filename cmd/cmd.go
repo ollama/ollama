@@ -495,6 +495,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set         Set session variables")
 		fmt.Fprintln(os.Stderr, "  /show        Show model information")
+		fmt.Fprintln(os.Stderr, "  /clear       Clear screen")
 		fmt.Fprintln(os.Stderr, "  /bye         Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help    Help for a command")
 		fmt.Fprintln(os.Stderr, "")
@@ -678,6 +679,8 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			} else {
 				usage()
 			}
+		case strings.HasPrefix(line, "/clear"), strings.HasPrefix(line, "/clear"):
+			fmt.Fprint(os.Stdout, "\x1b[2J\x1b[H")
 		case line == "/exit", line == "/bye":
 			return nil
 		case strings.HasPrefix(line, "/"):
