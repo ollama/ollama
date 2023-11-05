@@ -203,10 +203,10 @@
 
 		<div class="flex flex-col md:flex-row w-full p-4 md:space-x-4">
 			<div
-				class="flex flex-row space-x-1 md:space-x-0 md:space-y-1 md:flex-col flex-1 md:flex-none md:w-40 text-gray-200 text-xs text-left mb-3 md:mb-0"
+				class="tabs flex flex-row overflow-x-auto space-x-1 md:space-x-0 md:space-y-1 md:flex-col flex-1 md:flex-none md:w-40 text-gray-200 text-xs text-left mb-3 md:mb-0"
 			>
 				<button
-					class="px-2.5 py-2.5 rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'general'
 						? 'bg-gray-700'
 						: 'hover:bg-gray-800'}"
@@ -232,7 +232,31 @@
 				</button>
 
 				<button
-					class="px-2.5 py-2.5 rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'advanced'
+						? 'bg-gray-700'
+						: 'hover:bg-gray-800'}"
+					on:click={() => {
+						selectedTab = 'advanced';
+					}}
+				>
+					<div class=" self-center mr-2">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 20 20"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								d="M17 2.75a.75.75 0 00-1.5 0v5.5a.75.75 0 001.5 0v-5.5zM17 15.75a.75.75 0 00-1.5 0v1.5a.75.75 0 001.5 0v-1.5zM3.75 15a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5a.75.75 0 01.75-.75zM4.5 2.75a.75.75 0 00-1.5 0v5.5a.75.75 0 001.5 0v-5.5zM10 11a.75.75 0 01.75.75v5.5a.75.75 0 01-1.5 0v-5.5A.75.75 0 0110 11zM10.75 2.75a.75.75 0 00-1.5 0v1.5a.75.75 0 001.5 0v-1.5zM10 6a2 2 0 100 4 2 2 0 000-4zM3.75 10a2 2 0 100 4 2 2 0 000-4zM16.25 10a2 2 0 100 4 2 2 0 000-4z"
+							/>
+						</svg>
+					</div>
+					<div class=" self-center">Advanced</div>
+				</button>
+
+				<button
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'models'
 						? 'bg-gray-700'
 						: 'hover:bg-gray-800'}"
@@ -258,12 +282,12 @@
 				</button>
 
 				<button
-					class="px-2.5 py-2.5 rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
-					'advanced'
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'addons'
 						? 'bg-gray-700'
 						: 'hover:bg-gray-800'}"
 					on:click={() => {
-						selectedTab = 'advanced';
+						selectedTab = 'addons';
 					}}
 				>
 					<div class=" self-center mr-2">
@@ -278,7 +302,7 @@
 							/>
 						</svg>
 					</div>
-					<div class=" self-center">Advanced</div>
+					<div class=" self-center">Add-ons</div>
 				</button>
 			</div>
 			<div class="flex-1 md:min-h-[300px]">
@@ -329,27 +353,6 @@
 						<hr class=" border-gray-700" />
 
 						<div>
-							<div class=" mb-2.5 text-sm font-medium">
-								OpenAI API Key <span class=" text-gray-400 text-sm">(optional)</span>
-							</div>
-							<div class="flex w-full">
-								<div class="flex-1">
-									<input
-										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
-										placeholder="Enter OpenAI API Key"
-										bind:value={OPENAI_API_KEY}
-										autocomplete="off"
-									/>
-								</div>
-							</div>
-							<div class="mt-2 text-xs text-gray-500">
-								Adds optional support for 'gpt-*' models available.
-							</div>
-						</div>
-
-						<hr class=" border-gray-700" />
-
-						<div>
 							<div class=" mb-2.5 text-sm font-medium">System Prompt</div>
 							<textarea
 								bind:value={system}
@@ -364,7 +367,6 @@
 								on:click={() => {
 									saveSettings({
 										API_BASE_URL: API_BASE_URL === '' ? BUILD_TIME_API_BASE_URL : API_BASE_URL,
-										OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined,
 										system: system !== '' ? system : undefined
 									});
 									show = false;
@@ -579,6 +581,43 @@
 							</button>
 						</div>
 					</div>
+				{:else if selectedTab === 'addons'}
+					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
+						<div class=" space-y-3">
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">
+									OpenAI API Key <span class=" text-gray-400 text-sm">(optional)</span>
+								</div>
+								<div class="flex w-full">
+									<div class="flex-1">
+										<input
+											class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+											placeholder="Enter OpenAI API Key"
+											bind:value={OPENAI_API_KEY}
+											autocomplete="off"
+										/>
+									</div>
+								</div>
+								<div class="mt-2 text-xs text-gray-500">
+									Adds optional support for 'gpt-*' models available.
+								</div>
+							</div>
+						</div>
+
+						<div class="flex justify-end pt-3 text-sm font-medium">
+							<button
+								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
+								on:click={() => {
+									saveSettings({
+										OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined
+									});
+									show = false;
+								}}
+							>
+								Save
+							</button>
+						</div>
+					</div>
 				{/if}
 			</div>
 		</div>
@@ -591,6 +630,15 @@
 		/* display: none; <- Crashes Chrome on hover */
 		-webkit-appearance: none;
 		margin: 0; /* <-- Apparently some margin are still there even though it's hidden */
+	}
+
+	.tabs::-webkit-scrollbar {
+		display: none; /* for Chrome, Safari and Opera */
+	}
+
+	.tabs {
+		-ms-overflow-style: none; /* IE and Edge */
+		scrollbar-width: none; /* Firefox */
 	}
 
 	input[type='number'] {

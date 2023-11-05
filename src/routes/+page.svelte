@@ -1124,8 +1124,8 @@
 										e.preventDefault();
 									}
 									if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
-										submitPrompt(prompt);
 										e.target.style.height = '';
+										submitPrompt(prompt);
 									}
 								}}
 								rows="1"
