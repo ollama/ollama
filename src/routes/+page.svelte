@@ -871,7 +871,11 @@
 									<div class="space-x-7 flex w-full">
 										<div class="">
 											<img
-												src="/{message.role == 'user' ? 'user' : 'favicon'}.png"
+												src="{message.role == 'user'
+													? settings.gravatarUrl
+														? settings.gravatarUrl
+														: '/user'
+													: '/favicon'}.png"
 												class=" max-w-[32px] object-cover rounded"
 											/>
 										</div>
@@ -1124,8 +1128,8 @@
 										e.preventDefault();
 									}
 									if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
-										submitPrompt(prompt);
 										e.target.style.height = '';
+										submitPrompt(prompt);
 									}
 								}}
 								rows="1"
