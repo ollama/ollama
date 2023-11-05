@@ -4,6 +4,18 @@
 		<meta charset="utf-8" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+		<script>
+			// On page load or when changing themes, best to add inline in `head` to avoid FOUC
+			if (
+				localStorage.theme === 'light' ||
+				(!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)
+			) {
+				document.documentElement.classList.add('light');
+			} else {
+				document.documentElement.classList.add('dark');
+			}
+		</script>
+
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

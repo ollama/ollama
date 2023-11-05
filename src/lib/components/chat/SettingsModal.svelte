@@ -14,6 +14,7 @@
 	// General
 	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
 	let system = '';
+	let theme = 'dark';
 
 	// Models
 	let modelTag = '';
@@ -72,6 +73,19 @@
 				API_BASE_URL: API_BASE_URL
 			});
 		}
+	};
+
+	const toggleTheme = async () => {
+		if (theme === 'dark') {
+			theme = 'light';
+		} else {
+			theme = 'dark';
+		}
+
+		localStorage.theme = theme;
+
+		document.documentElement.classList.remove(theme === 'dark' ? 'light' : 'dark');
+		document.documentElement.classList.add(theme);
 	};
 
 	const pullModelHandler = async () => {
@@ -182,6 +196,7 @@
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(settings);
 
+		theme = localStorage.theme ?? 'dark';
 		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
 		system = settings.system ?? '';
 
@@ -197,8 +212,8 @@
 </script>
 
 <Modal bind:show>
-	<div class="rounded-lg bg-gray-900">
-		<div class=" flex justify-between text-gray-300 px-5 py-4">
+	<div class="rounded-lg dark:bg-gray-900">
+		<div class=" flex justify-between dark:text-gray-300 px-5 py-4">
 			<div class=" text-lg font-medium self-center">Settings</div>
 			<button
 				class="self-center"
@@ -218,17 +233,17 @@
 				</svg>
 			</button>
 		</div>
-		<hr class=" border-gray-800" />
+		<hr class=" dark:border-gray-800" />
 
 		<div class="flex flex-col md:flex-row w-full p-4 md:space-x-4">
 			<div
-				class="tabs flex flex-row overflow-x-auto space-x-1 md:space-x-0 md:space-y-1 md:flex-col flex-1 md:flex-none md:w-40 text-gray-200 text-xs text-left mb-3 md:mb-0"
+				class="tabs flex flex-row overflow-x-auto space-x-1 md:space-x-0 md:space-y-1 md:flex-col flex-1 md:flex-none md:w-40 dark:text-gray-200 text-xs text-left mb-3 md:mb-0"
 			>
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'general'
-						? 'bg-gray-700'
-						: 'hover:bg-gray-800'}"
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
 					on:click={() => {
 						selectedTab = 'general';
 					}}
@@ -253,8 +268,8 @@
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'advanced'
-						? 'bg-gray-700'
-						: 'hover:bg-gray-800'}"
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
 					on:click={() => {
 						selectedTab = 'advanced';
 					}}
@@ -277,8 +292,8 @@
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'models'
-						? 'bg-gray-700'
-						: 'hover:bg-gray-800'}"
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
 					on:click={() => {
 						selectedTab = 'models';
 					}}
@@ -303,8 +318,8 @@
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'addons'
-						? 'bg-gray-700'
-						: 'hover:bg-gray-800'}"
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
 					on:click={() => {
 						selectedTab = 'addons';
 					}}
@@ -328,17 +343,60 @@
 				{#if selectedTab === 'general'}
 					<div class="flex flex-col space-y-3">
 						<div>
+							<div class=" py-1 flex w-full justify-between">
+								<div class=" self-center text-sm font-medium">Theme</div>
+
+								<button
+									class="p-1 px-3 text-xs flex rounded transition"
+									on:click={() => {
+										toggleTheme();
+									}}
+								>
+									{#if theme === 'dark'}
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M7.455 2.004a.75.75 0 01.26.77 7 7 0 009.958 7.967.75.75 0 011.067.853A8.5 8.5 0 116.647 1.921a.75.75 0 01.808.083z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+
+										<span class="ml-2 self-center"> Dark </span>
+									{:else}
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											class="w-4 h-4 self-center"
+										>
+											<path
+												d="M10 2a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 2zM10 15a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 15zM10 7a3 3 0 100 6 3 3 0 000-6zM15.657 5.404a.75.75 0 10-1.06-1.06l-1.061 1.06a.75.75 0 001.06 1.06l1.06-1.06zM6.464 14.596a.75.75 0 10-1.06-1.06l-1.06 1.06a.75.75 0 001.06 1.06l1.06-1.06zM18 10a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 0118 10zM5 10a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 015 10zM14.596 15.657a.75.75 0 001.06-1.06l-1.06-1.061a.75.75 0 10-1.06 1.06l1.06 1.06zM5.404 6.464a.75.75 0 001.06-1.06l-1.06-1.06a.75.75 0 10-1.061 1.06l1.06 1.06z"
+											/>
+										</svg>
+										<span class="ml-2 self-center"> Light </span>
+									{/if}
+								</button>
+							</div>
+						</div>
+
+						<hr class=" dark:border-gray-700" />
+						<div>
 							<div class=" mb-2.5 text-sm font-medium">Ollama Server URL</div>
 							<div class="flex w-full">
 								<div class="flex-1 mr-2">
 									<input
-										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
 										placeholder="Enter URL (e.g. http://localhost:11434/api)"
 										bind:value={API_BASE_URL}
 									/>
 								</div>
 								<button
-									class="px-3 bg-gray-600 hover:bg-gray-700 rounded transition"
+									class="px-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-700 rounded transition"
 									on:click={() => {
 										checkOllamaConnection();
 									}}
@@ -358,9 +416,9 @@
 								</button>
 							</div>
 
-							<div class="mt-2 text-xs text-gray-500">
+							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
 								Trouble accessing Ollama? <a
-									class=" text-gray-300 font-medium"
+									class=" text-gray-500 dark:text-gray-300 font-medium"
 									href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
 									target="_blank"
 								>
@@ -369,20 +427,20 @@
 							</div>
 						</div>
 
-						<hr class=" border-gray-700" />
+						<hr class=" dark:border-gray-700" />
 
 						<div>
 							<div class=" mb-2.5 text-sm font-medium">System Prompt</div>
 							<textarea
 								bind:value={system}
-								class="w-full rounded p-4 text-sm text-gray-300 bg-gray-800 outline-none resize-none"
+								class="w-full rounded p-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none resize-none"
 								rows="4"
 							/>
 						</div>
 
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
-								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
+								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
 								on:click={() => {
 									saveSettings({
 										API_BASE_URL: API_BASE_URL === '' ? BUILD_TIME_API_BASE_URL : API_BASE_URL,
@@ -402,13 +460,13 @@
 							<div class="flex w-full">
 								<div class="flex-1 mr-2">
 									<input
-										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
 										placeholder="Enter model tag (e.g. mistral:7b)"
 										bind:value={modelTag}
 									/>
 								</div>
 								<button
-									class="px-3 bg-emerald-600 hover:bg-emerald-700 rounded transition"
+									class="px-3 text-gray-100 bg-emerald-600 hover:bg-emerald-700 rounded transition"
 									on:click={() => {
 										pullModelHandler();
 									}}
@@ -429,9 +487,9 @@
 								</button>
 							</div>
 
-							<div class="mt-2 text-xs text-gray-500">
+							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
 								To access the available model names for downloading, <a
-									class=" text-gray-300 font-medium"
+									class=" text-gray-500 dark:text-gray-300 font-medium"
 									href="https://ollama.ai/library"
 									target="_blank">click here.</a
 								>
@@ -440,34 +498,34 @@
 							{#if pullProgress !== null}
 								<div class="mt-2">
 									<div class=" mb-2 text-xs">Pull Progress</div>
-									<div class="w-full rounded-full bg-gray-800">
+									<div class="w-full rounded-full dark:bg-gray-800">
 										<div
-											class="bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+											class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
 											style="width: {Math.max(15, pullProgress ?? 0)}%"
 										>
 											{pullProgress ?? 0}%
 										</div>
 									</div>
-									<div class="mt-1 text-xs text-gray-700" style="font-size: 0.5rem;">
+									<div class="mt-1 text-xs dark:text-gray-700" style="font-size: 0.5rem;">
 										{digest}
 									</div>
 								</div>
 							{/if}
 						</div>
-						<hr class=" border-gray-700" />
+						<hr class=" dark:border-gray-700" />
 
 						<div>
 							<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
 							<div class="flex w-full">
 								<div class="flex-1 mr-2">
 									<input
-										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
 										placeholder="Enter model tag (e.g. mistral:7b)"
 										bind:value={deleteModelTag}
 									/>
 								</div>
 								<button
-									class="px-3 bg-red-700 hover:bg-red-800 rounded transition"
+									class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
 									on:click={() => {
 										deleteModelHandler();
 									}}
@@ -496,7 +554,7 @@
 								<div class="flex w-full">
 									<div class="flex-1">
 										<input
-											class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
 											type="number"
 											placeholder="Enter Seed"
 											bind:value={seed}
@@ -507,7 +565,7 @@
 								</div>
 							</div>
 
-							<hr class=" border-gray-700" />
+							<hr class=" dark:border-gray-700" />
 
 							<div>
 								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
@@ -523,7 +581,7 @@
 									max="1"
 									bind:value={temperature}
 									step="0.05"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 								/>
 							</div>
 
@@ -541,7 +599,7 @@
 									max="2"
 									bind:value={repeat_penalty}
 									step="0.05"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 								/>
 							</div>
 
@@ -559,7 +617,7 @@
 									max="100"
 									bind:value={top_k}
 									step="0.5"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 								/>
 							</div>
 
@@ -577,14 +635,14 @@
 									max="1"
 									bind:value={top_p}
 									step="0.05"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 								/>
 							</div>
 						</div>
 
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
-								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
+								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
 								on:click={() => {
 									saveSettings({
 										seed: (seed !== 0 ? seed : undefined) ?? undefined,
@@ -620,7 +678,7 @@
 								<div class="flex w-full">
 									<div class="flex-1">
 										<input
-											class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
 											placeholder="Enter Your Email"
 											bind:value={gravatarEmail}
 											autocomplete="off"
@@ -628,16 +686,16 @@
 										/>
 									</div>
 								</div>
-								<div class="mt-2 text-xs text-gray-500">
+								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
 									Changes user profile image to match your <a
-										class=" text-gray-300 font-medium"
+										class=" text-gray-500 dark:text-gray-300 font-medium"
 										href="https://gravatar.com/"
 										target="_blank">Gravatar.</a
 									>
 								</div>
 							</div>
 
-							<hr class=" border-gray-700" />
+							<hr class=" dark:border-gray-700" />
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									OpenAI API Key <span class=" text-gray-400 text-sm">(optional)</span>
@@ -645,14 +703,14 @@
 								<div class="flex w-full">
 									<div class="flex-1">
 										<input
-											class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
 											placeholder="Enter OpenAI API Key"
 											bind:value={OPENAI_API_KEY}
 											autocomplete="off"
 										/>
 									</div>
 								</div>
-								<div class="mt-2 text-xs text-gray-500">
+								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
 									Adds optional support for 'gpt-*' models available.
 								</div>
 							</div>
@@ -660,7 +718,7 @@
 
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
-								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
+								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
 								type="submit"
 							>
 								Save

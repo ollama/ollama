@@ -45,14 +45,14 @@
 </script>
 
 <div
-	class=" fixed top-0 flex flex-row justify-center bg-stone-100/5 text-gray-200 backdrop-blur-xl w-full z-30"
+	class=" fixed top-0 flex flex-row justify-center dark:bg-stone-100/5 dark:text-gray-200 backdrop-blur-xl w-full z-30"
 >
 	<div class="basis-full px-5">
 		<nav class="py-3" id="nav">
 			<div class="flex flex-row justify-between">
 				<div class="pl-2">
 					<button
-						class=" cursor-pointer p-1 flex hover:bg-gray-700 rounded-lg transition"
+						class=" cursor-pointer p-1 flex dark:hover:bg-gray-700 rounded-lg transition"
 						on:click={() => {
 							show = !show;
 						}}
@@ -75,12 +75,12 @@
 				</div>
 
 				<div class=" self-center">
-					{title != '' ? title.split(' ').slice(0, 7).join(' ') : 'Ollama Web UI'}
+					{title != '' ? title.split(' ').slice(0, 6).join(' ') : 'Ollama Web UI'}
 				</div>
 
 				<div class="pr-2">
 					<button
-						class=" cursor-pointer p-1 flex hover:bg-gray-700 rounded-lg transition"
+						class=" cursor-pointer p-1 flex dark:hover:bg-gray-700 rounded-lg transition"
 						on:click={() => {
 							createNewChat();
 						}}
