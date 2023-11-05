@@ -772,10 +772,12 @@
 							</div>
 
 							<div>
-								<img
-									alt="followers"
-									src="https://img.shields.io/github/stars/ollama-webui/ollama-webui?style=social&label=Star us on Github"
-								/>
+								<a href="https://github.com/ollama-webui/ollama-webui">
+									<img
+										alt="followers"
+										src="https://img.shields.io/github/stars/ollama-webui/ollama-webui?style=social&label=Star us on Github"
+									/>
+								</a>
 							</div>
 						</div>
 					</div>
