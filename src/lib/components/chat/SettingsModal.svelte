@@ -1,4 +1,5 @@
 <script lang="ts">
+	import sha256 from 'js-sha256';
 	import Modal from '../common/Modal.svelte';
 
 	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
@@ -12,7 +13,6 @@
 
 	// General
 	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
-	let OPENAI_API_KEY = '';
 	let system = '';
 
 	// Models
@@ -27,6 +27,23 @@
 	let repeat_penalty = 1.1;
 	let top_k = 40;
 	let top_p = 0.9;
+
+	// Addons
+	let gravatarEmail = '';
+	let OPENAI_API_KEY = '';
+
+	function getGravatarURL(email) {
+		// Trim leading and trailing whitespace from
+		// an email address and force all characters
+		// to lower case
+		const address = String(email).trim().toLowerCase();
+
+		// Create a SHA256 hash of the final string
+		const hash = sha256(address);
+
+		// Grab the actual image URL
+		return `https://www.gravatar.com/avatar/${hash}`;
+	}
 
 	const splitStream = (splitOn) => {
 		let buffer = '';
@@ -166,7 +183,6 @@
 		console.log(settings);
 
 		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
-		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 		system = settings.system ?? '';
 
 		seed = settings.seed ?? 0;
@@ -174,6 +190,9 @@
 		repeat_penalty = settings.repeat_penalty ?? 1.1;
 		top_k = settings.top_k ?? 40;
 		top_p = settings.top_p ?? 0.9;
+
+		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
+		gravatarEmail = settings.gravatarEmail ?? '';
 	}
 </script>
 
@@ -582,8 +601,43 @@
 						</div>
 					</div>
 				{:else if selectedTab === 'addons'}
-					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
+					<form
+						class="flex flex-col h-full justify-between space-y-3 text-sm"
+						on:submit|preventDefault={() => {
+							saveSettings({
+								gravatarEmail: gravatarEmail !== '' ? gravatarEmail : undefined,
+								gravatarUrl: gravatarEmail !== '' ? getGravatarURL(gravatarEmail) : undefined,
+								OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined
+							});
+							show = false;
+						}}
+					>
 						<div class=" space-y-3">
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">
+									Gravatar Email <span class=" text-gray-400 text-sm">(optional)</span>
+								</div>
+								<div class="flex w-full">
+									<div class="flex-1">
+										<input
+											class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+											placeholder="Enter Your Email"
+											bind:value={gravatarEmail}
+											autocomplete="off"
+											type="email"
+										/>
+									</div>
+								</div>
+								<div class="mt-2 text-xs text-gray-500">
+									Changes user profile image to match your <a
+										class=" text-gray-300 font-medium"
+										href="https://gravatar.com/"
+										target="_blank">Gravatar.</a
+									>
+								</div>
+							</div>
+
+							<hr class=" border-gray-700" />
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									OpenAI API Key <span class=" text-gray-400 text-sm">(optional)</span>
@@ -607,17 +661,12 @@
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
-								on:click={() => {
-									saveSettings({
-										OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined
-									});
-									show = false;
-								}}
+								type="submit"
 							>
 								Save
 							</button>
 						</div>
-					</div>
+					</form>
 				{/if}
 			</div>
 		</div>

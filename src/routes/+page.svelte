@@ -871,7 +871,11 @@
 									<div class="space-x-7 flex w-full">
 										<div class="">
 											<img
-												src="/{message.role == 'user' ? 'user' : 'favicon'}.png"
+												src="{message.role == 'user'
+													? settings.gravatarUrl
+														? settings.gravatarUrl
+														: '/user'
+													: '/favicon'}.png"
 												class=" max-w-[32px] object-cover rounded"
 											/>
 										</div>

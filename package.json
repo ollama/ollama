@@ -44,6 +44,7 @@
 		"highlight.js": "^11.9.0",
 		"http-server": "^14.1.1",
 		"idb": "^7.1.1",
+		"js-sha256": "^0.10.1",
 		"katex": "^0.16.9",
 		"marked": "^9.1.0",
 		"svelte-french-toast": "^1.2.0",
