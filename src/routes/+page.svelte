@@ -233,6 +233,7 @@
 	};
 
 	const saveSettings = async (updated) => {
+		console.log(updated);
 		settings = { ...settings, ...updated };
 		localStorage.setItem('settings', JSON.stringify(settings));
 		await getModelTags();
@@ -458,12 +459,13 @@
 				model: selectedModel,
 				prompt: userPrompt,
 				system: settings.system ?? undefined,
-				options:
-					settings.temperature != null
-						? {
-								temperature: settings.temperature
-						  }
-						: undefined,
+				options: {
+					seed: settings.seed ?? undefined,
+					temperature: settings.temperature ?? undefined,
+					repeat_penalty: settings.repeat_penalty ?? undefined,
+					top_k: settings.top_k ?? undefined,
+					top_p: settings.top_p ?? undefined
+				},
 				context:
 					messages.length > 3 && messages.at(-3).context != undefined
 						? messages.at(-3).context
@@ -566,7 +568,20 @@
 					body: JSON.stringify({
 						model: selectedModel,
 						stream: true,
-						messages: messages.map((message) => ({ ...message, done: undefined }))
+						messages: [
+							settings.system
+								? {
+										role: 'system',
+										content: settings.system
+								  }
+								: undefined,
+							...messages
+						]
+							.filter((message) => message)
+							.map((message) => ({ ...message, done: undefined })),
+						temperature: settings.temperature ?? undefined,
+						top_p: settings.top_p ?? undefined,
+						frequency_penalty: settings.repeat_penalty ?? undefined
 					})
 				});
 

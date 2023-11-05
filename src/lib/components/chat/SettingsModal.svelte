@@ -22,7 +22,11 @@
 	let pullProgress = null;
 
 	// Advanced
+	let seed = 0;
 	let temperature = 0.8;
+	let repeat_penalty = 1.1;
+	let top_k = 40;
+	let top_p = 0.9;
 
 	const splitStream = (splitOn) => {
 		let buffer = '';
@@ -164,7 +168,12 @@
 		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
 		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 		system = settings.system ?? '';
+
+		seed = settings.seed ?? 0;
 		temperature = settings.temperature ?? 0.8;
+		repeat_penalty = settings.repeat_penalty ?? 1.1;
+		top_k = settings.top_k ?? 40;
+		top_p = settings.top_p ?? 0.9;
 	}
 </script>
 
@@ -324,7 +333,7 @@
 								OpenAI API Key <span class=" text-gray-400 text-sm">(optional)</span>
 							</div>
 							<div class="flex w-full">
-								<div class="flex-1 mr-2">
+								<div class="flex-1">
 									<input
 										class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
 										placeholder="Enter OpenAI API Key"
@@ -460,22 +469,96 @@
 					</div>
 				{:else if selectedTab === 'advanced'}
 					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
-						<div>
-							<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
-								<div>Temperature</div>
-								<div>
-									{temperature}
-								</div></label
-							>
-							<input
-								id="steps-range"
-								type="range"
-								min="0"
-								max="1"
-								bind:value={temperature}
-								step="0.05"
-								class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
-							/>
+						<div class=" space-y-3">
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Seed</div>
+								<div class="flex w-full">
+									<div class="flex-1">
+										<input
+											class="w-full rounded py-2 px-4 text-sm text-gray-300 bg-gray-800 outline-none"
+											type="number"
+											placeholder="Enter Seed"
+											bind:value={seed}
+											autocomplete="off"
+											min="0"
+										/>
+									</div>
+								</div>
+							</div>
+
+							<hr class=" border-gray-700" />
+
+							<div>
+								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
+									<div>Temperature</div>
+									<div>
+										{temperature}
+									</div></label
+								>
+								<input
+									id="steps-range"
+									type="range"
+									min="0"
+									max="1"
+									bind:value={temperature}
+									step="0.05"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+								/>
+							</div>
+
+							<div>
+								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
+									<div>Repeat Penalty</div>
+									<div>
+										{repeat_penalty}
+									</div></label
+								>
+								<input
+									id="steps-range"
+									type="range"
+									min="0"
+									max="2"
+									bind:value={repeat_penalty}
+									step="0.05"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+								/>
+							</div>
+
+							<div>
+								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
+									<div>Top K</div>
+									<div>
+										{top_k}
+									</div></label
+								>
+								<input
+									id="steps-range"
+									type="range"
+									min="0"
+									max="100"
+									bind:value={top_k}
+									step="0.5"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+								/>
+							</div>
+
+							<div>
+								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
+									<div>Top P</div>
+									<div>
+										{top_p}
+									</div></label
+								>
+								<input
+									id="steps-range"
+									type="range"
+									min="0"
+									max="1"
+									bind:value={top_p}
+									step="0.05"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer bg-gray-700"
+								/>
+							</div>
 						</div>
 
 						<div class="flex justify-end pt-3 text-sm font-medium">
@@ -483,7 +566,11 @@
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 transition rounded"
 								on:click={() => {
 									saveSettings({
-										temperature: temperature !== 0.8 ? temperature : undefined
+										seed: (seed !== 0 ? seed : undefined) ?? undefined,
+										temperature: temperature !== 0.8 ? temperature : undefined,
+										repeat_penalty: repeat_penalty !== 1.1 ? repeat_penalty : undefined,
+										top_k: top_k !== 40 ? top_k : undefined,
+										top_p: top_p !== 0.9 ? top_p : undefined
 									});
 									show = false;
 								}}
@@ -497,3 +584,16 @@
 		</div>
 	</div>
 </Modal>
+
+<style>
+	input::-webkit-outer-spin-button,
+	input::-webkit-inner-spin-button {
+		/* display: none; <- Crashes Chrome on hover */
+		-webkit-appearance: none;
+		margin: 0; /* <-- Apparently some margin are still there even though it's hidden */
+	}
+
+	input[type='number'] {
+		-moz-appearance: textfield; /* Firefox */
+	}
+</style>
