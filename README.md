@@ -29,8 +29,7 @@ curl https://ollama.ai/install.sh | sh
 
 ### Docker
 
-The official [Ollama Docker image `ollama/ollama`](https://hub.docker.com/r/ollama/ollama)
-is available on Docker Hub.
+The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
 ## Quickstart
 
@@ -235,6 +234,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
+- [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 
 ### Plugins (Extensions)
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
@@ -244,6 +244,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Dumbar](https://github.com/JerrySievert/Dumbar)
-
-
 

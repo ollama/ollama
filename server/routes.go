@@ -365,7 +365,9 @@ func PushModelHandler(c *gin.Context) {
 			Insecure: req.Insecure,
 		}
 
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+
 		if err := PushModel(ctx, req.Name, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
@@ -614,6 +616,22 @@ var defaultAllowOrigins = []string{
 }
 
 func Serve(ln net.Listener, allowOrigins []string) error {
+	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+		// clean up unused layers and manifests
+		if err := PruneLayers(); err != nil {
+			return err
+		}
+
+		manifestsPath, err := GetManifestPath()
+		if err != nil {
+			return err
+		}
+
+		if err := PruneDirectory(manifestsPath); err != nil {
+			return err
+		}
+	}
+
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 
@@ -679,7 +697,7 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	if runtime.GOOS == "linux" {
 		// check compatibility to log warnings
 		if _, err := llm.CheckVRAM(); err != nil {
-			log.Printf("Warning: GPU support may not enabled, check you have installed install GPU drivers: %v", err)
+			log.Printf("Warning: GPU support may not be enabled, check you have installed GPU drivers: %v", err)
 		}
 	}
 

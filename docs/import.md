@@ -185,7 +185,7 @@ python convert.py <path to model directory>
 python convert-falcon-hf-to-gguf.py <path to model directory>
 
 # GPTNeoXForCausalLM
-python convert-falcon-hf-to-gguf.py <path to model directory>
+python convert-gptneox-hf-to-gguf.py <path to model directory>
 
 # GPTBigCodeForCausalLM
 python convert-starcoder-hf-to-gguf.py <path to model directory>

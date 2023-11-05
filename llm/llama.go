@@ -306,11 +306,17 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 	params := []string{
 		"--model", model,
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
-		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
-		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
 		"--embedding",
+	}
+
+	if opts.RopeFrequencyBase > 0 {
+		params = append(params, "--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase))
+	}
+
+	if opts.RopeFrequencyScale > 0 {
+		params = append(params, "--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale))
 	}
 
 	if opts.NumGQA > 0 {
@@ -360,7 +366,15 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 			runner.Path,
 			append(params, "--port", strconv.Itoa(port))...,
 		)
-		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", filepath.Dir(runner.Path)))
+
+		var libraryPaths []string
+		if libraryPath, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+			libraryPaths = append(libraryPaths, libraryPath)
+		}
+
+		libraryPaths = append(libraryPaths, filepath.Dir(runner.Path))
+
+		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", strings.Join(libraryPaths, ":")))
 		cmd.Stdout = os.Stderr
 		statusWriter := NewStatusWriter()
 		cmd.Stderr = statusWriter

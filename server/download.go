@@ -89,16 +89,11 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *R
 	}
 
 	if len(b.Parts) == 0 {
-		resp, err := makeRequest(ctx, "HEAD", requestURL, nil, nil, opts)
+		resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
 		if err != nil {
 			return err
 		}
 		defer resp.Body.Close()
-
-		if resp.StatusCode >= http.StatusBadRequest {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("registry responded with code %d: %v", resp.StatusCode, string(body))
-		}
 
 		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
@@ -134,7 +129,6 @@ func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *Regis
 
 func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
 	defer blobDownloadManager.Delete(b.Digest)
-
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
 	file, err := os.OpenFile(b.Name+"-partial", os.O_CREATE|os.O_RDWR, 0644)
@@ -170,7 +164,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 				}
 			}
 
-			return errors.New("max retries exceeded")
+			return errMaxRetriesExceeded
 		})
 	}
 
@@ -200,7 +194,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *RegistryOptions) error {
 	headers := make(http.Header)
 	headers.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
-	resp, err := makeRequest(ctx, "GET", requestURL, headers, nil, opts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, opts)
 	if err != nil {
 		return err
 	}
@@ -307,6 +301,8 @@ type downloadOpts struct {
 }
 
 const maxRetries = 3
+
+var errMaxRetriesExceeded = errors.New("max retries exceeded")
 
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
 func downloadBlob(ctx context.Context, opts downloadOpts) error {
