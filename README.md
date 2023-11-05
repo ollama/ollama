@@ -1,5 +1,14 @@
 # Ollama Web UI: A User-Friendly Web Interface for Chat Interactions 👋
 
+![GitHub stars](https://img.shields.io/github/stars/ollama-webui/ollama-webui?style=social)
+![GitHub forks](https://img.shields.io/github/forks/ollama-webui/ollama-webui?style=social)
+![GitHub watchers](https://img.shields.io/github/watchers/ollama-webui/ollama-webui?style=social)
+![GitHub repo size](https://img.shields.io/github/repo-size/ollama-webui/ollama-webui?style=plastic)
+![GitHub language count](https://img.shields.io/github/languages/count/ollama-webui/ollama-webui?style=plastic)
+![GitHub top language](https://img.shields.io/github/languages/top/ollama-webui/ollama-webui?style=plastic)
+![GitHub last commit](https://img.shields.io/github/last-commit/ollama-webui/ollama-webui?color=red&style=plastic)
+![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Follama-webui%2Follama-wbui&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)
+
 ChatGPT-Style Web Interface for Ollama 🦙
 
 ![Ollama Web UI Demo](./demo.gif)
@@ -177,7 +186,9 @@ This project is licensed under the [MIT License](LICENSE) - see the [LICENSE](LI
 
 ## Support 💬
 
-If you have any questions, suggestions, or need assistance, please open an issue or join our [Discord community](https://discord.gg/ollama) to connect with us! 🤝
+If you have any questions, suggestions, or need assistance, please open an issue or join our
+[Ollama Web UI Discord community](https://discord.gg/stz8SsUDcF) or
+[Ollama Discord community](https://discord.gg/ollama) to connect with us! 🤝
 
 ---
 
