@@ -29,8 +29,7 @@ curl https://ollama.ai/install.sh | sh
 
 ### Docker
 
-The official [Ollama Docker image `ollama/ollama`](https://hub.docker.com/r/ollama/ollama)
-is available on Docker Hub.
+The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
 ## Quickstart
 
@@ -235,4 +234,5 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
+- [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
