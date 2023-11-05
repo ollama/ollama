@@ -168,7 +168,6 @@ Feel free to contribute and help us make Ollama Web UI even better! 🙌
 
 A big shoutout to our amazing contributors who have helped make this project possible! 🙏
 
-- [Ollama Team](https://github.com/jmorganca/ollama)
 - [Timothy J. Baek](https://github.com/tjbck)
 - [AJ ONeal](https://github.com/coolaj86)
 
