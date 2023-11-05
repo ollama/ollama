@@ -768,8 +768,10 @@
 	}}
 />
 
-<div class="app text-gray-100">
-	<div class=" bg-gray-800 min-h-screen overflow-auto flex flex-row">
+<div class="app">
+	<div
+		class=" text-gray-700 dark:text-gray-100 bg-white dark:bg-gray-800 min-h-screen overflow-auto flex flex-row"
+	>
 		<Navbar
 			selectedChatId={chatId}
 			{chats}
@@ -789,16 +791,16 @@
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">
 				<div class="max-w-2xl mx-auto w-full px-2.5 mt-14">
-					<div class="p-3 rounded-lg bg-gray-900">
+					<div class="p-3 rounded-lg bg-gray-100 dark:bg-gray-900">
 						<div>
 							<label
 								for="models"
-								class="block mb-2 text-sm font-medium text-gray-200 flex justify-between"
+								class="block mb-2 text-sm font-medium dark:text-gray-200 flex justify-between"
 							>
 								<div class="self-center">Model</div>
 
 								<button
-									class=" self-center hover:text-gray-300"
+									class=" self-center dark:hover:text-gray-300"
 									on:click={() => {
 										openSettings();
 									}}
@@ -828,7 +830,7 @@
 							<div>
 								<select
 									id="models"
-									class="outline-none border border-gray-600 bg-gray-700 text-gray-200 text-sm rounded-lg block w-full p-2.5 placeholder-gray-400"
+									class="outline-none border dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 text-sm rounded-lg block w-full p-2.5 placeholder-gray-400"
 									bind:value={selectedModel}
 									disabled={messages.length != 0}
 								>
@@ -856,17 +858,17 @@
 							<div class="flex justify-center mt-8">
 								<img src="/ollama.png" class="w-16 invert-[80%]" />
 							</div>
-							<div class="mt-6 text-3xl text-gray-500 font-semibold">
+							<div class="mt-6 text-3xl text-gray-400 dark:text-gray-500 font-semibold">
 								Get up and running with large language models, locally.
 							</div>
 
-							<div class=" my-4 text-gray-600">
+							<div class=" my-4 text-gray-300 dark:text-gray-600">
 								Run Llama 2, Code Llama, and other models. <br /> Customize and create your own.
 							</div>
 						</div>
 					{:else}
 						{#each messages as message, messageIdx}
-							<div class=" w-full {message.role == 'user' ? '' : ' bg-gray-700'}">
+							<div class=" w-full {message.role == 'user' ? '' : ' bg-gray-100  dark:bg-gray-700'}">
 								<div class="flex justify-between p-5 py-10 max-w-3xl mx-auto rounded-lg group">
 									<div class="space-x-7 flex w-full">
 										<div class="">
@@ -884,25 +886,27 @@
 											<div class="w-full pr-28">
 												<div class="animate-pulse flex w-full">
 													<div class="space-y-2 w-full">
-														<div class="h-2 bg-gray-600 rounded mr-14" />
+														<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded mr-14" />
 
 														<div class="grid grid-cols-3 gap-4">
-															<div class="h-2 bg-gray-600 rounded col-span-2" />
-															<div class="h-2 bg-gray-600 rounded col-span-1" />
+															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-2" />
+															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1" />
 														</div>
 														<div class="grid grid-cols-4 gap-4">
-															<div class="h-2 bg-gray-600 rounded col-span-1" />
-															<div class="h-2 bg-gray-600 rounded col-span-2" />
-															<div class="h-2 bg-gray-600 rounded col-span-1 mr-4" />
+															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1" />
+															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-2" />
+															<div
+																class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1 mr-4"
+															/>
 														</div>
 
-														<div class="h-2 bg-gray-600 rounded" />
+														<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded" />
 													</div>
 												</div>
 											</div>
 										{:else}
 											<div
-												class="prose chat-{message.role} w-full max-w-full prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-8 prose-ol:-mb-8 prose-li:-mb-4 whitespace-pre-line"
+												class="prose chat-{message.role} w-full max-w-full dark:prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-8 prose-ol:-mb-8 prose-li:-mb-4 whitespace-pre-line"
 											>
 												{#if message.role == 'user'}
 													{#if message?.edit === true}
@@ -920,9 +924,9 @@
 																}}
 															/>
 
-															<div class=" flex justify-end space-x-2 text-sm text-gray-100">
+															<div class=" flex justify-end space-x-2 text-sm font-medium">
 																<button
-																	class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 transition rounded-lg"
+																	class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded-lg"
 																	on:click={() => {
 																		confirmEditMessage(messageIdx);
 																	}}
@@ -931,7 +935,7 @@
 																</button>
 
 																<button
-																	class=" px-4 py-2.5 bg-gray-800 hover:bg-gray-700 transition outline outline-1 outline-gray-600 rounded-lg"
+																	class=" px-4 py-2.5 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 transition outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg"
 																	on:click={() => {
 																		cancelEditMessage(messageIdx);
 																	}}
@@ -949,8 +953,8 @@
 													{#if message.done}
 														<div class=" flex justify-end space-x-1 text-gray-400">
 															<button
-																class="p-1 rounded hover:bg-gray-800 {message.rating === 1
-																	? 'bg-gray-800'
+																class="p-1 rounded dark:hover:bg-gray-800 {message.rating === 1
+																	? ' bg-gray-200 dark:bg-gray-800'
 																	: ''} transition"
 																on:click={() => {
 																	rateMessage(messageIdx, 1);
@@ -971,8 +975,8 @@
 																>
 															</button>
 															<button
-																class="p-1 rounded hover:bg-gray-800 {message.rating === -1
-																	? 'bg-gray-800'
+																class="p-1 rounded dark:hover:bg-gray-800 {message.rating === -1
+																	? 'bg-gray-200 dark:bg-gray-800'
 																	: ''} transition"
 																on:click={() => {
 																	rateMessage(messageIdx, -1);
@@ -1004,7 +1008,7 @@
 										{#if message.role == 'user'}
 											{#if message?.edit !== true}
 												<button
-													class="invisible group-hover:visible p-1 rounded hover:bg-gray-700 transition"
+													class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-700 transition"
 													on:click={() => {
 														editMessage(messageIdx);
 													}}
@@ -1026,7 +1030,7 @@
 											{/if}
 										{:else if message.done}
 											<button
-												class="p-1 rounded hover:bg-gray-700 transition"
+												class="p-1 rounded dark:hover:bg-gray-700 transition"
 												on:click={() => {
 													copyToClipboard(message.content);
 												}}
@@ -1058,7 +1062,7 @@
 			<div class="fixed bottom-0 w-full">
 				<!-- <hr class=" mb-3 border-gray-600" /> -->
 
-				<div class=" bg-gradient-to-t from-gray-900 pt-5">
+				<div class=" bg-gradient-to-t from-gray-100 dark:from-gray-900 pt-5">
 					<div class="max-w-3xl p-2.5 -mb-0.5 mx-auto inset-x-0">
 						{#if messages.length == 0 && suggestions !== 'false'}
 							<Suggestions {submitPrompt} />
@@ -1068,7 +1072,7 @@
 							{#if messages.at(-1).done == true}
 								<div class=" flex justify-end mb-2.5">
 									<button
-										class=" flex px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg"
+										class=" flex px-4 py-2.5 bg-white hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg"
 										on:click={regenerateResponse}
 									>
 										<div class=" self-center mr-1">
@@ -1085,13 +1089,13 @@
 												/>
 											</svg>
 										</div>
-										<div class=" self-center text-sm">Regenerate</div>
+										<div class=" self-center text-sm font-medium">Regenerate</div>
 									</button>
 								</div>
 							{:else}
 								<div class=" flex justify-end mb-2.5">
 									<button
-										class=" flex px-4 py-2.5 bg-gray-800 hover:bg-gray-700 outline outline-1 outline-gray-600 rounded-lg"
+										class=" flex px-4 py-2.5 bg-white hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg"
 										on:click={stopResponse}
 									>
 										<div class=" self-center mr-1">
@@ -1108,7 +1112,7 @@
 												/>
 											</svg>
 										</div>
-										<div class=" self-center text-sm">Stop generating</div>
+										<div class=" self-center text-sm font-medium">Stop generating</div>
 									</button>
 								</div>
 							{/if}
@@ -1120,7 +1124,7 @@
 							}}
 						>
 							<textarea
-								class="rounded-xl bg-gray-700 outline-none w-full py-3 px-5 pr-12 resize-none"
+								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none shadow border dark:border-gray-700 w-full py-3 px-5 pr-12 resize-none"
 								placeholder="Send a message"
 								bind:value={prompt}
 								on:keypress={(e) => {
@@ -1135,7 +1139,7 @@
 								rows="1"
 								on:input={(e) => {
 									e.target.style.height = '';
-									e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+									e.target.style.height = Math.min(e.target.scrollHeight, 200) + 2 + 'px';
 								}}
 							/>
 							<div class=" absolute right-0 bottom-0">
@@ -1144,7 +1148,7 @@
 										<button
 											class="{prompt !== ''
 												? 'bg-emerald-600 text-gray-100 hover:bg-emerald-700 '
-												: 'text-gray-600 disabled'} transition rounded p-2"
+												: 'text-gray-200 dark:text-gray-600 disabled'} transition rounded p-2"
 											type="submit"
 											disabled={prompt === ''}
 										>
