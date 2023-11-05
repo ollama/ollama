@@ -338,6 +338,32 @@
 					</div>
 					<div class=" self-center">Add-ons</div>
 				</button>
+
+				<button
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'about'
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+					on:click={() => {
+						selectedTab = 'about';
+					}}
+				>
+					<div class=" self-center mr-2">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 20 20"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</div>
+					<div class=" self-center">About</div>
+				</button>
 			</div>
 			<div class="flex-1 md:min-h-[300px]">
 				{#if selectedTab === 'general'}
@@ -453,99 +479,6 @@
 							</button>
 						</div>
 					</div>
-				{:else if selectedTab === 'models'}
-					<div class="flex flex-col space-y-3 text-sm mb-10">
-						<div>
-							<div class=" mb-2.5 text-sm font-medium">Pull a model</div>
-							<div class="flex w-full">
-								<div class="flex-1 mr-2">
-									<input
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter model tag (e.g. mistral:7b)"
-										bind:value={modelTag}
-									/>
-								</div>
-								<button
-									class="px-3 text-gray-100 bg-emerald-600 hover:bg-emerald-700 rounded transition"
-									on:click={() => {
-										pullModelHandler();
-									}}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"
-										/>
-										<path
-											d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"
-										/>
-									</svg>
-								</button>
-							</div>
-
-							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-								To access the available model names for downloading, <a
-									class=" text-gray-500 dark:text-gray-300 font-medium"
-									href="https://ollama.ai/library"
-									target="_blank">click here.</a
-								>
-							</div>
-
-							{#if pullProgress !== null}
-								<div class="mt-2">
-									<div class=" mb-2 text-xs">Pull Progress</div>
-									<div class="w-full rounded-full dark:bg-gray-800">
-										<div
-											class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
-											style="width: {Math.max(15, pullProgress ?? 0)}%"
-										>
-											{pullProgress ?? 0}%
-										</div>
-									</div>
-									<div class="mt-1 text-xs dark:text-gray-700" style="font-size: 0.5rem;">
-										{digest}
-									</div>
-								</div>
-							{/if}
-						</div>
-						<hr class=" dark:border-gray-700" />
-
-						<div>
-							<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
-							<div class="flex w-full">
-								<div class="flex-1 mr-2">
-									<input
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter model tag (e.g. mistral:7b)"
-										bind:value={deleteModelTag}
-									/>
-								</div>
-								<button
-									class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
-									on:click={() => {
-										deleteModelHandler();
-									}}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											fill-rule="evenodd"
-											d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
-											clip-rule="evenodd"
-										/>
-									</svg>
-								</button>
-							</div>
-						</div>
-					</div>
 				{:else if selectedTab === 'advanced'}
 					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
 						<div class=" space-y-3">
@@ -658,6 +591,99 @@
 							</button>
 						</div>
 					</div>
+				{:else if selectedTab === 'models'}
+					<div class="flex flex-col space-y-3 text-sm mb-10">
+						<div>
+							<div class=" mb-2.5 text-sm font-medium">Pull a model</div>
+							<div class="flex w-full">
+								<div class="flex-1 mr-2">
+									<input
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+										placeholder="Enter model tag (e.g. mistral:7b)"
+										bind:value={modelTag}
+									/>
+								</div>
+								<button
+									class="px-3 text-gray-100 bg-emerald-600 hover:bg-emerald-700 rounded transition"
+									on:click={() => {
+										pullModelHandler();
+									}}
+								>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 20 20"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"
+										/>
+										<path
+											d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"
+										/>
+									</svg>
+								</button>
+							</div>
+
+							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+								To access the available model names for downloading, <a
+									class=" text-gray-500 dark:text-gray-300 font-medium"
+									href="https://ollama.ai/library"
+									target="_blank">click here.</a
+								>
+							</div>
+
+							{#if pullProgress !== null}
+								<div class="mt-2">
+									<div class=" mb-2 text-xs">Pull Progress</div>
+									<div class="w-full rounded-full dark:bg-gray-800">
+										<div
+											class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+											style="width: {Math.max(15, pullProgress ?? 0)}%"
+										>
+											{pullProgress ?? 0}%
+										</div>
+									</div>
+									<div class="mt-1 text-xs dark:text-gray-700" style="font-size: 0.5rem;">
+										{digest}
+									</div>
+								</div>
+							{/if}
+						</div>
+						<hr class=" dark:border-gray-700" />
+
+						<div>
+							<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
+							<div class="flex w-full">
+								<div class="flex-1 mr-2">
+									<input
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+										placeholder="Enter model tag (e.g. mistral:7b)"
+										bind:value={deleteModelTag}
+									/>
+								</div>
+								<button
+									class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
+									on:click={() => {
+										deleteModelHandler();
+									}}
+								>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 20 20"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											fill-rule="evenodd"
+											d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
+											clip-rule="evenodd"
+										/>
+									</svg>
+								</button>
+							</div>
+						</div>
+					</div>
 				{:else if selectedTab === 'addons'}
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
@@ -725,6 +751,34 @@
 							</button>
 						</div>
 					</form>
+				{:else if selectedTab === 'about'}
+					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
+						<div class=" space-y-3">
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Ollama Web UI Version</div>
+								<div class="flex w-full">
+									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">v1.0.0-alpha</div>
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
+							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+								Created by <a
+									class=" text-gray-500 dark:text-gray-300 font-medium"
+									href="https://github.com/tjbck"
+									target="_blank">Timothy J. Baek</a
+								>
+							</div>
+
+							<div>
+								<img
+									alt="followers"
+									src="https://img.shields.io/github/stars/ollama-webui/ollama-webui?style=social&label=Star us on Github"
+								/>
+							</div>
+						</div>
+					</div>
 				{/if}
 			</div>
 		</div>
