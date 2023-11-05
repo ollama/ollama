@@ -108,14 +108,44 @@
 			// only add button if browser supports Clipboard API
 
 			if (navigator.clipboard && block.childNodes.length < 2) {
+				let code = block.querySelector('code');
+				code.style.borderTopRightRadius = 0;
+				code.style.borderTopLeftRadius = 0;
+
+				let topBarDiv = document.createElement('div');
+				topBarDiv.style.backgroundColor = '#343541';
+				topBarDiv.style.overflowX = 'auto';
+				topBarDiv.style.display = 'flex';
+				topBarDiv.style.justifyContent = 'space-between';
+				topBarDiv.style.padding = '0 1rem';
+				topBarDiv.style.paddingTop = '4px';
+				topBarDiv.style.borderTopRightRadius = '8px';
+				topBarDiv.style.borderTopLeftRadius = '8px';
+
+				let langDiv = document.createElement('div');
+				langDiv.textContent = code?.className.split(' ')[0].slice(9);
+				langDiv.style.color = 'white';
+				langDiv.style.margin = '4px';
+				langDiv.style.fontSize = '0.75rem';
+
 				let button = document.createElement('button');
+				button.textContent = 'Copy Code';
+				button.style.background = 'none';
+				button.style.fontSize = '0.75rem';
+				button.style.border = 'none';
+				button.style.margin = '4px';
+				button.style.cursor = 'pointer';
+				button.style.color = '#ddd';
+				button.addEventListener('click', () => copyCode(block, button));
 
-				button.innerText = 'Copy Code';
-				block.appendChild(button);
+				topBarDiv.appendChild(langDiv);
+				topBarDiv.appendChild(button);
 
-				button.addEventListener('click', async () => {
-					await copyCode(block, button);
-				});
+				block.prepend(topBarDiv);
+
+				// button.addEventListener('click', async () => {
+				// 	await copyCode(block, button);
+				// });
 			}
 		});
 
@@ -126,11 +156,11 @@
 			await navigator.clipboard.writeText(text);
 
 			// visual feedback that task is completed
-			button.innerText = 'Code Copied';
+			button.innerText = 'Copied!';
 
 			setTimeout(() => {
 				button.innerText = 'Copy Code';
-			}, 700);
+			}, 1000);
 		}
 	};
 
