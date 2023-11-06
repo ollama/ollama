@@ -236,3 +236,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
+- [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
