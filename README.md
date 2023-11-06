@@ -24,6 +24,9 @@ Coming soon!
 ```
 curl https://ollama.ai/install.sh | sh
 ```
+### GitHub Codespaces
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/jmorganca/ollama)
 
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
 
