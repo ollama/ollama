@@ -236,6 +236,7 @@
 		console.log(updated);
 		settings = { ...settings, ...updated };
 		localStorage.setItem('settings', JSON.stringify(settings));
+		API_BASE_URL = updated?.API_BASE_URL ?? API_BASE_URL;
 		await getModelTags();
 	};
 
@@ -374,7 +375,7 @@
 	// Ollama functions
 	//////////////////////////
 
-	const getModelTags = async (url = null) => {
+	const getModelTags = async (url = null, type = 'all') => {
 		const res = await fetch(`${url === null ? API_BASE_URL : url}/tags`, {
 			method: 'GET',
 			headers: {
@@ -394,43 +395,47 @@
 
 		console.log(res);
 
-		if (settings.OPENAI_API_KEY) {
-			// Validate OPENAI_API_KEY
-			const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
-				method: 'GET',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${settings.OPENAI_API_KEY}`
-				}
-			})
-				.then(async (res) => {
-					if (!res.ok) throw await res.json();
-					return res.json();
+		if (type === 'all') {
+			if (settings.OPENAI_API_KEY) {
+				// Validate OPENAI_API_KEY
+				const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
+					method: 'GET',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${settings.OPENAI_API_KEY}`
+					}
 				})
-				.catch((error) => {
-					console.log(error);
-					toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
-					return null;
-				});
-			const openaiModels = openaiModelRes?.data ?? null;
+					.then(async (res) => {
+						if (!res.ok) throw await res.json();
+						return res.json();
+					})
+					.catch((error) => {
+						console.log(error);
+						toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
+						return null;
+					});
+				const openaiModels = openaiModelRes?.data ?? null;
 
-			if (openaiModels) {
-				models = [
-					...(res?.models ?? []),
-					{ name: 'hr' },
+				if (openaiModels) {
+					models = [
+						...(res?.models ?? []),
+						{ name: 'hr' },
 
-					...openaiModels
-						.map((model) => ({ name: model.id, label: 'OpenAI' }))
-						.filter((model) => model.name.includes('gpt'))
-				];
+						...openaiModels
+							.map((model) => ({ name: model.id, label: 'OpenAI' }))
+							.filter((model) => model.name.includes('gpt'))
+					];
+				} else {
+					models = res?.models ?? [];
+				}
 			} else {
 				models = res?.models ?? [];
 			}
-		} else {
-			models = res?.models ?? [];
-		}
 
-		return models;
+			return models;
+		} else {
+			return res?.models ?? null;
+		}
 	};
 
 	const sendPrompt = async (userPrompt) => {

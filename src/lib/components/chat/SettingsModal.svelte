@@ -65,7 +65,7 @@
 		if (API_BASE_URL === '') {
 			API_BASE_URL = BUILD_TIME_API_BASE_URL;
 		}
-		const res = await getModelTags(API_BASE_URL);
+		const res = await getModelTags(API_BASE_URL, 'ollama');
 
 		if (res) {
 			toast.success('Server connection verified');
@@ -774,7 +774,7 @@
 							<div>
 								<a href="https://github.com/ollama-webui/ollama-webui">
 									<img
-										alt="followers"
+										alt="Github Repo"
 										src="https://img.shields.io/github/stars/ollama-webui/ollama-webui?style=social&label=Star us on Github"
 									/>
 								</a>
