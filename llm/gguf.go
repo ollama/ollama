@@ -135,14 +135,9 @@ func (llm *ggufModel) FileType() string {
 }
 
 func (llm *ggufModel) Decode(r io.Reader) error {
-	read := llm.readString
-	if llm.Version == 1 {
-		read = llm.readStringV1
-	}
-
 	// decode key-values
 	for i := 0; uint64(i) < llm.NumKV(); i++ {
-		k, err := read(r)
+		k, err := llm.readString(r)
 		if err != nil {
 			return err
 		}
@@ -174,24 +169,14 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 		case ggufTypeBool:
 			v = llm.readBool(r)
 		case ggufTypeString:
-			fn := llm.readString
-			if llm.Version == 1 {
-				fn = llm.readStringV1
-			}
-
-			s, err := fn(r)
+			s, err := llm.readString(r)
 			if err != nil {
 				return err
 			}
 
 			v = s
 		case ggufTypeArray:
-			fn := llm.readArray
-			if llm.Version == 1 {
-				fn = llm.readArrayV1
-			}
-
-			a, err := fn(r)
+			a, err := llm.readArray(r)
 			if err != nil {
 				return err
 			}
@@ -208,12 +193,7 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 
 	// decode tensors
 	for i := 0; uint64(i) < llm.NumTensor(); i++ {
-		read := llm.readString
-		if llm.Version == 1 {
-			read = llm.readStringV1
-		}
-
-		if _, err := read(r); err != nil {
+		if _, err := llm.readString(r); err != nil {
 			return err
 		}
 
@@ -325,6 +305,10 @@ func (llm ggufModel) readStringV1(r io.Reader) (string, error) {
 }
 
 func (llm ggufModel) readString(r io.Reader) (string, error) {
+	if llm.Version == 1 {
+		return llm.readStringV1(r)
+	}
+
 	var nameLength uint64
 	binary.Read(r, llm.bo, &nameLength)
 
@@ -374,6 +358,10 @@ func (llm *ggufModel) readArrayV1(r io.Reader) (arr []any, err error) {
 }
 
 func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
+	if llm.Version == 1 {
+		return llm.readArrayV1(r)
+	}
+
 	atype := llm.readU32(r)
 	n := llm.readU64(r)
 
