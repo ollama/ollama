@@ -149,9 +149,10 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 
 		i := i
 		g.Go(func() error {
+			var err error
 			for try := 0; try < maxRetries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
-				err := b.downloadChunk(inner, requestURL, w, part, opts)
+				err = b.downloadChunk(inner, requestURL, w, part, opts)
 				switch {
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
 					// return immediately if the context is canceled or the device is out of space
@@ -164,7 +165,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 				}
 			}
 
-			return errMaxRetriesExceeded
+			return fmt.Errorf("%w: %w", errMaxRetriesExceeded, err)
 		})
 	}
 
