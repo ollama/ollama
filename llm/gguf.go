@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+
+	"github.com/jmorganca/ollama/format"
 )
 
 type containerGGUF struct {
@@ -21,6 +23,8 @@ type containerGGUF struct {
 		NumTensor uint64
 		NumKV     uint64
 	}
+
+	parameters uint64
 }
 
 func (c *containerGGUF) Name() string {
@@ -101,6 +105,10 @@ func (llm *ggufModel) ModelFamily() string {
 }
 
 func (llm *ggufModel) ModelType() string {
+	if llm.parameters > 0 {
+		return format.Human(llm.parameters)
+	}
+
 	switch llm.ModelFamily() {
 	case "llama":
 		if blocks, ok := llm.kv["llama.block_count"].(uint32); ok {
@@ -189,8 +197,6 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 		llm.kv[k] = v
 	}
 
-	var parameters uint64
-
 	// decode tensors
 	for i := 0; uint64(i) < llm.NumTensor(); i++ {
 		if _, err := llm.readString(r); err != nil {
@@ -207,7 +213,7 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 		llm.readU32(r) // type
 		llm.readU64(r) // offset
 
-		parameters += elements
+		llm.parameters += elements
 	}
 
 	return nil
