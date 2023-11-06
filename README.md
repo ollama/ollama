@@ -228,6 +228,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
+- [gen.nvim](https://github.com/David-Kunz/gen.nvim)
 
 ### Libraries
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
@@ -235,6 +236,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
+- [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 
 ### Plugins (Extensions)
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
@@ -244,4 +246,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Dumbar](https://github.com/JerrySievert/Dumbar)
-
+- [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
