@@ -75,6 +75,14 @@ func newGGUFModel(container *containerGGUF) *ggufModel {
 	}
 }
 
+func (llm *ggufModel) NumTensor() uint64 {
+	if llm.Version == 1 {
+		return uint64(llm.V1.NumTensor)
+	}
+
+	return llm.V2.NumTensor
+}
+
 func (llm *ggufModel) NumKV() uint64 {
 	if llm.Version == 1 {
 		return uint64(llm.V1.NumKV)
@@ -132,6 +140,7 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 		read = llm.readStringV1
 	}
 
+	// decode key-values
 	for i := 0; uint64(i) < llm.NumKV(); i++ {
 		k, err := read(r)
 		if err != nil {
@@ -193,6 +202,32 @@ func (llm *ggufModel) Decode(r io.Reader) error {
 		}
 
 		llm.kv[k] = v
+	}
+
+	var parameters uint64
+
+	// decode tensors
+	for i := 0; uint64(i) < llm.NumTensor(); i++ {
+		read := llm.readString
+		if llm.Version == 1 {
+			read = llm.readStringV1
+		}
+
+		if _, err := read(r); err != nil {
+			return err
+		}
+
+		dimensions := llm.readU32(r)
+
+		var elements uint64 = 1
+		for i := 0; uint32(i) < dimensions; i++ {
+			elements *= llm.readU64(r)
+		}
+
+		llm.readU32(r) // type
+		llm.readU64(r) // offset
+
+		parameters += elements
 	}
 
 	return nil
