@@ -216,25 +216,34 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
+### UI
+#### GUI
+- [HTML UI](https://github.com/rtcfirefly/ollama-ui)
+- [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
+- [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
+- [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
+- [Web UI](https://github.com/ollama-webui/ollama-webui)
+
+#### Terminal UI
+- [oterm](https://github.com/ggozad/oterm)
+- [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
+- [Emacs client](https://github.com/zweifisch/ollama)
+- [gen.nvim](https://github.com/David-Kunz/gen.nvim)
+
+### Libraries
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
+- [LiteLLM](https://github.com/BerriAI/litellm)
+- [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
+- [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
+- [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
+
+### Plugins (Extensions)
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
 - [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
 - [Continue](https://github.com/continuedev/continue)
 - [Obsidian Ollama plugin](https://github.com/hinterdupfinger/obsidian-ollama)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
-- [LiteLLM](https://github.com/BerriAI/litellm)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
-- [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
-- [HTML UI](https://github.com/rtcfirefly/ollama-ui)
-- [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Dumbar](https://github.com/JerrySievert/Dumbar)
-- [Emacs client](https://github.com/zweifisch/ollama)
-- [oterm](https://github.com/ggozad/oterm)
-- [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
-- [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
-- [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
-- [gen.nvim](https://github.com/David-Kunz/gen.nvim)
-- [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
-- [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
