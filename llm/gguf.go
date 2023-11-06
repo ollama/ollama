@@ -106,7 +106,7 @@ func (llm *ggufModel) ModelFamily() string {
 
 func (llm *ggufModel) ModelType() string {
 	if llm.parameters > 0 {
-		return format.Human(llm.parameters)
+		return format.HumanNumber(llm.parameters)
 	}
 
 	switch llm.ModelFamily() {

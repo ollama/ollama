@@ -11,7 +11,7 @@ const (
 	Billion  = Million * 1000
 )
 
-func Human(b uint64) string {
+func HumanNumber(b uint64) string {
 	switch {
 	case b > Billion:
 		return fmt.Sprintf("%.0fB", math.Round(float64(b)/Billion))
