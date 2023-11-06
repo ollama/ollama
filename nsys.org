@@ -260,3 +260,20 @@ The fourth metric indicates that the cuBLAS Get Property operation with cuBLAS V
 Finally, the fifth metric shows that the cuBLAS Set Math Mode operation with cuBLAS V2 took less than 200 nanoseconds to complete and was executed once.
 
 Overall, these statistics suggest that your model is spending a significant amount of time performing matrix-vector multiplication operations using cuBLAS V2. To further optimize performance, you may want to consider reducing the size of the matrices used in your calculations or improving the efficiency of your code by parallelizing certain operations.
+
+
+
+* sql lite
+see the table [[report12.sqlite.tables]]
+
+Here is  a sample
+
+- CUDA_CALLCHAINS                             11532570
+in emacs org mode please Convert the followin table to emacs format
+| rowid | id | symbol | module | unresolved | originalIP | stackDepth |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 956 | 531 | 1 | 139949379708479 | 0 |
+| 2 | 1 | 957 | 531 | 1 | 139949379717464 | 1 |
+| 3 | 1 | 958 | 443 | 1 | 139949427394918 | 2 |
+| 4 | 1 | 959 | 424 | 1 | 139950062578040 | 3 |
+| 5 | 1 | 960 | 424 | 1 | 139950058071173 | 4 |
