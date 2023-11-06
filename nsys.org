@@ -229,10 +229,10 @@ With a few keystrokes and a well-placed command, we can delve into the mysteries
 
 Let's take a closer look at what each flag does:
 
-* `--show-output=true`: This flag tells `nsys profile` to display the output in real-time as it is generated. This can be useful for quickly identifying performance bottlenecks and making adjustments on the fly.
-* `--trace=cuda,nvtx,cublas,cublas-verbose,cusparse,cusparse-verbose,mpi,oshmem,ucx,osrt,cudnn,opengl,opengl-annotations,openacc,openmp,nvvideo`: This flag specifies which events we want to trace. In this case, we're interested in tracing events related to CUDA, NVTX, Cublas, CuSPARSE, MPI, OSHMEM, UCX, OSRT, CuDNN, OpenGL, OpenGL annotations, OpenACC, OpenMP, and NVVideo.
-* `--sample=process-tree`: This flag tells `nsys profile` to sample the process tree at regular intervals. This can be useful for identifying performance issues across multiple processes or threads.
-* `--cudabacktrace=all`: This flag enables CUDA backtracing, which provides detailed information about the execution path of each kernel on the GPU.
+ `--show-output=true`: This flag tells `nsys profile` to display the output in real-time as it is generated. This can be useful for quickly identifying performance bottlenecks and making adjustments on the fly.
+ `--trace=cuda,nvtx,cublas,cublas-verbose,cusparse,cusparse-verbose,mpi,oshmem,ucx,osrt,cudnn,opengl,opengl-annotations,openacc,openmp,nvvideo`: This flag specifies which events we want to trace. In this case, we're interested in tracing events related to CUDA, NVTX, Cublas, CuSPARSE, MPI, OSHMEM, UCX, OSRT, CuDNN, OpenGL, OpenGL annotations, OpenACC, OpenMP, and NVVideo.
+ `--sample=process-tree`: This flag tells `nsys profile` to sample the process tree at regular intervals. This can be useful for identifying performance issues across multiple processes or threads.
+ `--cudabacktrace=all`: This flag enables CUDA backtracing, which provides detailed information about the execution path of each kernel on the GPU.
 
 By running this command with these flags, we can get a comprehensive overview of our system's performance. We can see which events are taking up the most time and identify any bottlenecks that may be slowing us down. With this information, we can make adjustments to our code or configuration to optimize performance and improve overall system efficiency.
 
@@ -241,7 +241,6 @@ By running this command with these flags, we can get a comprehensive overview of
     jq .  ./report12.json > report12.jq
 #+end_src
 
-#+RESULTS:
 
 * self eval prompt
 
