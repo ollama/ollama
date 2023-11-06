@@ -19,7 +19,7 @@
     kubectl -n ollama port-forward service/ollama 11434:80
     ```
 
-1. Pull and run `orca-mini:3b`
+1. Pull and run a model, for example `orca-mini:3b`
 
     ```bash
     ollama run orca-mini:3b
