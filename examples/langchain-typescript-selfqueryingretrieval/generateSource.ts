@@ -3,7 +3,7 @@ import { HuggingFaceTransformersEmbeddings } from 'langchain/embeddings/hf_trans
 import { Chroma } from "langchain/vectorstores/chroma";
 import { Document } from "langchain/document";
 import { ChromaClient } from "chromadb";
-const numberOfArtworks = 15;
+const numberOfArtworks = 10;
 
 // list of artists we are going to pull from the API
 const artists = ["van Gogh", "Renoir", "Monet", "Picasso"]
@@ -35,7 +35,6 @@ const getArt = async (artists: string[]) => {
   const artwork = await fetchArtwork(artistsWorkIds);
   return artwork
 }
-
 
 const fetchArtistWorkIds = async (artist: string): Promise<number[]> => {
   const artistURL = `https://api.artic.edu/api/v1/artworks/search?q=${artist}&limit=${numberOfArtworks}`;
@@ -99,7 +98,6 @@ const sanitize = (badstring: string): string => {
   return goodstring;
 }
 
-
 const fetchArtwork = async (workids: number[]) => {
   const docsarray = [];
   const artworks: Artwork[] = [];
@@ -127,8 +125,5 @@ const fetchArtwork = async (workids: number[]) => {
 
   return docsarray;
 }
-
-
-
 
 generateSource();

@@ -26,6 +26,7 @@ const attributeInfo: AttributeInfo[] = [
   }
 ]
 
+
 // Define the embeddings that will be used when adding the documents to the vector store
 const embeddings = new HuggingFaceTransformersEmbeddings({
   modelName: "Xenova/all-MiniLM-L6-v2",

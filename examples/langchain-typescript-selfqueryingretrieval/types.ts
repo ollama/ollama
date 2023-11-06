@@ -23,5 +23,4 @@ export type Artwork = {
   date: number;
   artist: string;
   description: string;
-  // description_embedding: number[];
 }
