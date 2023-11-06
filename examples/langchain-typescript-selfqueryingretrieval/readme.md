@@ -107,3 +107,5 @@ When you run this example, you will get a set of documents from the database tha
 To take this further, you could work on getting more out of the dataset. It turns out that this works best if there is only a single possible value for any given field. Our artists are often referred to by their last name, but sometimes using their full name. It may be Vincent van Gogh, or just van Gogh. Another way to get around this is to build a better query translator that knows that the search could be for a substring of the full name. But that also requires looking into the metadata searching capabilities of the database.
 
 Maybe it makes more sense to move the artist name and title of the work into the document itself. Then add some more metadata (there are at least 100 other attributes in the raw API that aren't used in this example.)
+
+Also try different models. In testing so far, it seems that codellama performs the best, but when a new model comes out you might try that.
