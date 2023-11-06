@@ -41,8 +41,7 @@ const fetchArtistWorkIds = async (artist: string): Promise<number[]> => {
   const response = await fetch(artistURL);
   const json = await response.json();
   const artistWorks: { id: number }[] = json.data;
-  const justIds = artistWorks.map((work) => work.id);
-  return justIds;
+  return artistWorks.map((work) => work.id);
 }
 const embedding = new HuggingFaceTransformersEmbeddings({
   modelName: "Xenova/all-MiniLM-L6-v2",

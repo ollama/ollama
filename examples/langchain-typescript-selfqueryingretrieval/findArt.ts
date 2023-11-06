@@ -27,12 +27,12 @@ const attributeInfo: AttributeInfo[] = [
 ]
 
 
-// Define the embeddings that will be used when adding the documents to the vector store
+// Define the model used to generate embeddings, these capture the context of the input data
 const embeddings = new HuggingFaceTransformersEmbeddings({
   modelName: "Xenova/all-MiniLM-L6-v2",
 });
 
-// Create the Ollama model
+// Run the model using Ollama
 const llm = new Ollama({
   model: modelName
 })
@@ -58,9 +58,9 @@ const findArt = async () => {
       // query from the LLM used to retrieve the documents
       {
         handleLLMEnd(output) {
-          console.log("llm end")
-          const outout = output.generations[0][0].text.replace(/\\"/gm, "'").replace(/\n/gm, "")
-          console.log(`output - ${JSON.stringify(outout, null, 2)}`)
+          console.log("This is the output from the LLM after it has come up with a filter")
+          const llmEndOutput = output.generations[0][0].text.replace(/\\"/gm, "'").replace(/\n/gm, "")
+          console.log(`output - ${JSON.stringify(llmEndOutput, null, 2)}`)
         }
       },
     ]);

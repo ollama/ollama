@@ -34,7 +34,7 @@ There are a few things you need to do to enable Self Query Retrieval. First, the
 
 ## The code
 
-There are two main parts to the code. First there is a GenerateSource.ts file and then there is a FindArt.ts file. Let's look at GenerateSource first.
+There are two main parts to the code. First there is a `GenerateSource.ts` file and then there is a `FindArt.ts` file. Let's look at GenerateSource first.
 
 ### GenerateSource
 
@@ -108,4 +108,4 @@ To take this further, you could work on getting more out of the dataset. It turn
 
 Maybe it makes more sense to move the artist name and title of the work into the document itself. Then add some more metadata (there are at least 100 other attributes in the raw API that aren't used in this example.)
 
-Also try different models. In testing so far, it seems that codellama performs the best, but when a new model comes out you might try that.
+Also try different models. In testing so far, it seems that `codellama` produces more reliably useable filters. It's not perfect and can still create a filter that won't find anything. When a new code model comes out, you might try that to see if it performs better.
