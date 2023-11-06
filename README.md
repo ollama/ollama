@@ -235,3 +235,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
+- [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
