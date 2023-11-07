@@ -527,6 +527,7 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
+		"logit_bias":        llm.LogitBias,
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
