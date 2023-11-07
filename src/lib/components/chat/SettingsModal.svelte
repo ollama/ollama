@@ -752,7 +752,7 @@
 						</div>
 					</form>
 				{:else if selectedTab === 'about'}
-					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
+					<div class="flex flex-col h-full justify-between space-y-3 text-sm mb-6">
 						<div class=" space-y-3">
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">Ollama Web UI Version</div>
