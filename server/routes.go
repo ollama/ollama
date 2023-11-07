@@ -167,10 +167,6 @@ func GenerateHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
 		return
 	}
-	if req.Model == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
-	}
 
 	model, err := GetModel(req.Model)
 	if err != nil {
