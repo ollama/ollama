@@ -14,6 +14,7 @@ type Prompt struct {
 	Placeholder    string
 	AltPlaceholder string
 	UseAlt         bool
+	UsePreamble    bool
 }
 
 type Terminal struct {
@@ -219,6 +220,14 @@ func (i *Instance) HistoryEnable() {
 
 func (i *Instance) HistoryDisable() {
 	i.History.Enabled = false
+}
+
+func (i *Instance) PreambleEnable() {
+	i.Prompt.UsePreamble = true
+}
+
+func (i *Instance) PreambleDisable() {
+	i.Prompt.UsePreamble = false
 }
 
 func NewTerminal() (*Terminal, error) {

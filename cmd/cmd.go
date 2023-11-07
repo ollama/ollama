@@ -510,6 +510,8 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		fmt.Fprintln(os.Stderr, "  /set nowordwrap   Disable wordwrap")
 		fmt.Fprintln(os.Stderr, "  /set verbose      Show LLM stats")
 		fmt.Fprintln(os.Stderr, "  /set quiet        Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set preamble     Enable reply preamble")
+		fmt.Fprintln(os.Stderr, "  /set nopreamble   Disable reply preamble")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -528,6 +530,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		AltPrompt:      "... ",
 		Placeholder:    "Send a message (/? for help)",
 		AltPlaceholder: `Use """ to end multi-line input`,
+		UsePreamble:    true,
 	}
 
 	scanner, err := readline.New(prompt)
@@ -613,6 +616,10 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 				case "quiet":
 					cmd.Flags().Set("verbose", "false")
 					fmt.Println("Set 'quiet' mode.")
+				case "preamble":
+					scanner.PreambleEnable()
+				case "nopreamble":
+					scanner.PreambleDisable()
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
@@ -686,6 +693,11 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		}
 
 		if len(line) > 0 && line[0] != '/' {
+			if scanner.Prompt.UsePreamble {
+				fmt.Println("\n" + model + ":")
+			} else {
+				fmt.Println()
+			}
 			if err := generate(cmd, model, line, wordWrap); err != nil {
 				return err
 			}
