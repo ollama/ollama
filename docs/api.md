@@ -167,6 +167,73 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }
 ```
 
+#### Request
+
+If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but you can set any of them individually and omit the ones you do not want to override.
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "llama2:7b",
+  "prompt": "Why is the sky blue?",
+  "stream": false,
+  "options": {
+    "num_keep": 5,
+    "seed": 42,
+    "num_predict": 100,
+    "top_k": 20,
+    "top_p": 0.9,
+    "tfs_z": 0.5,
+    "typical_p": 0.7,
+    "repeat_last_n": 33,
+    "temperature": 0.8,
+    "repeat_penalty": 1.2,
+    "presence_penalty": 1.5,
+    "frequency_penalty": 1.0,
+    "mirostat": 1,
+    "mirostat_tau": 0.8,
+    "mirostat_eta": 0.6,
+    "penalize_newline": true,
+    "stop": ["\n", "user:"],
+    "numa": false,
+    "num_ctx": 4,
+    "num_batch": 2,
+    "num_gqa": 1,
+    "num_gpu": 1,
+    "main_gpu": 0,
+    "low_vram": false,
+    "f16_kv": true,
+    "logits_all": false,
+    "vocab_only": false,
+    "use_mmap": true,
+    "use_mlock": false,
+    "embedding_only": false,
+    "rope_frequency_base": 1.1,
+    "rope_frequency_scale": 0.8,
+    "num_thread": 8
+    }
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "llama2:7b",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "response": "The sky is blue because it is the color of the sky.",
+  "context": [1, 2, 3],
+  "done": true,
+  "total_duration": 5589157167,
+  "load_duration": 3013701500,
+  "sample_count": 114,
+  "sample_duration": 81442000,
+  "prompt_eval_count": 46,
+  "prompt_eval_duration": 1160282000,
+  "eval_count": 13,
+  "eval_duration": 1325948000
+}
+```
+
 ## Create a Model
 
 ```shell
