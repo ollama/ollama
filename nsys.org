@@ -277,3 +277,894 @@ in emacs org mode please Convert the followin table to emacs format
 | 3 | 1 | 958 | 443 | 1 | 139949427394918 | 2 |
 | 4 | 1 | 959 | 424 | 1 | 139950062578040 | 3 |
 | 5 | 1 | 960 | 424 | 1 | 139950058071173 | 4 |
+
+
+* report 
+#+begin_src sh
+  /opt/nvidia/nsight-systems/2023.2.3/bin/nsys export -t arrow  report13.nsys-rep
+#    jq .  ./report12.json > report12.jq
+#+end_src
+
+#+RESULTS:
+
+
+#+begin_src sh
+ h5ls ./report13.h5
+#+end_src
+
+#+RESULTS:
+| ANALYSIS_DETAILS                    | Dataset | {1/Inf}        |
+| COMPOSITE_EVENTS                    | Dataset | {46319/Inf}    |
+| CUDA_CALLCHAINS                     | Dataset | {75232703/Inf} |
+| CUPTI_ACTIVITY_KIND_CUDA_EVENT      | Dataset | {16384/Inf}    |
+| CUPTI_ACTIVITY_KIND_KERNEL          | Dataset | {2938465/Inf}  |
+| CUPTI_ACTIVITY_KIND_MEMCPY          | Dataset | {43467/Inf}    |
+| CUPTI_ACTIVITY_KIND_MEMSET          | Dataset | {6/Inf}        |
+| CUPTI_ACTIVITY_KIND_RUNTIME         | Dataset | {6147860/Inf}  |
+| CUPTI_ACTIVITY_KIND_SYNCHRONIZATION | Dataset | {5578/Inf}     |
+| ENUM_CUDA_DEV_MEM_EVENT_OPER        | Dataset | {2/Inf}        |
+| ENUM_CUDA_FUNC_CACHE_CONFIG         | Dataset | {4/Inf}        |
+| ENUM_CUDA_KERNEL_LAUNCH_TYPE        | Dataset | {4/Inf}        |
+| ENUM_CUDA_MEMCPY_OPER               | Dataset | {14/Inf}       |
+| ENUM_CUDA_MEMPOOL_OPER              | Dataset | {4/Inf}        |
+| ENUM_CUDA_MEMPOOL_TYPE              | Dataset | {3/Inf}        |
+| ENUM_CUDA_MEM_KIND                  | Dataset | {8/Inf}        |
+| ENUM_CUDA_SHARED_MEM_LIMIT_CONFIG   | Dataset | {2/Inf}        |
+| ENUM_CUDA_UNIF_MEM_ACCESS_TYPE      | Dataset | {5/Inf}        |
+| ENUM_CUDA_UNIF_MEM_MIGRATION        | Dataset | {6/Inf}        |
+| ENUM_CUPTI_STREAM_TYPE              | Dataset | {4/Inf}        |
+| ENUM_CUPTI_SYNC_TYPE                | Dataset | {5/Inf}        |
+| ENUM_D3D12_CMD_LIST_TYPE            | Dataset | {7/Inf}        |
+| ENUM_D3D12_HEAP_FLAGS               | Dataset | {7/Inf}        |
+| ENUM_D3D12_HEAP_TYPE                | Dataset | {4/Inf}        |
+| ENUM_D3D12_PAGE_PROPERTY            | Dataset | {4/Inf}        |
+| ENUM_DXGI_FORMAT                    | Dataset | {121/Inf}      |
+| ENUM_ETW_MEMORY_TRANSFER_TYPE       | Dataset | {8/Inf}        |
+| ENUM_GPU_CTX_SWITCH                 | Dataset | {13/Inf}       |
+| ENUM_NET_DEVICE_ID                  | Dataset | {45/Inf}       |
+| ENUM_NET_LINK_TYPE                  | Dataset | {3/Inf}        |
+| ENUM_NET_VENDOR_ID                  | Dataset | {1/Inf}        |
+| ENUM_NSYS_EVENT_CLASS               | Dataset | {85/Inf}       |
+| ENUM_NSYS_EVENT_TYPE                | Dataset | {142/Inf}      |
+| ENUM_NVDRIVER_EVENT_ID              | Dataset | {4/Inf}        |
+| ENUM_OPENACC_DEVICE                 | Dataset | {10/Inf}       |
+| ENUM_OPENACC_EVENT_KIND             | Dataset | {17/Inf}       |
+| ENUM_OPENGL_DEBUG_SEVERITY          | Dataset | {4/Inf}        |
+| ENUM_OPENGL_DEBUG_SOURCE            | Dataset | {6/Inf}        |
+| ENUM_OPENGL_DEBUG_TYPE              | Dataset | {9/Inf}        |
+| ENUM_OPENMP_DISPATCH                | Dataset | {2/Inf}        |
+| ENUM_OPENMP_EVENT_KIND              | Dataset | {37/Inf}       |
+| ENUM_OPENMP_MUTEX                   | Dataset | {7/Inf}        |
+| ENUM_OPENMP_SYNC_REGION             | Dataset | {7/Inf}        |
+| ENUM_OPENMP_TASK_FLAG               | Dataset | {9/Inf}        |
+| ENUM_OPENMP_TASK_STATUS             | Dataset | {7/Inf}        |
+| ENUM_OPENMP_THREAD                  | Dataset | {4/Inf}        |
+| ENUM_OPENMP_WORK                    | Dataset | {7/Inf}        |
+| ENUM_SAMPLING_THREAD_STATE          | Dataset | {11/Inf}       |
+| ENUM_SLI_TRANSER                    | Dataset | {6/Inf}        |
+| ENUM_STACK_UNWIND_METHOD            | Dataset | {10/Inf}       |
+| ENUM_VULKAN_PIPELINE_CREATION_FLAGS | Dataset | {3/Inf}        |
+| ENUM_WDDM_ENGINE_TYPE               | Dataset | {9/Inf}        |
+| ENUM_WDDM_INTERRUPT_TYPE            | Dataset | {17/Inf}       |
+| ENUM_WDDM_PACKET_TYPE               | Dataset | {8/Inf}        |
+| ENUM_WDDM_PAGING_QUEUE_TYPE         | Dataset | {4/Inf}        |
+| ENUM_WDDM_VIDMM_OP_TYPE             | Dataset | {32/Inf}       |
+| EXPORT_META_DATA                    | Dataset | {29/Inf}       |
+| NVTX_EVENTS                         | Dataset | {61455/Inf}    |
+| NVVIDEO_DECODER_API                 | Dataset | {16/Inf}       |
+| NVVIDEO_ENCODER_API                 | Dataset | {16/Inf}       |
+| NVVIDEO_JPEG_API                    | Dataset | {16/Inf}       |
+| OSRT_API                            | Dataset | {240970/Inf}   |
+| OSRT_CALLCHAINS                     | Dataset | {132715/Inf}   |
+| PROCESSES                           | Dataset | {621/Inf}      |
+| PROFILER_OVERHEAD                   | Dataset | {382/Inf}      |
+| ProcessStreams                      | Dataset | {2/Inf}        |
+| SAMPLING_CALLCHAINS                 | Dataset | {869296/Inf}   |
+| SCHED_EVENTS                        | Dataset | {110530/Inf}   |
+| StringIds                           | Dataset | {12367/Inf}    |
+| TARGET_INFO_CUDA_NULL_STREAM        | Dataset | {3/Inf}        |
+| TARGET_INFO_CUDA_STREAM             | Dataset | {45/Inf}       |
+| TARGET_INFO_GPU                     | Dataset | {1/Inf}        |
+| TARGET_INFO_SESSION_START_TIME      | Dataset | {1/Inf}        |
+| TARGET_INFO_SYSTEM_ENV              | Dataset | {81/Inf}       |
+| ThreadNames                         | Dataset | {33/Inf}       |
+| UnwindMethodType                    | Dataset | {SCALAR}       |
+
+
+#+begin_src sh
+pip install h5py
+#+end_src
+
+#+RESULTS:
+| Looking     | in      | indexes:   | https://pypi.org/simple, | https://pypi.ngc.nvidia.com |                                                                   |          |       |          |
+| Requirement | already | satisfied: | h5py                     | in                          | /home/mdupont/.pyenv/versions/3.11.4/lib/python3.11/site-packages | (3.10.0) |       |          |
+| Requirement | already | satisfied: | numpy>=1.17.3            | in                          | /home/mdupont/.pyenv/versions/3.11.4/lib/python3.11/site-packages | (from    | h5py) | (1.26.0) |
+
+
+* now colllect all the outputs
+
+#+begin_src sh
+for format in  arrow ; do /opt/nvidia/nsight-systems/2023.2.3/bin/nsys export -t $format report13.nsys-rep  --force-overwrite=1; done
+#+end_src
+
+
+#+begin_src sh :results verbatim :exports both
+  
+  python reporthd5.py
+
+#+end_src
+
+#+RESULTS:
+#+begin_example
+FILE
+KEY 	 - ANALYSIS_DETAILS : <HDF5 dataset "ANALYSIS_DETAILS": shape (1,), type "|V32">
+ds
+/ANALYSIS_DETAILS (1,) 1 [('globalVid', '<u8'), ('duration', '<u8'), ('startTime', '<u8'), ('stopTime', '<u8')]
+<HDF5 dataset "ANALYSIS_DETAILS": shape (1,), type "|V32">
+KEY 	 - COMPOSITE_EVENTS : <HDF5 dataset "COMPOSITE_EVENTS": shape (46319,), type "|V44">
+ds
+/COMPOSITE_EVENTS (46319,) 46319 [('id', '<i8'), ('start', '<i8'), ('cpu', '<u4'), ('threadState', '<u8'), ('globalTid', '<u8'), ('cpuCycles', '<i8')]
+OBJ 0 (1, 43298909, 4, 1, 312590808665272, 1)
+OBJ 1 (2, 44374279, 4, 1, 312590808665272, 1)
+OBJ 2 (3, 45302235, 4, 1, 312590808665272, 1)
+OBJ 3 (4, 46422286, 8, 1, 312590808665272, 1)
+OBJ 4 (5, 47266495, 8, 1, 312590808665272, 1)
+OBJ 5 (6, 48071935, 8, 1, 312590808665272, 1)
+OBJ 6 (7, 48876559, 8, 1, 312590808665272, 1)
+OBJ 7 (8, 50684702, 8, 1, 312590808665272, 1)
+OBJ 8 (9, 51872297, 8, 1, 312590808665272, 1)
+OBJ 9 (10, 53006750, 8, 1, 312590808665272, 1)
+KEY 	 - CUDA_CALLCHAINS : <HDF5 dataset "CUDA_CALLCHAINS": shape (75232703,), type "|V29">
+ds
+/CUDA_CALLCHAINS (75232703,) 75232703 [('id', '<i8'), ('symbol', '<u4'), ('module', '<u4'), ('unresolved', 'u1'), ('originalIP', '<u8'), ('stackDepth', '<i4')]
+OBJ 0 (1, 8153, 536, 1, 139782886811199, 0)
+OBJ 1 (1, 2260, 536, 1, 139782886820184, 1)
+OBJ 2 (1, 2751, 475, 1, 139782934497638, 2)
+OBJ 3 (1, 8154, 458, 1, 139783569680760, 3)
+OBJ 4 (1, 8155, 458, 1, 139783565173893, 4)
+OBJ 5 (1, 8156, 455, 1, 93873028566758, 5)
+OBJ 6 (1, 7856, 455, 1, 93873028400448, 6)
+OBJ 7 (1, 7857, 455, 1, 93873028027025, 7)
+OBJ 8 (1, 7858, 455, 1, 93873027388370, 8)
+OBJ 9 (1, 374, 213, 0, 139783548607888, 9)
+KEY 	 - CUPTI_ACTIVITY_KIND_CUDA_EVENT : <HDF5 dataset "CUPTI_ACTIVITY_KIND_CUDA_EVENT": shape (16384,), type "|V36">
+ds
+/CUPTI_ACTIVITY_KIND_CUDA_EVENT (16384,) 16384 [('deviceId', '<u4'), ('contextId', '<u8'), ('streamId', '<u8'), ('correlationId', '<u4'), ('globalPid', '<u8'), ('eventId', '<u4')]
+OBJ 0 (0, 1, 13, 26107, 312591528230912, 17)
+OBJ 1 (0, 1, 13, 26077, 312634259800064, 17)
+OBJ 2 (0, 1, 13, 26125, 312591528230912, 17)
+OBJ 3 (0, 1, 13, 26096, 312634259800064, 17)
+OBJ 4 (0, 1, 13, 26143, 312591528230912, 17)
+OBJ 5 (0, 1, 13, 26115, 312634259800064, 17)
+OBJ 6 (0, 1, 13, 26161, 312591528230912, 17)
+OBJ 7 (0, 1, 13, 26133, 312634259800064, 17)
+OBJ 8 (0, 1, 13, 26181, 312591528230912, 17)
+OBJ 9 (0, 1, 13, 26153, 312634259800064, 17)
+KEY 	 - CUPTI_ACTIVITY_KIND_KERNEL : <HDF5 dataset "CUPTI_ACTIVITY_KIND_KERNEL": shape (2938465,), type "|V148">
+ds
+/CUPTI_ACTIVITY_KIND_KERNEL (2938465,) 2938465 [('start', '<i8'), ('end', '<i8'), ('deviceId', '<u4'), ('contextId', '<u8'), ('streamId', '<u8'), ('correlationId', '<u4'), ('globalPid', '<u8'), ('demangledName', '<u8'), ('shortName', '<u8'), ('mangledName', '<u8'), ('launchType', '<u4'), ('cacheConfig', '<u4'), ('registersPerThread', '<u4'), ('gridX', '<i4'), ('gridY', '<i4'), ('gridZ', '<i4'), ('blockX', '<i4'), ('blockY', '<i4'), ('blockZ', '<i4'), ('staticSharedMemory', '<i4'), ('dynamicSharedMemory', '<i4'), ('localMemoryPerThread', '<i4'), ('localMemoryTotal', '<i4'), ('gridId', '<i8'), ('sharedMemoryExecuted', '<u4'), ('graphNodeId', '<u8'), ('sharedMemoryLimitConfig', '<u4')]
+OBJ 0 (5832708738, 5832711746, 0, 1, 13, 3874, 312591528230912, 12189, 12190, 12167, 1, 1, 40, 2, 1, 1, 1024, 1, 1, 128, 0, 0, 70778880, 3, 8192, 0, 0)
+OBJ 1 (5832746370, 5832748258, 0, 1, 13, 3878, 312591528230912, 12192, 12193, 12169, 1, 1, 16, 32, 1, 1, 256, 1, 1, 0, 0, 0, 70778880, 4, 8192, 0, 0)
+OBJ 2 (5832762402, 5832763746, 0, 1, 13, 3883, 312591528230912, 12194, 12195, 12170, 1, 1, 16, 16, 2, 1, 256, 1, 1, 0, 0, 0, 70778880, 5, 8192, 0, 0)
+OBJ 3 (5832795906, 5832924001, 0, 1, 13, 3888, 312591528230912, 12196, 12197, 12171, 1, 2, 168, 8, 1, 1, 32, 4, 1, 30336, 0, 0, 70778880, 6, 102400, 0, 0)
+OBJ 4 (5832927393, 5832928673, 0, 1, 13, 3893, 312591528230912, 12198, 12199, 12172, 1, 1, 16, 16, 1, 1, 1, 256, 1, 0, 0, 0, 70778880, 7, 8192, 0, 0)
+OBJ 5 (5832931937, 5832933409, 0, 1, 13, 3896, 312591528230912, 12200, 12201, 12173, 1, 1, 16, 64, 1, 1, 32, 1, 1, 0, 0, 0, 70778880, 8, 16384, 0, 0)
+OBJ 6 (5832934081, 5832935393, 0, 1, 13, 3899, 312591528230912, 12194, 12195, 12170, 1, 1, 16, 16, 2, 1, 256, 1, 1, 0, 0, 0, 70778880, 9, 8192, 0, 0)
+OBJ 7 (5832936193, 5833064640, 0, 1, 13, 3904, 312591528230912, 12196, 12197, 12171, 1, 2, 168, 8, 1, 1, 32, 4, 1, 30336, 0, 0, 70778880, 10, 102400, 0, 0)
+OBJ 8 (5833065313, 5833066881, 0, 1, 13, 3909, 312591528230912, 12200, 12201, 12173, 1, 1, 16, 64, 1, 1, 32, 1, 1, 0, 0, 0, 70778880, 11, 16384, 0, 0)
+OBJ 9 (5833067936, 5833069217, 0, 1, 13, 3912, 312591528230912, 12194, 12195, 12170, 1, 1, 16, 16, 2, 1, 256, 1, 1, 0, 0, 0, 70778880, 12, 8192, 0, 0)
+KEY 	 - CUPTI_ACTIVITY_KIND_MEMCPY : <HDF5 dataset "CUPTI_ACTIVITY_KIND_MEMCPY": shape (43467,), type "|V112">
+ds
+/CUPTI_ACTIVITY_KIND_MEMCPY (43467,) 43467 [('start', '<i8'), ('end', '<i8'), ('deviceId', '<u4'), ('contextId', '<u8'), ('streamId', '<u8'), ('correlationId', '<u4'), ('globalPid', '<u8'), ('bytes', '<u8'), ('copyKind', '<u8'), ('deprecatedSrcId', '<u4'), ('srcKind', '<u4'), ('dstKind', '<u4'), ('srcDeviceId', '<u4'), ('srcContextId', '<u4'), ('dstDeviceId', '<u4'), ('dstContextId', '<u4'), ('migrationCause', '<u4'), ('graphNodeId', '<u8'), ('virtualAddress', '<u8')]
+OBJ 0 (5372062787, 5372790656, 0, 1, 7, 1184, 312591528230912, 9437184, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 1 (5372915615, 5373056351, 0, 1, 7, 1195, 312591528230912, 2359296, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 2 (5373180190, 5373319326, 0, 1, 7, 1206, 312591528230912, 2359296, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 3 (5373462653, 5374209178, 0, 1, 7, 1217, 312591528230912, 9437184, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 4 (5374319066, 5376865648, 0, 1, 7, 1228, 312591528230912, 33030144, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 5 (5376996559, 5379521734, 0, 1, 7, 1239, 312591528230912, 33030144, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 6 (5379650405, 5382159003, 0, 1, 7, 1250, 312591528230912, 33030144, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 7 (5382169179, 5382170971, 0, 1, 7, 1261, 312591528230912, 16384, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 8 (5382182459, 5382184059, 0, 1, 7, 1264, 312591528230912, 16384, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+OBJ 9 (5382293595, 5383019352, 0, 1, 7, 1267, 312591528230912, 9437184, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+KEY 	 - CUPTI_ACTIVITY_KIND_MEMSET : <HDF5 dataset "CUPTI_ACTIVITY_KIND_MEMSET": shape (6,), type "|V72">
+ds
+/CUPTI_ACTIVITY_KIND_MEMSET (6,) 6 [('start', '<i8'), ('end', '<i8'), ('deviceId', '<u4'), ('contextId', '<u8'), ('streamId', '<u8'), ('correlationId', '<u4'), ('globalPid', '<u8'), ('value', '<u4'), ('bytes', '<u8'), ('graphNodeId', '<u8'), ('memKind', '<u4')]
+OBJ 0 (5777435065, 5777590392, 0, 1, 7, 3856, 312591528230912, 0, 134217728, 0, 2)
+OBJ 1 (5777591129, 5777748216, 0, 1, 7, 3859, 312591528230912, 0, 134217728, 0, 2)
+OBJ 2 (1816702598906, 1816702754777, 0, 1, 7, 3856, 312632112316416, 0, 134217728, 0, 2)
+OBJ 3 (1816702755417, 1816702912441, 0, 1, 7, 3859, 312632112316416, 0, 134217728, 0, 2)
+OBJ 4 (2737421114629, 2737421271109, 0, 1, 7, 3856, 312634259800064, 0, 134217728, 0, 2)
+OBJ 5 (2737421271845, 2737421429156, 0, 1, 7, 3859, 312634259800064, 0, 134217728, 0, 2)
+KEY 	 - CUPTI_ACTIVITY_KIND_RUNTIME : <HDF5 dataset "CUPTI_ACTIVITY_KIND_RUNTIME": shape (6147860,), type "|V52">
+ds
+/CUPTI_ACTIVITY_KIND_RUNTIME (6147860,) 6147860 [('start', '<i8'), ('end', '<i8'), ('eventClass', '<u4'), ('globalTid', '<u8'), ('correlationId', '<u4'), ('nameId', '<u8'), ('returnValue', '<u4'), ('callchainId', '<i8')]
+OBJ 0 (5006603212, 5006604368, 1, 312591530085603, 1, 12157, 0, 0)
+OBJ 1 (5006720579, 5006750145, 0, 312591530085603, 119, 12158, 0, 0)
+OBJ 2 (5006760494, 5251180978, 0, 312591530085603, 121, 12161, 0, 0)
+OBJ 3 (5251181887, 5251183364, 0, 312591530085603, 122, 12161, 0, 0)
+OBJ 4 (5251183521, 5251184700, 0, 312591530085603, 123, 12161, 0, 0)
+OBJ 5 (5251184760, 5251185840, 0, 312591530085603, 124, 12161, 0, 0)
+OBJ 6 (5251185903, 5251186984, 0, 312591530085603, 125, 12161, 0, 0)
+OBJ 7 (5251187043, 5251188169, 0, 312591530085603, 126, 12161, 0, 0)
+OBJ 8 (5251188229, 5251189333, 0, 312591530085603, 127, 12161, 0, 0)
+OBJ 9 (5251189395, 5251190478, 0, 312591530085603, 128, 12161, 0, 0)
+KEY 	 - CUPTI_ACTIVITY_KIND_SYNCHRONIZATION : <HDF5 dataset "CUPTI_ACTIVITY_KIND_SYNCHRONIZATION": shape (5578,), type "|V56">
+ds
+/CUPTI_ACTIVITY_KIND_SYNCHRONIZATION (5578,) 5578 [('start', '<i8'), ('end', '<i8'), ('deviceId', '<u4'), ('contextId', '<u8'), ('streamId', '<u8'), ('correlationId', '<u4'), ('globalPid', '<u8'), ('syncType', '<u4'), ('eventId', '<u4')]
+OBJ 0 (5885337285, 5894238494, 0, 1, 4294967295, 25620, 312591528230912, 1, 4294967295)
+OBJ 1 (5894312899, 5894800959, 0, 1, 4294967295, 25639, 312591528230912, 1, 4294967295)
+OBJ 2 (6050953131, 6050954829, 0, 1, 4294967295, 26096, 312591528230912, 2, 17)
+OBJ 3 (6244146894, 6276939559, 0, 1, 4294967295, 60705, 312591528230912, 1, 4294967295)
+OBJ 4 (6277133298, 6283456855, 0, 1, 4294967295, 60725, 312591528230912, 1, 4294967295)
+OBJ 5 (6496976911, 6533552590, 0, 1, 4294967295, 95787, 312591528230912, 1, 4294967295)
+OBJ 6 (6533593614, 6539921765, 0, 1, 4294967295, 95806, 312591528230912, 1, 4294967295)
+OBJ 7 (6774397596, 6813919393, 0, 1, 4294967295, 130868, 312591528230912, 1, 4294967295)
+OBJ 8 (6813957791, 6820280815, 0, 1, 4294967295, 130887, 312591528230912, 1, 4294967295)
+OBJ 9 (7070163931, 7111900226, 0, 1, 4294967295, 165949, 312591528230912, 1, 4294967295)
+KEY 	 - ENUM_CUDA_DEV_MEM_EVENT_OPER : <HDF5 dataset "ENUM_CUDA_DEV_MEM_EVENT_OPER": shape (2,), type "|V24">
+ds
+/ENUM_CUDA_DEV_MEM_EVENT_OPER (2,) 2 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_DEV_MEM_EVENT_OPR_ALLOCATION', b'Allocation')
+OBJ 1 (1, b'CUDA_DEV_MEM_EVENT_OPR_DEALLOCATION', b'Deallocation')
+KEY 	 - ENUM_CUDA_FUNC_CACHE_CONFIG : <HDF5 dataset "ENUM_CUDA_FUNC_CACHE_CONFIG": shape (4,), type "|V24">
+ds
+/ENUM_CUDA_FUNC_CACHE_CONFIG (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CU_FUNC_CACHE_PREFER_NONE', b'None')
+OBJ 1 (1, b'CU_FUNC_CACHE_PREFER_SHARED', b'Shared')
+OBJ 2 (2, b'CU_FUNC_CACHE_PREFER_L1', b'L1')
+OBJ 3 (3, b'CU_FUNC_CACHE_PREFER_EQUAL', b'Equal')
+KEY 	 - ENUM_CUDA_KERNEL_LAUNCH_TYPE : <HDF5 dataset "ENUM_CUDA_KERNEL_LAUNCH_TYPE": shape (4,), type "|V24">
+ds
+/ENUM_CUDA_KERNEL_LAUNCH_TYPE (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_KERNEL_LAUNCH_TYPE_UNKNOWN', b'Unknown')
+OBJ 1 (1, b'CUDA_KERNEL_LAUNCH_TYPE_REGULAR', b'Regular')
+OBJ 2 (2, b'CUDA_KERNEL_LAUNCH_TYPE_COOPERATIVE_SINGLE_DEVICE', b'Coop Single Device')
+OBJ 3 (3, b'CUDA_KERNEL_LAUNCH_TYPE_COOPERATIVE_MULTI_DEVICE', b'Coop Multi Device')
+KEY 	 - ENUM_CUDA_MEMCPY_OPER : <HDF5 dataset "ENUM_CUDA_MEMCPY_OPER": shape (14,), type "|V24">
+ds
+/ENUM_CUDA_MEMCPY_OPER (14,) 14 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_MEMCPY_KIND_UNKNOWN', b'Unknown')
+OBJ 1 (1, b'CUDA_MEMCPY_KIND_HTOD', b'Host-to-Device')
+OBJ 2 (2, b'CUDA_MEMCPY_KIND_DTOH', b'Device-to-Host')
+OBJ 3 (3, b'CUDA_MEMCPY_KIND_HTOA', b'Host-to-Array')
+OBJ 4 (4, b'CUDA_MEMCPY_KIND_ATOH', b'Array-to-Host')
+OBJ 5 (5, b'CUDA_MEMCPY_KIND_ATOA', b'Array-to-Array')
+OBJ 6 (6, b'CUDA_MEMCPY_KIND_ATOD', b'Array-to-Device')
+OBJ 7 (7, b'CUDA_MEMCPY_KIND_DTOA', b'Device-to-Array')
+OBJ 8 (8, b'CUDA_MEMCPY_KIND_DTOD', b'Device-to-Device')
+OBJ 9 (9, b'CUDA_MEMCPY_KIND_HTOH', b'Host-to-Host')
+KEY 	 - ENUM_CUDA_MEMPOOL_OPER : <HDF5 dataset "ENUM_CUDA_MEMPOOL_OPER": shape (4,), type "|V24">
+ds
+/ENUM_CUDA_MEMPOOL_OPER (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_MEMPOOL_OPERATION_TYPE_INVALID', b'Invalid')
+OBJ 1 (1, b'CUDA_MEMPOOL_OPERATION_TYPE_CREATED', b'Created')
+OBJ 2 (2, b'CUDA_MEMPOOL_OPERATION_TYPE_DESTROYED', b'Destroyed')
+OBJ 3 (3, b'CUDA_MEMPOOL_OPERATION_TYPE_TRIMMED', b'Trimmed')
+KEY 	 - ENUM_CUDA_MEMPOOL_TYPE : <HDF5 dataset "ENUM_CUDA_MEMPOOL_TYPE": shape (3,), type "|V24">
+ds
+/ENUM_CUDA_MEMPOOL_TYPE (3,) 3 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_MEMPOOL_TYPE_INVALID', b'Invalid')
+OBJ 1 (1, b'CUDA_MEMPOOL_TYPE_LOCAL', b'Local')
+OBJ 2 (2, b'CUDA_MEMPOOL_TYPE_IMPORTED', b'Imported')
+KEY 	 - ENUM_CUDA_MEM_KIND : <HDF5 dataset "ENUM_CUDA_MEM_KIND": shape (8,), type "|V24">
+ds
+/ENUM_CUDA_MEM_KIND (8,) 8 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_MEMOPR_MEMORY_KIND_PAGEABLE', b'Pageable')
+OBJ 1 (1, b'CUDA_MEMOPR_MEMORY_KIND_PINNED', b'Pinned')
+OBJ 2 (2, b'CUDA_MEMOPR_MEMORY_KIND_DEVICE', b'Device')
+OBJ 3 (3, b'CUDA_MEMOPR_MEMORY_KIND_ARRAY', b'Array')
+OBJ 4 (4, b'CUDA_MEMOPR_MEMORY_KIND_MANAGED', b'Managed')
+OBJ 5 (5, b'CUDA_MEMOPR_MEMORY_KIND_DEVICE_STATIC', b'Device Static')
+OBJ 6 (6, b'CUDA_MEMOPR_MEMORY_KIND_MANAGED_STATIC', b'Managed Static')
+OBJ 7 (7, b'CUDA_MEMOPR_MEMORY_KIND_UNKNOWN', b'Unknown')
+KEY 	 - ENUM_CUDA_SHARED_MEM_LIMIT_CONFIG : <HDF5 dataset "ENUM_CUDA_SHARED_MEM_LIMIT_CONFIG": shape (2,), type "|V24">
+ds
+/ENUM_CUDA_SHARED_MEM_LIMIT_CONFIG (2,) 2 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_SHARED_MEM_LIMIT_DEFAULT', b'Default')
+OBJ 1 (1, b'CUDA_SHARED_MEM_LIMIT_OPTIN', b'Opt in')
+KEY 	 - ENUM_CUDA_UNIF_MEM_ACCESS_TYPE : <HDF5 dataset "ENUM_CUDA_UNIF_MEM_ACCESS_TYPE": shape (5,), type "|V24">
+ds
+/ENUM_CUDA_UNIF_MEM_ACCESS_TYPE (5,) 5 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_UNIFIED_MEMORY_ACCESS_TYPE_UNKNOWN', b'Unknown')
+OBJ 1 (1, b'CUDA_UNIFIED_MEMORY_ACCESS_TYPE_READ', b'Read')
+OBJ 2 (2, b'CUDA_UNIFIED_MEMORY_ACCESS_TYPE_WRITE', b'Write')
+OBJ 3 (3, b'CUDA_UNIFIED_MEMORY_ACCESS_TYPE_ATOMIC', b'Atomic')
+OBJ 4 (4, b'CUDA_UNIFIED_MEMORY_ACCESS_TYPE_PREFETCH', b'Prefetch')
+KEY 	 - ENUM_CUDA_UNIF_MEM_MIGRATION : <HDF5 dataset "ENUM_CUDA_UNIF_MEM_MIGRATION": shape (6,), type "|V24">
+ds
+/ENUM_CUDA_UNIF_MEM_MIGRATION (6,) 6 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUDA_UNIFIED_MEMORY_MIGRATION_CAUSE_UNKNOWN', b'Unknown')
+OBJ 1 (1, b'CUDA_UNIFIED_MEMORY_MIGRATION_CAUSE_USER', b'User prefetch')
+OBJ 2 (2, b'CUDA_UNIFIED_MEMORY_MIGRATION_CAUSE_COHERENCE', b'Page fault')
+OBJ 3 (3, b'CUDA_UNIFIED_MEMORY_MIGRATION_CAUSE_PREFETCH', b'Speculative prefecth')
+OBJ 4 (4, b'CUDA_UNIFIED_MEMORY_MIGRATION_CAUSE_EVICTION', b'Eviction')
+OBJ 5 (5, b'CUDA_UNIFIED_MEMORY_MIGRATION_CAUSE_ACCESS_COUNTERS', b'Access counters')
+KEY 	 - ENUM_CUPTI_STREAM_TYPE : <HDF5 dataset "ENUM_CUPTI_STREAM_TYPE": shape (4,), type "|V24">
+ds
+/ENUM_CUPTI_STREAM_TYPE (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUPTI_ACTIVITY_STREAM_CREATE_FLAG_UNKNOWN', b'Unknown stream type')
+OBJ 1 (1, b'CUPTI_ACTIVITY_STREAM_CREATE_FLAG_DEFAULT', b'Default stream')
+OBJ 2 (2, b'CUPTI_ACTIVITY_STREAM_CREATE_FLAG_NON_BLOCKING', b'Non-blocking stream')
+OBJ 3 (3, b'CUPTI_ACTIVITY_STREAM_CREATE_FLAG_NULL', b'Null stream')
+KEY 	 - ENUM_CUPTI_SYNC_TYPE : <HDF5 dataset "ENUM_CUPTI_SYNC_TYPE": shape (5,), type "|V24">
+ds
+/ENUM_CUPTI_SYNC_TYPE (5,) 5 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUPTI_ACTIVITY_SYNCHRONIZATION_TYPE_UNKNOWN', b'Unknown')
+OBJ 1 (1, b'CUPTI_ACTIVITY_SYNCHRONIZATION_TYPE_EVENT_SYNCHRONIZE', b'Event sync')
+OBJ 2 (2, b'CUPTI_ACTIVITY_SYNCHRONIZATION_TYPE_STREAM_WAIT_EVENT', b'Stream wait sync')
+OBJ 3 (3, b'CUPTI_ACTIVITY_SYNCHRONIZATION_TYPE_STREAM_SYNCHRONIZE', b'Stream sync')
+OBJ 4 (4, b'CUPTI_ACTIVITY_SYNCHRONIZATION_TYPE_CONTEXT_SYNCHRONIZE', b'Context sync')
+KEY 	 - ENUM_D3D12_CMD_LIST_TYPE : <HDF5 dataset "ENUM_D3D12_CMD_LIST_TYPE": shape (7,), type "|V24">
+ds
+/ENUM_D3D12_CMD_LIST_TYPE (7,) 7 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'D3D12_COMMAND_LIST_TYPE_DIRECT', b'Direct')
+OBJ 1 (1, b'D3D12_COMMAND_LIST_TYPE_BUNDLE', b'Bundle')
+OBJ 2 (2, b'D3D12_COMMAND_LIST_TYPE_COMPUTE', b'Compute')
+OBJ 3 (3, b'D3D12_COMMAND_LIST_TYPE_COPY', b'Copy')
+OBJ 4 (4, b'D3D12_COMMAND_LIST_TYPE_VIDEO_DECODE', b'Video decode')
+OBJ 5 (5, b'D3D12_COMMAND_LIST_TYPE_VIDEO_PROCESS', b'Video process')
+OBJ 6 (6, b'D3D12_COMMAND_LIST_TYPE_VIDEO_ENCODE', b'Video encode')
+KEY 	 - ENUM_D3D12_HEAP_FLAGS : <HDF5 dataset "ENUM_D3D12_HEAP_FLAGS": shape (7,), type "|V24">
+ds
+/ENUM_D3D12_HEAP_FLAGS (7,) 7 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'D3D12_HEAP_FLAG_NONE', b'None')
+OBJ 1 (1, b'D3D12_HEAP_FLAG_SHARED', b'Shared')
+OBJ 2 (4, b'D3D12_HEAP_FLAG_DENY_BUFFERS', b'Deny Buffers')
+OBJ 3 (8, b'D3D12_HEAP_FLAG_ALLOW_DISPLAY', b'Allow Display')
+OBJ 4 (32, b'D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER', b'Shared Cross Adapter')
+OBJ 5 (64, b'D3D12_HEAP_FLAG_DENY_RT_DS_TEXTURES', b'Deny RT DS Textures')
+OBJ 6 (128, b'D3D12_HEAP_FLAG_DENY_NON_RT_DS_TEXTURES', b'Deny non-RT Textures')
+KEY 	 - ENUM_D3D12_HEAP_TYPE : <HDF5 dataset "ENUM_D3D12_HEAP_TYPE": shape (4,), type "|V24">
+ds
+/ENUM_D3D12_HEAP_TYPE (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'D3D12_HEAP_TYPE_DEFAULT', b'Default')
+OBJ 1 (2, b'D3D12_HEAP_TYPE_UPLOAD', b'Upload')
+OBJ 2 (3, b'D3D12_HEAP_TYPE_READBACK', b'Readback')
+OBJ 3 (4, b'D3D12_HEAP_TYPE_CUSTOM', b'Custom')
+KEY 	 - ENUM_D3D12_PAGE_PROPERTY : <HDF5 dataset "ENUM_D3D12_PAGE_PROPERTY": shape (4,), type "|V24">
+ds
+/ENUM_D3D12_PAGE_PROPERTY (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'D3D12_CPU_PAGE_PROPERTY_UNKNOWN', b'Unknown')
+OBJ 1 (1, b'D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE', b'Not available')
+OBJ 2 (2, b'D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE', b'Write combine')
+OBJ 3 (3, b'D3D12_CPU_PAGE_PROPERTY_WRITE_BACK', b'Write back')
+KEY 	 - ENUM_DXGI_FORMAT : <HDF5 dataset "ENUM_DXGI_FORMAT": shape (121,), type "|V24">
+ds
+/ENUM_DXGI_FORMAT (121,) 121 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'DXGI_FORMAT_UNKNOWN', b'Unknown')
+OBJ 1 (1, b'DXGI_FORMAT_R32G32B32A32_TYPELESS', b'R32G32B32A32 typeless')
+OBJ 2 (2, b'DXGI_FORMAT_R32G32B32A32_FLOAT', b'R32G32B32A32 float')
+OBJ 3 (3, b'DXGI_FORMAT_R32G32B32A32_UINT', b'R32G32B32A32 uint')
+OBJ 4 (4, b'DXGI_FORMAT_R32G32B32A32_SINT', b'R32G32B32A32 int')
+OBJ 5 (5, b'DXGI_FORMAT_R32G32B32_TYPELESS', b'R32G32B32 typeless')
+OBJ 6 (6, b'DXGI_FORMAT_R32G32B32_FLOAT', b'R32G32B32 float')
+OBJ 7 (7, b'DXGI_FORMAT_R32G32B32_UINT', b'R32G32B32 uint')
+OBJ 8 (8, b'DXGI_FORMAT_R32G32B32_SINT', b'R32G32B32 int')
+OBJ 9 (9, b'DXGI_FORMAT_R16G16B16A16_TYPELESS', b'R16G16B16A16 typeless')
+KEY 	 - ENUM_ETW_MEMORY_TRANSFER_TYPE : <HDF5 dataset "ENUM_ETW_MEMORY_TRANSFER_TYPE": shape (8,), type "|V24">
+ds
+/ENUM_ETW_MEMORY_TRANSFER_TYPE (8,) 8 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'UnknownTransfer', b'Unknown Transfer')
+OBJ 1 (1, b'DeviceToSystem', b'Device To System Transfer')
+OBJ 2 (2, b'SystemToDevice', b'System To Device Transfer')
+OBJ 3 (3, b'AgpToDevice', b'AGP To Device Transfer')
+OBJ 4 (4, b'DeviceToAgp', b'Device To AGP Transfer')
+OBJ 5 (5, b'EvictToAlternateva', b'Evict To Alternate VA Transfer')
+OBJ 6 (6, b'RestoreFromAlternateva', b'Restore From Alternate VA Transfer')
+OBJ 7 (7, b'Discard', b'Discard')
+KEY 	 - ENUM_GPU_CTX_SWITCH : <HDF5 dataset "ENUM_GPU_CTX_SWITCH": shape (13,), type "|V24">
+ds
+/ENUM_GPU_CTX_SWITCH (13,) 13 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (-1, b'UnknownGpuCtxswTag', b'Unknown')
+OBJ 1 (0, b'SOF', b'SO')
+OBJ 2 (1, b'REQ_BY_HOST', b'Request by host')
+OBJ 3 (2, b'FE_ACK', b'Front-end ACK')
+OBJ 4 (3, b'FE_ACK_WFI', b'Front-end ACK WFI')
+OBJ 5 (4, b'FE_ACK_GFXP', b'Front-end ACK GFXP')
+OBJ 6 (5, b'FE_ACK_CTAP', b'Front-end ACK CTAP')
+OBJ 7 (6, b'FE_ACK_CILP', b'Front-end ACK CILP')
+OBJ 8 (7, b'SAVE_END', b'Save end')
+OBJ 9 (8, b'RESTORE_START', b'Restore start')
+KEY 	 - ENUM_NET_DEVICE_ID : <HDF5 dataset "ENUM_NET_DEVICE_ID": shape (45,), type "|V24">
+ds
+/ENUM_NET_DEVICE_ID (45,) 45 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (4099, b'CntX3', b'ConnectX-3')
+OBJ 1 (4103, b'CntX3Pro', b'ConnectX-3 Pro')
+OBJ 2 (4113, b'CntIB', b'Connect-IB')
+OBJ 3 (4115, b'CntX4', b'ConnectX-4')
+OBJ 4 (4117, b'CntX4Lx', b'ConnectX-4 Lx')
+OBJ 5 (4119, b'CntX5', b'ConnectX-5')
+OBJ 6 (4121, b'CntX5Ex', b'ConnectX-5 Ex')
+OBJ 7 (4123, b'CntX6', b'ConnectX-6')
+OBJ 8 (4125, b'CntX6Dx', b'ConnectX-6 Dx')
+OBJ 9 (4127, b'CntX6Lx', b'ConnectX-6 Lx')
+KEY 	 - ENUM_NET_LINK_TYPE : <HDF5 dataset "ENUM_NET_LINK_TYPE": shape (3,), type "|V24">
+ds
+/ENUM_NET_LINK_TYPE (3,) 3 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'Unknown', b'Unknown NIC')
+OBJ 1 (1, b'Ethernet', b'Ethernet NIC')
+OBJ 2 (2, b'InfiniBand', b'InfiniBand NIC')
+KEY 	 - ENUM_NET_VENDOR_ID : <HDF5 dataset "ENUM_NET_VENDOR_ID": shape (1,), type "|V24">
+ds
+/ENUM_NET_VENDOR_ID (1,) 1 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+<HDF5 dataset "ENUM_NET_VENDOR_ID": shape (1,), type "|V24">
+KEY 	 - ENUM_NSYS_EVENT_CLASS : <HDF5 dataset "ENUM_NSYS_EVENT_CLASS": shape (85,), type "|V24">
+ds
+/ENUM_NSYS_EVENT_CLASS (85,) 85 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'TRACE_PROCESS_EVENT_CUDA_RUNTIME', b'CUDA runtime')
+OBJ 1 (1, b'TRACE_PROCESS_EVENT_CUDA_DRIVER', b'CUDA driver')
+OBJ 2 (2, b'TRACE_PROCESS_EVENT_GL', b'GL')
+OBJ 3 (3, b'TRACE_PROCESS_EVENT_TSP_OVERHEAD', b'TSP overhead')
+OBJ 4 (4, b'TRACE_PROCESS_EVENT_GL_DEBUG', b'GL debug')
+OBJ 5 (5, b'TRACE_PROCESS_EVENT_GL_WORKLOAD', b'GL workload')
+OBJ 6 (6, b'TRACE_PROCESS_EVENT_NVTX_START', b'NVTX start')
+OBJ 7 (7, b'TRACE_PROCESS_EVENT_NVTX_FINISH', b'NVTX finish')
+OBJ 8 (8, b'TRACE_PROCESS_EVENT_GL_START', b'GL start')
+OBJ 9 (9, b'TRACE_PROCESS_EVENT_GL_FINISH', b'GL finish')
+KEY 	 - ENUM_NSYS_EVENT_TYPE : <HDF5 dataset "ENUM_NSYS_EVENT_TYPE": shape (142,), type "|V24">
+ds
+/ENUM_NSYS_EVENT_TYPE (142,) 142 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'Unknown', b'Unknown')
+OBJ 1 (1, b'CpuCycles', b'CpuCycles')
+OBJ 2 (2, b'Instructions', b'Instructions')
+OBJ 3 (3, b'CacheReferences', b'CacheReferences')
+OBJ 4 (4, b'L1CacheDataWriteMisses', b'L1CacheDataWriteMisses')
+OBJ 5 (5, b'L1CacheDataReadMisses', b'L1CacheDataReadMisses')
+OBJ 6 (6, b'L1CacheInstructionMisses', b'L1CacheInstructionMisses')
+OBJ 7 (7, b'L2CacheDataWriteMisses', b'L2CacheDataWriteMisses')
+OBJ 8 (8, b'L2CacheDataReadMisses', b'L2CacheDataReadMisses')
+OBJ 9 (9, b'L2CacheInstructionMisses', b'L2CacheInstructionMisses')
+KEY 	 - ENUM_NVDRIVER_EVENT_ID : <HDF5 dataset "ENUM_NVDRIVER_EVENT_ID": shape (4,), type "|V24">
+ds
+/ENUM_NVDRIVER_EVENT_ID (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'NV_WGF2UM_EVENT_LOAD_BALANCE_GPU', b'GPU load balance')
+OBJ 1 (8, b'NV_WGF2UM_EVENT_LOAD_BALANCE_CPU', b'CPU load balance')
+OBJ 2 (21, b'NV_WGF2UM_EVENT_LOAD_BALANCE_MASTER_GPU', b'GPU load balance master')
+OBJ 3 (22, b'NV_WGF2UM_EVENT_LOAD_BALANCE_MASTER_CPU', b'CPU load balance master')
+KEY 	 - ENUM_OPENACC_DEVICE : <HDF5 dataset "ENUM_OPENACC_DEVICE": shape (10,), type "|V24">
+ds
+/ENUM_OPENACC_DEVICE (10,) 10 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'acc_device_none', b'None')
+OBJ 1 (1, b'acc_device_default', b'Default')
+OBJ 2 (2, b'acc_device_host', b'Host')
+OBJ 3 (3, b'acc_device_not_host', b'Not host')
+OBJ 4 (4, b'acc_device_nvidia', b'NVIDIA')
+OBJ 5 (5, b'acc_device_radeon', b'Radeon')
+OBJ 6 (6, b'acc_device_xeonphi', b'Xeon Phi')
+OBJ 7 (7, b'acc_device_pgi_opencl', b'PGI OpenCL')
+OBJ 8 (8, b'acc_device_nvidia_opencl', b'NVIDIA OpenCL')
+OBJ 9 (9, b'acc_device_opencl', b'OpenCL')
+KEY 	 - ENUM_OPENACC_EVENT_KIND : <HDF5 dataset "ENUM_OPENACC_EVENT_KIND": shape (17,), type "|V24">
+ds
+/ENUM_OPENACC_EVENT_KIND (17,) 17 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'CUPTI_OPENACC_EVENT_KIND_INVALID', b'Invalid')
+OBJ 1 (1, b'CUPTI_OPENACC_EVENT_KIND_DEVICE_INIT', b'Device init')
+OBJ 2 (2, b'CUPTI_OPENACC_EVENT_KIND_DEVICE_SHUTDOWN', b'Device shutdown')
+OBJ 3 (3, b'CUPTI_OPENACC_EVENT_KIND_RUNTIME_SHUTDOWN', b'Runtime shutdown')
+OBJ 4 (4, b'CUPTI_OPENACC_EVENT_KIND_ENQUEUE_LAUNCH', b'Enqueue launch')
+OBJ 5 (5, b'CUPTI_OPENACC_EVENT_KIND_ENQUEUE_UPLOAD', b'Enqueue upload')
+OBJ 6 (6, b'CUPTI_OPENACC_EVENT_KIND_ENQUEUE_DOWNLOAD', b'Enqueue download')
+OBJ 7 (7, b'CUPTI_OPENACC_EVENT_KIND_WAIT', b'Wait')
+OBJ 8 (8, b'CUPTI_OPENACC_EVENT_KIND_IMPLICIT_WAIT', b'Implicit wait')
+OBJ 9 (9, b'CUPTI_OPENACC_EVENT_KIND_COMPUTE_CONSTRUCT', b'Compute construct')
+KEY 	 - ENUM_OPENGL_DEBUG_SEVERITY : <HDF5 dataset "ENUM_OPENGL_DEBUG_SEVERITY": shape (4,), type "|V24">
+ds
+/ENUM_OPENGL_DEBUG_SEVERITY (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (33387, b'GL_DEBUG_SEVERITY_NOTIFICATION', b'Notification')
+OBJ 1 (37190, b'GL_DEBUG_SEVERITY_HIGH', b'High')
+OBJ 2 (37191, b'GL_DEBUG_SEVERITY_MEDIUM', b'Medium')
+OBJ 3 (37192, b'GL_DEBUG_SEVERITY_LOW', b'Low')
+KEY 	 - ENUM_OPENGL_DEBUG_SOURCE : <HDF5 dataset "ENUM_OPENGL_DEBUG_SOURCE": shape (6,), type "|V24">
+ds
+/ENUM_OPENGL_DEBUG_SOURCE (6,) 6 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (33350, b'GL_DEBUG_SOURCE_API', b'API')
+OBJ 1 (33351, b'GL_DEBUG_SOURCE_WINDOW_SYSTEM', b'Window system')
+OBJ 2 (33352, b'GL_DEBUG_SOURCE_SHADER_COMPILER', b'Shader compiler')
+OBJ 3 (33353, b'GL_DEBUG_SOURCE_THIRD_PARTY', b'Third party')
+OBJ 4 (33354, b'GL_DEBUG_SOURCE_APPLICATION', b'Application')
+OBJ 5 (33355, b'GL_DEBUG_SOURCE_OTHER', b'Other')
+KEY 	 - ENUM_OPENGL_DEBUG_TYPE : <HDF5 dataset "ENUM_OPENGL_DEBUG_TYPE": shape (9,), type "|V24">
+ds
+/ENUM_OPENGL_DEBUG_TYPE (9,) 9 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (33356, b'GL_DEBUG_TYPE_ERROR', b'Error')
+OBJ 1 (33357, b'GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR', b'Deprecated behavior')
+OBJ 2 (33358, b'GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR', b'Undefined behavior')
+OBJ 3 (33359, b'GL_DEBUG_TYPE_PORTABILITY', b'Portability')
+OBJ 4 (33360, b'GL_DEBUG_TYPE_PERFORMANCE', b'Performance')
+OBJ 5 (33361, b'GL_DEBUG_TYPE_OTHER', b'Other')
+OBJ 6 (33384, b'GL_DEBUG_TYPE_MARKER', b'Marker')
+OBJ 7 (33385, b'GL_DEBUG_TYPE_PUSH_GROUP', b'Push group')
+OBJ 8 (33386, b'GL_DEBUG_TYPE_POP_GROUP', b'Pop group')
+KEY 	 - ENUM_OPENMP_DISPATCH : <HDF5 dataset "ENUM_OPENMP_DISPATCH": shape (2,), type "|V24">
+ds
+/ENUM_OPENMP_DISPATCH (2,) 2 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'ompt_dispatch_iteration', b'Iteration')
+OBJ 1 (2, b'ompt_dispatch_section', b'Section')
+KEY 	 - ENUM_OPENMP_EVENT_KIND : <HDF5 dataset "ENUM_OPENMP_EVENT_KIND": shape (37,), type "|V24">
+ds
+/ENUM_OPENMP_EVENT_KIND (37,) 37 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'OPENMP_EVENT_KIND_INVALID', b'Invalid')
+OBJ 1 (1, b'OPENMP_EVENT_KIND_THREAD_BEGIN', b'Thread begin')
+OBJ 2 (2, b'OPENMP_EVENT_KIND_THREAD_END', b'Thread end')
+OBJ 3 (3, b'OPENMP_EVENT_KIND_PARALLEL_BEGIN', b'Parallel begin')
+OBJ 4 (4, b'OPENMP_EVENT_KIND_PARALLEL_END', b'Parallel End')
+OBJ 5 (5, b'OPENMP_EVENT_KIND_SYNC_REGION_WAIT_BEGIN', b'Sync region wait begin')
+OBJ 6 (6, b'OPENMP_EVENT_KIND_SYNC_REGION_WAIT_END', b'Sync region wait end')
+OBJ 7 (7, b'OPENMP_EVENT_KIND_SYNC_REGION_BEGIN', b'Sync region begin')
+OBJ 8 (8, b'OPENMP_EVENT_KIND_SYNC_REGION_END', b'Sync region end')
+OBJ 9 (9, b'OPENMP_EVENT_KIND_TASK_BEGIN', b'Task begin')
+KEY 	 - ENUM_OPENMP_MUTEX : <HDF5 dataset "ENUM_OPENMP_MUTEX": shape (7,), type "|V24">
+ds
+/ENUM_OPENMP_MUTEX (7,) 7 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'ompt_mutex_lock', b'Wait for lock')
+OBJ 1 (2, b'ompt_mutex_test_lock', b'Testing lock')
+OBJ 2 (3, b'ompt_mutex_nest_lock', b'Wait for nested lock')
+OBJ 3 (4, b'ompt_mutex_test_nest_lock', b'Testing nested lock')
+OBJ 4 (5, b'ompt_mutex_critical', b'Wait for critical section entry')
+OBJ 5 (6, b'ompt_mutex_atomic', b'Wait for atomic region entry')
+OBJ 6 (7, b'ompt_mutex_ordered', b'Wait for ordered region entry')
+KEY 	 - ENUM_OPENMP_SYNC_REGION : <HDF5 dataset "ENUM_OPENMP_SYNC_REGION": shape (7,), type "|V24">
+ds
+/ENUM_OPENMP_SYNC_REGION (7,) 7 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'ompt_sync_region_barrier', b'Barrier')
+OBJ 1 (2, b'ompt_sync_region_barrier_implicit', b'Implicit barrier')
+OBJ 2 (3, b'ompt_sync_region_barrier_explicit', b'Explicit barrier')
+OBJ 3 (4, b'ompt_sync_region_barrier_implementation', b'Implementation barrier')
+OBJ 4 (5, b'ompt_sync_region_taskwait', b'Task wait')
+OBJ 5 (6, b'ompt_sync_region_taskgroup', b'Task group')
+OBJ 6 (7, b'ompt_sync_region_reduction', b'Reduction')
+KEY 	 - ENUM_OPENMP_TASK_FLAG : <HDF5 dataset "ENUM_OPENMP_TASK_FLAG": shape (9,), type "|V24">
+ds
+/ENUM_OPENMP_TASK_FLAG (9,) 9 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'ompt_task_initial', b'Initial')
+OBJ 1 (2, b'ompt_task_implicit', b'Implitic')
+OBJ 2 (4, b'ompt_task_explicit', b'Explicit')
+OBJ 3 (8, b'ompt_task_target', b'Target')
+OBJ 4 (134217728, b'ompt_task_undeferred', b'Undeferred')
+OBJ 5 (268435456, b'ompt_task_untied', b'United')
+OBJ 6 (536870912, b'ompt_task_final', b'Final')
+OBJ 7 (1073741824, b'ompt_task_mergeable', b'Mergeable')
+OBJ 8 (2147483648, b'ompt_task_merged', b'Merged')
+KEY 	 - ENUM_OPENMP_TASK_STATUS : <HDF5 dataset "ENUM_OPENMP_TASK_STATUS": shape (7,), type "|V24">
+ds
+/ENUM_OPENMP_TASK_STATUS (7,) 7 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'ompt_task_complete', b'Completed')
+OBJ 1 (2, b'ompt_task_yield', b'Yielded')
+OBJ 2 (3, b'ompt_task_cancel', b'Cancelled')
+OBJ 3 (4, b'ompt_task_detach', b'Detached')
+OBJ 4 (5, b'ompt_task_early_fulfill', b'Early fulfilled')
+OBJ 5 (6, b'ompt_task_late_fulfill', b'Late fulfilled')
+OBJ 6 (7, b'ompt_task_switch', b'Switched Out')
+KEY 	 - ENUM_OPENMP_THREAD : <HDF5 dataset "ENUM_OPENMP_THREAD": shape (4,), type "|V24">
+ds
+/ENUM_OPENMP_THREAD (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'ompt_thread_initial', b'Initial')
+OBJ 1 (2, b'ompt_thread_worker', b'Worker')
+OBJ 2 (3, b'ompt_thread_other', b'Internal')
+OBJ 3 (4, b'ompt_thread_unknown', b'Unknown')
+KEY 	 - ENUM_OPENMP_WORK : <HDF5 dataset "ENUM_OPENMP_WORK": shape (7,), type "|V24">
+ds
+/ENUM_OPENMP_WORK (7,) 7 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'ompt_work_loop', b'Loop region')
+OBJ 1 (2, b'ompt_work_sections', b'Sections region')
+OBJ 2 (3, b'ompt_work_single_executor', b'Single region executor')
+OBJ 3 (4, b'ompt_work_single_other', b'Single region waiting')
+OBJ 4 (5, b'ompt_work_workshare', b'Workshare retion')
+OBJ 5 (6, b'ompt_work_distribute', b'Distribute region')
+OBJ 6 (7, b'ompt_work_taskloop', b'Task loop region')
+KEY 	 - ENUM_SAMPLING_THREAD_STATE : <HDF5 dataset "ENUM_SAMPLING_THREAD_STATE": shape (11,), type "|V24">
+ds
+/ENUM_SAMPLING_THREAD_STATE (11,) 11 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'Unknown', b'Unknown')
+OBJ 1 (1, b'Running', b'Running')
+OBJ 2 (2, b'Interruptible', b'Interruptible')
+OBJ 3 (3, b'Uninterruptible', b'Uninterruptible')
+OBJ 4 (4, b'Stopped', b'Stopped')
+OBJ 5 (5, b'Terminated', b'Terminated')
+OBJ 6 (6, b'Unscheduled', b'Unscheduled')
+OBJ 7 (7, b'Waiting', b'Waiting')
+OBJ 8 (8, b'OSRuntime', b'OS runtime')
+OBJ 9 (9, b'Initialized', b'Initialized')
+KEY 	 - ENUM_SLI_TRANSER : <HDF5 dataset "ENUM_SLI_TRANSER": shape (6,), type "|V24">
+ds
+/ENUM_SLI_TRANSER (6,) 6 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'P2P_SKIPPED', b'Skipped')
+OBJ 1 (1, b'P2P_EARLY_PUSH', b'Early push')
+OBJ 2 (2, b'P2P_PUSH_FAILED', b'Push failed')
+OBJ 3 (3, b'P2P_2WAY_OR_PULL', b'2way or pull')
+OBJ 4 (4, b'P2P_PRESENT', b'Present')
+OBJ 5 (5, b'P2P_DX12_INIT_PUSH_ON_WRITE', b'DX12 push on write')
+KEY 	 - ENUM_STACK_UNWIND_METHOD : <HDF5 dataset "ENUM_STACK_UNWIND_METHOD": shape (10,), type "|V24">
+ds
+/ENUM_STACK_UNWIND_METHOD (10,) 10 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'Unknown', b'Unknown')
+OBJ 1 (1, b'FramePointer', b'Frame pointer')
+OBJ 2 (2, b'UnwindTable', b'Unwind table')
+OBJ 3 (3, b'LR_FramePointer', b'LR frame pointer')
+OBJ 4 (4, b'LR_UnwindTable', b'LR unwind table')
+OBJ 5 (5, b'KernelContext', b'Kernel context')
+OBJ 6 (6, b'DWARF_EH', b'DWARF EH')
+OBJ 7 (7, b'DWARF_DF', b'DWARF DF')
+OBJ 8 (8, b'LBR', b'LBR')
+OBJ 9 (1000, b'Undefined', b'Undefined')
+KEY 	 - ENUM_VULKAN_PIPELINE_CREATION_FLAGS : <HDF5 dataset "ENUM_VULKAN_PIPELINE_CREATION_FLAGS": shape (3,), type "|V24">
+ds
+/ENUM_VULKAN_PIPELINE_CREATION_FLAGS (3,) 3 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT', b'Valid flag')
+OBJ 1 (2, b'VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT', b'Cache hit flag')
+OBJ 2 (4, b'VK_PIPELINE_CREATION_FEEDBACK_BASE_PIPELINE_ACCELERATION_BIT', b'Pipeline acceleration flag')
+KEY 	 - ENUM_WDDM_ENGINE_TYPE : <HDF5 dataset "ENUM_WDDM_ENGINE_TYPE": shape (9,), type "|V24">
+ds
+/ENUM_WDDM_ENGINE_TYPE (9,) 9 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'DXGK_ENGINE_TYPE_OTHER', b'Other')
+OBJ 1 (1, b'DXGK_ENGINE_TYPE_3D', b'3D')
+OBJ 2 (2, b'DXGK_ENGINE_TYPE_VIDEO_DECODE', b'Video decode')
+OBJ 3 (3, b'DXGK_ENGINE_TYPE_VIDEO_ENCODE', b'Video encode')
+OBJ 4 (4, b'DXGK_ENGINE_TYPE_VIDEO_PROCESSING', b'Video processing')
+OBJ 5 (5, b'DXGK_ENGINE_TYPE_SCENE_ASSEMBLY', b'Scene assembly')
+OBJ 6 (6, b'DXGK_ENGINE_TYPE_COPY', b'Copy')
+OBJ 7 (7, b'DXGK_ENGINE_TYPE_OVERLAY', b'Overlay')
+OBJ 8 (8, b'DXGK_ENGINE_TYPE_CRYPTO', b'Crypto')
+KEY 	 - ENUM_WDDM_INTERRUPT_TYPE : <HDF5 dataset "ENUM_WDDM_INTERRUPT_TYPE": shape (17,), type "|V24">
+ds
+/ENUM_WDDM_INTERRUPT_TYPE (17,) 17 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (1, b'DXGK_INTERRUPT_DMA_COMPLETED', b'DMA complete')
+OBJ 1 (2, b'DXGK_INTERRUPT_DMA_PREEMPTED', b'DMA preempted')
+OBJ 2 (3, b'DXGK_INTERRUPT_CRTC_VSYNC', b'Critical VSYNC')
+OBJ 3 (4, b'DXGK_INTERRUPT_DMA_FAULTED', b'CMA faulted')
+OBJ 4 (5, b'DXGK_INTERRUPT_DISPLAYONLY_VSYNC', b'Display-only VSYNC')
+OBJ 5 (6, b'DXGK_INTERRUPT_DISPLAYONLY_PRESENT_PROGRESS', b'Display-only progress')
+OBJ 6 (7, b'DXGK_INTERRUPT_CRTC_VSYNC_WITH_MULTIPLANE_OVERLAY', b'Critical VSYNC w/ overlay')
+OBJ 7 (8, b'DXGK_INTERRUPT_MICACAST_CHUNK_PROCESSING_COMPLETE', b'Miracast chunk complete')
+OBJ 8 (9, b'DXGK_INTERRUPT_DMA_PAGE_FAULTED', b'DMA page faulted')
+OBJ 9 (10, b'DXGK_INTERRUPT_CRTC_VSYNC_WITH_MULTIPLANE_OVERLAY2', b'Critical VSYNC w/ overlay 2')
+KEY 	 - ENUM_WDDM_PACKET_TYPE : <HDF5 dataset "ENUM_WDDM_PACKET_TYPE": shape (8,), type "|V24">
+ds
+/ENUM_WDDM_PACKET_TYPE (8,) 8 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'DXGKETW_RENDER_COMMAND_BUFFER', b'Render')
+OBJ 1 (1, b'DXGKETW_DEFERRED_COMMAND_BUFFER', b'Deferred')
+OBJ 2 (2, b'DXGKETW_SYSTEM_COMMAND_BUFFER', b'System')
+OBJ 3 (3, b'DXGKETW_MMIOFLIP_COMMAND_BUFFER', b'MemMap IO Flip')
+OBJ 4 (4, b'DXGKETW_WAIT_COMMAND_BUFFER', b'Wait')
+OBJ 5 (5, b'DXGKETW_SIGNAL_COMMAND_BUFFER', b'Signal')
+OBJ 6 (6, b'DXGKETW_DEVICE_COMMAND_BUFFER', b'Device')
+OBJ 7 (7, b'DXGKETW_SOFTWARE_COMMAND_BUFFER', b'Software')
+KEY 	 - ENUM_WDDM_PAGING_QUEUE_TYPE : <HDF5 dataset "ENUM_WDDM_PAGING_QUEUE_TYPE": shape (4,), type "|V24">
+ds
+/ENUM_WDDM_PAGING_QUEUE_TYPE (4,) 4 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'VIDMM_PAGING_QUEUE_TYPE_UMD', b'UMD')
+OBJ 1 (1, b'VIDMM_PAGING_QUEUE_TYPE_DEFAULT', b'Default')
+OBJ 2 (2, b'VIDMM_PAGING_QUEUE_TYPE_EVICT', b'Evict')
+OBJ 3 (3, b'VIDMM_PAGING_QUEUE_TYPE_RECLAIM', b'Reclaim')
+KEY 	 - ENUM_WDDM_VIDMM_OP_TYPE : <HDF5 dataset "ENUM_WDDM_VIDMM_OP_TYPE": shape (32,), type "|V24">
+ds
+/ENUM_WDDM_VIDMM_OP_TYPE (32,) 32 [('id', '<i8'), ('name', 'O'), ('label', 'O')]
+OBJ 0 (0, b'None', b'None')
+OBJ 1 (101, b'RestoreSegments', b'Restore segments')
+OBJ 2 (102, b'PurgeSegments', b'Purge segements')
+OBJ 3 (103, b'CleanupPrimary', b'Cleanup primary')
+OBJ 4 (104, b'AllocatePagingBufferResources', b'Allocate paging buffer resources')
+OBJ 5 (105, b'FreePagingBufferResources', b'Free paging buffer resources')
+OBJ 6 (106, b'ReportVidMmState', b'Report VIDMM State')
+OBJ 7 (107, b'RunApertureCoherencyTest', b'Run aperture coherency test')
+OBJ 8 (108, b'RunUnmapToDummyPageTest', b'Run unmap to dummy page test')
+OBJ 9 (109, b'DeferredCommand', b'Deferred command')
+KEY 	 - EXPORT_META_DATA : <HDF5 dataset "EXPORT_META_DATA": shape (29,), type "|V16">
+ds
+/EXPORT_META_DATA (29,) 29 [('name', 'O'), ('value', 'O')]
+OBJ 0 (b'EXPORT_PRODUCT_NAME', b'NVIDIA Nsight Systems')
+OBJ 1 (b'EXPORT_PRODUCT_VERSION', b'2023.2.3.1004')
+OBJ 2 (b'EXPORT_PRODUCT_DATE', b'2023.2')
+OBJ 3 (b'EXPORT_SCHEMA_VERSION', b'3.1.7')
+OBJ 4 (b'EXPORT_SCHEMA_VERSION_MAJOR', b'3')
+OBJ 5 (b'EXPORT_SCHEMA_VERSION_MINOR', b'1')
+OBJ 6 (b'EXPORT_SCHEMA_VERSION_MICRO', b'7')
+OBJ 7 (b'EXPORT_SCHEMA_VERSION_CKSUM', b'2070890140 131535')
+OBJ 8 (b'EXPORT_PLATFORM', b'linux-desktop')
+OBJ 9 (b'EXPORT_ARCH', b'x64')
+KEY 	 - NVTX_EVENTS : <HDF5 dataset "NVTX_EVENTS": shape (61455,), type "|V124">
+ds
+/NVTX_EVENTS (61455,) 61455 [('start', '<i8'), ('end', '<i8'), ('eventType', '<u4'), ('rangeId', '<u8'), ('category', '<u8'), ('color', '<u4'), ('text', 'O'), ('globalTid', '<u8'), ('endGlobalTid', '<u8'), ('textId', '<u4'), ('domainId', '<u8'), ('uint64Value', '<u8'), ('int64Value', '<i8'), ('doubleValue', '<f8'), ('uint32Value', '<u4'), ('int32Value', '<i4'), ('floatValue', '<f4'), ('jsonTextId', '<u4'), ('jsonText', 'O')]
+OBJ 0 (4865495939, 0, 75, 0, 0, 0, b'cuBLAS', 312591530085603, 0, 0, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 1 (4865500712, 4865506779, 59, 0, 0, 0, b'', 312591530085603, 0, 159, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 2 (4865506953, 4865507089, 59, 0, 0, 0, b'', 312591530085603, 0, 159, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 3 (5251194673, 5259402750, 59, 0, 0, 0, b'', 312591530085603, 0, 8109, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 4 (5259406694, 5259406879, 59, 0, 0, 0, b'', 312591530085603, 0, 8119, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 5 (5832940944, 5832941870, 59, 0, 0, 0, b'', 312591530085603, 0, 11821, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 6 (5832949055, 5834941579, 59, 0, 0, 0, b'', 312591530085603, 0, 11822, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 7 (5834964730, 5834964932, 59, 0, 0, 0, b'', 312591530085603, 0, 11821, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 8 (5834965059, 5834974060, 59, 0, 0, 0, b'', 312591530085603, 0, 11822, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+OBJ 9 (5834986788, 5834986889, 59, 0, 0, 0, b'', 312591530085603, 0, 11821, 1, 0, 0, 0., 0, 0, 0., 0, b'')
+KEY 	 - NVVIDEO_DECODER_API : <HDF5 dataset "NVVIDEO_DECODER_API": shape (16,), type "|V36">
+ds
+/NVVIDEO_DECODER_API (16,) 16 [('start', '<i8'), ('end', '<i8'), ('eventClass', '<u4'), ('globalTid', '<u8'), ('nameId', '<u8')]
+OBJ 0 (44340242, 44340242, 87, 312590806810624, 162)
+OBJ 1 (67351040, 67351040, 87, 312591041691648, 162)
+OBJ 2 (82794613, 82794613, 88, 312591041691648, 7827)
+OBJ 3 (82796136, 82796136, 88, 312591041691648, 7827)
+OBJ 4 (4800741797, 4800741797, 87, 312591461122048, 162)
+OBJ 5 (4817995621, 4817995621, 88, 312591461122048, 7827)
+OBJ 6 (4817998039, 4817998039, 88, 312591461122048, 7827)
+OBJ 7 (4858367641, 4858367641, 87, 312591528230912, 162)
+OBJ 8 (1815740857749, 1815740857749, 87, 312632045207552, 162)
+OBJ 9 (1815764724638, 1815764724638, 88, 312632045207552, 7827)
+KEY 	 - NVVIDEO_ENCODER_API : <HDF5 dataset "NVVIDEO_ENCODER_API": shape (16,), type "|V36">
+ds
+/NVVIDEO_ENCODER_API (16,) 16 [('start', '<i8'), ('end', '<i8'), ('eventClass', '<u4'), ('globalTid', '<u8'), ('nameId', '<u8')]
+OBJ 0 (44140120, 44140120, 84, 312590806810624, 160)
+OBJ 1 (67152968, 67152968, 84, 312591041691648, 160)
+OBJ 2 (82794330, 82794330, 85, 312591041691648, 7826)
+OBJ 3 (82796051, 82796051, 85, 312591041691648, 7826)
+OBJ 4 (4800538162, 4800538162, 84, 312591461122048, 160)
+OBJ 5 (4817995193, 4817995193, 85, 312591461122048, 7826)
+OBJ 6 (4817997835, 4817997835, 85, 312591461122048, 7826)
+OBJ 7 (4857960737, 4857960737, 84, 312591528230912, 160)
+OBJ 8 (1815739771111, 1815739771111, 84, 312632045207552, 160)
+OBJ 9 (1815764724074, 1815764724074, 85, 312632045207552, 7826)
+KEY 	 - NVVIDEO_JPEG_API : <HDF5 dataset "NVVIDEO_JPEG_API": shape (16,), type "|V36">
+ds
+/NVVIDEO_JPEG_API (16,) 16 [('start', '<i8'), ('end', '<i8'), ('eventClass', '<u4'), ('globalTid', '<u8'), ('nameId', '<u8')]
+OBJ 0 (44528130, 44528130, 90, 312590806810624, 164)
+OBJ 1 (67538344, 67538344, 90, 312591041691648, 164)
+OBJ 2 (82795292, 82795292, 91, 312591041691648, 7828)
+OBJ 3 (82796669, 82796669, 91, 312591041691648, 7828)
+OBJ 4 (4800929972, 4800929972, 90, 312591461122048, 164)
+OBJ 5 (4817996259, 4817996259, 91, 312591461122048, 7828)
+OBJ 6 (4817998798, 4817998798, 91, 312591461122048, 7828)
+OBJ 7 (4858716290, 4858716290, 90, 312591528230912, 164)
+OBJ 8 (1815741893482, 1815741893482, 90, 312632045207552, 164)
+OBJ 9 (1815764725440, 1815764725440, 91, 312632045207552, 7828)
+KEY 	 - OSRT_API : <HDF5 dataset "OSRT_API": shape (240970,), type "|V52">
+ds
+/OSRT_API (240970,) 240970 [('start', '<i8'), ('end', '<i8'), ('eventClass', '<u4'), ('globalTid', '<u8'), ('nameId', '<u8'), ('returnValue', '<u4'), ('nestingLevel', '<u4'), ('callchainId', '<i8')]
+OBJ 0 (44756818, 44756818, 31, 312590806810624, 166, 0, 0, 0)
+OBJ 1 (49553149, 49557073, 27, 312590808665272, 5082, 0, 0, 0)
+OBJ 2 (49559029, 49561260, 27, 312590808665272, 5082, 0, 0, 0)
+OBJ 3 (49562414, 49563475, 27, 312590808665272, 5082, 0, 0, 0)
+OBJ 4 (49563569, 49564415, 27, 312590808665272, 5082, 0, 0, 0)
+OBJ 5 (49564497, 49565225, 27, 312590808665272, 5082, 0, 0, 0)
+OBJ 6 (49565315, 49566065, 27, 312590808665272, 5082, 0, 0, 0)
+OBJ 7 (49566138, 49566702, 27, 312590808665272, 5082, 0, 0, 0)
+OBJ 8 (49576283, 49577255, 27, 312590808665272, 5082, 0, 0, 0)
+OBJ 9 (49577503, 49578366, 27, 312590808665272, 5082, 0, 0, 0)
+KEY 	 - OSRT_CALLCHAINS : <HDF5 dataset "OSRT_CALLCHAINS": shape (132715,), type "|V36">
+ds
+/OSRT_CALLCHAINS (132715,) 132715 [('id', '<i8'), ('symbol', '<u4'), ('module', '<u4'), ('kernelMode', 'u1'), ('thumbCode', 'u1'), ('unresolved', 'u1'), ('specialEntry', 'u1'), ('originalIP', '<u8'), ('unwindMethod', '<i4'), ('stackDepth', '<i4')]
+OBJ 0 (1, 5158, 213, 0, 0, 0, 0, 139921554778880, 0, 0)
+OBJ 1 (1, 5159, 367, 0, 0, 1, 0, 139921426745001, 0, 1)
+OBJ 2 (2, 5158, 213, 0, 0, 0, 0, 139921554778880, 0, 0)
+OBJ 3 (2, 5159, 367, 0, 0, 1, 0, 139921426745001, 0, 1)
+OBJ 4 (3, 4801, 213, 0, 0, 0, 0, 139921554581088, 0, 0)
+OBJ 5 (3, 7910, 367, 0, 0, 1, 0, 139921426696238, 0, 1)
+OBJ 6 (4, 5085, 213, 0, 0, 0, 0, 139927113780288, 0, 0)
+OBJ 7 (4, 5086, 233, 0, 0, 0, 0, 4199249, 0, 1)
+OBJ 8 (4, 5087, 233, 0, 0, 0, 0, 8388608, 0, 2)
+OBJ 9 (4, 5088, 0, 0, 0, 1, 0, 139925739540432, 0, 3)
+KEY 	 - PROCESSES : <HDF5 dataset "PROCESSES": shape (621,), type "|V24">
+ds
+/PROCESSES (621,) 621 [('globalPid', '<u8'), ('pid', '<u8'), ('name', 'O')]
+OBJ 0 (312590806810624, 1854648, b'ollama')
+OBJ 1 (281474993487872, 1, b'systemd')
+OBJ 2 (281475010265088, 2, b'kthreadd')
+OBJ 3 (281475027042304, 3, b'rcu_gp')
+OBJ 4 (281475043819520, 4, b'rcu_par_gp')
+OBJ 5 (281475060596736, 5, b'slub_flushwq')
+OBJ 6 (281475077373952, 6, b'netns')
+OBJ 7 (281475110928384, 8, b'kworker/0:0H-events_highpri')
+OBJ 8 (281475144482816, 10, b'mm_percpu_wq')
+OBJ 9 (281475161260032, 11, b'rcu_tasks_kthread')
+KEY 	 - PROFILER_OVERHEAD : <HDF5 dataset "PROFILER_OVERHEAD": shape (382,), type "|V36">
+ds
+/PROFILER_OVERHEAD (382,) 382 [('start', '<i8'), ('end', '<i8'), ('globalTid', '<u8'), ('nameId', '<u8'), ('returnValue', '<u4')]
+OBJ 0 (43287224, 43431724, 312590808665272, 155, 0)
+OBJ 1 (43462865, 43686611, 312590808665278, 155, 0)
+OBJ 2 (43716216, 43887712, 312590808665277, 155, 0)
+OBJ 3 (44137293, 44332093, 312590808665272, 161, 0)
+OBJ 4 (44337705, 44521010, 312590808665272, 163, 0)
+OBJ 5 (44525805, 44688820, 312590808665272, 165, 0)
+OBJ 6 (44692729, 46912015, 312590808665272, 167, 0)
+OBJ 7 (46930319, 49350949, 312590808665272, 169, 0)
+OBJ 8 (49359806, 49400603, 312590808665272, 170, 0)
+OBJ 9 (49403792, 49426852, 312590808665272, 171, 0)
+KEY 	 - ProcessStreams : <HDF5 dataset "ProcessStreams": shape (2,), type "|V16">
+ds
+/ProcessStreams (2,) 2 [('globalPid', '<u8'), ('filenameId', '<u4'), ('contentId', '<u4')]
+OBJ 0 (312590806810624, 204, 205)
+OBJ 1 (312590806810624, 198, 199)
+KEY 	 - SAMPLING_CALLCHAINS : <HDF5 dataset "SAMPLING_CALLCHAINS": shape (869296,), type "|V36">
+ds
+/SAMPLING_CALLCHAINS (869296,) 869296 [('id', '<i8'), ('symbol', '<u4'), ('module', '<u4'), ('kernelMode', 'u1'), ('thumbCode', 'u1'), ('unresolved', 'u1'), ('specialEntry', 'u1'), ('originalIP', '<u8'), ('unwindMethod', '<i4'), ('stackDepth', '<i4')]
+OBJ 0 (1, 249, 208, 0, 0, 1, 0, 140730826443920, 8, 0)
+OBJ 1 (1, 250, 213, 0, 0, 0, 0, 139927114110571, 8, 1)
+OBJ 2 (1, 251, 247, 0, 0, 1, 0, 139927116920313, 8, 2)
+OBJ 3 (1, 252, 247, 0, 0, 1, 0, 139927116913627, 8, 3)
+OBJ 4 (1, 253, 247, 0, 0, 1, 0, 139927116917779, 8, 4)
+OBJ 5 (1, 254, 247, 0, 0, 1, 0, 139927116918163, 8, 5)
+OBJ 6 (1, 255, 247, 0, 0, 1, 0, 139927116901236, 8, 6)
+OBJ 7 (1, 256, 247, 0, 0, 1, 0, 139927116906739, 8, 7)
+OBJ 8 (1, 257, 247, 0, 0, 1, 0, 139927116907182, 8, 8)
+OBJ 9 (1, 258, 245, 0, 0, 1, 0, 139927124451884, 8, 9)
+KEY 	 - SCHED_EVENTS : <HDF5 dataset "SCHED_EVENTS": shape (110530,), type "|V21">
+ds
+/SCHED_EVENTS (110530,) 110530 [('start', '<i8'), ('cpu', '<u4'), ('isSchedIn', 'u1'), ('globalTid', '<u8')]
+OBJ 0 (35767, 4, 1, 312590808665272)
+OBJ 1 (311972, 4, 0, 312590808665272)
+OBJ 2 (980456, 4, 1, 312590808665272)
+OBJ 3 (1004347, 4, 0, 312590808665272)
+OBJ 4 (1221612, 4, 1, 312590808665272)
+OBJ 5 (1245848, 4, 0, 312590808665272)
+OBJ 6 (1462211, 4, 1, 312590808665272)
+OBJ 7 (2669103, 4, 0, 312590808665272)
+OBJ 8 (12559227, 4, 1, 312590808665272)
+OBJ 9 (12727045, 4, 0, 312590808665272)
+KEY 	 - StringIds : <HDF5 dataset "StringIds": shape (12367,), type "|V12">
+ds
+/StringIds (12367,) 12367 [('id', '<i4'), ('value', 'O')]
+OBJ 0 (0, b'[Unknown]')
+OBJ 1 (1, b'[kernel.kallsyms]')
+OBJ 2 (2, b'[Max depth]')
+OBJ 3 (3, b'[Broken backtraces]')
+OBJ 4 (4, b'[Called from Java]')
+OBJ 5 (5, b'QnxKernelTrace')
+OBJ 6 (6, b'GpuMetrics')
+OBJ 7 (7, b'SocMetrics')
+OBJ 8 (8, b'mm_')
+OBJ 9 (9, b'task_submit')
+KEY 	 - TARGET_INFO_CUDA_NULL_STREAM : <HDF5 dataset "TARGET_INFO_CUDA_NULL_STREAM": shape (3,), type "|V24">
+ds
+/TARGET_INFO_CUDA_NULL_STREAM (3,) 3 [('streamId', '<u4'), ('hwId', '<u4'), ('vmId', '<u4'), ('processId', '<u4'), ('deviceId', '<u4'), ('contextId', '<u4')]
+OBJ 0 (7, 0, 1, 1854691, 0, 1)
+OBJ 1 (7, 0, 1, 1857110, 0, 1)
+OBJ 2 (7, 0, 1, 1857238, 0, 1)
+KEY 	 - TARGET_INFO_CUDA_STREAM : <HDF5 dataset "TARGET_INFO_CUDA_STREAM": shape (45,), type "|V28">
+ds
+/TARGET_INFO_CUDA_STREAM (45,) 45 [('streamId', '<u4'), ('hwId', '<u4'), ('vmId', '<u4'), ('processId', '<u4'), ('contextId', '<u4'), ('priority', '<u4'), ('flag', '<u4')]
+OBJ 0 (18, 0, 1, 1854691, 1, 0, 2)
+OBJ 1 (17, 0, 1, 1854691, 1, 0, 2)
+OBJ 2 (16, 0, 1, 1854691, 1, 0, 2)
+OBJ 3 (15, 0, 1, 1854691, 1, 0, 2)
+OBJ 4 (14, 0, 1, 1854691, 1, 0, 2)
+OBJ 5 (12, 0, 1, 1854691, 1, 4294967291, 1)
+OBJ 6 (11, 0, 1, 1854691, 1, 0, 2)
+OBJ 7 (8, 0, 1, 1854691, 1, 0, 2)
+OBJ 8 (7, 0, 1, 1854691, 1, 0, 3)
+OBJ 9 (13, 0, 1, 1854691, 1, 0, 2)
+KEY 	 - TARGET_INFO_GPU : <HDF5 dataset "TARGET_INFO_GPU": shape (1,), type "|V201">
+ds
+/TARGET_INFO_GPU (1,) 1 [('vmId', '<i8'), ('id', '<u4'), ('name', 'O'), ('busLocation', 'O'), ('isDiscrete', 'u1'), ('l2CacheSize', '<u4'), ('totalMemory', '<u8'), ('memoryBandwidth', '<u8'), ('clockRate', '<u4'), ('smCount', '<u4'), ('pwGpuId', '<u4'), ('uuid', 'O'), ('luid', '<u8'), ('chipName', 'O'), ('cuDevice', '<i4'), ('ctxswDevPath', 'O'), ('ctrlDevPath', 'O'), ('revision', '<u4'), ('nodeMask', '<u4'), ('constantMemory', '<u4'), ('maxIPC', '<u4'), ('maxRegistersPerBlock', '<u4'), ('maxShmemPerBlock', '<u4'), ('maxShmemPerBlockOptin', '<u4'), ('maxShmemPerSm', '<u4'), ('maxRegistersPerSm', '<u4'), ('threadsPerWarp', '<u4'), ('asyncEngines', '<u4'), ('maxWarpsPerSm', '<u4'), ('maxBlocksPerSm', '<u4'), ('maxThreadsPerBlock', '<u4'), ('maxBlockDimX', '<u4'), ('maxBlockDimY', '<u4'), ('maxBlockDimZ', '<u4'), ('maxGridDimX', '<u4'), ('maxGridDimY', '<u4'), ('maxGridDimZ', '<u4'), ('computeMajor', '<u4'), ('computeMinor', '<u4'), ('smMajor', '<u4'), ('smMinor', '<u4')]
+<HDF5 dataset "TARGET_INFO_GPU": shape (1,), type "|V201">
+KEY 	 - TARGET_INFO_SESSION_START_TIME : <HDF5 dataset "TARGET_INFO_SESSION_START_TIME": shape (1,), type "|V24">
+ds
+/TARGET_INFO_SESSION_START_TIME (1,) 1 [('utcEpochNs', '<u8'), ('utcTime', 'O'), ('localTime', 'O')]
+<HDF5 dataset "TARGET_INFO_SESSION_START_TIME": shape (1,), type "|V24">
+KEY 	 - TARGET_INFO_SYSTEM_ENV : <HDF5 dataset "TARGET_INFO_SYSTEM_ENV": shape (81,), type "|V36">
+ds
+/TARGET_INFO_SYSTEM_ENV (81,) 81 [('globalVid', '<u8'), ('devStateName', 'O'), ('name', 'O'), ('nameEnum', '<i4'), ('value', 'O')]
+OBJ 0 (281474976710656, b'Local (CLI)', b'CpuCores', 1, b'24')
+OBJ 1 (281474976710656, b'Local (CLI)', b'CpuSpeedMhz', 2, b'5200')
+OBJ 2 (281474976710656, b'Local (CLI)', b'CpuArchitecture', 3, b'x86_64')
+OBJ 3 (281474976710656, b'Local (CLI)', b'SupportedABIs', 5, b'x86_64,')
+OBJ 4 (281474976710656, b'Local (CLI)', b'Supported64BitABIs', 7, b'x86_64')
+OBJ 5 (281474976710656, b'Local (CLI)', b'CNTFRQMHz', 11, b'0')
+OBJ 6 (281474976710656, b'Local (CLI)', b'CpuDescription', 13, b'12th Gen Intel(R) Core(TM) i9-12900KF')
+OBJ 7 (281474976710656, b'Local (CLI)', b'CpuInfo', 14, b'{"items":[{"cpuid":0,"socket":0,"maxfreqhz":5100000000},{"cpuid":1,"socket":0,"maxfreqhz":5100000000},{"cpuid":2,"socket":0,"maxfreqhz":5100000000},{"cpuid":3,"socket":0,"maxfreqhz":5100000000},{"cpuid":4,"socket":0,"maxfreqhz":5100000000},{"cpuid":5,"socket":0,"maxfreqhz":5100000000},{"cpuid":6,"socket":0,"maxfreqhz":5100000000},{"cpuid":7,"socket":0,"maxfreqhz":5100000000},{"cpuid":8,"socket":0,"maxfreqhz":5200000000},{"cpuid":9,"socket":0,"maxfreqhz":5200000000},{"cpuid":10,"socket":0,"maxfreqhz":5200000000},{"cpuid":11,"socket":0,"maxfreqhz":5200000000},{"cpuid":12,"socket":0,"maxfreqhz":5100000000},{"cpuid":13,"socket":0,"maxfreqhz":5100000000},{"cpuid":14,"socket":0,"maxfreqhz":5100000000},{"cpuid":15,"socket":0,"maxfreqhz":5100000000},{"cpuid":16,"socket":0,"maxfreqhz":4000000000},{"cpuid":17,"socket":0,"maxfreqhz":4000000000},{"cpuid":18,"socket":0,"maxfreqhz":4000000000},{"cpuid":19,"socket":0,"maxfreqhz":4000000000},{"cpuid":20,"socket":0,"maxfreqhz":4000000000},{"cpuid":21,"socket":0,"maxfreqhz":4000000000},{"cpuid":22,"socket":0,"maxfreqhz":4000000000},{"cpuid":23,"socket":0,"maxfreqhz":4000000000}]}')
+OBJ 8 (281474976710656, b'Local (CLI)', b'CpuEmcSpeedMhz', 101, b'1600')
+OBJ 9 (281474976710656, b'Local (CLI)', b'SupportsXmcClients', 153, b'0')
+KEY 	 - ThreadNames : <HDF5 dataset "ThreadNames": shape (33,), type "|V24">
+ds
+/ThreadNames (33,) 33 [('nameId', '<u8'), ('priority', '<u8'), ('globalTid', '<u8')]
+OBJ 0 (201, 20, 312634261657309)
+OBJ 1 (202, 20, 312634261657306)
+OBJ 2 (157, 10, 312634261657304)
+OBJ 3 (158, 10, 312591530085604)
+OBJ 4 (201, 20, 312591530085610)
+OBJ 5 (158, 10, 312591462976736)
+OBJ 6 (157, 10, 312591043546316)
+OBJ 7 (195, 20, 312591462976735)
+OBJ 8 (195, 20, 312591043546310)
+OBJ 9 (157, 10, 312591462976737)
+KEY 	 - UnwindMethodType : <HDF5 dataset "UnwindMethodType": shape (), type "<i4">
+ds
+/UnwindMethodType () 1 int32
+<HDF5 dataset "UnwindMethodType": shape (), type "<i4">
+#+end_example
