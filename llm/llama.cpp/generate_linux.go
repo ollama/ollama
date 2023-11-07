@@ -7,6 +7,7 @@ package llm
 //go:generate git -C ggml apply ../patches/0002-34B-model-support.patch
 //go:generate git -C ggml apply ../patches/0005-ggml-support-CUDA-s-half-type-for-aarch64-1455-2670.patch
 //go:generate git -C ggml apply ../patches/0001-copy-cuda-runtime-libraries.patch
+//go:generate git -C ggml apply ../patches/0006-fix-f16-mul-mat.patch
 //go:generate cmake -S ggml -B ggml/build/cpu -DLLAMA_K_QUANTS=on
 //go:generate cmake --build ggml/build/cpu --target server --config Release
 //go:generate mv ggml/build/cpu/bin/server ggml/build/cpu/bin/ollama-runner
