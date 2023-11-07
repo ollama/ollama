@@ -180,7 +180,7 @@ install_cuda_driver_apt() {
     case $1 in
         debian)
             status 'Enabling contrib sources...'
-            $SUDO sed 's/main/contrib/' < /etc/apt/sources.list | sudo tee /etc/apt/sources.list.d/contrib.list > /dev/null
+            $SUDO sed 's/main/contrib/' < /etc/apt/sources.list | $SUDO tee /etc/apt/sources.list.d/contrib.list > /dev/null
             ;;
     esac
 
