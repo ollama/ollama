@@ -39,6 +39,31 @@ To run and chat with [Llama 2](https://ollama.ai/library/llama2):
 ollama run llama2
 ```
 
+## Configuration
+
+In order to store model files in a custom directory, you need to set the `OLLAMA_MODELS` environment variable.
+
+Here is how you can set it:
+
+On **Linux** or **macOS**, open your terminal and run:
+  
+```sh
+export OLLAMA_MODELS="/path/to/your/models/directory"
+```
+
+On **Windows**, open a powershell terminal and run:
+
+```cmd
+set OLLAMA_MODELS="C:\path\to\your\models\directory"
+```
+
+If you're working in a Jupyter Notebook or Google Colab, you can set it within your notebook with:
+
+```py
+import os
+os.environ['OLLAMA_MODELS'] = "/path/to/your/models/directory"
+```
+
 ## Model library
 
 Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
