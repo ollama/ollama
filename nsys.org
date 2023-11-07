@@ -1168,3 +1168,115 @@ ds
 /UnwindMethodType () 1 int32
 <HDF5 dataset "UnwindMethodType": shape (), type "<i4">
 #+end_example
+
+
+* KEY 	 - CUPTI_ACTIVITY_KIND_MEMSET : <HDF5 dataset "CUPTI_ACTIVITY_KIND_MEMSET": shape (6,), type "|V72">
+This is a CUDA-Python script that performs a mass update operation on the GPU using the CUPTI\_ACTIVITY\_KIND\_MEMSET API.
+The script creates five objects (OBJ 0 to OBJ 4) and initializes their values using the memKind parameter of CUPTI\_ACTIVITY\_KIND\_MEMSET API. The memKind parameter specifies the memory type, where in this case it is set to 2 which represents global memory.
+The script then calls the CUPTI\_ACTIVITY\_KIND\_MEMSET API with six arguments: start, end, deviceId, contextId, streamId, and correlationId. The start and end arguments specify the range of memory to be updated. The deviceId argument specifies the GPU on which the update operation should be performed. The contextId argument specifies the execution context in which the update operation should be performed. The streamId argument specifies the stream on which the update operation should be performed. The correlationId argument is used for bookkeeping and is set to 0 in this case.
+Finally, the script prints out the memory addresses of the objects before and after the update operation using the OBJ variable names.
+
+
+* using sqlite
+#+begin_src sh :results verbatim :exports both
+  sqlite3 ./report13.sqlite 
+  sqlite> select stackDepth,originalIP,count(*) from CUDA_CALLCHAINS group by originalIP,stackDepth order by count(*) desc;
+
+#+end_src
+
+
+#+begin_src sh :results verbatim :exports both
+  python reporthd5_callchains.py > callchains.tsv
+  cut -f2 callchains.tsv  | sort |uniq -c |sort -n |tail
+
+#+end_src
+
+#+begin_src sh :results verbatim :exports both
+
+  cut -f2,3 callchains.tsv  | sort |uniq -c |sort -n | tail
+#+end_src
+#+RESULTS:
+#+begin_example
+
+ 874879 5105	245
+ 879885 11871	455
+ 879885 11872	455
+ 879886 11869	455
+ 879886 11870	455
+ 879886 3266	455
+ 881489 11863	455
+ 882087 2260	536
+ 882087 2751	475
+ 882087 8153	536
+#+end_example
+
+
+ cut -f2,3,5 callchains.tsv  | sort |uniq -c |sort -n | tail
+ #+end_src
+ #+RESULTS:
+#+begin_example
+
+1604971 5105	245	139783675200909
+1608569 11869	455	93873028397482
+1608569 11870	455	93873028473768
+1608569 11871	455	93873028048153
+1608569 11872	455	93873028097846
+1608569 3266	455	93873028596637
+1611581 11863	455	93873028100739
+1612178 2260	536	139782886820184
+1612178 2751	475	139782934497638
+1612178 8153	536	139782886811199
+#+end_example
+
+#+begin_src sh :results verbatim :exports both
+cut -f5 callchains.tsv  | sort |uniq -c |sort -n | tail
+#+end_src
+#+RESULTS:
+#+begin_example
+
+1604971 93873027808729
+1608569 93873028048153
+1608569 93873028097846
+1608569 93873028397482
+1608569 93873028473768
+1608569 93873028596637
+1611581 93873028100739
+1612178 139782886811199
+1612178 139782886820184
+1612178 139782934497638
+#+end_example
+
+#+begin_src sh :results verbatim :exports both
+cut -f2,3,6 callchains.tsv  | sort |uniq -c |sort -n | tail -1000 > topcalls.txt
+#+end_src
+
+* here are the columns of cuda
+#+begin_src sh :results verbatim :exports both
+#+end_src
+#+RESULTS:
+#+begin_example
+
+  1 [('id', '<i8'), 
+  2 ('symbol', '<u4'),
+  3 ('module', '<u4'),
+  4 ('unresolved', 'u1'),
+  5 ('originalIP', '<u8'),
+  6 ('stackDepth', '<i4')]
+#+end_example
+
+
+Now we join the symbol ids with [[string_ids.txt]]
+#+begin_example
+ 683286 3266	455	7 3266|0x55608486039d
+1095002 8201	536	0 8201|0x7fa83470663f
+1095002 8202	536	1 8202|0x7fa834708958
+1095002 8203	475	2 8203|0x7fa837480966 
+1177007 400	213	22 400|start_thread
+1177007 401	213	23 401|__GI___clone3
+1269765 400	213	23 400|start_thread
+1269765 401	213	24 401|__GI___clone3
+1612178 2260	536	1 2260|0x7f21bd508958
+1612178 2751	475	2 2751|0x7f21c0280966
+1612178 8153	536	0 8153|0x7f21bd50663f
+2898731 845	456	3 845|cudaLaunchKernel
+#+end_example

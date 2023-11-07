@@ -44,4 +44,4 @@ def h5dump(path,group='/'):
     with h5py.File(path,'r') as f:
          descend_obj(f[group])
 if __name__=="__main__":
-    h5dump("report13.h5")
+    h5dump("report13.h5","/")
