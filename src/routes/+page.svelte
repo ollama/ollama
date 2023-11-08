@@ -113,7 +113,7 @@
 				code.style.borderTopLeftRadius = 0;
 
 				let topBarDiv = document.createElement('div');
-				topBarDiv.style.backgroundColor = '#343541';
+				topBarDiv.style.backgroundColor = '#202123';
 				topBarDiv.style.overflowX = 'auto';
 				topBarDiv.style.display = 'flex';
 				topBarDiv.style.justifyContent = 'space-between';
@@ -795,71 +795,60 @@
 
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">
-				<div class="max-w-2xl mx-auto w-full px-2.5 mt-14">
-					<div class="p-3 rounded-lg bg-gray-100 dark:bg-gray-900">
-						<div>
-							<label
-								for="models"
-								class="block mb-2 text-sm font-medium dark:text-gray-200 flex justify-between"
+				<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-14">
+					<div class="flex justify-between my-2 text-sm">
+						<select
+							id="models"
+							class="outline-none bg-transparent text-lg font-semibold rounded-lg block w-full placeholder-gray-400"
+							bind:value={selectedModel}
+							disabled={messages.length != 0}
+						>
+							<option value="" selected>Select a model</option>
+
+							{#each models as model}
+								{#if model.name === 'hr'}
+									<hr />
+								{:else}
+									<option value={model.name} class=" text-lg">{model.name}</option>
+								{/if}
+							{/each}
+						</select>
+						<button
+							class=" self-center dark:hover:text-gray-300"
+							on:click={() => {
+								openSettings();
+							}}
+						>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
+								class="w-4 h-4"
 							>
-								<div class="self-center">Model</div>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
+								/>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+								/>
+							</svg>
+						</button>
+					</div>
 
-								<button
-									class=" self-center dark:hover:text-gray-300"
-									on:click={() => {
-										openSettings();
-									}}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke-width="1.5"
-										stroke="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
-										/>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-										/>
-									</svg>
-								</button>
-							</label>
-
-							<div>
-								<select
-									id="models"
-									class="outline-none border dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 text-sm rounded-lg block w-full p-2.5 placeholder-gray-400"
-									bind:value={selectedModel}
-									disabled={messages.length != 0}
-								>
-									<option value="" selected>Select a model</option>
-
-									{#each models as model}
-										{#if model.name === 'hr'}
-											<hr />
-										{:else}
-											<option value={model.name}>{model.name}</option>
-										{/if}
-									{/each}
-								</select>
-								<div class="text-right mt-1.5 text-xs text-gray-500">
-									<button on:click={saveDefaultModel}> Set as default</button>
-								</div>
-							</div>
-						</div>
+					<div class="text-left mt-1.5 text-xs text-gray-500">
+						<button on:click={saveDefaultModel}> Set as default</button>
 					</div>
 				</div>
 
-				<div class=" h-full mb-48 w-full flex flex-col">
+				<div class=" h-full mt-10 mb-32 w-full flex flex-col">
 					{#if messages.length == 0}
-						<div class="m-auto text-center max-w-md pb-16">
+						<div class="m-auto text-center max-w-md pb-32 px-2">
 							<div class="flex justify-center mt-8">
 								<img src="/ollama.png" class="w-16 invert-[80%]" />
 							</div>
@@ -873,189 +862,222 @@
 						</div>
 					{:else}
 						{#each messages as message, messageIdx}
-							<div class=" w-full {message.role == 'user' ? '' : ' bg-gray-100  dark:bg-gray-700'}">
-								<div class="flex justify-between p-5 py-10 max-w-3xl mx-auto rounded-lg group">
-									<div class="space-x-7 flex w-full">
-										<div class="">
+							<div class=" w-full">
+								<div class="flex justify-between px-5 mb-3 max-w-3xl mx-auto rounded-lg group">
+									<div class=" flex w-full">
+										<div class=" mr-4">
 											<img
 												src="{message.role == 'user'
 													? settings.gravatarUrl
 														? settings.gravatarUrl
 														: '/user'
 													: '/favicon'}.png"
-												class=" max-w-[32px] object-cover rounded"
+												class=" max-w-[28px] object-cover rounded-full"
 											/>
 										</div>
 
-										{#if message.role != 'user' && message.content == ''}
-											<div class="w-full pr-28">
-												<div class="animate-pulse flex w-full">
-													<div class="space-y-2 w-full">
-														<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded mr-14" />
+										<div class="w-full">
+											<div class=" self-center font-bold mb-0.5">
+												{message.role === 'user' ? 'You' : 'Ollama'}
+											</div>
 
-														<div class="grid grid-cols-3 gap-4">
-															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-2" />
-															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1" />
-														</div>
-														<div class="grid grid-cols-4 gap-4">
-															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1" />
-															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-2" />
-															<div
-																class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1 mr-4"
-															/>
-														</div>
+											{#if message.role !== 'user' && message.content === ''}
+												<div class="w-full mt-3">
+													<div class="animate-pulse flex w-full">
+														<div class="space-y-2 w-full">
+															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded mr-14" />
 
-														<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded" />
+															<div class="grid grid-cols-3 gap-4">
+																<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-2" />
+																<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1" />
+															</div>
+															<div class="grid grid-cols-4 gap-4">
+																<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1" />
+																<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-2" />
+																<div
+																	class="h-2 bg-gray-200 dark:bg-gray-600 rounded col-span-1 mr-4"
+																/>
+															</div>
+
+															<div class="h-2 bg-gray-200 dark:bg-gray-600 rounded" />
+														</div>
 													</div>
 												</div>
-											</div>
-										{:else}
-											<div
-												class="prose chat-{message.role} w-full max-w-full dark:prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-8 prose-ol:-mb-8 prose-li:-mb-4 whitespace-pre-line"
-											>
-												{#if message.role == 'user'}
-													{#if message?.edit === true}
-														<div>
-															<textarea
-																class=" bg-transparent outline-none w-full resize-none"
-																bind:value={message.editedContent}
-																on:input={(e) => {
-																	e.target.style.height = '';
-																	e.target.style.height = `${e.target.scrollHeight}px`;
-																}}
-																on:focus={(e) => {
-																	e.target.style.height = '';
-																	e.target.style.height = `${e.target.scrollHeight}px`;
-																}}
-															/>
-
-															<div class=" flex justify-end space-x-2 text-sm font-medium">
-																<button
-																	class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded-lg"
-																	on:click={() => {
-																		confirmEditMessage(messageIdx);
+											{:else}
+												<div
+													class="prose chat-{message.role} w-full max-w-full dark:prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-6 prose-ol:-mb-6 prose-li:-mb-4 whitespace-pre-line"
+												>
+													{#if message.role == 'user'}
+														{#if message?.edit === true}
+															<div class=" w-full">
+																<textarea
+																	class=" bg-transparent outline-none w-full resize-none"
+																	bind:value={message.editedContent}
+																	on:input={(e) => {
+																		e.target.style.height = '';
+																		e.target.style.height = `${e.target.scrollHeight}px`;
 																	}}
-																>
-																	Save & Submit
-																</button>
-
-																<button
-																	class=" px-4 py-2.5 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-100 transition outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg"
-																	on:click={() => {
-																		cancelEditMessage(messageIdx);
+																	on:focus={(e) => {
+																		e.target.style.height = '';
+																		e.target.style.height = `${e.target.scrollHeight}px`;
 																	}}
-																>
-																	Cancel
-																</button>
+																/>
+
+																<div class=" flex justify-end space-x-2 text-sm font-medium">
+																	<button
+																		class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded-lg"
+																		on:click={() => {
+																			confirmEditMessage(messageIdx);
+																		}}
+																	>
+																		Save & Submit
+																	</button>
+
+																	<button
+																		class=" px-4 py-2.5 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-100 transition outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg"
+																		on:click={() => {
+																			cancelEditMessage(messageIdx);
+																		}}
+																	>
+																		Cancel
+																	</button>
+																</div>
 															</div>
-														</div>
+														{:else}
+															<div class="w-full">
+																{message.content}
+
+																<div class=" flex justify-start space-x-1">
+																	<button
+																		class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-800 transition"
+																		on:click={() => {
+																			editMessage(messageIdx);
+																		}}
+																	>
+																		<svg
+																			xmlns="http://www.w3.org/2000/svg"
+																			fill="none"
+																			viewBox="0 0 24 24"
+																			stroke-width="1.5"
+																			stroke="currentColor"
+																			class="w-4 h-4"
+																		>
+																			<path
+																				stroke-linecap="round"
+																				stroke-linejoin="round"
+																				d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125"
+																			/>
+																		</svg>
+																	</button>
+																</div>
+															</div>
+														{/if}
 													{:else}
-														{message.content}
-													{/if}
-												{:else}
-													{@html marked(message.content.replace('\\\\', '\\\\\\'))}
+														<div class="w-full">
+															{@html marked(message.content.replace('\\\\', '\\\\\\'))}
 
-													{#if message.done}
-														<div class=" flex justify-end space-x-1 text-gray-400">
-															<button
-																class="p-1 rounded dark:hover:bg-gray-800 {message.rating === 1
-																	? ' bg-gray-200 dark:bg-gray-800'
-																	: ''} transition"
-																on:click={() => {
-																	rateMessage(messageIdx, 1);
-																}}
-															>
-																<svg
-																	stroke="currentColor"
-																	fill="none"
-																	stroke-width="2"
-																	viewBox="0 0 24 24"
-																	stroke-linecap="round"
-																	stroke-linejoin="round"
-																	class="w-4 h-4"
-																	xmlns="http://www.w3.org/2000/svg"
-																	><path
-																		d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"
-																	/></svg
-																>
-															</button>
-															<button
-																class="p-1 rounded dark:hover:bg-gray-800 {message.rating === -1
-																	? 'bg-gray-200 dark:bg-gray-800'
-																	: ''} transition"
-																on:click={() => {
-																	rateMessage(messageIdx, -1);
-																}}
-															>
-																<svg
-																	stroke="currentColor"
-																	fill="none"
-																	stroke-width="2"
-																	viewBox="0 0 24 24"
-																	stroke-linecap="round"
-																	stroke-linejoin="round"
-																	class="w-4 h-4"
-																	xmlns="http://www.w3.org/2000/svg"
-																	><path
-																		d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"
-																	/></svg
-																>
-															</button>
+															{#if message.done}
+																<div class=" flex justify-start space-x-1 -mt-2">
+																	<button
+																		class="{messageIdx + 1 === messages.length
+																			? 'visible'
+																			: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition"
+																		on:click={() => {
+																			copyToClipboard(message.content);
+																		}}
+																	>
+																		<svg
+																			xmlns="http://www.w3.org/2000/svg"
+																			fill="none"
+																			viewBox="0 0 24 24"
+																			stroke-width="1.5"
+																			stroke="currentColor"
+																			class="w-4 h-4"
+																		>
+																			<path
+																				stroke-linecap="round"
+																				stroke-linejoin="round"
+																				d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
+																			/>
+																		</svg>
+																	</button>
+
+																	<button
+																		class="{messageIdx + 1 === messages.length
+																			? 'visible'
+																			: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition"
+																		on:click={() => {
+																			rateMessage(messageIdx, 1);
+																		}}
+																	>
+																		<svg
+																			stroke="currentColor"
+																			fill="none"
+																			stroke-width="2"
+																			viewBox="0 0 24 24"
+																			stroke-linecap="round"
+																			stroke-linejoin="round"
+																			class="w-4 h-4"
+																			xmlns="http://www.w3.org/2000/svg"
+																			><path
+																				d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"
+																			/></svg
+																		>
+																	</button>
+																	<button
+																		class="{messageIdx + 1 === messages.length
+																			? 'visible'
+																			: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition"
+																		on:click={() => {
+																			rateMessage(messageIdx, -1);
+																		}}
+																	>
+																		<svg
+																			stroke="currentColor"
+																			fill="none"
+																			stroke-width="2"
+																			viewBox="0 0 24 24"
+																			stroke-linecap="round"
+																			stroke-linejoin="round"
+																			class="w-4 h-4"
+																			xmlns="http://www.w3.org/2000/svg"
+																			><path
+																				d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"
+																			/></svg
+																		>
+																	</button>
+
+																	{#if messageIdx + 1 === messages.length}
+																		<button
+																			class="{messageIdx + 1 === messages.length
+																				? 'visible'
+																				: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition"
+																			on:click={regenerateResponse}
+																		>
+																			<svg
+																				xmlns="http://www.w3.org/2000/svg"
+																				fill="none"
+																				viewBox="0 0 24 24"
+																				stroke-width="1.5"
+																				stroke="currentColor"
+																				class="w-4 h-4"
+																			>
+																				<path
+																					stroke-linecap="round"
+																					stroke-linejoin="round"
+																					d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+																				/>
+																			</svg>
+																		</button>
+																	{/if}
+																</div>
+															{/if}
 														</div>
 													{/if}
-												{/if}
-											</div>
-										{/if}
-										<!-- {} -->
-									</div>
-
-									<div>
-										{#if message.role == 'user'}
-											{#if message?.edit !== true}
-												<button
-													class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-700 transition"
-													on:click={() => {
-														editMessage(messageIdx);
-													}}
-												>
-													<svg
-														xmlns="http://www.w3.org/2000/svg"
-														viewBox="0 0 20 20"
-														fill="currentColor"
-														class="w-4 h-4"
-													>
-														<path
-															d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z"
-														/>
-														<path
-															d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z"
-														/>
-													</svg>
-												</button>
+												</div>
 											{/if}
-										{:else if message.done}
-											<button
-												class="p-1 rounded dark:hover:bg-gray-700 transition"
-												on:click={() => {
-													copyToClipboard(message.content);
-												}}
-											>
-												<svg
-													xmlns="http://www.w3.org/2000/svg"
-													fill="none"
-													viewBox="0 0 24 24"
-													stroke-width="1.5"
-													stroke="currentColor"
-													class="w-4 h-4"
-												>
-													<path
-														stroke-linecap="round"
-														stroke-linejoin="round"
-														d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
-													/>
-												</svg>
-											</button>
-										{/if}
+										</div>
+										<!-- {} -->
 									</div>
 								</div>
 							</div>
@@ -1065,71 +1087,19 @@
 			</div>
 
 			<div class="fixed bottom-0 w-full">
-				<!-- <hr class=" mb-3 border-gray-600" /> -->
-
-				<div class=" bg-gradient-to-t from-gray-100 dark:from-gray-900 pt-5">
+				<div class=" bg-gradient-to-t from-white/90 dark:from-gray-900 pt-5">
 					<div class="max-w-3xl p-2.5 -mb-0.5 mx-auto inset-x-0">
 						{#if messages.length == 0 && suggestions !== 'false'}
 							<Suggestions {submitPrompt} />
 						{/if}
-
-						{#if messages.length != 0 && messages.at(-1).role == 'assistant'}
-							{#if messages.at(-1).done == true}
-								<div class=" flex justify-end mb-2.5">
-									<button
-										class=" flex px-4 py-2.5 bg-white hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg"
-										on:click={regenerateResponse}
-									>
-										<div class=" self-center mr-1">
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 20 20"
-												fill="currentColor"
-												class="w-4 h-4"
-											>
-												<path
-													fill-rule="evenodd"
-													d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-													clip-rule="evenodd"
-												/>
-											</svg>
-										</div>
-										<div class=" self-center text-sm font-medium">Regenerate</div>
-									</button>
-								</div>
-							{:else}
-								<div class=" flex justify-end mb-2.5">
-									<button
-										class=" flex px-4 py-2.5 bg-white hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg"
-										on:click={stopResponse}
-									>
-										<div class=" self-center mr-1">
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 20 20"
-												fill="currentColor"
-												class="w-4 h-4"
-											>
-												<path
-													fill-rule="evenodd"
-													d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm5-2.25A.75.75 0 017.75 7h4.5a.75.75 0 01.75.75v4.5a.75.75 0 01-.75.75h-4.5a.75.75 0 01-.75-.75v-4.5z"
-													clip-rule="evenodd"
-												/>
-											</svg>
-										</div>
-										<div class=" self-center text-sm font-medium">Stop generating</div>
-									</button>
-								</div>
-							{/if}
-						{/if}
 						<form
-							class=" flex shadow-sm relative w-full"
+							class=" flex relative w-full"
 							on:submit|preventDefault={() => {
 								submitPrompt(prompt);
 							}}
 						>
 							<textarea
-								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none shadow border dark:border-gray-700 w-full py-3 px-5 pr-12 resize-none"
+								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none border dark:border-gray-700 w-full py-3 px-5 pr-12 resize-none"
 								placeholder="Send a message"
 								bind:value={prompt}
 								on:keypress={(e) => {
@@ -1148,35 +1118,53 @@
 								}}
 							/>
 							<div class=" absolute right-0 bottom-0">
-								<div class="pr-3 pb-2">
+								<div class="pr-3 pb-[9px]">
 									{#if messages.length == 0 || messages.at(-1).done == true}
 										<button
 											class="{prompt !== ''
-												? 'bg-emerald-600 text-gray-100 hover:bg-emerald-700 '
-												: 'text-gray-200 dark:text-gray-600 disabled'} transition rounded p-2"
+												? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
+												: 'text-white bg-gray-100 dark:text-gray-400 dark:bg-gray-600 disabled'} transition rounded-lg p-1.5"
 											type="submit"
 											disabled={prompt === ''}
 										>
 											<svg
 												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 16 16"
-												fill="none"
-												class="w-4 h-4"
-												><path
-													d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"
-													fill="currentColor"
-												/></svg
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-5 h-5"
 											>
+												<path
+													fill-rule="evenodd"
+													d="M10 17a.75.75 0 01-.75-.75V5.612L5.29 9.77a.75.75 0 01-1.08-1.04l5.25-5.5a.75.75 0 011.08 0l5.25 5.5a.75.75 0 11-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0110 17z"
+													clip-rule="evenodd"
+												/>
+											</svg>
 										</button>
 									{:else}
-										<div class="loading mb-1.5 mr-1 font-semibold text-lg">...</div>
+										<button
+											class="bg-white hover:bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-800 transition rounded-lg p-1.5"
+											on:click={stopResponse}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 24 24"
+												fill="currentColor"
+												class="w-5 h-5"
+											>
+												<path
+													fill-rule="evenodd"
+													d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm6-2.438c0-.724.588-1.312 1.313-1.312h4.874c.725 0 1.313.588 1.313 1.313v4.874c0 .725-.588 1.313-1.313 1.313H9.564a1.312 1.312 0 01-1.313-1.313V9.564z"
+													clip-rule="evenodd"
+												/>
+											</svg>
+										</button>
 									{/if}
 								</div>
 							</div>
 						</form>
 
 						<div class="mt-2.5 text-xs text-gray-500 text-center">
-							LLMs may produce inaccurate information about people, places, or facts.
+							LLMs can make mistakes. Verify important information.
 						</div>
 					</div>
 				</div>

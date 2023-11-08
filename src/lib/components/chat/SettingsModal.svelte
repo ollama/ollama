@@ -2,7 +2,7 @@
 	import sha256 from 'js-sha256';
 	import Modal from '../common/Modal.svelte';
 
-	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
+	import { WEB_UI_VERSION, API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
 
 	export let show = false;
@@ -212,7 +212,7 @@
 </script>
 
 <Modal bind:show>
-	<div class="rounded-lg dark:bg-gray-900">
+	<div>
 		<div class=" flex justify-between dark:text-gray-300 px-5 py-4">
 			<div class=" text-lg font-medium self-center">Settings</div>
 			<button
@@ -752,12 +752,14 @@
 						</div>
 					</form>
 				{:else if selectedTab === 'about'}
-					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
+					<div class="flex flex-col h-full justify-between space-y-3 text-sm mb-6">
 						<div class=" space-y-3">
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">Ollama Web UI Version</div>
 								<div class="flex w-full">
-									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">v1.0.0-alpha</div>
+									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">
+										{WEB_UI_VERSION}
+									</div>
 								</div>
 							</div>
 

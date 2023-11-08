@@ -8,6 +8,8 @@ export const API_BASE_URL =
 			: `http://localhost:11434/api`
 		: PUBLIC_API_BASE_URL;
 
+export const WEB_UI_VERSION = 'v1.0.0-alpha.1';
+
 // Source: https://kit.svelte.dev/docs/modules#$env-static-public
 // This feature, akin to $env/static/private, exclusively incorporates environment variables
 // that are prefixed with config.kit.env.publicPrefix (usually set to PUBLIC_).
