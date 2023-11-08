@@ -538,7 +538,7 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		return fmt.Errorf("failed to marshal data: %v", err)
 	}
 
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/predict", llm.Port)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
 		return fmt.Errorf("error creating POST request: %v", err)
