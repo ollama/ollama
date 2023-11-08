@@ -216,9 +216,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
-### UI
-
-#### Web & Desktop
+### Web & Desktop
 
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
@@ -226,7 +224,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Web UI](https://github.com/ollama-webui/ollama-webui)
 
-#### Terminal
+### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
