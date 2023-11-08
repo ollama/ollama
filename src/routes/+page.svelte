@@ -675,6 +675,18 @@
 		} else if (messages.length != 0 && messages.at(-1).done != true) {
 			console.log('wait');
 		} else {
+			document.getElementById('chat-textarea').style.height = '';
+
+			messages = [
+				...messages,
+				{
+					role: 'user',
+					content: userPrompt
+				}
+			];
+
+			prompt = '';
+
 			if (messages.length == 0) {
 				await db.put('chats', {
 					id: chatId,
@@ -689,16 +701,6 @@
 				});
 				chats = await db.getAllFromIndex('chats', 'timestamp');
 			}
-
-			messages = [
-				...messages,
-				{
-					role: 'user',
-					content: userPrompt
-				}
-			];
-
-			prompt = '';
 
 			setTimeout(() => {
 				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -1099,6 +1101,7 @@
 							}}
 						>
 							<textarea
+								id="chat-textarea"
 								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none border dark:border-gray-700 w-full py-3 px-5 pr-12 resize-none"
 								placeholder="Send a message"
 								bind:value={prompt}
@@ -1107,7 +1110,6 @@
 										e.preventDefault();
 									}
 									if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
-										e.target.style.height = '';
 										submitPrompt(prompt);
 									}
 								}}
