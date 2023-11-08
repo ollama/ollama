@@ -159,7 +159,7 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ### Pass in prompt as arguments
 
 ```
-$ ollama run llama2 "summarize this file:" "$(cat README.md)"
+$ ollama run llama2 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
@@ -217,20 +217,24 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ## Community Integrations
 
 ### UI
-#### GUI
+
+#### Web & Desktop
+
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Web UI](https://github.com/ollama-webui/ollama-webui)
 
-#### Terminal UI
+#### Terminal
+
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
 
 ### Libraries
+
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LiteLLM](https://github.com/BerriAI/litellm)
@@ -238,7 +242,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 
-### Plugins (Extensions)
+### Extensions & Plugins
+
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
 - [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
 - [Continue](https://github.com/continuedev/continue)
@@ -246,5 +251,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
-- [Dumbar](https://github.com/JerrySievert/Dumbar)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
