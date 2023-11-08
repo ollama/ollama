@@ -212,7 +212,7 @@
 </script>
 
 <Modal bind:show>
-	<div class="rounded-lg dark:bg-gray-900">
+	<div>
 		<div class=" flex justify-between dark:text-gray-300 px-5 py-4">
 			<div class=" text-lg font-medium self-center">Settings</div>
 			<button
