@@ -243,6 +243,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
 - [Continue](https://github.com/continuedev/continue)
 - [Obsidian Ollama plugin](https://github.com/hinterdupfinger/obsidian-ollama)
+- [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Dumbar](https://github.com/JerrySievert/Dumbar)

@@ -74,6 +74,25 @@ systemctl restart ollama
 - macOS: Raw model data is stored under `~/.ollama/models`.
 - Linux: Raw model data is stored under `/usr/share/ollama/.ollama/models`
 
+
+
+Below the models directory you will find a structure similar to the following:
+
+```shell
+.
+├── blobs
+└── manifests
+   └── registry.ollama.ai
+      ├── f0rodo
+      ├── library
+      ├── mattw
+      └── saikatkumardey
+```
+
+There is a `manifests/registry.ollama.ai/namespace` path. In example above, the user has downloaded models from the official `library`, `f0rodo`, `mattw`, and `saikatkumardey` namespaces. Within each of those directories, you will find directories for each of the models downloaded. And in there you will find a file name representing each tag. Each tag file is the manifest for the model.  
+
+The manifest lists all the layers used in this model. You will see a `media type` for each layer, along with a digest. That digest corresponds with a file in the `models/blobs directory`.
+
 ### How can I change where Ollama stores models?
 
 To modify where models are stored, you can use the `OLLAMA_MODELS` environment variable. Note that on Linux this means defining `OLLAMA_MODELS` in a drop-in `/etc/systemd/system/ollama.service.d` service file, reloading systemd, and restarting the ollama service.
