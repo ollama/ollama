@@ -1,15 +1,21 @@
 import h5py
 import collections
 
+ids = {}
+with open("string_ids.txt") as fi:
+    for x in fi:
+        p = x.strip().split("|")
+        ids[p[0]] = p[1]
+#print(ids)
 # from https://stackoverflow.com/a/53340677
 def descend_obj(obj,sep='\t'):
     """
     Iterate through groups in a HDF5 file and prints the groups and datasets names and datasets attributes
     """
     if type(obj) in [h5py._hl.group.Group,h5py._hl.files.File]:
-        print("FILE")
+        #print("FILE")
         for key in obj.keys():
-            print ("KEY",sep,'-',key,':',obj[key])
+            #print ("KEY",sep,'-',key,':',obj[key])
             descend_obj(obj[key],sep=sep+'\t')
     elif type(obj)==h5py._hl.dataset.Dataset:
         #print("ds")
@@ -20,7 +26,8 @@ def descend_obj(obj,sep='\t'):
         for i in range(objs):
             #print("OBJ",i, obj[i])
             data = obj[i]
-            print("\t".join(map(str,data)))
+            name = ids.get(str(data[1]),"oops")
+            print("\t".join(map(str,data)),name)
             # 1 [('id', '<i8'), 
             # 2 ('symbol', '<u4'),
             # 3 ('module', '<u4'),
