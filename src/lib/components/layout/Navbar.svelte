@@ -114,7 +114,7 @@
 	bind:this={navElement}
 	class="h-screen {show
 		? ''
-		: '-translate-x-72'} w-72 fixed top-0 left-0 z-40 transition bg-gray-900 text-gray-200 shadow-2xl text-sm
+		: '-translate-x-72'} w-72 fixed top-0 left-0 z-40 transition bg-[#0a0a0a] text-gray-200 shadow-2xl text-sm
         "
 >
 	<div class="py-2.5 my-auto flex flex-col justify-between h-screen">

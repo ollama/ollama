@@ -795,20 +795,7 @@
 
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">
-				<!-- <div class="max-w-2xl w-full px-2.5">
-					<div class="p-3 rounded-lg bg-gray-100 dark:bg-gray-900">
-						<div>
-							<label
-								for="models"
-								class="block mb-2 text-sm font-medium dark:text-gray-200 flex justify-between"
-							/>
-
-							<div />
-						</div>
-					</div>
-				</div> -->
-
-				<div class="max-w-2xl mx-auto w-full mt-14">
+				<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-14">
 					<div class="flex justify-between my-2 text-sm">
 						<select
 							id="models"
@@ -861,7 +848,7 @@
 
 				<div class=" h-full mt-10 mb-48 w-full flex flex-col">
 					{#if messages.length == 0}
-						<div class="m-auto text-center max-w-md pb-16">
+						<div class="m-auto text-center max-w-md pb-28 px-2">
 							<div class="flex justify-center mt-8">
 								<img src="/ollama.png" class="w-16 invert-[80%]" />
 							</div>
