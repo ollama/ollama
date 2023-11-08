@@ -113,7 +113,7 @@
 				code.style.borderTopLeftRadius = 0;
 
 				let topBarDiv = document.createElement('div');
-				topBarDiv.style.backgroundColor = '#343541';
+				topBarDiv.style.backgroundColor = '#202123';
 				topBarDiv.style.overflowX = 'auto';
 				topBarDiv.style.display = 'flex';
 				topBarDiv.style.justifyContent = 'space-between';
@@ -846,9 +846,9 @@
 					</div>
 				</div>
 
-				<div class=" h-full mt-10 mb-48 w-full flex flex-col">
+				<div class=" h-full mt-10 mb-32 w-full flex flex-col">
 					{#if messages.length == 0}
-						<div class="m-auto text-center max-w-md pb-28 px-2">
+						<div class="m-auto text-center max-w-md pb-32 px-2">
 							<div class="flex justify-center mt-8">
 								<img src="/ollama.png" class="w-16 invert-[80%]" />
 							</div>
@@ -1087,8 +1087,6 @@
 			</div>
 
 			<div class="fixed bottom-0 w-full">
-				<!-- <hr class=" mb-3 border-gray-600" /> -->
-
 				<div class=" bg-gradient-to-t from-white/90 dark:from-gray-900 pt-5">
 					<div class="max-w-3xl p-2.5 -mb-0.5 mx-auto inset-x-0">
 						{#if messages.length == 0 && suggestions !== 'false'}
