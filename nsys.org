@@ -1281,3 +1281,76 @@ Now we join the symbol ids with [[string_ids.txt]]
 2898731 845	456	3 845|cudaLaunchKernel
 #+end_example
 
+
+#+begin_example
+/home/mdupont/2023/11/07/nvidia-cuda-toolkit-11.5.1/amd64/cuda_cuobjdump/bin/cuobjdump --dump-ptx /home/mdupont/2023/10/30/ollama/llm/llama.cpp/gguf/build/cuda/bin/ollama-runner >cuobjdump.ptx
+
+sort cuobjdump.ptx |uniq -c |sort -n > cuobjdump.ptx.txt
+#end_example
+
+#+begin_example
+     64 mov.b32 {low,high},%r5651;
+     66 add.s64 %rd5, %rd3, %rd4;
+     66 cvta.to.global.u64 %rd3, %rd1;
+     69 add.s64 %rd9, %rd7, %rd8;
+     72 mov.u32 %r5, %tid.x;
+     ```cuda-gdb
+mov.u32 %r5, %tid.x;
+```
+This is a single instruction in NVIDIA's CUDA programming language that moves a 32-bit unsigned integer value from the global register `%r5` to the x-component of the thread identifier (`%tid.x`) in a CUDA kernel.
+
+In NVIDIA's GPU architecture, each thread is assigned a unique identifier (thread ID) that identifies its position within the thread block. This thread ID is stored in a register called `%tid`. The x-component of this identifier (`%tid.x`) represents the row number of the thread within the grid (i.e., how many threads are in the current row), while the y-component (`%tid.y`) represents the column number.
+
+By moving a 32-bit unsigned integer value from `%r5` to `%tid.x`, this instruction is essentially setting the x-component of the thread identifier to that value. This can be useful for implementing certain parallel processing algorithms, where each thread needs to perform a different operation based on its row number within the grid.
+
+Note: The `mov.u32` instruction in CUDA is used to move a 32-bit unsigned integer value between registers or memory locations. The `%r5`, `%tid.x`, and other symbols are placeholders that are replaced with actual register names and thread ID components during the compilation of the CUDA code into machine instructions for execution on the NVIDIA GPU.
+
+    102 .reg .pred %p<2>;
+
+The given NVIDIA CUDA code is a GPU kernel that takes a 1D input array "input" and a scalar value "output", and performs some mathematical operation to produce the output. The kernel is compiled with the ".reg" directive, which indicates that the variables are register-resident and will be stored in registers on the GPU for faster access.
+
+The "%p<2>" syntax in the kernel declaration is a placeholder for the two input arguments of the kernel function. The "<2>" specifies that the kernel expects at most two input arguments, and the "%" symbol indicates that the inputs are variables.
+
+The code then defines two variables: "%p" for the output value, which will be assigned the result of the operation, and "%pred", which is a placeholder for a temporary variable used during the computation.
+
+Overall, without more information about the specific operation being performed and the meaning of the input array and scalar value, it's difficult to provide a detailed interpretation of this code
+
+    107 in cuda assembly what does this mean: setp.ge.s32 %p1, %r1, %r2;
+    The code you provided is a line of CUDA assembly language that sets the value of a shared memory location at index `%p1` to the sum of two 32-bit integers stored in registers `%r1` and `%r2`. Here's an interpretation:
+
+* `setp.ge.s32` is a CUDA instruction that sets a single precision floating point value (i.e., 32 bits).
+* The first argument `%p1` specifies the shared memory location at which the result should be stored. Shared memory is a fast, low-latency cache of data within the GPU that's accessible to all threads in the same block.
+* The second and third arguments `%r1` and `%r2` specify the two 32-bit integers to be added. Registers are fast memory locations within the GPU that can hold values.
+* The instruction sets the value of the shared memory location at index `%p1` to the sum of the two integers stored in registers `%r1` and `%r2`.
+
+In other words, this instruction takes two 32-bit integers from registers and adds them together, storing the result in a shared memory location.
+
+    166 in cuda assembly what does this mean: bar.sync 0;
+    In CUDA assembly, the command "bar.sync 0;" is used to synchronize all threads within a particular block of execution. This means that all threads will wait for each other until everyone has reached the same point in the program before continuing. The "0" at the end of the command specifies that the first thread (thread 0) should be the leader for this block of execution.
+
+    294 )
+    294 {
+    294 ret;
+    
+   3304 	{ 
+   3304 and.b32 r,r,t; 
+   3304 and.b32 s,s,0x80808080;
+   3304 and.b32 s,s,t; 
+   3304 and.b32 t,b,0x7f7f7f7f;
+   3304 and.b32 t,t,u; 
+   3304 not.b32 t,t; 
+   3304 not.b32 u,b; 
+   3304 not.b32 u,s; 
+   3304 or.b32 r,a,0x80808080;
+   3304 or.b32 r,r,s; 
+   3304 prmt.b32 s,a,0,0xba98; 
+   3304 prmt.b32 t,t,0,0xba98; 
+   3304 .reg .u32 a,b,r,s,t,u,v,w; 
+   3304 sub.u32 r,r,t; 
+   3304 xor.b32 r,r,s; 
+   3304 xor.b32 s,s,0x7f7f7f7f;
+   3304 xor.b32 s,u,a; 
+   3304 xor.b32 t,r,a; 
+   7866 	{.reg .f16 low,high;
+
+#end_example
