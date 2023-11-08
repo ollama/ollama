@@ -60,14 +60,16 @@
 						<div class=" m-auto self-center">
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
-								viewBox="0 0 20 20"
-								fill="currentColor"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
 								class="w-5 h-5"
 							>
 								<path
-									fill-rule="evenodd"
-									d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10zm0 5.25a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75z"
-									clip-rule="evenodd"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"
 								/>
 							</svg>
 						</div>
@@ -88,12 +90,16 @@
 						<div class=" m-auto self-center">
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
-								viewBox="0 0 20 20"
-								fill="currentColor"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
 								class="w-5 h-5"
 							>
 								<path
-									d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
 								/>
 							</svg>
 						</div>
@@ -108,7 +114,7 @@
 	bind:this={navElement}
 	class="h-screen {show
 		? ''
-		: '-translate-x-72'} w-72 fixed top-0 left-0 z-40 transition bg-black text-gray-200 shadow-2xl text-sm
+		: '-translate-x-72'} w-72 fixed top-0 left-0 z-40 transition bg-gray-900 text-gray-200 shadow-2xl text-sm
         "
 >
 	<div class="py-2.5 my-auto flex flex-col justify-between h-screen">

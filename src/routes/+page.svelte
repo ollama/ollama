@@ -795,65 +795,67 @@
 
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">
-				<div class="max-w-2xl mx-auto w-full px-2.5 mt-14">
+				<!-- <div class="max-w-2xl w-full px-2.5">
 					<div class="p-3 rounded-lg bg-gray-100 dark:bg-gray-900">
 						<div>
 							<label
 								for="models"
 								class="block mb-2 text-sm font-medium dark:text-gray-200 flex justify-between"
-							>
-								<div class="self-center">Model</div>
+							/>
 
-								<button
-									class=" self-center dark:hover:text-gray-300"
-									on:click={() => {
-										openSettings();
-									}}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke-width="1.5"
-										stroke="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
-										/>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-										/>
-									</svg>
-								</button>
-							</label>
-
-							<div>
-								<select
-									id="models"
-									class="outline-none border dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 text-sm rounded-lg block w-full p-2.5 placeholder-gray-400"
-									bind:value={selectedModel}
-									disabled={messages.length != 0}
-								>
-									<option value="" selected>Select a model</option>
-
-									{#each models as model}
-										{#if model.name === 'hr'}
-											<hr />
-										{:else}
-											<option value={model.name}>{model.name}</option>
-										{/if}
-									{/each}
-								</select>
-								<div class="text-right mt-1.5 text-xs text-gray-500">
-									<button on:click={saveDefaultModel}> Set as default</button>
-								</div>
-							</div>
+							<div />
 						</div>
+					</div>
+				</div> -->
+
+				<div class="max-w-2xl mx-auto w-full mt-14">
+					<div class="flex justify-between my-2 text-sm">
+						<select
+							id="models"
+							class="outline-none bg-transparent text-lg font-semibold rounded-lg block w-full placeholder-gray-400"
+							bind:value={selectedModel}
+							disabled={messages.length != 0}
+						>
+							<option value="" selected>Select a model</option>
+
+							{#each models as model}
+								{#if model.name === 'hr'}
+									<hr />
+								{:else}
+									<option value={model.name} class=" text-lg">{model.name}</option>
+								{/if}
+							{/each}
+						</select>
+						<button
+							class=" self-center dark:hover:text-gray-300"
+							on:click={() => {
+								openSettings();
+							}}
+						>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
+								/>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+								/>
+							</svg>
+						</button>
+					</div>
+
+					<div class="text-left mt-1.5 text-xs text-gray-500">
+						<button on:click={saveDefaultModel}> Set as default</button>
 					</div>
 				</div>
 
@@ -960,22 +962,23 @@
 
 																<div class=" flex justify-start space-x-1">
 																	<button
-																		class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-900 transition"
+																		class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-800 transition"
 																		on:click={() => {
 																			editMessage(messageIdx);
 																		}}
 																	>
 																		<svg
 																			xmlns="http://www.w3.org/2000/svg"
-																			viewBox="0 0 20 20"
-																			fill="currentColor"
+																			fill="none"
+																			viewBox="0 0 24 24"
+																			stroke-width="1.5"
+																			stroke="currentColor"
 																			class="w-4 h-4"
 																		>
 																			<path
-																				d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z"
-																			/>
-																			<path
-																				d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z"
+																				stroke-linecap="round"
+																				stroke-linejoin="round"
+																				d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125"
 																			/>
 																		</svg>
 																	</button>
@@ -1105,13 +1108,13 @@
 							<Suggestions {submitPrompt} />
 						{/if}
 						<form
-							class=" flex shadow-sm relative w-full"
+							class=" flex relative w-full"
 							on:submit|preventDefault={() => {
 								submitPrompt(prompt);
 							}}
 						>
 							<textarea
-								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none shadow border dark:border-gray-700 w-full py-3 px-5 pr-12 resize-none"
+								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none border dark:border-gray-700 w-full py-3 px-5 pr-12 resize-none"
 								placeholder="Send a message"
 								bind:value={prompt}
 								on:keypress={(e) => {

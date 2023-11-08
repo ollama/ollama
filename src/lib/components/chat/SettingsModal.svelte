@@ -2,7 +2,7 @@
 	import sha256 from 'js-sha256';
 	import Modal from '../common/Modal.svelte';
 
-	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
+	import { WEB_UI_VERSION, API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
 
 	export let show = false;
@@ -757,7 +757,9 @@
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">Ollama Web UI Version</div>
 								<div class="flex w-full">
-									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">v1.0.0-alpha</div>
+									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">
+										{WEB_UI_VERSION}
+									</div>
 								</div>
 							</div>
 
