@@ -863,7 +863,7 @@
 					{:else}
 						{#each messages as message, messageIdx}
 							<div class=" w-full">
-								<div class="flex justify-between px-5 mb-4 max-w-3xl mx-auto rounded-lg group">
+								<div class="flex justify-between px-5 mb-3 max-w-3xl mx-auto rounded-lg group">
 									<div class=" flex w-full">
 										<div class=" mr-4">
 											<img
@@ -905,7 +905,7 @@
 												</div>
 											{:else}
 												<div
-													class="prose chat-{message.role} w-full max-w-full dark:prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-8 prose-ol:-mb-8 prose-li:-mb-4 whitespace-pre-line"
+													class="prose chat-{message.role} w-full max-w-full dark:prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-6 prose-ol:-mb-6 prose-li:-mb-4 whitespace-pre-line"
 												>
 													{#if message.role == 'user'}
 														{#if message?.edit === true}
