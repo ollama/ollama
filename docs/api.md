@@ -46,6 +46,7 @@ Advanced parameters (optional):
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
+- `raw`: if `true` no formatting will be applied to the prompt and no context will be returned. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API, and are managing history yourself.
 
 ### Examples
 
@@ -133,6 +134,36 @@ If `stream` is set to `false`, the response will be a single JSON object:
   "prompt_eval_duration": 1160282000,
   "eval_count": 13,
   "eval_duration": 1325948000
+}
+```
+
+#### Request
+
+In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting and context.
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "mistral",
+  "prompt": "[INST] why is the sky blue? [/INST]",
+  "raw": true,
+  "stream": false
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "mistral",
+  "created_at": "2023-11-03T15:36:02.583064Z",
+  "response": " The sky appears blue because of a phenomenon called Rayleigh scattering.",
+  "done": true,
+  "total_duration": 14648695333,
+  "load_duration": 3302671417,
+  "prompt_eval_count": 14,
+  "prompt_eval_duration": 286243000,
+  "eval_count": 129,
+  "eval_duration": 10931424000
 }
 ```
 
