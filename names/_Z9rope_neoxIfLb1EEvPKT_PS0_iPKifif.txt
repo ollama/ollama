@@ -1,0 +1,78 @@
+.entry _Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif
+.param .u64 _Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_0,
+.param .u64 _Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_1,
+.param .u32 _Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_2,
+.param .u64 _Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_3,
+.param .f32 _Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_4,
+.param .u32 _Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_5,
+.param .f32 _Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_6
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<19>;
+.reg .b32 %r<21>;
+.reg .b64 %rd<15>;
+
+
+ld.param.u64 %rd1, [_Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_0];
+ld.param.u64 %rd2, [_Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_1];
+ld.param.u32 %r2, [_Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_2];
+ld.param.u64 %rd3, [_Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_3];
+ld.param.f32 %f1, [_Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_4];
+ld.param.u32 %r3, [_Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_5];
+ld.param.f32 %f2, [_Z9rope_neoxIfLb1EEvPKT_PS0_iPKifif_param_6];
+mov.u32 %r4, %ctaid.y;
+mov.u32 %r5, %ntid.y;
+mov.u32 %r6, %tid.y;
+mad.lo.s32 %r7, %r5, %r4, %r6;
+shl.b32 %r1, %r7, 1;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB91_2;
+
+cvta.to.global.u64 %rd4, %rd3;
+mov.u32 %r8, %ctaid.x;
+mov.u32 %r9, %ntid.x;
+mov.u32 %r10, %tid.x;
+mad.lo.s32 %r11, %r9, %r8, %r10;
+shr.u32 %r12, %r1, 31;
+add.s32 %r13, %r1, %r12;
+shr.s32 %r14, %r13, 1;
+mad.lo.s32 %r15, %r11, %r2, %r14;
+div.s32 %r16, %r11, %r3;
+mul.wide.s32 %rd5, %r16, 4;
+add.s64 %rd6, %rd4, %rd5;
+ld.global.u32 %r17, [%rd6];
+cvt.rn.f32.s32 %f3, %r17;
+mul.ftz.f32 %f4, %f3, %f1;
+cvt.rn.f32.s32 %f5, %r14;
+lg2.approx.ftz.f32 %f6, %f2;
+mul.ftz.f32 %f7, %f6, %f5;
+ex2.approx.ftz.f32 %f8, %f7;
+mul.ftz.f32 %f9, %f4, %f8;
+sin.approx.ftz.f32 %f10, %f9;
+cos.approx.ftz.f32 %f11, %f9;
+cvta.to.global.u64 %rd7, %rd1;
+mul.wide.s32 %rd8, %r15, 4;
+add.s64 %rd9, %rd7, %rd8;
+shr.u32 %r18, %r2, 31;
+add.s32 %r19, %r2, %r18;
+shr.s32 %r20, %r19, 1;
+mul.wide.s32 %rd10, %r20, 4;
+add.s64 %rd11, %rd9, %rd10;
+ld.global.f32 %f12, [%rd9];
+mul.ftz.f32 %f13, %f11, %f12;
+ld.global.f32 %f14, [%rd11];
+mul.ftz.f32 %f15, %f10, %f14;
+sub.ftz.f32 %f16, %f13, %f15;
+cvta.to.global.u64 %rd12, %rd2;
+add.s64 %rd13, %rd12, %rd8;
+st.global.f32 [%rd13], %f16;
+mul.ftz.f32 %f17, %f11, %f14;
+fma.rn.ftz.f32 %f18, %f10, %f12, %f17;
+add.s64 %rd14, %rd13, %rd10;
+st.global.f32 [%rd14], %f18;
+
+$L__BB91_2:
+ret;
+
+}

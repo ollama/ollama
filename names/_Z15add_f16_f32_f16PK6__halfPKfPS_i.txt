@@ -1,0 +1,49 @@
+.entry _Z15add_f16_f32_f16PK6__halfPKfPS_i
+.param .u64 _Z15add_f16_f32_f16PK6__halfPKfPS_i_param_0,
+.param .u64 _Z15add_f16_f32_f16PK6__halfPKfPS_i_param_1,
+.param .u64 _Z15add_f16_f32_f16PK6__halfPKfPS_i_param_2,
+.param .u32 _Z15add_f16_f32_f16PK6__halfPKfPS_i_param_3
+)
+{
+.reg .pred %p<2>;
+.reg .b16 %rs<5>;
+.reg .f32 %f<2>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<12>;
+
+
+ld.param.u64 %rd1, [_Z15add_f16_f32_f16PK6__halfPKfPS_i_param_0];
+ld.param.u64 %rd2, [_Z15add_f16_f32_f16PK6__halfPKfPS_i_param_1];
+ld.param.u64 %rd3, [_Z15add_f16_f32_f16PK6__halfPKfPS_i_param_2];
+ld.param.u32 %r2, [_Z15add_f16_f32_f16PK6__halfPKfPS_i_param_3];
+mov.u32 %r3, %ntid.x;
+mov.u32 %r4, %ctaid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB1_2;
+
+cvta.to.global.u64 %rd4, %rd1;
+mul.wide.s32 %rd5, %r1, 2;
+add.s64 %rd6, %rd4, %rd5;
+ld.global.u16 %rs3, [%rd6];
+cvta.to.global.u64 %rd7, %rd2;
+mul.wide.s32 %rd8, %r1, 4;
+add.s64 %rd9, %rd7, %rd8;
+ld.global.f32 %f1, [%rd9];
+
+	{ cvt.rn.f16.f32 %rs1, %f1;}
+
+
+	
+	{add.f16 %rs2,%rs3,%rs1;
+}
+
+	cvta.to.global.u64 %rd10, %rd3;
+add.s64 %rd11, %rd10, %rd5;
+st.global.u16 [%rd11], %rs2;
+
+$L__BB1_2:
+ret;
+
+}

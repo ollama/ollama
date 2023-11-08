@@ -1,0 +1,44 @@
+.entry _Z7add_f32PKfS0_Pfii
+.param .u64 _Z7add_f32PKfS0_Pfii_param_0,
+.param .u64 _Z7add_f32PKfS0_Pfii_param_1,
+.param .u64 _Z7add_f32PKfS0_Pfii_param_2,
+.param .u32 _Z7add_f32PKfS0_Pfii_param_3,
+.param .u32 _Z7add_f32PKfS0_Pfii_param_4
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<4>;
+.reg .b32 %r<8>;
+.reg .b64 %rd<12>;
+
+
+ld.param.u64 %rd1, [_Z7add_f32PKfS0_Pfii_param_0];
+ld.param.u64 %rd2, [_Z7add_f32PKfS0_Pfii_param_1];
+ld.param.u64 %rd3, [_Z7add_f32PKfS0_Pfii_param_2];
+ld.param.u32 %r3, [_Z7add_f32PKfS0_Pfii_param_3];
+ld.param.u32 %r2, [_Z7add_f32PKfS0_Pfii_param_4];
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %ctaid.x;
+mov.u32 %r6, %tid.x;
+mad.lo.s32 %r1, %r4, %r5, %r6;
+setp.ge.s32 %p1, %r1, %r3;
+@%p1 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd4, %rd1;
+mul.wide.s32 %rd5, %r1, 4;
+add.s64 %rd6, %rd4, %rd5;
+rem.s32 %r7, %r1, %r2;
+cvta.to.global.u64 %rd7, %rd2;
+mul.wide.s32 %rd8, %r7, 4;
+add.s64 %rd9, %rd7, %rd8;
+ld.global.f32 %f1, [%rd9];
+ld.global.f32 %f2, [%rd6];
+add.ftz.f32 %f3, %f2, %f1;
+cvta.to.global.u64 %rd10, %rd3;
+add.s64 %rd11, %rd10, %rd5;
+st.global.f32 [%rd11], %f3;
+
+$L__BB0_2:
+ret;
+
+}

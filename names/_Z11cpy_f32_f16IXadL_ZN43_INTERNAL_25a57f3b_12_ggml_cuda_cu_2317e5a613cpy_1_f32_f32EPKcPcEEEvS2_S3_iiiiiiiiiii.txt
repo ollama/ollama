@@ -1,0 +1,75 @@
+.entry _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii
+.param .u64 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_0,
+.param .u64 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_1,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_2,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_3,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_4,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_5,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_6,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_7,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_8,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_9,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_10,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_11,
+.param .u32 _Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_12
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<2>;
+.reg .b32 %r<36>;
+.reg .b64 %rd<9>;
+
+
+ld.param.u64 %rd1, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_0];
+ld.param.u64 %rd2, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_1];
+ld.param.u32 %r12, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_2];
+ld.param.u32 %r2, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_3];
+ld.param.u32 %r3, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_4];
+ld.param.u32 %r4, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_5];
+ld.param.u32 %r5, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_6];
+ld.param.u32 %r6, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_7];
+ld.param.u32 %r7, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_8];
+ld.param.u32 %r8, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_9];
+ld.param.u32 %r9, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_10];
+ld.param.u32 %r10, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_11];
+ld.param.u32 %r11, [_Z11cpy_f32_f16IXadL_ZN43_INTERNAL_25a57f3b_12_ggml_cuda_cu_2317e5a613cpy_1_f32_f32EPKcPcEEEvS2_S3_iiiiiiiiiii_param_12];
+mov.u32 %r13, %ntid.x;
+mov.u32 %r14, %ctaid.x;
+mov.u32 %r15, %tid.x;
+mad.lo.s32 %r1, %r13, %r14, %r15;
+setp.ge.s32 %p1, %r1, %r12;
+@%p1 bra $L__BB61_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.lo.s32 %r16, %r3, %r2;
+div.s32 %r17, %r1, %r16;
+mul.lo.s32 %r18, %r16, %r17;
+sub.s32 %r19, %r1, %r18;
+div.s32 %r20, %r19, %r2;
+mul.lo.s32 %r21, %r20, %r2;
+sub.s32 %r22, %r19, %r21;
+mul.lo.s32 %r23, %r17, %r6;
+mad.lo.s32 %r24, %r20, %r5, %r23;
+mad.lo.s32 %r25, %r22, %r4, %r24;
+mul.lo.s32 %r26, %r8, %r7;
+div.s32 %r27, %r1, %r26;
+mul.lo.s32 %r28, %r26, %r27;
+sub.s32 %r29, %r1, %r28;
+div.s32 %r30, %r29, %r7;
+mul.lo.s32 %r31, %r30, %r7;
+sub.s32 %r32, %r29, %r31;
+mul.lo.s32 %r33, %r27, %r11;
+mad.lo.s32 %r34, %r30, %r10, %r33;
+mad.lo.s32 %r35, %r32, %r9, %r34;
+cvt.s64.s32 %rd4, %r25;
+add.s64 %rd5, %rd3, %rd4;
+cvt.s64.s32 %rd6, %r35;
+cvta.to.global.u64 %rd7, %rd2;
+add.s64 %rd8, %rd7, %rd6;
+ld.global.f32 %f1, [%rd5];
+st.global.f32 [%rd8], %f1;
+
+$L__BB61_2:
+ret;
+
+}

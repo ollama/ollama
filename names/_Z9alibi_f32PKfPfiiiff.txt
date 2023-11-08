@@ -1,0 +1,60 @@
+.entry _Z9alibi_f32PKfPfiiiff
+.param .u64 _Z9alibi_f32PKfPfiiiff_param_0,
+.param .u64 _Z9alibi_f32PKfPfiiiff_param_1,
+.param .u32 _Z9alibi_f32PKfPfiiiff_param_2,
+.param .u32 _Z9alibi_f32PKfPfiiiff_param_3,
+.param .u32 _Z9alibi_f32PKfPfiiiff_param_4,
+.param .f32 _Z9alibi_f32PKfPfiiiff_param_5,
+.param .f32 _Z9alibi_f32PKfPfiiiff_param_6
+)
+{
+.reg .pred %p<3>;
+.reg .f32 %f<11>;
+.reg .b32 %r<18>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z9alibi_f32PKfPfiiiff_param_0];
+ld.param.u64 %rd2, [_Z9alibi_f32PKfPfiiiff_param_1];
+ld.param.u32 %r2, [_Z9alibi_f32PKfPfiiiff_param_2];
+ld.param.u32 %r3, [_Z9alibi_f32PKfPfiiiff_param_3];
+ld.param.u32 %r4, [_Z9alibi_f32PKfPfiiiff_param_4];
+ld.param.f32 %f1, [_Z9alibi_f32PKfPfiiiff_param_5];
+ld.param.f32 %f2, [_Z9alibi_f32PKfPfiiiff_param_6];
+mov.u32 %r5, %ntid.x;
+mov.u32 %r6, %ctaid.x;
+mov.u32 %r7, %tid.x;
+mad.lo.s32 %r1, %r5, %r6, %r7;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB14_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mov.u32 %r8, %ctaid.y;
+mov.u32 %r9, %ntid.y;
+mov.u32 %r10, %tid.y;
+mad.lo.s32 %r11, %r9, %r8, %r10;
+mad.lo.s32 %r12, %r11, %r2, %r1;
+div.s32 %r13, %r11, %r3;
+setp.lt.s32 %p2, %r13, %r4;
+sub.s32 %r14, %r13, %r4;
+shl.b32 %r15, %r14, 1;
+selp.f32 %f3, %f1, %f2, %p2;
+selp.b32 %r16, %r13, %r15, %p2;
+add.s32 %r17, %r16, 1;
+cvt.rn.f32.s32 %f4, %r17;
+lg2.approx.ftz.f32 %f5, %f3;
+mul.ftz.f32 %f6, %f5, %f4;
+ex2.approx.ftz.f32 %f7, %f6;
+cvt.rn.f32.s32 %f8, %r1;
+mul.wide.s32 %rd4, %r12, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f9, [%rd5];
+fma.rn.ftz.f32 %f10, %f7, %f8, %f9;
+cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.f32 [%rd7], %f10;
+
+$L__BB14_2:
+ret;
+
+}

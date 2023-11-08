@@ -1,0 +1,37 @@
+.entry _Z9scale_f32PKfPffi
+.param .u64 _Z9scale_f32PKfPffi_param_0,
+.param .u64 _Z9scale_f32PKfPffi_param_1,
+.param .f32 _Z9scale_f32PKfPffi_param_2,
+.param .u32 _Z9scale_f32PKfPffi_param_3
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<4>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z9scale_f32PKfPffi_param_0];
+ld.param.u64 %rd2, [_Z9scale_f32PKfPffi_param_1];
+ld.param.f32 %f1, [_Z9scale_f32PKfPffi_param_2];
+ld.param.u32 %r2, [_Z9scale_f32PKfPffi_param_3];
+mov.u32 %r3, %ntid.x;
+mov.u32 %r4, %ctaid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB17_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r1, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f2, [%rd5];
+mul.ftz.f32 %f3, %f2, %f1;
+cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.f32 [%rd7], %f3;
+
+$L__BB17_2:
+ret;
+
+}

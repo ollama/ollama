@@ -1,0 +1,81 @@
+.entry _Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif
+.param .u64 _Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_0,
+.param .u64 _Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_1,
+.param .u32 _Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_2,
+.param .u64 _Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_3,
+.param .f32 _Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_4,
+.param .u32 _Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_5,
+.param .f32 _Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_6
+)
+{
+.reg .pred %p<2>;
+.reg .b16 %rs<5>;
+.reg .f32 %f<18>;
+.reg .b32 %r<15>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_0];
+ld.param.u64 %rd2, [_Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_1];
+ld.param.u32 %r2, [_Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_2];
+ld.param.f32 %f1, [_Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_4];
+ld.param.f32 %f2, [_Z4ropeI6__halfLb0EEvPKT_PS1_iPKifif_param_6];
+mov.u32 %r3, %ctaid.y;
+mov.u32 %r4, %ntid.y;
+mov.u32 %r5, %tid.y;
+mad.lo.s32 %r6, %r4, %r3, %r5;
+shl.b32 %r1, %r6, 1;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB96_2;
+
+mov.u32 %r7, %ntid.x;
+mov.u32 %r8, %ctaid.x;
+mov.u32 %r9, %tid.x;
+mad.lo.s32 %r10, %r7, %r8, %r9;
+mad.lo.s32 %r11, %r10, %r2, %r1;
+shr.u32 %r12, %r1, 31;
+add.s32 %r13, %r1, %r12;
+shr.s32 %r14, %r13, 1;
+cvt.rn.f32.s32 %f7, %r14;
+lg2.approx.ftz.f32 %f8, %f2;
+mul.ftz.f32 %f9, %f8, %f7;
+ex2.approx.ftz.f32 %f10, %f9;
+mul.ftz.f32 %f11, %f1, 0f00000000;
+mul.ftz.f32 %f12, %f11, %f10;
+sin.approx.ftz.f32 %f13, %f12;
+cos.approx.ftz.f32 %f14, %f12;
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r11, 2;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.u16 %rs1, [%rd5];
+
+	{ cvt.f32.f16 %f3, %rs1;}
+
+
+	ld.global.u16 %rs2, [%rd5+2];
+
+	{ cvt.f32.f16 %f4, %rs2;}
+
+
+	mul.ftz.f32 %f15, %f14, %f3;
+mul.ftz.f32 %f16, %f13, %f4;
+sub.ftz.f32 %f5, %f15, %f16;
+
+	{ cvt.rn.f16.f32 %rs3, %f5;}
+
+
+	cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.u16 [%rd7], %rs3;
+mul.ftz.f32 %f17, %f14, %f4;
+fma.rn.ftz.f32 %f6, %f13, %f3, %f17;
+
+	{ cvt.rn.f16.f32 %rs4, %f6;}
+
+
+	st.global.u16 [%rd7+2], %rs4;
+
+$L__BB96_2:
+ret;
+
+}

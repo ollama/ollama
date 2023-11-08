@@ -1,0 +1,50 @@
+.entry _Z9clamp_f32PKfPfffi
+.param .u64 _Z9clamp_f32PKfPfffi_param_0,
+.param .u64 _Z9clamp_f32PKfPfffi_param_1,
+.param .f32 _Z9clamp_f32PKfPfffi_param_2,
+.param .f32 _Z9clamp_f32PKfPfffi_param_3,
+.param .u32 _Z9clamp_f32PKfPfffi_param_4
+)
+{
+.reg .pred %p<4>;
+.reg .f32 %f<6>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<10>;
+
+
+ld.param.u64 %rd2, [_Z9clamp_f32PKfPfffi_param_0];
+ld.param.u64 %rd3, [_Z9clamp_f32PKfPfffi_param_1];
+ld.param.f32 %f5, [_Z9clamp_f32PKfPfffi_param_2];
+ld.param.f32 %f4, [_Z9clamp_f32PKfPfffi_param_3];
+ld.param.u32 %r2, [_Z9clamp_f32PKfPfffi_param_4];
+mov.u32 %r3, %ctaid.x;
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r4, %r3, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB18_5;
+
+cvta.to.global.u64 %rd4, %rd2;
+cvt.s64.s32 %rd1, %r1;
+mul.wide.s32 %rd5, %r1, 4;
+add.s64 %rd6, %rd4, %rd5;
+ld.global.f32 %f1, [%rd6];
+setp.lt.ftz.f32 %p2, %f1, %f5;
+@%p2 bra $L__BB18_4;
+
+setp.gt.ftz.f32 %p3, %f1, %f4;
+mov.f32 %f5, %f4;
+@%p3 bra $L__BB18_4;
+
+mov.f32 %f5, %f1;
+
+$L__BB18_4:
+cvta.to.global.u64 %rd7, %rd3;
+shl.b64 %rd8, %rd1, 2;
+add.s64 %rd9, %rd7, %rd8;
+st.global.f32 [%rd9], %f5;
+
+$L__BB18_5:
+ret;
+
+}

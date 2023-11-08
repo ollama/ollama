@@ -1,0 +1,54 @@
+#+begin_src sh :results verbatim :exports both
+  ldd /mnt/data1/2023/10/30/ollama/llm/llama.cpp/gguf/build/cuda/bin/ollama-runner
+#+end_src
+#+RESULTS:
+#+begin_example
+  linux-vdso.so.1 0x00007ffe4bb6c000)
+  libcudart.so.12 =>  0x00007f843ec00000)
+  libcublas.so.12 => /usr/local/cuda/lib64/libcublas.so.12 0x00007f8438400000)
+  libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 0x00007f8438000000)
+  libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 0x00007f843f68a000)
+  libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 0x00007f843efe0000)
+  libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 0x00007f8437c00000)
+  /lib64/ld-linux-x86-64.so.2 0x00007f843f79a000)
+  libdl.so.2 => /lib/x86_64-linux-gnu/libdl.so.2 0x00007f843f683000)
+  libpthread.so.0 => /lib/x86_64-linux-gnu/libpthread.so.0 0x00007f843efdb000)
+  librt.so.1 => /lib/x86_64-linux-gnu/librt.so.1 0x00007f843efd6000)
+  libcublasLt.so.12 => /usr/local/cuda/lib64/libcublasLt.so.12 0x00007f8414c00000)
+	
+#+end_example
+
+file /usr/local/cuda/lib64/libcudart.so.12.3.52 
+/usr/local/cuda/lib64/libcudart.so.12.3.52: ELF 64-bit LSB shared object, x86-64, version 1 SYSV), dynamically linked, BuildID[sha1]=bd4d4254e27af84242102783be1539da56ab8714, stripped
+
+
+#+begin_src sh :results verbatim :exports both
+PATH=/usr/local/cuda-12.3/bin/ ~/2023/11/07/nvidia-cuda-toolkit-11.5.1/amd64/cuda_cuobjdump/bin/cuobjdump --all-fatbin   --all-fatbin   --dump-elf                                    --dump-elf-symbols                            --dump-ptx                                    --dump-resource-usage                         --dump-sass  /home/mdupont/2023/10/30/ollama/llm/llama.cpp/gguf/build/cuda/bin/ollama-runner 
+#+end_src
+
+#+RESULTS:
+#+begin_example
+
+Fatbin ptx code:
+================
+arch = sm_52
+code version = [8,2]
+producer = <unknown>
+host = linux
+compile_size = 64bit
+compressed
+
+
+
+
+
+
+
+
+.version 8.2
+.target sm_52
+.address_size 64
+
+
+
+

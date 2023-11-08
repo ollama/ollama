@@ -1,0 +1,38 @@
+.entry _Z8silu_f32PKfPfi
+.param .u64 _Z8silu_f32PKfPfi_param_0,
+.param .u64 _Z8silu_f32PKfPfi_param_1,
+.param .u32 _Z8silu_f32PKfPfi_param_2
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<6>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z8silu_f32PKfPfi_param_0];
+ld.param.u64 %rd2, [_Z8silu_f32PKfPfi_param_1];
+ld.param.u32 %r2, [_Z8silu_f32PKfPfi_param_2];
+mov.u32 %r3, %ntid.x;
+mov.u32 %r4, %ctaid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB4_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r1, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f1, [%rd5];
+mul.ftz.f32 %f2, %f1, 0fBFB8AA3B;
+ex2.approx.ftz.f32 %f3, %f2;
+add.ftz.f32 %f4, %f3, 0f3F800000;
+div.approx.ftz.f32 %f5, %f1, %f4;
+cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.f32 [%rd7], %f5;
+
+$L__BB4_2:
+ret;
+
+}

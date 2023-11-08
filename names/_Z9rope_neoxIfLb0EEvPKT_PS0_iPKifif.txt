@@ -1,0 +1,70 @@
+.entry _Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif
+.param .u64 _Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_0,
+.param .u64 _Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_1,
+.param .u32 _Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_2,
+.param .u64 _Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_3,
+.param .f32 _Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_4,
+.param .u32 _Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_5,
+.param .f32 _Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_6
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<18>;
+.reg .b32 %r<18>;
+.reg .b64 %rd<11>;
+
+
+ld.param.u64 %rd1, [_Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_0];
+ld.param.u64 %rd2, [_Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_1];
+ld.param.u32 %r2, [_Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_2];
+ld.param.f32 %f1, [_Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_4];
+ld.param.f32 %f2, [_Z9rope_neoxIfLb0EEvPKT_PS0_iPKifif_param_6];
+mov.u32 %r3, %ctaid.y;
+mov.u32 %r4, %ntid.y;
+mov.u32 %r5, %tid.y;
+mad.lo.s32 %r6, %r4, %r3, %r5;
+shl.b32 %r1, %r6, 1;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB90_2;
+
+mov.u32 %r7, %ntid.x;
+mov.u32 %r8, %ctaid.x;
+mov.u32 %r9, %tid.x;
+mad.lo.s32 %r10, %r7, %r8, %r9;
+shr.u32 %r11, %r1, 31;
+add.s32 %r12, %r1, %r11;
+shr.s32 %r13, %r12, 1;
+mad.lo.s32 %r14, %r10, %r2, %r13;
+cvt.rn.f32.s32 %f3, %r13;
+lg2.approx.ftz.f32 %f4, %f2;
+mul.ftz.f32 %f5, %f4, %f3;
+ex2.approx.ftz.f32 %f6, %f5;
+mul.ftz.f32 %f7, %f1, 0f00000000;
+mul.ftz.f32 %f8, %f7, %f6;
+sin.approx.ftz.f32 %f9, %f8;
+cos.approx.ftz.f32 %f10, %f8;
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r14, 4;
+add.s64 %rd5, %rd3, %rd4;
+shr.u32 %r15, %r2, 31;
+add.s32 %r16, %r2, %r15;
+shr.s32 %r17, %r16, 1;
+mul.wide.s32 %rd6, %r17, 4;
+add.s64 %rd7, %rd5, %rd6;
+ld.global.f32 %f11, [%rd5];
+mul.ftz.f32 %f12, %f10, %f11;
+ld.global.f32 %f13, [%rd7];
+mul.ftz.f32 %f14, %f9, %f13;
+sub.ftz.f32 %f15, %f12, %f14;
+cvta.to.global.u64 %rd8, %rd2;
+add.s64 %rd9, %rd8, %rd4;
+st.global.f32 [%rd9], %f15;
+mul.ftz.f32 %f16, %f10, %f13;
+fma.rn.ftz.f32 %f17, %f9, %f11, %f16;
+add.s64 %rd10, %rd9, %rd6;
+st.global.f32 [%rd10], %f17;
+
+$L__BB90_2:
+ret;
+
+}

@@ -1,0 +1,49 @@
+.entry _Z17diag_mask_inf_f32PKfPfiii
+.param .u64 _Z17diag_mask_inf_f32PKfPfiii_param_0,
+.param .u64 _Z17diag_mask_inf_f32PKfPfiii_param_1,
+.param .u32 _Z17diag_mask_inf_f32PKfPfiii_param_2,
+.param .u32 _Z17diag_mask_inf_f32PKfPfiii_param_3,
+.param .u32 _Z17diag_mask_inf_f32PKfPfiii_param_4
+)
+{
+.reg .pred %p<3>;
+.reg .f32 %f<4>;
+.reg .b32 %r<16>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z17diag_mask_inf_f32PKfPfiii_param_0];
+ld.param.u64 %rd2, [_Z17diag_mask_inf_f32PKfPfiii_param_1];
+ld.param.u32 %r2, [_Z17diag_mask_inf_f32PKfPfiii_param_2];
+ld.param.u32 %r3, [_Z17diag_mask_inf_f32PKfPfiii_param_3];
+ld.param.u32 %r4, [_Z17diag_mask_inf_f32PKfPfiii_param_4];
+mov.u32 %r5, %ntid.y;
+mov.u32 %r6, %ctaid.y;
+mov.u32 %r7, %tid.y;
+mad.lo.s32 %r1, %r5, %r6, %r7;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB15_2;
+
+mov.u32 %r8, %tid.x;
+mov.u32 %r9, %ntid.x;
+mov.u32 %r10, %ctaid.x;
+mad.lo.s32 %r11, %r9, %r10, %r8;
+cvta.to.global.u64 %rd3, %rd1;
+mad.lo.s32 %r12, %r11, %r2, %r1;
+mul.wide.s32 %rd4, %r12, 4;
+add.s64 %rd5, %rd3, %rd4;
+rem.s32 %r13, %r11, %r3;
+add.s32 %r14, %r13, %r4;
+setp.gt.s32 %p2, %r1, %r14;
+selp.b32 %r15, 2147483647, 0, %p2;
+cvt.rn.f32.s32 %f1, %r15;
+ld.global.f32 %f2, [%rd5];
+sub.ftz.f32 %f3, %f2, %f1;
+cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.f32 [%rd7], %f3;
+
+$L__BB15_2:
+ret;
+
+}

@@ -1,0 +1,79 @@
+.entry _Z8gelu_f32PKfPfi
+.param .u64 _Z8gelu_f32PKfPfi_param_0,
+.param .u64 _Z8gelu_f32PKfPfi_param_1,
+.param .u32 _Z8gelu_f32PKfPfi_param_2
+)
+{
+.reg .pred %p<4>;
+.reg .f32 %f<32>;
+.reg .b32 %r<10>;
+.reg .b64 %rd<10>;
+
+
+ld.param.u64 %rd2, [_Z8gelu_f32PKfPfi_param_0];
+ld.param.u64 %rd3, [_Z8gelu_f32PKfPfi_param_1];
+ld.param.u32 %r2, [_Z8gelu_f32PKfPfi_param_2];
+mov.u32 %r3, %ntid.x;
+mov.u32 %r4, %ctaid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB3_5;
+
+cvta.to.global.u64 %rd4, %rd2;
+cvt.s64.s32 %rd1, %r1;
+mul.wide.s32 %rd5, %r1, 4;
+add.s64 %rd6, %rd4, %rd5;
+ld.global.f32 %f1, [%rd6];
+mul.ftz.f32 %f7, %f1, 0f3F4C422A;
+mul.ftz.f32 %f8, %f1, 0f3D372713;
+fma.rn.ftz.f32 %f9, %f1, %f8, 0f3F800000;
+mul.ftz.f32 %f2, %f7, %f9;
+abs.ftz.f32 %f3, %f2;
+setp.ltu.ftz.f32 %p2, %f3, 0f3F19999A;
+@%p2 bra $L__BB3_3;
+bra.uni $L__BB3_2;
+
+$L__BB3_3:
+mul.ftz.f32 %f18, %f2, %f2;
+mov.f32 %f19, 0fBD563CAE;
+mov.f32 %f20, 0f3C80F082;
+fma.rn.ftz.f32 %f21, %f20, %f18, %f19;
+mov.f32 %f22, 0f3E085941;
+fma.rn.ftz.f32 %f23, %f21, %f18, %f22;
+mov.f32 %f24, 0fBEAAA9ED;
+fma.rn.ftz.f32 %f25, %f23, %f18, %f24;
+mov.f32 %f26, 0f00000000;
+fma.rn.ftz.f32 %f27, %f25, %f18, %f26;
+fma.rn.ftz.f32 %f31, %f27, %f2, %f2;
+bra.uni $L__BB3_4;
+
+$L__BB3_2:
+mul.ftz.f32 %f10, %f3, 0f4038AA3B;
+ex2.approx.ftz.f32 %f11, %f10;
+add.ftz.f32 %f12, %f11, 0f3F800000;
+mov.f32 %f13, 0f3F800000;
+rcp.approx.ftz.f32 %f14, %f12;
+mov.f32 %f15, 0fC0000000;
+fma.rn.ftz.f32 %f16, %f14, %f15, %f13;
+setp.ge.ftz.f32 %p3, %f3, 0f41102CB4;
+selp.f32 %f17, 0f3F800000, %f16, %p3;
+mov.b32 %r6, %f17;
+mov.b32 %r7, %f2;
+and.b32 %r8, %r7, -2147483648;
+or.b32 %r9, %r8, %r6;
+mov.b32 %f31, %r9;
+
+$L__BB3_4:
+add.ftz.f32 %f28, %f31, 0f3F800000;
+mul.ftz.f32 %f29, %f1, 0f3F000000;
+mul.ftz.f32 %f30, %f29, %f28;
+cvta.to.global.u64 %rd7, %rd3;
+shl.b64 %rd8, %rd1, 2;
+add.s64 %rd9, %rd7, %rd8;
+st.global.f32 [%rd9], %f30;
+
+$L__BB3_5:
+ret;
+
+}
