@@ -223,6 +223,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Web UI](https://github.com/ollama-webui/ollama-webui)
+- [Ollamac](https://github.com/kevinhermawan/Ollamac)
 
 ### Terminal
 
