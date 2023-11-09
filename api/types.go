@@ -42,6 +42,50 @@ type GenerateRequest struct {
 	Options map[string]interface{} `json:"options"`
 }
 
+// Options specfied in GenerateRequest, if you add a new option here add it to the API docs also
+type Options struct {
+	Runner
+
+	// Predict options used at runtime
+	NumKeep          int      `json:"num_keep,omitempty"`
+	Seed             int      `json:"seed,omitempty"`
+	NumPredict       int      `json:"num_predict,omitempty"`
+	TopK             int      `json:"top_k,omitempty"`
+	TopP             float32  `json:"top_p,omitempty"`
+	TFSZ             float32  `json:"tfs_z,omitempty"`
+	TypicalP         float32  `json:"typical_p,omitempty"`
+	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
+	Temperature      float32  `json:"temperature,omitempty"`
+	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
+	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
+	Mirostat         int      `json:"mirostat,omitempty"`
+	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
+	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
+	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
+	Stop             []string `json:"stop,omitempty"`
+}
+
+// Runner options which must be set when the model is loaded into memory
+type Runner struct {
+	UseNUMA            bool    `json:"numa,omitempty"`
+	NumCtx             int     `json:"num_ctx,omitempty"`
+	NumBatch           int     `json:"num_batch,omitempty"`
+	NumGQA             int     `json:"num_gqa,omitempty"`
+	NumGPU             int     `json:"num_gpu,omitempty"`
+	MainGPU            int     `json:"main_gpu,omitempty"`
+	LowVRAM            bool    `json:"low_vram,omitempty"`
+	F16KV              bool    `json:"f16_kv,omitempty"`
+	LogitsAll          bool    `json:"logits_all,omitempty"`
+	VocabOnly          bool    `json:"vocab_only,omitempty"`
+	UseMMap            bool    `json:"use_mmap,omitempty"`
+	UseMLock           bool    `json:"use_mlock,omitempty"`
+	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
+	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
+	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
+	NumThread          int     `json:"num_thread,omitempty"`
+}
+
 type EmbeddingRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
@@ -160,49 +204,6 @@ func (r *GenerateResponse) Summary() {
 		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", r.EvalDuration)
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(r.EvalCount)/r.EvalDuration.Seconds())
 	}
-}
-
-// Runner options which must be set when the model is loaded into memory
-type Runner struct {
-	UseNUMA            bool    `json:"numa,omitempty"`
-	NumCtx             int     `json:"num_ctx,omitempty"`
-	NumBatch           int     `json:"num_batch,omitempty"`
-	NumGQA             int     `json:"num_gqa,omitempty"`
-	NumGPU             int     `json:"num_gpu,omitempty"`
-	MainGPU            int     `json:"main_gpu,omitempty"`
-	LowVRAM            bool    `json:"low_vram,omitempty"`
-	F16KV              bool    `json:"f16_kv,omitempty"`
-	LogitsAll          bool    `json:"logits_all,omitempty"`
-	VocabOnly          bool    `json:"vocab_only,omitempty"`
-	UseMMap            bool    `json:"use_mmap,omitempty"`
-	UseMLock           bool    `json:"use_mlock,omitempty"`
-	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
-	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
-	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
-	NumThread          int     `json:"num_thread,omitempty"`
-}
-
-type Options struct {
-	Runner
-
-	// Predict options used at runtime
-	NumKeep          int      `json:"num_keep,omitempty"`
-	Seed             int      `json:"seed,omitempty"`
-	NumPredict       int      `json:"num_predict,omitempty"`
-	TopK             int      `json:"top_k,omitempty"`
-	TopP             float32  `json:"top_p,omitempty"`
-	TFSZ             float32  `json:"tfs_z,omitempty"`
-	TypicalP         float32  `json:"typical_p,omitempty"`
-	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
-	Temperature      float32  `json:"temperature,omitempty"`
-	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
-	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
-	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	Mirostat         int      `json:"mirostat,omitempty"`
-	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
-	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
-	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
-	Stop             []string `json:"stop,omitempty"`
 }
 
 var ErrInvalidOpts = fmt.Errorf("invalid options")
