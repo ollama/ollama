@@ -31,15 +31,18 @@ func (e StatusError) Error() string {
 	}
 }
 
+type ImageData string
+
 type GenerateRequest struct {
-	Model    string `json:"model"`
-	Prompt   string `json:"prompt"`
-	System   string `json:"system"`
-	Template string `json:"template"`
-	Context  []int  `json:"context,omitempty"`
-	Stream   *bool  `json:"stream,omitempty"`
-	Raw      bool   `json:"raw,omitempty"`
-	Format   string `json:"format"`
+	Model     string      `json:"model"`
+	Prompt    string      `json:"prompt"`
+	System    string      `json:"system"`
+	Template  string      `json:"template"`
+	Context   []int       `json:"context,omitempty"`
+	Stream    *bool       `json:"stream,omitempty"`
+	Raw       bool        `json:"raw,omitempty"`
+	Format    string      `json:"format"`
+	ImageData []ImageData `json:"image_data,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -199,9 +202,10 @@ type TokenResponse struct {
 }
 
 type GenerateResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response"`
+	Model      string    `json:"model"`
+	MultiModal bool      `json:"multi_modal"`
+	CreatedAt  time.Time `json:"created_at"`
+	Response   string    `json:"response"`
 
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`

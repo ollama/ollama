@@ -156,9 +156,9 @@ func GenerateHandler(c *gin.Context) {
 	defer loaded.mu.Unlock()
 
 	checkpointStart := time.Now()
-
 	var req api.GenerateRequest
 	err := c.ShouldBindJSON(&req)
+
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -292,6 +292,7 @@ func GenerateHandler(c *gin.Context) {
 			Format:           req.Format,
 			CheckpointStart:  checkpointStart,
 			CheckpointLoaded: checkpointLoaded,
+			Images:           req.ImageData,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}

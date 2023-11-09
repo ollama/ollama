@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -35,6 +37,11 @@ import (
 	"github.com/jmorganca/ollama/server"
 	"github.com/jmorganca/ollama/version"
 )
+
+type ImageData struct {
+	Data string `json:"data"`
+	Path string `json:"path"`
+}
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
@@ -418,6 +425,7 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 		Model:    args[0],
 		WordWrap: os.Getenv("TERM") == "xterm-256color",
 		Options:  map[string]interface{}{},
+		Images:   []ImageData{},
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -427,7 +435,6 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 	opts.Format = format
 
 	prompts := args[1:]
-
 	// prepend stdin to the prompt if provided
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		in, err := io.ReadAll(os.Stdin)
@@ -466,6 +473,7 @@ type generateOptions struct {
 	Format   string
 	System   string
 	Template string
+	Images   []ImageData
 	Options  map[string]interface{}
 }
 
@@ -551,14 +559,19 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 		return nil
 	}
 
+	images := make([]api.ImageData, 0)
+	for _, i := range opts.Images {
+		images = append(images, api.ImageData(i.Data))
+	}
 	request := api.GenerateRequest{
-		Model:    opts.Model,
-		Prompt:   opts.Prompt,
-		Context:  generateContext,
-		Format:   opts.Format,
-		System:   opts.System,
-		Template: opts.Template,
-		Options:  opts.Options,
+		Model:     opts.Model,
+		Prompt:    opts.Prompt,
+		Context:   generateContext,
+		Format:    opts.Format,
+		System:    opts.System,
+		Template:  opts.Template,
+		Options:   opts.Options,
+		ImageData: images,
 	}
 
 	if err := client.Generate(ctx, &request, fn); err != nil {
@@ -585,7 +598,10 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 		latest.Summary()
 	}
 
-	cmd.SetContext(context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context))
+	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
+	ctx = context.WithValue(ctx, "multimodal", latest.MultiModal)
+	cmd.SetContext(ctx)
+
 	return nil
 }
 
@@ -603,9 +619,14 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 	loadOpts := generateOptions{
 		Model:  opts.Model,
 		Prompt: "",
+		Images: []ImageData{},
 	}
 	if err := generate(cmd, loadOpts); err != nil {
 		return err
+	}
+	multiModal, ok := cmd.Context().Value("multimodal").(bool)
+	if !ok {
+		multiModal = false
 	}
 
 	usage := func() {
@@ -902,6 +923,25 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 
 		if len(prompt) > 0 && multiline == MultilineNone {
 			opts.Prompt = prompt
+			if multiModal {
+				newPrompt, images, err := extractFileNames(prompt)
+				if err != nil {
+					return err
+				}
+				prompt = newPrompt
+
+				// reset the context if we find another image
+				if len(images) > 0 {
+					opts.Images = images
+					ctx := cmd.Context()
+					ctx = context.WithValue(ctx, generateContextKey("context"), []int{})
+					cmd.SetContext(ctx)
+				}
+				if len(opts.Images) == 0 {
+					fmt.Println("This model requires you to add a jpeg, png, or svg image.\n")
+					continue
+				}
+			}
 			if err := generate(cmd, opts); err != nil {
 				return err
 			}
@@ -909,6 +949,57 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			prompt = ""
 		}
 	}
+}
+
+func normalizeFilePath(fp string) string {
+	// Define a map of escaped characters and their replacements
+	replacements := map[string]string{
+		"\\ ":  " ",  // Escaped space
+		"\\(":  "(",  // Escaped left parenthesis
+		"\\)":  ")",  // Escaped right parenthesis
+		"\\[":  "[",  // Escaped left square bracket
+		"\\]":  "]",  // Escaped right square bracket
+		"\\{":  "{",  // Escaped left curly brace
+		"\\}":  "}",  // Escaped right curly brace
+		"\\$":  "$",  // Escaped dollar sign
+		"\\&":  "&",  // Escaped ampersand
+		"\\;":  ";",  // Escaped semicolon
+		"\\'":  "'",  // Escaped single quote
+		"\\\\": "\\", // Escaped backslash
+		"\\*":  "*",  // Escaped asterisk
+		"\\?":  "?",  // Escaped question mark
+	}
+
+	for escaped, actual := range replacements {
+		fp = strings.ReplaceAll(fp, escaped, actual)
+	}
+	return fp
+}
+
+func extractFileNames(input string) (string, []ImageData, error) {
+	// Regex to match file paths starting with / or ./ and include escaped spaces (\ or %20)
+	// and followed by more characters and a file extension
+	regexPattern := `(?:\./|/)[\S\\ ]+?\.(?:jpg|jpeg|png|svg)\b`
+	re := regexp.MustCompile(regexPattern)
+
+	filePaths := re.FindAllString(input, -1)
+	var imgs []ImageData
+
+	for _, fp := range filePaths {
+		nfp := normalizeFilePath(fp)
+		data, err := getBase64Image(nfp)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			fmt.Printf("Couldn't process image: %q\n", err)
+			return "", imgs, err
+		}
+		fmt.Printf("Added image '%s'\n", nfp)
+		input = strings.ReplaceAll(input, fp, "")
+		imgs = append(imgs, ImageData{Data: data, Path: nfp})
+	}
+	return input, imgs, nil
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
@@ -935,6 +1026,44 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 	}
 
 	return server.Serve(ln, origins)
+}
+
+func getBase64Image(filePath string) (string, error) {
+	_, err := os.Stat(filePath)
+	if err != nil {
+		fmt.Printf("Couldn't find image %s\n", filePath)
+		return "", err
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+
+	contentType := http.DetectContentType(data)
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/svg+xml", "image/png"}
+	if !contains(allowedTypes, contentType) {
+		return "", fmt.Errorf("invalid image type: %s", contentType)
+	}
+
+	// Convert the image data to base64
+	imgBase64 := base64.StdEncoding.EncodeToString(data)
+	return imgBase64, nil
+}
+
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }
 
 func initializeKeypair() error {
