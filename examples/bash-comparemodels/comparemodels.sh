@@ -30,7 +30,7 @@ for ITEM in "${SELECTIONS[@]}"; do
     ollama run "$ITEM" ""
     echo "--------------------------------------------------------------"
     echo "Running the questions through the model $ITEM"
-    COMMAND_OUTPUT=$(ollama run "$ITEM" --verbose < sourcequestions 2>&1| tee /dev/stderr)
+    COMMAND_OUTPUT=$(ollama run "$ITEM" --verbose < sourcequestions.txt 2>&1| tee /dev/stderr)
 
     # eval duration is sometimes listed in seconds and sometimes in milliseconds. 
     # Add up the values for each model

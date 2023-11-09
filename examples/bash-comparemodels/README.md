@@ -1,5 +1,10 @@
 # Bash Shell examples
 
-When you review the examples on this site, it is possible to think that making use of AI with Ollama will be hard. You need an orchestrator, and vector database, complicated infrastructure, and more. But that is not always the case. Ollama is designed to be easy to use, and to be used in any environment.
+When calling `ollama`, you can pass it a file to run all the prompts in the file, one after the other:
 
-The two examples here show how to list the models and query them from a simple bash script.
+`ollama run llama2 < sourcequestions.txt`
+
+This concept is used in the following example.
+
+## Compare Models
+`comparemodels.sh` is a script that runs all the questions in `sourcequestions.txt` using any 4 models you choose that you have already pulled from the Ollama library or have created locally.
