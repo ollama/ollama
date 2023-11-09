@@ -51,7 +51,7 @@ Advanced parameters (optional):
 
 ### JSON mode
 
-Enable JSON mode by setting the `format` parameter to `json` and specifying the mode should use JSON in the prompt. This will structure the response as valid JSON.
+Enable JSON mode by setting the `format` parameter to `json` and specifying the model should use JSON in the `prompt`. This will structure the response as valid JSON. See the JSON mode [example](#request-json-mode) below.
 
 ### Examples
 
