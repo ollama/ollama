@@ -56,7 +56,7 @@ Enable JSON mode by setting the `format` parameter to `json` and specifying JSON
 ```
 curl -X POST http://localhost:11434/api/generate -d '{
   "model": "llama2",
-  "prompt": "Why is the sky blue?",
+  "prompt": "Why is the sky blue? Respond in JSON.",
   "format": "json",
   "stream": false
 }'
