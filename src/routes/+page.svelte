@@ -40,8 +40,7 @@
 	let suggestions = ''; // $page.url.searchParams.get('suggestions');
 
 	onMount(async () => {
-		await createNewChat(true);
-		await setDBandLoadChats();
+		await Promise.all([await createNewChat(true), await setDBandLoadChats()]);
 	});
 
 	//////////////////////////
@@ -804,17 +803,17 @@
 					<div class="flex justify-between my-2 text-sm">
 						<select
 							id="models"
-							class="outline-none bg-transparent text-lg font-semibold rounded-lg block w-full placeholder-gray-400"
+							class="outline-none bg-transparent text-lg font-semibold rounded-lg block w-full placeholder-gray-800"
 							bind:value={selectedModel}
 							disabled={messages.length != 0}
 						>
-							<option value="" selected>Select a model</option>
+							<option class=" text-gray-700" value="" selected>Select a model</option>
 
 							{#each models as model}
 								{#if model.name === 'hr'}
 									<hr />
 								{:else}
-									<option value={model.name} class=" text-lg">{model.name}</option>
+									<option value={model.name} class="text-gray-700 text-lg">{model.name}</option>
 								{/if}
 							{/each}
 						</select>
