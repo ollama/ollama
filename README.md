@@ -231,7 +231,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
-- [gptel](https://github.com/karthink/gptel) Emacs client
+- [gptel Emacs client](https://github.com/karthink/gptel)
 
 ### Libraries
 
