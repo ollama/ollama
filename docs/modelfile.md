@@ -118,6 +118,8 @@ PARAMETER <parameter> <parametervalue>
 | num_predict    | Maximum number of tokens to predict when generating text. (Default: 128, -1 = infinite generation, -2 = fill context)                                                                                                                                   | int        | num_predict 42       |
 | top_k          | Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)                                                                        | int        | top_k 40             |
 | top_p          | Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)                                                                 | float      | top_p 0.9            |
+|image_data      | (Only supported for ultimodal models, e.g., LLaVAAn) Array of objects to hold base64-encoded image `data` and its `id`s to be reference in `prompt`. You can determine the place of the image in the prompt as in the following: `[img-12]Describe the image in detail.` where `[img-12]` is the refference to the image with an id of 12. | [{data: string, id: int | string}] | image_data: [{"data": "<BASE64_STRING>", "id": 12}]
+
 
 ### TEMPLATE
 
