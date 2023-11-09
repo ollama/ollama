@@ -38,7 +38,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
-- `format`: the format to return a response in. Currently the only accepted is `json`
+- `format`: the format to return a response in. Currently the only accepted value is `json`
 
 Advanced parameters (optional):
 
