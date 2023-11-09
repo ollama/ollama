@@ -123,7 +123,10 @@
 				topBarDiv.style.borderTopLeftRadius = '8px';
 
 				let langDiv = document.createElement('div');
-				langDiv.textContent = code?.className.split(' ')[0].slice(9);
+
+				let codeClassNames = code?.className.split(' ');
+				langDiv.textContent =
+					codeClassNames[0] === 'hljs' ? codeClassNames[1].slice(9) : codeClassNames[0].slice(9);
 				langDiv.style.color = 'white';
 				langDiv.style.margin = '4px';
 				langDiv.style.fontSize = '0.75rem';
@@ -771,7 +774,7 @@
 
 <svelte:window
 	on:scroll={(e) => {
-		autoScroll = window.innerHeight + window.scrollY >= document.body.offsetHeight - 30;
+		autoScroll = window.innerHeight + window.scrollY >= document.body.offsetHeight - 40;
 	}}
 />
 
@@ -850,16 +853,12 @@
 
 				<div class=" h-full mt-10 mb-32 w-full flex flex-col">
 					{#if messages.length == 0}
-						<div class="m-auto text-center max-w-md pb-32 px-2">
+						<div class="m-auto text-center max-w-md pb-56 px-2">
 							<div class="flex justify-center mt-8">
-								<img src="/ollama.png" class="w-16 invert-[80%]" />
+								<img src="/ollama.png" class=" w-16 invert-[10%] dark:invert-[100%] rounded-full" />
 							</div>
-							<div class="mt-6 text-3xl text-gray-400 dark:text-gray-500 font-semibold">
-								Get up and running with large language models, locally.
-							</div>
-
-							<div class=" my-4 text-gray-300 dark:text-gray-600">
-								Run Llama 2, Code Llama, and other models. <br /> Customize and create your own.
+							<div class=" mt-1 text-2xl text-gray-800 dark:text-gray-100 font-semibold">
+								How can I help you today?
 							</div>
 						</div>
 					{:else}
