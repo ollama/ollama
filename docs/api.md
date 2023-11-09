@@ -51,7 +51,7 @@ Advanced parameters (optional):
 
 ### JSON mode
 
-Enable JSON mode by setting the `format` parameter to `json`. This will ensure the response is valid JSON:
+Enable JSON mode by setting the `format` parameter to `json` and specifying JSON is required in the prompt. This will ensure the response is valid JSON:
 
 ```
 curl -X POST http://localhost:11434/api/generate -d '{
