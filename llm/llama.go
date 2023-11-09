@@ -28,7 +28,7 @@ import (
 )
 
 const jsonGrammar = `
-root   ::= array | object
+root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 
 object ::=
