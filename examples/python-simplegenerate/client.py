@@ -17,7 +17,7 @@ def generate(prompt, context):
     for line in r.iter_lines():
         body = json.loads(line)
         response_part = body.get('response', '')
-        # the response streams one token at a time, print that as we recieve it
+        # the response streams one token at a time, print that as we receive it
         print(response_part, end='', flush=True)
 
         if 'error' in body:

@@ -46,6 +46,7 @@ Advanced parameters (optional):
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
+- `raw`: if `true` no formatting will be applied to the prompt and no context will be returned. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API, and are managing history yourself.
 
 ### Examples
 
@@ -117,6 +118,103 @@ curl -X POST http://localhost:11434/api/generate -d '{
 #### Response
 
 If `stream` is set to `false`, the response will be a single JSON object:
+
+```json
+{
+  "model": "llama2:7b",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "response": "The sky is blue because it is the color of the sky.",
+  "context": [1, 2, 3],
+  "done": true,
+  "total_duration": 5589157167,
+  "load_duration": 3013701500,
+  "sample_count": 114,
+  "sample_duration": 81442000,
+  "prompt_eval_count": 46,
+  "prompt_eval_duration": 1160282000,
+  "eval_count": 13,
+  "eval_duration": 1325948000
+}
+```
+
+#### Request
+
+In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting and context.
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "mistral",
+  "prompt": "[INST] why is the sky blue? [/INST]",
+  "raw": true,
+  "stream": false
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "mistral",
+  "created_at": "2023-11-03T15:36:02.583064Z",
+  "response": " The sky appears blue because of a phenomenon called Rayleigh scattering.",
+  "done": true,
+  "total_duration": 14648695333,
+  "load_duration": 3302671417,
+  "prompt_eval_count": 14,
+  "prompt_eval_duration": 286243000,
+  "eval_count": 129,
+  "eval_duration": 10931424000
+}
+```
+
+#### Request
+
+If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but you can set any of them individually and omit the ones you do not want to override.
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "llama2:7b",
+  "prompt": "Why is the sky blue?",
+  "stream": false,
+  "options": {
+    "num_keep": 5,
+    "seed": 42,
+    "num_predict": 100,
+    "top_k": 20,
+    "top_p": 0.9,
+    "tfs_z": 0.5,
+    "typical_p": 0.7,
+    "repeat_last_n": 33,
+    "temperature": 0.8,
+    "repeat_penalty": 1.2,
+    "presence_penalty": 1.5,
+    "frequency_penalty": 1.0,
+    "mirostat": 1,
+    "mirostat_tau": 0.8,
+    "mirostat_eta": 0.6,
+    "penalize_newline": true,
+    "stop": ["\n", "user:"],
+    "numa": false,
+    "num_ctx": 4,
+    "num_batch": 2,
+    "num_gqa": 1,
+    "num_gpu": 1,
+    "main_gpu": 0,
+    "low_vram": false,
+    "f16_kv": true,
+    "logits_all": false,
+    "vocab_only": false,
+    "use_mmap": true,
+    "use_mlock": false,
+    "embedding_only": false,
+    "rope_frequency_base": 1.1,
+    "rope_frequency_scale": 0.8,
+    "num_thread": 8
+    }
+}'
+```
+
+#### Response
 
 ```json
 {
