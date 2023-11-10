@@ -14,11 +14,7 @@ countries = [
 country = random.choice(countries)
 model = "llama2"
 
-prompt = (
-    "generate one realisticly believable sample data set of a persons first name, last name, address in the"
-    + country
-    + ", and  phone number. Do not use common names. Respond using JSON. Key names should with no backslashes, values should use plain ascii with no special characters."
-)
+prompt = f"generate one realisticly believable sample data set of a persons first name, last name, address in {country}, and  phone number. Do not use common names. Respond using JSON. Key names should with no backslashes, values should use plain ascii with no special characters."
 
 data = {
     "prompt": prompt,
