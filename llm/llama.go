@@ -27,6 +27,34 @@ import (
 	"github.com/jmorganca/ollama/format"
 )
 
+const jsonGrammar = `
+root   ::= object
+value  ::= object | array | string | number | ("true" | "false" | "null") ws
+
+object ::=
+  "{" ws (
+            string ":" ws value
+    ("," ws string ":" ws value)*
+  )? "}" ws
+
+array  ::=
+  "[" ws (
+            value
+    ("," ws value)*
+  )? "]" ws
+
+string ::=
+  "\"" (
+    [^"\\] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
+  )* "\"" ws
+
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
+
+# Optional space: by convention, applied in this grammar after literal chars when allowed
+ws ::= ([ \t\n] ws)?
+`
+
 //go:embed llama.cpp/*/build/*/bin/*
 var llamaCppEmbed embed.FS
 
@@ -196,7 +224,10 @@ type llama struct {
 	Running
 }
 
-var errNoGPU = errors.New("nvidia-smi command failed")
+var (
+	errNvidiaSMI     = errors.New("nvidia-smi command failed")
+	errAvailableVRAM = errors.New("not enough VRAM available, falling back to CPU only")
+)
 
 // CheckVRAM returns the free VRAM in bytes on Linux machines with NVIDIA GPUs
 func CheckVRAM() (int64, error) {
@@ -205,7 +236,7 @@ func CheckVRAM() (int64, error) {
 	cmd.Stdout = &stdout
 	err := cmd.Run()
 	if err != nil {
-		return 0, errNoGPU
+		return 0, errNvidiaSMI
 	}
 
 	var freeMiB int64
@@ -226,8 +257,8 @@ func CheckVRAM() (int64, error) {
 
 	freeBytes := freeMiB * 1024 * 1024
 	if freeBytes < 2*format.GigaByte {
-		log.Printf("less than 2 GB VRAM available, falling back to CPU only")
-		freeMiB = 0
+		log.Printf("less than 2 GB VRAM available")
+		return 0, errAvailableVRAM
 	}
 
 	return freeBytes, nil
@@ -240,7 +271,7 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	if runtime.GOOS == "linux" {
 		freeBytes, err := CheckVRAM()
 		if err != nil {
-			if err.Error() != "nvidia-smi command failed" {
+			if !errors.Is(err, errNvidiaSMI) {
 				log.Print(err.Error())
 			}
 			// nvidia driver not installed or no nvidia GPU found
@@ -306,11 +337,17 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 	params := []string{
 		"--model", model,
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
-		"--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase),
-		"--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
 		"--embedding",
+	}
+
+	if opts.RopeFrequencyBase > 0 {
+		params = append(params, "--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase))
+	}
+
+	if opts.RopeFrequencyScale > 0 {
+		params = append(params, "--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale))
 	}
 
 	if opts.NumGQA > 0 {
@@ -360,7 +397,15 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 			runner.Path,
 			append(params, "--port", strconv.Itoa(port))...,
 		)
-		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", filepath.Dir(runner.Path)))
+
+		var libraryPaths []string
+		if libraryPath, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+			libraryPaths = append(libraryPaths, libraryPath)
+		}
+
+		libraryPaths = append(libraryPaths, filepath.Dir(runner.Path))
+
+		cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s", strings.Join(libraryPaths, ":")))
 		cmd.Stdout = os.Stderr
 		statusWriter := NewStatusWriter()
 		cmd.Stderr = statusWriter
@@ -480,7 +525,7 @@ type prediction struct {
 
 const maxBufferSize = 512 * format.KiloByte
 
-func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
+func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, format string, fn func(api.GenerateResponse)) error {
 	prevConvo, err := llm.Decode(ctx, prevContext)
 	if err != nil {
 		return err
@@ -526,6 +571,10 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 			return fmt.Errorf("error converting json schema to grammar: %v", err)
 		}
 		request["grammar"] = grammar
+	}
+
+	if format == "json" {
+		request["grammar"] = jsonGrammar
 	}
 
 	// Handling JSON marshaling with special characters unescaped.

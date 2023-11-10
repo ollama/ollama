@@ -38,6 +38,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
+- `format`: the format to return a response in. Currently the only accepted value is `json`
 
 Advanced parameters (optional):
 
@@ -45,24 +46,31 @@ Advanced parameters (optional):
 - `system`: system prompt to (overrides what is defined in the `Modelfile`)
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
-- `stream`: if `false` the response will be be returned as a single response object, rather than a stream of objects
+- `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
+- `raw`: if `true` no formatting will be applied to the prompt and no context will be returned. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API, and are managing history yourself.
 
-### Request
+### JSON mode
+
+Enable JSON mode by setting the `format` parameter to `json` and specifying the model should use JSON in the `prompt`. This will structure the response as valid JSON. See the JSON mode [example](#request-json-mode) below.
+
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{
-  "model": "llama2:7b",
+  "model": "llama2",
   "prompt": "Why is the sky blue?"
 }'
 ```
 
-### Response
+#### Response
 
-A stream of JSON objects:
+A stream of JSON objects is returned:
 
 ```json
 {
-  "model": "llama2:7b",
+  "model": "llama2",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "response": "The",
   "done": false
@@ -86,7 +94,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 
 ```json
 {
-  "model": "llama2:7b",
+  "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "",
   "context": [1, 2, 3],
@@ -98,6 +106,182 @@ To calculate how fast the response is generated in tokens per second (token/s), 
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 113,
+  "eval_duration": 1325948000
+}
+```
+
+#### Request (No streaming)
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "llama2:7b",
+  "prompt": "Why is the sky blue?",
+  "stream": false
+}'
+```
+
+#### Response
+
+If `stream` is set to `false`, the response will be a single JSON object:
+
+```json
+{
+  "model": "llama2:7b",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "response": "The sky is blue because it is the color of the sky.",
+  "context": [1, 2, 3],
+  "done": true,
+  "total_duration": 5589157167,
+  "load_duration": 3013701500,
+  "sample_count": 114,
+  "sample_duration": 81442000,
+  "prompt_eval_count": 46,
+  "prompt_eval_duration": 1160282000,
+  "eval_count": 13,
+  "eval_duration": 1325948000
+}
+```
+
+#### Request (Raw mode)
+
+In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting and context.
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "mistral",
+  "prompt": "[INST] why is the sky blue? [/INST]",
+  "raw": true,
+  "stream": false
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "mistral",
+  "created_at": "2023-11-03T15:36:02.583064Z",
+  "response": " The sky appears blue because of a phenomenon called Rayleigh scattering.",
+  "done": true,
+  "total_duration": 14648695333,
+  "load_duration": 3302671417,
+  "prompt_eval_count": 14,
+  "prompt_eval_duration": 286243000,
+  "eval_count": 129,
+  "eval_duration": 10931424000
+}
+```
+
+#### Request (JSON mode)
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "llama2",
+  "prompt": "What color is the sky at different times of the day? Respond using JSON",
+  "format": "json",
+  "stream": false
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "llama2",
+  "created_at": "2023-11-09T21:07:55.186497Z",
+  "response": "{\n\"morning\": {\n\"color\": \"blue\"\n},\n\"noon\": {\n\"color\": \"blue-gray\"\n},\n\"afternoon\": {\n\"color\": \"warm gray\"\n},\n\"evening\": {\n\"color\": \"orange\"\n}\n}\n",
+  "done": true,
+  "total_duration": 4661289125,
+  "load_duration": 1714434500,
+  "prompt_eval_count": 36,
+  "prompt_eval_duration": 264132000,
+  "eval_count": 75,
+  "eval_duration": 2112149000
+}
+```
+
+The value of `response` will be a string containing JSON similar to:
+
+```json
+{
+  "morning": {
+    "color": "blue"
+  },
+  "noon": {
+    "color": "blue-gray"
+  },
+  "afternoon": {
+    "color": "warm gray"
+  },
+  "evening": {
+    "color": "orange"
+  }
+}
+```
+
+#### Request (With options)
+
+If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but you can set any of them individually and omit the ones you do not want to override.
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "llama2:7b",
+  "prompt": "Why is the sky blue?",
+  "stream": false,
+  "options": {
+    "num_keep": 5,
+    "seed": 42,
+    "num_predict": 100,
+    "top_k": 20,
+    "top_p": 0.9,
+    "tfs_z": 0.5,
+    "typical_p": 0.7,
+    "repeat_last_n": 33,
+    "temperature": 0.8,
+    "repeat_penalty": 1.2,
+    "presence_penalty": 1.5,
+    "frequency_penalty": 1.0,
+    "mirostat": 1,
+    "mirostat_tau": 0.8,
+    "mirostat_eta": 0.6,
+    "penalize_newline": true,
+    "stop": ["\n", "user:"],
+    "numa": false,
+    "num_ctx": 4,
+    "num_batch": 2,
+    "num_gqa": 1,
+    "num_gpu": 1,
+    "main_gpu": 0,
+    "low_vram": false,
+    "f16_kv": true,
+    "logits_all": false,
+    "vocab_only": false,
+    "use_mmap": true,
+    "use_mlock": false,
+    "embedding_only": false,
+    "rope_frequency_base": 1.1,
+    "rope_frequency_scale": 0.8,
+    "num_thread": 8
+    }
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "llama2:7b",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "response": "The sky is blue because it is the color of the sky.",
+  "context": [1, 2, 3],
+  "done": true,
+  "total_duration": 5589157167,
+  "load_duration": 3013701500,
+  "sample_count": 114,
+  "sample_duration": 81442000,
+  "prompt_eval_count": 46,
+  "prompt_eval_duration": 1160282000,
+  "eval_count": 13,
   "eval_duration": 1325948000
 }
 ```
@@ -114,9 +298,11 @@ Create a model from a [`Modelfile`](./modelfile.md)
 
 - `name`: name of the model to create
 - `path`: path to the Modelfile
-- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
+- `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/create -d '{
@@ -125,7 +311,7 @@ curl -X POST http://localhost:11434/api/create -d '{
 }'
 ```
 
-### Response
+#### Response
 
 A stream of JSON objects. When finished, `status` is `success`.
 
@@ -143,13 +329,17 @@ GET /api/tags
 
 List models that are available locally.
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl http://localhost:11434/api/tags
 ```
 
-### Response
+#### Response
+
+A single JSON object will be returned.
 
 ```json
 {
@@ -180,7 +370,9 @@ Show details about a model including modelfile, template, parameters, license, a
 
 - `name`: name of the model to show
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl http://localhost:11434/api/show -d '{
@@ -188,7 +380,7 @@ curl http://localhost:11434/api/show -d '{
 }'
 ```
 
-### Response
+#### Response
 
 ```json
 {
@@ -207,7 +399,9 @@ POST /api/copy
 
 Copy a model. Creates a model with another name from an existing model.
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl http://localhost:11434/api/copy -d '{
@@ -215,6 +409,10 @@ curl http://localhost:11434/api/copy -d '{
   "destination": "llama2-backup"
 }'
 ```
+
+#### Response
+
+The only response is a 200 OK if successful.
 
 ## Delete a Model
 
@@ -226,15 +424,21 @@ Delete a model and its data.
 
 ### Parameters
 
-- `model`: model name to delete
+- `name`: model name to delete
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X DELETE http://localhost:11434/api/delete -d '{
   "name": "llama2:13b"
 }'
 ```
+
+#### Response
+
+If successful, the only response is a 200 OK.
 
 ## Pull a Model
 
@@ -248,9 +452,11 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 - `name`: name of the model to pull
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
-- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
+- `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/pull -d '{
@@ -258,13 +464,51 @@ curl -X POST http://localhost:11434/api/pull -d '{
 }'
 ```
 
-### Response
+#### Response
+
+If `stream` is not specified, or set to `true`, a stream of JSON objects is returned:
+
+The first object is the manifest:
+
+```json
+{
+  "status": "pulling manifest"
+}
+```
+
+Then there is a series of downloading responses. Until any of the download is completed, the `completed` key may not be included. The number of files to be downloaded depends on the number of layers specified in the manifest.
 
 ```json
 {
   "status": "downloading digestname",
   "digest": "digestname",
-  "total": 2142590208
+  "total": 2142590208,
+  "completed": 241970
+}
+```
+
+After all the files are downloaded, the final responses are:
+
+```json
+{
+    "status": "verifying sha256 digest"
+}
+{
+    "status": "writing manifest"
+}
+{
+    "status": "removing any unused layers"
+}
+{
+    "status": "success"
+}
+```
+
+if `stream` is set to false, then the response is a single JSON object:
+
+```json
+{
+  "status": "success"
 }
 ```
 
@@ -280,9 +524,11 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 - `name`: name of the model to push in the form of `<namespace>/<model>:<tag>`
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pushing to your library during development.
-- `stream`: (optional) if `false` the response will be be returned as a single response object, rather than a stream of objects
+- `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/push -d '{
@@ -290,9 +536,9 @@ curl -X POST http://localhost:11434/api/push -d '{
 }'
 ```
 
-### Response
+#### Response
 
-Streaming response that starts with:
+If `stream` is not specified, or set to `true`, a stream of JSON objects is returned:
 
 ```json
 { "status": "retrieving manifest" }
@@ -325,6 +571,12 @@ Finally, when the upload is complete:
 {"status":"success"}
 ```
 
+If `stream` is set to `false`, then the response is a single JSON object:
+
+```json
+{ "status": "success" }
+```
+
 ## Generate Embeddings
 
 ```shell
@@ -342,7 +594,9 @@ Advanced parameters:
 
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 
-### Request
+### Examples
+
+#### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/embeddings -d '{
@@ -351,7 +605,7 @@ curl -X POST http://localhost:11434/api/embeddings -d '{
 }'
 ```
 
-### Response
+#### Response
 
 ```json
 {

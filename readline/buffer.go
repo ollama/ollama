@@ -2,6 +2,7 @@ package readline
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/emirpasic/gods/lists/arraylist"
 	"golang.org/x/term"
@@ -17,7 +18,8 @@ type Buffer struct {
 }
 
 func NewBuffer(prompt *Prompt) (*Buffer, error) {
-	width, height, err := term.GetSize(0)
+	fd := int(os.Stdout.Fd())
+	width, height, err := term.GetSize(fd)
 	if err != nil {
 		fmt.Println("Error getting size:", err)
 		return nil, err

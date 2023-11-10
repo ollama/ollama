@@ -72,7 +72,7 @@ func ClientFromEnvironment() (*Client, error) {
 		},
 	}
 
-	mockRequest, err := http.NewRequest("HEAD", client.base.String(), nil)
+	mockRequest, err := http.NewRequest(http.MethodHead, client.base.String(), nil)
 	if err != nil {
 		return nil, err
 	}
