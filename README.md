@@ -35,7 +35,7 @@ is available on Docker Hub.
 ### Autocompletion
 To enable autocompletion generate completion script for your shell (`bash`, `zsh`, `fish`) and `source` it in your shell config (`~/.bash_profile`, `~/.zshrc`, `~/.profile`, `~/.bashrc`, etc.):
 ```
-echo "source <(./ollama completion bash)" >> ~/.bashrc
+echo "source <(./ollama completion bash)" >> ~/.bashrc # Required bash-completion package installed
 ```
 
 ## Quickstart
