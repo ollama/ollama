@@ -41,7 +41,7 @@ for line in response.iter_lines():
   if line:
     json_data = json.loads(line)
     if json_data['done'] == False:
-      print(json_data['response'], end='')
+      print(json_data['response'], end='', flush=True)
 
 
 

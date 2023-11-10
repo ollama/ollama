@@ -1,5 +1,7 @@
 # Log Analysis example
 
+![loganalyzer 2023-11-10 08_53_29](https://github.com/jmorganca/ollama/assets/633681/ad30f1fc-321f-4953-8914-e30e24db9921)
+
 This example shows one possible way to create a log file analyzer. To use it, run:
 
 `python loganalysis.py <logfile>`
