@@ -832,18 +832,17 @@ func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func GenerateCompletionsHandler(cmd *cobra.Command, args []string) error {
-	file, err := os.OpenFile(args[1], os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
+func completionHandler(cmd *cobra.Command, args []string) error {
+	var err error
 	switch args[0] {
 	case "bash":
-		err = cmd.Root().GenBashCompletion(file)
+		err = cmd.Root().GenBashCompletion(os.Stdout)
 	case "zsh":
-		err = cmd.Root().GenZshCompletion(file)
+		err = cmd.Root().GenZshCompletion(os.Stdout)
 	case "fish":
-		err = cmd.Root().GenFishCompletion(file, true)
+		err = cmd.Root().GenFishCompletion(os.Stdout, true)
+	default:
+		err = errors.New("unsupported shell")
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
@@ -852,6 +851,7 @@ func GenerateCompletionsHandler(cmd *cobra.Command, args []string) error {
 }
 
 func autocompleteModelName(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	log.Printf("autocomplete: %s", toComplete)
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
@@ -984,13 +984,13 @@ func NewCLI() *cobra.Command {
 		ValidArgsFunction: autocompleteModelName,
 	}
 
-	generateCompletionsCmd := &cobra.Command{
-		Use:                   "completions [bash|zsh|fish] [PATH]",
+	completionCmd := &cobra.Command{
+		Use:                   "completion [bash|zsh|fish]",
 		Short:                 "Generate completion scripts",
 		DisableFlagsInUseLine: true,
 		Hidden:                true,
-		Args:                  cobra.ExactArgs(2),
-		RunE:                  GenerateCompletionsHandler,
+		Args:                  cobra.ExactArgs(1),
+		RunE:                  completionHandler,
 	}
 
 	rootCmd.AddCommand(
@@ -1003,7 +1003,7 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		copyCmd,
 		deleteCmd,
-		generateCompletionsCmd,
+		completionCmd,
 	)
 
 	return rootCmd
