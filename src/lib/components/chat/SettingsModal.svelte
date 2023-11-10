@@ -13,21 +13,22 @@
 
 	// General
 	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
-	let system = '';
 	let theme = 'dark';
+	let system = '';
+
+	// Advanced
+	let requestFormat = '';
+	let seed = 0;
+	let temperature = 0.8;
+	let repeat_penalty = 1.1;
+	let top_k = 40;
+	let top_p = 0.9;
 
 	// Models
 	let modelTag = '';
 	let deleteModelTag = '';
 	let digest = '';
 	let pullProgress = null;
-
-	// Advanced
-	let seed = 0;
-	let temperature = 0.8;
-	let repeat_penalty = 1.1;
-	let top_k = 40;
-	let top_p = 0.9;
 
 	// Addons
 	let gravatarEmail = '';
@@ -86,6 +87,16 @@
 
 		document.documentElement.classList.remove(theme === 'dark' ? 'light' : 'dark');
 		document.documentElement.classList.add(theme);
+	};
+
+	const togglerequestFormat = async () => {
+		if (requestFormat === '') {
+			requestFormat = 'json';
+		} else {
+			requestFormat = '';
+		}
+
+		saveSettings({ requestFormat: requestFormat !== '' ? requestFormat : undefined });
 	};
 
 	const pullModelHandler = async () => {
@@ -200,6 +211,7 @@
 		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
 		system = settings.system ?? '';
 
+		requestFormat = settings.requestFormat ?? '';
 		seed = settings.seed ?? 0;
 		temperature = settings.temperature ?? 0.8;
 		repeat_penalty = settings.repeat_penalty ?? 1.1;
@@ -483,9 +495,40 @@
 					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
 						<div class=" space-y-3">
 							<div>
-								<div class=" mb-2.5 text-sm font-medium">Seed</div>
-								<div class="flex w-full">
-									<div class="flex-1">
+								<div class=" py-1 flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Request Mode</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											togglerequestFormat();
+										}}
+									>
+										{#if requestFormat === ''}
+											<span class="ml-2 self-center"> Default </span>
+										{:else if requestFormat === 'json'}
+											<!-- <svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-4 h-4 self-center"
+											>
+												<path
+													d="M10 2a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 2zM10 15a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 15zM10 7a3 3 0 100 6 3 3 0 000-6zM15.657 5.404a.75.75 0 10-1.06-1.06l-1.061 1.06a.75.75 0 001.06 1.06l1.06-1.06zM6.464 14.596a.75.75 0 10-1.06-1.06l-1.06 1.06a.75.75 0 001.06 1.06l1.06-1.06zM18 10a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 0118 10zM5 10a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 015 10zM14.596 15.657a.75.75 0 001.06-1.06l-1.06-1.061a.75.75 0 10-1.06 1.06l1.06 1.06zM5.404 6.464a.75.75 0 001.06-1.06l-1.06-1.06a.75.75 0 10-1.061 1.06l1.06 1.06z"
+												/>
+											</svg> -->
+											<span class="ml-2 self-center"> JSON </span>
+										{/if}
+									</button>
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
+							<div>
+								<div class=" py-1 flex w-full justify-between">
+									<div class=" w-20 text-sm font-medium self-center">Seed</div>
+									<div class=" flex-1 self-center">
 										<input
 											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
 											type="number"
