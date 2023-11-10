@@ -163,6 +163,9 @@ func GenerateHandler(c *gin.Context) {
 	case req.Model == "":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
+	case len(req.Format) > 0 && req.Format != "json":
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
+		return
 	case req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
 		return
@@ -231,7 +234,7 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
+		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, req.Format, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()

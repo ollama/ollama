@@ -38,6 +38,7 @@ type GenerateRequest struct {
 	Context  []int  `json:"context,omitempty"`
 	Stream   *bool  `json:"stream,omitempty"`
 	Raw      bool   `json:"raw,omitempty"`
+	Format   string `json:"format"`
 
 	Options map[string]interface{} `json:"options"`
 }

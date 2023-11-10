@@ -27,6 +27,34 @@ import (
 	"github.com/jmorganca/ollama/format"
 )
 
+const jsonGrammar = `
+root   ::= object
+value  ::= object | array | string | number | ("true" | "false" | "null") ws
+
+object ::=
+  "{" ws (
+            string ":" ws value
+    ("," ws string ":" ws value)*
+  )? "}" ws
+
+array  ::=
+  "[" ws (
+            value
+    ("," ws value)*
+  )? "]" ws
+
+string ::=
+  "\"" (
+    [^"\\] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
+  )* "\"" ws
+
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
+
+# Optional space: by convention, applied in this grammar after literal chars when allowed
+ws ::= ([ \t\n] ws)?
+`
+
 //go:embed llama.cpp/*/build/*/bin/*
 var llamaCppEmbed embed.FS
 
@@ -497,7 +525,7 @@ type prediction struct {
 
 const maxBufferSize = 512 * format.KiloByte
 
-func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
+func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, format string, fn func(api.GenerateResponse)) error {
 	prevConvo, err := llm.Decode(ctx, prevContext)
 	if err != nil {
 		return err
@@ -530,6 +558,10 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
+	}
+
+	if format == "json" {
+		request["grammar"] = jsonGrammar
 	}
 
 	// Handling JSON marshaling with special characters unescaped.

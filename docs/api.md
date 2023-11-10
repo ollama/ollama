@@ -38,6 +38,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
+- `format`: the format to return a response in. Currently the only accepted value is `json`
 
 Advanced parameters (optional):
 
@@ -48,13 +49,17 @@ Advanced parameters (optional):
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `raw`: if `true` no formatting will be applied to the prompt and no context will be returned. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API, and are managing history yourself.
 
+### JSON mode
+
+Enable JSON mode by setting the `format` parameter to `json` and specifying the model should use JSON in the `prompt`. This will structure the response as valid JSON. See the JSON mode [example](#request-json-mode) below.
+
 ### Examples
 
 #### Request
 
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{
-  "model": "llama2:7b",
+  "model": "llama2",
   "prompt": "Why is the sky blue?"
 }'
 ```
@@ -65,7 +70,7 @@ A stream of JSON objects is returned:
 
 ```json
 {
-  "model": "llama2:7b",
+  "model": "llama2",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "response": "The",
   "done": false
@@ -89,7 +94,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 
 ```json
 {
-  "model": "llama2:7b",
+  "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "",
   "context": [1, 2, 3],
@@ -105,7 +110,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 }
 ```
 
-#### Request
+#### Request (No streaming)
 
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{
@@ -137,7 +142,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 }
 ```
 
-#### Request
+#### Request (Raw mode)
 
 In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting and context.
 
@@ -167,7 +172,54 @@ curl -X POST http://localhost:11434/api/generate -d '{
 }
 ```
 
-#### Request
+#### Request (JSON mode)
+
+```shell
+curl -X POST http://localhost:11434/api/generate -d '{
+  "model": "llama2",
+  "prompt": "What color is the sky at different times of the day? Respond using JSON",
+  "format": "json",
+  "stream": false
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "llama2",
+  "created_at": "2023-11-09T21:07:55.186497Z",
+  "response": "{\n\"morning\": {\n\"color\": \"blue\"\n},\n\"noon\": {\n\"color\": \"blue-gray\"\n},\n\"afternoon\": {\n\"color\": \"warm gray\"\n},\n\"evening\": {\n\"color\": \"orange\"\n}\n}\n",
+  "done": true,
+  "total_duration": 4661289125,
+  "load_duration": 1714434500,
+  "prompt_eval_count": 36,
+  "prompt_eval_duration": 264132000,
+  "eval_count": 75,
+  "eval_duration": 2112149000
+}
+```
+
+The value of `response` will be a string containing JSON similar to:
+
+```json
+{
+  "morning": {
+    "color": "blue"
+  },
+  "noon": {
+    "color": "blue-gray"
+  },
+  "afternoon": {
+    "color": "warm gray"
+  },
+  "evening": {
+    "color": "orange"
+  }
+}
+```
+
+#### Request (With options)
 
 If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but you can set any of them individually and omit the ones you do not want to override.
 
