@@ -1324,7 +1324,7 @@
 											>
 												{#if speechRecognitionListening}
 													<svg
-														class=" w-5 h-5 translate-y-[1px]"
+														class=" w-5 h-5 translate-y-[0.5px]"
 														fill="currentColor"
 														viewBox="0 0 24 24"
 														xmlns="http://www.w3.org/2000/svg"
@@ -1369,7 +1369,7 @@
 														xmlns="http://www.w3.org/2000/svg"
 														viewBox="0 0 20 20"
 														fill="currentColor"
-														class="w-5 h-5 translate-y-[1px]"
+														class="w-5 h-5 translate-y-[0.5px]"
 													>
 														<path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" />
 														<path
