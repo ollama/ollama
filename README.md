@@ -38,7 +38,7 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - 📤📥 **Import/Export Chat History**: Seamlessly move your chat data in and out of the platform.
 
-- 🗣️ **Voice Input Support**: Engage with your model through voice input; effortlessly communicate with the option for autosending after 3 seconds of silence.
+- 🗣️ **Voice Input Support**: Engage with your model through voice interactions; enjoy the convenience of talking to your model directly. Additionally, explore the option for sending voice input automatically after 3 seconds of silence for a streamlined experience.
 
 - ⚙️ **Fine-Tuned Control with Advanced Parameters**: Gain a deeper level of control by adjusting parameters such as temperature and defining your system prompts to tailor the conversation to your specific preferences and needs.
 
