@@ -496,6 +496,7 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		fmt.Fprintln(os.Stderr, "  /set         Set session variables")
 		fmt.Fprintln(os.Stderr, "  /show        Show model information")
 		fmt.Fprintln(os.Stderr, "  /bye         Exit")
+		fmt.Fprintln(os.Stderr, "  /clear       Clear terminal")
 		fmt.Fprintln(os.Stderr, "  /?, /help    Help for a command")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
@@ -680,6 +681,8 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			}
 		case line == "/exit", line == "/bye":
 			return nil
+		case line == "/clear", line == "/cls":
+			fmt.Printf("\x1bc")
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
 			fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
