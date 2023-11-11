@@ -235,6 +235,9 @@
 					// Restart recognition after it ends
 					console.log('recognition ended');
 					speechRecognitionListening = false;
+					if (prompt !== '' && settings?.speechAutoSend === true) {
+						submitPrompt(prompt);
+					}
 				};
 
 				// Event triggered when an error occurs
