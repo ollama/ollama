@@ -259,6 +259,7 @@
 	const createNewChat = async (init = false) => {
 		if (init || messages.length > 0) {
 			chatId = uuidv4();
+			autoScroll = true;
 			messages = [];
 			title = '';
 
