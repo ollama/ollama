@@ -14,7 +14,7 @@ import (
 )
 
 type LLM interface {
-	Predict(context.Context, []int, string, []api.ImageData, func(api.GenerateResponse)) error
+	Predict(context.Context, []int, string, string, []api.ImageData, func(api.GenerateResponse)) error
 	Embedding(context.Context, string) ([]float64, error)
 	Encode(context.Context, string) ([]int, error)
 	Decode(context.Context, []int) (string, error)

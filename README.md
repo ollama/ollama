@@ -223,6 +223,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Web UI](https://github.com/ollama-webui/ollama-webui)
+- [Ollamac](https://github.com/kevinhermawan/Ollamac)
 
 ### Terminal
 
@@ -230,6 +231,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
+- [gptel Emacs client](https://github.com/karthink/gptel)
 
 ### Libraries
 
@@ -238,6 +240,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
+- [Ollama4j for Java](https://github.com/amithkoujalgi/ollama4j)
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 
 ### Extensions & Plugins

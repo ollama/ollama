@@ -291,7 +291,7 @@ func OptionShowDescriptionAtLineEnd() Option {
 	}
 }
 
-var defaultTheme = Theme{Saucer: "█", SaucerPadding: " ", BarStart: "|", BarEnd: "|"}
+var defaultTheme = Theme{Saucer: "█", SaucerPadding: " ", BarStart: "▕", BarEnd: "▏"}
 
 // NewOptions constructs a new instance of ProgressBar, with any options you specify
 func NewOptions(max int, options ...Option) *ProgressBar {
