@@ -31,6 +31,7 @@
 	let pullProgress = null;
 
 	// Addons
+	let speechAutoSend = false;
 	let gravatarEmail = '';
 	let OPENAI_API_KEY = '';
 
@@ -89,7 +90,7 @@
 		document.documentElement.classList.add(theme);
 	};
 
-	const togglerequestFormat = async () => {
+	const toggleRequestFormat = async () => {
 		if (requestFormat === '') {
 			requestFormat = 'json';
 		} else {
@@ -97,6 +98,11 @@
 		}
 
 		saveSettings({ requestFormat: requestFormat !== '' ? requestFormat : undefined });
+	};
+
+	const toggleSpeechAutoSend = async () => {
+		speechAutoSend = !speechAutoSend;
+		saveSettings({ speechAutoSend: speechAutoSend });
 	};
 
 	const pullModelHandler = async () => {
@@ -218,8 +224,9 @@
 		top_k = settings.top_k ?? 40;
 		top_p = settings.top_p ?? 0.9;
 
-		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
+		speechAutoSend = settings.speechAutoSend ?? false;
 		gravatarEmail = settings.gravatarEmail ?? '';
+		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 	}
 </script>
 
@@ -501,7 +508,7 @@
 									<button
 										class="p-1 px-3 text-xs flex rounded transition"
 										on:click={() => {
-											togglerequestFormat();
+											toggleRequestFormat();
 										}}
 									>
 										{#if requestFormat === ''}
@@ -740,6 +747,27 @@
 						}}
 					>
 						<div class=" space-y-3">
+							<div>
+								<div class=" py-1 flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Speech Auto-Send</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											toggleSpeechAutoSend();
+										}}
+										type="button"
+									>
+										{#if speechAutoSend === true}
+											<span class="ml-2 self-center">On</span>
+										{:else}
+											<span class="ml-2 self-center">Off</span>
+										{/if}
+									</button>
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									Gravatar Email <span class=" text-gray-400 text-sm">(optional)</span>

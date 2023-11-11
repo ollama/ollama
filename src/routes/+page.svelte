@@ -26,6 +26,12 @@
 		temperature: null
 	};
 
+	let fileUploadEnabled = false;
+
+	let speechRecognition;
+	let speechRecognitionEnabled = true;
+	let speechRecognitionListening = false;
+
 	let models = [];
 	let chats = [];
 
@@ -183,6 +189,66 @@
 				// • rendering keys, e.g.:
 				throwOnError: false
 			});
+		}
+	};
+
+	const speechRecognitionHandler = () => {
+		// Check if SpeechRecognition is supported
+
+		if (speechRecognitionListening) {
+			speechRecognition.stop();
+		} else {
+			if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+				// Create a SpeechRecognition object
+				speechRecognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+
+				// Set continuous to true for continuous recognition
+				speechRecognition.continuous = true;
+
+				// Set the timeout for turning off the recognition after inactivity (in milliseconds)
+				const inactivityTimeout = 3000; // 3 seconds
+
+				let timeoutId;
+				// Start recognition
+				speechRecognition.start();
+				speechRecognitionListening = true;
+
+				// Event triggered when speech is recognized
+				speechRecognition.onresult = function (event) {
+					// Clear the inactivity timeout
+					clearTimeout(timeoutId);
+
+					// Handle recognized speech
+					console.log(event);
+					const transcript = event.results[Object.keys(event.results).length - 1][0].transcript;
+					prompt = `${prompt}${transcript}`;
+
+					// Restart the inactivity timeout
+					timeoutId = setTimeout(() => {
+						console.log('Speech recognition turned off due to inactivity.');
+						speechRecognition.stop();
+					}, inactivityTimeout);
+				};
+
+				// Event triggered when recognition is ended
+				speechRecognition.onend = function () {
+					// Restart recognition after it ends
+					console.log('recognition ended');
+					speechRecognitionListening = false;
+					if (prompt !== '' && settings?.speechAutoSend === true) {
+						submitPrompt(prompt);
+					}
+				};
+
+				// Event triggered when an error occurs
+				speechRecognition.onerror = function (event) {
+					console.log(event);
+					toast.error(`Speech recognition error: ${event.error}`);
+					speechRecognitionListening = false;
+				};
+			} else {
+				toast.error('SpeechRecognition API is not supported in this browser.');
+			}
 		}
 	};
 
@@ -1199,8 +1265,9 @@
 						>
 							<textarea
 								id="chat-textarea"
-								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none border dark:border-gray-700 w-full py-3 px-5 pr-12 resize-none"
-								placeholder="Send a message"
+								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none border dark:border-gray-700 w-full py-3
+									{fileUploadEnabled ? 'pl-12' : 'pl-5'} {speechRecognitionEnabled ? 'pr-20' : 'pr-12'} resize-none"
+								placeholder={speechRecognitionListening ? 'Listening...' : 'Send a message'}
 								bind:value={prompt}
 								on:keypress={(e) => {
 									if (e.keyCode == 13 && !e.shiftKey) {
@@ -1216,9 +1283,102 @@
 									e.target.style.height = Math.min(e.target.scrollHeight, 200) + 2 + 'px';
 								}}
 							/>
+
+							{#if fileUploadEnabled}
+								<div class=" absolute left-0 bottom-0">
+									<div class="pl-2.5 pb-[9px]">
+										<button
+											class="  text-gray-600 dark:text-gray-200 transition rounded-lg p-1.5"
+											type="button"
+											on:click={() => {
+												console.log('file');
+											}}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-5 h-5"
+											>
+												<path
+													fill-rule="evenodd"
+													d="M15.621 4.379a3 3 0 00-4.242 0l-7 7a3 3 0 004.241 4.243h.001l.497-.5a.75.75 0 011.064 1.057l-.498.501-.002.002a4.5 4.5 0 01-6.364-6.364l7-7a4.5 4.5 0 016.368 6.36l-3.455 3.553A2.625 2.625 0 119.52 9.52l3.45-3.451a.75.75 0 111.061 1.06l-3.45 3.451a1.125 1.125 0 001.587 1.595l3.454-3.553a3 3 0 000-4.242z"
+													clip-rule="evenodd"
+												/>
+											</svg>
+										</button>
+									</div>
+								</div>
+							{/if}
+
 							<div class=" absolute right-0 bottom-0">
-								<div class="pr-3 pb-[9px]">
+								<div class="pr-2.5 pb-[9px]">
 									{#if messages.length == 0 || messages.at(-1).done == true}
+										{#if speechRecognitionEnabled}
+											<button
+												class=" text-gray-600 dark:text-gray-300 transition rounded-lg p-1.5 mr-0.5"
+												type="button"
+												on:click={() => {
+													speechRecognitionHandler();
+												}}
+											>
+												{#if speechRecognitionListening}
+													<svg
+														class=" w-5 h-5 translate-y-[1px]"
+														fill="currentColor"
+														viewBox="0 0 24 24"
+														xmlns="http://www.w3.org/2000/svg"
+														><style>
+															.spinner_qM83 {
+																animation: spinner_8HQG 1.05s infinite;
+															}
+															.spinner_oXPr {
+																animation-delay: 0.1s;
+															}
+															.spinner_ZTLf {
+																animation-delay: 0.2s;
+															}
+															@keyframes spinner_8HQG {
+																0%,
+																57.14% {
+																	animation-timing-function: cubic-bezier(0.33, 0.66, 0.66, 1);
+																	transform: translate(0);
+																}
+																28.57% {
+																	animation-timing-function: cubic-bezier(0.33, 0, 0.66, 0.33);
+																	transform: translateY(-6px);
+																}
+																100% {
+																	transform: translate(0);
+																}
+															}
+														</style><circle class="spinner_qM83" cx="4" cy="12" r="2.5" /><circle
+															class="spinner_qM83 spinner_oXPr"
+															cx="12"
+															cy="12"
+															r="2.5"
+														/><circle
+															class="spinner_qM83 spinner_ZTLf"
+															cx="20"
+															cy="12"
+															r="2.5"
+														/></svg
+													>
+												{:else}
+													<svg
+														xmlns="http://www.w3.org/2000/svg"
+														viewBox="0 0 20 20"
+														fill="currentColor"
+														class="w-5 h-5 translate-y-[1px]"
+													>
+														<path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" />
+														<path
+															d="M5.5 9.643a.75.75 0 00-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-1.5v-1.546A6.001 6.001 0 0016 10v-.357a.75.75 0 00-1.5 0V10a4.5 4.5 0 01-9 0v-.357z"
+														/>
+													</svg>
+												{/if}
+											</button>
+										{/if}
 										<button
 											class="{prompt !== ''
 												? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
