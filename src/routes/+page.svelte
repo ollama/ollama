@@ -1112,6 +1112,85 @@
 															<div class="w-full">
 																{message.content}
 
+																<!-- <div class=" flex justify-start space-x-1">
+																	<div class="flex self-center">
+																		<button
+																			class="self-center"
+																			on:click={() => {
+																				message.selectedContentIdx = Math.max(
+																					0,
+																					message.selectedContentIdx - 1
+																				);
+																				messages = messages;
+																			}}
+																		>
+																			<svg
+																				xmlns="http://www.w3.org/2000/svg"
+																				viewBox="0 0 20 20"
+																				fill="currentColor"
+																				class="w-4 h-4"
+																			>
+																				<path
+																					fill-rule="evenodd"
+																					d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z"
+																					clip-rule="evenodd"
+																				/>
+																			</svg>
+																		</button>
+
+																		<div class="text-xs font-bold self-center">
+																			{message.selectedContentIdx + 1} / {message.contents.length}
+																		</div>
+
+																		<button
+																			class="self-center"
+																			on:click={() => {
+																				message.selectedContentIdx = Math.min(
+																					message.contents.length - 1,
+																					message.selectedContentIdx + 1
+																				);
+																				messages = messages;
+
+																				console.log(message);
+																			}}
+																		>
+																			<svg
+																				xmlns="http://www.w3.org/2000/svg"
+																				viewBox="0 0 20 20"
+																				fill="currentColor"
+																				class="w-4 h-4"
+																			>
+																				<path
+																					fill-rule="evenodd"
+																					d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+																					clip-rule="evenodd"
+																				/>
+																			</svg>
+																		</button>
+																	</div>
+																	<button
+																		class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-800 transition"
+																		on:click={() => {
+																			editMessage(messageIdx);
+																		}}
+																	>
+																		<svg
+																			xmlns="http://www.w3.org/2000/svg"
+																			fill="none"
+																			viewBox="0 0 24 24"
+																			stroke-width="1.5"
+																			stroke="currentColor"
+																			class="w-4 h-4"
+																		>
+																			<path
+																				stroke-linecap="round"
+																				stroke-linejoin="round"
+																				d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125"
+																			/>
+																		</svg>
+																	</button>
+																</div> -->
+
 																<div class=" flex justify-start space-x-1">
 																	<button
 																		class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-800 transition"
@@ -1252,8 +1331,8 @@
 			</div>
 
 			<div class="fixed bottom-0 w-full">
-				<div class=" bg-gradient-to-t from-white/90 dark:from-gray-900 pt-5">
-					<div class="max-w-3xl p-2.5 -mb-0.5 mx-auto inset-x-0">
+				<div class=" bg-gradient-to-t from-white dark:from-gray-800 from-40% pt-5">
+					<div class="max-w-3xl px-2.5 pt-2.5 pb-2 -mb-0.5 mx-auto inset-x-0">
 						{#if messages.length == 0 && suggestions !== 'false'}
 							<Suggestions {submitPrompt} />
 						{/if}
@@ -1265,7 +1344,7 @@
 						>
 							<textarea
 								id="chat-textarea"
-								class="rounded-xl dark:bg-gray-700 dark:text-gray-100 outline-none border dark:border-gray-700 w-full py-3
+								class="rounded-xl dark:bg-gray-800 dark:text-gray-100 outline-none border dark:border-gray-600 w-full py-3
 									{fileUploadEnabled ? 'pl-12' : 'pl-5'} {speechRecognitionEnabled ? 'pr-20' : 'pr-12'} resize-none"
 								placeholder={speechRecognitionListening ? 'Listening...' : 'Send a message'}
 								bind:value={prompt}
@@ -1316,7 +1395,7 @@
 									{#if messages.length == 0 || messages.at(-1).done == true}
 										{#if speechRecognitionEnabled}
 											<button
-												class=" text-gray-600 dark:text-gray-300 transition rounded-lg p-1.5 mr-0.5"
+												class=" text-gray-600 dark:text-gray-300 transition rounded-lg p-1 mr-0.5"
 												type="button"
 												on:click={() => {
 													speechRecognitionHandler();
@@ -1382,7 +1461,7 @@
 										<button
 											class="{prompt !== ''
 												? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
-												: 'text-white bg-gray-100 dark:text-gray-800 dark:bg-gray-600 disabled'} transition rounded-lg p-1.5"
+												: 'text-white bg-gray-100 dark:text-gray-800 dark:bg-gray-600 disabled'} transition rounded-lg p-1"
 											type="submit"
 											disabled={prompt === ''}
 										>
@@ -1422,7 +1501,7 @@
 							</div>
 						</form>
 
-						<div class="mt-2.5 text-xs text-gray-500 text-center">
+						<div class="mt-1.5 text-xs text-gray-500 text-center">
 							LLMs can make mistakes. Verify important information.
 						</div>
 					</div>
