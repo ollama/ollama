@@ -183,7 +183,7 @@ type Runner struct {
 
 type ImageData struct {
 	Data string `json:"data"`
-	ID   string `json:"id"`
+	ID   int    `json:"id"`
 }
 
 type Options struct {
@@ -281,7 +281,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 							if dataVal, ok := data["Data"].(string); ok {
 								imgData.Data = dataVal
 							}
-							if id, ok := data["ID"].(string); ok {
+							if id, ok := data["ID"].(int); ok {
 								imgData.ID = id
 							}
 							slice[i] = imgData

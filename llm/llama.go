@@ -292,7 +292,7 @@ func (w *StatusWriter) Write(b []byte) (int, error) {
 	return os.Stderr.Write(b)
 }
 
-func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
+func newLlama(model string, adapters []string, mmprojPath string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
 	fileInfo, err := os.Stat(model)
 	if err != nil {
 		return nil, err
@@ -343,6 +343,9 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 	}
 	if opts.UseNUMA {
 		params = append(params, "--numa")
+	}
+	if mmprojPath != "" {
+		params = append(params, "--mmproj", mmprojPath)
 	}
 
 	var runnerErr error
@@ -494,7 +497,8 @@ type prediction struct {
 
 const maxBufferSize = 512 * format.KiloByte
 
-func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, fn func(api.GenerateResponse)) error {
+func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, images []api.ImageData, fn func(api.GenerateResponse)) error {
+
 	prevConvo, err := llm.Decode(ctx, prevContext)
 	if err != nil {
 		return err
@@ -507,6 +511,10 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 	nextContext.WriteString(prevConvo)
 	nextContext.WriteString(prompt)
 
+	imageData := llm.ImageData
+	if len(images) > 0 {
+		imageData = images
+	}
 	request := map[string]any{
 		"prompt":            nextContext.String(),
 		"stream":            true,
@@ -527,13 +535,9 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
-		"image_data":        llm.ImageData,
+		"image_data":        imageData,
 	}
-	if len(llm.ImageData) > 0 {
-		log.Printf("llama.go: %+v ----  (%+v)\n", request["prompt"], len(llm.ImageData[0].Data))
-	} else {
-		log.Printf("llama.go: %+v ----  (No Images)\n", request["prompt"])
-	}
+
 	// Handling JSON marshaling with special characters unescaped.
 	buffer := &bytes.Buffer{}
 	enc := json.NewEncoder(buffer)

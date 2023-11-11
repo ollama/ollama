@@ -95,7 +95,7 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 			loaded.Options = nil
 		}
 
-		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, opts)
+		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, model.MMProjPath, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
@@ -195,6 +195,29 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	rawImages, _ := req.Options["image_data"].([]interface{})
+
+	images := make([]api.ImageData, len(rawImages))
+	for i, img := range rawImages {
+		imgMap, ok := img.(map[string]interface{})
+		if !ok {
+			return
+		}
+		data, ok := imgMap["data"].(string)
+		if !ok {
+			log.Println("image data is not a string")
+			return
+		}
+		floatId, ok := imgMap["id"].(float64)
+		if !ok {
+			log.Printf("image id is not defined")
+			return
+		}
+		id := int(floatId)
+
+		images[i] = api.ImageData{Data: data, ID: id}
+	}
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -218,7 +241,7 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, fn); err != nil {
+		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, images, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()

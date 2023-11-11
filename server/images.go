@@ -40,6 +40,7 @@ type Model struct {
 	ShortName     string
 	ModelPath     string
 	OriginalModel string
+	MMProjPath    string
 	AdapterPaths  []string
 	Template      string
 	System        string
@@ -222,6 +223,8 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 			model.License = append(model.License, string(bts))
+		case "application/vnd.ollama.image.mmproj":
+			model.MMProjPath = filename
 		}
 	}
 
@@ -429,6 +432,32 @@ func CreateModel(ctx context.Context, name string, path string, fn func(resp api
 			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
 			layer, err := CreateLayer(strings.NewReader(c.Args))
+			if err != nil {
+				return err
+			}
+
+			if layer.Size > 0 {
+				layer.MediaType = mediaType
+				layers = append(layers, layer)
+			}
+		case "mmproj":
+			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
+			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
+			mmprojFile, err := filenameWithPath(path, c.Args)
+			if err != nil {
+				return err
+			}
+
+			file, err := os.Open(mmprojFile)
+			if err != nil {
+				return fmt.Errorf("failed to open file: %v", err)
+			}
+			defer file.Close()
+
+			// reset the file
+			file.Seek(0, io.SeekStart)
+
+			layer, err := CreateLayer(file)
 			if err != nil {
 				return err
 			}
@@ -930,6 +959,10 @@ TEMPLATE """{{ .Template }}"""
 
 {{- if .System }}
 SYSTEM """{{ .System }}"""
+{{- end }}
+
+{{- if .MMProjPath }}
+MMPROJ {{ .MMProjPath }}
 {{- end }}
 
 {{- range $adapter := .AdapterPaths }}

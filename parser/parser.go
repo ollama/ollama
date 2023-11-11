@@ -40,6 +40,9 @@ func Parse(reader io.Reader) ([]Command, error) {
 			command.Args = string(fields[1])
 			// copy command for validation
 			modelCommand = command
+		case "MMPROJ":
+			command.Name = "mmproj"
+			command.Args = string(fields[1])
 		case "LICENSE", "TEMPLATE", "SYSTEM", "PROMPT", "ADAPTER":
 			command.Name = string(bytes.ToLower(fields[0]))
 			command.Args = string(fields[1])

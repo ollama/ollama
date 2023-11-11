@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -38,7 +39,7 @@ import (
 
 type ImageData struct {
 	Data string `json:"data"`
-	ID   string `json:"id"`
+	ID   int    `json:"id"`
 	Path string `json:"path"`
 }
 
@@ -421,11 +422,6 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, images []
 	var currentLineLength int
 	var wordBuffer string
 
-	// log.Println("Setting image_data:")
-	// for _, image := range images {
-	// 	log.Println("Image ID:", image.ID, "Path:", image.Path)
-	// }
-
 	options := make(map[string]interface{})
 	options["image_data"] = images
 	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext, Options: options}
@@ -624,24 +620,28 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 						case "add":
 							if len(args) > 4 {
 								if len(args[3]) > 0 {
+									id, err := strconv.Atoi(args[3])
+									if err != nil {
+										return fmt.Errorf("error image id must be a number, receved string to int: %w", args[3])
+									}
 									var newImage string = getBase64Image(args[4])
 									if len(newImage) > 0 {
 										var found bool
 										for i, img := range images {
 											if img.Path == args[4] {
-												images[i] = ImageData{ID: args[3], Data: newImage, Path: args[4]}
+												images[i] = ImageData{ID: id, Data: newImage, Path: args[4]}
 												fmt.Print("Image updated\n\n")
 												found = true
 												break
-											} else if img.ID == args[3] {
+											} else if img.ID == id {
 												fmt.Print("Image ID: ", args[3], " now references ", args[4], "\n\n")
-												images[i] = ImageData{ID: args[3], Data: newImage, Path: args[4]}
+												images[i] = ImageData{ID: id, Data: newImage, Path: args[4]}
 											}
 										}
 
 										if !found {
 											// If no image with the same ID was found, append a new one
-											images = append(images, ImageData{ID: args[3], Data: newImage, Path: args[4]})
+											images = append(images, ImageData{ID: id, Data: newImage, Path: args[4]})
 											fmt.Print("Image Added\n\n")
 										}
 									} else {
@@ -655,15 +655,19 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 							}
 						case "remove":
 							if len(args) == 3 {
+								id, err := strconv.Atoi(args[3])
+								if err != nil {
+									return fmt.Errorf("error image id must be a number, receved string to int: %s", args[3])
+								}
 								var removed bool = false
 								for i := 0; i < len(images); i++ {
-									if images[i].ID == args[3] {
+									if images[i].ID == id {
 										// Remove the element from the slice by shifting all elements to its right.
 										images = append(images[:i], images[i+1:]...)
 										removed = true
 									}
 								}
-								if removed == false {
+								if !removed {
 									fmt.Print("Image not found in context\n\n")
 								} else {
 									fmt.Print("Image removed\n\n")
