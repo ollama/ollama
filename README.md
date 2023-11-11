@@ -8,6 +8,7 @@
 ![GitHub top language](https://img.shields.io/github/languages/top/ollama-webui/ollama-webui?style=plastic)
 ![GitHub last commit](https://img.shields.io/github/last-commit/ollama-webui/ollama-webui?color=red&style=plastic)
 ![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Follama-webui%2Follama-wbui&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)
+[![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/tjbck)
 
 ChatGPT-Style Web Interface for Ollama 🦙
 
@@ -36,6 +37,8 @@ ChatGPT-Style Web Interface for Ollama 🦙
 - 📜 **Chat History**: Effortlessly access and manage your conversation history.
 
 - 📤📥 **Import/Export Chat History**: Seamlessly move your chat data in and out of the platform.
+
+- 🗣️ **Voice Input Support**: Engage with your model through voice input; effortlessly communicate with the option for autosending after 3 seconds of silence.
 
 - ⚙️ **Fine-Tuned Control with Advanced Parameters**: Gain a deeper level of control by adjusting parameters such as temperature and defining your system prompts to tailor the conversation to your specific preferences and needs.
 
