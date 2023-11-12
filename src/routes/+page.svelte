@@ -1614,7 +1614,6 @@
 									class=" bg-white/20 p-1.5 rounded-full"
 									on:click={() => {
 										window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-										autoScroll = true;
 									}}
 								>
 									<svg
