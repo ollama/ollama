@@ -1,5 +1,6 @@
 # Ollama Web UI: A User-Friendly Web Interface for Chat Interactions 👋
 
+
 ![GitHub stars](https://img.shields.io/github/stars/ollama-webui/ollama-webui?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/ollama-webui/ollama-webui?style=social)
 ![GitHub watchers](https://img.shields.io/github/watchers/ollama-webui/ollama-webui?style=social)
@@ -8,6 +9,7 @@
 ![GitHub top language](https://img.shields.io/github/languages/top/ollama-webui/ollama-webui?style=plastic)
 ![GitHub last commit](https://img.shields.io/github/last-commit/ollama-webui/ollama-webui?color=red&style=plastic)
 ![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Follama-webui%2Follama-wbui&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)
+[![Discord](https://img.shields.io/badge/Discord-Ollama_Web_UI-blue?logo=discord&logoColor=white)](https://discord.gg/5rJgQTnV4s)
 [![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/tjbck)
 
 ChatGPT-Style Web Interface for Ollama 🦙
@@ -51,6 +53,16 @@ ChatGPT-Style Web Interface for Ollama 🦙
 ### Prerequisites
 
 Make sure you have the latest version of Ollama installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
+
+#### Installing Both Ollama and Ollama Web UI Using Docker Compose
+
+If you don't have Ollama installed, you can also use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
+
+```bash
+docker compose up --build
+```
+
+This command will install both Ollama and Ollama Web UI on your system. Ensure to modify the `compose.yaml` file for GPU support if needed.
 
 #### Checking Ollama
 
@@ -190,7 +202,7 @@ This project is licensed under the [MIT License](LICENSE) - see the [LICENSE](LI
 ## Support 💬
 
 If you have any questions, suggestions, or need assistance, please open an issue or join our
-[Ollama Web UI Discord community](https://discord.gg/stz8SsUDcF) or
+[Ollama Web UI Discord community](https://discord.gg/5rJgQTnV4s) or
 [Ollama Discord community](https://discord.gg/ollama) to connect with us! 🤝
 
 ---
