@@ -385,7 +385,6 @@
 			}
 
 			renderLatex();
-
 			hljs.highlightAll();
 			createCopyCodeBlockButton();
 		}
@@ -546,6 +545,12 @@
 				history.currentId = messageId;
 			}
 		}
+
+		await tick();
+
+		renderLatex();
+		hljs.highlightAll();
+		createCopyCodeBlockButton();
 	};
 
 	const showNextMessage = async (message) => {
@@ -586,6 +591,12 @@
 				history.currentId = messageId;
 			}
 		}
+
+		await tick();
+
+		renderLatex();
+		hljs.highlightAll();
+		createCopyCodeBlockButton();
 	};
 
 	//////////////////////////
