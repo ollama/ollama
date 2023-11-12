@@ -1145,13 +1145,13 @@
 									bind:value={selectedModel}
 									disabled={messages.length != 0}
 								>
-									<option value="" selected>Select a model</option>
+									<option class=" text-gray-700" value="" selected>Select a model</option>
 
 									{#each models as model}
 										{#if model.name === 'hr'}
 											<hr />
 										{:else}
-											<option value={model.name} class=" text-lg">{model.name}</option>
+											<option value={model.name} class="text-gray-700 text-lg">{model.name}</option>
 										{/if}
 									{/each}
 								</select>
