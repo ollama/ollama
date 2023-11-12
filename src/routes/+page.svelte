@@ -372,7 +372,7 @@
 				history = _history;
 			}
 
-			if ('models' in chat) {
+			if ('models' in chat && chat.models !== undefined) {
 				selectedModels = chat.models ?? selectedModels;
 			} else {
 				selectedModels = [chat.model ?? ''];
