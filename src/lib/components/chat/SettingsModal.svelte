@@ -749,7 +749,7 @@
 						<div class=" space-y-3">
 							<div>
 								<div class=" py-1 flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Speech Auto-Send</div>
+									<div class=" self-center text-sm font-medium">Voice Input Auto-Send</div>
 
 									<button
 										class="p-1 px-3 text-xs flex rounded transition"
