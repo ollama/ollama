@@ -432,6 +432,7 @@
 			await db.put('chats', {
 				id: chat.id,
 				model: chat.model,
+				models: chat.models,
 				system: chat.system,
 				options: chat.options,
 				title: chat.title,
