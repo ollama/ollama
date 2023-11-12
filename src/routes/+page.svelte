@@ -479,6 +479,7 @@
 		history.messages[userMessageId] = userMessage;
 		history.currentId = userMessageId;
 
+		await tick();
 		await sendPrompt(userPrompt, userMessageId);
 	};
 
@@ -809,15 +810,28 @@
 		}
 	};
 
-	const sendPromptOpenAI = async (userPrompt) => {
+	const sendPromptOpenAI = async (userPrompt, parentId) => {
 		if (settings.OPENAI_API_KEY) {
 			if (models) {
+				let responseMessageId = uuidv4();
+
 				let responseMessage = {
+					parentId: parentId,
+					id: responseMessageId,
+					childrenIds: [],
 					role: 'assistant',
 					content: ''
 				};
 
-				messages = [...messages, responseMessage];
+				history.messages[responseMessageId] = responseMessage;
+				history.currentId = responseMessageId;
+				if (parentId !== null) {
+					history.messages[parentId].childrenIds = [
+						...history.messages[parentId].childrenIds,
+						responseMessageId
+					];
+				}
+
 				window.scrollTo({ top: document.body.scrollHeight });
 
 				const res = await fetch(`https://api.openai.com/v1/chat/completions`, {
@@ -839,7 +853,7 @@
 							...messages
 						]
 							.filter((message) => message)
-							.map((message) => ({ ...message, done: undefined })),
+							.map((message) => ({ role: message.role, content: message.content })),
 						temperature: settings.temperature ?? undefined,
 						top_p: settings.top_p ?? undefined,
 						frequency_penalty: settings.repeat_penalty ?? undefined
