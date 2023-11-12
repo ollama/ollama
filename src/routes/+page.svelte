@@ -20,7 +20,8 @@
 	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
 	let db;
 
-	let selectedModel = '';
+	// let selectedModel = '';
+	let selectedModels = [''];
 	let settings = {
 		system: null,
 		temperature: null
@@ -293,10 +294,12 @@
 				await getModelTags();
 			}
 
-			selectedModel =
-				settings.model && models.map((model) => model.name).includes(settings.model)
-					? settings.model
-					: '';
+			// selectedModel =
+			// 	settings.model && models.map((model) => model.name).includes(settings.model)
+			// 		? settings.model
+			// 		: '';
+
+			selectedModels = settings.models ?? [''];
 
 			console.log(chatId);
 		}
@@ -317,7 +320,7 @@
 	};
 
 	const saveDefaultModel = () => {
-		settings.model = selectedModel;
+		settings.models = selectedModels;
 		localStorage.setItem('settings', JSON.stringify(settings));
 		toast.success('Default model updated');
 	};
@@ -334,7 +337,7 @@
 		const chat = await db.get('chats', id);
 		console.log(chat);
 		if (chatId !== chat.id) {
-			if ('history' in chat) {
+			if ('history' in chat && chat.history !== undefined) {
 				history = chat.history;
 			} else {
 				let _history = {
@@ -369,11 +372,16 @@
 				history = _history;
 			}
 
+			if ('models' in chat) {
+				selectedModels = chat.models ?? selectedModels;
+			} else {
+				selectedModels = [chat.model ?? ''];
+			}
+
 			console.log(history);
 
 			title = chat.title;
 			chatId = chat.id;
-			selectedModel = chat.model ?? selectedModel;
 			settings.system = chat.system ?? settings.system;
 			settings.temperature = chat.temperature ?? settings.temperature;
 			autoScroll = true;
@@ -499,7 +507,7 @@
 		await db.put('chats', {
 			id: chatId,
 			title: title === '' ? 'New Chat' : title,
-			model: selectedModel,
+			models: selectedModels,
 			system: settings.system,
 			options: {
 				temperature: settings.temperature
@@ -668,26 +676,26 @@
 	};
 
 	const sendPrompt = async (userPrompt, parentId) => {
-		// await Promise.all(
-		// 	selectedModels.map((model) => {
-		// 		if (selectedModel.includes('gpt-')) {
-		// 			await sendPromptOpenAI(userPrompt, parentId);
-		// 		} else {
-		// 			await sendPromptOllama(userPrompt, parentId);
-		// 		}
-		// 	})
-		// );
+		await Promise.all(
+			selectedModels.map(async (model) => {
+				if (model.includes('gpt-')) {
+					await sendPromptOpenAI(model, userPrompt, parentId);
+				} else {
+					await sendPromptOllama(model, userPrompt, parentId);
+				}
+			})
+		);
 
-		if (selectedModel.includes('gpt-')) {
-			await sendPromptOpenAI(userPrompt, parentId);
-		} else {
-			await sendPromptOllama(userPrompt, parentId);
-		}
+		// if (selectedModel.includes('gpt-')) {
+		// 	await sendPromptOpenAI(userPrompt, parentId);
+		// } else {
+		// 	await sendPromptOllama(userPrompt, parentId);
+		// }
 
 		console.log(history);
 	};
 
-	const sendPromptOllama = async (userPrompt, parentId) => {
+	const sendPromptOllama = async (model, userPrompt, parentId) => {
 		let responseMessageId = uuidv4();
 
 		let responseMessage = {
@@ -695,7 +703,8 @@
 			id: responseMessageId,
 			childrenIds: [],
 			role: 'assistant',
-			content: ''
+			content: '',
+			model: model
 		};
 
 		history.messages[responseMessageId] = responseMessage;
@@ -715,7 +724,7 @@
 				'Content-Type': 'text/event-stream'
 			},
 			body: JSON.stringify({
-				model: selectedModel,
+				model: model,
 				prompt: userPrompt,
 				system: settings.system ?? undefined,
 				options: {
@@ -788,7 +797,7 @@
 			await db.put('chats', {
 				id: chatId,
 				title: title === '' ? 'New Chat' : title,
-				model: selectedModel,
+				models: selectedModels,
 				system: settings.system,
 				options: {
 					temperature: settings.temperature
@@ -810,7 +819,7 @@
 		}
 	};
 
-	const sendPromptOpenAI = async (userPrompt, parentId) => {
+	const sendPromptOpenAI = async (model, userPrompt, parentId) => {
 		if (settings.OPENAI_API_KEY) {
 			if (models) {
 				let responseMessageId = uuidv4();
@@ -820,7 +829,8 @@
 					id: responseMessageId,
 					childrenIds: [],
 					role: 'assistant',
-					content: ''
+					content: '',
+					model: model
 				};
 
 				history.messages[responseMessageId] = responseMessage;
@@ -841,7 +851,7 @@
 						Authorization: `Bearer ${settings.OPENAI_API_KEY}`
 					},
 					body: JSON.stringify({
-						model: selectedModel,
+						model: model,
 						stream: true,
 						messages: [
 							settings.system
@@ -909,7 +919,8 @@
 					await db.put('chats', {
 						id: chatId,
 						title: title === '' ? 'New Chat' : title,
-						model: selectedModel,
+						models: selectedModels,
+
 						system: settings.system,
 						options: {
 							temperature: settings.temperature
@@ -941,7 +952,7 @@
 	const submitPrompt = async (userPrompt) => {
 		console.log('submitPrompt');
 
-		if (selectedModel === '') {
+		if (selectedModels.includes('')) {
 			toast.error('Model not selected');
 		} else if (messages.length != 0 && messages.at(-1).done != true) {
 			console.log('wait');
@@ -970,7 +981,7 @@
 			if (messages.length == 0) {
 				await db.put('chats', {
 					id: chatId,
-					model: selectedModel,
+					models: selectedModels,
 					system: settings.system,
 					options: {
 						temperature: settings.temperature
@@ -1022,7 +1033,7 @@
 				'Content-Type': 'text/event-stream'
 			},
 			body: JSON.stringify({
-				model: selectedModel,
+				model: selectedModels[0],
 				prompt: `Generate a brief 3-5 word title for this question, excluding the term 'title.' Then, please reply with only the title: ${userPrompt}`,
 				stream: false
 			})
@@ -1079,7 +1090,7 @@
 		<div class="min-h-screen w-full flex justify-center">
 			<div class=" py-2.5 flex flex-col justify-between w-full">
 				<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-14">
-					<div class="flex justify-between my-2 text-sm">
+					<!-- <div class="flex justify-between my-2 text-sm">
 						<select
 							id="models"
 							class="outline-none bg-transparent text-lg font-semibold rounded-lg block w-full placeholder-gray-800"
@@ -1122,9 +1133,9 @@
 								/>
 							</svg>
 						</button>
-					</div>
+					</div> -->
 
-					<!-- <div class="flex flex-col">
+					<div class="flex flex-col my-2">
 						{#each selectedModels as selectedModel, selectedModelIdx}
 							<div class="flex">
 								<select
@@ -1144,15 +1155,15 @@
 									{/each}
 								</select>
 
-								{#if selectedModelIdx === selectedModels.length - 1}
+								{#if selectedModelIdx === 0}
 									<button
 										class="  self-center {selectedModelIdx === 0
 											? 'mr-3'
 											: 'mr-7'} disabled:text-gray-600 disabled:hover:text-gray-600"
-										disabled={selectedModels.length === 3}
+										disabled={selectedModels.length === 3 || messages.length != 0}
 										on:click={() => {
 											if (selectedModels.length < 3) {
-												selectedModels = ['', ...selectedModels];
+												selectedModels = [...selectedModels, ''];
 											}
 										}}
 									>
@@ -1169,9 +1180,11 @@
 									</button>
 								{:else}
 									<button
-										class="  self-center dark:hover:text-gray-300 {selectedModelIdx === 0
+										class="  self-center dark:hover:text-gray-300 disabled:text-gray-600 disabled:hover:text-gray-600 {selectedModelIdx ===
+										0
 											? 'mr-3'
 											: 'mr-7'}"
+										disabled={messages.length != 0}
 										on:click={() => {
 											selectedModels.splice(selectedModelIdx, 1);
 											selectedModels = selectedModels;
@@ -1220,7 +1233,7 @@
 								{/if}
 							</div>
 						{/each}
-					</div> -->
+					</div>
 
 					<div class="text-left mt-1.5 text-xs text-gray-500">
 						<button on:click={saveDefaultModel}> Set as default</button>
@@ -1255,7 +1268,13 @@
 
 										<div class="w-full">
 											<div class=" self-center font-bold mb-0.5">
-												{message.role === 'user' ? 'You' : 'Ollama'}
+												{#if message.role === 'user'}
+													You
+												{:else}
+													Ollama <span class=" text-gray-500 text-sm font-medium"
+														>{message.model ? ` ${message.model}` : ''}</span
+													>
+												{/if}
 											</div>
 
 											{#if message.role !== 'user' && message.content === ''}
@@ -1622,7 +1641,7 @@
 							<Suggestions {submitPrompt} />
 						{/if}
 
-						{#if autoScroll === false}
+						{#if autoScroll === false && messages.length > 0}
 							<div class=" flex justify-center mb-4">
 								<button
 									class=" bg-white/20 p-1.5 rounded-full"
