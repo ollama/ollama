@@ -232,6 +232,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
+- [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
 
 ### Libraries
