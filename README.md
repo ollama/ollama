@@ -243,6 +243,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama4j for Java](https://github.com/amithkoujalgi/ollama4j)
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
+- [Ollama for Dart](https://github.com/breitburg/dart-ollama)
 
 ### Extensions & Plugins
 
