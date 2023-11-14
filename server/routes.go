@@ -26,6 +26,7 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
+	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
 )
 
@@ -414,6 +415,19 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
+	modelfile, err := os.Open(req.Path)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer modelfile.Close()
+
+	commands, err := parser.Parse(modelfile)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -424,7 +438,7 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, req.Name, req.Path, fn); err != nil {
+		if err := CreateModel(ctx, req.Name, commands, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
