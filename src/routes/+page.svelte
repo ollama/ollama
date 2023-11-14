@@ -618,7 +618,8 @@
 			method: 'GET',
 			headers: {
 				Accept: 'application/json',
-				'Content-Type': 'application/json'
+				'Content-Type': 'application/json',
+				...(settings.authHeader && { Authorization: settings.authHeader })
 			}
 		})
 			.then(async (res) => {
@@ -722,7 +723,8 @@
 		const res = await fetch(`${API_BASE_URL}/generate`, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'text/event-stream'
+				'Content-Type': 'text/event-stream',
+				...(settings.authHeader && { Authorization: settings.authHeader })
 			},
 			body: JSON.stringify({
 				model: model,
@@ -1031,7 +1033,8 @@
 		const res = await fetch(`${API_BASE_URL}/generate`, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'text/event-stream'
+				'Content-Type': 'text/event-stream',
+				...(settings.authHeader && { Authorization: settings.authHeader })
 			},
 			body: JSON.stringify({
 				model: selectedModels[0],

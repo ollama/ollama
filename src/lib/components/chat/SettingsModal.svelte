@@ -4,6 +4,7 @@
 
 	import { WEB_UI_VERSION, API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
+	import { onMount } from 'svelte';
 
 	export let show = false;
 	export let saveSettings: Function;
@@ -34,6 +35,11 @@
 	let speechAutoSend = false;
 	let gravatarEmail = '';
 	let OPENAI_API_KEY = '';
+
+	// Auth
+	let authEnabled = false;
+	let authType = 'Basic';
+	let authContent = '';
 
 	function getGravatarURL(email) {
 		// Trim leading and trailing whitespace from
@@ -103,6 +109,10 @@
 	const toggleSpeechAutoSend = async () => {
 		speechAutoSend = !speechAutoSend;
 		saveSettings({ speechAutoSend: speechAutoSend });
+	};
+
+	const toggleAuthHeader = async () => {
+		authEnabled = !authEnabled;
 	};
 
 	const pullModelHandler = async () => {
@@ -228,6 +238,16 @@
 		gravatarEmail = settings.gravatarEmail ?? '';
 		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 	}
+
+	onMount(() => {
+		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+
+		authEnabled = settings.authHeader !== undefined ? true : false;
+		if (authEnabled) {
+			authType = settings.authHeader.split(' ')[0];
+			authContent = settings.authHeader.split(' ')[1];
+		}
+	});
 </script>
 
 <Modal bind:show>
@@ -360,6 +380,32 @@
 
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'auth'
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+					on:click={() => {
+						selectedTab = 'auth';
+					}}
+				>
+					<div class=" self-center mr-2">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 24 24"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.39-.223-2.73-.635-3.985a.75.75 0 00-.722-.516l-.143.001c-2.996 0-5.717-1.17-7.734-3.08zm3.094 8.016a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</div>
+					<div class=" self-center">Authentication</div>
+				</button>
+
+				<button
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'about'
 						? 'bg-gray-200 dark:bg-gray-700'
 						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
@@ -384,7 +430,7 @@
 					<div class=" self-center">About</div>
 				</button>
 			</div>
-			<div class="flex-1 md:min-h-[300px]">
+			<div class="flex-1 md:min-h-[330px]">
 				{#if selectedTab === 'general'}
 					<div class="flex flex-col space-y-3">
 						<div>
@@ -811,6 +857,123 @@
 									Adds optional support for 'gpt-*' models available.
 								</div>
 							</div>
+						</div>
+
+						<div class="flex justify-end pt-3 text-sm font-medium">
+							<button
+								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
+								type="submit"
+							>
+								Save
+							</button>
+						</div>
+					</form>
+				{:else if selectedTab === 'auth'}
+					<form
+						class="flex flex-col h-full justify-between space-y-3 text-sm"
+						on:submit|preventDefault={() => {
+							console.log('auth save');
+							saveSettings({
+								authHeader: authEnabled ? `${authType} ${authContent}` : undefined
+							});
+							show = false;
+						}}
+					>
+						<div class=" space-y-3">
+							<div>
+								<div class=" py-1 flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Authorization Header</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										type="button"
+										on:click={() => {
+											toggleAuthHeader();
+										}}
+									>
+										{#if authEnabled === true}
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 24 24"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													fill-rule="evenodd"
+													d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3a3 3 0 00-3 3v6.75a3 3 0 003 3h10.5a3 3 0 003-3v-6.75a3 3 0 00-3-3v-3c0-2.9-2.35-5.25-5.25-5.25zm3.75 8.25v-3a3.75 3.75 0 10-7.5 0v3h7.5z"
+													clip-rule="evenodd"
+												/>
+											</svg>
+
+											<span class="ml-2 self-center"> On </span>
+										{:else}
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 24 24"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													d="M18 1.5c2.9 0 5.25 2.35 5.25 5.25v3.75a.75.75 0 01-1.5 0V6.75a3.75 3.75 0 10-7.5 0v3a3 3 0 013 3v6.75a3 3 0 01-3 3H3.75a3 3 0 01-3-3v-6.75a3 3 0 013-3h9v-3c0-2.9 2.35-5.25 5.25-5.25z"
+												/>
+											</svg>
+
+											<span class="ml-2 self-center">Off</span>
+										{/if}
+									</button>
+								</div>
+							</div>
+
+							{#if authEnabled}
+								<hr class=" dark:border-gray-700" />
+
+								<div class="mt-2">
+									<div class=" py-1 flex w-full space-x-2">
+										<button
+											class=" py-1 font-semibold flex rounded transition"
+											on:click={() => {
+												authType = authType === 'Basic' ? 'Bearer' : 'Basic';
+											}}
+											type="button"
+										>
+											{#if authType === 'Basic'}
+												<span class="self-center mr-2">Basic</span>
+											{:else if authType === 'Bearer'}
+												<span class="self-center mr-2">Bearer</span>
+											{/if}
+										</button>
+
+										<div class="flex-1">
+											<input
+												class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+												placeholder="Enter Authorization Header Content"
+												bind:value={authContent}
+											/>
+										</div>
+									</div>
+									<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+										Toggle between <span class=" text-gray-500 dark:text-gray-300 font-medium"
+											>'Basic'</span
+										>
+										and <span class=" text-gray-500 dark:text-gray-300 font-medium">'Bearer'</span> by
+										clicking on the label next to the input.
+									</div>
+								</div>
+
+								<hr class=" dark:border-gray-700" />
+
+								<div>
+									<div class=" mb-2.5 text-sm font-medium">Preview Authorization Header</div>
+									<textarea
+										value={JSON.stringify({
+											Authorization: `${authType} ${authContent}`
+										})}
+										class="w-full rounded p-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none resize-none"
+										rows="2"
+										disabled
+									/>
+								</div>
+							{/if}
 						</div>
 
 						<div class="flex justify-end pt-3 text-sm font-medium">
