@@ -33,7 +33,11 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
 
+- ⚙️ **Many Models Conversations**: : Effortlessly engage with various models simultaneously, harnessing their unique strengths for optimal responses. Enhance your experience by leveraging a diverse set of models in parallel.
+
 - 🤝 **OpenAI Model Integration**: Seamlessly utilize OpenAI models alongside Ollama models for a versatile conversational experience.
+
+- 🔄 **Regeneration History Access**: Easily revisit and explore your entire regeneration history.
 
 - 📜 **Chat History**: Effortlessly access and manage your conversation history.
 
