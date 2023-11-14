@@ -782,7 +782,9 @@ func PruneLayers() error {
 		if runtime.GOOS == "windows" {
 			name = strings.ReplaceAll(name, "-", ":")
 		}
-		deleteMap[name] = struct{}{}
+		if strings.HasPrefix(name, "sha256:") {
+			deleteMap[name] = struct{}{}
+		}
 	}
 
 	log.Printf("total blobs: %d", len(deleteMap))
