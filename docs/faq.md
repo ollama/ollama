@@ -104,3 +104,6 @@ No. Anything you do with Ollama, such as generate a response from the model, sta
 ## Does Ollama use the OpenAI API?
 
 As of November 14, 2023, Ollama does not use the OpenAI API. The Ollama API is documented at [jmorganca/ollama/docs/api](./api) and works differently from how the OpenAI API works. We are investigating other options that may offer more compatibility. Until then, some of our users have had success with using [LiteLLM](https://docs.litellm.ai/docs/providers/ollama) in front of Ollama. 
+## How can I use Ollama in VSCode to help me code?
+
+There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. You can see the list of plugins at the bottom of the main repository readme.
