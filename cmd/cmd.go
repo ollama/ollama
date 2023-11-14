@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -350,34 +349,44 @@ func pull(model string, insecure bool) error {
 }
 
 func RunGenerate(cmd *cobra.Command, args []string) error {
-	if len(args) > 1 {
-		// join all args into a single prompt
-		wordWrap := false
-		if term.IsTerminal(int(os.Stdout.Fd())) {
-			wordWrap = true
-		}
+	format, err := cmd.Flags().GetString("format")
+	if err != nil {
+		return err
+	}
 
-		nowrap, err := cmd.Flags().GetBool("nowordwrap")
-		if err != nil {
-			return err
-		}
-		if nowrap {
-			wordWrap = false
-		}
+	prompts := args[1:]
 
-		format, err := cmd.Flags().GetString("format")
+	// prepend stdin to the prompt if provided
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		in, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return err
 		}
 
-		return generate(cmd, args[0], strings.Join(args[1:], " "), wordWrap, format)
+		prompts = append([]string{string(in)}, prompts...)
 	}
 
-	if readline.IsTerminal(int(os.Stdin.Fd())) {
-		return generateInteractive(cmd, args[0])
+	// output is being piped
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return generate(cmd, args[0], strings.Join(prompts, " "), false, format)
 	}
 
-	return generateBatch(cmd, args[0])
+	wordWrap := os.Getenv("TERM") == "xterm-256color"
+
+	nowrap, err := cmd.Flags().GetBool("nowordwrap")
+	if err != nil {
+		return err
+	}
+	if nowrap {
+		wordWrap = false
+	}
+
+	// prompts are provided via stdin or args so don't enter interactive mode
+	if len(prompts) > 0 {
+		return generate(cmd, args[0], strings.Join(prompts, " "), wordWrap, format)
+	}
+
+	return generateInteractive(cmd, args[0], wordWrap, format)
 }
 
 type generateContextKey string
@@ -490,7 +499,7 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 	return nil
 }
 
-func generateInteractive(cmd *cobra.Command, model string) error {
+func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format string) error {
 	// load the model
 	if err := generate(cmd, model, "", false, ""); err != nil {
 		return err
@@ -540,26 +549,6 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 	scanner, err := readline.New(prompt)
 	if err != nil {
 		return err
-	}
-
-	format, err := cmd.Flags().GetString("format")
-	if err != nil {
-		return err
-	}
-
-	var wordWrap bool
-	termType := os.Getenv("TERM")
-	if termType == "xterm-256color" {
-		wordWrap = true
-	}
-
-	// override wrapping if the user turned it off
-	nowrap, err := cmd.Flags().GetBool("nowordwrap")
-	if err != nil {
-		return err
-	}
-	if nowrap {
-		wordWrap = false
 	}
 
 	fmt.Print(readline.StartBracketedPaste)
@@ -713,19 +702,6 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 			}
 		}
 	}
-}
-
-func generateBatch(cmd *cobra.Command, model string) error {
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		prompt := scanner.Text()
-		fmt.Printf(">>> %s\n", prompt)
-		if err := generate(cmd, model, prompt, false, ""); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
