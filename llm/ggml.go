@@ -82,7 +82,7 @@ type model interface {
 
 type container interface {
 	Name() string
-	Decode(io.Reader) (model, error)
+	Decode(io.Reader) error
 }
 
 type containerGGML struct{}
@@ -91,8 +91,8 @@ func (c *containerGGML) Name() string {
 	return "ggml"
 }
 
-func (c *containerGGML) Decode(r io.Reader) (model, error) {
-	return nil, nil
+func (c *containerGGML) Decode(r io.Reader) error {
+	return nil
 }
 
 type containerGGMF struct {
@@ -103,18 +103,19 @@ func (c *containerGGMF) Name() string {
 	return "ggmf"
 }
 
-func (c *containerGGMF) Decode(r io.Reader) (model, error) {
+func (c *containerGGMF) Decode(r io.Reader) error {
 	var version uint32
 	binary.Read(r, binary.LittleEndian, &version)
 
 	switch version {
 	case 1:
 	default:
-		return nil, errors.New("invalid version")
+		return errors.New("invalid version")
 	}
 
 	c.version = version
-	return nil, nil
+
+	return nil
 }
 
 type containerGGJT struct {
@@ -125,22 +126,19 @@ func (c *containerGGJT) Name() string {
 	return "ggjt"
 }
 
-func (c *containerGGJT) Decode(r io.Reader) (model, error) {
+func (c *containerGGJT) Decode(r io.Reader) error {
 	var version uint32
 	binary.Read(r, binary.LittleEndian, &version)
 
 	switch version {
 	case 1, 2, 3:
 	default:
-		return nil, errors.New("invalid version")
+		return errors.New("invalid version")
 	}
 
 	c.version = version
 
-	// different model types may have different layouts for hyperparameters
-	var llama llamaModel
-	binary.Read(r, binary.LittleEndian, &llama.hyperparameters)
-	return &llama, nil
+	return nil
 }
 
 type containerLORA struct {
@@ -151,18 +149,18 @@ func (c *containerLORA) Name() string {
 	return "ggla"
 }
 
-func (c *containerLORA) Decode(r io.Reader) (model, error) {
+func (c *containerLORA) Decode(r io.Reader) error {
 	var version uint32
 	binary.Read(r, binary.LittleEndian, &version)
 
 	switch version {
 	case 1:
 	default:
-		return nil, errors.New("invalid version")
+		return errors.New("invalid version")
 	}
 
 	c.version = version
-	return nil, nil
+	return nil
 }
 
 const (
@@ -200,12 +198,24 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 		return nil, errors.New("invalid file magic")
 	}
 
-	model, err := ggml.Decode(r)
-	if err != nil {
-		return nil, err
+	if ggml.magic == FILE_MAGIC_GGUF_LE || ggml.magic == FILE_MAGIC_GGUF_BE {
+		ggufContainer, ok := ggml.container.(*containerGGUF)
+		if !ok {
+			return nil, errors.New("failed to decode gguf model container")
+		}
+		model := &ggufModel{
+			containerGGUF: ggufContainer,
+			kv:            make(kv),
+		}
+		if err := model.Decode(r); err != nil {
+			return nil, err
+		}
+		ggml.model = model
+	} else {
+		var llama llamaModel
+		binary.Read(r, binary.LittleEndian, &llama.hyperparameters)
+		ggml.model = &llama
 	}
-
-	ggml.model = model
 
 	// final model type
 	return &ggml, nil

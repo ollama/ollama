@@ -31,7 +31,7 @@ func (c *containerGGUF) Name() string {
 	return "gguf"
 }
 
-func (c *containerGGUF) Decode(r io.Reader) (model, error) {
+func (c *containerGGUF) Decode(r io.Reader) error {
 	binary.Read(r, c.bo, &c.Version)
 
 	switch c.Version {
@@ -41,12 +41,7 @@ func (c *containerGGUF) Decode(r io.Reader) (model, error) {
 		binary.Read(r, c.bo, &c.V2)
 	}
 
-	model := newGGUFModel(c)
-	if err := model.Decode(r); err != nil {
-		return nil, err
-	}
-
-	return model, nil
+	return nil
 }
 
 const (
