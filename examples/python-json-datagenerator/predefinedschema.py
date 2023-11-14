@@ -15,7 +15,7 @@ template = {
   "phoneNumber": ""
 }
 
-prompt = f"generate one realisticly believable sample data set of a persons first name, last name, address in the US, and  phone number. \nUse the following template: {json.dumps(template)}."
+prompt = f"generate one realistically believable sample data set of a persons first name, last name, address in the US, and  phone number. \nUse the following template: {json.dumps(template)}."
 
 data = {
     "prompt": prompt,
