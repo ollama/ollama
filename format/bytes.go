@@ -12,11 +12,11 @@ const (
 func HumanBytes(b int64) string {
 	switch {
 	case b > GigaByte:
-		return fmt.Sprintf("%d GB", b/GigaByte)
+		return fmt.Sprintf("%.1f GB", float64(b)/GigaByte)
 	case b > MegaByte:
-		return fmt.Sprintf("%d MB", b/MegaByte)
+		return fmt.Sprintf("%.1f MB", float64(b)/MegaByte)
 	case b > KiloByte:
-		return fmt.Sprintf("%d KB", b/KiloByte)
+		return fmt.Sprintf("%.1f KB", float64(b)/KiloByte)
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
