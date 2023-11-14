@@ -3,6 +3,7 @@ import re
 import requests
 import json
 
+# prelines and postlines represent the number of lines of context to include in the output around the error
 prelines = 10
 postlines = 10
 
