@@ -410,17 +410,27 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" || req.Path == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name and path are required"})
+	if req.Name == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
 		return
 	}
 
-	modelfile, err := os.Open(req.Path)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if req.Path == "" && req.Modelfile == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "path or modelfile are required"})
 		return
 	}
-	defer modelfile.Close()
+
+	var modelfile io.Reader = strings.NewReader(req.Modelfile)
+	if req.Path != "" && req.Modelfile == "" {
+		bin, err := os.Open(req.Path)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("error reading modelfile: %s", err)})
+			return
+		}
+		defer bin.Close()
+
+		modelfile = bin
+	}
 
 	commands, err := parser.Parse(modelfile)
 	if err != nil {
