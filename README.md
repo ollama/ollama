@@ -79,6 +79,8 @@ If you want to access the Ollama web interface over LAN, for example, from your 
 OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
 ```
 
+In case you encounter any issues running the command and encounter errors, ensure to turn off any existing Ollama service that might be running in the background before retrying.
+
 If you're running Ollama via Docker:
 
 ```bash
@@ -88,6 +90,12 @@ docker run -d -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_ORIGINS="*" --nam
 ### Using Docker 🐳
 
 If Ollama is hosted on your local machine, run the following command:
+
+```bash
+docker run -d -p 3000:8080 --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+```
+
+Alternatively, if you prefer to build the container yourself, use the following command:
 
 ```bash
 docker build --build-arg OLLAMA_API_BASE_URL='' -t ollama-webui .
@@ -150,31 +158,7 @@ docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
 
 ## Troubleshooting
 
-### Connection Errors
-
-If you encounter difficulties connecting to the Ollama server, please follow these steps to diagnose and resolve the issue:
-
-**1. Verify Ollama Server Configuration**
-
-Ensure that the Ollama server is properly configured to accept incoming connections from all origins. To do this, make sure the server is launched with the `OLLAMA_ORIGINS=*` environment variable, as shown in the following command:
-
-```bash
-OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
-```
-
-This configuration allows Ollama to accept connections from any source.
-
-**2. Check Ollama URL Format**
-
-Ensure that the Ollama URL is correctly formatted in the application settings. Follow these steps:
-
-- Go to "Settings" within the Ollama WebUI.
-- Navigate to the "General" section.
-- Verify that the Ollama URL is in the following format: `http://localhost:11434/api`.
-
-It is crucial to include the `/api` at the end of the URL to ensure that the Ollama Web UI can communicate with the server.
-
-By following these troubleshooting steps, you should be able to identify and resolve connection issues with your Ollama server configuration. If you require further assistance or have additional questions, please don't hesitate to reach out or refer to our documentation for comprehensive guidance.
+See [TROUBLESHOOTING.md](/TROUBLESHOOTING.md) for information on how to troubleshoot and/or join our [Ollama Web UI Discord community](https://discord.gg/5rJgQTnV4s).
 
 ## What's Next? 🚀
 
@@ -186,17 +170,16 @@ Here are some exciting tasks on our to-do list:
 - 📈 **User Study Tools**: Providing specialized tools, like heat maps and behavior tracking modules, to empower researchers in capturing and analyzing user behavior patterns with precision and accuracy.
 - 🌐 **Web Browser Extension**: Seamlessly integrate our services into your browsing experience with our convenient browser extension.
 - 📚 **Enhanced Documentation**: Elevate your setup and customization experience with improved, comprehensive documentation.
-- 🌟 **User Interface Enhancement**: Elevate the user interface to deliver a smoother, more enjoyable interaction.
-- 🧐 **User Testing and Feedback Gathering**: Conduct thorough user testing to gather insights and refine our offerings based on valuable user feedback.
 
 Feel free to contribute and help us make Ollama Web UI even better! 🙌
 
-## Contributors ✨
+## Supporters ✨
 
-A big shoutout to our amazing contributors who have helped make this project possible! 🙏
+A big shoutout to our amazing supporters who's helping to make this project possible! 🙏
 
-- [Timothy J. Baek](https://github.com/tjbck)
-- [AJ ONeal](https://github.com/coolaj86)
+### Platinum Sponsors 🤍
+
+- [Prof. Lawrence Kim @ SFU](https://www.lhkim.com/)
 
 ## License 📜
 
@@ -210,4 +193,4 @@ If you have any questions, suggestions, or need assistance, please open an issue
 
 ---
 
-Let's make Ollama Web UI even more amazing together! 💪
+Created by [Timothy J. Baek](https://github.com/tjbck) - Let's make Ollama Web UI even more amazing together! 💪
