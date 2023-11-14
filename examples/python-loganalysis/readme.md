@@ -45,4 +45,4 @@ for line in response.iter_lines():
 
 There is a lot more that can be done here. This is a simple way to detect errors, looking for the word error. Perhaps it would be interesting to find anomalous activity in the logs. It could be interesting to create embeddings for each line and compare them, looking for similar lines. Or look into applying Levenshtein Distance algorithms to find similar lines to help identify the anomalous lines.
 
-Also try different models and different prompts to analyze the data. You could consider adding RAG to this to help understand newer log formats.
+Also try different models and different prompts to analyze the data. You could consider adding retrieval augmented generation (RAG) to this to help understand newer log formats.
