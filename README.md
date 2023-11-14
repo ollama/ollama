@@ -183,7 +183,7 @@ A big shoutout to our amazing supporters who's helping to make this project poss
 
 ## License 📜
 
-Ollama Web UI is licensed under CC BY-NC-SA 4.0 - see the [LICENSE](LICENSE) file for details. 📄
+This project is licensed under the [MIT License](LICENSE) - see the [LICENSE](LICENSE) file for details. 📄
 
 ## Support 💬
 
