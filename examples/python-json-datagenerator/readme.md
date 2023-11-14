@@ -24,7 +24,7 @@ When running `randomaddresses.py` you will see that the schema changes and adapt
 
 In `predefinedschema.py`, a template has been specified in the prompt as well. It's been defined as JSON and then dumped into the prompt string to make it easier to work with.
 
-Both examples turn streaming off so that we end up with the completed JSON all at once. We need to convert the `response.text` to JSON so that when we output it as a string we can set the indent spacing to make the output attractive.
+Both examples turn streaming off so that we end up with the completed JSON all at once. We need to convert the `response.text` to JSON so that when we output it as a string we can set the indent spacing to make the output easy to read.
 
 ```python
 response = requests.post("http://localhost:11434/api/generate", json=data, stream=False)
