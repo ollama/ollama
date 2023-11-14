@@ -398,7 +398,7 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 		generateContext = []int{}
 	}
 
-	termWidth, _, err := term.GetSize(int(0))
+	termWidth, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		wordWrap = false
 	}
