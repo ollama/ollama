@@ -542,7 +542,11 @@ func generateInteractive(cmd *cobra.Command, model string) error {
 		return err
 	}
 
-	var format string
+	format, err := cmd.Flags().GetString("format")
+	if err != nil {
+		return err
+	}
+
 	var wordWrap bool
 	termType := os.Getenv("TERM")
 	if termType == "xterm-256color" {
