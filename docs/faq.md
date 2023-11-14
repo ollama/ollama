@@ -96,3 +96,7 @@ The manifest lists all the layers used in this model. You will see a `media type
 ### How can I change where Ollama stores models?
 
 To modify where models are stored, you can use the `OLLAMA_MODELS` environment variable. Note that on Linux this means defining `OLLAMA_MODELS` in a drop-in `/etc/systemd/system/ollama.service.d` service file, reloading systemd, and restarting the ollama service.
+
+## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
+
+No. Anything you do with Ollama, such as generate a response from the model, stays with you. We don't collect any data about how you use the model. You are always in control of your own data.
