@@ -100,3 +100,7 @@ To modify where models are stored, you can use the `OLLAMA_MODELS` environment v
 ## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
 
 No. Anything you do with Ollama, such as generate a response from the model, stays with you. We don't collect any data about how you use the model. You are always in control of your own data.
+
+## Does Ollama use the OpenAI API?
+
+As of November 14, 2023, Ollama does not use the OpenAI API. The Ollama API is documented at [jmorganca/ollama/docs/api](./api) and works differently from how the OpenAI API works. We are investigating other options that may offer more compatibility. Until then, some of our users have had success with using [LiteLLM](https://docs.litellm.ai/docs/providers/ollama) in front of Ollama. 
