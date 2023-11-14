@@ -1,5 +1,11 @@
 # FAQ
 
+- [How can I view the logs?](#how-can-i-view-the-logs)
+- [How can I expose Ollama on my network?](#how-can-i-expose-ollama-on-my-network)
+- [How can I allow additional web origins to access Ollama?](#how-can-i-allow-additional-web-origins-to-access-ollama)
+- [Where are models stored?](#where-are-models-stored)
+
+
 ## How can I view the logs?
 
 On macOS:
@@ -103,10 +109,12 @@ No. Anything you do with Ollama, such as generate a response from the model, sta
 
 ## Does Ollama use the OpenAI API?
 
-As of November 14, 2023, Ollama does not use the OpenAI API. The Ollama API is documented at [jmorganca/ollama/docs/api](./api) and works differently from how the OpenAI API works. We are investigating other options that may offer more compatibility. Until then, some of our users have had success with using [LiteLLM](https://docs.litellm.ai/docs/providers/ollama) in front of Ollama. 
+As of November 14, 2023, Ollama does not use the OpenAI API. The Ollama API is documented at [jmorganca/ollama/docs/api](./api) and works differently from how the OpenAI API works. We are investigating other options that may offer more compatibility. Until then, some of our users have had success with using [LiteLLM](https://docs.litellm.ai/docs/providers/ollama) in front of Ollama.
+
 ## How can I use Ollama in VSCode to help me code?
 
 There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. You can see the list of plugins at the bottom of the main repository readme.
+
 ## How do I send a document to Ollama?
 
 Ollama is a tool that will send a prompt to a model and return the generated answer. On its own, it doesn't know about documents. But as a developer you can add that capability. Or you can use the work of other developers who have leveraged Ollama to achieve this. Review the list of integrations others have already built at the bottom of the main repository readme if you just want to use someone else's project to do this.  
