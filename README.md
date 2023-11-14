@@ -231,6 +231,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
+- [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
 
 ### Libraries
@@ -243,6 +244,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama4j for Java](https://github.com/amithkoujalgi/ollama4j)
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
+- [Ollama for Dart](https://github.com/breitburg/dart-ollama)
 
 ### Extensions & Plugins
 
