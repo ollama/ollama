@@ -979,6 +979,9 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
 			log.Printf("error uploading blob: %v", err)
+			if errors.Is(err, errUnauthorized) {
+				return fmt.Errorf("unable to push %s, make sure this namespace exists and you are authorized to push to it", ParseModelPath(name).GetNamespaceRepository())
+			}
 			return err
 		}
 	}
@@ -1165,6 +1168,8 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
+var errUnauthorized = fmt.Errorf("unauthorized")
+
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
 	for try := 0; try < maxRetries; try++ {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
@@ -1187,7 +1192,10 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 				body.Seek(0, io.SeekStart)
 			}
 
-			continue
+			if try == (maxRetries - 1) {
+				// last retry reached
+				return nil, errUnauthorized
+			}
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, os.ErrNotExist
 		case resp.StatusCode >= http.StatusBadRequest:
