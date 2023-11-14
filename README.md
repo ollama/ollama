@@ -177,7 +177,7 @@ Feel free to contribute and help us make Ollama Web UI even better! 🙌
 
 A big shoutout to our amazing supporters who's helping to make this project possible! 🙏
 
-## Platinum Sponsors 🤍
+### Platinum Sponsors 🤍
 
 - [Prof. Lawrence Kim @ SFU](https://www.lhkim.com/)
 
