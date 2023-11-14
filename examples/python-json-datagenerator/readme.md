@@ -9,7 +9,7 @@ There are two python scripts in this example. `randomaddresses.py` generates ran
 Both programs are basically the same, with a different prompt for each, demonstrating two different ideas. The key part of getting JSON out of a model is to state in the prompt or system prompt that it should respond using JSON, and specifying the `format` as `json` in the data body.
 
 ```python
-prompt = f"generate one realisticly believable sample data set of a persons first name, last name, address in {country}, and  phone number. Do not use common names. Respond using JSON. Key names should with no backslashes, values should use plain ascii with no special characters."
+prompt = f"generate one realistically believable sample data set of a persons first name, last name, address in {country}, and  phone number. Do not use common names. Respond using JSON. Key names should with no backslashes, values should use plain ascii with no special characters."
 
 data = {
     "prompt": prompt,
