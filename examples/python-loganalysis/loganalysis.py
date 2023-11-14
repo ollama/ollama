@@ -43,9 +43,3 @@ for line in response.iter_lines():
     if json_data['done'] == False:
       print(json_data['response'], end='', flush=True)
 
-
-
-
-
-
-
