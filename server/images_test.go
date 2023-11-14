@@ -6,7 +6,7 @@ import (
 
 func TestModelPrompt(t *testing.T) {
 	var m Model
-	s, err := m.Prompt(PromptVars{
+	s, err := m.Prompt(&PromptVars{
 		First:  true,
 		Prompt: "<h1>",
 	}, "a{{ .Prompt }}b")

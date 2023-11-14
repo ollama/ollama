@@ -54,7 +54,7 @@ type PromptVars struct {
 	Prompt string
 }
 
-func (m *Model) Prompt(vars PromptVars, reqTemplate string) (string, error) {
+func (m *Model) Prompt(vars *PromptVars, reqTemplate string) (string, error) {
 	t := m.Template
 	if reqTemplate != "" {
 		// override the model template if one is specified

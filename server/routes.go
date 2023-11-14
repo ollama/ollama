@@ -219,19 +219,34 @@ func GenerateHandler(c *gin.Context) {
 		prompt.WriteString(prevCtx)
 	}
 	// build the prompt history from messages
-	for i, m := range req.Messages {
-		// apply the template to the prompt
-		p, err := model.Prompt(PromptVars{
-			First:  i == 0,
-			Prompt: m.Prompt,
-			System: req.System,
-		}, req.Template)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+	vars := &PromptVars{
+		First: true,
+	}
+	for _, m := range req.Messages {
+		if m.Role == "system" {
+			if vars.System != "" {
+				flush(vars, req.Template, model)
+			}
+			vars.System = m.Content
 		}
-		prompt.WriteString(p)
-		prompt.WriteString(m.Response)
+
+		if m.Role == "user" {
+			if vars.Prompt != "" {
+				flush(vars, req.Template, model)
+			}
+			vars.Prompt = m.Content
+		}
+
+		if m.Role == "assistant" {
+			if vars.Prompt != "" || vars.System != "" {
+				flush(vars, req.Template, model)
+			}
+			prompt.WriteString(m.Content)
+		}
+	}
+
+	if vars.Prompt != "" || vars.System != "" {
+		flush(vars, req.Template, model)
 	}
 
 	// finally, add the current prompt as the most recent message
@@ -240,7 +255,7 @@ func GenerateHandler(c *gin.Context) {
 		prompt.WriteString(req.Prompt)
 	} else if strings.TrimSpace(req.Prompt) != "" {
 		// template the request prompt before adding it
-		p, err := model.Prompt(PromptVars{
+		p, err := model.Prompt(&PromptVars{
 			First:  first,
 			System: req.System,
 			Prompt: req.Prompt,
@@ -253,11 +268,7 @@ func GenerateHandler(c *gin.Context) {
 	}
 
 	sendContext := first || isContextSet
-	var respCtx strings.Builder
-	if _, err := respCtx.WriteString(prompt.String()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	var msgContent strings.Builder
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -273,20 +284,21 @@ func GenerateHandler(c *gin.Context) {
 
 			r.Model = req.Model
 			r.CreatedAt = time.Now().UTC()
-			// if the final response expects a context, build the context as we go
-			if sendContext {
-				if _, err := respCtx.WriteString(r.Response); err != nil {
-					ch <- gin.H{"error": err.Error()}
-					return
-				}
+			if _, err := msgContent.WriteString(r.Response); err != nil {
+				ch <- gin.H{"error": err.Error()}
+				return
 			}
 
 			if r.Done {
 				r.TotalDuration = time.Since(checkpointStart)
 				r.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				r.Message = api.Message{
+					Role:    "assistant",
+					Content: msgContent.String(),
+				}
 				// if the response expects a context, encode it and send it back
 				if sendContext {
-					embd, err := loaded.runner.Encode(c.Request.Context(), respCtx.String())
+					embd, err := loaded.runner.Encode(c.Request.Context(), prompt.String()+msgContent.String())
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 						return
@@ -326,6 +338,17 @@ func GenerateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func flush(prompt *PromptVars, template string, model *Model) (string, error) {
+	p, err := model.Prompt(prompt, template)
+	if err != nil {
+		return "", err
+	}
+	prompt.First = false
+	prompt.Prompt = ""
+	prompt.System = ""
+	return p, nil
 }
 
 func EmbeddingHandler(c *gin.Context) {
