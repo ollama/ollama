@@ -47,9 +47,11 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - ⚙️ **Fine-Tuned Control with Advanced Parameters**: Gain a deeper level of control by adjusting parameters such as temperature and defining your system prompts to tailor the conversation to your specific preferences and needs.
 
+- 🔐 **Auth Header Support**: Effortlessly enhance security by adding Authorization headers to Ollama requests directly from the web UI settings, ensuring access to secured Ollama servers.
+
 - 🔗 **External Ollama Server Connection**: Seamlessly link to an external Ollama server hosted on a different address by configuring the environment variable during the Docker build phase. Additionally, you can also set the external server connection URL from the web UI post-build.
 
-- 🔑 **Auth Header Support**: Securely access Ollama servers with added Authorization headers for enhanced authentication.
+- 🔒 **Backend Reverse Proxy Support**: Strengthen security by enabling direct communication between Ollama Web UI backend and Ollama, eliminating the need to expose Ollama over LAN.
 
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
