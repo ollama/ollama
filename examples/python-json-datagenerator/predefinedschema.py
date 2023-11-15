@@ -7,10 +7,10 @@ template = {
   "firstName": "", 
   "lastName": "", 
   "address": {
-    "theStreet": "", 
-    "theCity": "", 
-    "theState": "", 
-    "theZipCode": ""
+    "street": "", 
+    "city": "", 
+    "state": "", 
+    "zipCode": ""
   }, 
   "phoneNumber": ""
 }
