@@ -105,10 +105,6 @@ type CreateRequest struct {
 	Stream    *bool  `json:"stream,omitempty"`
 }
 
-type CreateBlobResponse struct {
-	Path string `json:"path"`
-}
-
 type DeleteRequest struct {
 	Name string `json:"name"`
 }

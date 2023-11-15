@@ -662,7 +662,7 @@ func HeadBlobHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, api.CreateBlobResponse{Path: path})
+	c.Status(http.StatusOK)
 }
 
 func CreateBlobHandler(c *gin.Context) {
@@ -701,7 +701,7 @@ func CreateBlobHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, api.CreateBlobResponse{Path: targetPath})
+	c.Status(http.StatusCreated)
 }
 
 var defaultAllowOrigins = []string{
