@@ -1184,7 +1184,7 @@
 									</button>
 								{:else}
 									<button
-										class="  self-center dark:hover:text-gray-300 disabled:text-gray-600 disabled:hover:text-gray-600 {selectedModelIdx ===
+										class="  self-center disabled:text-gray-600 disabled:hover:text-gray-600 {selectedModelIdx ===
 										0
 											? 'mr-3'
 											: 'mr-7'}"

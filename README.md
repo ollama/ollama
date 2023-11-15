@@ -47,21 +47,19 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 - ⚙️ **Fine-Tuned Control with Advanced Parameters**: Gain a deeper level of control by adjusting parameters such as temperature and defining your system prompts to tailor the conversation to your specific preferences and needs.
 
+- 🔐 **Auth Header Support**: Effortlessly enhance security by adding Authorization headers to Ollama requests directly from the web UI settings, ensuring access to secured Ollama servers.
+
 - 🔗 **External Ollama Server Connection**: Seamlessly link to an external Ollama server hosted on a different address by configuring the environment variable during the Docker build phase. Additionally, you can also set the external server connection URL from the web UI post-build.
 
-- 🔑 **Auth Header Support**: Securely access Ollama servers with added Authorization headers for enhanced authentication.
+- 🔒 **Backend Reverse Proxy Support**: Strengthen security by enabling direct communication between Ollama Web UI backend and Ollama, eliminating the need to expose Ollama over LAN.
 
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
 ## How to Install 🚀
 
-### Prerequisites
+### Installing Both Ollama and Ollama Web UI Using Docker Compose
 
-Make sure you have the latest version of Ollama installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
-
-#### Installing Both Ollama and Ollama Web UI Using Docker Compose
-
-If you don't have Ollama installed, you can also use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
+If you don't have Ollama installed yet, you can use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
 
 ```bash
 docker compose up --build
@@ -69,86 +67,84 @@ docker compose up --build
 
 This command will install both Ollama and Ollama Web UI on your system. Ensure to modify the `compose.yaml` file for GPU support if needed.
 
-#### Checking Ollama
+### Installing Ollama Web UI Only
 
-After installing, verify that Ollama is running by accessing the following link in your web browser: [http://127.0.0.1:11434/](http://127.0.0.1:11434/). Note that the port number may differ based on your system configuration.
+#### Prerequisites
 
-#### Accessing Ollama Web Interface over LAN
+Make sure you have the latest version of Ollama installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
 
-If you want to access the Ollama web interface over LAN, for example, from your phone, run Ollama using the following command:
+##### Checking Ollama
 
-```bash
-OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
-```
+After installing Ollama, verify that Ollama is running by accessing the following link in your web browser: [http://127.0.0.1:11434/](http://127.0.0.1:11434/). Note that the port number may differ based on your system configuration.
 
-In case you encounter any issues running the command and encounter errors, ensure to turn off any existing Ollama service that might be running in the background before retrying.
+#### Using Docker 🐳
 
-If you're running Ollama via Docker:
+If Ollama is hosted on your local machine and accessible at [http://127.0.0.1:11434/](http://127.0.0.1:11434/), run the following command:
 
 ```bash
-docker run -d -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_ORIGINS="*" --name ollama ollama/ollama
-```
-
-### Using Docker 🐳
-
-If Ollama is hosted on your local machine, run the following command:
-
-```bash
-docker run -d -p 3000:8080 --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 Alternatively, if you prefer to build the container yourself, use the following command:
 
 ```bash
-docker build --build-arg OLLAMA_API_BASE_URL='' -t ollama-webui .
-docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
+docker build -t ollama-webui .
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway --name ollama-webui --restart always ollama-webui
 ```
 
-Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000). Enjoy! 😄
+Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000) and accessible over LAN (or Network). Enjoy! 😄
 
-#### Connecting to Ollama on a Different Server
+#### Accessing External Ollama on a Different Server
 
-If Ollama is hosted on a server other than your local machine, change `OLLAMA_API_BASE_URL` to match:
+Change `OLLAMA_API_BASE_URL` environment variable to match the external Ollama Server url:
 
 ```bash
-docker build --build-arg OLLAMA_API_BASE_URL='https://example.com/api' -t ollama-webui .
-docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+```
+
+Alternatively, if you prefer to build the container yourself, use the following command:
+
+```bash
+docker build -t ollama-webui .
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name ollama-webui --restart always ollama-webui
 ```
 
 ## How to Build for Static Deployment
 
-1. Install `node`
+1. Clone & Enter the project
 
-   ```sh
-   # Mac, Linux
-   curl https://webi.sh/node@lts | sh
-   source ~/.config/envman/PATH.env
-   ```
-
-   ```pwsh
-   # Windows
-   curl.exe https://webi.ms/node@lts | powershell
-   ```
-
-2. Clone & Enter the project
    ```sh
    git clone https://github.com/ollama-webui/ollama-webui.git
    pushd ./ollama-webui/
    ```
-3. Create and edit `.env`
+
+2. Create and edit `.env`
+
    ```sh
    cp -RPp example.env .env
    ```
+
+3. Install node dependencies
+
+   ```sh
+   npm i
+   ```
+
 4. Run in dev mode, or build the site for deployment
+
    - Test in Dev mode:
+
      ```sh
      npm run dev
      ```
-   - Build for Deploy: \
-     (`PUBLIC_API_BASE_URL` will overwrite the value in `.env`)
+
+   - Build for Deploy:
+
      ```sh
+     #`PUBLIC_API_BASE_URL` will overwrite the value in `.env`
      PUBLIC_API_BASE_URL='https://example.com/api' npm run build
      ```
+
 5. Test the build with `caddy` (or the server of your choice)
 
    ```sh
@@ -168,9 +164,9 @@ See [TROUBLESHOOTING.md](/TROUBLESHOOTING.md) for information on how to troubles
 
 Here are some exciting tasks on our to-do list:
 
+- 🔐 **Access Control**: Securely manage requests to Ollama by utilizing the backend as a reverse proxy gateway, ensuring only authenticated users can send specific requests.
 - 🧪 **Research-Centric Features**: Empower researchers in the fields of LLM and HCI with a comprehensive web UI for conducting user studies. Stay tuned for ongoing feature enhancements (e.g., surveys, analytics, and participant tracking) to facilitate their research.
 - 📈 **User Study Tools**: Providing specialized tools, like heat maps and behavior tracking modules, to empower researchers in capturing and analyzing user behavior patterns with precision and accuracy.
-- 🌐 **Web Browser Extension**: Seamlessly integrate our services into your browsing experience with our convenient browser extension.
 - 📚 **Enhanced Documentation**: Elevate your setup and customization experience with improved, comprehensive documentation.
 
 Feel free to contribute and help us make Ollama Web UI even better! 🙌

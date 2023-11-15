@@ -15,8 +15,6 @@ services:
       - ollama:/root/.ollama
     ports:
       - 11434:11434
-    environment:
-      - 'OLLAMA_ORIGINS=*'
     container_name: ollama
     pull_policy: always
     tty: true
@@ -24,16 +22,18 @@ services:
     image: ollama/ollama:latest
 
   ollama-webui:
-    restart: unless-stopped
     build:
       context: .
       args:
-        OLLAMA_API_BASE_URL: ''
+        OLLAMA_API_BASE_URL: '/ollama/api'
       dockerfile: Dockerfile
     image: ollama-webui:latest
     container_name: ollama-webui
     ports:
       - 3000:8080
+    extra_hosts:
+        - host.docker.internal:host-gateway
+    restart: unless-stopped
 
 volumes:
   ollama: {}
