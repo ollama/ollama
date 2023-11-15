@@ -54,14 +54,8 @@ type PromptVars struct {
 	Prompt string
 }
 
-func (m *Model) Prompt(vars *PromptVars, reqTemplate string) (string, error) {
-	t := m.Template
-	if reqTemplate != "" {
-		// override the model template if one is specified
-		t = reqTemplate
-	}
-
-	tmpl, err := template.New("").Parse(t)
+func (m *Model) Prompt(vars *PromptVars) (string, error) {
+	tmpl, err := template.New("").Parse(m.Template)
 	if err != nil {
 		return "", err
 	}

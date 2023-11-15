@@ -5,11 +5,13 @@ import (
 )
 
 func TestModelPrompt(t *testing.T) {
-	var m Model
+	m := Model{
+		Template: "a{{ .Prompt }}b",
+	}
 	s, err := m.Prompt(&PromptVars{
 		First:  true,
 		Prompt: "<h1>",
-	}, "a{{ .Prompt }}b")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

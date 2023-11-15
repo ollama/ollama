@@ -608,7 +608,9 @@ func (llm *llama) Predict(ctx context.Context, prompt string, format string, fn 
 				}
 
 				if p.Content != "" {
-					fn(api.GenerateResponse{Response: p.Content})
+					fn(api.GenerateResponse{
+						Response: p.Content,
+					})
 				}
 
 				if p.Stop {

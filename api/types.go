@@ -96,8 +96,8 @@ type Runner struct {
 type GenerateResponse struct {
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response"` // the last response chunk when streaming
-	Message   Message   `json:"message"`
+	Response  string    `json:"response,omitempty"` // the last response chunk when streaming
+	Message   *Message  `json:"message,omitempty"`
 
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`

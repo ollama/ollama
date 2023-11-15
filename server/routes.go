@@ -170,12 +170,12 @@ func GenerateHandler(c *gin.Context) {
 	case len(req.Format) > 0 && req.Format != "json":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
 		return
-	case req.Raw && (req.Template != "" || req.System != "" || isContextSet || areMessagesSet):
+	case req.Raw && (isContextSet || areMessagesSet || req.System != "" || req.Template != ""):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, context, or messages"})
 		return
-	case areMessagesSet && isContextSet:
-		// this makes rebuilding the prompt history too complicated, so don't allow it
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "only one of messages or context may be specified"})
+	case areMessagesSet && (isContextSet || req.Raw || req.System != "" || req.Template != "" || req.Prompt != ""):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "cannot specify context, raw, system, template, or prompt when using messages"})
+		return
 	}
 
 	model, err := GetModel(req.Model)
@@ -204,71 +204,27 @@ func GenerateHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	var prompt strings.Builder
-	if req.Context != nil {
-		// TODO: context is deprecated, at some point the context logic within this conditional should be removed
-		// if the request has a context rather than messages, decode it and add it to the prompt
-		prevCtx, err := loaded.runner.Decode(c.Request.Context(), req.Context)
+	var prompt string
+	sendContext := false
+	switch {
+	case req.Raw:
+		prompt = req.Prompt
+	case areMessagesSet:
+		prompt, err = promptFromMessages(model, req.Messages)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
-		// Remove leading spaces from prevCtx if present
-		prevCtx = strings.TrimPrefix(prevCtx, " ")
-		prompt.WriteString(prevCtx)
-	}
-	// build the prompt history from messages
-	vars := &PromptVars{
-		First: true,
-	}
-	for _, m := range req.Messages {
-		if m.Role == "system" {
-			if vars.System != "" {
-				flush(vars, req.Template, model)
-			}
-			vars.System = m.Content
-		}
-
-		if m.Role == "user" {
-			if vars.Prompt != "" {
-				flush(vars, req.Template, model)
-			}
-			vars.Prompt = m.Content
-		}
-
-		if m.Role == "assistant" {
-			if vars.Prompt != "" || vars.System != "" {
-				flush(vars, req.Template, model)
-			}
-			prompt.WriteString(m.Content)
-		}
-	}
-
-	if vars.Prompt != "" || vars.System != "" {
-		flush(vars, req.Template, model)
-	}
-
-	// finally, add the current prompt as the most recent message
-	first := !isContextSet && !areMessagesSet
-	if req.Raw {
-		prompt.WriteString(req.Prompt)
-	} else if strings.TrimSpace(req.Prompt) != "" {
-		// template the request prompt before adding it
-		p, err := model.Prompt(&PromptVars{
-			First:  first,
-			System: req.System,
-			Prompt: req.Prompt,
-		}, req.Template)
+	case req.Prompt != "":
+		prompt, err = promptFromRequestParams(c, model, req)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		prompt.WriteString(p)
+		sendContext = true
 	}
 
-	sendContext := first || isContextSet
-	var msgContent strings.Builder
+	var generated strings.Builder
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -284,7 +240,9 @@ func GenerateHandler(c *gin.Context) {
 
 			r.Model = req.Model
 			r.CreatedAt = time.Now().UTC()
-			if _, err := msgContent.WriteString(r.Response); err != nil {
+
+			// build up the full response to send back the context
+			if _, err := generated.WriteString(r.Response); err != nil {
 				ch <- gin.H{"error": err.Error()}
 				return
 			}
@@ -292,13 +250,9 @@ func GenerateHandler(c *gin.Context) {
 			if r.Done {
 				r.TotalDuration = time.Since(checkpointStart)
 				r.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-				r.Message = api.Message{
-					Role:    "assistant",
-					Content: msgContent.String(),
-				}
 				// if the response expects a context, encode it and send it back
 				if sendContext {
-					embd, err := loaded.runner.Encode(c.Request.Context(), prompt.String()+msgContent.String())
+					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+generated.String())
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 						return
@@ -307,48 +261,124 @@ func GenerateHandler(c *gin.Context) {
 				}
 			}
 
-			if req.Raw {
-				// in raw mode the client must manage history on their own
-				r.Context = nil
+			// determine if the client should get a prompt/response or message
+			if areMessagesSet && !r.Done {
+				r.Message = &api.Message{Role: "assistant", Content: r.Response}
+				// do not send back response in the case of messages
+				r.Response = ""
 			}
 
 			ch <- r
 		}
 
-		if err := loaded.runner.Predict(c.Request.Context(), prompt.String(), req.Format, fn); err != nil {
+		if err := loaded.runner.Predict(c.Request.Context(), prompt, req.Format, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
 
 	if req.Stream != nil && !*req.Stream {
-		var response api.GenerateResponse
-		generated := ""
+		// Wait for the channel to close
+		var r api.GenerateResponse
 		for resp := range ch {
-			if r, ok := resp.(api.GenerateResponse); ok {
-				generated += r.Response
-				response = r
-			} else {
+			var ok bool
+			if r, ok = resp.(api.GenerateResponse); !ok {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
 		}
-		response.Response = generated
-		c.JSON(http.StatusOK, response)
+		if areMessagesSet {
+			r.Message = &api.Message{Role: "assistant", Content: generated.String()}
+		} else {
+			r.Response = generated.String()
+		}
+		c.JSON(http.StatusOK, r)
 		return
 	}
 
 	streamResponse(c, ch)
 }
 
-func flush(prompt *PromptVars, template string, model *Model) (string, error) {
-	p, err := model.Prompt(prompt, template)
+func promptFromRequestParams(c *gin.Context, model *Model, req api.GenerateRequest) (string, error) {
+	if req.Template != "" {
+		// override the default model template
+		model.Template = req.Template
+	}
+
+	var prompt strings.Builder
+	if req.Context != nil {
+		// TODO: context is deprecated, at some point the context logic within this conditional should be removed
+		// if the request has a context rather than messages, decode it and add it to the prompt
+		prevCtx, err := loaded.runner.Decode(c.Request.Context(), req.Context)
+		if err != nil {
+			return "", err
+		}
+
+		// Remove leading spaces from prevCtx if present
+		prevCtx = strings.TrimPrefix(prevCtx, " ")
+		prompt.WriteString(prevCtx)
+	}
+	p, err := model.Prompt(&PromptVars{
+		First:  req.Context == nil,
+		System: req.System,
+		Prompt: req.Prompt,
+	})
 	if err != nil {
 		return "", err
 	}
-	prompt.First = false
-	prompt.Prompt = ""
-	prompt.System = ""
-	return p, nil
+	prompt.WriteString(p)
+	return prompt.String(), nil
+}
+
+func promptFromMessages(model *Model, messages []api.Message) (string, error) {
+	flush := func(vars *PromptVars, model *Model, prompt *strings.Builder) error {
+		p, err := model.Prompt(vars)
+		if err != nil {
+			return err
+		}
+		prompt.WriteString(p)
+
+		vars.First = false
+		vars.Prompt = ""
+		vars.System = ""
+		return nil
+	}
+
+	var prompt strings.Builder
+	vars := &PromptVars{
+		First: true,
+	}
+	for _, m := range messages {
+		switch m.Role {
+		case "system":
+			if vars.System != "" {
+				if err := flush(vars, model, &prompt); err != nil {
+					return "", err
+				}
+			}
+			vars.System = m.Content
+		case "user":
+			if vars.Prompt != "" {
+				if err := flush(vars, model, &prompt); err != nil {
+					return "", err
+				}
+			}
+			vars.Prompt = m.Content
+		case "assistant":
+			if vars.Prompt != "" || vars.System != "" {
+				if err := flush(vars, model, &prompt); err != nil {
+					return "", err
+				}
+			}
+			prompt.WriteString(m.Content)
+		}
+	}
+	if vars.Prompt != "" || vars.System != "" {
+		if err := flush(vars, model, &prompt); err != nil {
+			return "", err
+		}
+	}
+
+	return prompt.String(), nil
 }
 
 func EmbeddingHandler(c *gin.Context) {
