@@ -94,24 +94,6 @@ Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localh
 
 ### Accessing External Ollama on a Different Server
 
-#### Prerequisites
-
-If you want to access an external Ollama Server hosted over LAN (or Network), for example, Ollama from your cloud server and Ollama Web UI on your localhost, run Ollama using the following command:
-
-```bash
-OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
-```
-
-In case you encounter any issues running the command and encounter errors, ensure to turn off any existing Ollama service that might be running in the background before retrying.
-
-If you're running Ollama via Docker:
-
-```bash
-docker run -d -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_ORIGINS="*" --name ollama ollama/ollama
-```
-
-#### Installing Ollama Web UI
-
 Change `OLLAMA_API_BASE_URL` environment variable to match the external Ollama Server url:
 
 ```bash
