@@ -105,7 +105,12 @@ func (b *Bar) percent() float64 {
 }
 
 func (b *Bar) rate() float64 {
-	return (float64(b.currentValue) - float64(b.initialValue)) / b.elapsed().Seconds()
+	elapsed := b.elapsed()
+	if elapsed.Seconds() > 0 {
+		return (float64(b.currentValue) - float64(b.initialValue)) / elapsed.Seconds()
+	}
+
+	return 0
 }
 
 func (b *Bar) elapsed() time.Duration {
