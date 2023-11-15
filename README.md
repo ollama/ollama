@@ -57,13 +57,9 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 ## How to Install 🚀
 
-### Prerequisites
+### Installing Both Ollama and Ollama Web UI Using Docker Compose
 
-Make sure you have the latest version of Ollama installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
-
-#### Installing Both Ollama and Ollama Web UI Using Docker Compose
-
-If you don't have Ollama installed, you can also use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
+If you don't have Ollama installed yet, you can use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
 
 ```bash
 docker compose up --build
@@ -71,13 +67,19 @@ docker compose up --build
 
 This command will install both Ollama and Ollama Web UI on your system. Ensure to modify the `compose.yaml` file for GPU support if needed.
 
-#### Checking Ollama
+### Installing Ollama Web UI Only
 
-After installing, verify that Ollama is running by accessing the following link in your web browser: [http://127.0.0.1:11434/](http://127.0.0.1:11434/). Note that the port number may differ based on your system configuration.
+#### Prerequisites
 
-### Using Docker 🐳
+Make sure you have the latest version of Ollama installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
 
-If Ollama is hosted on your local machine, run the following command:
+##### Checking Ollama
+
+After installing Ollama, verify that Ollama is running by accessing the following link in your web browser: [http://127.0.0.1:11434/](http://127.0.0.1:11434/). Note that the port number may differ based on your system configuration.
+
+#### Using Docker 🐳
+
+If Ollama is hosted on your local machine and accessible at [http://127.0.0.1:11434/](http://127.0.0.1:11434/), run the following command:
 
 ```bash
 docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
@@ -92,7 +94,7 @@ docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway --name o
 
 Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000) and accessible over LAN (or Network). Enjoy! 😄
 
-### Accessing External Ollama on a Different Server
+#### Accessing External Ollama on a Different Server
 
 Change `OLLAMA_API_BASE_URL` environment variable to match the external Ollama Server url:
 
