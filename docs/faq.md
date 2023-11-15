@@ -99,6 +99,6 @@ To modify where models are stored, you can use the `OLLAMA_MODELS` environment v
 
 No. Anything you do with Ollama, such as generate a response from the model, stays with you. We don't collect any data about how you use the model. You are always in control of your own data.
 
-## How can I use Ollama in VSCode to help me code?
+## How can I use Ollama in Visual Studio Code?
 
-There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. You can see the list of plugins at the bottom of the main repository readme.
+There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. You can see the list of [extensions & plugins](https://github.com/jmorganca/ollama#extensions--plugins) at the bottom of the main repository readme.
