@@ -25,7 +25,7 @@ type Progress struct {
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{pos: -1, w: w}
+	p := &Progress{w: w}
 	go p.start()
 	return p
 }
@@ -71,7 +71,10 @@ func (p *Progress) render() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	fmt.Fprintf(p.w, "\033[%dA", p.pos)
+	if p.pos > 0 {
+		fmt.Fprintf(p.w, "\033[%dA", p.pos)
+	}
+
 	for _, state := range p.states {
 		fmt.Fprintln(p.w, state.String())
 	}
