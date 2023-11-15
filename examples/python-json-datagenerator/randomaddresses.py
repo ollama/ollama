@@ -3,8 +3,8 @@ import json
 import random
 
 countries = [
-    "the US",
-    "the UK",
+    "United States",
+    "United Kingdom",
     "the Netherlands",
     "Germany",
     "Mexico",
