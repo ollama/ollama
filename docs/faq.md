@@ -80,8 +80,6 @@ systemctl restart ollama
 - macOS: Raw model data is stored under `~/.ollama/models`.
 - Linux: Raw model data is stored under `/usr/share/ollama/.ollama/models`
 
-
-
 Below the models directory you will find a structure similar to the following:
 
 ```shell
@@ -106,10 +104,6 @@ To modify where models are stored, you can use the `OLLAMA_MODELS` environment v
 ## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
 
 No. Anything you do with Ollama, such as generate a response from the model, stays with you. We don't collect any data about how you use the model. You are always in control of your own data.
-
-## Does Ollama use the OpenAI API?
-
-As of November 14, 2023, Ollama does not use the OpenAI API. The Ollama API is documented at [jmorganca/ollama/docs/api](./api) and works differently from how the OpenAI API works. We are investigating other options that may offer more compatibility. Until then, some of our users have had success with using [LiteLLM](https://docs.litellm.ai/docs/providers/ollama) in front of Ollama.
 
 ## How can I use Ollama in VSCode to help me code?
 
