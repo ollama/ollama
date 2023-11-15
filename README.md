@@ -174,9 +174,9 @@ See [TROUBLESHOOTING.md](/TROUBLESHOOTING.md) for information on how to troubles
 
 Here are some exciting tasks on our to-do list:
 
+- 🔐 **Access Control**: Securely manage requests to Ollama by utilizing the backend as a reverse proxy gateway, ensuring only authenticated users can send specific requests.
 - 🧪 **Research-Centric Features**: Empower researchers in the fields of LLM and HCI with a comprehensive web UI for conducting user studies. Stay tuned for ongoing feature enhancements (e.g., surveys, analytics, and participant tracking) to facilitate their research.
 - 📈 **User Study Tools**: Providing specialized tools, like heat maps and behavior tracking modules, to empower researchers in capturing and analyzing user behavior patterns with precision and accuracy.
-- 🌐 **Web Browser Extension**: Seamlessly integrate our services into your browsing experience with our convenient browser extension.
 - 📚 **Enhanced Documentation**: Elevate your setup and customization experience with improved, comprehensive documentation.
 
 Feel free to contribute and help us make Ollama Web UI even better! 🙌
