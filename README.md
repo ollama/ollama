@@ -75,9 +75,28 @@ This command will install both Ollama and Ollama Web UI on your system. Ensure t
 
 After installing, verify that Ollama is running by accessing the following link in your web browser: [http://127.0.0.1:11434/](http://127.0.0.1:11434/). Note that the port number may differ based on your system configuration.
 
-#### Accessing Ollama Web Interface over LAN
+### Using Docker 🐳
 
-If you want to access the Ollama web interface over LAN, for example, from your phone, run Ollama using the following command:
+If Ollama is hosted on your local machine, run the following command:
+
+```bash
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+```
+
+Alternatively, if you prefer to build the container yourself, use the following command:
+
+```bash
+docker build -t ollama-webui .
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway --name ollama-webui --restart always ollama-webui
+```
+
+Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000). Enjoy! 😄
+
+### Accessing Ollama on a Different Server hosted over LAN (or Network)
+
+#### Prerequisites
+
+If you want to access an external Ollama Server hosted over LAN (or Network), for example, from your cloud server, run Ollama using the following command:
 
 ```bash
 OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve
@@ -91,26 +110,9 @@ If you're running Ollama via Docker:
 docker run -d -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_ORIGINS="*" --name ollama ollama/ollama
 ```
 
-### Using Docker 🐳
+#### Installing Ollama Web UI
 
-If Ollama is hosted on your local machine, run the following command:
-
-```bash
-docker run -d -p 3000:8080 --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
-```
-
-Alternatively, if you prefer to build the container yourself, use the following command:
-
-```bash
-docker build --build-arg OLLAMA_API_BASE_URL='' -t ollama-webui .
-docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
-```
-
-Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000). Enjoy! 😄
-
-#### Connecting to Ollama on a Different Server
-
-If Ollama is hosted on a server other than your local machine, change `OLLAMA_API_BASE_URL` to match:
+Change `OLLAMA_API_BASE_URL` to match the external Ollama Server url:
 
 ```bash
 docker build --build-arg OLLAMA_API_BASE_URL='https://example.com/api' -t ollama-webui .
@@ -119,38 +121,40 @@ docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
 
 ## How to Build for Static Deployment
 
-1. Install `node`
+1. Clone & Enter the project
 
-   ```sh
-   # Mac, Linux
-   curl https://webi.sh/node@lts | sh
-   source ~/.config/envman/PATH.env
-   ```
-
-   ```pwsh
-   # Windows
-   curl.exe https://webi.ms/node@lts | powershell
-   ```
-
-2. Clone & Enter the project
    ```sh
    git clone https://github.com/ollama-webui/ollama-webui.git
    pushd ./ollama-webui/
    ```
-3. Create and edit `.env`
+
+2. Create and edit `.env`
+
    ```sh
    cp -RPp example.env .env
    ```
+
+3. Install node dependencies
+
+   ```sh
+   npm i
+   ```
+
 4. Run in dev mode, or build the site for deployment
+
    - Test in Dev mode:
+
      ```sh
      npm run dev
      ```
-   - Build for Deploy: \
-     (`PUBLIC_API_BASE_URL` will overwrite the value in `.env`)
+
+   - Build for Deploy:
+
      ```sh
+     #`PUBLIC_API_BASE_URL` will overwrite the value in `.env`
      PUBLIC_API_BASE_URL='https://example.com/api' npm run build
      ```
+
 5. Test the build with `caddy` (or the server of your choice)
 
    ```sh
