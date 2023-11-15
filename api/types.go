@@ -32,11 +32,11 @@ func (e StatusError) Error() string {
 
 type GenerateRequest struct {
 	Model    string    `json:"model"`
-	Prompt   string    `json:"prompt"` // prompt sends a message as the user
+	Prompt   string    `json:"prompt"`
 	System   string    `json:"system"`
 	Template string    `json:"template"`
-	Context  []int     `json:"context,omitempty"`  // DEPRECATED: context is deprecated, use messages instead
-	Messages []Message `json:"messages,omitempty"` // messages sent in the conversation so far
+	Context  []int     `json:"context,omitempty"` // DEPRECATED: context is deprecated, use messages instead
+	Messages []Message `json:"messages,omitempty"`
 	Stream   *bool     `json:"stream,omitempty"`
 	Raw      bool      `json:"raw,omitempty"`
 	Format   string    `json:"format"`
@@ -45,7 +45,7 @@ type GenerateRequest struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
+	Role    string `json:"role"` // one of ["system", "user", "assistant"]
 	Content string `json:"content"`
 }
 
@@ -96,8 +96,8 @@ type Runner struct {
 type GenerateResponse struct {
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response,omitempty"` // the last response chunk when streaming
-	Message   *Message  `json:"message,omitempty"`
+	Response  string    `json:"response,omitempty"` // the latest response chunk when streaming
+	Message   *Message  `json:"message,omitempty"`  // the latest message chunk when streaming
 
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`

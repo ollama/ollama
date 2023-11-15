@@ -307,7 +307,6 @@ func promptFromRequestParams(c *gin.Context, model *Model, req api.GenerateReque
 	var prompt strings.Builder
 	if req.Context != nil {
 		// TODO: context is deprecated, at some point the context logic within this conditional should be removed
-		// if the request has a context rather than messages, decode it and add it to the prompt
 		prevCtx, err := loaded.runner.Decode(c.Request.Context(), req.Context)
 		if err != nil {
 			return "", err

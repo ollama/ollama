@@ -549,10 +549,9 @@ func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, 
 		return nil, err
 	}
 
-	if prompt != "" || len(messages) > 0 {
-		fmt.Println()
-		fmt.Println()
-	}
+	// spacing for readability
+	fmt.Println()
+	fmt.Println()
 
 	if !latest.Done {
 		if abort {
