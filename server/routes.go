@@ -764,6 +764,7 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	r.DELETE("/api/delete", DeleteModelHandler)
 	r.POST("/api/show", ShowModelHandler)
 	r.POST("/api/blobs/:digest", CreateBlobHandler)
+	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
@@ -772,8 +773,6 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 
 		r.Handle(method, "/api/tags", ListModelsHandler)
 	}
-
-	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
 
 	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
 	s := &http.Server{

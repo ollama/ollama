@@ -323,6 +323,30 @@ A stream of JSON objects. When finished, `status` is `success`.
 }
 ```
 
+### Check if a Blob Exists
+
+```shell
+HEAD /api/blobs/:digest
+```
+
+Check if a blob is known to the server.
+
+#### Query Parameters
+
+- `digest`: the SHA256 digest of the blob
+
+#### Examples
+
+##### Request
+
+```shell
+curl -I http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931d01fa595843f55d36f5b275a52087dd2
+```
+
+##### Response
+
+Return 200 OK if the blob exists, 404 Not Found if it does not.
+
 ### Create a Blob
 
 ```shell
@@ -337,17 +361,15 @@ Create a blob from a file. Returns the server file path.
 
 #### Examples
 
+##### Request
+
 ```shell
-curl -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931d01fa595843f55d36f5b275a52087dd2 -d @llama2-13b-q4_0.gguf
+curl -T model.bin -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931d01fa595843f55d36f5b275a52087dd2
 ```
 
-#### Response
+##### Response
 
-```json
-{
-  "path": "/home/user/.ollama/models/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931d01fa595843f55d36f5b275a52087dd2"
-}
-```
+Return 201 Created if the blob was successfully created.
 
 ## List Local Models
 
