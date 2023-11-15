@@ -1,10 +1,5 @@
 # FAQ
 
-- [How can I view the logs?](#how-can-i-view-the-logs)
-- [How can I expose Ollama on my network?](#how-can-i-expose-ollama-on-my-network)
-- [How can I allow additional web origins to access Ollama?](#how-can-i-allow-additional-web-origins-to-access-ollama)
-- [Where are models stored?](#where-are-models-stored)
-
 ## How can I view the logs?
 
 On macOS:
