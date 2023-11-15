@@ -4,7 +4,6 @@
 
 - [Generate a completion](#generate-a-completion)
 - [Create a Model](#create-a-model)
-- [Create a Blob](#create-a-blob)
 - [List Local Models](#list-local-models)
 - [Show Model Information](#show-model-information)
 - [Copy a Model](#copy-a-model)
@@ -298,7 +297,7 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 ### Parameters
 
 - `name`: name of the model to create
-- `path`: path to the Modelfile
+- `path`: path to the Modelfile (deprecated: please use modelfile instead)
 - `modelfile`: contents of the Modelfile
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -324,7 +323,7 @@ A stream of JSON objects. When finished, `status` is `success`.
 }
 ```
 
-## Create a Blob
+### Create a Blob
 
 ```shell
 POST /api/blobs/:digest
@@ -332,17 +331,17 @@ POST /api/blobs/:digest
 
 Create a blob from a file. Returns the server file path.
 
-### Query Parameters
+#### Query Parameters
 
 - `digest`: the expected SHA256 digest of the file
 
-### Examples
+#### Examples
 
 ```shell
 curl -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931d01fa595843f55d36f5b275a52087dd2 -d @llama2-13b-q4_0.gguf
 ```
 
-### Response
+#### Response
 
 ```json
 {
