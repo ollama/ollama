@@ -78,7 +78,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 			bin, err := os.Open(path)
 			if errors.Is(err, os.ErrNotExist) && c.Name == "model" {
-				// value might be a model reference and not a real file
+				continue
 			} else if err != nil {
 				return err
 			}
