@@ -38,10 +38,10 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
-- `format`: the format to return a response in. Currently the only accepted value is `json`
 
 Advanced parameters (optional):
 
+- `format`: the format to return a response in. Currently the only accepted value is `json`
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system prompt to (overrides what is defined in the `Modelfile`)
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
