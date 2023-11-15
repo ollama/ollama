@@ -491,16 +491,31 @@ func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, 
 	var currentLineLength int
 	var wordBuffer string
 
+	var role string
 	var fullResponse strings.Builder
+
 	request := api.GenerateRequest{Model: model, Prompt: prompt, Messages: messages, Format: format}
 	fn := func(generated api.GenerateResponse) error {
 		p.StopAndClear()
 
 		latest = generated
-		fullResponse.WriteString(generated.Response)
+
+		if generated.Response == "" && generated.Message == nil {
+			// warm-up response
+			return nil
+		}
+		var content string
+		if generated.Message != nil {
+			role = generated.Message.Role
+			content = generated.Message.Content
+		} else {
+			content = generated.Response
+		}
+
+		fullResponse.WriteString(content)
 
 		if wordWrap {
-			for _, ch := range generated.Response {
+			for _, ch := range content {
 				if currentLineLength+1 > termWidth-5 {
 					// backtrack the length of the last word and clear to the end of the line
 					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
@@ -521,7 +536,7 @@ func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, 
 				}
 			}
 		} else {
-			fmt.Print(generated.Response)
+			fmt.Print(content)
 		}
 
 		return nil
@@ -533,7 +548,8 @@ func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, 
 		}
 		return nil, err
 	}
-	if prompt != "" {
+
+	if prompt != "" || len(messages) > 0 {
 		fmt.Println()
 		fmt.Println()
 	}
@@ -554,7 +570,7 @@ func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, 
 		latest.Summary()
 	}
 
-	return latest.Message, nil
+	return &api.Message{Role: role, Content: fullResponse.String()}, nil
 }
 
 func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format string) error {
