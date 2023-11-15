@@ -297,18 +297,17 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) (string, error) {
-	var response CreateBlobResponse
-	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/blobs/%s/path", digest), nil, &response); err != nil {
+func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {
+	if err := c.do(ctx, http.MethodHead, fmt.Sprintf("/api/blobs/%s", digest), nil, nil); err != nil {
 		var statusError StatusError
 		if !errors.As(err, &statusError) || statusError.StatusCode != http.StatusNotFound {
-			return "", err
+			return err
 		}
 
-		if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, &response); err != nil {
-			return "", err
+		if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil); err != nil {
+			return err
 		}
 	}
 
-	return response.Path, nil
+	return nil
 }

@@ -650,7 +650,7 @@ func CopyModelHandler(c *gin.Context) {
 	}
 }
 
-func GetBlobHandler(c *gin.Context) {
+func HeadBlobHandler(c *gin.Context) {
 	path, err := GetBlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -771,8 +771,9 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		})
 
 		r.Handle(method, "/api/tags", ListModelsHandler)
-		r.Handle(method, "/api/blobs/:digest/path", GetBlobHandler)
 	}
+
+	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
 
 	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
 	s := &http.Server{

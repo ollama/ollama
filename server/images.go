@@ -287,6 +287,15 @@ func CreateModel(ctx context.Context, name string, commands []parser.Command, fn
 
 		switch c.Name {
 		case "model":
+			if strings.HasPrefix(c.Args, "@") {
+				blobPath, err := GetBlobsPath(strings.TrimPrefix(c.Args, "@"))
+				if err != nil {
+					return err
+				}
+
+				c.Args = blobPath
+			}
+
 			bin, err := os.Open(realpath(c.Args))
 			if err != nil {
 				// not a file on disk so must be a model reference

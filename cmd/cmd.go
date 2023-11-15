@@ -91,12 +91,11 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			bin.Seek(0, io.SeekStart)
 
 			digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
-			path, err = client.CreateBlob(cmd.Context(), digest, bin)
-			if err != nil {
+			if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
 				return err
 			}
 
-			modelfile = bytes.ReplaceAll(modelfile, []byte(c.Args), []byte(path))
+			modelfile = bytes.ReplaceAll(modelfile, []byte(c.Args), []byte("@"+digest))
 		}
 	}
 
