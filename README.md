@@ -112,11 +112,17 @@ docker run -d -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_ORIGINS="*" --nam
 
 #### Installing Ollama Web UI
 
-Change `OLLAMA_API_BASE_URL` to match the external Ollama Server url:
+Change `OLLAMA_API_BASE_URL` environment variable to match the external Ollama Server url:
 
 ```bash
-docker build --build-arg OLLAMA_API_BASE_URL='https://example.com/api' -t ollama-webui .
-docker run -d -p 3000:8080 --name ollama-webui --restart always ollama-webui
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+```
+
+Alternatively, if you prefer to build the container yourself, use the following command:
+
+```bash
+docker build -t ollama-webui .
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name ollama-webui --restart always ollama-webui
 ```
 
 ## How to Build for Static Deployment
