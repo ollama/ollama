@@ -421,7 +421,7 @@ func CreateModel(ctx context.Context, name string, commands []parser.Command, fn
 		case "template", "system":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating %s layer", c.Name)})
 
-			// remove duplicates layers
+			// remove duplicate layers
 			layers = removeLayerFromLayers(layers, mediatype)
 
 			layer, err := CreateLayer(strings.NewReader(c.Args))
