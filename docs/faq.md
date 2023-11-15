@@ -5,7 +5,6 @@
 - [How can I allow additional web origins to access Ollama?](#how-can-i-allow-additional-web-origins-to-access-ollama)
 - [Where are models stored?](#where-are-models-stored)
 
-
 ## How can I view the logs?
 
 On macOS:
@@ -108,11 +107,3 @@ No. Anything you do with Ollama, such as generate a response from the model, sta
 ## How can I use Ollama in VSCode to help me code?
 
 There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. You can see the list of plugins at the bottom of the main repository readme.
-
-## How do I send a document to Ollama?
-
-Ollama is a tool that will send a prompt to a model and return the generated answer. On its own, it doesn't know about documents. But as a developer you can add that capability. Or you can use the work of other developers who have leveraged Ollama to achieve this. Review the list of integrations others have already built at the bottom of the main repository readme if you just want to use someone else's project to do this.  
-
-If you are looking to build your own solution, start by looking at Retrieval Augmented Generation, or RAG. This breaks apart the document into smaller pieces, then generates embeddings for the pieces that are stored in a vector database. An embedding converts the words into a series of numbers. When you ask your application to answer a question, that question is also converted into an embedding and then compared to each of the chunks in the database. The most similar chunks can then be fed to the model as source material to answer the question.
-
-The reason we do this is that most models have a limited context which is the input size, and your document is often bigger. Plus, often providing too much information will simply confuse the model and result in wrong answers.
