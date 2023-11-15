@@ -472,6 +472,13 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 		return err
 	}
 
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	spinner := progress.NewSpinner("")
+	defer spinner.Stop()
+	p.Add("", spinner)
+
 	var latest api.GenerateResponse
 
 	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
@@ -502,6 +509,9 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 
 	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext, Format: format}
 	fn := func(response api.GenerateResponse) error {
+		spinner.Stop()
+		p.StopAndClear()
+
 		latest = response
 
 		if wordWrap {
