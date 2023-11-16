@@ -77,6 +77,14 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 
 	b.Total = fi.Size()
 
+	// http.StatusCreated indicates a blob has been mounted
+	// ref: https://distribution.github.io/distribution/spec/api/#cross-repository-blob-mount
+	if resp.StatusCode == http.StatusCreated {
+		b.Completed.Store(b.Total)
+		b.done = true
+		return nil
+	}
+
 	var size = b.Total / numUploadParts
 	switch {
 	case size < minUploadPartSize:
