@@ -102,3 +102,34 @@ No. Anything you do with Ollama, such as generate a response from the model, sta
 ## How can I use Ollama in Visual Studio Code?
 
 There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. You can see the list of [extensions & plugins](https://github.com/jmorganca/ollama#extensions--plugins) at the bottom of the main repository readme.
+
+## How do I use Ollama behind a proxy?
+
+Ollama is compatible with proxy servers if `HTTP_PROXY` or `HTTPS_PROXY` are configured. When using either variables, ensure it is set where `ollama serve` can access the values.
+
+When using `HTTPS_PROXY`, ensure the proxy certificate is installed as a system certificate.
+
+On macOS:
+
+```bash
+HTTPS_PROXY=http://proxy.example.com ollama serve
+```
+
+On Linux:
+
+```bash
+echo "Environment=HTTPS_PROXY=https://proxy.example.com" >>/etc/systemd/system/ollama.service.d/environment.conf
+```
+
+Reload `systemd` and restart Ollama:
+
+```bash
+systemctl daemon-reload
+systemctl restart ollama
+```
+
+### How do I use Ollama behind a proxy in Docker?
+
+Ollama Docker container can be configured to use a proxy by passing `-e HTTPS_PROXY=https://proxy.example.com` when starting the container. Ensure the certificate is installed as a system certificate when using HTTPS.
+
+Alternatively, Docker daemon can be configured to use a proxy. Instructions are available for Docker Desktop on [macOS](https://docs.docker.com/desktop/settings/mac/#proxies), [Windows](https://docs.docker.com/desktop/settings/windows/#proxies), and [Linux](https://docs.docker.com/desktop/settings/linux/#proxies), and Docker [daemon with systemd](https://docs.docker.com/config/daemon/systemd/#httphttps-proxy).
