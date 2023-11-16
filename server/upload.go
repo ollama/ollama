@@ -55,7 +55,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 	if b.From != "" {
 		values := requestURL.Query()
 		values.Add("mount", b.Digest)
-		values.Add("from", b.From)
+		values.Add("from", ParseModelPath(b.From).GetNamespaceRepository())
 		requestURL.RawQuery = values.Encode()
 	}
 
@@ -260,7 +260,7 @@ func (b *blobUpload) uploadChunk(ctx context.Context, method string, requestURL 
 			return err
 		}
 
-		return fmt.Errorf("http status %d %s: %s", resp.StatusCode, resp.Status, body)
+		return fmt.Errorf("http status %s: %s", resp.Status, body)
 	}
 
 	if method == http.MethodPatch {
