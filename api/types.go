@@ -187,6 +187,10 @@ type TokenResponse struct {
 	Token string `json:"token"`
 }
 
+func (r *GenerateRequest) Empty() bool {
+	return r.Prompt == "" && r.Template == "" && r.System == "" && len(r.Messages) == 0
+}
+
 func (r *GenerateResponse) Summary() {
 	if r.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", r.TotalDuration)

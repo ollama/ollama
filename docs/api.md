@@ -58,7 +58,7 @@ Enable JSON mode by setting the `format` parameter to `json`. This will structur
 
 ### Examples
 
-#### Request (Messages)
+#### Request (Chat Mode)
 
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{

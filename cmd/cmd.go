@@ -427,8 +427,7 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 
 	// output is being piped
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		_, err := generate(cmd, args[0], strings.Join(prompts, " "), nil, false, format)
-		if err != nil {
+		if _, err := generate(cmd, false, api.GenerateRequest{Model: args[0], Prompt: strings.Join(prompts, " "), Format: format}); err != nil {
 			return err
 		}
 		return nil
@@ -446,8 +445,7 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 
 	// prompts are provided via stdin or args so don't enter interactive mode
 	if len(prompts) > 0 {
-		_, err := generate(cmd, args[0], strings.Join(prompts, " "), nil, wordWrap, format)
-		if err != nil {
+		if _, err := generate(cmd, wordWrap, api.GenerateRequest{Model: args[0], Prompt: strings.Join(prompts, " "), Format: format}); err != nil {
 			return err
 		}
 		return nil
@@ -456,7 +454,7 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 	return generateInteractive(cmd, args[0], wordWrap, format)
 }
 
-func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, wordWrap bool, format string) (*api.Message, error) {
+func generate(cmd *cobra.Command, wordWrap bool, request api.GenerateRequest) (*api.Message, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return nil, err
@@ -494,7 +492,6 @@ func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, 
 	var role string
 	var fullResponse strings.Builder
 
-	request := api.GenerateRequest{Model: model, Prompt: prompt, Messages: messages, Format: format}
 	fn := func(generated api.GenerateResponse) error {
 		p.StopAndClear()
 
@@ -574,7 +571,7 @@ func generate(cmd *cobra.Command, model, prompt string, messages []api.Message, 
 
 func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format string) error {
 	// load the model
-	if _, err := generate(cmd, model, "", nil, false, ""); err != nil {
+	if _, err := generate(cmd, false, api.GenerateRequest{Model: model}); err != nil {
 		return err
 	}
 
@@ -772,7 +769,7 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 
 		if len(line) > 0 && line[0] != '/' {
 			messages = append(messages, api.Message{Role: "user", Content: line})
-			assistant, err := generate(cmd, model, "", messages, wordWrap, format)
+			assistant, err := generate(cmd, wordWrap, api.GenerateRequest{Model: model, Messages: messages, Format: format})
 			if err != nil {
 				return err
 			}

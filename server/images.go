@@ -49,7 +49,6 @@ type Model struct {
 }
 
 type PromptVars struct {
-	First  bool
 	System string
 	Prompt string
 }

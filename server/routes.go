@@ -161,8 +161,6 @@ func GenerateHandler(c *gin.Context) {
 	}
 
 	// validate the request
-	isContextSet := req.Context != nil && len(req.Context) > 0
-	areMessagesSet := req.Messages != nil && len(req.Messages) > 0
 	switch {
 	case req.Model == "":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
@@ -170,10 +168,10 @@ func GenerateHandler(c *gin.Context) {
 	case len(req.Format) > 0 && req.Format != "json":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
 		return
-	case req.Raw && (isContextSet || areMessagesSet || req.System != "" || req.Template != ""):
+	case req.Raw && (len(req.Context) > 0 || len(req.Messages) > 0 || req.System != "" || req.Template != ""):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, context, or messages"})
 		return
-	case areMessagesSet && (isContextSet || req.Raw || req.System != "" || req.Template != "" || req.Prompt != ""):
+	case len(req.Messages) > 0 && (len(req.Context) > 0 || req.Raw || req.System != "" || req.Template != "" || req.Prompt != ""):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "cannot specify context, raw, system, template, or prompt when using messages"})
 		return
 	}
@@ -209,7 +207,7 @@ func GenerateHandler(c *gin.Context) {
 	switch {
 	case req.Raw:
 		prompt = req.Prompt
-	case areMessagesSet:
+	case len(req.Messages) > 0:
 		prompt, err = promptFromMessages(model, req.Messages)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -229,7 +227,7 @@ func GenerateHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 		// an empty request loads the model
-		if req.Prompt == "" && req.Template == "" && req.System == "" && !areMessagesSet {
+		if req.Empty() {
 			ch <- api.GenerateResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true}
 			return
 		}
@@ -262,7 +260,7 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			// determine if the client should get a prompt/response or message
-			if areMessagesSet && !r.Done {
+			if len(req.Messages) > 0 && !r.Done {
 				r.Message = &api.Message{Role: "assistant", Content: r.Response}
 				// do not send back response in the case of messages
 				r.Response = ""
@@ -286,7 +284,7 @@ func GenerateHandler(c *gin.Context) {
 				return
 			}
 		}
-		if areMessagesSet {
+		if len(req.Messages) > 0 {
 			r.Message = &api.Message{Role: "assistant", Content: generated.String()}
 		} else {
 			r.Response = generated.String()
@@ -317,7 +315,6 @@ func promptFromRequestParams(c *gin.Context, model *Model, req api.GenerateReque
 		prompt.WriteString(prevCtx)
 	}
 	p, err := model.Prompt(&PromptVars{
-		First:  req.Context == nil,
 		System: req.System,
 		Prompt: req.Prompt,
 	})
@@ -336,41 +333,36 @@ func promptFromMessages(model *Model, messages []api.Message) (string, error) {
 		}
 		prompt.WriteString(p)
 
-		vars.First = false
 		vars.Prompt = ""
 		vars.System = ""
 		return nil
 	}
 
 	var prompt strings.Builder
-	vars := &PromptVars{
-		First: true,
-	}
+	vars := &PromptVars{}
 	for _, m := range messages {
+		if (m.Role == "system" || m.Role == "user") && vars.Prompt != "" {
+			if err := flush(vars, model, &prompt); err != nil {
+				return "", err
+			}
+		}
+
+		if m.Role == "assistant" && (vars.Prompt != "" || vars.System != "") {
+			if err := flush(vars, model, &prompt); err != nil {
+				return "", err
+			}
+		}
+
 		switch m.Role {
 		case "system":
-			if vars.System != "" {
-				if err := flush(vars, model, &prompt); err != nil {
-					return "", err
-				}
-			}
 			vars.System = m.Content
 		case "user":
-			if vars.Prompt != "" {
-				if err := flush(vars, model, &prompt); err != nil {
-					return "", err
-				}
-			}
 			vars.Prompt = m.Content
 		case "assistant":
-			if vars.Prompt != "" || vars.System != "" {
-				if err := flush(vars, model, &prompt); err != nil {
-					return "", err
-				}
-			}
 			prompt.WriteString(m.Content)
 		}
 	}
+
 	if vars.Prompt != "" || vars.System != "" {
 		if err := flush(vars, model, &prompt); err != nil {
 			return "", err
