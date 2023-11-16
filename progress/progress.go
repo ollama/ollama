@@ -31,6 +31,12 @@ func NewProgress(w io.Writer) *Progress {
 }
 
 func (p *Progress) Stop() bool {
+	for _, state := range p.states {
+		if spinner, ok := state.(*Spinner); ok {
+			spinner.Stop()
+		}
+	}
+
 	if p.ticker != nil {
 		p.ticker.Stop()
 		p.ticker = nil

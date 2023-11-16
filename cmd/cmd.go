@@ -53,7 +53,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	bars := make(map[string]*progress.Bar)
 
-	status := "transferring context"
+	status := fmt.Sprintf("creating %s", args[0])
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
@@ -71,6 +71,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	spinner.Stop()
+
+	status = "transferring context"
+	spinner = progress.NewSpinner(status)
+	p.Add(status, spinner)
 
 	for _, c := range commands {
 		switch c.Name {
@@ -133,10 +139,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if spinner != nil {
-		spinner.Stop()
-	}
-
 	return nil
 }
 
@@ -178,15 +180,13 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	bars := make(map[string]*progress.Bar)
 
-	var status string
-	var spinner *progress.Spinner
+	status := fmt.Sprintf("pushing %s", args[0])
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
 
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
-			if spinner != nil {
-				spinner.Stop()
-				spinner = nil
-			}
+			spinner.Stop()
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
@@ -197,10 +197,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 			bar.Set(resp.Completed)
 		} else if status != resp.Status {
-			if spinner != nil {
-				spinner.Stop()
-				spinner = nil
-			}
+			spinner.Stop()
 
 			status = resp.Status
 			spinner = progress.NewSpinner(status)
@@ -215,10 +212,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if spinner != nil {
-		spinner.Stop()
-	}
-
+	spinner.Stop()
 	return nil
 }
 
@@ -379,15 +373,13 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 	bars := make(map[string]*progress.Bar)
 
-	var status string
-	var spinner *progress.Spinner
+	status := fmt.Sprintf("pulling %s", args[0])
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
 
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
-			if spinner != nil {
-				spinner.Stop()
-				spinner = nil
-			}
+			spinner.Stop()
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
@@ -398,10 +390,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 			bar.Set(resp.Completed)
 		} else if status != resp.Status {
-			if spinner != nil {
-				spinner.Stop()
-				spinner = nil
-			}
+			spinner.Stop()
 
 			status = resp.Status
 			spinner = progress.NewSpinner(status)
@@ -414,10 +403,6 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	request := api.PullRequest{Name: args[0], Insecure: insecure}
 	if err := client.Pull(context.Background(), &request, fn); err != nil {
 		return err
-	}
-
-	if spinner != nil {
-		spinner.Stop()
 	}
 
 	return nil
@@ -476,7 +461,6 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 	defer p.Stop()
 
 	spinner := progress.NewSpinner("")
-	defer spinner.Stop()
 	p.Add("", spinner)
 
 	var latest api.GenerateResponse
