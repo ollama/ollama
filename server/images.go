@@ -1171,7 +1171,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 var errUnauthorized = fmt.Errorf("unauthorized")
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
-	var lastErr error
+	lastErr := errMaxRetriesExceeded
 	for try := 0; try < maxRetries; try++ {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
