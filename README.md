@@ -216,10 +216,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
-### Mobile
-
-- [Maid](https://github.com/danemadsen/Maid) (Mobile Artificial Intelligence Distribution)
-
 ### Web & Desktop
 
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
@@ -251,6 +247,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
+
+### Mobile
+
+- [Maid](https://github.com/danemadsen/Maid) (Mobile Artificial Intelligence Distribution)
 
 ### Extensions & Plugins
 
