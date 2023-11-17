@@ -97,16 +97,6 @@ Environment="PATH=$PATH"
 [Install]
 WantedBy=default.target
 EOF
-
-    mkdir -p /etc/systemd/system/ollama.service.d
-    cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service.d/environment.conf >/dev/null
-[Service]
-#Environment="OLLAMA_HOST="
-#Environment="OLLAMA_ORIGINS="
-#Environment="OLLAMA_MODELS="
-#Environment="HTTPS_PROXY="
-EOF
-
     SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
