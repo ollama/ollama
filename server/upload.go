@@ -42,8 +42,8 @@ type blobUpload struct {
 
 const (
 	numUploadParts          = 64
-	minUploadPartSize int64 = 95 * 1000 * 1000
-	maxUploadPartSize int64 = 1000 * 1000 * 1000
+	minUploadPartSize int64 = 100 * format.MegaByte
+	maxUploadPartSize int64 = 1000 * format.MegaByte
 )
 
 func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
@@ -153,7 +153,9 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 					case errors.Is(err, errMaxRetriesExceeded):
 						return err
 					case err != nil:
-						log.Printf("%s part %d attempt %d failed: %v, retrying", b.Digest[7:19], part.N, try, err)
+						sleep := 200*time.Millisecond + time.Duration(try)*time.Second/4
+						log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+						time.Sleep(sleep)
 						continue
 					}
 
