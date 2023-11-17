@@ -666,8 +666,14 @@ func HeadBlobHandler(c *gin.Context) {
 }
 
 func CreateBlobHandler(c *gin.Context) {
+	targetPath, err := GetBlobsPath(c.Param("digest"))
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	hash := sha256.New()
-	temp, err := os.CreateTemp("", c.Param("digest"))
+	temp, err := os.CreateTemp(filepath.Dir(targetPath), c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -686,12 +692,6 @@ func CreateBlobHandler(c *gin.Context) {
 	}
 
 	if err := temp.Close(); err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	targetPath, err := GetBlobsPath(c.Param("digest"))
-	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
