@@ -58,7 +58,7 @@ Enable JSON mode by setting the `format` parameter to `json` and specifying the 
 #### Request
 
 ```shell
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt": "Why is the sky blue?"
 }'
@@ -113,7 +113,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 #### Request (No streaming)
 
 ```shell
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt": "Why is the sky blue?",
   "stream": false
@@ -147,7 +147,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting and context.
 
 ```shell
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "mistral",
   "prompt": "[INST] why is the sky blue? [/INST]",
   "raw": true,
@@ -175,7 +175,7 @@ curl -X POST http://localhost:11434/api/generate -d '{
 #### Request (JSON mode)
 
 ```shell
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt": "What color is the sky at different times of the day? Respond using JSON",
   "format": "json",
@@ -224,7 +224,7 @@ The value of `response` will be a string containing JSON similar to:
 If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but you can set any of them individually and omit the ones you do not want to override.
 
 ```shell
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt": "Why is the sky blue?",
   "stream": false,
@@ -297,19 +297,18 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 ### Parameters
 
 - `name`: name of the model to create
-- `path`: path to the Modelfile (deprecated: please use modelfile instead)
 - `modelfile`: contents of the Modelfile
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
+- `path` (deprecated): path to the Modelfile
 
 ### Examples
 
 #### Request
 
 ```shell
-curl -X POST http://localhost:11434/api/create -d '{
+curl http://localhost:11434/api/create -d '{
   "name": "mario",
-  "path": "~/Modelfile",
-  "modelfile": "FROM llama2"
+  "modelfile": "FROM llama2\nSYSTEM You are mario from Super Mario Bros."
 }'
 ```
 
@@ -509,7 +508,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 #### Request
 
 ```shell
-curl -X POST http://localhost:11434/api/pull -d '{
+curl http://localhost:11434/api/pull -d '{
   "name": "llama2"
 }'
 ```
@@ -581,7 +580,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 #### Request
 
 ```shell
-curl -X POST http://localhost:11434/api/push -d '{
+curl http://localhost:11434/api/push -d '{
   "name": "mattw/pygmalion:latest"
 }'
 ```
@@ -649,7 +648,7 @@ Advanced parameters:
 #### Request
 
 ```shell
-curl -X POST http://localhost:11434/api/embeddings -d '{
+curl http://localhost:11434/api/embeddings -d '{
   "model": "llama2",
   "prompt": "Here is an article about llamas..."
 }'

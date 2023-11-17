@@ -206,7 +206,7 @@ Ollama has a REST API for running and managing models.
 For example, to generate text from a model:
 
 ```
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt":"Why is the sky blue?"
 }'
