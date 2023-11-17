@@ -45,65 +45,41 @@
 </script>
 
 <div
-	class=" fixed top-0 flex flex-row justify-center dark:bg-stone-100/5 dark:text-gray-200 backdrop-blur-xl w-full z-30"
+	class=" fixed top-0 flex flex-row justify-center bg-white/95 dark:bg-gray-800/90 dark:text-gray-200 backdrop-blur-xl w-full z-30"
 >
-	<div class="basis-full px-5">
+	<div class="basis-full">
 		<nav class="py-3" id="nav">
-			<div class="flex flex-row justify-between">
-				<div class="pl-2">
-					<button
-						class=" cursor-pointer p-1 flex dark:hover:bg-gray-700 rounded-lg transition"
-						on:click={() => {
-							show = !show;
-						}}
+			<div class=" flex max-w-3xl mx-auto px-3">
+				<div class="flex w-full max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+					<div class="pr-2">
+						<button
+							class=" cursor-pointer p-1 flex dark:hover:bg-gray-700 rounded-lg transition"
+							on:click={() => {
+								createNewChat();
+							}}
+						>
+							<div class=" m-auto self-center">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									viewBox="0 0 20 20"
+									fill="currentColor"
+									class="w-5 h-5"
+								>
+									<path
+										d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z"
+									/>
+									<path
+										d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z"
+									/>
+								</svg>
+							</div>
+						</button>
+					</div>
+					<div
+						class=" flex-1 self-center font-medium overflow-hidden text-ellipsis whitespace-nowrap w-[80vw] pr-4"
 					>
-						<div class=" m-auto self-center">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="w-5 h-5"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"
-								/>
-							</svg>
-						</div>
-					</button>
-				</div>
-
-				<div class=" self-center">
-					{title != '' ? title.split(' ').slice(0, 6).join(' ') : 'Ollama Web UI'}
-				</div>
-
-				<div class="pr-2">
-					<button
-						class=" cursor-pointer p-1 flex dark:hover:bg-gray-700 rounded-lg transition"
-						on:click={() => {
-							createNewChat();
-						}}
-					>
-						<div class=" m-auto self-center">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="w-5 h-5"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
-								/>
-							</svg>
-						</div>
-					</button>
+						{title != '' ? title : 'Ollama Web UI'}
+					</div>
 				</div>
 			</div>
 		</nav>
@@ -114,35 +90,44 @@
 	bind:this={navElement}
 	class="h-screen {show
 		? ''
-		: '-translate-x-72'} w-72 fixed top-0 left-0 z-40 transition bg-[#0a0a0a] text-gray-200 shadow-2xl text-sm
+		: '-translate-x-[260px]'} w-[260px] fixed top-0 left-0 z-40 transition bg-[#0a0a0a] text-gray-200 shadow-2xl text-sm
         "
 >
 	<div class="py-2.5 my-auto flex flex-col justify-between h-screen">
 		<div class="px-2.5 flex justify-center space-x-2">
 			<button
-				class=" cursor-pointer flex-grow rounded-md border border-gray-600 p-3 flex"
+				class="flex-grow flex justify-between rounded-md px-3 py-1.5 my-2 hover:bg-gray-900 transition"
 				on:click={() => {
 					createNewChat();
 				}}
 			>
-				<div class="self-center mr-2">
+				<div class="flex self-center">
+					<div class="self-center mr-3.5">
+						<img src="/ollama.png" class=" w-5 invert-[100%] rounded-full" />
+					</div>
+
+					<div class=" self-center font-medium text-sm">New Chat</div>
+				</div>
+
+				<div class="self-center">
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						viewBox="0 0 20 20"
 						fill="currentColor"
-						class="w-5 h-5"
+						class="w-4 h-4"
 					>
 						<path
-							d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"
+							d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z"
+						/>
+						<path
+							d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z"
 						/>
 					</svg>
 				</div>
-
-				<div class=" self-center">New Chat</div>
 			</button>
 
-			<button
-				class=" cursor-pointer w-12 rounded-md border border-gray-600 flex"
+			<!-- <button
+				class=" cursor-pointer w-12 rounded-md flex"
 				on:click={() => {
 					show = !show;
 				}}
@@ -166,16 +151,16 @@
 						/>
 					</svg>
 				</div>
-			</button>
+			</button> -->
 		</div>
 
 		<div class="pl-2.5 my-3 flex-1 flex flex-col space-y-1 overflow-y-auto">
 			{#each _chats as chat, i}
 				<div class=" w-full pr-2 relative">
 					<button
-						class=" w-full flex justify-between rounded-md px-4 py-3 hover:bg-gray-800 {chat.id ===
+						class=" w-full flex justify-between rounded-md px-3 py-2 hover:bg-gray-900 {chat.id ===
 						selectedChatId
-							? 'bg-gray-800'
+							? 'bg-gray-900'
 							: ''} transition whitespace-nowrap text-ellipsis"
 						on:click={() => {
 							if (chat.id !== chatTitleEditIdx) {
@@ -205,8 +190,8 @@
 							</div>
 							<div
 								class=" text-left self-center overflow-hidden {chat.id === selectedChatId
-									? 'w-[150px]'
-									: 'w-[200px]'} "
+									? 'w-[120px]'
+									: 'w-[180px]'} "
 							>
 								{#if chatTitleEditIdx === chat.id}
 									<input bind:value={chatTitle} class=" bg-transparent w-full" />
@@ -218,7 +203,7 @@
 					</button>
 
 					{#if chat.id === selectedChatId}
-						<div class=" absolute right-[22px] top-[14px]">
+						<div class=" absolute right-[22px] top-[10px]">
 							{#if chatTitleEditIdx === chat.id}
 								<div class="flex self-center space-x-1.5">
 									<button
@@ -322,7 +307,7 @@
 				<div class="flex">
 					<input bind:this={importFileInputElement} bind:files={importFiles} type="file" hidden />
 					<button
-						class=" flex rounded-md p-3.5 w-full hover:bg-gray-800 transition"
+						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
 						on:click={() => {
 							importFileInputElement.click();
 							// importChatHistory();
@@ -347,7 +332,7 @@
 						<div class=" self-center">Import</div>
 					</button>
 					<button
-						class=" flex rounded-md p-3.5 w-full hover:bg-gray-800 transition"
+						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
 						on:click={() => {
 							exportChatHistory();
 						}}
@@ -372,7 +357,7 @@
 					</button>
 				</div>
 				<button
-					class=" flex rounded-md p-3.5 w-full hover:bg-gray-800 transition"
+					class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
 					on:click={() => {
 						deleteChatHistory();
 					}}
@@ -396,7 +381,7 @@
 					<div class=" self-center">Clear conversations</div>
 				</button>
 				<button
-					class=" flex rounded-md p-3.5 w-full hover:bg-gray-800 transition"
+					class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
 					on:click={() => {
 						openSettings();
 					}}
@@ -426,5 +411,34 @@
 				</button>
 			</div>
 		</div>
+	</div>
+
+	<div
+		class="fixed left-0 top-[50dvh] z-40 -translate-y-1/2 transition-transform translate-x-[255px] md:translate-x-[260px] rotate-0"
+	>
+		<button
+			class=" group"
+			on:click={() => {
+				show = !show;
+			}}
+			><span class="" data-state="closed"
+				><div
+					class="flex h-[72px] w-8 items-center justify-center opacity-20 group-hover:opacity-100 transition"
+				>
+					<div class="flex h-6 w-6 flex-col items-center">
+						<div
+							class="h-3 w-1 rounded-full bg-[#0f0f0f] dark:bg-white rotate-0 translate-y-[0.15rem] {show
+								? 'group-hover:rotate-[15deg]'
+								: 'group-hover:rotate-[-15deg]'}"
+						/>
+						<div
+							class="h-3 w-1 rounded-full bg-[#0f0f0f] dark:bg-white rotate-0 translate-y-[-0.15rem] {show
+								? 'group-hover:rotate-[-15deg]'
+								: 'group-hover:rotate-[15deg]'}"
+						/>
+					</div>
+				</div>
+			</span>
+		</button>
 	</div>
 </div>
