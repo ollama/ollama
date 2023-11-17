@@ -62,7 +62,7 @@ Enable JSON mode by setting the `format` parameter to `json`. This will structur
 
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{
-  "model": "mistral",
+  "model": "llama2",
   "messages": [
     {
       "role": "user",
