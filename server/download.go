@@ -53,8 +53,8 @@ type blobDownloadPart struct {
 
 const (
 	numDownloadParts          = 64
-	minDownloadPartSize int64 = 32 * 1000 * 1000
-	maxDownloadPartSize int64 = 256 * 1000 * 1000
+	minDownloadPartSize int64 = 100 * format.MegaByte
+	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
 
 func (p *blobDownloadPart) Name() string {
@@ -158,7 +158,9 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 					// return immediately if the context is canceled or the device is out of space
 					return err
 				case err != nil:
-					log.Printf("%s part %d attempt %d failed: %v, retrying", b.Digest[7:19], i, try, err)
+					sleep := 200*time.Millisecond + time.Duration(try)*time.Second/4
+					log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], i, try, err, sleep)
+					time.Sleep(sleep)
 					continue
 				default:
 					if try > 0 {
@@ -304,7 +306,7 @@ type downloadOpts struct {
 	fn      func(api.ProgressResponse)
 }
 
-const maxRetries = 3
+const maxRetries = 10
 
 var errMaxRetriesExceeded = errors.New("max retries exceeded")
 
