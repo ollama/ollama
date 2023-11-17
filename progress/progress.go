@@ -3,12 +3,8 @@ package progress
 import (
 	"fmt"
 	"io"
-	"os"
-	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
 type State interface {
@@ -48,19 +44,18 @@ func (p *Progress) Stop() bool {
 }
 
 func (p *Progress) StopAndClear() bool {
+	fmt.Fprint(p.w, "\033[?25l")
+	defer fmt.Fprint(p.w, "\033[?25h")
+
 	stopped := p.Stop()
 	if stopped {
-		termWidth, _, err := term.GetSize(int(os.Stderr.Fd()))
-		if err != nil {
-			panic(err)
-		}
-
 		// clear the progress bar by:
-		// 1. reset to beginning of line
-		// 2. move up to the first line of the progress bar
-		// 3. fill the terminal width with spaces
-		// 4. reset to beginning of line
-		fmt.Fprintf(p.w, "\r\033[%dA%s\r", p.pos, strings.Repeat(" ", termWidth))
+		// 1. for each line in the progress:
+		//   a. move the cursor up one line
+		//   b. clear the line
+		for i := 0; i < p.pos; i++ {
+			fmt.Fprint(p.w, "\033[A\033[2K")
+		}
 	}
 
 	return stopped
@@ -76,6 +71,9 @@ func (p *Progress) Add(key string, state State) {
 func (p *Progress) render() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	fmt.Fprint(p.w, "\033[?25l")
+	defer fmt.Fprint(p.w, "\033[?25h")
 
 	if p.pos > 0 {
 		fmt.Fprintf(p.w, "\033[%dA", p.pos)
