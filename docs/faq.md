@@ -130,7 +130,7 @@ systemctl restart ollama
 
 ### How do I use Ollama behind a proxy in Docker?
 
-Ollama Docker container can be configured to use a proxy by passing `-e HTTPS_PROXY=https://proxy.example.com` when starting the container.
+The Ollama Docker container image can be configured to use a proxy by passing `-e HTTPS_PROXY=https://proxy.example.com` when starting the container.
 
 Alternatively, Docker daemon can be configured to use a proxy. Instructions are available for Docker Desktop on [macOS](https://docs.docker.com/desktop/settings/mac/#proxies), [Windows](https://docs.docker.com/desktop/settings/windows/#proxies), and [Linux](https://docs.docker.com/desktop/settings/linux/#proxies), and Docker [daemon with systemd](https://docs.docker.com/config/daemon/systemd/#httphttps-proxy).
 
