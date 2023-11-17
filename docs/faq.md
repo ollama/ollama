@@ -148,3 +148,9 @@ Build and run this image:
 docker build -t ollama-with-ca .
 docker run -d -e HTTPS_PROXY=https://my.proxy.example.com -p 11434:11434 ollama-with-ca
 ```
+
+### How do I use Ollama with GPU acceleration in Docker?
+
+The Ollama Docker container can be configured with GPU acceleration in Linux or Windows (with WSL2). This requires the [nvidia-container-toolkit](https://github.com/NVIDIA/nvidia-container-toolkit).
+
+GPU acceleration is not available for Docker Desktop in macOS due to the lack of GPU passthrough and emulation.
