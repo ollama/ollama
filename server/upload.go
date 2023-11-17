@@ -301,7 +301,7 @@ func (b *blobUpload) Wait(ctx context.Context, fn func(api.ProgressResponse)) er
 		}
 
 		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("uploading %s", b.Digest),
+			Status:    fmt.Sprintf("uploading %s", b.Digest[7:19]),
 			Digest:    b.Digest,
 			Total:     b.Total,
 			Completed: b.Completed.Load(),
@@ -352,7 +352,7 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryO
 	default:
 		defer resp.Body.Close()
 		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("uploading %s", layer.Digest),
+			Status:    fmt.Sprintf("uploading %s", layer.Digest[7:19]),
 			Digest:    layer.Digest,
 			Total:     layer.Size,
 			Completed: layer.Size,

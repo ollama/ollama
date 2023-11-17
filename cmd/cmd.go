@@ -30,7 +30,7 @@ import (
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/progressbar"
+	"github.com/jmorganca/ollama/progress"
 	"github.com/jmorganca/ollama/readline"
 	"github.com/jmorganca/ollama/server"
 	"github.com/jmorganca/ollama/version"
@@ -48,13 +48,19 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	bars := make(map[string]*progress.Bar)
+
+	status := fmt.Sprintf("creating %s", args[0])
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
+
 	modelfile, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
-
-	spinner := NewSpinner("transferring context")
-	go spinner.Spin(100 * time.Millisecond)
 
 	commands, err := parser.Parse(bytes.NewReader(modelfile))
 	if err != nil {
@@ -65,6 +71,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	spinner.Stop()
+
+	status = "transferring context"
+	spinner = progress.NewSpinner(status)
+	p.Add(status, spinner)
 
 	for _, c := range commands {
 		switch c.Name {
@@ -99,39 +111,32 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	var currentDigest string
-	var bar *progressbar.ProgressBar
-
-	request := api.CreateRequest{Name: args[0], Path: filename, Modelfile: string(modelfile)}
 	fn := func(resp api.ProgressResponse) error {
-		if resp.Digest != currentDigest && resp.Digest != "" {
+		if resp.Digest != "" {
 			spinner.Stop()
-			currentDigest = resp.Digest
-			// pulling
-			bar = progressbar.DefaultBytes(
-				resp.Total,
-				resp.Status,
-			)
-			bar.Set64(resp.Completed)
-		} else if resp.Digest == currentDigest && resp.Digest != "" {
-			bar.Set64(resp.Completed)
-		} else {
-			currentDigest = ""
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(resp.Status, resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
 			spinner.Stop()
-			spinner = NewSpinner(resp.Status)
-			go spinner.Spin(100 * time.Millisecond)
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
 		}
 
 		return nil
 	}
 
+	request := api.CreateRequest{Name: args[0], Path: filename, Modelfile: string(modelfile)}
 	if err := client.Create(context.Background(), &request, fn); err != nil {
 		return err
-	}
-
-	spinner.Stop()
-	if spinner.description != "success" {
-		return errors.New("unexpected end to create model")
 	}
 
 	return nil
@@ -170,36 +175,44 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var currentDigest string
-	var bar *progressbar.ProgressBar
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
 
-	request := api.PushRequest{Name: args[0], Insecure: insecure}
+	bars := make(map[string]*progress.Bar)
+
+	status := fmt.Sprintf("pushing %s", args[0])
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
+
 	fn := func(resp api.ProgressResponse) error {
-		if resp.Digest != currentDigest && resp.Digest != "" {
-			currentDigest = resp.Digest
-			bar = progressbar.DefaultBytes(
-				resp.Total,
-				fmt.Sprintf("pushing %s...", resp.Digest[7:19]),
-			)
+		if resp.Digest != "" {
+			spinner.Stop()
 
-			bar.Set64(resp.Completed)
-		} else if resp.Digest == currentDigest && resp.Digest != "" {
-			bar.Set64(resp.Completed)
-		} else {
-			currentDigest = ""
-			fmt.Println(resp.Status)
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(resp.Status, resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			spinner.Stop()
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
 		}
+
 		return nil
 	}
 
+	request := api.PushRequest{Name: args[0], Insecure: insecure}
 	if err := client.Push(context.Background(), &request, fn); err != nil {
 		return err
 	}
 
-	if bar != nil && !bar.IsFinished() {
-		return errors.New("unexpected end to push model")
-	}
-
+	spinner.Stop()
 	return nil
 }
 
@@ -350,44 +363,46 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return pull(args[0], insecure)
-}
-
-func pull(model string, insecure bool) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	var currentDigest string
-	var bar *progressbar.ProgressBar
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
 
-	request := api.PullRequest{Name: model, Insecure: insecure}
+	bars := make(map[string]*progress.Bar)
+
+	status := fmt.Sprintf("pulling %s", args[0])
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
+
 	fn := func(resp api.ProgressResponse) error {
-		if resp.Digest != currentDigest && resp.Digest != "" {
-			currentDigest = resp.Digest
-			bar = progressbar.DefaultBytes(
-				resp.Total,
-				fmt.Sprintf("pulling %s...", resp.Digest[7:19]),
-			)
+		if resp.Digest != "" {
+			spinner.Stop()
 
-			bar.Set64(resp.Completed)
-		} else if resp.Digest == currentDigest && resp.Digest != "" {
-			bar.Set64(resp.Completed)
-		} else {
-			currentDigest = ""
-			fmt.Println(resp.Status)
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(resp.Status, resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			spinner.Stop()
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
 		}
 
 		return nil
 	}
 
+	request := api.PullRequest{Name: args[0], Insecure: insecure}
 	if err := client.Pull(context.Background(), &request, fn); err != nil {
 		return err
-	}
-
-	if bar != nil && !bar.IsFinished() {
-		return errors.New("unexpected end to pull model")
 	}
 
 	return nil
@@ -442,8 +457,11 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 		return err
 	}
 
-	spinner := NewSpinner("")
-	go spinner.Spin(60 * time.Millisecond)
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	spinner := progress.NewSpinner("")
+	p.Add("", spinner)
 
 	var latest api.GenerateResponse
 
@@ -475,9 +493,8 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 
 	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext, Format: format}
 	fn := func(response api.GenerateResponse) error {
-		if !spinner.IsFinished() {
-			spinner.Finish()
-		}
+		spinner.Stop()
+		p.StopAndClear()
 
 		latest = response
 
@@ -511,7 +528,6 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 
 	if err := client.Generate(cancelCtx, &request, fn); err != nil {
 		if strings.Contains(err.Error(), "context canceled") && abort {
-			spinner.Finish()
 			return nil
 		}
 		return err
