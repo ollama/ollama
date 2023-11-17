@@ -25,7 +25,7 @@ Coming soon!
 curl https://ollama.ai/install.sh | sh
 ```
 
-### Arch-Linux
+#### Arch-Linux
 
 Ollama is available in the `extra` repository on Arch-Linux. This command is supposed to be run as root.
 ```
