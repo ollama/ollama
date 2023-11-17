@@ -114,7 +114,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{
-  "model": "llama2:7b",
+  "model": "llama2",
   "prompt": "Why is the sky blue?",
   "stream": false
 }'
@@ -126,7 +126,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 
 ```json
 {
-  "model": "llama2:7b",
+  "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "context": [1, 2, 3],
@@ -225,7 +225,7 @@ If you want to set custom options for the model at runtime rather than in the Mo
 
 ```shell
 curl -X POST http://localhost:11434/api/generate -d '{
-  "model": "llama2:7b",
+  "model": "llama2",
   "prompt": "Why is the sky blue?",
   "stream": false,
   "options": {
@@ -270,7 +270,7 @@ curl -X POST http://localhost:11434/api/generate -d '{
 
 ```json
 {
-  "model": "llama2:7b",
+  "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "context": [1, 2, 3],
@@ -395,7 +395,7 @@ A single JSON object will be returned.
 {
   "models": [
     {
-      "name": "llama2:7b",
+      "name": "llama2",
       "modified_at": "2023-08-02T17:02:23.713454393-07:00",
       "size": 3791730596
     },
@@ -426,7 +426,7 @@ Show details about a model including modelfile, template, parameters, license, a
 
 ```shell
 curl http://localhost:11434/api/show -d '{
-  "name": "llama2:7b"
+  "name": "llama2"
 }'
 ```
 
@@ -455,7 +455,7 @@ Copy a model. Creates a model with another name from an existing model.
 
 ```shell
 curl http://localhost:11434/api/copy -d '{
-  "source": "llama2:7b",
+  "source": "llama2",
   "destination": "llama2-backup"
 }'
 ```
@@ -510,7 +510,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ```shell
 curl -X POST http://localhost:11434/api/pull -d '{
-  "name": "llama2:7b"
+  "name": "llama2"
 }'
 ```
 
@@ -650,7 +650,7 @@ Advanced parameters:
 
 ```shell
 curl -X POST http://localhost:11434/api/embeddings -d '{
-  "model": "llama2:7b",
+  "model": "llama2",
   "prompt": "Here is an article about llamas..."
 }'
 ```
