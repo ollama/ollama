@@ -9,7 +9,6 @@ func TestModelPrompt(t *testing.T) {
 		Template: "a{{ .Prompt }}b",
 	}
 	s, err := m.Prompt(&PromptVars{
-		First:  true,
 		Prompt: "<h1>",
 	})
 	if err != nil {
