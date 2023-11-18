@@ -206,7 +206,7 @@ Ollama has a REST API for running and managing models.
 For example, to generate text from a model:
 
 ```
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt":"Why is the sky blue?"
 }'
@@ -224,6 +224,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Web UI](https://github.com/ollama-webui/ollama-webui)
 - [Ollamac](https://github.com/kevinhermawan/Ollamac)
+- [big-AGI](https://github.com/enricoros/big-agi/blob/main/docs/config-ollama.md)
+- [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
 
 ### Terminal
 
@@ -245,6 +247,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
+
+### Mobile
+
+- [Maid](https://github.com/danemadsen/Maid) (Mobile Artificial Intelligence Distribution)
 
 ### Extensions & Plugins
 
