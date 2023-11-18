@@ -74,7 +74,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	spinner.Stop()
 
-	status = "transferring context"
+	status = "transferring model data"
 	spinner = progress.NewSpinner(status)
 	p.Add(status, spinner)
 
