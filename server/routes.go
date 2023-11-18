@@ -673,7 +673,7 @@ func CreateBlobHandler(c *gin.Context) {
 	}
 
 	hash := sha256.New()
-	temp, err := os.CreateTemp(filepath.Dir(targetPath), c.Param("digest"))
+	temp, err := os.CreateTemp(filepath.Dir(targetPath), c.Param("digest")+"-")
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
