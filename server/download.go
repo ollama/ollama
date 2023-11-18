@@ -285,7 +285,7 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 		}
 
 		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("downloading %s", b.Digest),
+			Status:    fmt.Sprintf("downloading %s", b.Digest[7:19]),
 			Digest:    b.Digest,
 			Total:     b.Total,
 			Completed: b.Completed.Load(),
@@ -322,7 +322,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 		return err
 	default:
 		opts.fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("downloading %s", opts.digest),
+			Status:    fmt.Sprintf("downloading %s", opts.digest[7:19]),
 			Digest:    opts.digest,
 			Total:     fi.Size(),
 			Completed: fi.Size(),

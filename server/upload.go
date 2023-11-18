@@ -55,7 +55,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 	if b.From != "" {
 		values := requestURL.Query()
 		values.Add("mount", b.Digest)
-		values.Add("from", b.From)
+		values.Add("from", ParseModelPath(b.From).GetNamespaceRepository())
 		requestURL.RawQuery = values.Encode()
 	}
 
@@ -76,6 +76,14 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 	}
 
 	b.Total = fi.Size()
+
+	// http.StatusCreated indicates a blob has been mounted
+	// ref: https://distribution.github.io/distribution/spec/api/#cross-repository-blob-mount
+	if resp.StatusCode == http.StatusCreated {
+		b.Completed.Store(b.Total)
+		b.done = true
+		return nil
+	}
 
 	var size = b.Total / numUploadParts
 	switch {
@@ -260,7 +268,7 @@ func (b *blobUpload) uploadChunk(ctx context.Context, method string, requestURL 
 			return err
 		}
 
-		return fmt.Errorf("http status %d %s: %s", resp.StatusCode, resp.Status, body)
+		return fmt.Errorf("http status %s: %s", resp.Status, body)
 	}
 
 	if method == http.MethodPatch {
@@ -293,7 +301,7 @@ func (b *blobUpload) Wait(ctx context.Context, fn func(api.ProgressResponse)) er
 		}
 
 		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("uploading %s", b.Digest),
+			Status:    fmt.Sprintf("uploading %s", b.Digest[7:19]),
 			Digest:    b.Digest,
 			Total:     b.Total,
 			Completed: b.Completed.Load(),
@@ -344,7 +352,7 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryO
 	default:
 		defer resp.Body.Close()
 		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("uploading %s", layer.Digest),
+			Status:    fmt.Sprintf("uploading %s", layer.Digest[7:19]),
 			Digest:    layer.Digest,
 			Total:     layer.Size,
 			Completed: layer.Size,

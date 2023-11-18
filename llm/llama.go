@@ -71,9 +71,10 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	// IMPORTANT: the order of the runners in the array is the priority order
 	switch runtime.GOOS {
 	case "darwin":
-		runners = []ModelRunner{
-			{Path: path.Join(buildPath, "metal", "bin", "ollama-runner")},
-			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
+		if runtime.GOARCH == "arm64" {
+			runners = []ModelRunner{{Path: path.Join(buildPath, "metal", "bin", "ollama-runner")}}
+		} else {
+			runners = []ModelRunner{{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")}}
 		}
 	case "linux":
 		runners = []ModelRunner{
