@@ -190,14 +190,21 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 	headers.Set("Content-Type", "application/octet-stream")
 	headers.Set("Content-Length", "0")
 
-	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, nil, opts)
-	if err != nil {
-		b.err = err
+	for try := 0; try < maxRetries; try++ {
+		resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, nil, opts)
+		if err != nil {
+			b.err = err
+			sleep := 200*time.Millisecond + time.Duration(try)*time.Second/4
+			log.Printf("%s complete upload attempt %d failed: %v, retrying in %s", b.Digest[7:19], try, err, sleep)
+			time.Sleep(sleep)
+			continue
+		}
+		defer resp.Body.Close()
+
+		b.err = nil
+		b.done = true
 		return
 	}
-	defer resp.Body.Close()
-
-	b.done = true
 }
 
 func (b *blobUpload) uploadChunk(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *RegistryOptions) error {
