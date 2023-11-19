@@ -9,7 +9,7 @@ import jwt
 
 import config
 
-JWT_SECRET_KEY = config.OLLAMA_WEBUI_JWT_SECRET_KEY
+JWT_SECRET_KEY = config.WEBUI_JWT_SECRET_KEY
 ALGORITHM = "HS256"
 
 ##############

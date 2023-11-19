@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.web.routers import auths, users
-from config import OLLAMA_WEBUI_VERSION, OLLAMA_WEBUI_AUTH
+from config import WEBUI_VERSION, WEBUI_AUTH
 
 app = FastAPI()
 
@@ -23,4 +23,4 @@ app.include_router(users.router, prefix="/users", tags=["users"])
 
 @app.get("/")
 async def get_status():
-    return {"status": True, "version": OLLAMA_WEBUI_VERSION, "auth": OLLAMA_WEBUI_AUTH}
+    return {"status": True, "version": WEBUI_VERSION, "auth": WEBUI_AUTH}

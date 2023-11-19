@@ -9,7 +9,7 @@ import json
 from apps.web.models.users import Users
 from constants import ERROR_MESSAGES
 from utils.utils import extract_token_from_auth_header
-from config import OLLAMA_API_BASE_URL, OLLAMA_WEBUI_AUTH
+from config import OLLAMA_API_BASE_URL, WEBUI_AUTH
 
 app = Flask(__name__)
 CORS(
@@ -32,7 +32,7 @@ def proxy(path):
     headers = dict(request.headers)
 
     # Basic RBAC support
-    if OLLAMA_WEBUI_AUTH:
+    if WEBUI_AUTH:
         if "Authorization" in headers:
             token = extract_token_from_auth_header(headers["Authorization"])
             user = Users.get_user_by_token(token)

@@ -81,6 +81,9 @@ class UsersTable:
             )
         ]
 
+    def get_num_users(self) -> Optional[int]:
+        return self.table.count_documents({})
+
     def update_user_by_id(self, id: str, updated: dict) -> Optional[UserModel]:
         user = self.table.find_one_and_update(
             {"id": id}, {"$set": updated}, return_document=ReturnDocument.AFTER
