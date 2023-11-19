@@ -2,6 +2,7 @@ package progress
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -55,7 +56,7 @@ func (b *Bar) String() string {
 		pre.WriteString(" ")
 	}
 
-	fmt.Fprintf(&pre, "%.0f%% ", b.percent())
+	fmt.Fprintf(&pre, "%3.0f%% ", math.Floor(b.percent()))
 
 	fmt.Fprintf(&suf, "(%s/%s, %s/s, %s)",
 		format.HumanBytes(b.currentValue),
