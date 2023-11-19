@@ -51,7 +51,7 @@ func (p *Progress) StopAndClear() bool {
 
 	stopped := p.Stop()
 	if stopped {
-		// clear the progress bar by:
+		// clear all progress lines
 		for i := 0; i < p.pos; i++ {
 			fmt.Fprint(p.w, "\033[A\033[2K\033[1G")
 		}
