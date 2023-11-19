@@ -1131,6 +1131,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		if !errors.Is(err, context.Canceled) {
 			log.Printf("request failed: %v", err)
 		}
+
 		return nil, err
 	}
 
@@ -1150,7 +1151,13 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 				return nil, err
 			}
 		}
-		return makeRequest(ctx, method, requestURL, headers, body, regOpts)
+
+		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, errUnauthorized
+		}
+
+		return resp, err
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, os.ErrNotExist
 	case resp.StatusCode >= http.StatusBadRequest:
