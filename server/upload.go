@@ -181,7 +181,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 		resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, nil, opts)
 		if err != nil {
 			b.err = err
-			sleep := 200*time.Millisecond + time.Duration(try)*time.Second/4
+			sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
 			log.Printf("%s complete upload attempt %d failed: %v, retrying in %s", b.Digest[7:19], try, err, sleep)
 			time.Sleep(sleep)
 			continue
