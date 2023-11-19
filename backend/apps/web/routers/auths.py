@@ -8,15 +8,6 @@ from pydantic import BaseModel
 import time
 import uuid
 
-from constants import ERROR_MESSAGES
-from utils.utils import (
-    get_password_hash,
-    bearer_scheme,
-    create_token,
-)
-
-from utils.misc import get_gravatar_url
-
 from apps.web.models.auths import (
     SigninForm,
     SignupForm,
@@ -25,12 +16,18 @@ from apps.web.models.auths import (
     Auths,
 )
 from apps.web.models.users import Users
-import config
+
+
+from utils.utils import (
+    get_password_hash,
+    bearer_scheme,
+    create_token,
+)
+from utils.misc import get_gravatar_url
+from constants import ERROR_MESSAGES
+
 
 router = APIRouter()
-
-DB = config.DB
-
 
 ############################
 # GetSessionUser

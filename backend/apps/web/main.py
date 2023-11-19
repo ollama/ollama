@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.web.routers import auths
+from apps.web.routers import auths, users
 from config import OLLAMA_WEBUI_VERSION, OLLAMA_WEBUI_AUTH
 
 app = FastAPI()
@@ -18,6 +18,7 @@ app.add_middleware(
 
 
 app.include_router(auths.router, prefix="/auths", tags=["auths"])
+app.include_router(users.router, prefix="/users", tags=["users"])
 
 
 @app.get("/")

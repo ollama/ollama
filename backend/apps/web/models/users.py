@@ -27,6 +27,11 @@ class UserModel(BaseModel):
 ####################
 
 
+class UserRoleUpdateForm(BaseModel):
+    id: str
+    role: str
+
+
 class UsersTable:
     def __init__(self, db):
         self.db = db
@@ -71,10 +76,19 @@ class UsersTable:
     def get_users(self, skip: int = 0, limit: int = 50) -> Optional[UserModel]:
         return [
             UserModel(**user)
-            for user in list(self.table.find({}, {"_id": False}))
-            .skip(skip)
-            .limit(limit)
+            for user in list(
+                self.table.find({}, {"_id": False}).skip(skip).limit(limit)
+            )
         ]
+
+    def update_user_by_id(self, id: str, updated: dict) -> Optional[UserModel]:
+        user = self.table.find_one_and_update(
+            {"id": id}, {"$set": updated}, return_document=ReturnDocument.AFTER
+        )
+        return UserModel(**user)
+
+    def update_user_role_by_id(self, id: str, role: str) -> Optional[UserModel]:
+        return self.update_user_by_id(id, {"role": role})
 
 
 Users = UsersTable(DB)
