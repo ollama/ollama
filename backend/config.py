@@ -55,7 +55,3 @@ if WEBUI_AUTH:
     ####################################
 
     WEBUI_JWT_SECRET_KEY = os.environ.get("WEBUI_JWT_SECRET_KEY", "t0p-s3cr3t")
-
-    if ENV == "prod":
-        if WEBUI_JWT_SECRET_KEY == "":
-            WEBUI_JWT_SECRET_KEY = str(b64encode(token_bytes(32)).decode())
