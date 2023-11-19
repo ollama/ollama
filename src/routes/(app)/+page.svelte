@@ -10,17 +10,17 @@
 	import 'katex/dist/katex.min.css';
 	import toast from 'svelte-french-toast';
 
-	import { API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
+	import { OLLAMA_API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
 
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Suggestions from '$lib/components/chat/Suggestions.svelte';
+	import { user } from '$lib/stores';
 
 	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
 	let db;
 
-	// let selectedModel = '';
 	let selectedModels = [''];
 	let settings = {
 		system: null,
@@ -619,7 +619,8 @@
 			headers: {
 				Accept: 'application/json',
 				'Content-Type': 'application/json',
-				...(settings.authHeader && { Authorization: settings.authHeader })
+				...(settings.authHeader && { Authorization: settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
 			}
 		})
 			.then(async (res) => {
@@ -628,7 +629,11 @@
 			})
 			.catch((error) => {
 				console.log(error);
-				toast.error('Server connection failed');
+				if ('detail' in error) {
+					toast.error(error.detail);
+				} else {
+					toast.error('Server connection failed');
+				}
 				return null;
 			});
 
@@ -687,13 +692,6 @@
 				}
 			})
 		);
-
-		// if (selectedModel.includes('gpt-')) {
-		// 	await sendPromptOpenAI(userPrompt, parentId);
-		// } else {
-		// 	await sendPromptOllama(userPrompt, parentId);
-		// }
-
 		console.log(history);
 	};
 
@@ -724,7 +722,8 @@
 			method: 'POST',
 			headers: {
 				'Content-Type': 'text/event-stream',
-				...(settings.authHeader && { Authorization: settings.authHeader })
+				...(settings.authHeader && { Authorization: settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
 			},
 			body: JSON.stringify({
 				model: model,
@@ -779,6 +778,8 @@
 								responseMessage.content += data.response;
 								messages = messages;
 							}
+						} else if ('detail' in data) {
+							throw data;
 						} else {
 							responseMessage.done = true;
 							responseMessage.context = data.context;
@@ -791,6 +792,10 @@
 				}
 			} catch (error) {
 				console.log(error);
+				if ('detail' in error) {
+					toast.error(error.detail);
+				}
+				break;
 			}
 
 			if (autoScroll) {
@@ -817,7 +822,7 @@
 			window.scrollTo({ top: document.body.scrollHeight });
 		}
 
-		if (messages.length == 2) {
+		if (messages.length == 2 && messages.at(1).content !== '') {
 			await generateChatTitle(chatId, userPrompt);
 		}
 	};
@@ -1034,7 +1039,8 @@
 			method: 'POST',
 			headers: {
 				'Content-Type': 'text/event-stream',
-				...(settings.authHeader && { Authorization: settings.authHeader })
+				...(settings.authHeader && { Authorization: settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
 			},
 			body: JSON.stringify({
 				model: selectedModels[0],
@@ -1047,6 +1053,9 @@
 				return res.json();
 			})
 			.catch((error) => {
+				if ('detail' in error) {
+					toast.error(error.detail);
+				}
 				console.log(error);
 				return null;
 			});
