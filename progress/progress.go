@@ -12,9 +12,10 @@ type State interface {
 }
 
 type Progress struct {
-	mu  sync.Mutex
+	mu sync.Mutex
+	w  io.Writer
+
 	pos int
-	w   io.Writer
 
 	ticker *time.Ticker
 	states []State
@@ -37,6 +38,7 @@ func (p *Progress) Stop() bool {
 		p.ticker.Stop()
 		p.ticker = nil
 		p.render()
+		fmt.Fprint(p.w, "\n")
 		return true
 	}
 
@@ -50,11 +52,8 @@ func (p *Progress) StopAndClear() bool {
 	stopped := p.Stop()
 	if stopped {
 		// clear the progress bar by:
-		// 1. for each line in the progress:
-		//   a. move the cursor up one line
-		//   b. clear the line
 		for i := 0; i < p.pos; i++ {
-			fmt.Fprint(p.w, "\033[A\033[2K")
+			fmt.Fprint(p.w, "\033[A\033[2K\033[1G")
 		}
 	}
 
@@ -75,17 +74,23 @@ func (p *Progress) render() error {
 	fmt.Fprint(p.w, "\033[?25l")
 	defer fmt.Fprint(p.w, "\033[?25h")
 
-	if p.pos > 0 {
-		fmt.Fprintf(p.w, "\033[%dA", p.pos)
+	// clear already rendered progress lines
+	for i := 0; i < p.pos; i++ {
+		if i > 0 {
+			fmt.Fprint(p.w, "\033[A")
+		}
+		fmt.Fprint(p.w, "\033[2K\033[1G")
 	}
 
-	for _, state := range p.states {
-		fmt.Fprintln(p.w, state.String())
+	// render progress lines
+	for i, state := range p.states {
+		fmt.Fprint(p.w, state.String())
+		if i < len(p.states)-1 {
+			fmt.Fprint(p.w, "\n")
+		}
 	}
 
-	if len(p.states) > 0 {
-		p.pos = len(p.states)
-	}
+	p.pos = len(p.states)
 
 	return nil
 }

@@ -53,10 +53,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	bars := make(map[string]*progress.Bar)
 
-	status := fmt.Sprintf("creating %s", args[0])
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
-
 	modelfile, err := os.ReadFile(filename)
 	if err != nil {
 		return err
@@ -72,10 +68,8 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	spinner.Stop()
-
-	status = "transferring model data"
-	spinner = progress.NewSpinner(status)
+	status := "transferring model data"
+	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
 	for _, c := range commands {
@@ -179,14 +173,14 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	defer p.Stop()
 
 	bars := make(map[string]*progress.Bar)
-
-	status := fmt.Sprintf("pushing %s", args[0])
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
+	var status string
+	var spinner *progress.Spinner
 
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
-			spinner.Stop()
+			if spinner != nil {
+				spinner.Stop()
+			}
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
@@ -197,7 +191,9 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 			bar.Set(resp.Completed)
 		} else if status != resp.Status {
-			spinner.Stop()
+			if spinner != nil {
+				spinner.Stop()
+			}
 
 			status = resp.Status
 			spinner = progress.NewSpinner(status)
@@ -373,13 +369,14 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 	bars := make(map[string]*progress.Bar)
 
-	status := fmt.Sprintf("pulling %s", args[0])
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
+	var status string
+	var spinner *progress.Spinner
 
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
-			spinner.Stop()
+			if spinner != nil {
+				spinner.Stop()
+			}
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
@@ -390,7 +387,9 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 			bar.Set(resp.Completed)
 		} else if status != resp.Status {
-			spinner.Stop()
+			if spinner != nil {
+				spinner.Stop()
+			}
 
 			status = resp.Status
 			spinner = progress.NewSpinner(status)

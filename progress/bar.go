@@ -66,7 +66,8 @@ func (b *Bar) String() string {
 
 	mid.WriteString("▕")
 
-	f := termWidth - pre.Len() - suf.Len() - 2
+	// add 3 extra spaces: 2 boundary characters and 1 space at the end
+	f := termWidth - pre.Len() - suf.Len() - 3
 	n := int(float64(f) * b.percent() / 100)
 
 	if n > 0 {
