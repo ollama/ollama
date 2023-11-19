@@ -228,26 +228,6 @@ func GetModel(name string) (*Model, error) {
 	return model, nil
 }
 
-func filenameWithPath(path, f string) (string, error) {
-	// if filePath starts with ~/, replace it with the user's home directory.
-	if strings.HasPrefix(f, fmt.Sprintf("~%s", string(os.PathSeparator))) {
-		parts := strings.Split(f, string(os.PathSeparator))
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("failed to open file: %v", err)
-		}
-
-		f = filepath.Join(home, filepath.Join(parts[1:]...))
-	}
-
-	// if filePath is not an absolute path, make it relative to the modelfile path
-	if !filepath.IsAbs(f) {
-		f = filepath.Join(filepath.Dir(path), f)
-	}
-
-	return f, nil
-}
-
 func realpath(p string) string {
 	abspath, err := filepath.Abs(p)
 	if err != nil {
