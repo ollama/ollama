@@ -12,4 +12,4 @@ def get_gravatar_url(email):
     hash_hex = hash_object.hexdigest()
 
     # Grab the actual image URL
-    return f"https://www.gravatar.com/avatar/{hash_hex}"
+    return f"https://www.gravatar.com/avatar/{hash_hex}?d=mp"
