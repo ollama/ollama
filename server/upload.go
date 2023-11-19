@@ -8,6 +8,7 @@ import (
 	"hash"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -153,7 +154,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 					case errors.Is(err, errMaxRetriesExceeded):
 						return err
 					case err != nil:
-						sleep := 200*time.Millisecond + time.Duration(try)*time.Second/4
+						sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
 						log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
 						time.Sleep(sleep)
 						continue
@@ -244,6 +245,7 @@ func (b *blobUpload) uploadChunk(ctx context.Context, method string, requestURL 
 			return err
 		}
 
+		// retry uploading to the redirect URL
 		for try := 0; try < maxRetries; try++ {
 			err = b.uploadChunk(ctx, http.MethodPut, redirectURL, part, nil)
 			switch {
@@ -252,7 +254,9 @@ func (b *blobUpload) uploadChunk(ctx context.Context, method string, requestURL 
 			case errors.Is(err, errMaxRetriesExceeded):
 				return err
 			case err != nil:
-				log.Printf("%s part %d attempt %d failed: %v, retrying", b.Digest[7:19], part.N, try, err)
+				sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
+				log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+				time.Sleep(sleep)
 				continue
 			}
 

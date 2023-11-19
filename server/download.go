@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -147,7 +148,6 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 			continue
 		}
 
-		i := i
 		g.Go(func() error {
 			var err error
 			for try := 0; try < maxRetries; try++ {
@@ -158,14 +158,11 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 					// return immediately if the context is canceled or the device is out of space
 					return err
 				case err != nil:
-					sleep := 200*time.Millisecond + time.Duration(try)*time.Second/4
-					log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], i, try, err, sleep)
+					sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
+					log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
 					time.Sleep(sleep)
 					continue
 				default:
-					if try > 0 {
-						log.Printf("%s part %d completed after %d retries", b.Digest[7:19], i, try)
-					}
 					return nil
 				}
 			}
@@ -306,7 +303,7 @@ type downloadOpts struct {
 	fn      func(api.ProgressResponse)
 }
 
-const maxRetries = 10
+const maxRetries = 6
 
 var errMaxRetriesExceeded = errors.New("max retries exceeded")
 
