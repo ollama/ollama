@@ -226,7 +226,7 @@ type llama struct {
 }
 
 var (
-	errNvidiaSMI     = errors.New("warning: gpu support may not be enabled, check you have installed GPU drivers: nvidia-smi command failed")
+	errNvidiaSMI     = errors.New("warning: gpu support may not be enabled, check that you have installed GPU drivers: nvidia-smi command failed")
 	errAvailableVRAM = errors.New("not enough VRAM available, falling back to CPU only")
 )
 
