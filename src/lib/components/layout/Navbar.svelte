@@ -388,17 +388,17 @@
 				{#if $user !== undefined}
 					<button
 						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
-						on:focus={() => {
-							showDropdown = true;
+						on:click={() => {
+							showDropdown = !showDropdown;
 						}}
 						on:focusout={() => {
 							setTimeout(() => {
 								showDropdown = false;
-							}, 100);
+							}, 150);
 						}}
 					>
 						<div class=" self-center mr-3">
-							<img src="/user.png" class=" max-w-[30px] object-cover rounded-full" />
+							<img src={$user.profile_image_url} class=" max-w-[30px] object-cover rounded-full" />
 						</div>
 						<div class=" self-center font-semibold">{$user.name}</div>
 					</button>
@@ -406,7 +406,7 @@
 					{#if showDropdown}
 						<div
 							id="dropdownDots"
-							class="absolute z-10 bottom-[4.5rem] rounded-lg shadow w-[240px] bg-gray-900"
+							class="absolute z-10 bottom-[70px] 4.5rem rounded-lg shadow w-[240px] bg-gray-900"
 						>
 							<div class="py-2 w-full">
 								<button
@@ -440,14 +440,14 @@
 								</button>
 							</div>
 
-							<hr class=" dark:border-gray-700 m-0 p-0" />
+							<hr class=" border-gray-700 m-0 p-0" />
 
 							<div class="py-2 w-full">
 								<button
 									class="flex py-2.5 px-3.5 w-full hover:bg-gray-800 transition"
 									on:click={() => {
 										localStorage.removeItem('token');
-										location.href = '/';
+										location.href = '/auth';
 									}}
 								>
 									<div class=" self-center mr-3">

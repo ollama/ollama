@@ -11,7 +11,7 @@
 	let loaded = false;
 
 	onMount(async () => {
-		const webBackendStatus = await fetch(`${WEBUI_API_BASE_URL}/`, {
+		const resBackend = await fetch(`${WEBUI_API_BASE_URL}/`, {
 			method: 'GET',
 			headers: {
 				'Content-Type': 'application/json'
@@ -26,11 +26,11 @@
 				return null;
 			});
 
-		console.log(webBackendStatus);
-		await config.set(webBackendStatus);
+		console.log(resBackend);
+		await config.set(resBackend);
 
-		if (webBackendStatus) {
-			if (webBackendStatus.auth) {
+		if ($config) {
+			if ($config.auth) {
 				if (localStorage.token) {
 					const res = await fetch(`${WEBUI_API_BASE_URL}/auths`, {
 						method: 'GET',
@@ -49,9 +49,14 @@
 							return null;
 						});
 
-					await user.set(res);
+					if (res) {
+						await user.set(res);
+					} else {
+						localStorage.removeItem('token');
+						await goto('/auth');
+					}
 				} else {
-					goto('/auth');
+					await goto('/auth');
 				}
 			}
 		}

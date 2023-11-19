@@ -2,8 +2,10 @@
 	import { goto } from '$app/navigation';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import { config, user } from '$lib/stores';
+	import { onMount } from 'svelte';
 	import toast from 'svelte-french-toast';
 
+	let loaded = false;
 	let mode = 'signin';
 
 	let name = '';
@@ -33,7 +35,7 @@
 
 		if (res) {
 			console.log(res);
-			toast.success(`You're now logged in. Redirecting you to the main page."`);
+			toast.success(`You're now logged in. Redirecting you to the main page.`);
 			localStorage.token = res.token;
 			await user.set(res);
 			goto('/');
@@ -71,12 +73,15 @@
 		}
 	};
 
-	if ($config === null || !$config.auth || ($config.auth && $user !== undefined)) {
-		goto('/');
-	}
+	onMount(async () => {
+		if ($config === null || !$config.auth || ($config.auth && $user !== undefined)) {
+			await goto('/');
+		}
+		loaded = true;
+	});
 </script>
 
-{#if $config && $config.auth}
+{#if loaded && $config && $config.auth}
 	<div class="fixed m-10 z-50">
 		<div class="flex space-x-2">
 			<div class=" self-center">
@@ -215,6 +220,146 @@
 	</div>
 </div> -->
 
+	<!-- <div class=" bg-white min-h-screen w-full flex flex-col">
+	<div class=" mt-6 mx-6">
+		<div class="flex space-x-2">
+			<div class=" self-center text-2xl font-semibold">Ollama</div>
+			<div class=" self-center">
+				<img src="/ollama.png" class=" w-5" />
+			</div>
+		</div>
+	</div>
+
+	<div class=" my-auto pb-36 w-full px-4">
+		<div class=" text-center flex flex-col justify-center">
+			<div class=" text-xl md:text-2xl font-bold">Get Started</div>
+
+			<div
+				class=" mt-4 flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-1 px-3 justify-center"
+			>
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Log in
+				</button>
+
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Sign up
+				</button>
+			</div>
+		</div>
+	</div>
+</div> -->
+	<!-- <div class=" bg-white min-h-screen w-full flex flex-col">
+	<div class=" mt-6 mx-6">
+		<div class="flex space-x-2">
+			<div class=" self-center text-2xl font-semibold">Ollama</div>
+			<div class=" self-center">
+				<img src="/ollama.png" class=" w-5" />
+			</div>
+		</div>
+	</div>
+
+	<div class=" my-auto pb-36 w-full px-4">
+		<div class=" text-center flex flex-col justify-center">
+			<div class=" text-xl md:text-2xl font-bold">Get Started</div>
+
+			<div
+				class=" mt-4 flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-1 px-3 justify-center"
+			>
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Log in
+				</button>
+
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Sign up
+				</button>
+			</div>
+		</div>
+	</div>
+</div> -->
+	<!-- <div class=" bg-white min-h-screen w-full flex flex-col">
+	<div class=" mt-6 mx-6">
+		<div class="flex space-x-2">
+			<div class=" self-center text-2xl font-semibold">Ollama</div>
+			<div class=" self-center">
+				<img src="/ollama.png" class=" w-5" />
+			</div>
+		</div>
+	</div>
+
+	<div class=" my-auto pb-36 w-full px-4">
+		<div class=" text-center flex flex-col justify-center">
+			<div class=" text-xl md:text-2xl font-bold">Get Started</div>
+
+			<div
+				class=" mt-4 flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-1 px-3 justify-center"
+			>
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Log in
+				</button>
+
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Sign up
+				</button>
+			</div>
+		</div>
+	</div>
+</div> -->
+	<!-- <div class=" bg-white min-h-screen w-full flex flex-col">
+	<div class=" mt-6 mx-6">
+		<div class="flex space-x-2">
+			<div class=" self-center text-2xl font-semibold">Ollama</div>
+			<div class=" self-center">
+				<img src="/ollama.png" class=" w-5" />
+			</div>
+		</div>
+	</div>
+
+	<div class=" my-auto pb-36 w-full px-4">
+		<div class=" text-center flex flex-col justify-center">
+			<div class=" text-xl md:text-2xl font-bold">Get Started</div>
+
+			<div
+				class=" mt-4 flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-1 px-3 justify-center"
+			>
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Log in
+				</button>
+
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Sign up
+				</button>
+			</div>
+		</div>
+	</div>
+</div> -->
+	<!-- <div class=" bg-white min-h-screen w-full flex flex-col">
+	<div class=" mt-6 mx-6">
+		<div class="flex space-x-2">
+			<div class=" self-center text-2xl font-semibold">Ollama</div>
+			<div class=" self-center">
+				<img src="/ollama.png" class=" w-5" />
+			</div>
+		</div>
+	</div>
+
+	<div class=" my-auto pb-36 w-full px-4">
+		<div class=" text-center flex flex-col justify-center">
+			<div class=" text-xl md:text-2xl font-bold">Get Started</div>
+
+			<div
+				class=" mt-4 flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-1 px-3 justify-center"
+			>
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Log in
+				</button>
+
+				<button class=" flex-1 px-4 py-3.5 bg-blue-700 text-white font-medium rounded-lg">
+					Sign up
+				</button>
+			</div>
+		</div>
+	</div>
+</div> -->
 	<!-- <div class=" bg-white min-h-screen w-full flex flex-col">
 	<div class=" mt-6 mx-6">
 		<div class="flex space-x-2">

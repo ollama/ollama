@@ -3,7 +3,9 @@ from typing import List, Union, Optional
 from pymongo import ReturnDocument
 import time
 
-from utils import decode_token
+from utils.utils import decode_token
+from utils.misc import get_gravatar_url
+
 from config import DB
 
 ####################
@@ -15,7 +17,8 @@ class UserModel(BaseModel):
     id: str
     name: str
     email: str
-    role: str = "user"
+    role: str = "pending"
+    profile_image_url: str = "/user.png"
     created_at: int  # timestamp in epoch
 
 
@@ -30,7 +33,7 @@ class UsersTable:
         self.table = db.users
 
     def insert_new_user(
-        self, id: str, name: str, email: str, role: str = "user"
+        self, id: str, name: str, email: str, role: str = "pending"
     ) -> Optional[UserModel]:
         user = UserModel(
             **{
@@ -38,6 +41,7 @@ class UsersTable:
                 "name": name,
                 "email": email,
                 "role": role,
+                "profile_image_url": get_gravatar_url(email),
                 "created_at": int(time.time()),
             }
         )

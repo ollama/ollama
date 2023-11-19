@@ -5,7 +5,7 @@ import uuid
 
 
 from apps.web.models.users import UserModel, Users
-from utils import (
+from utils.utils import (
     verify_password,
     get_password_hash,
     bearer_scheme,
@@ -43,6 +43,7 @@ class UserResponse(BaseModel):
     email: str
     name: str
     role: str
+    profile_image_url: str
 
 
 class SigninResponse(Token, UserResponse):
@@ -66,7 +67,7 @@ class AuthsTable:
         self.table = db.auths
 
     def insert_new_auth(
-        self, email: str, password: str, name: str, role: str = "user"
+        self, email: str, password: str, name: str, role: str = "pending"
     ) -> Optional[UserModel]:
         print("insert_new_auth")
 

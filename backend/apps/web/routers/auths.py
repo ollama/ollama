@@ -9,11 +9,13 @@ import time
 import uuid
 
 from constants import ERROR_MESSAGES
-from utils import (
+from utils.utils import (
     get_password_hash,
     bearer_scheme,
     create_token,
 )
+
+from utils.misc import get_gravatar_url
 
 from apps.web.models.auths import (
     SigninForm,
@@ -45,10 +47,12 @@ async def get_session_user(cred=Depends(bearer_scheme)):
             "email": user.email,
             "name": user.name,
             "role": user.role,
+            "profile_image_url": user.profile_image_url,
         }
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.INVALID_TOKEN,
         )
 
 
@@ -70,9 +74,10 @@ async def signin(form_data: SigninForm):
             "email": user.email,
             "name": user.name,
             "role": user.role,
+            "profile_image_url": user.profile_image_url,
         }
     else:
-        raise HTTPException(400, detail=ERROR_MESSAGES.DEFAULT())
+        raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
 
 
 ############################
@@ -98,6 +103,7 @@ async def signup(form_data: SignupForm):
                     "email": user.email,
                     "name": user.name,
                     "role": user.role,
+                    "profile_image_url": user.profile_image_url,
                 }
             else:
                 raise HTTPException(500, detail=ERROR_MESSAGES.DEFAULT(err))

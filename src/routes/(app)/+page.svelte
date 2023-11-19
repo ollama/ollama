@@ -16,7 +16,7 @@
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Suggestions from '$lib/components/chat/Suggestions.svelte';
-	import { user } from '$lib/stores';
+	import { config, user } from '$lib/stores';
 
 	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
 	let db;
@@ -1224,14 +1224,27 @@
 								<div class="flex justify-between px-5 mb-3 max-w-3xl mx-auto rounded-lg group">
 									<div class=" flex w-full">
 										<div class=" mr-4">
-											<img
-												src="{message.role == 'user'
-													? settings.gravatarUrl
-														? settings.gravatarUrl
-														: '/user'
-													: '/favicon'}.png"
-												class=" max-w-[28px] object-cover rounded-full"
-											/>
+											{#if message.role === 'user'}
+												{#if $config === null}
+													<img
+														src="{settings.gravatarUrl ? settings.gravatarUrl : '/user'}.png"
+														class=" max-w-[28px] object-cover rounded-full"
+														alt="User profile"
+													/>
+												{:else}
+													<img
+														src={$user.profile_image_url}
+														class=" max-w-[28px] object-cover rounded-full"
+														alt="User profile"
+													/>
+												{/if}
+											{:else}
+												<img
+													src="/favicon.png"
+													class=" max-w-[28px] object-cover rounded-full"
+													alt="Ollama profile"
+												/>
+											{/if}
 										</div>
 
 										<div class="w-full">

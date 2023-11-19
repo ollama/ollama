@@ -149,6 +149,10 @@
 						if (data.error) {
 							throw data.error;
 						}
+
+						if (data.detail) {
+							throw data.detail;
+						}
 						if (data.status) {
 							if (!data.status.includes('downloading')) {
 								toast.success(data.status);
@@ -206,6 +210,10 @@
 						if (data.error) {
 							throw data.error;
 						}
+						if (data.detail) {
+							throw data.detail;
+						}
+
 						if (data.status) {
 						}
 					} else {
