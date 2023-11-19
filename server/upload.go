@@ -155,6 +155,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 					case errors.Is(err, errMaxRetriesExceeded):
 						return err
 					case err != nil:
+						part.Reset()
 						sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
 						log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
 						time.Sleep(sleep)
@@ -258,6 +259,7 @@ func (b *blobUpload) uploadChunk(ctx context.Context, method string, requestURL 
 			case errors.Is(err, errMaxRetriesExceeded):
 				return err
 			case err != nil:
+				part.Reset()
 				sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
 				log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
 				time.Sleep(sleep)
