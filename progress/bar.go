@@ -55,7 +55,7 @@ func (b *Bar) String() string {
 		pre.WriteString(" ")
 	}
 
-	fmt.Fprintf(&pre, "%.1f%% ", b.percent())
+	fmt.Fprintf(&pre, "%.0f%% ", b.percent())
 
 	fmt.Fprintf(&suf, "(%s/%s, %s/s, %s)",
 		format.HumanBytes(b.currentValue),
@@ -63,26 +63,20 @@ func (b *Bar) String() string {
 		format.HumanBytes(int64(b.rate())),
 		b.elapsed())
 
-	mid.WriteString("[")
+	mid.WriteString("▕")
 
-	// pad 3 for last = or > and "] "
-	f := termWidth - pre.Len() - mid.Len() - suf.Len() - 3
+	f := termWidth - pre.Len() - suf.Len() - 2
 	n := int(float64(f) * b.percent() / 100)
-	if n > 0 {
-		mid.WriteString(strings.Repeat("=", n))
-	}
 
-	if b.currentValue >= b.maxValue {
-		mid.WriteString("=")
-	} else {
-		mid.WriteString(">")
+	if n > 0 {
+		mid.WriteString(strings.Repeat("█", n))
 	}
 
 	if f-n > 0 {
 		mid.WriteString(strings.Repeat(" ", f-n))
 	}
 
-	mid.WriteString("] ")
+	mid.WriteString("▏")
 
 	return pre.String() + mid.String() + suf.String()
 }
