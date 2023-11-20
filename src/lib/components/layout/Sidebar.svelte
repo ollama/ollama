@@ -579,8 +579,8 @@
 				{:else}
 					<button
 						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
-						on:click={() => {
-							openSettings();
+						on:click={async () => {
+							await showSettings.set(true);
 						}}
 					>
 						<div class=" self-center mr-3">
