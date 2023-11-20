@@ -37,7 +37,7 @@ func NewBar(message string, maxValue, initialValue int64) *Bar {
 func (b *Bar) String() string {
 	termWidth, _, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
-		panic(err)
+		termWidth = 80
 	}
 
 	var pre, mid, suf strings.Builder
