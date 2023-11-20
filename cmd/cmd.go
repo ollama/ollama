@@ -82,6 +82,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = filepath.Join(home, path[2:])
 			}
 
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(filepath.Dir(filename), path)
+			}
+
 			bin, err := os.Open(path)
 			if errors.Is(err, os.ErrNotExist) && c.Name == "model" {
 				continue
