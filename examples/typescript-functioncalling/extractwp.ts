@@ -21,7 +21,7 @@ async function main() {
     }],
   }
 
-  // Depending on the model chosen, you may have a restricted context.
+  // Depending on the model chosen, you may be limited by the size of the context window, so limit the context to 2000 words.
   const textcontent = await readFile("./wp.txt", "utf-8").then((text) => text.split(" ").slice(0, 2000).join(" "));
 
   // Specific instructions for this task
