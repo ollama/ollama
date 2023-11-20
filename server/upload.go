@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"log"
 	"math"
@@ -103,7 +102,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 		}
 
 		// set part.N to the current number of parts
-		b.Parts = append(b.Parts, blobUploadPart{blobUpload: b, N: len(b.Parts), Hash: md5.New(), Offset: offset, Size: size})
+		b.Parts = append(b.Parts, blobUploadPart{blobUpload: b, N: len(b.Parts), Offset: offset, Size: size})
 		offset += size
 	}
 
@@ -178,8 +177,16 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 	requestURL := <-b.nextURL
 
 	var sb strings.Builder
+
+	// calculate md5 checksum and add it to the commit request
 	for _, part := range b.Parts {
-		sb.Write(part.Sum(nil))
+		hash := md5.New()
+		if _, err := io.Copy(hash, io.NewSectionReader(b.file, part.Offset, part.Size)); err != nil {
+			b.err = err
+			return
+		}
+
+		sb.Write(hash.Sum(nil))
 	}
 
 	md5sum := md5.Sum([]byte(sb.String()))
@@ -334,13 +341,10 @@ func (b *blobUpload) Wait(ctx context.Context, fn func(api.ProgressResponse)) er
 
 type blobUploadPart struct {
 	// N is the part number
-	N      int
-	Offset int64
-	Size   int64
-	hash.Hash
-
+	N       int
+	Offset  int64
+	Size    int64
 	written int64
-
 	*blobUpload
 }
 
@@ -348,14 +352,12 @@ func (p *blobUploadPart) Write(b []byte) (n int, err error) {
 	n = len(b)
 	p.written += int64(n)
 	p.Completed.Add(int64(n))
-	p.Hash.Write(b)
 	return n, nil
 }
 
 func (p *blobUploadPart) Reset() {
 	p.Completed.Add(-int64(p.written))
 	p.written = 0
-	p.Hash.Reset()
 }
 
 func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryOptions, fn func(api.ProgressResponse)) error {
