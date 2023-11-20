@@ -457,7 +457,7 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 	}
 
 	p := progress.NewProgress(os.Stderr)
-	defer p.Stop()
+	defer p.StopAndClear()
 
 	spinner := progress.NewSpinner("")
 	p.Add("", spinner)
@@ -492,7 +492,6 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 
 	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext, Format: format}
 	fn := func(response api.GenerateResponse) error {
-		spinner.Stop()
 		p.StopAndClear()
 
 		latest = response

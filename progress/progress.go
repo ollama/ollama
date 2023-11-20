@@ -27,7 +27,7 @@ func NewProgress(w io.Writer) *Progress {
 	return p
 }
 
-func (p *Progress) Stop() bool {
+func (p *Progress) stop() bool {
 	for _, state := range p.states {
 		if spinner, ok := state.(*Spinner); ok {
 			spinner.Stop()
@@ -38,22 +38,32 @@ func (p *Progress) Stop() bool {
 		p.ticker.Stop()
 		p.ticker = nil
 		p.render()
-		fmt.Fprint(p.w, "\n")
 		return true
 	}
 
 	return false
 }
 
+func (p *Progress) Stop() bool {
+	stopped := p.stop()
+	if stopped {
+		fmt.Fprint(p.w, "\n")
+	}
+	return stopped
+}
+
 func (p *Progress) StopAndClear() bool {
 	fmt.Fprint(p.w, "\033[?25l")
 	defer fmt.Fprint(p.w, "\033[?25h")
 
-	stopped := p.Stop()
+	stopped := p.stop()
 	if stopped {
 		// clear all progress lines
 		for i := 0; i < p.pos; i++ {
-			fmt.Fprint(p.w, "\033[A\033[2K\033[1G")
+			if i > 0 {
+				fmt.Fprint(p.w, "\033[A")
+			}
+			fmt.Fprint(p.w, "\033[2K\033[1G")
 		}
 	}
 
