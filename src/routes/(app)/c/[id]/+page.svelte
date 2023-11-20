@@ -91,6 +91,8 @@
 			if (messages.length > 0) {
 				history.messages[messages.at(-1).id].done = true;
 			}
+			await tick();
+
 			return chat;
 		} else {
 			return null;
@@ -503,17 +505,19 @@
 	}}
 />
 
-<Navbar {title} />
-<div class="min-h-screen w-full flex justify-center">
-	<div class=" py-2.5 flex flex-col justify-between w-full">
-		<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-10">
-			<ModelSelector bind:selectedModels disabled={messages.length > 0} />
+{#if loaded}
+	<Navbar {title} />
+	<div class="min-h-screen w-full flex justify-center">
+		<div class=" py-2.5 flex flex-col justify-between w-full">
+			<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-10">
+				<ModelSelector bind:selectedModels disabled={messages.length > 0} />
+			</div>
+
+			<div class=" h-full mt-10 mb-32 w-full flex flex-col">
+				<Messages bind:history bind:messages bind:autoScroll {sendPrompt} {regenerateResponse} />
+			</div>
 		</div>
 
-		<div class=" h-full mt-10 mb-32 w-full flex flex-col">
-			<Messages bind:history bind:messages bind:autoScroll {sendPrompt} {regenerateResponse} />
-		</div>
+		<MessageInput bind:prompt bind:autoScroll {messages} {submitPrompt} {stopResponse} />
 	</div>
-
-	<MessageInput bind:prompt bind:autoScroll {messages} {submitPrompt} {stopResponse} />
-</div>
+{/if}

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { v4 as uuidv4 } from 'uuid';
+
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { user, db, chats, showSettings, chatId } from '$lib/stores';
@@ -168,8 +170,10 @@
 		<div class="px-2.5 flex justify-center space-x-2">
 			<button
 				class="flex-grow flex justify-between rounded-md px-3 py-1.5 my-2 hover:bg-gray-900 transition"
-				on:click={() => {
-					location.href = '/';
+				on:click={async () => {
+					goto('/');
+
+					await chatId.set(uuidv4());
 					// createNewChat();
 				}}
 			>

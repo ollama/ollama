@@ -1,5 +1,8 @@
 <script lang="ts">
+	import { v4 as uuidv4 } from 'uuid';
+
 	import { goto } from '$app/navigation';
+	import { chatId } from '$lib/stores';
 
 	export let title: string = 'Ollama Web UI';
 </script>
@@ -14,8 +17,10 @@
 					<div class="pr-2">
 						<button
 							class=" cursor-pointer p-1 flex dark:hover:bg-gray-700 rounded-lg transition"
-							on:click={() => {
-								location.href = '/';
+							on:click={async () => {
+								console.log('newChat');
+								goto('/');
+								await chatId.set(uuidv4());
 							}}
 						>
 							<div class=" m-auto self-center">

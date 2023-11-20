@@ -50,10 +50,12 @@
 		if (API_BASE_URL === '') {
 			API_BASE_URL = BUILD_TIME_API_BASE_URL;
 		}
-		const res = await getModels(API_BASE_URL, 'ollama');
+		const _models = await getModels(API_BASE_URL, 'ollama');
 
-		if (res) {
+		if (_models.length > 0) {
 			toast.success('Server connection verified');
+			await models.set(_models);
+
 			saveSettings({
 				API_BASE_URL: API_BASE_URL
 			});

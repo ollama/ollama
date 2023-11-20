@@ -41,8 +41,11 @@
 	}
 
 	onMount(async () => {
-		console.log();
-		await initNewChat();
+		await chatId.set(uuidv4());
+
+		chatId.subscribe(async () => {
+			await initNewChat();
+		});
 	});
 
 	//////////////////////////
@@ -50,8 +53,6 @@
 	//////////////////////////
 
 	const initNewChat = async () => {
-		await chatId.set(uuidv4());
-
 		console.log($chatId);
 
 		autoScroll = true;
