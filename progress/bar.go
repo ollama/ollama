@@ -11,6 +11,12 @@ import (
 	"golang.org/x/term"
 )
 
+type Stats struct {
+	rate      int64
+	value     int64
+	remaining time.Duration
+}
+
 type Bar struct {
 	message      string
 	messageWidth int
@@ -20,7 +26,9 @@ type Bar struct {
 	currentValue int64
 
 	started time.Time
-	stopped time.Time
+
+	stats   Stats
+	statted time.Time
 }
 
 func NewBar(message string, maxValue, initialValue int64) *Bar {
@@ -57,12 +65,22 @@ func (b *Bar) String() string {
 	}
 
 	fmt.Fprintf(&pre, "%3.0f%% ", math.Floor(b.percent()))
+	fmt.Fprintf(&suf, "(%s/%s", format.HumanBytes(b.currentValue), format.HumanBytes(b.maxValue))
 
-	fmt.Fprintf(&suf, "(%s/%s, %s/s, %s)",
-		format.HumanBytes(b.currentValue),
-		format.HumanBytes(b.maxValue),
-		format.HumanBytes(int64(b.rate())),
-		b.elapsed())
+	stats := b.Stats()
+	rate := int64(stats.rate)
+	if rate > 0 {
+		fmt.Fprintf(&suf, ", %s/s", format.HumanBytes(rate))
+	}
+
+	fmt.Fprintf(&suf, ")")
+
+	elapsed := time.Since(b.started)
+	if b.percent() < 100 && rate > 0 {
+		fmt.Fprintf(&suf, " [%s:%s]", elapsed.Round(time.Second), stats.remaining)
+	} else {
+		fmt.Fprintf(&suf, "        ")
+	}
 
 	mid.WriteString("▕")
 
@@ -86,7 +104,6 @@ func (b *Bar) String() string {
 func (b *Bar) Set(value int64) {
 	if value >= b.maxValue {
 		value = b.maxValue
-		b.stopped = time.Now()
 	}
 
 	b.currentValue = value
@@ -100,20 +117,32 @@ func (b *Bar) percent() float64 {
 	return 0
 }
 
-func (b *Bar) rate() float64 {
-	elapsed := b.elapsed()
-	if elapsed.Seconds() > 0 {
-		return (float64(b.currentValue) - float64(b.initialValue)) / elapsed.Seconds()
+func (b *Bar) Stats() Stats {
+	if time.Since(b.statted) < time.Second || b.currentValue >= b.maxValue {
+		return b.stats
 	}
 
-	return 0
-}
+	if b.statted.IsZero() {
+		b.stats = Stats{
+			value:     b.initialValue,
+			rate:      0,
+			remaining: 0,
+		}
+	} else {
+		rate := b.currentValue - b.stats.value
+		var remaining time.Duration
+		if rate > 0 {
+			remaining = time.Second * time.Duration((float64(b.maxValue-b.currentValue))/(float64(rate)))
+		}
 
-func (b *Bar) elapsed() time.Duration {
-	stopped := b.stopped
-	if stopped.IsZero() {
-		stopped = time.Now()
+		b.stats = Stats{
+			value:     b.currentValue,
+			rate:      rate,
+			remaining: remaining,
+		}
 	}
 
-	return stopped.Sub(b.started).Round(time.Second)
+	b.statted = time.Now()
+
+	return b.stats
 }
