@@ -546,9 +546,11 @@ func generate(cmd *cobra.Command, wordWrap bool, request api.GenerateRequest) (*
 		return nil, err
 	}
 
-	// spacing for readability
-	fmt.Println()
-	fmt.Println()
+	if request.Prompt != "" || request.Messages != nil {
+		// spacing for readability, a message was sent
+		fmt.Println()
+		fmt.Println()
+	}
 
 	if !latest.Done {
 		if abort {
