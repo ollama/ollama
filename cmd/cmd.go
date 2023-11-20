@@ -132,7 +132,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.CreateRequest{Name: args[0], Path: filename, Modelfile: string(modelfile)}
+	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile)}
 	if err := client.Create(context.Background(), &request, fn); err != nil {
 		return err
 	}
