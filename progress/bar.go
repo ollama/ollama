@@ -118,17 +118,25 @@ func (b *Bar) percent() float64 {
 }
 
 func (b *Bar) Stats() Stats {
-	if time.Since(b.statted) < time.Second || b.currentValue >= b.maxValue {
+	if time.Since(b.statted) < time.Second {
 		return b.stats
 	}
 
-	if b.statted.IsZero() {
+	switch {
+	case b.statted.IsZero():
+	case b.currentValue >= b.maxValue:
+		b.stats = Stats{
+			value:     b.maxValue,
+			rate:      0,
+			remaining: 0,
+		}
+	case b.statted.IsZero():
 		b.stats = Stats{
 			value:     b.initialValue,
 			rate:      0,
 			remaining: 0,
 		}
-	} else {
+	default:
 		rate := b.currentValue - b.stats.value
 		var remaining time.Duration
 		if rate > 0 {
