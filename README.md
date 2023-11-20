@@ -263,3 +263,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
+- [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
