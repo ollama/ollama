@@ -111,7 +111,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(resp.Status, resp.Total, resp.Completed)
+				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -184,7 +184,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(resp.Status, resp.Total, resp.Completed)
+				bar = progress.NewBar(fmt.Sprintf("pushing %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -380,7 +380,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(resp.Status, resp.Total, resp.Completed)
+				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
