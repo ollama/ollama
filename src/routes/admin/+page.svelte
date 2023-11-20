@@ -112,7 +112,7 @@
 										<td class="px-6 py-4"> {user.email} </td>
 										<td class="px-6 py-4">
 											<button
-												class="  text-white underline"
+												class="  dark:text-white underline"
 												on:click={() => {
 													if (user.role === 'user') {
 														updateUserRole(user.id, 'admin');
