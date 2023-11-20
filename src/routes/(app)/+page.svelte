@@ -62,8 +62,6 @@
 			messages: {},
 			currentId: null
 		};
-
-		await settings.set(JSON.parse(localStorage.getItem('settings') ?? JSON.stringify($settings)));
 		selectedModels = $settings.models ?? [''];
 	};
 

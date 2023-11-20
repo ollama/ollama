@@ -4,7 +4,7 @@
 	import { WEB_UI_VERSION, OLLAMA_API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
 	import { onMount } from 'svelte';
-	import { config, settings, user } from '$lib/stores';
+	import { config, models, settings, user } from '$lib/stores';
 	import { splitStream, getGravatarURL } from '$lib/utils';
 
 	export let show = false;
@@ -50,7 +50,7 @@
 		if (API_BASE_URL === '') {
 			API_BASE_URL = BUILD_TIME_API_BASE_URL;
 		}
-		const res = await getModelTags(API_BASE_URL, 'ollama');
+		const res = await getModels(API_BASE_URL, 'ollama');
 
 		if (res) {
 			toast.success('Server connection verified');
@@ -97,6 +97,7 @@
 			method: 'POST',
 			headers: {
 				'Content-Type': 'text/event-stream',
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
 				...($user && { Authorization: `Bearer ${localStorage.token}` })
 			},
 			body: JSON.stringify({
@@ -150,7 +151,7 @@
 		}
 
 		modelTag = '';
-		await getModelTags();
+		models.set(await getModels());
 	};
 
 	const deleteModelHandler = async () => {
@@ -158,6 +159,7 @@
 			method: 'DELETE',
 			headers: {
 				'Content-Type': 'text/event-stream',
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
 				...($user && { Authorization: `Bearer ${localStorage.token}` })
 			},
 			body: JSON.stringify({
@@ -203,7 +205,7 @@
 		}
 
 		deleteModelTag = '';
-		await getModelTags();
+		models.set(await getModels());
 	};
 
 	$: if (show) {
@@ -226,14 +228,14 @@
 		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 	}
 
-	const getModelTags = async (url = null, type = 'all') => {
+	const getModels = async (url = '', type = 'all') => {
 		let models = [];
-		const res = await fetch(`${url === null ? API_BASE_URL : url}/tags`, {
+		const res = await fetch(`${url ? url : $settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/tags`, {
 			method: 'GET',
 			headers: {
 				Accept: 'application/json',
 				'Content-Type': 'application/json',
-				...(settings.authHeader && { Authorization: settings.authHeader }),
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
 				...($user && { Authorization: `Bearer ${localStorage.token}` })
 			}
 		})
@@ -250,50 +252,44 @@
 				}
 				return null;
 			});
-
 		console.log(res);
+		models.push(...(res?.models ?? []));
 
-		if (type === 'all') {
-			if (settings.OPENAI_API_KEY) {
-				// Validate OPENAI_API_KEY
-				const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
-					method: 'GET',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${settings.OPENAI_API_KEY}`
-					}
-				})
-					.then(async (res) => {
-						if (!res.ok) throw await res.json();
-						return res.json();
-					})
-					.catch((error) => {
-						console.log(error);
-						toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
-						return null;
-					});
-				const openaiModels = openaiModelRes?.data ?? null;
-
-				if (openaiModels) {
-					models = [
-						...(res?.models ?? []),
-						{ name: 'hr' },
-
-						...openaiModels
-							.map((model) => ({ name: model.id, label: 'OpenAI' }))
-							.filter((model) => model.name.includes('gpt'))
-					];
-				} else {
-					models = res?.models ?? [];
+		// If OpenAI API Key exists
+		if (type === 'all' && $settings.OPENAI_API_KEY) {
+			// Validate OPENAI_API_KEY
+			const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
+				method: 'GET',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${$settings.OPENAI_API_KEY}`
 				}
-			} else {
-				models = res?.models ?? [];
-			}
+			})
+				.then(async (res) => {
+					if (!res.ok) throw await res.json();
+					return res.json();
+				})
+				.catch((error) => {
+					console.log(error);
+					toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
+					return null;
+				});
 
-			return models;
-		} else {
-			return res?.models ?? null;
+			const openAIModels = openaiModelRes?.data ?? null;
+
+			models.push(
+				...(openAIModels
+					? [
+							{ name: 'hr' },
+							...openAIModels
+								.map((model) => ({ name: model.id, label: 'OpenAI' }))
+								.filter((model) => model.name.includes('gpt'))
+					  ]
+					: [])
+			);
 		}
+
+		return models;
 	};
 
 	onMount(() => {

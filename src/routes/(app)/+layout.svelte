@@ -93,6 +93,8 @@
 			await goto('/auth');
 		}
 
+		await settings.set(JSON.parse(localStorage.getItem('settings') ?? JSON.stringify($settings)));
+
 		let _models = await getModels();
 		await models.set(_models);
 		let _db = await getDB();
