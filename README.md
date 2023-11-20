@@ -249,6 +249,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
+- [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
 
 ### Mobile
 
