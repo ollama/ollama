@@ -35,7 +35,7 @@
 
 		if (res) {
 			console.log(res);
-			toast.success(`You're now logged in. Redirecting you to the main page.`);
+			toast.success(`You're now logged in.`);
 			localStorage.token = res.token;
 			await user.set(res);
 			goto('/');
@@ -66,7 +66,7 @@
 
 		if (res) {
 			console.log(res);
-			toast.success(`Account creation successful. Redirecting you to the main page."`);
+			toast.success(`Account creation successful."`);
 			localStorage.token = res.token;
 			await user.set(res);
 			goto('/');

@@ -1,15 +1,19 @@
 <script lang="ts">
-	import sha256 from 'js-sha256';
 	import Modal from '../common/Modal.svelte';
 
 	import { WEB_UI_VERSION, OLLAMA_API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
 	import { onMount } from 'svelte';
-	import { config, user } from '$lib/stores';
+	import { config, settings, user } from '$lib/stores';
+	import { splitStream, getGravatarURL } from '$lib/utils';
 
 	export let show = false;
-	export let saveSettings: Function;
-	export let getModelTags: Function;
+
+	const saveSettings = async (updated) => {
+		console.log(updated);
+		await settings.set({ ...$settings, ...updated });
+		localStorage.setItem('settings', JSON.stringify($settings));
+	};
 
 	let selectedTab = 'general';
 
@@ -41,34 +45,6 @@
 	let authEnabled = false;
 	let authType = 'Basic';
 	let authContent = '';
-
-	function getGravatarURL(email) {
-		// Trim leading and trailing whitespace from
-		// an email address and force all characters
-		// to lower case
-		const address = String(email).trim().toLowerCase();
-
-		// Create a SHA256 hash of the final string
-		const hash = sha256(address);
-
-		// Grab the actual image URL
-		return `https://www.gravatar.com/avatar/${hash}`;
-	}
-
-	const splitStream = (splitOn) => {
-		let buffer = '';
-		return new TransformStream({
-			transform(chunk, controller) {
-				buffer += chunk;
-				const parts = buffer.split(splitOn);
-				parts.slice(0, -1).forEach((part) => controller.enqueue(part));
-				buffer = parts[parts.length - 1];
-			},
-			flush(controller) {
-				if (buffer) controller.enqueue(buffer);
-			}
-		});
-	};
 
 	const checkOllamaConnection = async () => {
 		if (API_BASE_URL === '') {
@@ -249,6 +225,76 @@
 		gravatarEmail = settings.gravatarEmail ?? '';
 		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 	}
+
+	const getModelTags = async (url = null, type = 'all') => {
+		let models = [];
+		const res = await fetch(`${url === null ? API_BASE_URL : url}/tags`, {
+			method: 'GET',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json',
+				...(settings.authHeader && { Authorization: settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
+			}
+		})
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((error) => {
+				console.log(error);
+				if ('detail' in error) {
+					toast.error(error.detail);
+				} else {
+					toast.error('Server connection failed');
+				}
+				return null;
+			});
+
+		console.log(res);
+
+		if (type === 'all') {
+			if (settings.OPENAI_API_KEY) {
+				// Validate OPENAI_API_KEY
+				const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
+					method: 'GET',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${settings.OPENAI_API_KEY}`
+					}
+				})
+					.then(async (res) => {
+						if (!res.ok) throw await res.json();
+						return res.json();
+					})
+					.catch((error) => {
+						console.log(error);
+						toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
+						return null;
+					});
+				const openaiModels = openaiModelRes?.data ?? null;
+
+				if (openaiModels) {
+					models = [
+						...(res?.models ?? []),
+						{ name: 'hr' },
+
+						...openaiModels
+							.map((model) => ({ name: model.id, label: 'OpenAI' }))
+							.filter((model) => model.name.includes('gpt'))
+					];
+				} else {
+					models = res?.models ?? [];
+				}
+			} else {
+				models = res?.models ?? [];
+			}
+
+			return models;
+		} else {
+			return res?.models ?? null;
+		}
+	};
 
 	onMount(() => {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
