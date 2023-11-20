@@ -349,13 +349,13 @@ func promptFromMessages(model *Model, messages []api.Message) (string, error) {
 	var prompt strings.Builder
 	vars := &PromptVars{}
 	for _, m := range messages {
-		if (m.Role == "system" || m.Role == "user") && vars.Prompt != "" {
+		if (m.Role == "system" || m.Role == "user") && vars.User != "" {
 			if err := flush(vars, model, &prompt); err != nil {
 				return "", err
 			}
 		}
 
-		if m.Role == "assistant" && (vars.Prompt != "" || vars.System != "") {
+		if m.Role == "assistant" && (vars.User != "" || vars.System != "") {
 			if err := flush(vars, model, &prompt); err != nil {
 				return "", err
 			}
