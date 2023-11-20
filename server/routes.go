@@ -321,6 +321,7 @@ func promptFromRequestParams(c *gin.Context, model *Model, req api.GenerateReque
 	p, err := model.Prompt(&PromptVars{
 		System: req.System,
 		Prompt: req.Prompt,
+		User:   req.Prompt,
 	})
 	if err != nil {
 		return "", err
@@ -340,6 +341,7 @@ func promptFromMessages(model *Model, messages []api.Message) (string, error) {
 		prompt.WriteString(p)
 
 		vars.Prompt = ""
+		vars.User = ""
 		vars.System = ""
 		return nil
 	}
@@ -364,6 +366,7 @@ func promptFromMessages(model *Model, messages []api.Message) (string, error) {
 			vars.System = m.Content
 		case "user":
 			vars.Prompt = m.Content
+			vars.User = m.Content
 		case "assistant":
 			prompt.WriteString(m.Content)
 		default:
