@@ -1,6 +1,9 @@
 package format
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 const (
 	Byte     = 1
@@ -11,16 +14,32 @@ const (
 )
 
 func HumanBytes(b int64) string {
+	var value float64
+	var unit string
+
 	switch {
-	case b > TeraByte:
-		return fmt.Sprintf("%.1f TB", float64(b)/TeraByte)
-	case b > GigaByte:
-		return fmt.Sprintf("%.1f GB", float64(b)/GigaByte)
-	case b > MegaByte:
-		return fmt.Sprintf("%.1f MB", float64(b)/MegaByte)
-	case b > KiloByte:
-		return fmt.Sprintf("%.1f KB", float64(b)/KiloByte)
+	case b >= TeraByte:
+		value = float64(b) / TeraByte
+		unit = "TB"
+	case b >= GigaByte:
+		value = float64(b) / GigaByte
+		unit = "GB"
+	case b >= MegaByte:
+		value = float64(b) / MegaByte
+		unit = "MB"
+	case b >= KiloByte:
+		value = float64(b) / KiloByte
+		unit = "KB"
 	default:
 		return fmt.Sprintf("%d B", b)
+	}
+
+	switch {
+	case value >= 100:
+		return fmt.Sprintf("%d %s", int(value), unit)
+	case value != math.Trunc(value):
+		return fmt.Sprintf("%.1f %s", value, unit)
+	default:
+		return fmt.Sprintf("%d %s", int(value), unit)
 	}
 }
