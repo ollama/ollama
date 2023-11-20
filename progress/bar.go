@@ -124,15 +124,14 @@ func (b *Bar) Stats() Stats {
 
 	switch {
 	case b.statted.IsZero():
-	case b.currentValue >= b.maxValue:
 		b.stats = Stats{
-			value:     b.maxValue,
+			value:     b.initialValue,
 			rate:      0,
 			remaining: 0,
 		}
-	case b.statted.IsZero():
+	case b.currentValue >= b.maxValue:
 		b.stats = Stats{
-			value:     b.initialValue,
+			value:     b.maxValue,
 			rate:      0,
 			remaining: 0,
 		}
