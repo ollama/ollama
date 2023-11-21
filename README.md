@@ -218,7 +218,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Mobile
 
-- [Maid](https://github.com/MaidFoundation/Maid) (Mobile Artificial Intelligence Distribution)
+- [Mobile Artificial Intelligence Distribution](https://github.com/MaidFoundation/Maid) (Maid)
 
 ### Web & Desktop
 
