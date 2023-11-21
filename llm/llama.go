@@ -226,7 +226,7 @@ type llama struct {
 }
 
 var (
-	errNvidiaSMI     = errors.New("nvidia-smi command failed")
+	errNvidiaSMI     = errors.New("warning: gpu support may not be enabled, check that you have installed GPU drivers: nvidia-smi command failed")
 	errAvailableVRAM = errors.New("not enough VRAM available, falling back to CPU only")
 )
 
@@ -341,6 +341,10 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
 		"--embedding",
+	}
+
+	if opts.MainGPU > 0 {
+		params = append(params, "--main-gpu", fmt.Sprintf("%d", opts.MainGPU))
 	}
 
 	if opts.RopeFrequencyBase > 0 {
@@ -544,6 +548,7 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"stream":            true,
 		"n_predict":         llm.NumPredict,
 		"n_keep":            llm.NumKeep,
+		"main_gpu":          llm.MainGPU,
 		"temperature":       llm.Temperature,
 		"top_k":             llm.TopK,
 		"top_p":             llm.TopP,
