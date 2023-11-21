@@ -145,6 +145,8 @@ func (i *Instance) Readline() (string, error) {
 				buf.MoveLeftWord()
 			case 'f':
 				buf.MoveRightWord()
+			case CharBackspace:
+				buf.DeleteWord()
 			case CharEscapeEx:
 				escex = true
 			}
