@@ -240,8 +240,11 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
 - [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
-- [ollama package for archlinux](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
+
+### Package managers
+
+- [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 
 ### Libraries
 
