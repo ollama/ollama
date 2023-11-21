@@ -299,9 +299,9 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 ### Parameters
 
 - `name`: name of the model to create
-- `modelfile`: contents of the Modelfile
+- `modelfile` (optional): contents of the Modelfile
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
-- `path` (deprecated): path to the Modelfile
+- `path` (optional): path to the Modelfile
 
 ### Examples
 
