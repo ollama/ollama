@@ -242,7 +242,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [gptel Emacs client](https://github.com/karthink/gptel)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
 
-### Installation Packages
+### Package managers
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 
