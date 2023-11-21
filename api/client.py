@@ -78,7 +78,7 @@ def create_blob(digest, file_path):
 
 
 # Create a model from a Modelfile. Use the callback function to override the default handler.
-def create(model_name: str, filename: str, callback=None):
+def create(model_name, filename, callback=None):
     try:
         file_path = Path(filename).expanduser().resolve()
         # Read and process the modelfile
