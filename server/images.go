@@ -228,10 +228,10 @@ func GetModel(name string) (*Model, error) {
 	return model, nil
 }
 
-func realpath(p string) string {
-	abspath, err := filepath.Abs(p)
+func realpath(mfPath, from string) string {
+	abspath, err := filepath.Abs(from)
 	if err != nil {
-		return p
+		return from
 	}
 
 	home, err := os.UserHomeDir()
@@ -239,16 +239,22 @@ func realpath(p string) string {
 		return abspath
 	}
 
-	if p == "~" {
+	if from == "~" {
 		return home
-	} else if strings.HasPrefix(p, "~/") {
-		return filepath.Join(home, p[2:])
+	} else if strings.HasPrefix(from, "~/") {
+		return filepath.Join(home, from[2:])
+	}
+
+	mfDir := filepath.Dir(mfPath)
+	if _, err := os.Stat(filepath.Join(mfDir, from)); err == nil {
+		// this is a file relative to the Modelfile
+		return filepath.Join(mfDir, from)
 	}
 
 	return abspath
 }
 
-func CreateModel(ctx context.Context, name string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
+func CreateModel(ctx context.Context, modelFilePath, name string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
@@ -276,7 +282,7 @@ func CreateModel(ctx context.Context, name string, commands []parser.Command, fn
 				c.Args = blobPath
 			}
 
-			bin, err := os.Open(realpath(c.Args))
+			bin, err := os.Open(realpath(modelFilePath, c.Args))
 			if err != nil {
 				// not a file on disk so must be a model reference
 				modelpath := ParseModelPath(c.Args)
@@ -372,7 +378,7 @@ func CreateModel(ctx context.Context, name string, commands []parser.Command, fn
 			layers = append(layers, layer)
 		case "adapter":
 			fn(api.ProgressResponse{Status: "creating adapter layer"})
-			bin, err := os.Open(realpath(c.Args))
+			bin, err := os.Open(realpath(modelFilePath, c.Args))
 			if err != nil {
 				return err
 			}
