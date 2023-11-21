@@ -236,6 +236,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
 - [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
+- [Oatmeal](https://github.com/dustinblackman/oatmeal)
 
 ### Libraries
 
