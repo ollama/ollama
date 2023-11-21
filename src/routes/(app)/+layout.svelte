@@ -3,7 +3,7 @@
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 
-	import { config, user, showSettings, settings, models, db } from '$lib/stores';
+	import { config, user, showSettings, settings, models, db, chats } from '$lib/stores';
 
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -77,7 +77,7 @@
 	};
 
 	const getDB = async () => {
-		return await openDB('Chats', 1, {
+		const _db = await openDB('Chats', 1, {
 			upgrade(db) {
 				const store = db.createObjectStore('chats', {
 					keyPath: 'id',
@@ -86,6 +86,63 @@
 				store.createIndex('timestamp', 'timestamp');
 			}
 		});
+
+		return {
+			db: _db,
+			getChatById: async function (id) {
+				return await this.db.get('chats', id);
+			},
+			getChats: async function () {
+				let chats = await this.db.getAllFromIndex('chats', 'timestamp');
+				chats = chats.map((item, idx) => ({
+					title: chats[chats.length - 1 - idx].title,
+					id: chats[chats.length - 1 - idx].id
+				}));
+				return chats;
+			},
+			exportChats: async function () {
+				let chats = await this.db.getAllFromIndex('chats', 'timestamp');
+				chats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
+				return chats;
+			},
+			addChats: async function (_chats) {
+				for (const chat of _chats) {
+					console.log(chat);
+					await this.addChat(chat);
+				}
+				await chats.set(await this.db.getChats());
+			},
+			addChat: async function (chat) {
+				await this.db.put('chats', {
+					...chat
+				});
+			},
+			createNewChat: async function (chat) {
+				await this.addChat({ ...chat, timestamp: Date.now() });
+				await chats.set(await this.db.getChats());
+			},
+			updateChatById: async function (id, updated) {
+				const chat = await this.getChatById(id);
+
+				await this.db.put('chats', {
+					...chat,
+					...updated,
+					timestamp: Date.now()
+				});
+
+				await chats.set(await this.db.getChats());
+			},
+			deleteChatById: async function (id) {
+				await this.db.delete('chats', id);
+				await chats.set(await this.db.getChats());
+			},
+			deleteAllChat: async function () {
+				const tx = this.db.transaction('chats', 'readwrite');
+				await Promise.all([tx.store.clear(), tx.done]);
+
+				await chats.set(await this.db.getChats());
+			}
+		};
 	};
 
 	onMount(async () => {

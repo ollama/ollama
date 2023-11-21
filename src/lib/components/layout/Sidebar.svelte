@@ -21,134 +21,40 @@
 
 	let showDropdown = false;
 
-	let _chats = $chats.map((item, idx) => $chats[$chats.length - 1 - idx]);
-	$: if ($chats) {
-		// Reverse Order
-		_chats = $chats.map((item, idx) => $chats[$chats.length - 1 - idx]);
-	}
-
 	onMount(async () => {
 		if (window.innerWidth > 1280) {
 			show = true;
 		}
 
-		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
+		await chats.set(await $db.getChats());
 	});
 
 	const loadChat = async (id) => {
 		goto(`/c/${id}`);
-
-		// const chat = await db.get('chats', id);
-		// console.log(chat);
-		// if (chatId !== chat.id) {
-		// 	if ('history' in chat && chat.history !== undefined) {
-		// 		history = chat.history;
-		// 	} else {
-		// 		let _history = {
-		// 			messages: {},
-		// 			currentId: null
-		// 		};
-
-		// 		let parentMessageId = null;
-		// 		let messageId = null;
-
-		// 		for (const message of chat.messages) {
-		// 			messageId = uuidv4();
-
-		// 			if (parentMessageId !== null) {
-		// 				_history.messages[parentMessageId].childrenIds = [
-		// 					..._history.messages[parentMessageId].childrenIds,
-		// 					messageId
-		// 				];
-		// 			}
-
-		// 			_history.messages[messageId] = {
-		// 				...message,
-		// 				id: messageId,
-		// 				parentId: parentMessageId,
-		// 				childrenIds: []
-		// 			};
-
-		// 			parentMessageId = messageId;
-		// 		}
-		// 		_history.currentId = messageId;
-
-		// 		history = _history;
-		// 	}
-
-		// 	if ('models' in chat && chat.models !== undefined) {
-		// 		selectedModels = chat.models ?? selectedModels;
-		// 	} else {
-		// 		selectedModels = [chat.model ?? ''];
-		// 	}
-
-		// 	console.log(history);
-
-		// 	title = chat.title;
-		// 	chatId = chat.id;
-		// 	settings.system = chat.system ?? settings.system;
-		// 	settings.temperature = chat.temperature ?? settings.temperature;
-		// 	autoScroll = true;
-
-		// 	await tick();
-
-		// 	if (messages.length > 0) {
-		// 		history.messages[messages.at(-1).id].done = true;
-		// 	}
-		// }
 	};
 
 	const editChatTitle = async (id, _title) => {
-		const chat = await $db.get('chats', id);
-		console.log(chat);
-
-		await $db.put('chats', {
-			...chat,
+		await $db.updateChatById(id, {
 			title: _title
 		});
-
 		title = _title;
-		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
 	};
 
 	const deleteChat = async (id) => {
 		goto('/');
-
-		const chat = await $db.delete('chats', id);
-		console.log(chat);
-		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
+		$db.deleteChatById(id);
 	};
 
 	const deleteChatHistory = async () => {
-		const tx = $db.transaction('chats', 'readwrite');
-		await Promise.all([tx.store.clear(), tx.done]);
-		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
+		await $db.deleteAllChat();
 	};
 
-	const importChatHistory = async (chatHistory) => {
-		for (const chat of chatHistory) {
-			console.log(chat);
-
-			await $db.put('chats', {
-				id: chat.id,
-				model: chat.model,
-				models: chat.models,
-				system: chat.system,
-				options: chat.options,
-				title: chat.title,
-				timestamp: chat.timestamp,
-				messages: chat.messages,
-				history: chat.history
-			});
-		}
-		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
-
-		console.log(chats);
+	const importChats = async (chatHistory) => {
+		await $db.addChats(chatHistory);
 	};
 
-	const exportChatHistory = async () => {
-		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
-		let blob = new Blob([JSON.stringify($chats)], { type: 'application/json' });
+	const exportChats = async () => {
+		let blob = new Blob([JSON.stringify(await $db.exportChats())], { type: 'application/json' });
 		saveAs(blob, `chat-export-${Date.now()}.json`);
 	};
 
@@ -159,7 +65,7 @@
 		reader.onload = (event) => {
 			let chats = JSON.parse(event.target.result);
 			console.log(chats);
-			importChatHistory(chats);
+			importChats(chats);
 		};
 
 		reader.readAsText(importFiles[0]);
@@ -238,7 +144,7 @@
 		</div>
 
 		<div class="pl-2.5 my-3 flex-1 flex flex-col space-y-1 overflow-y-auto">
-			{#each _chats as chat, i}
+			{#each $chats as chat, i}
 				<div class=" w-full pr-2 relative">
 					<button
 						class=" w-full flex justify-between rounded-md px-3 py-2 hover:bg-gray-900 {chat.id ===
@@ -396,7 +302,7 @@
 						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
 						on:click={() => {
 							importFileInputElement.click();
-							// importChatHistory();
+							// importChats();
 						}}
 					>
 						<div class=" self-center mr-3">
@@ -420,7 +326,7 @@
 					<button
 						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
 						on:click={() => {
-							exportChatHistory();
+							exportChats();
 						}}
 					>
 						<div class=" self-center mr-3">

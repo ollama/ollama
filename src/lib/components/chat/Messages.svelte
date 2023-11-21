@@ -20,7 +20,6 @@
 	export let messages = [];
 
 	$: if (messages && messages.length > 0 && (messages.at(-1).done ?? false)) {
-		console.log('message done: rendering');
 		(async () => {
 			await tick();
 			renderLatex();
@@ -32,7 +31,6 @@
 	const createCopyCodeBlockButton = () => {
 		// use a class selector if available
 		let blocks = document.querySelectorAll('pre');
-		console.log(blocks);
 
 		blocks.forEach((block) => {
 			// only add button if browser supports Clipboard API
@@ -195,8 +193,6 @@
 	};
 
 	const rateMessage = async (messageIdx, rating) => {
-		const chat = await $db.get('chats', chatId);
-
 		messages = messages.map((message, idx) => {
 			if (messageIdx === idx) {
 				message.rating = rating;
@@ -204,14 +200,10 @@
 			return message;
 		});
 
-		await $db.put('chats', {
-			...chat,
-			timestamp: Date.now(),
+		$db.updateChatById(chatId, {
 			messages: messages,
 			history: history
 		});
-
-		console.log(messages);
 	};
 
 	const showPreviousMessage = async (message) => {

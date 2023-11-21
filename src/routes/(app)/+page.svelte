@@ -71,8 +71,6 @@
 	//////////////////////////
 
 	const sendPrompt = async (userPrompt, parentId) => {
-		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
-
 		await Promise.all(
 			selectedModels.map(async (model) => {
 				if (model.includes('gpt-')) {
@@ -83,9 +81,7 @@
 			})
 		);
 
-		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
-
-		console.log(history);
+		await chats.set(await $db.getChats());
 	};
 
 	const sendPromptOllama = async (model, userPrompt, parentId) => {
@@ -189,8 +185,7 @@
 				window.scrollTo({ top: document.body.scrollHeight });
 			}
 
-			await $db.put('chats', {
-				id: $chatId,
+			await $db.updateChatById($chatId, {
 				title: title === '' ? 'New Chat' : title,
 				models: selectedModels,
 				system: $settings.system ?? undefined,
@@ -202,8 +197,7 @@
 					top_p: $settings.top_p ?? undefined
 				},
 				messages: messages,
-				history: history,
-				timestamp: Date.now()
+				history: history
 			});
 		}
 
@@ -316,11 +310,9 @@
 						window.scrollTo({ top: document.body.scrollHeight });
 					}
 
-					await $db.put('chats', {
-						id: $chatId,
+					await $db.updateChatById($chatId, {
 						title: title === '' ? 'New Chat' : title,
 						models: selectedModels,
-
 						system: $settings.system ?? undefined,
 						options: {
 							seed: $settings.seed ?? undefined,
@@ -330,8 +322,7 @@
 							top_p: $settings.top_p ?? undefined
 						},
 						messages: messages,
-						history: history,
-						timestamp: Date.now()
+						history: history
 					});
 				}
 
@@ -344,7 +335,6 @@
 
 				if (messages.length == 2) {
 					window.history.replaceState(history.state, '', `/c/${$chatId}`);
-
 					await setChatTitle($chatId, userPrompt);
 				}
 			}
@@ -362,7 +352,6 @@
 			document.getElementById('chat-textarea').style.height = '';
 
 			let userMessageId = uuidv4();
-
 			let userMessage = {
 				id: userMessageId,
 				parentId: messages.length !== 0 ? messages.at(-1).id : null,
@@ -381,7 +370,7 @@
 			prompt = '';
 
 			if (messages.length == 0) {
-				await $db.put('chats', {
+				await $db.createNewChat({
 					id: $chatId,
 					title: 'New Chat',
 					models: selectedModels,
@@ -394,8 +383,7 @@
 						top_p: $settings.top_p ?? undefined
 					},
 					messages: messages,
-					history: history,
-					timestamp: Date.now()
+					history: history
 				});
 			}
 
@@ -459,9 +447,8 @@
 	};
 
 	const setChatTitle = async (_chatId, _title) => {
-		const chat = await $db.get('chats', _chatId);
-		await $db.put('chats', { ...chat, title: _title });
-		if (chat.id === $chatId) {
+		await $db.updateChatById(_chatId, { title: _title });
+		if (_chatId === $chatId) {
 			title = _title;
 		}
 	};
@@ -469,7 +456,6 @@
 
 <svelte:window
 	on:scroll={(e) => {
-		console.log(e);
 		autoScroll = window.innerHeight + window.scrollY >= document.body.offsetHeight - 40;
 	}}
 />
