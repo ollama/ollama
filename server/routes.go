@@ -423,14 +423,14 @@ func CreateModelHandler(c *gin.Context) {
 
 	var modelfile io.Reader = strings.NewReader(req.Modelfile)
 	if req.Path != "" && req.Modelfile == "" {
-		bin, err := os.Open(req.Path)
+		mf, err := os.Open(req.Path)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("error reading modelfile: %s", err)})
 			return
 		}
-		defer bin.Close()
+		defer mf.Close()
 
-		modelfile = bin
+		modelfile = mf
 	}
 
 	commands, err := parser.Parse(modelfile)
@@ -449,7 +449,7 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, req.Name, commands, fn); err != nil {
+		if err := CreateModel(ctx, req.Name, filepath.Dir(req.Path), commands, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
