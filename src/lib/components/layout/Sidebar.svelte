@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { v4 as uuidv4 } from 'uuid';
 
+	import fileSaver from 'file-saver';
+	const { saveAs } = fileSaver;
+
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { user, db, chats, showSettings, chatId } from '$lib/stores';
@@ -141,7 +144,7 @@
 
 	const exportChatHistory = async () => {
 		await chats.set(await $db.getAllFromIndex('chats', 'timestamp'));
-		let blob = new Blob([JSON.stringify(chats)], { type: 'application/json' });
+		let blob = new Blob([JSON.stringify($chats)], { type: 'application/json' });
 		saveAs(blob, `chat-export-${Date.now()}.json`);
 	};
 

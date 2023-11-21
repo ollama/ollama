@@ -330,7 +330,7 @@
 								/>
 							{:else}
 								<img
-									src={$user.profile_image_url}
+									src={$user ? $user.profile_image_url : '/user.png'}
 									class=" max-w-[28px] object-cover rounded-full"
 									alt="User profile"
 								/>
