@@ -8,10 +8,6 @@ status() { echo ">>> $*" >&2; }
 error() { echo "ERROR $*"; exit 1; }
 warning() { echo "WARNING: $*"; }
 
-TEMP_DIR=$(mktemp -d)
-cleanup() { rm -rf "$TEMP_DIR"; }
-trap cleanup EXIT
-
 available() { command -v "$1" >/dev/null; }
 require() {
     MISSING=''
@@ -52,6 +48,31 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
+TEMP_DIR=$(mktemp -d)
+cleanup() {
+    EXIT_CODE=$?
+    rm -rf "$TEMP_DIR"
+
+    if available nvidia-smi && lsmod | grep -qv nvidia; then
+        status 'Reboot to complete NVIDIA CUDA driver install.'
+    fi
+
+    if available systemctl >/dev/null; then
+        $SUDO systemctl restart ollama
+
+        timeout 10 sh -c 'while :; do [ "$(curl -s http://127.0.0.1:11434)" = "Ollama is running" ] && break; sleep 0.2; done' \
+            && status 'Ollama service is available at 127.0.0.1:11434' \
+            || true
+    fi
+
+    if available ollama; then
+        status 'Install completed. Run "ollama --help" to get started.'
+    fi
+
+    exit $EXIT_CODE
+}
+trap cleanup EXIT
+
 status "Downloading ollama..."
 curl --fail --show-error --location --progress-bar -o "$TEMP_DIR/ollama" "https://ollama.ai/download/ollama-linux-$ARCH"
 
@@ -64,12 +85,6 @@ done
 status "Installing ollama to $BIN_DIR..."
 $SUDO install -o0 -g0 -m755 -d "$BIN_DIR"
 $SUDO install -o0 -g0 -m755 "$TEMP_DIR/ollama" "$BIN_DIR/ollama"
-
-install_success() { 
-    status 'The Ollama API is now available at 0.0.0.0:11434.'
-    status 'Install complete. Run "ollama" from the command line.'
-}
-trap install_success EXIT
 
 # Everything from this point onwards is optional.
 
@@ -102,9 +117,6 @@ EOF
             status "Enabling and starting ollama service..."
             $SUDO systemctl daemon-reload
             $SUDO systemctl enable ollama
-
-            start_service() { $SUDO systemctl restart ollama; }
-            trap start_service EXIT
             ;;
     esac
 }
@@ -115,7 +127,7 @@ fi
 
 if ! available lspci && ! available lshw; then
     warning "Unable to detect NVIDIA GPU. Install lspci or lshw to automatically detect and install NVIDIA CUDA drivers."
-    exit 0
+    exit
 fi
 
 check_gpu() {
@@ -128,13 +140,13 @@ check_gpu() {
 
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
-    exit 0
+    exit
 fi
 
 if ! check_gpu lspci && ! check_gpu lshw; then
     install_success
-    warning "No NVIDIA GPU detected. Ollama will run in CPU-only mode."
-    exit 0
+    warning "No NVIDIA GPU detected. Ollama will run with CPU."
+    exit
 fi
 
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-7-centos-7
@@ -242,7 +254,7 @@ if ! lsmod | grep -q nvidia; then
 
     if lsmod | grep -q nouveau; then
         status 'Reboot to complete NVIDIA CUDA driver install.'
-        exit 0
+        exit
     fi
 
     $SUDO modprobe nvidia
