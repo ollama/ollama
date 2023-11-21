@@ -245,16 +245,15 @@ func realpath(mfPath, from string) string {
 		return filepath.Join(home, from[2:])
 	}
 
-	mfDir := filepath.Dir(mfPath)
-	if _, err := os.Stat(filepath.Join(mfDir, from)); err == nil {
+	if _, err := os.Stat(filepath.Join(mfPath, from)); err == nil {
 		// this is a file relative to the Modelfile
-		return filepath.Join(mfDir, from)
+		return filepath.Join(mfPath, from)
 	}
 
 	return abspath
 }
 
-func CreateModel(ctx context.Context, modelFilePath, name string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
+func CreateModel(ctx context.Context, name, modelFilePath string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
