@@ -272,3 +272,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
+- [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
