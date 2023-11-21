@@ -89,17 +89,13 @@ func (b *Bar) String() string {
 
 	fmt.Fprintf(&suf, ")")
 
-	elapsed := time.Since(b.started)
 	var timing string
 	if stats.value > b.initialValue && stats.value < b.maxValue {
-		timing = fmt.Sprintf("[%s:%s]", formatDuration(elapsed), formatDuration(stats.remaining))
+		timing = fmt.Sprintf("[%s:%s]", formatDuration(time.Since(b.started)), formatDuration(stats.remaining))
 	}
 
 	// 44 is the maximum width for the stats on the right of the progress bar
-	if suf.Len() < 44 {
-		suf.WriteString(strings.Repeat(" ", 44-suf.Len()-len(timing)))
-	}
-
+	suf.WriteString(strings.Repeat(" ", 44-suf.Len()-len(timing)))
 	suf.WriteString(timing)
 
 	// add 3 extra spaces: 2 boundary characters and 1 space at the end
