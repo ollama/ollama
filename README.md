@@ -25,13 +25,6 @@ Coming soon!
 curl https://ollama.ai/install.sh | sh
 ```
 
-#### Arch-Linux
-
-Ollama is available in the `extra` repository on Arch-Linux. This command is supposed to be run as root.
-```
-# pacman -S ollama
-```
-
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
 
 ### Docker
@@ -242,6 +235,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
 - [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
+- [ollama package for archlinux](https://archlinux.org/packages/extra/x86_64/ollama/)
 
 ### Libraries
 
