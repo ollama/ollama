@@ -99,9 +99,10 @@ type EmbeddingResponse struct {
 }
 
 type CreateRequest struct {
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	Stream *bool  `json:"stream,omitempty"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Modelfile string `json:"modelfile"`
+	Stream    *bool  `json:"stream,omitempty"`
 }
 
 type DeleteRequest struct {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -53,8 +54,8 @@ type blobDownloadPart struct {
 
 const (
 	numDownloadParts          = 64
-	minDownloadPartSize int64 = 32 * 1000 * 1000
-	maxDownloadPartSize int64 = 256 * 1000 * 1000
+	minDownloadPartSize int64 = 100 * format.MegaByte
+	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
 
 func (p *blobDownloadPart) Name() string {
@@ -147,7 +148,6 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 			continue
 		}
 
-		i := i
 		g.Go(func() error {
 			var err error
 			for try := 0; try < maxRetries; try++ {
@@ -158,12 +158,11 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 					// return immediately if the context is canceled or the device is out of space
 					return err
 				case err != nil:
-					log.Printf("%s part %d attempt %d failed: %v, retrying", b.Digest[7:19], i, try, err)
+					sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
+					log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+					time.Sleep(sleep)
 					continue
 				default:
-					if try > 0 {
-						log.Printf("%s part %d completed after %d retries", b.Digest[7:19], i, try)
-					}
 					return nil
 				}
 			}
@@ -285,7 +284,7 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 		}
 
 		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("downloading %s", b.Digest),
+			Status:    fmt.Sprintf("pulling %s", b.Digest[7:19]),
 			Digest:    b.Digest,
 			Total:     b.Total,
 			Completed: b.Completed.Load(),
@@ -304,7 +303,7 @@ type downloadOpts struct {
 	fn      func(api.ProgressResponse)
 }
 
-const maxRetries = 3
+const maxRetries = 6
 
 var errMaxRetriesExceeded = errors.New("max retries exceeded")
 
@@ -322,7 +321,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 		return err
 	default:
 		opts.fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("downloading %s", opts.digest),
+			Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
 			Digest:    opts.digest,
 			Total:     fi.Size(),
 			Completed: fi.Size(),

@@ -206,7 +206,7 @@ Ollama has a REST API for running and managing models.
 For example, to generate text from a model:
 
 ```
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt":"Why is the sky blue?"
 }'
@@ -229,6 +229,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Web UI](https://github.com/ollama-webui/ollama-webui)
 - [Ollamac](https://github.com/kevinhermawan/Ollamac)
 - [big-AGI](https://github.com/enricoros/big-agi/blob/main/docs/config-ollama.md)
+- [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
 
 ### Terminal
 
@@ -237,11 +238,13 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
 - [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
+- [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
 
 ### Libraries
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
+- [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
@@ -250,6 +253,11 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
+- [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
+
+### Mobile
+
+- [Maid](https://github.com/danemadsen/Maid) (Mobile Artificial Intelligence Distribution)
 
 ### Extensions & Plugins
 
@@ -261,3 +269,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
+- [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
