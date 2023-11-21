@@ -10,8 +10,6 @@ type Spinner struct {
 	message      string
 	messageWidth int
 
-	parts []string
-
 	value int
 
 	ticker  *time.Ticker
@@ -22,10 +20,8 @@ type Spinner struct {
 func NewSpinner(message string) *Spinner {
 	s := &Spinner{
 		message: message,
-		parts: []string{
-			"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
-		},
 		started: time.Now(),
+		value:   231,
 	}
 	go s.start()
 	return s
@@ -48,18 +44,21 @@ func (s *Spinner) String() string {
 	}
 
 	if s.stopped.IsZero() {
-		spinner := s.parts[s.value]
-		sb.WriteString(spinner)
-		sb.WriteString(" ")
+		sb.WriteString(fmt.Sprintf("\033[48;5;%dm ", s.value))
+		sb.WriteString("\033[0m")
 	}
 
 	return sb.String()
 }
 
 func (s *Spinner) start() {
-	s.ticker = time.NewTicker(100 * time.Millisecond)
+	s.ticker = time.NewTicker(40 * time.Millisecond)
 	for range s.ticker.C {
-		s.value = (s.value + 1) % len(s.parts)
+		if s.value < 255 {
+			s.value++
+		} else {
+			s.value = 231
+		}
 		if !s.stopped.IsZero() {
 			return
 		}

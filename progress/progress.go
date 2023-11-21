@@ -81,9 +81,6 @@ func (p *Progress) render() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	fmt.Fprint(p.w, "\033[?25l")
-	defer fmt.Fprint(p.w, "\033[?25h")
-
 	// clear already rendered progress lines
 	for i := 0; i < p.pos; i++ {
 		if i > 0 {
@@ -107,6 +104,9 @@ func (p *Progress) render() error {
 
 func (p *Progress) start() {
 	p.ticker = time.NewTicker(100 * time.Millisecond)
+	fmt.Fprint(p.w, "\033[?25l")
+	defer fmt.Fprintln(p.w, "\033[?25h")
+
 	for range p.ticker.C {
 		p.render()
 	}
