@@ -10,7 +10,7 @@ class ERROR_MESSAGES(str, Enum):
         return super().__str__()
 
     DEFAULT = lambda err="": f"Something went wrong :/\n{err if err else ''}"
-    ENV_VAR_NOT_FOUND = "Essential environment variable not found. Terminating now."
+    ENV_VAR_NOT_FOUND = "Required environment variable not found. Terminating now."
     INVALID_TOKEN = (
         "Your session has expired or the token is invalid. Please sign in again."
     )
