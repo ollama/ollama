@@ -73,7 +73,7 @@ class UsersTable:
         else:
             return None
 
-    def get_users(self, skip: int = 0, limit: int = 50) -> Optional[UserModel]:
+    def get_users(self, skip: int = 0, limit: int = 50) -> List[UserModel]:
         return [
             UserModel(**user)
             for user in list(
