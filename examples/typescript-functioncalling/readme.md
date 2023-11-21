@@ -2,7 +2,7 @@
 
 ![function calling 2023-11-16 16_12_58](https://github.com/jmorganca/ollama/assets/633681/a0acc247-9746-45ab-b325-b65dfbbee4fb)
 
-One of the features added to some models is called **function calling**. It's a bit of a confusing name. It's understandable if you think that means the model can call functions, but that's not what it means. Function Calling simply means that the output of the model is formatted in JSON, using a preconfigured schema, and uses the expected types. Then your code can use the output of the model and call functions with it. With JSON format available as an option for all models in Ollama, you can use any model to do function calling.
+One of the most exciting features added to Large Language Models recently is 'function calling'. It's a bit of a confusing name. It's understandable if you think that means the model can call functions, but that's not what it means. Function calling simply means that the output of the model is formatted in JSON, using a preconfigured schema, and uses the expected types. Then your code can use the output of the model and call functions with it.
 
 The two examples provided can extract information out of the provided texts. The first example uses the first couple of chapters from War and Peace by Lev Nikolayevich Tolstoy, and extracts the names and titles of the characters introduced in the story. The second example uses a more complicated schema to pull out addresses and event information from a series of emails.
 
