@@ -244,7 +244,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Installation Packages
 
-- [Package for archlinux](https://archlinux.org/packages/extra/x86_64/ollama/)
+- [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 
 ### Libraries
 
