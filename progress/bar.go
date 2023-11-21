@@ -95,7 +95,10 @@ func (b *Bar) String() string {
 	}
 
 	// 44 is the maximum width for the stats on the right of the progress bar
-	suf.WriteString(strings.Repeat(" ", 44-suf.Len()-len(timing)))
+	pad := 44 - suf.Len() - len(timing)
+	if pad > 0 {
+		suf.WriteString(strings.Repeat(" ", pad))
+	}
 	suf.WriteString(timing)
 
 	// add 3 extra spaces: 2 boundary characters and 1 space at the end
