@@ -71,6 +71,7 @@ def create_blob(digest, file_path):
     response = requests.head(url)
     if response.status_code != 404:
         return  # Blob already exists, no need to upload
+    response.raise_for_status()
 
     # Upload the blob
     with open(file_path, 'rb') as file_data:
@@ -81,47 +82,45 @@ def create_blob(digest, file_path):
 def create(model_name, filename, callback=None):
     try:
         file_path = Path(filename).expanduser().resolve()
+        processed_lines = []
+
         # Read and process the modelfile
         with open(file_path, 'r') as f:
-            lines = f.readlines()
-
-        processed_lines = []
-        for line in lines:
-            # Skip empty or whitespace-only lines
-            if not line.strip():
-                continue
-            
-            parts = line.strip().split()
-            command, *args = parts
-
-            if command in ["FROM", "ADAPTER"]:
-                path = Path(args[0]).expanduser()
-
-                # Check if path is relative and resolve it
-                if not path.is_absolute():
-                    path = (file_path.parent / path).resolve()
-                
-                # Skip if file does not exist for "model", this is handled by the server
-                if not path.exists() and command == "FROM":
-                    processed_lines.append(line)
+            for line in f:            
+                # Skip empty or whitespace-only lines
+                if not line.strip():
                     continue
+            
+                command, args = line.split(maxsplit=1)
 
-                # Calculate SHA-256 hash
-                with open(path, 'rb') as bin_file:
-                    hash = hashlib.sha256()
-                    hash.update(bin_file.read())
-                    digest = f"sha256:{hash.hexdigest()}"
+                if command.upper() in ["FROM", "ADAPTER"]:
+                    path = Path(args.strip()).expanduser()
+
+                    # Check if path is relative and resolve it
+                    if not path.is_absolute():
+                        path = (file_path.parent / path)
+
+                    # Skip if file does not exist for "model", this is handled by the server
+                    if not path.exists():
+                        processed_lines.append(line)
+                        continue
+
+                    # Calculate SHA-256 hash
+                    with open(path, 'rb') as bin_file:
+                        hash = hashlib.sha256()
+                        hash.update(bin_file.read())
+                        blob = f"sha256:{hash.hexdigest()}"
                 
-                # Add the file to the remote server
-                create_blob(digest, path)
+                    # Add the file to the remote server
+                    create_blob(blob, path)
 
-                # Replace path with digest in the line
-                line = f"{command} @{digest}\n"
+                    # Replace path with digest in the line
+                    line = f"{command} @{blob}\n"
 
-            processed_lines.append(line)
+                processed_lines.append(line)
 
         # Combine processed lines back into a single string
-        modelfile_content = ''.join(processed_lines)
+        modelfile_content = '\n'.join(processed_lines)
 
         url = f"{BASE_URL}/api/create"
         payload = {"name": model_name, "modelfile": modelfile_content}
