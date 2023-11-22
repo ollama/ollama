@@ -251,7 +251,7 @@
 	};
 
 	const sendPromptOpenAI = async (model, userPrompt, parentId) => {
-		if (settings.OPENAI_API_KEY) {
+		if ($settings.OPENAI_API_KEY) {
 			if (models) {
 				let responseMessageId = uuidv4();
 
@@ -279,7 +279,7 @@
 					method: 'POST',
 					headers: {
 						'Content-Type': 'application/json',
-						Authorization: `Bearer ${settings.OPENAI_API_KEY}`
+						Authorization: `Bearer ${$settings.OPENAI_API_KEY}`
 					},
 					body: JSON.stringify({
 						model: model,
@@ -288,7 +288,7 @@
 							$settings.system
 								? {
 										role: 'system',
-										content: settings.system
+										content: $settings.system
 								  }
 								: undefined,
 							...messages
