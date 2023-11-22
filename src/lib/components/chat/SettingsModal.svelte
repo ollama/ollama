@@ -133,7 +133,7 @@
 							throw data.detail;
 						}
 						if (data.status) {
-							if (!data.status.includes('downloading')) {
+							if (!data.digest) {
 								toast.success(data.status);
 							} else {
 								digest = data.digest;

@@ -22,14 +22,14 @@ services:
     restart: unless-stopped
     image: ollama/ollama:latest
 
-  ollama-webui-db:
-    image: mongo
-    container_name: ollama-webui-db
-    restart: always
-    # Make sure to change the username/password!
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: example
+  # ollama-webui-db:
+  #   image: mongo
+  #   container_name: ollama-webui-db
+  #   restart: always
+  #   # Make sure to change the username/password!
+  #   environment:
+  #     MONGO_INITDB_ROOT_USERNAME: root
+  #     MONGO_INITDB_ROOT_PASSWORD: example
 
   ollama-webui:
     build:
@@ -41,7 +41,7 @@ services:
     container_name: ollama-webui
     depends_on:
       - ollama
-      - ollama-webui-db
+      # - ollama-webui-db
     ports:
       - 3000:8080
     environment:
