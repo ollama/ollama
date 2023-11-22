@@ -4,8 +4,13 @@
 	font-display: swap;
 }
 
+@font-face {
+	font-family: 'Mona Sans';
+	src: url('/assets/fonts/Mona-Sans.woff2');
+	font-display: swap;
+}
+
 html {
-	@apply bg-gray-800;
 	word-break: break-word;
 }
 

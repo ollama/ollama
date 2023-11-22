@@ -1,14 +1,20 @@
 <script lang="ts">
-	import sha256 from 'js-sha256';
 	import Modal from '../common/Modal.svelte';
 
-	import { WEB_UI_VERSION, API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
+	import { WEB_UI_VERSION, OLLAMA_API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
 	import { onMount } from 'svelte';
+	import { config, models, settings, user } from '$lib/stores';
+	import { splitStream, getGravatarURL } from '$lib/utils';
 
 	export let show = false;
-	export let saveSettings: Function;
-	export let getModelTags: Function;
+
+	const saveSettings = async (updated) => {
+		console.log(updated);
+		await settings.set({ ...$settings, ...updated });
+		await models.set(await getModels());
+		localStorage.setItem('settings', JSON.stringify($settings));
+	};
 
 	let selectedTab = 'general';
 
@@ -32,6 +38,7 @@
 	let pullProgress = null;
 
 	// Addons
+	let titleAutoGenerate = true;
 	let speechAutoSend = false;
 	let gravatarEmail = '';
 	let OPENAI_API_KEY = '';
@@ -41,42 +48,16 @@
 	let authType = 'Basic';
 	let authContent = '';
 
-	function getGravatarURL(email) {
-		// Trim leading and trailing whitespace from
-		// an email address and force all characters
-		// to lower case
-		const address = String(email).trim().toLowerCase();
-
-		// Create a SHA256 hash of the final string
-		const hash = sha256(address);
-
-		// Grab the actual image URL
-		return `https://www.gravatar.com/avatar/${hash}`;
-	}
-
-	const splitStream = (splitOn) => {
-		let buffer = '';
-		return new TransformStream({
-			transform(chunk, controller) {
-				buffer += chunk;
-				const parts = buffer.split(splitOn);
-				parts.slice(0, -1).forEach((part) => controller.enqueue(part));
-				buffer = parts[parts.length - 1];
-			},
-			flush(controller) {
-				if (buffer) controller.enqueue(buffer);
-			}
-		});
-	};
-
 	const checkOllamaConnection = async () => {
 		if (API_BASE_URL === '') {
 			API_BASE_URL = BUILD_TIME_API_BASE_URL;
 		}
-		const res = await getModelTags(API_BASE_URL, 'ollama');
+		const _models = await getModels(API_BASE_URL, 'ollama');
 
-		if (res) {
+		if (_models.length > 0) {
 			toast.success('Server connection verified');
+			await models.set(_models);
+
 			saveSettings({
 				API_BASE_URL: API_BASE_URL
 			});
@@ -111,6 +92,11 @@
 		saveSettings({ speechAutoSend: speechAutoSend });
 	};
 
+	const toggleTitleAutoGenerate = async () => {
+		titleAutoGenerate = !titleAutoGenerate;
+		saveSettings({ titleAutoGenerate: titleAutoGenerate });
+	};
+
 	const toggleAuthHeader = async () => {
 		authEnabled = !authEnabled;
 	};
@@ -119,7 +105,9 @@
 		const res = await fetch(`${API_BASE_URL}/pull`, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'text/event-stream'
+				'Content-Type': 'text/event-stream',
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
 			},
 			body: JSON.stringify({
 				name: modelTag
@@ -147,8 +135,12 @@
 						if (data.error) {
 							throw data.error;
 						}
+
+						if (data.detail) {
+							throw data.detail;
+						}
 						if (data.status) {
-							if (!data.status.includes('downloading')) {
+							if (!data.digest) {
 								toast.success(data.status);
 							} else {
 								digest = data.digest;
@@ -168,14 +160,16 @@
 		}
 
 		modelTag = '';
-		await getModelTags();
+		models.set(await getModels());
 	};
 
 	const deleteModelHandler = async () => {
 		const res = await fetch(`${API_BASE_URL}/delete`, {
 			method: 'DELETE',
 			headers: {
-				'Content-Type': 'text/event-stream'
+				'Content-Type': 'text/event-stream',
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
 			},
 			body: JSON.stringify({
 				name: deleteModelTag
@@ -203,6 +197,10 @@
 						if (data.error) {
 							throw data.error;
 						}
+						if (data.detail) {
+							throw data.detail;
+						}
+
 						if (data.status) {
 						}
 					} else {
@@ -216,7 +214,7 @@
 		}
 
 		deleteModelTag = '';
-		await getModelTags();
+		models.set(await getModels());
 	};
 
 	$: if (show) {
@@ -234,10 +232,75 @@
 		top_k = settings.top_k ?? 40;
 		top_p = settings.top_p ?? 0.9;
 
+		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
 		gravatarEmail = settings.gravatarEmail ?? '';
 		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 	}
+
+	const getModels = async (url = '', type = 'all') => {
+		let models = [];
+		const res = await fetch(`${url ? url : $settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/tags`, {
+			method: 'GET',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json',
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
+			}
+		})
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((error) => {
+				console.log(error);
+				if ('detail' in error) {
+					toast.error(error.detail);
+				} else {
+					toast.error('Server connection failed');
+				}
+				return null;
+			});
+		console.log(res);
+		models.push(...(res?.models ?? []));
+
+		// If OpenAI API Key exists
+		if (type === 'all' && $settings.OPENAI_API_KEY) {
+			// Validate OPENAI_API_KEY
+			const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
+				method: 'GET',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${$settings.OPENAI_API_KEY}`
+				}
+			})
+				.then(async (res) => {
+					if (!res.ok) throw await res.json();
+					return res.json();
+				})
+				.catch((error) => {
+					console.log(error);
+					toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
+					return null;
+				});
+
+			const openAIModels = openaiModelRes?.data ?? null;
+
+			models.push(
+				...(openAIModels
+					? [
+							{ name: 'hr' },
+							...openAIModels
+								.map((model) => ({ name: model.id, label: 'OpenAI' }))
+								.filter((model) => model.name.includes('gpt'))
+					  ]
+					: [])
+			);
+		}
+
+		return models;
+	};
 
 	onMount(() => {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
@@ -378,31 +441,33 @@
 					<div class=" self-center">Add-ons</div>
 				</button>
 
-				<button
-					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
-					'auth'
-						? 'bg-gray-200 dark:bg-gray-700'
-						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
-					on:click={() => {
-						selectedTab = 'auth';
-					}}
-				>
-					<div class=" self-center mr-2">
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 24 24"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								fill-rule="evenodd"
-								d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.39-.223-2.73-.635-3.985a.75.75 0 00-.722-.516l-.143.001c-2.996 0-5.717-1.17-7.734-3.08zm3.094 8.016a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
-								clip-rule="evenodd"
-							/>
-						</svg>
-					</div>
-					<div class=" self-center">Authentication</div>
-				</button>
+				{#if !$config || ($config && !$config.auth)}
+					<button
+						class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+						'auth'
+							? 'bg-gray-200 dark:bg-gray-700'
+							: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+						on:click={() => {
+							selectedTab = 'auth';
+						}}
+					>
+						<div class=" self-center mr-2">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 24 24"
+								fill="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.39-.223-2.73-.635-3.985a.75.75 0 00-.722-.516l-.143.001c-2.996 0-5.717-1.17-7.734-3.08zm3.094 8.016a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</div>
+						<div class=" self-center">Authentication</div>
+					</button>
+				{/if}
 
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
@@ -795,6 +860,28 @@
 						<div class=" space-y-3">
 							<div>
 								<div class=" py-1 flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Title Auto Generation</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											toggleTitleAutoGenerate();
+										}}
+										type="button"
+									>
+										{#if titleAutoGenerate === true}
+											<span class="ml-2 self-center">On</span>
+										{:else}
+											<span class="ml-2 self-center">Off</span>
+										{/if}
+									</button>
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
+							<div>
+								<div class=" py-1 flex w-full justify-between">
 									<div class=" self-center text-sm font-medium">Voice Input Auto-Send</div>
 
 									<button
@@ -992,7 +1079,7 @@
 								<div class=" mb-2.5 text-sm font-medium">Ollama Web UI Version</div>
 								<div class="flex w-full">
 									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">
-										{WEB_UI_VERSION}
+										{$config && $config.version ? $config.version : WEB_UI_VERSION}
 									</div>
 								</div>
 							</div>

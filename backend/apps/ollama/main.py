@@ -1,4 +1,4 @@
-from flask import Flask, request, Response
+from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
 
 
@@ -6,7 +6,10 @@ import requests
 import json
 
 
-from config import OLLAMA_API_BASE_URL
+from apps.web.models.users import Users
+from constants import ERROR_MESSAGES
+from utils.utils import extract_token_from_auth_header
+from config import OLLAMA_API_BASE_URL, WEBUI_AUTH
 
 app = Flask(__name__)
 CORS(
@@ -22,11 +25,39 @@ TARGET_SERVER_URL = OLLAMA_API_BASE_URL
 def proxy(path):
     # Combine the base URL of the target server with the requested path
     target_url = f"{TARGET_SERVER_URL}/{path}"
-    print(target_url)
+    print(path)
 
     # Get data from the original request
     data = request.get_data()
     headers = dict(request.headers)
+
+    # Basic RBAC support
+    if WEBUI_AUTH:
+        if "Authorization" in headers:
+            token = extract_token_from_auth_header(headers["Authorization"])
+            user = Users.get_user_by_token(token)
+            if user:
+                # Only user and admin roles can access
+                if user.role in ["user", "admin"]:
+                    if path in ["pull", "delete", "push", "copy", "create"]:
+                        # Only admin role can perform actions above
+                        if user.role == "admin":
+                            pass
+                        else:
+                            return (
+                                jsonify({"detail": ERROR_MESSAGES.ACCESS_PROHIBITED}),
+                                401,
+                            )
+                    else:
+                        pass
+                else:
+                    return jsonify({"detail": ERROR_MESSAGES.ACCESS_PROHIBITED}), 401
+            else:
+                return jsonify({"detail": ERROR_MESSAGES.UNAUTHORIZED}), 401
+        else:
+            return jsonify({"detail": ERROR_MESSAGES.UNAUTHORIZED}), 401
+    else:
+        pass
 
     # Make a request to the target server
     target_response = requests.request(
