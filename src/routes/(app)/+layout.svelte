@@ -110,7 +110,7 @@
 					console.log(chat);
 					await this.addChat(chat);
 				}
-				await chats.set(await this.db.getChats());
+				await chats.set(await this.getChats());
 			},
 			addChat: async function (chat) {
 				await this.db.put('chats', {
@@ -119,7 +119,7 @@
 			},
 			createNewChat: async function (chat) {
 				await this.addChat({ ...chat, timestamp: Date.now() });
-				await chats.set(await this.db.getChats());
+				await chats.set(await this.getChats());
 			},
 			updateChatById: async function (id, updated) {
 				const chat = await this.getChatById(id);
@@ -130,17 +130,17 @@
 					timestamp: Date.now()
 				});
 
-				await chats.set(await this.db.getChats());
+				await chats.set(await this.getChats());
 			},
 			deleteChatById: async function (id) {
 				await this.db.delete('chats', id);
-				await chats.set(await this.db.getChats());
+				await chats.set(await this.getChats());
 			},
 			deleteAllChat: async function () {
 				const tx = this.db.transaction('chats', 'readwrite');
 				await Promise.all([tx.store.clear(), tx.done]);
 
-				await chats.set(await this.db.getChats());
+				await chats.set(await this.getChats());
 			}
 		};
 	};
