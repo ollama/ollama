@@ -13,5 +13,5 @@ docker buildx build \
     --cache-from type=local,src=.cache \
     --cache-to type=local,dest=.cache \
     -f Dockerfile \
-    -t ollama \
+    -t ollama/ollama:$VERSION \
     .
