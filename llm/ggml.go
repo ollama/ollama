@@ -179,7 +179,7 @@ const (
 	FILE_MAGIC_GGUF_BE = 0x47475546
 )
 
-func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
+func DecodeGGML(r io.Reader) (*GGML, error) {
 	var ggml GGML
 	binary.Read(r, binary.LittleEndian, &ggml.magic)
 
