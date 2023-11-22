@@ -125,11 +125,6 @@ if available systemctl; then
     configure_systemd
 fi
 
-if ! available lspci && ! available lshw; then
-    warning "Unable to detect NVIDIA GPU. Install lspci or lshw to automatically detect and install NVIDIA CUDA drivers."
-    exit
-fi
-
 check_gpu() {
     case $1 in
         lspci) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
@@ -140,6 +135,11 @@ check_gpu() {
 
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
+    exit
+fi
+
+if ! available lspci && ! available lshw; then
+    warning "Unable to detect NVIDIA GPU. Install lspci or lshw to automatically detect and install NVIDIA CUDA drivers."
     exit
 fi
 
