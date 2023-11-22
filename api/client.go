@@ -311,3 +311,15 @@ func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) err
 
 	return nil
 }
+
+func (c *Client) Version(ctx context.Context) (string, error) {
+	var version struct {
+		Version string `json:"version"`
+	}
+
+	if err := c.do(ctx, http.MethodGet, "/api/version", nil, &version); err != nil {
+		return "", err
+	}
+
+	return version.Version, nil
+}
