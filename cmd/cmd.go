@@ -1037,8 +1037,25 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func versionHandler(cmd *cobra.Command, _ []string) {
+	fmt.Printf("ollama version %s\n", version.Version)
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return
+	}
+
+	serverVersion, err := client.Version(cmd.Context())
+	if err != nil {
+		return
+	}
+
+	fmt.Printf("server version %s\n", serverVersion)
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	cobra.EnableCommandSorting = false
 
 	rootCmd := &cobra.Command{
 		Use:           "ollama",
@@ -1049,9 +1066,17 @@ func NewCLI() *cobra.Command {
 			DisableDefaultCmd: true,
 		},
 		Version: version.Version,
+		Run: func(cmd *cobra.Command, args []string) {
+			if version, _ := cmd.Flags().GetBool("version"); version {
+				versionHandler(cmd, args)
+				return
+			}
+
+			cmd.Print(cmd.UsageString())
+		},
 	}
 
-	cobra.EnableCommandSorting = false
+	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
