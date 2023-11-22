@@ -27,34 +27,6 @@ import (
 	"github.com/jmorganca/ollama/format"
 )
 
-const jsonGrammar = `
-root   ::= object
-value  ::= object | array | string | number | ("true" | "false" | "null") ws
-
-object ::=
-  "{" ws (
-            string ":" ws value
-    ("," ws string ":" ws value)*
-  )? "}" ws
-
-array  ::=
-  "[" ws (
-            value
-    ("," ws value)*
-  )? "]" ws
-
-string ::=
-  "\"" (
-    [^"\\] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
-  )* "\"" ws
-
-number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
-
-# Optional space: by convention, applied in this grammar after literal chars when allowed
-ws ::= ([ \t\n] ws)?
-`
-
 //go:embed llama.cpp/*/build/*/bin/*
 var llamaCppEmbed embed.FS
 
@@ -525,7 +497,7 @@ type prediction struct {
 
 const maxBufferSize = 512 * format.KiloByte
 
-func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, format string, fn func(api.GenerateResponse)) error {
+func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, outputFormat string, fn func(api.GenerateResponse)) error {
 	prevConvo, err := llm.Decode(ctx, prevContext)
 	if err != nil {
 		return err
@@ -561,20 +533,20 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"grammar":           llm.Grammar,
 	}
 
-	// If json schema is provided, convert it to a grammar
-	if llm.Schema != "" {
-		if llm.Grammar != "" {
-			return fmt.Errorf("cannot use both a grammar and a json schema, please provide only one")
+	if outputFormat == "json" {
+		// If json schema is provided, convert it to a grammar and use that
+		if llm.Schema != "" {
+			if llm.Grammar != "" {
+				return fmt.Errorf("cannot use both a grammar and a json schema, please provide only one")
+			}
+			grammar, err := format.SchemaToGrammar(llm.Schema, nil)
+			if err != nil {
+				return fmt.Errorf("error converting json schema to grammar: %v", err)
+			}
+			request["grammar"] = grammar
+		} else {
+			request["grammar"] = format.JsonGrammar
 		}
-		grammar, err := format.SchemaToGrammar(llm.Schema, nil)
-		if err != nil {
-			return fmt.Errorf("error converting json schema to grammar: %v", err)
-		}
-		request["grammar"] = grammar
-	}
-
-	if format == "json" {
-		request["grammar"] = jsonGrammar
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
