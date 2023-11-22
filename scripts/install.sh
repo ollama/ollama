@@ -8,11 +8,11 @@ status() { echo ">>> $*" >&2; }
 error() { echo "ERROR $*"; exit 1; }
 warning() { echo "WARNING: $*"; }
 
-available() { command -v "$1" >/dev/null; }
+runnable() { command -v "$1" >/dev/null; }
 require() {
     MISSING=''
     for TOOL in "$@"; do
-        if ! available "$TOOL"; then
+        if ! runnable "$TOOL"; then
             MISSING="$MISSING $TOOL"
         fi
     done
@@ -32,7 +32,7 @@ esac
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
-    if ! available sudo; then
+    if ! runnable sudo; then
         error "This script requires superuser permissions. Please re-run as root."
     fi
 
@@ -53,11 +53,11 @@ cleanup() {
     EXIT_CODE=$?
     rm -rf "$TEMP_DIR"
 
-    if available nvidia-smi && lsmod | grep -qv nvidia; then
+    if runnable nvidia-smi && lsmod | grep -qv nvidia; then
         status 'Reboot to complete NVIDIA CUDA driver install.'
     fi
 
-    if available systemctl >/dev/null; then
+    if runnable systemctl >/dev/null; then
         $SUDO systemctl restart ollama
 
         timeout 10 sh -c 'while :; do [ "$(curl -s http://127.0.0.1:11434)" = "Ollama is running" ] && break; sleep 0.2; done' \
@@ -65,7 +65,7 @@ cleanup() {
             || true
     fi
 
-    if available ollama; then
+    if runnable ollama; then
         status 'Install completed. Run "ollama --help" to get started.'
     fi
 
@@ -121,15 +121,15 @@ EOF
     esac
 }
 
-if available systemctl; then
+if runnable systemctl; then
     configure_systemd
 fi
 
 check_gpu() {
     case $1 in
-        lspci) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
-        lshw) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
-        nvidia-smi) available nvidia-smi || return 1 ;;
+        lspci) runnable lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
+        lshw) runnable lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
+        nvidia-smi) runnable nvidia-smi || return 1 ;;
     esac
 }
 
@@ -138,7 +138,7 @@ if check_gpu nvidia-smi; then
     exit
 fi
 
-if ! available lspci && ! available lshw; then
+if ! runnable lspci && ! runnable lshw; then
     warning "Unable to detect NVIDIA GPU. Install lspci or lshw to automatically detect and install NVIDIA CUDA drivers."
     exit
 fi
@@ -217,7 +217,7 @@ OS_VERSION=$VERSION_ID
 
 PACKAGE_MANAGER=
 for PACKAGE_MANAGER in dnf yum apt-get; do
-    if available $PACKAGE_MANAGER; then
+    if runnable $PACKAGE_MANAGER; then
         break
     fi
 done
