@@ -12,6 +12,7 @@
 	const saveSettings = async (updated) => {
 		console.log(updated);
 		await settings.set({ ...$settings, ...updated });
+		await models.set(await getModels());
 		localStorage.setItem('settings', JSON.stringify($settings));
 	};
 
