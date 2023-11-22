@@ -22,6 +22,8 @@ services:
     restart: unless-stopped
     image: ollama/ollama:latest
 
+
+  # Uncomment below for WIP: Auth support
   # ollama-webui-db:
   #   image: mongo
   #   container_name: ollama-webui-db
@@ -41,11 +43,13 @@ services:
     container_name: ollama-webui
     depends_on:
       - ollama
+      # Uncomment below for WIP: Auth support
       # - ollama-webui-db
     ports:
       - 3000:8080
     environment:
       - "OLLAMA_API_BASE_URL=http://ollama:11434/api"
+      # Uncomment below for WIP: Auth support
       # - "WEBUI_AUTH=TRUE"
       # - "WEBUI_DB_URL=mongodb://root:example@ollama-webui-db:27017/"
       # - "WEBUI_JWT_SECRET_KEY=SECRET_KEY"
