@@ -38,6 +38,7 @@
 	let pullProgress = null;
 
 	// Addons
+	let titleAutoGenerate = true;
 	let speechAutoSend = false;
 	let gravatarEmail = '';
 	let OPENAI_API_KEY = '';
@@ -89,6 +90,11 @@
 	const toggleSpeechAutoSend = async () => {
 		speechAutoSend = !speechAutoSend;
 		saveSettings({ speechAutoSend: speechAutoSend });
+	};
+
+	const toggleTitleAutoGenerate = async () => {
+		titleAutoGenerate = !titleAutoGenerate;
+		saveSettings({ titleAutoGenerate: titleAutoGenerate });
 	};
 
 	const toggleAuthHeader = async () => {
@@ -226,6 +232,7 @@
 		top_k = settings.top_k ?? 40;
 		top_p = settings.top_p ?? 0.9;
 
+		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
 		gravatarEmail = settings.gravatarEmail ?? '';
 		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
@@ -851,6 +858,28 @@
 						}}
 					>
 						<div class=" space-y-3">
+							<div>
+								<div class=" py-1 flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Title Auto Generation</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											toggleTitleAutoGenerate();
+										}}
+										type="button"
+									>
+										{#if titleAutoGenerate === true}
+											<span class="ml-2 self-center">On</span>
+										{:else}
+											<span class="ml-2 self-center">Off</span>
+										{/if}
+									</button>
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
 							<div>
 								<div class=" py-1 flex w-full justify-between">
 									<div class=" self-center text-sm font-medium">Voice Input Auto-Send</div>
