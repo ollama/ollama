@@ -23,22 +23,24 @@ type LLM interface {
 	Ping(context.Context) error
 }
 
-func New(workDir, model string, adapters []string, opts api.Options) (LLM, error) {
+func FromPath(model string) (*GGML, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
-
 	f, err := os.Open(model)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	ggml, err := DecodeGGML(f)
+	return DecodeGGML(f)
+}
+
+func New(workDir, modelPath string, adapters []string, opts api.Options) (LLM, error) {
+	ggml, err := FromPath(modelPath)
 	if err != nil {
 		return nil, err
 	}
-
 	if runtime.GOOS == "darwin" {
 		switch ggml.FileType() {
 		case "F32", "Q5_0", "Q5_1", "Q8_0":
@@ -82,9 +84,9 @@ func New(workDir, model string, adapters []string, opts api.Options) (LLM, error
 		opts.NumGQA = 0
 		opts.RopeFrequencyBase = 0.0
 		opts.RopeFrequencyScale = 0.0
-		return newLlama(model, adapters, chooseRunners(workDir, "gguf"), ggml.NumLayers(), opts)
+		return newLlama(modelPath, adapters, chooseRunners(workDir, "gguf"), ggml.NumLayers(), opts)
 	case "ggml", "ggmf", "ggjt", "ggla":
-		return newLlama(model, adapters, chooseRunners(workDir, "ggml"), ggml.NumLayers(), opts)
+		return newLlama(modelPath, adapters, chooseRunners(workDir, "ggml"), ggml.NumLayers(), opts)
 	default:
 		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
 	}

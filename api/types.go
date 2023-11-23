@@ -119,6 +119,9 @@ type ShowResponse struct {
 	Parameters string `json:"parameters,omitempty"`
 	Template   string `json:"template,omitempty"`
 	System     string `json:"system,omitempty"`
+	// these fields are used to determine information about the model runtime
+	BaseModel string `json:"base_model,omitempty"`
+	ModelType string `json:"model_type,omitempty"`
 }
 
 type CopyRequest struct {

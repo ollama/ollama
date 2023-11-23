@@ -538,10 +538,29 @@ func GetModelInfo(name string) (*api.ShowResponse, error) {
 		return nil, err
 	}
 
+	counter := 0
+	// find the base model by following the OriginalModel field
+	baseModel := model
+	for {
+		if counter > 100 {
+			// prevent infinite loops
+			return nil, fmt.Errorf("failed to find base model for %s", name)
+		}
+		if baseModel.OriginalModel == "" {
+			break
+		}
+		baseModel, err = GetModel(baseModel.OriginalModel)
+		if err != nil {
+			return nil, err
+		}
+		counter++
+	}
+
 	resp := &api.ShowResponse{
-		License:  strings.Join(model.License, "\n"),
-		System:   model.System,
-		Template: model.Template,
+		License:   strings.Join(model.License, "\n"),
+		System:    model.System,
+		Template:  model.Template,
+		BaseModel: baseModel.ShortName,
 	}
 
 	mf, err := ShowModelfile(model)
@@ -579,6 +598,12 @@ func GetModelInfo(name string) (*api.ShowResponse, error) {
 		}
 	}
 	resp.Parameters = strings.Join(params, "\n")
+
+	ggml, err := llm.FromPath(model.ModelPath)
+	if err != nil {
+		return nil, err
+	}
+	resp.ModelType = ggml.Name()
 
 	return resp, nil
 }

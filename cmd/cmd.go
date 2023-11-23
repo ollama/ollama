@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -140,6 +141,15 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func isTerminalInteractive() bool {
+	fileInfo, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	// Check if the Stdin is a character device (terminal)
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -148,7 +158,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	// check if the model exists on the server
-	_, err = client.Show(context.Background(), &api.ShowRequest{Name: name})
+	details, err := client.Show(context.Background(), &api.ShowRequest{Name: name})
 	var statusError api.StatusError
 	switch {
 	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
@@ -157,6 +167,28 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 	case err != nil:
 		return err
+	}
+	// check if the model is up to date
+	if details.ModelType != "" && details.ModelType != "gguf" {
+		switch {
+		case !isTerminalInteractive():
+			fmt.Printf("warning: '%s' is out of date and will not work in a future version, please pull the model to update", name)
+		default:
+			fmt.Printf("This model requires an update to work in future versions of Ollama. Check for update now? (y/n) ")
+
+			reader := bufio.NewReader(os.Stdin)
+			response, err := reader.ReadString('\n')
+			if err != nil {
+				return err
+			}
+
+			response = strings.TrimSpace(response)
+			if strings.ToLower(response) == "y" {
+				if err := PullHandler(cmd, []string{details.BaseModel}); err != nil {
+					fmt.Printf("error: %s\n", err.Error())
+				}
+			}
+		}
 	}
 
 	return RunGenerate(cmd, args)
