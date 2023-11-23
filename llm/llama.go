@@ -340,6 +340,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
+                "--tensor-split", fmt.Sprintf("%s", opts.TensorSplit),
 		"--embedding",
 	}
 
