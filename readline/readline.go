@@ -21,9 +21,10 @@ type Terminal struct {
 }
 
 type Instance struct {
-	Prompt   *Prompt
-	Terminal *Terminal
-	History  *History
+	Prompt             *Prompt
+	Terminal           *Terminal
+	History            *History
+	appendMultilineEnd bool
 }
 
 func New(prompt Prompt) (*Instance, error) {
@@ -198,9 +199,15 @@ func (i *Instance) Readline() (string, error) {
 			fmt.Println()
 			switch pasteMode {
 			case PasteModeStart:
-				output = `"""` + output
+				if !i.Prompt.UseAlt {
+					output = `"""` + output
+					i.appendMultilineEnd = true
+				}
 			case PasteModeEnd:
-				output = output + `"""`
+				if i.appendMultilineEnd {
+					output = output + `"""`
+					i.appendMultilineEnd = false
+				}
 			}
 			return output, nil
 		default:
