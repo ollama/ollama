@@ -15,6 +15,7 @@
 	let importFiles;
 
 	let title: string = 'Ollama Web UI';
+	let search = '';
 
 	let chatTitleEditIdx = null;
 	let chatTitle = '';
@@ -82,7 +83,7 @@
 	<div class="py-2.5 my-auto flex flex-col justify-between h-screen">
 		<div class="px-2.5 flex justify-center space-x-2">
 			<button
-				class="flex-grow flex justify-between rounded-md px-3 py-1.5 my-2 hover:bg-gray-900 transition"
+				class="flex-grow flex justify-between rounded-md px-3 py-1.5 mt-2 hover:bg-gray-900 transition"
 				on:click={async () => {
 					goto('/');
 
@@ -114,6 +115,61 @@
 					</svg>
 				</div>
 			</button>
+		</div>
+
+		<div class="px-2.5 flex justify-center my-1">
+			<!-- <button
+				class="flex-grow flex space-x-3 rounded-md px-3 py-2  hover:bg-gray-900 transition"
+				on:click={async () => {}}
+			>
+				<div class="self-center">
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 20 20"
+						fill="currentColor"
+						class="w-4 h-4"
+					>
+						<path
+							d="M3.196 12.87l-.825.483a.75.75 0 000 1.294l7.25 4.25a.75.75 0 00.758 0l7.25-4.25a.75.75 0 000-1.294l-.825-.484-5.666 3.322a2.25 2.25 0 01-2.276 0L3.196 12.87z"
+						/>
+						<path
+							d="M3.196 8.87l-.825.483a.75.75 0 000 1.294l7.25 4.25a.75.75 0 00.758 0l7.25-4.25a.75.75 0 000-1.294l-.825-.484-5.666 3.322a2.25 2.25 0 01-2.276 0L3.196 8.87z"
+						/>
+						<path
+							d="M10.38 1.103a.75.75 0 00-.76 0l-7.25 4.25a.75.75 0 000 1.294l7.25 4.25a.75.75 0 00.76 0l7.25-4.25a.75.75 0 000-1.294l-7.25-4.25z"
+						/>
+					</svg>
+				</div>
+
+				<div class="flex self-center">
+					<div class=" self-center font-medium text-sm">Presets</div>
+				</div>
+			</button> -->
+		</div>
+
+		<div class="px-2.5 mt-1 mb-2 flex justify-center space-x-2">
+			<div class="flex w-full">
+				<div class="self-center pl-3 py-2 rounded-l bg-gray-900">
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 20 20"
+						fill="currentColor"
+						class="w-4 h-4"
+					>
+						<path
+							fill-rule="evenodd"
+							d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
+							clip-rule="evenodd"
+						/>
+					</svg>
+				</div>
+
+				<input
+					class="w-full rounded-r py-1.5 pl-2.5 pr-4 text-sm text-gray-300 bg-gray-900 outline-none"
+					placeholder="Search"
+					bind:value={search}
+				/>
+			</div>
 
 			<!-- <button
 				class=" cursor-pointer w-12 rounded-md flex"
@@ -143,8 +199,20 @@
 			</button> -->
 		</div>
 
-		<div class="pl-2.5 my-3 flex-1 flex flex-col space-y-1 overflow-y-auto">
-			{#each $chats as chat, i}
+		<div class="pl-2.5 my-2 flex-1 flex flex-col space-y-1 overflow-y-auto">
+			{#each $chats.filter((chat) => {
+				if (search === '') {
+					return true;
+				} else {
+					let title = chat.title.toLowerCase();
+
+					if (title.includes(search)) {
+						return true;
+					} else {
+						return false;
+					}
+				}
+			}) as chat, i}
 				<div class=" w-full pr-2 relative">
 					<button
 						class=" w-full flex justify-between rounded-md px-3 py-2 hover:bg-gray-900 {chat.id ===
