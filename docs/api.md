@@ -372,10 +372,10 @@ curl -T model.bin -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf08
 
 Return 201 Created if the blob was successfully created.
 
-## List Local Models
+## List Models
 
 ```shell
-GET /api/tags
+GET /api/list
 ```
 
 List models that are available locally.
@@ -385,7 +385,7 @@ List models that are available locally.
 #### Request
 
 ```shell
-curl http://localhost:11434/api/tags
+curl http://localhost:11434/api/list
 ```
 
 #### Response

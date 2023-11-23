@@ -157,7 +157,7 @@ def push(model_name, insecure=False, callback=None):
 # List models that are available locally.
 def list():
     try:
-        response = requests.get(f"{BASE_URL}/api/tags")
+        response = requests.get(f"{BASE_URL}/api/list")
         response.raise_for_status()
         data = response.json()
         models = data.get('models', [])

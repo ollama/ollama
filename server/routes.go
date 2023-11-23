@@ -771,6 +771,7 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 			c.String(http.StatusOK, "Ollama is running")
 		})
 
+		r.Handle(method, "/api/list", ListModelsHandler)
 		r.Handle(method, "/api/tags", ListModelsHandler)
 	}
 
