@@ -270,7 +270,7 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
 		freeBytes, err := CheckVRAM()
 		if err != nil {
 			if !errors.Is(err, errNvidiaSMI) {
