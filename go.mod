@@ -12,6 +12,7 @@ require (
 )
 
 require (
+	github.com/containerd/console v1.0.3 // indirect
 	github.com/cratonica/2goarray v0.0.0-20190331194516-514510793eaa // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
@@ -29,6 +30,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 )
+
 
 require (
 	github.com/bytedance/sonic v1.9.1 // indirect

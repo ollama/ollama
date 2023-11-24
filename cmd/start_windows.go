@@ -10,31 +10,8 @@ import (
 	"strings"
 	"syscall"
 
-	"golang.org/x/sys/windows"
-
 	"github.com/jmorganca/ollama/api"
 )
-
-func init() {
-	var inMode uint32
-	var outMode uint32
-	var errMode uint32
-
-	in := windows.Handle(os.Stdin.Fd())
-	if err := windows.GetConsoleMode(in, &inMode); err == nil {
-		windows.SetConsoleMode(in, inMode|windows.ENABLE_VIRTUAL_TERMINAL_INPUT) //nolint:errcheck
-	}
-
-	out := windows.Handle(os.Stdout.Fd())
-	if err := windows.GetConsoleMode(out, &outMode); err == nil {
-		windows.SetConsoleMode(out, outMode|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING) //nolint:errcheck
-	}
-
-	errf := windows.Handle(os.Stderr.Fd())
-	if err := windows.GetConsoleMode(errf, &errMode); err == nil {
-		windows.SetConsoleMode(errf, errMode|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING) //nolint:errcheck
-	}
-}
 
 func startApp(ctx context.Context, client *api.Client) error {
 	// log.Printf("XXX Attempting to find and start ollama app")
