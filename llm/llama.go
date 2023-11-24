@@ -84,6 +84,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	case "windows":
 		// TODO: select windows GPU runner here when available
 		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cuda", "bin", "Release", "ollama-runner.exe"), Accelerated: true},
 			{Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
 		}
 	default:
