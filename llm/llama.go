@@ -84,6 +84,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	case "windows":
 		// TODO: select windows GPU runner here when available
 		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cuda", "bin", "Release", "ollama-runner.exe"), Accelerated: true},
 			{Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
 		}
 	default:
@@ -269,7 +270,7 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
 		freeBytes, err := CheckVRAM()
 		if err != nil {
 			if !errors.Is(err, errNvidiaSMI) {
