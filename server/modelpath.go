@@ -85,20 +85,27 @@ func (mp ModelPath) GetShortTagname() string {
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
-func (mp ModelPath) GetManifestPath(createDir bool) (string, error) {
+// modelsDir returns the value of the OLLAMA_MODELS environment variable or the user's home directory if OLLAMA_MODELS is not set.
+// The models directory is where Ollama stores its model files and manifests.
+func modelsDir() (string, error) {
+	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
+		return models, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
+	return filepath.Join(home, ".ollama", "models"), nil
+}
 
-	path := filepath.Join(home, ".ollama", "models", "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
-	if createDir {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return "", err
-		}
+// GetManifestPath returns the path to the manifest file for the given model path, it is up to the caller to create the directory if it does not exist.
+func (mp ModelPath) GetManifestPath() (string, error) {
+	dir, err := modelsDir()
+	if err != nil {
+		return "", err
 	}
 
-	return path, nil
+	return filepath.Join(dir, "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag), nil
 }
 
 func (mp ModelPath) BaseURL() *url.URL {
@@ -109,12 +116,12 @@ func (mp ModelPath) BaseURL() *url.URL {
 }
 
 func GetManifestPath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := modelsDir()
 	if err != nil {
 		return "", err
 	}
 
-	path := filepath.Join(home, ".ollama", "models", "manifests")
+	path := filepath.Join(dir, "manifests")
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return "", err
 	}
@@ -123,7 +130,7 @@ func GetManifestPath() (string, error) {
 }
 
 func GetBlobsPath(digest string) (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := modelsDir()
 	if err != nil {
 		return "", err
 	}
@@ -132,7 +139,7 @@ func GetBlobsPath(digest string) (string, error) {
 		digest = strings.ReplaceAll(digest, ":", "-")
 	}
 
-	path := filepath.Join(home, ".ollama", "models", "blobs", digest)
+	path := filepath.Join(dir, "blobs", digest)
 	dirPath := filepath.Dir(path)
 	if digest == "" {
 		dirPath = path

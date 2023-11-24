@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "fs": "^0.0.1-security",
+    "ollama-node": "^0.0.3",
+    "path": "^0.12.7"
+  }
+}

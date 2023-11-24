@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"reflect"
@@ -37,8 +36,55 @@ type GenerateRequest struct {
 	System   string `json:"system"`
 	Template string `json:"template"`
 	Context  []int  `json:"context,omitempty"`
+	Stream   *bool  `json:"stream,omitempty"`
+	Raw      bool   `json:"raw,omitempty"`
+	Format   string `json:"format"`
 
 	Options map[string]interface{} `json:"options"`
+}
+
+// Options specfied in GenerateRequest, if you add a new option here add it to the API docs also
+type Options struct {
+	Runner
+
+	// Predict options used at runtime
+	NumKeep          int      `json:"num_keep,omitempty"`
+	Seed             int      `json:"seed,omitempty"`
+	NumPredict       int      `json:"num_predict,omitempty"`
+	TopK             int      `json:"top_k,omitempty"`
+	TopP             float32  `json:"top_p,omitempty"`
+	TFSZ             float32  `json:"tfs_z,omitempty"`
+	TypicalP         float32  `json:"typical_p,omitempty"`
+	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
+	Temperature      float32  `json:"temperature,omitempty"`
+	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
+	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
+	Mirostat         int      `json:"mirostat,omitempty"`
+	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
+	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
+	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
+	Stop             []string `json:"stop,omitempty"`
+}
+
+// Runner options which must be set when the model is loaded into memory
+type Runner struct {
+	UseNUMA            bool    `json:"numa,omitempty"`
+	NumCtx             int     `json:"num_ctx,omitempty"`
+	NumBatch           int     `json:"num_batch,omitempty"`
+	NumGQA             int     `json:"num_gqa,omitempty"`
+	NumGPU             int     `json:"num_gpu,omitempty"`
+	MainGPU            int     `json:"main_gpu,omitempty"`
+	LowVRAM            bool    `json:"low_vram,omitempty"`
+	F16KV              bool    `json:"f16_kv,omitempty"`
+	LogitsAll          bool    `json:"logits_all,omitempty"`
+	VocabOnly          bool    `json:"vocab_only,omitempty"`
+	UseMMap            bool    `json:"use_mmap,omitempty"`
+	UseMLock           bool    `json:"use_mlock,omitempty"`
+	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
+	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
+	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
+	NumThread          int     `json:"num_thread,omitempty"`
 }
 
 type EmbeddingRequest struct {
@@ -53,8 +99,10 @@ type EmbeddingResponse struct {
 }
 
 type CreateRequest struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Modelfile string `json:"modelfile"`
+	Stream    *bool  `json:"stream,omitempty"`
 }
 
 type DeleteRequest struct {
@@ -83,13 +131,14 @@ type PullRequest struct {
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Stream   *bool  `json:"stream,omitempty"`
 }
 
 type ProgressResponse struct {
 	Status    string `json:"status"`
 	Digest    string `json:"digest,omitempty"`
-	Total     int    `json:"total,omitempty"`
-	Completed int    `json:"completed,omitempty"`
+	Total     int64  `json:"total,omitempty"`
+	Completed int64  `json:"completed,omitempty"`
 }
 
 type PushRequest struct {
@@ -97,6 +146,7 @@ type PushRequest struct {
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Stream   *bool  `json:"stream,omitempty"`
 }
 
 type ListResponse struct {
@@ -106,7 +156,7 @@ type ListResponse struct {
 type ModelResponse struct {
 	Name       string    `json:"name"`
 	ModifiedAt time.Time `json:"modified_at"`
-	Size       int       `json:"size"`
+	Size       int64     `json:"size"`
 	Digest     string    `json:"digest"`
 }
 
@@ -117,7 +167,7 @@ type TokenResponse struct {
 type GenerateResponse struct {
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response,omitempty"`
+	Response  string    `json:"response"`
 
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`
@@ -158,48 +208,7 @@ func (r *GenerateResponse) Summary() {
 	}
 }
 
-type Options struct {
-	Seed int `json:"seed,omitempty"`
-
-	// Backend options
-	UseNUMA bool `json:"numa,omitempty"`
-
-	// Model options
-	NumCtx             int     `json:"num_ctx,omitempty"`
-	NumKeep            int     `json:"num_keep,omitempty"`
-	NumBatch           int     `json:"num_batch,omitempty"`
-	NumGQA             int     `json:"num_gqa,omitempty"`
-	NumGPU             int     `json:"num_gpu,omitempty"`
-	MainGPU            int     `json:"main_gpu,omitempty"`
-	LowVRAM            bool    `json:"low_vram,omitempty"`
-	F16KV              bool    `json:"f16_kv,omitempty"`
-	LogitsAll          bool    `json:"logits_all,omitempty"`
-	VocabOnly          bool    `json:"vocab_only,omitempty"`
-	UseMMap            bool    `json:"use_mmap,omitempty"`
-	UseMLock           bool    `json:"use_mlock,omitempty"`
-	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
-	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
-	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
-
-	// Predict options
-	NumPredict       int      `json:"num_predict,omitempty"`
-	TopK             int      `json:"top_k,omitempty"`
-	TopP             float32  `json:"top_p,omitempty"`
-	TFSZ             float32  `json:"tfs_z,omitempty"`
-	TypicalP         float32  `json:"typical_p,omitempty"`
-	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
-	Temperature      float32  `json:"temperature,omitempty"`
-	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
-	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
-	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	Mirostat         int      `json:"mirostat,omitempty"`
-	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
-	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
-	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
-	Stop             []string `json:"stop,omitempty"`
-
-	NumThread int `json:"num_thread,omitempty"`
-}
+var ErrInvalidOpts = fmt.Errorf("invalid options")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
@@ -214,6 +223,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 		}
 	}
 
+	invalidOpts := []string{}
 	for key, val := range m {
 		if opt, ok := jsonOpts[key]; ok {
 			field := valueOpts.FieldByName(opt.Name)
@@ -231,44 +241,39 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 						// when JSON unmarshals numbers, it uses float64, not int
 						field.SetInt(int64(t))
 					default:
-						log.Printf("could not convert model parameter %v to int, skipped", key)
+						return fmt.Errorf("option %q must be of type integer", key)
 					}
 				case reflect.Bool:
 					val, ok := val.(bool)
 					if !ok {
-						log.Printf("could not convert model parameter %v to bool, skipped", key)
-						continue
+						return fmt.Errorf("option %q must be of type boolean", key)
 					}
 					field.SetBool(val)
 				case reflect.Float32:
 					// JSON unmarshals to float64
 					val, ok := val.(float64)
 					if !ok {
-						log.Printf("could not convert model parameter %v to float32, skipped", key)
-						continue
+						return fmt.Errorf("option %q must be of type float32", key)
 					}
 					field.SetFloat(val)
 				case reflect.String:
 					val, ok := val.(string)
 					if !ok {
-						log.Printf("could not convert model parameter %v to string, skipped", key)
-						continue
+						return fmt.Errorf("option %q must be of type string", key)
 					}
 					field.SetString(val)
 				case reflect.Slice:
 					// JSON unmarshals to []interface{}, not []string
 					val, ok := val.([]interface{})
 					if !ok {
-						log.Printf("could not convert model parameter %v to slice, skipped", key)
-						continue
+						return fmt.Errorf("option %q must be of type array", key)
 					}
 					// convert []interface{} to []string
 					slice := make([]string, len(val))
 					for i, item := range val {
 						str, ok := item.(string)
 						if !ok {
-							log.Printf("could not convert model parameter %v to slice of strings, skipped", key)
-							continue
+							return fmt.Errorf("option %q must be of an array of strings", key)
 						}
 						slice[i] = str
 					}
@@ -277,45 +282,53 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 				}
 			}
+		} else {
+			invalidOpts = append(invalidOpts, key)
 		}
+	}
+
+	if len(invalidOpts) > 0 {
+		return fmt.Errorf("%w: %v", ErrInvalidOpts, strings.Join(invalidOpts, ", "))
 	}
 	return nil
 }
 
 func DefaultOptions() Options {
 	return Options{
-		Seed: -1,
-
-		UseNUMA: false,
-
-		NumCtx:             2048,
-		NumKeep:            -1,
-		NumBatch:           512,
-		NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
-		NumGQA:             1,
-		LowVRAM:            false,
-		F16KV:              true,
-		UseMMap:            true,
-		UseMLock:           false,
-		RopeFrequencyBase:  10000.0,
-		RopeFrequencyScale: 1.0,
-		EmbeddingOnly:      true,
-
-		RepeatLastN:      64,
-		RepeatPenalty:    1.1,
-		FrequencyPenalty: 0.0,
-		PresencePenalty:  0.0,
+		// options set on request to runner
+		NumPredict:       -1,
+		NumKeep:          0,
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,
 		TFSZ:             1.0,
 		TypicalP:         1.0,
+		RepeatLastN:      64,
+		RepeatPenalty:    1.1,
+		PresencePenalty:  0.0,
+		FrequencyPenalty: 0.0,
 		Mirostat:         0,
 		MirostatTau:      5.0,
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
+		Seed:             -1,
 
-		NumThread: 0, // let the runtime decide
+		Runner: Runner{
+			// options set when the model is loaded
+			NumCtx:             2048,
+			RopeFrequencyBase:  10000.0,
+			RopeFrequencyScale: 1.0,
+			NumBatch:           512,
+			NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
+			NumGQA:             1,
+			NumThread:          0, // let the runtime decide
+			LowVRAM:            false,
+			F16KV:              true,
+			UseMLock:           false,
+			UseMMap:            true,
+			UseNUMA:            false,
+			EmbeddingOnly:      true,
+		},
 	}
 }
 

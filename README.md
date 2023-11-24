@@ -13,7 +13,11 @@ Get up and running with large language models locally.
 
 ### macOS
 
-[Download](https://ollama.ai/download/Ollama-darwin.zip) 
+[Download](https://ollama.ai/download/Ollama-darwin.zip)
+
+### Windows
+
+Coming soon!
 
 ### Linux & WSL2
 
@@ -23,9 +27,9 @@ curl https://ollama.ai/install.sh | sh
 
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
 
-### Windows 
+### Docker
 
-coming soon
+The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
 ## Quickstart
 
@@ -37,12 +41,13 @@ ollama run llama2
 
 ## Model library
 
-Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library "ollama model library")
+Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
 
 Here are some example open-source models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
+| Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
 | Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
@@ -55,31 +60,35 @@ Here are some example open-source models that can be downloaded:
 
 ## Customize your own model
 
-### Import from GGUF or GGML
+### Import from GGUF
 
-Ollama supports importing GGUF and GGML file formats in the Modelfile. This means if you have a model that is not in the Ollama library, you can create it, iterate on it, and upload it to the Ollama library to share with others when you are ready.
+Ollama supports importing GGUF models in the Modelfile:
 
-1. Create a file named Modelfile, and add a `FROM` instruction with the local filepath to the model you want to import.
+1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
 
    ```
    FROM ./vicuna-33b.Q4_0.gguf
    ```
 
-3. Create the model in Ollama
+2. Create the model in Ollama
 
    ```
-   ollama create name -f path_to_modelfile
+   ollama create example -f Modelfile
    ```
 
-5. Run the model
+3. Run the model
 
    ```
-   ollama run name
+   ollama run example
    ```
+
+### Import from PyTorch or Safetensors
+
+See the [guide](docs/import.md) on importing models for more information.
 
 ### Customize a prompt
 
-Models from the Ollama library can be customized with a prompt. The example
+Models from the Ollama library can be customized with a prompt. For example, to customize the `llama2` model:
 
 ```
 ollama pull llama2
@@ -108,7 +117,7 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-For more examples, see the [examples](./examples) directory. For more information on working with a Modelfile, see the [Modelfile](./docs/modelfile.md) documentation.
+For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
 
 ## CLI Reference
 
@@ -150,7 +159,7 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ### Pass in prompt as arguments
 
 ```
-$ ollama run llama2 "summarize this file:" "$(cat README.md)"
+$ ollama run llama2 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
@@ -169,8 +178,7 @@ ollama list
 Install `cmake` and `go`:
 
 ```
-brew install cmake
-brew install go
+brew install cmake go
 ```
 
 Then generate dependencies and build:
@@ -194,29 +202,78 @@ Finally, in a separate shell, run a model:
 
 ## REST API
 
-> See the [API documentation](./docs/api.md) for all endpoints.
-
-Ollama has an API for running and managing models. For example to generate text from a model:
+Ollama has a REST API for running and managing models.
+For example, to generate text from a model:
 
 ```
-curl -X POST http://localhost:11434/api/generate -d '{
+curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt":"Why is the sky blue?"
 }'
 ```
 
+See the [API documentation](./docs/api.md) for all endpoints.
+
 ## Community Integrations
 
+### Mobile
+
+- [Mobile Artificial Intelligence Distribution](https://github.com/MaidFoundation/Maid) (Maid)
+
+### Web & Desktop
+
+- [HTML UI](https://github.com/rtcfirefly/ollama-ui)
+- [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
+- [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
+- [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
+- [Web UI](https://github.com/ollama-webui/ollama-webui)
+- [Ollamac](https://github.com/kevinhermawan/Ollamac)
+- [big-AGI](https://github.com/enricoros/big-agi/blob/main/docs/config-ollama.md)
+- [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
+
+### Terminal
+
+- [oterm](https://github.com/ggozad/oterm)
+- [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
+- [Emacs client](https://github.com/zweifisch/ollama)
+- [gen.nvim](https://github.com/David-Kunz/gen.nvim)
+- [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
+- [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
+- [gptel Emacs client](https://github.com/karthink/gptel)
+- [Oatmeal](https://github.com/dustinblackman/oatmeal)
+
+### Package managers
+
+- [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
+
+### Libraries
+
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
+- [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
+- [LiteLLM](https://github.com/BerriAI/litellm)
+- [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
+- [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
+- [Ollama4j for Java](https://github.com/amithkoujalgi/ollama4j)
+- [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
+- [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
+- [Ollama for Dart](https://github.com/breitburg/dart-ollama)
+- [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
+
+### Mobile
+
+- [Maid](https://github.com/danemadsen/Maid) (Mobile Artificial Intelligence Distribution)
+
+### Extensions & Plugins
+
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
 - [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
 - [Continue](https://github.com/continuedev/continue)
 - [Obsidian Ollama plugin](https://github.com/hinterdupfinger/obsidian-ollama)
+- [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
-- [LiteLLM](https://github.com/BerriAI/litellm)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
-- [HTML UI](https://github.com/rtcfirefly/ollama-ui)
-- [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
-- [Dumbar](https://github.com/JerrySievert/Dumbar)
-- [Emacs client](https://github.com/zweifisch/ollama)
+- [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
+- [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
+- [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
+- [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
