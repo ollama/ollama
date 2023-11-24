@@ -7,9 +7,10 @@ import (
 )
 
 type GGML struct {
-	magic uint32
 	container
 	model
+
+	Size int64
 }
 
 const (
@@ -82,7 +83,7 @@ type model interface {
 
 type container interface {
 	Name() string
-	Decode(io.Reader) (model, error)
+	Decode(*readOffset) (model, error)
 }
 
 type containerGGML struct{}
@@ -91,7 +92,7 @@ func (c *containerGGML) Name() string {
 	return "ggml"
 }
 
-func (c *containerGGML) Decode(r io.Reader) (model, error) {
+func (c *containerGGML) Decode(ro *readOffset) (model, error) {
 	return nil, nil
 }
 
@@ -103,9 +104,9 @@ func (c *containerGGMF) Name() string {
 	return "ggmf"
 }
 
-func (c *containerGGMF) Decode(r io.Reader) (model, error) {
+func (c *containerGGMF) Decode(ro *readOffset) (model, error) {
 	var version uint32
-	binary.Read(r, binary.LittleEndian, &version)
+	binary.Read(ro, binary.LittleEndian, &version)
 
 	switch version {
 	case 1:
@@ -125,9 +126,9 @@ func (c *containerGGJT) Name() string {
 	return "ggjt"
 }
 
-func (c *containerGGJT) Decode(r io.Reader) (model, error) {
+func (c *containerGGJT) Decode(ro *readOffset) (model, error) {
 	var version uint32
-	binary.Read(r, binary.LittleEndian, &version)
+	binary.Read(ro, binary.LittleEndian, &version)
 
 	switch version {
 	case 1, 2, 3:
@@ -139,7 +140,7 @@ func (c *containerGGJT) Decode(r io.Reader) (model, error) {
 
 	// different model types may have different layouts for hyperparameters
 	var llama llamaModel
-	binary.Read(r, binary.LittleEndian, &llama.hyperparameters)
+	binary.Read(ro, binary.LittleEndian, &llama.hyperparameters)
 	return &llama, nil
 }
 
@@ -151,9 +152,9 @@ func (c *containerLORA) Name() string {
 	return "ggla"
 }
 
-func (c *containerLORA) Decode(r io.Reader) (model, error) {
+func (c *containerLORA) Decode(ro *readOffset) (model, error) {
 	var version uint32
-	binary.Read(r, binary.LittleEndian, &version)
+	binary.Read(ro, binary.LittleEndian, &version)
 
 	switch version {
 	case 1:
@@ -180,33 +181,51 @@ const (
 )
 
 func DecodeGGML(r io.Reader) (*GGML, error) {
-	var ggml GGML
-	binary.Read(r, binary.LittleEndian, &ggml.magic)
+	ro := readOffset{Reader: r}
 
-	switch ggml.magic {
+	var magic uint32
+	if err := binary.Read(&ro, binary.LittleEndian, &magic); err != nil {
+		return nil, err
+	}
+
+	var c container
+	switch magic {
 	case FILE_MAGIC_GGML:
-		ggml.container = &containerGGML{}
+		c = &containerGGML{}
 	case FILE_MAGIC_GGMF:
-		ggml.container = &containerGGMF{}
+		c = &containerGGMF{}
 	case FILE_MAGIC_GGJT:
-		ggml.container = &containerGGJT{}
+		c = &containerGGJT{}
 	case FILE_MAGIC_GGLA:
-		ggml.container = &containerLORA{}
+		c = &containerLORA{}
 	case FILE_MAGIC_GGUF_LE:
-		ggml.container = &containerGGUF{bo: binary.LittleEndian}
+		c = &containerGGUF{bo: binary.LittleEndian}
 	case FILE_MAGIC_GGUF_BE:
-		ggml.container = &containerGGUF{bo: binary.BigEndian}
+		c = &containerGGUF{bo: binary.BigEndian}
 	default:
 		return nil, errors.New("invalid file magic")
 	}
 
-	model, err := ggml.Decode(r)
+	model, err := c.Decode(&ro)
 	if err != nil {
 		return nil, err
 	}
 
-	ggml.model = model
-
 	// final model type
-	return &ggml, nil
+	return &GGML{
+		container: c,
+		model:     model,
+		Size:      ro.offset,
+	}, nil
+}
+
+type readOffset struct {
+	io.Reader
+	offset int64
+}
+
+func (r *readOffset) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.offset += int64(n)
+	return n, err
 }
