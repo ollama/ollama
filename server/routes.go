@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -862,37 +861,18 @@ func HeadBlobHandler(c *gin.Context) {
 }
 
 func CreateBlobHandler(c *gin.Context) {
-	targetPath, err := GetBlobsPath(c.Param("digest"))
+	layer, err := NewLayer(c.Request.Body, "")
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	hash := sha256.New()
-	temp, err := os.CreateTemp(filepath.Dir(targetPath), c.Param("digest")+"-")
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer temp.Close()
-	defer os.Remove(temp.Name())
-
-	if _, err := io.Copy(temp, io.TeeReader(c.Request.Body, hash)); err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if layer.Digest != c.Param("digest") {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("digest mismatch, expected %q, got %q", c.Param("digest"), layer.Digest)})
 		return
 	}
 
-	if fmt.Sprintf("sha256:%x", hash.Sum(nil)) != c.Param("digest") {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "digest does not match body"})
-		return
-	}
-
-	if err := temp.Close(); err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := os.Rename(temp.Name(), targetPath); err != nil {
+	if _, err := layer.Commit(); err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
