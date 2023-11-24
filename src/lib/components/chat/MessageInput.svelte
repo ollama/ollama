@@ -88,7 +88,7 @@
 			{#if autoScroll === false && messages.length > 0}
 				<div class=" flex justify-center mb-4">
 					<button
-						class=" bg-white/20 p-1.5 rounded-full"
+						class=" bg-white border border-gray-100 dark:border-none dark:bg-white/20 p-1.5 rounded-full"
 						on:click={() => {
 							autoScroll = true;
 							window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
