@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Modal from '../common/Modal.svelte';
 
-	import { WEB_UI_VERSION, OLLAMA_API_BASE_URL as BUILD_TIME_API_BASE_URL } from '$lib/constants';
+	import { WEB_UI_VERSION, OLLAMA_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
 	import { onMount } from 'svelte';
 	import { config, models, settings, user } from '$lib/stores';
@@ -19,7 +19,7 @@
 	let selectedTab = 'general';
 
 	// General
-	let API_BASE_URL = BUILD_TIME_API_BASE_URL;
+	let API_BASE_URL = OLLAMA_API_BASE_URL;
 	let theme = 'dark';
 	let system = '';
 
@@ -50,7 +50,7 @@
 
 	const checkOllamaConnection = async () => {
 		if (API_BASE_URL === '') {
-			API_BASE_URL = BUILD_TIME_API_BASE_URL;
+			API_BASE_URL = OLLAMA_API_BASE_URL;
 		}
 		const _models = await getModels(API_BASE_URL, 'ollama');
 
@@ -222,7 +222,7 @@
 		console.log(settings);
 
 		theme = localStorage.theme ?? 'dark';
-		API_BASE_URL = settings.API_BASE_URL ?? BUILD_TIME_API_BASE_URL;
+		API_BASE_URL = settings.API_BASE_URL ?? OLLAMA_API_BASE_URL;
 		system = settings.system ?? '';
 
 		requestFormat = settings.requestFormat ?? '';
@@ -599,7 +599,7 @@
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
 								on:click={() => {
 									saveSettings({
-										API_BASE_URL: API_BASE_URL === '' ? BUILD_TIME_API_BASE_URL : API_BASE_URL,
+										API_BASE_URL: API_BASE_URL === '' ? OLLAMA_API_BASE_URL : API_BASE_URL,
 										system: system !== '' ? system : undefined
 									});
 									show = false;
