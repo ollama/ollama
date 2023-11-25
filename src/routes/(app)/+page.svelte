@@ -21,6 +21,7 @@
 
 	let title = '';
 	let prompt = '';
+	let files = [];
 
 	let messages = [];
 	let history = {
@@ -358,7 +359,8 @@
 				parentId: messages.length !== 0 ? messages.at(-1).id : null,
 				childrenIds: [],
 				role: 'user',
-				content: userPrompt
+				content: userPrompt,
+				files: files.length > 0 ? files : undefined
 			};
 
 			if (messages.length !== 0) {
@@ -369,6 +371,7 @@
 			history.currentId = userMessageId;
 
 			prompt = '';
+			files = [];
 
 			if (messages.length == 0) {
 				await $db.createNewChat({
@@ -477,5 +480,5 @@
 		</div>
 	</div>
 
-	<MessageInput bind:prompt bind:autoScroll {messages} {submitPrompt} {stopResponse} />
+	<MessageInput bind:prompt bind:files bind:autoScroll {messages} {submitPrompt} {stopResponse} />
 </div>
