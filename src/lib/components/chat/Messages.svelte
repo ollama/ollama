@@ -314,7 +314,7 @@
 				<div class=" flex w-full">
 					<div class=" mr-4">
 						{#if message.role === 'user'}
-							{#if $config === null}
+							{#if $config === null || !($config?.auth ?? true)}
 								<img
 									src="{$settings.gravatarUrl ? $settings.gravatarUrl : '/user'}.png"
 									class=" max-w-[28px] object-cover rounded-full"
