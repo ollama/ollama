@@ -148,7 +148,7 @@
 					}}
 				/>
 				<form
-					class=" flex flex-col relative w-full rounded-xl border dark:border-gray-600"
+					class=" flex flex-col relative w-full rounded-xl border dark:border-gray-600 bg-white dark:bg-gray-800 dark:text-gray-100"
 					on:submit|preventDefault={() => {
 						submitPrompt(prompt);
 					}}
