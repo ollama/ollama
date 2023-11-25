@@ -472,7 +472,7 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 
 func waitForServer(llm *llama) error {
 	start := time.Now()
-	expiresAt := time.Now().Add(3 * time.Minute) // be generous with timeout, large models can take a while to load
+	expiresAt := time.Now().Add(time.Duration(llm.Options.LlamaRunnerTimeout) * time.Second) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 

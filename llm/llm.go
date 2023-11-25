@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/pbnjay/memory"
 
@@ -38,6 +39,9 @@ func New(workDir, model string, adapters []string, opts api.Options) (LLM, error
 	if err != nil {
 		return nil, err
 	}
+
+	//Default timeout when waiting on llama runner 
+	opts.LlamaRunnerTimeout = int((3 * time.Minute).Seconds());
 
 	if runtime.GOOS == "darwin" {
 		switch ggml.FileType() {

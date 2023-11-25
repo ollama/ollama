@@ -65,6 +65,7 @@ type Options struct {
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+	LlamaRunnerTimeout int      `json:"llama_runner_timeout,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
