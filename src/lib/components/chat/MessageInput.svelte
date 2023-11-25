@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { settings } from '$lib/stores';
+	import toast from 'svelte-french-toast';
 	import Suggestions from './MessageInput/Suggestions.svelte';
 
 	export let submitPrompt: Function;
@@ -7,6 +8,11 @@
 
 	export let suggestions = 'true';
 	export let autoScroll = true;
+
+	let filesInputElement;
+	let inputFiles;
+
+	export let files = [];
 
 	export let fileUploadEnabled = false;
 	export let speechRecognitionEnabled = true;
@@ -111,43 +117,82 @@
 			{/if}
 
 			<div class="bg-gradient-to-t from-white dark:from-gray-800 from-40% pb-2">
+				<input
+					bind:this={filesInputElement}
+					bind:files={inputFiles}
+					type="file"
+					hidden
+					on:change={() => {
+						let reader = new FileReader();
+						reader.onload = (event) => {
+							files = [
+								...files,
+								{
+									type: 'image',
+									url: `${event.target.result}`
+								}
+							];
+							inputFiles = null;
+						};
+
+						if (
+							inputFiles &&
+							inputFiles.length > 0 &&
+							['image/gif', 'image/jpeg', 'image/png'].includes(inputFiles[0]['type'])
+						) {
+							reader.readAsDataURL(inputFiles[0]);
+						} else {
+							toast.error(`Unsupported File Type '${inputFiles[0]['type']}'.`);
+							inputFiles = null;
+						}
+					}}
+				/>
 				<form
-					class=" flex relative w-full"
+					class=" flex flex-col relative w-full rounded-xl border dark:border-gray-600"
 					on:submit|preventDefault={() => {
 						submitPrompt(prompt);
 					}}
 				>
-					<textarea
-						id="chat-textarea"
-						class="rounded-xl dark:bg-gray-800 dark:text-gray-100 outline-none border dark:border-gray-600 w-full py-3
-                        {fileUploadEnabled ? 'pl-12' : 'pl-5'} {speechRecognitionEnabled
-							? 'pr-20'
-							: 'pr-12'} resize-none"
-						placeholder={speechRecognitionListening ? 'Listening...' : 'Send a message'}
-						bind:value={prompt}
-						on:keypress={(e) => {
-							if (e.keyCode == 13 && !e.shiftKey) {
-								e.preventDefault();
-							}
-							if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
-								submitPrompt(prompt);
-							}
-						}}
-						rows="1"
-						on:input={(e) => {
-							e.target.style.height = '';
-							e.target.style.height = Math.min(e.target.scrollHeight, 200) + 2 + 'px';
-						}}
-					/>
+					{#if files.length > 0}
+						<div class="ml-2 mt-2 mb-1 flex space-x-2">
+							{#each files as file, fileIdx}
+								<div class=" relative group">
+									<img src={file.url} alt="input" class=" h-16 w-16 rounded-xl bg-cover" />
 
-					{#if fileUploadEnabled}
-						<div class=" absolute left-0 bottom-0">
-							<div class="pl-2.5 pb-[9px]">
+									<div class=" absolute -top-1 -right-1">
+										<button
+											class=" bg-gray-400 text-white border border-white rounded-full group-hover:visible invisible transition"
+											type="button"
+											on:click={() => {
+												files.splice(fileIdx, 1);
+												files = files;
+											}}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+												/>
+											</svg>
+										</button>
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					<div class=" flex">
+						{#if fileUploadEnabled}
+							<div class=" self-end mb-2 ml-1.5">
 								<button
-									class="  text-gray-600 dark:text-gray-200 transition rounded-lg p-1.5"
+									class="  text-gray-600 dark:text-gray-200 transition rounded-lg p-1 ml-1"
 									type="button"
 									on:click={() => {
-										console.log('file');
+										filesInputElement.click();
 									}}
 								>
 									<svg
@@ -164,15 +209,35 @@
 									</svg>
 								</button>
 							</div>
-						</div>
-					{/if}
+						{/if}
 
-					<div class=" absolute right-0 bottom-0">
-						<div class="pr-2.5 pb-[9px]">
+						<textarea
+							id="chat-textarea"
+							class=" dark:bg-gray-800 dark:text-gray-100 outline-none w-full py-3 px-2 {fileUploadEnabled
+								? ''
+								: ' pl-4'} rounded-xl resize-none"
+							placeholder={speechRecognitionListening ? 'Listening...' : 'Send a message'}
+							bind:value={prompt}
+							on:keypress={(e) => {
+								if (e.keyCode == 13 && !e.shiftKey) {
+									e.preventDefault();
+								}
+								if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
+									submitPrompt(prompt);
+								}
+							}}
+							rows="1"
+							on:input={(e) => {
+								e.target.style.height = '';
+								e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+							}}
+						/>
+
+						<div class="self-end mb-2 flex space-x-0.5 mr-2">
 							{#if messages.length == 0 || messages.at(-1).done == true}
 								{#if speechRecognitionEnabled}
 									<button
-										class=" text-gray-600 dark:text-gray-300 transition rounded-lg p-1 mr-0.5"
+										class=" text-gray-600 dark:text-gray-300 transition rounded-lg p-1.5 mr-0.5 self-center"
 										type="button"
 										on:click={() => {
 											speechRecognitionHandler();
@@ -233,7 +298,7 @@
 								<button
 									class="{prompt !== ''
 										? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
-										: 'text-white bg-gray-100 dark:text-gray-800 dark:bg-gray-600 disabled'} transition rounded-lg p-1"
+										: 'text-white bg-gray-100 dark:text-gray-800 dark:bg-gray-600 disabled'} transition rounded-lg p-1 mr-0.5 w-7 h-7 self-center"
 									type="submit"
 									disabled={prompt === ''}
 								>

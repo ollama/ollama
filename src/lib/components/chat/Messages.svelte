@@ -409,6 +409,17 @@
 										</div>
 									{:else}
 										<div class="w-full">
+											{#if message.files}
+												<div class="my-3">
+													{#each message.files as file}
+														<div>
+															{#if file.type === 'image'}
+																<img src={file.url} alt="input" class=" max-h-96" />
+															{/if}
+														</div>
+													{/each}
+												</div>
+											{/if}
 											{message.content}
 
 											<div class=" flex justify-start space-x-1">

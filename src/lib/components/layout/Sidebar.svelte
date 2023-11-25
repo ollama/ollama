@@ -119,7 +119,7 @@
 			</button>
 		</div>
 
-		<div class="px-2.5 flex justify-center my-1">
+		<!-- <div class="px-2.5 flex justify-center my-1">
 			<button
 				class="flex-grow flex space-x-3 rounded-md px-3 py-2 hover:bg-gray-900 transition"
 				on:click={async () => {
@@ -147,7 +147,7 @@
 					<div class=" self-center font-medium text-sm">Presets</div>
 				</div>
 			</button>
-		</div>
+		</div> -->
 
 		<div class="px-2.5 mt-1 mb-2 flex justify-center space-x-2">
 			<div class="flex w-full">
