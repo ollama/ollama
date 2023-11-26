@@ -417,7 +417,7 @@ func CreateModelHandler(c *gin.Context) {
 	}
 
 	if strings.Count(req.Name, ":") > 1 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": ": is not allowed in tag names"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "':' (colon) is not allowed in tag names"})
 		return
 	}
 
