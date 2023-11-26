@@ -24,6 +24,7 @@ type Instance struct {
 	Prompt   *Prompt
 	Terminal *Terminal
 	History  *History
+	Pasting  bool
 }
 
 func New(prompt Prompt) (*Instance, error) {
@@ -46,7 +47,7 @@ func New(prompt Prompt) (*Instance, error) {
 
 func (i *Instance) Readline() (string, error) {
 	prompt := i.Prompt.Prompt
-	if i.Prompt.UseAlt {
+	if i.Prompt.UseAlt || i.Pasting {
 		prompt = i.Prompt.AltPrompt
 	}
 	fmt.Print(prompt)
@@ -63,12 +64,13 @@ func (i *Instance) Readline() (string, error) {
 	var esc bool
 	var escex bool
 	var metaDel bool
-	var pasteMode PasteMode
 
 	var currentLineBuf []rune
 
 	for {
-		if buf.IsEmpty() {
+		// don't show placeholder when pasting unless we're in multiline mode
+		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
+		if buf.IsEmpty() && showPlaceholder {
 			ph := i.Prompt.Placeholder
 			if i.Prompt.UseAlt {
 				ph = i.Prompt.AltPlaceholder
@@ -119,9 +121,9 @@ func (i *Instance) Readline() (string, error) {
 					code += string(r)
 				}
 				if code == CharBracketedPasteStart {
-					pasteMode = PasteModeStart
+					i.Pasting = true
 				} else if code == CharBracketedPasteEnd {
-					pasteMode = PasteModeEnd
+					i.Pasting = false
 				}
 			case KeyDel:
 				if buf.Size() > 0 {
@@ -196,12 +198,7 @@ func (i *Instance) Readline() (string, error) {
 			}
 			buf.MoveToEnd()
 			fmt.Println()
-			switch pasteMode {
-			case PasteModeStart:
-				output = `"""` + output
-			case PasteModeEnd:
-				output = output + `"""`
-			}
+
 			return output, nil
 		default:
 			if metaDel {

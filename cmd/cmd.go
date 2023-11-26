@@ -602,14 +602,12 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 		fmt.Fprintln(os.Stderr, "")
 	}
 
-	prompt := readline.Prompt{
+	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
 		Placeholder:    "Send a message (/? for help)",
 		AltPlaceholder: `Use """ to end multi-line input`,
-	}
-
-	scanner, err := readline.New(prompt)
+	})
 	if err != nil {
 		return err
 	}
@@ -617,7 +615,7 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 	fmt.Print(readline.StartBracketedPaste)
 	defer fmt.Printf(readline.EndBracketedPaste)
 
-	var multiLineBuffer string
+	var prompt string
 
 	for {
 		line, err := scanner.Readline()
@@ -630,27 +628,33 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 				fmt.Println("\nUse Ctrl-D or /bye to exit.")
 			}
 
+			scanner.Prompt.UseAlt = false
+			prompt = ""
+
 			continue
 		case err != nil:
 			return err
 		}
 
-		line = strings.TrimSpace(line)
-
 		switch {
-		case scanner.Prompt.UseAlt:
-			if strings.HasSuffix(line, `"""`) {
-				scanner.Prompt.UseAlt = false
-				multiLineBuffer += strings.TrimSuffix(line, `"""`)
-				line = multiLineBuffer
-				multiLineBuffer = ""
-			} else {
-				multiLineBuffer += line + " "
+		case strings.HasPrefix(prompt, `"""`):
+			// if the prompt so far starts with """ then we're in multiline mode
+			// and we need to keep reading until we find a line that ends with """
+			cut, found := strings.CutSuffix(line, `"""`)
+			prompt += cut + "\n"
+
+			if !found {
 				continue
 			}
-		case strings.HasPrefix(line, `"""`):
+
+			prompt = strings.TrimPrefix(prompt, `"""`)
+			scanner.Prompt.UseAlt = false
+		case strings.HasPrefix(line, `"""`) && len(prompt) == 0:
 			scanner.Prompt.UseAlt = true
-			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
+			prompt += line + "\n"
+			continue
+		case scanner.Pasting:
+			prompt += line + "\n"
 			continue
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
@@ -757,12 +761,17 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
 			fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
+			continue
+		default:
+			prompt += line
 		}
 
-		if len(line) > 0 && line[0] != '/' {
-			if err := generate(cmd, model, line, wordWrap, format); err != nil {
+		if len(prompt) > 0 && prompt[0] != '/' {
+			if err := generate(cmd, model, prompt, wordWrap, format); err != nil {
 				return err
 			}
+
+			prompt = ""
 		}
 	}
 }
