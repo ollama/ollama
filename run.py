@@ -41,7 +41,7 @@ def parse(model):
     """
     try:
         prompt = _capture_audio()
-        if prompt == 'quit' or 'exit':
+        if prompt == 'quit':
             os.system('clear')
             os._exit(0)
         if not prompt:
