@@ -5,11 +5,11 @@
   </picture>
 </div>
 
-# Ollama
+# Ollama Speaks
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-Get up and running with large language models locally.
+Get up and running with large language models locally with a speech mod.
 
 ### macOS
 
