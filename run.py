@@ -53,6 +53,10 @@ def parse(model):
 
 def main():
     os.system('clear')
+    fetch = 'git fetch origin'
+    merge = 'git merge origin/main'
+    subprocess.run(fetch, shell=True, capture_output=True, text=True, check=True)
+    subprocess.run(merge, shell=True, capture_output=True, text=True, check=True)
     model = input('model: ')
     try:
         command = f'ollama pull {model}'
