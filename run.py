@@ -1,7 +1,5 @@
 import os
-import re
 import subprocess
-import json
 import speech_recognition as sr
 
 
@@ -16,7 +14,7 @@ def _generate_response(model, prompt):
     command = f'''curl http://localhost:11434/api/generate -d '{{ \"model\": \"{model}\", \"prompt\": \"{prompt}\" }}' | jq -r '.response' | tr -d '\\n' | sed 's/\\. /\\.\\n/g' | say'''
     try:
         subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         pass
 
 def _capture_audio():
@@ -25,7 +23,7 @@ def _capture_audio():
     """
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
-        # os.system('clear')
+        os.system('clear')
         print('say something...')
         audio = recognizer.listen(source, timeout=5)
     try:
@@ -43,8 +41,8 @@ def parse(model):
     """
     try:
         prompt = _capture_audio()
-        if prompt == 'quit':
-            # os.system('clear')
+        if prompt == 'quit' or 'exit':
+            os.system('clear')
             os._exit(0)
         if not prompt:
             return
@@ -54,7 +52,15 @@ def parse(model):
 
 
 def main():
+    os.system('clear')
     model = input('model: ')
+    try:
+        command = f'ollama pull {model}'
+        print(command)
+        subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError:
+        print('no such model')
+        os._exit(0)
     while True:
         parse(model)
 

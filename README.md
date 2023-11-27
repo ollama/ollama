@@ -17,7 +17,6 @@ Get up and running with large language models locally with a speech mod.
 ```bash
 chmod +x install.sh
 chmod +x serve.sh
-chmod +x run.sh
 source install.sh
 ```
 
