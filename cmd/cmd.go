@@ -37,6 +37,12 @@ import (
 )
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
+	if strings.Contains(name, ":") {
+		return errors.New("tag name should not contain a colon")
+	}
+
 	filename, _ := cmd.Flags().GetString("file")
 	filename, err := filepath.Abs(filename)
 	if err != nil {
@@ -132,7 +138,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile)}
+	request := api.CreateRequest{Name: name, Modelfile: string(modelfile)}
 	if err := client.Create(context.Background(), &request, fn); err != nil {
 		return err
 	}
