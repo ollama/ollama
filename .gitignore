@@ -8,3 +8,4 @@ ollama
 ggml-metal.metal
 .cache
 *.exe
+.idea
