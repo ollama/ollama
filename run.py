@@ -5,14 +5,15 @@ import json
 import speech_recognition as sr
 
 
-def _generate_response(prompt):
+def _generate_response(model, prompt):
     """
     Function to generate and parse a response from a given LLM to be parsed by Ollama.
 
     Params:
+        model: str
         prompt: str
     """
-    command = f'''curl http://localhost:11434/api/generate -d '{{ \"model\": \"mistral\", \"prompt\": \"{prompt}\" }}' | jq -r '.response' | tr -d '\\n' | sed 's/\\. /\\.\\n/g' | say'''
+    command = f'''curl http://localhost:11434/api/generate -d '{{ \"model\": \"{model}\", \"prompt\": \"{prompt}\" }}' | jq -r '.response' | tr -d '\\n' | sed 's/\\. /\\.\\n/g' | say'''
     try:
         subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as e:
@@ -36,7 +37,7 @@ def _capture_audio():
         return ''
 
 
-def parse():
+def parse(model):
     """
     Function to parse input and output of the LLM.
     """
@@ -47,14 +48,15 @@ def parse():
             os._exit(0)
         if not prompt:
             return
-        _generate_response(prompt)
+        _generate_response(model, prompt)
     except:
         pass
 
 
 def main():
+    model = input('model: ')
     while True:
-        parse()
+        parse(model)
 
 
 if __name__ == '__main__':
