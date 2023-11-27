@@ -230,6 +230,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollamac](https://github.com/kevinhermawan/Ollamac)
 - [big-AGI](https://github.com/enricoros/big-agi/blob/main/docs/config-ollama.md)
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
+- [Amica](https://github.com/semperai/amica)
 
 ### Terminal
 
