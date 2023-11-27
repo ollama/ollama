@@ -380,7 +380,9 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 	out := make(map[string]interface{})
 	// iterate params and set values based on json struct tags
 	for key, vals := range params {
-		if opt, ok := jsonOpts[key]; ok {
+		if opt, ok := jsonOpts[key]; !ok {
+			return nil, fmt.Errorf("unknown parameter '%s'", key)
+		} else {
 			field := valueOpts.FieldByName(opt.Name)
 			if field.IsValid() && field.CanSet() {
 				switch field.Kind() {
