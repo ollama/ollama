@@ -440,6 +440,9 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 		interactive = false
 	}
 	opts.Prompt = strings.Join(prompts, " ")
+	if len(prompts) > 0 {
+		interactive = false
+	}
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
 	if err != nil {
