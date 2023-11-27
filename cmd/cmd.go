@@ -626,14 +626,15 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 	// only list out the most common parameters
 	usageParameters := func() {
 		fmt.Fprintln(os.Stderr, "Available Parameters:")
-		fmt.Fprintln(os.Stderr, "  /set parameter seed <num>           Random number seed")
-		fmt.Fprintln(os.Stderr, "  /set parameter num_predict <num>    Max number of tokens to predict")
-		fmt.Fprintln(os.Stderr, "  /set parameter top_k <num>          Pick from top k num of tokens")
-		fmt.Fprintln(os.Stderr, "  /set parameter top_p <num>          Pick token based on sum of probabilities")
-		fmt.Fprintln(os.Stderr, "  /set parameter num_ctx <num>        Set the context size")
-		fmt.Fprintln(os.Stderr, "  /set parameter temperature <num>    Set creativity level")
-		fmt.Fprintln(os.Stderr, "  /set parameter repeat_penalty <num> How strongly to penalize repetitions")
-		fmt.Fprintln(os.Stderr, "  /set parameter repeat_last_n <num   Set how far back to look for repetitions")
+		fmt.Fprintln(os.Stderr, "  /set parameter seed <int>             Random number seed")
+		fmt.Fprintln(os.Stderr, "  /set parameter num_predict <int>      Max number of tokens to predict")
+		fmt.Fprintln(os.Stderr, "  /set parameter top_k <int>            Pick from top k num of tokens")
+		fmt.Fprintln(os.Stderr, "  /set parameter top_p <float>          Pick token based on sum of probabilities")
+		fmt.Fprintln(os.Stderr, "  /set parameter num_ctx <int>          Set the context size")
+		fmt.Fprintln(os.Stderr, "  /set parameter temperature <float>    Set creativity level")
+		fmt.Fprintln(os.Stderr, "  /set parameter repeat_penalty <float> How strongly to penalize repetitions")
+		fmt.Fprintln(os.Stderr, "  /set parameter repeat_last_n <int>    Set how far back to look for repetitions")
+		fmt.Fprintln(os.Stderr, "  /set parameter stop \"<string>\", ...   Set the stop parameters")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
