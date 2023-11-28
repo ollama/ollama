@@ -139,7 +139,7 @@ Ensure the certificate is installed as a system certificate when using HTTPS. Th
 ```dockerfile
 FROM ollama/ollama
 COPY my-ca.pem /usr/local/share/ca-certificates/my-ca.crt
-RUN update-ca-certificate
+RUN update-ca-certificates
 ```
 
 Build and run this image:
