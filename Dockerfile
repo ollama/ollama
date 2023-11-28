@@ -14,7 +14,7 @@ ENV GOFLAGS=$GOFLAGS
 RUN /usr/local/go/bin/go generate ./... \
     && /usr/local/go/bin/go build .
 
-FROM ubuntu:22.04
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 RUN apt-get update && apt-get install -y ca-certificates
 COPY --from=0 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
 EXPOSE 11434
