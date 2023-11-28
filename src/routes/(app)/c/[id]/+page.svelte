@@ -273,6 +273,8 @@
 					];
 				}
 
+				await tick();
+
 				window.scrollTo({ top: document.body.scrollHeight });
 
 				const res = await fetch(`https://api.openai.com/v1/chat/completions`, {
