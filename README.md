@@ -29,8 +29,3 @@ source install.sh
 ```bash
 python run.py
 ```
-
-#### update main llama repo
-```bash
-python update.py
-```
