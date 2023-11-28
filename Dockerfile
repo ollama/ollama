@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 as build
 
 ARG TARGETARCH
 ARG GOFLAGS="'-ldflags=-w -s'"
@@ -16,7 +16,7 @@ RUN /usr/local/go/bin/go generate ./... \
 
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 RUN apt-get update && apt-get install -y ca-certificates
-COPY --from=0 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
+COPY --from=build /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
 EXPOSE 11434
 ENV OLLAMA_HOST 0.0.0.0
 ENTRYPOINT ["/bin/ollama"]
