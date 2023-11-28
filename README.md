@@ -15,6 +15,8 @@ ChatGPT-Style Web Interface for Ollama 🦙
 
 ![Ollama Web UI Demo](./demo.gif)
 
+Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you can discover, download, and explore customized Modelfiles for Ollama! 🦙🔍
+
 ## Features ⭐
 
 - 🖥️ **Intuitive Interface**: Our chat interface takes inspiration from ChatGPT, ensuring a user-friendly experience.
@@ -54,6 +56,10 @@ ChatGPT-Style Web Interface for Ollama 🦙
 - 🔒 **Backend Reverse Proxy Support**: Strengthen security by enabling direct communication between Ollama Web UI backend and Ollama, eliminating the need to expose Ollama over LAN.
 
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
+
+## 🔗 Also Check Out OllamaHub! 
+
+Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/), where you can discover, download, and explore customized Modelfiles. OllamaHub offers a wide range of exciting possibilities for enhancing your chat interactions with Ollama! 🚀
 
 ## How to Install 🚀
 
