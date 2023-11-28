@@ -23,7 +23,7 @@ Ollama binds to 127.0.0.1 port 11434 by default. Change the bind address with th
 On macOS:
 
 ```bash
-OLLAMA_HOST=0.0.0.0:11435 ollama serve
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
 
 On Linux:
