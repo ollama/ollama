@@ -30,14 +30,17 @@ def _capture_audio():
         prompt = recognizer.recognize_google(audio)
         return prompt
     except sr.UnknownValueError:
-        return ""
-    except sr.RequestError as e:
+        return ''
+    except sr.RequestError:
         return ''
 
 
 def parse(model):
     """
     Function to parse input and output of the LLM.
+
+    Params:
+        model: str
     """
     try:
         prompt = _capture_audio()
@@ -52,6 +55,9 @@ def parse(model):
 
 
 def main():
+    """
+    Function to handle the main routine.
+    """
     os.system('clear')
     model = input('model: ')
     try:
