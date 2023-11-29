@@ -47,6 +47,8 @@ Here are some example open-source models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
+| Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
+| Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
 | Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
