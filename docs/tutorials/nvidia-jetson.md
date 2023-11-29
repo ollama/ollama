@@ -25,7 +25,7 @@ sudo apt install curl
 ### Run the installation script for Ollama
 
 ```
-curl https://ollama.ai/install.sh | sh || true
+curl https://ollama.ai/install.sh | sh
 ```
 
 ### Stop the Ollama service (if it's already running)
@@ -79,7 +79,7 @@ Here's the snippet to execute once you're up and running with the device.
 ```
 sudo apt update && \
 sudo apt install curl && \
-curl https://ollama.ai/install.sh | sh || true && \
+curl -f https://ollama.ai/install.sh | sh || true && \
 sudo systemctl stop ollama && \
 nohup bash -c 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve' > ollama_serve.log 2>&1 & \
 ollama pull mistral && \
