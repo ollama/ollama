@@ -11,6 +11,10 @@
 
 Get up and running with large language models locally with a speech mod.
 
+## Demo
+
+[YouTube](https://youtu.be/NYRUC0v50DI)
+
 ### macOS
 
 #### install
