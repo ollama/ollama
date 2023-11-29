@@ -108,8 +108,7 @@ func (llm *ggufModel) NumKV() uint64 {
 }
 
 func (llm *ggufModel) ModelFamily() string {
-	t, ok := llm.kv["general.architecture"].(string)
-	if ok {
+	if t, ok := llm.kv["general.architecture"].(string); ok {
 		return t
 	}
 
@@ -146,8 +145,7 @@ func (llm *ggufModel) ModelType() string {
 }
 
 func (llm *ggufModel) FileType() string {
-	t, ok := llm.kv["general.file_type"].(uint32)
-	if ok {
+	if t, ok := llm.kv["general.file_type"].(uint32); ok {
 		return fileType(t)
 	}
 
@@ -216,6 +214,7 @@ func (llm *ggufModel) Decode(rso *readSeekOffset) error {
 			return err
 		}
 
+		// dims is the number of dimensions in the tensor
 		dims := llm.readU32(rso)
 
 		shape := [4]uint64{1, 1, 1, 1}
