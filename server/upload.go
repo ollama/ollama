@@ -103,7 +103,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 		}
 
 		// set part.N to the current number of parts
-		b.Parts = append(b.Parts, blobUploadPart{blobUpload: b, N: len(b.Parts), Offset: offset, Size: size, Hash: md5.New()})
+		b.Parts = append(b.Parts, blobUploadPart{blobUpload: b, N: len(b.Parts), Offset: offset, Size: size})
 		offset += size
 	}
 
@@ -227,8 +227,9 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 		headers.Set("Content-Range", fmt.Sprintf("%d-%d", part.Offset, part.Offset+part.Size-1))
 	}
 
+	md5sum := md5.New()
 	sr := io.NewSectionReader(b.file, part.Offset, part.Size)
-	resp, err := makeRequest(ctx, method, requestURL, headers, io.TeeReader(sr, io.MultiWriter(part, part.Hash)), opts)
+	resp, err := makeRequest(ctx, method, requestURL, headers, io.TeeReader(sr, io.MultiWriter(part, md5sum)), opts)
 	if err != nil {
 		return err
 	}
@@ -296,6 +297,7 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 		b.nextURL <- nextURL
 	}
 
+	part.Hash = md5sum
 	return nil
 }
 
@@ -354,7 +356,6 @@ func (p *blobUploadPart) Write(b []byte) (n int, err error) {
 }
 
 func (p *blobUploadPart) Reset() {
-	p.Hash.Reset()
 	p.Completed.Add(-int64(p.written))
 	p.written = 0
 }
