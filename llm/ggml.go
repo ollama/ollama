@@ -83,7 +83,7 @@ type model interface {
 
 type container interface {
 	Name() string
-	Decode(*readOffset) (model, error)
+	Decode(*readSeekOffset) (model, error)
 }
 
 type containerGGML struct{}
@@ -92,7 +92,7 @@ func (c *containerGGML) Name() string {
 	return "ggml"
 }
 
-func (c *containerGGML) Decode(ro *readOffset) (model, error) {
+func (c *containerGGML) Decode(ro *readSeekOffset) (model, error) {
 	return nil, nil
 }
 
@@ -104,7 +104,7 @@ func (c *containerGGMF) Name() string {
 	return "ggmf"
 }
 
-func (c *containerGGMF) Decode(ro *readOffset) (model, error) {
+func (c *containerGGMF) Decode(ro *readSeekOffset) (model, error) {
 	var version uint32
 	binary.Read(ro, binary.LittleEndian, &version)
 
@@ -126,7 +126,7 @@ func (c *containerGGJT) Name() string {
 	return "ggjt"
 }
 
-func (c *containerGGJT) Decode(ro *readOffset) (model, error) {
+func (c *containerGGJT) Decode(ro *readSeekOffset) (model, error) {
 	var version uint32
 	binary.Read(ro, binary.LittleEndian, &version)
 
@@ -152,7 +152,7 @@ func (c *containerLORA) Name() string {
 	return "ggla"
 }
 
-func (c *containerLORA) Decode(ro *readOffset) (model, error) {
+func (c *containerLORA) Decode(ro *readSeekOffset) (model, error) {
 	var version uint32
 	binary.Read(ro, binary.LittleEndian, &version)
 
@@ -180,8 +180,8 @@ const (
 	FILE_MAGIC_GGUF_BE = 0x47475546
 )
 
-func DecodeGGML(r io.Reader) (*GGML, error) {
-	ro := readOffset{Reader: r}
+func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
+	ro := readSeekOffset{ReadSeeker: r}
 
 	var magic uint32
 	if err := binary.Read(&ro, binary.LittleEndian, &magic); err != nil {
@@ -219,13 +219,23 @@ func DecodeGGML(r io.Reader) (*GGML, error) {
 	}, nil
 }
 
-type readOffset struct {
-	io.Reader
+type readSeekOffset struct {
+	io.ReadSeeker
 	offset int64
 }
 
-func (r *readOffset) Read(p []byte) (int, error) {
-	n, err := r.Reader.Read(p)
-	r.offset += int64(n)
+func (rso *readSeekOffset) Seek(offset int64, whence int) (int64, error) {
+	offset, err := rso.ReadSeeker.Seek(offset, whence)
+	if err != nil {
+		return 0, err
+	}
+
+	rso.offset = offset
+	return offset, nil
+}
+
+func (rso *readSeekOffset) Read(p []byte) (int, error) {
+	n, err := rso.ReadSeeker.Read(p)
+	rso.offset += int64(n)
 	return n, err
 }
