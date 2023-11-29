@@ -13,7 +13,7 @@ Get up and running with large language models locally with a speech mod.
 
 ### Demo
 
-[![Watch the video](https://img.youtube.com/vi/NYRUC0v50DI/0.jpg)](https://youtu.be/NYRUC0v50DI)
+[YouTube Video](https://youtu.be/NYRUC0v50DI)
 
 ### macOS
 
