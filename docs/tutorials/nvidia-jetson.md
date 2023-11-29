@@ -6,19 +6,63 @@ NVIDIA Jetson devices are Linux-based embedded AI computers that are purpose-bui
 
 Jetsons have an integrated GPU that is wired directly to the memory controller of the machine. For this reason, the `nvidia-smi` command is unrecognized, and Ollama proceeds to operate in "CPU only" mode. This can be verified by using a monitoring tool like jtop.
 
-In order to address this, we simply pass the path to the Jetson's pre-installed CUDA libraries into `ollama serve` (while in a tmux session). We then hardcode the num_gpu parameters into a cloned version of our target model.
+In order to address this, we simply pass the path to the Jetson's pre-installed CUDA libraries into `ollama serve`. We then hardcode the num_gpu parameters into a cloned version of our target model.
 
-Here are the steps:
+## Step-by-step process
 
-- Update: `sudo apt update`
-- Install curl: `sudo apt install curl`
-- Install Ollama via standard Linux command (ignore the 404 error): `curl https://ollama.ai/install.sh | sh`
-- Stop the Ollama service: `sudo systemctl stop ollama`
-- Serve Ollama and reference the CUDA libraries path: `nohup bash -c 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve'`
-- Pull the model you want to use (e.g. mistral): `ollama pull mistral`
-- Create a new Modelfile specifically for enabling GPU support on the Jetson and specify the FROM model and the num_gpu PARAMETER: `echo -e 'FROM mistral\nPARAMETER num_gpu 999' > ModelfileMistralJetson`
-- Create a new model from your Modelfile: `ollama create mistral-jetson -f ./ModelfileMistralJetson`
-- Run the new model: `ollama run mistral-jetson`
+### Update the system package lists
+
+```
+sudo apt update
+```
+
+### Install `curl` (if it's not already installed)
+
+```
+sudo apt install curl
+```
+
+### Run the installation script for Ollama
+
+```
+curl https://ollama.ai/install.sh | sh || true
+```
+
+### Stop the Ollama service (if it's already running)
+
+```
+sudo systemctl stop ollama
+```
+
+### Start the Ollama service in the background and redirect its output to a log file
+
+```
+nohup bash -c 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve' > ollama_serve.log 2>&1 &
+```
+
+### Pull the Mistral model
+
+```
+ollama pull mistral
+```
+
+### Create a `Modelfile` for Mistral on Jetson (specifying a num_gpu PARAMETER)
+
+```
+echo -e 'FROM mistral\nPARAMETER num_gpu 999' > ModelfileMistralJetson
+```
+
+### Create a new `mistral-jetson` model using the new `Modelfile`
+
+```
+ollama create mistral-jetson -f ./ModelfileMistralJetson
+```
+
+### Run the `mistral-jetson` model
+
+```
+ollama run mistral-jetson
+```
 
 If you run a monitoring tool like jtop you should now see that Ollama is using the Jetson's integrated GPU.
 
@@ -26,9 +70,9 @@ And that's it!
 
 ## Quickstart snippet
 
-The snippet below is designed to get anyone up and running on a Jetson device with at least 8GB of RAM (e.g. a Jetson Orin Developer Kit).
+The above commands have been packaged into a single snippet that is designed to get anyone up and running on a Jetson device with at least 8GB of RAM (e.g. a Jetson Orin Developer Kit).
 
-I highly recommend testing this out on a freshly flashed MicroSD card with JetPack 5.1.2 following [these instrutions](https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit#write).
+The below should be suitable for getting anyone up and running on a freshly flashed Micro SD card with JetPack 5.1.2 following [these instructions](https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit#write).
 
 Here's the snippet to execute once you're up and running with the device.
 
@@ -37,8 +81,7 @@ sudo apt update && \
 sudo apt install curl && \
 curl https://ollama.ai/install.sh | sh || true && \
 sudo systemctl stop ollama && \
-nohup bash -c 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve' && \
-ollama pull mistral && \
+nohup bash -c 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve' > ollama_serve.log 2>&1 & \
 ollama pull mistral && \
 echo -e 'FROM mistral\nPARAMETER num_gpu 999' > ModelfileMistralJetson && \
 ollama create mistral-jetson -f ./ModelfileMistralJetson && \
