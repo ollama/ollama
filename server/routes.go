@@ -416,8 +416,8 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	if strings.Count(req.Name, ":") > 1 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "':' (colon) is not allowed in tag names"})
+	if err := ParseModelPath(req.Name).Validate(); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -642,6 +642,11 @@ func CopyModelHandler(c *gin.Context) {
 
 	if req.Source == "" || req.Destination == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "source add destination are required"})
+		return
+	}
+
+	if err := ParseModelPath(req.Destination).Validate(); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
