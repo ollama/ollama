@@ -70,16 +70,23 @@ And that's it!
 
 ## Quickstart snippet
 
-The above commands have been packaged into a single snippet that is designed to get anyone up and running on a Jetson device with at least 8GB of RAM (e.g. a Jetson Orin Developer Kit).
+The above commands have been packaged into a pair of code snippets that are designed to get anyone up and running on a Jetson device with at least 8GB of RAM (e.g. a Jetson Orin Developer Kit).
 
-The below should be suitable for getting anyone up and running on a freshly flashed Micro SD card with JetPack 5.1.2 following [these instructions](https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit#write).
+The below should work perfectly on a freshly flashed Micro SD card with JetPack 5.1.2 following [these instructions](https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit#write).
 
-Here's the snippet to execute once you're up and running with the device.
+There are two (2) sets of commands because the Jetson's architecture causes the Ollama install script to hang when trying to install the NVIDIA drivers (which are not needed as the Jetson comes with CUDA libraries pre-installed). Executing these snippets sequentially allows the process to flow smoothly.
+
+### Set 1
 
 ```
 sudo apt update && \
 sudo apt install curl && \
-curl -f https://ollama.ai/install.sh | sh || true && \
+curl -f https://ollama.ai/install.sh | sh
+```
+
+### Set 2
+
+```
 sudo systemctl stop ollama && \
 nohup bash -c 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve' > ollama_serve.log 2>&1 & \
 ollama pull mistral && \
