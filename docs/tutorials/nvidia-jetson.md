@@ -11,10 +11,10 @@ In order to address this, we simply pass the path to the Jetson's pre-installed 
 Here are the steps:
 
 - Update: `sudo apt update`
-- Install curl and tmux: `sudo apt install curl tmux`
+- Install curl: `sudo apt install curl`
 - Install Ollama via standard Linux command (ignore the 404 error): `curl https://ollama.ai/install.sh | sh`
 - Stop the Ollama service: `sudo systemctl stop ollama`
-- Start Ollama serve in a tmux session called ollama_jetson and reference the CUDA libraries path: `tmux has-session -t ollama_jetson 2>/dev/null || tmux new-session -d -s ollama_jetson 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve'`
+- Serve Ollama and reference the CUDA libraries path: `nohup bash -c 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve'`
 - Pull the model you want to use (e.g. mistral): `ollama pull mistral`
 - Create a new Modelfile specifically for enabling GPU support on the Jetson and specify the FROM model and the num_gpu PARAMETER: `echo -e 'FROM mistral\nPARAMETER num_gpu 999' > ModelfileMistralJetson`
 - Create a new model from your Modelfile: `ollama create mistral-jetson -f ./ModelfileMistralJetson`
@@ -34,10 +34,11 @@ Here's the snippet to execute once you're up and running with the device.
 
 ```
 sudo apt update && \
-sudo apt install curl tmux && \
+sudo apt install curl && \
 curl https://ollama.ai/install.sh | sh || true && \
 sudo systemctl stop ollama && \
-tmux has-session -t ollama_jetson 2>/dev/null || tmux new-session -d -s ollama_jetson 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve' && \
+nohup bash -c 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve' && \
+ollama pull mistral && \
 ollama pull mistral && \
 echo -e 'FROM mistral\nPARAMETER num_gpu 999' > ModelfileMistralJetson && \
 ollama create mistral-jetson -f ./ModelfileMistralJetson && \
