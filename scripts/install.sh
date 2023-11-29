@@ -217,7 +217,7 @@ fi
 
 if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
     case $OS_NAME in
-        centos|rhel) install_cuda_driver_yum 'rhel' $OS_VERSION ;;
+	centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
         rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
         fedora) install_cuda_driver_yum $OS_NAME $OS_VERSION ;;
         amzn) install_cuda_driver_yum 'fedora' '35' ;;
