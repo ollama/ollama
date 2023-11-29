@@ -604,7 +604,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 
 	usageSet := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set parameter    Set a given parameter")
+		fmt.Fprintln(os.Stderr, "  /set parameter    Set a parameter")
 		fmt.Fprintln(os.Stderr, "  /set history      Enable history")
 		fmt.Fprintln(os.Stderr, "  /set nohistory    Disable history")
 		fmt.Fprintln(os.Stderr, "  /set wordwrap     Enable wordwrap")
@@ -637,6 +637,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set parameter temperature <float>    Set creativity level")
 		fmt.Fprintln(os.Stderr, "  /set parameter repeat_penalty <float> How strongly to penalize repetitions")
 		fmt.Fprintln(os.Stderr, "  /set parameter repeat_last_n <int>    Set how far back to look for repetitions")
+		fmt.Fprintln(os.Stderr, "  /set parameter num_gpu <int>          The number of layers to send to the GPU")
 		fmt.Fprintln(os.Stderr, "  /set parameter stop \"<string>\", ...   Set the stop parameters")
 		fmt.Fprintln(os.Stderr, "")
 	}
