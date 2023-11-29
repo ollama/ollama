@@ -19,6 +19,8 @@ import (
 	"strings"
 	"text/template"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
@@ -131,15 +133,46 @@ type ManifestV2 struct {
 }
 
 type ConfigV2 struct {
-	ModelFormat string `json:"model_format"`
-	ModelFamily string `json:"model_family"`
-	ModelType   string `json:"model_type"`
-	FileType    string `json:"file_type"`
-	RootFS      RootFS `json:"rootfs"`
+	ModelFormat   string   `json:"model_format"`
+	ModelFamily   string   `json:"model_family"`
+	ModelFamilies []string `json:"model_families"`
+	ModelType     string   `json:"model_type"`
+	FileType      string   `json:"file_type"`
+	RootFS        RootFS   `json:"rootfs"`
 
 	// required by spec
 	Architecture string `json:"architecture"`
 	OS           string `json:"os"`
+}
+
+func (c *ConfigV2) SetModelFormat(format string) {
+	if c.ModelFormat == "" {
+		c.ModelFormat = format
+	}
+}
+
+func (c *ConfigV2) SetModelFamily(families ...string) {
+	for _, family := range families {
+		if c.ModelFamily == "" {
+			c.ModelFamily = family
+		}
+
+		if !slices.Contains(c.ModelFamilies, family) {
+			c.ModelFamilies = append(c.ModelFamilies, family)
+		}
+	}
+}
+
+func (c *ConfigV2) SetModelType(modelType string) {
+	if c.ModelType == "" {
+		c.ModelType = modelType
+	}
+}
+
+func (c *ConfigV2) SetFileType(fileType string) {
+	if c.FileType == "" {
+		c.FileType = fileType
+	}
 }
 
 type RootFS struct {
@@ -351,10 +384,10 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 					return err
 				}
 
-				config.ModelFormat = fromConfig.ModelFormat
-				config.ModelFamily = fromConfig.ModelFamily
-				config.ModelType = fromConfig.ModelType
-				config.FileType = fromConfig.FileType
+				config.SetModelFormat(fromConfig.ModelFormat)
+				config.SetModelFamily(append(fromConfig.ModelFamilies, fromConfig.ModelFamily)...)
+				config.SetModelType(fromConfig.ModelType)
+				config.SetFileType(fromConfig.FileType)
 
 				for _, layer := range manifest.Layers {
 					deleteMap[layer.Digest] = struct{}{}
@@ -400,10 +433,10 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 					return err
 				}
 
-				config.ModelFormat = ggml.Name()
-				config.ModelFamily = ggml.ModelFamily()
-				config.ModelType = ggml.ModelType()
-				config.FileType = ggml.FileType()
+				config.SetModelFormat(ggml.Name())
+				config.SetModelFamily(ggml.ModelFamily())
+				config.SetModelType(ggml.ModelType())
+				config.SetFileType(ggml.FileType())
 
 				mediatype := mediatype
 				if ggml.ModelFamily() == "clip" {
