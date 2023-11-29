@@ -194,24 +194,22 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 	headers.Set("Content-Length", "0")
 
 	for try := 0; try < maxRetries; try++ {
-		resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, nil, opts)
-		if err != nil {
-			b.err = err
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-
+		var resp *http.Response
+		resp, err = makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, nil, opts)
+		if errors.Is(err, context.Canceled) {
+			break
+		} else if err != nil {
 			sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
 			log.Printf("%s complete upload attempt %d failed: %v, retrying in %s", b.Digest[7:19], try, err, sleep)
 			time.Sleep(sleep)
 			continue
 		}
 		defer resp.Body.Close()
-
-		b.err = nil
-		b.done = true
-		return
+		break
 	}
+
+	b.err = err
+	b.done = true
 }
 
 func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *RegistryOptions) error {
