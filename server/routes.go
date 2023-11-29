@@ -416,6 +416,11 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
+	if strings.Count(req.Name, ":") > 1 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "':' (colon) is not allowed in tag names"})
+		return
+	}
+
 	if req.Path == "" && req.Modelfile == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "path or modelfile are required"})
 		return
