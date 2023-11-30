@@ -233,6 +233,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [big-AGI](https://github.com/enricoros/big-agi/blob/main/docs/config-ollama.md)
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
 - [Amica](https://github.com/semperai/amica)
+- [chatd](https://github.com/BruceMacD/chatd)
 
 ### Terminal
 
