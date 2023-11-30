@@ -747,7 +747,7 @@
 									min="1"
 									max="16000"
 									bind:value={num_ctx}
-									step="32"
+									step="1"
 									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 								/>
 							</div>
@@ -771,7 +771,6 @@
 							</button>
 						</div>
 					</div>
-					
 				{:else if selectedTab === 'models'}
 					<div class="flex flex-col space-y-3 text-sm mb-10">
 						<div>
