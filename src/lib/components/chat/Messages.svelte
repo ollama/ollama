@@ -425,7 +425,7 @@
 													{/each}
 												</div>
 											{/if}
-											{message.content}
+											<pre class="">{message.content}</pre>
 
 											<div class=" flex justify-start space-x-1">
 												{#if message.parentId !== null && message.parentId in history.messages && (history.messages[message.parentId]?.childrenIds.length ?? 0) > 1}
