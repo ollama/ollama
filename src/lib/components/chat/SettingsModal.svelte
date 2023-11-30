@@ -762,7 +762,7 @@
 										repeat_penalty: repeat_penalty !== 1.1 ? repeat_penalty : undefined,
 										top_k: top_k !== 40 ? top_k : undefined,
 										top_p: top_p !== 0.9 ? top_p : undefined,
-										num_ctx: num_ctx !== 2048 ? num_ctx : undefined,
+										num_ctx: num_ctx !== 2048 ? num_ctx : undefined
 									});
 									show = false;
 								}}
