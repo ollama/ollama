@@ -744,7 +744,7 @@
 								<input
 									id="steps-range"
 									type="range"
-									min="0"
+									min="1"
 									max="16000"
 									bind:value={num_ctx}
 									step="32"
