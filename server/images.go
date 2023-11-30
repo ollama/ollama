@@ -35,16 +35,17 @@ type RegistryOptions struct {
 }
 
 type Model struct {
-	Name          string `json:"name"`
-	ShortName     string
-	ModelPath     string
-	OriginalModel string
-	AdapterPaths  []string
-	Template      string
-	System        string
-	License       []string
-	Digest        string
-	Options       map[string]interface{}
+	Name           string `json:"name"`
+	ShortName      string
+	ModelPath      string
+	OriginalModel  string
+	AdapterPaths   []string
+	ProjectorPaths []string
+	Template       string
+	System         string
+	License        []string
+	Digest         string
+	Options        map[string]interface{}
 }
 
 type PromptVars struct {
@@ -250,6 +251,8 @@ func GetModel(name string) (*Model, error) {
 			log.Print("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
 			model.AdapterPaths = append(model.AdapterPaths, filename)
+		case "application/vnd.ollama.image.projector":
+			model.ProjectorPaths = append(model.ProjectorPaths, filename)
 		case "application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
 			if err != nil {

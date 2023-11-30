@@ -325,7 +325,7 @@ func (w *StatusWriter) Write(b []byte) (int, error) {
 	return os.Stderr.Write(b)
 }
 
-func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
+func newLlama(model string, adapters, projectors []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
 	fileInfo, err := os.Stat(model)
 	if err != nil {
 		return nil, err
@@ -363,6 +363,11 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 	if len(adapters) > 0 {
 		// TODO: applying multiple adapters is not supported by the llama.cpp server yet
 		params = append(params, "--lora", adapters[0])
+	}
+
+	if len(projectors) > 0 {
+		// TODO: applying multiple projectors is not supported by the llama.cpp server yet
+		params = append(params, "--mmproj", projectors[0])
 	}
 
 	if opts.NumThread > 0 {
