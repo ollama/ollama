@@ -264,7 +264,6 @@ func GenerateHandler(c *gin.Context) {
 func ChatCompletionsHandler(c *gin.Context) {
 	var req api.ChatCompletionRequest
 	err := c.ShouldBindJSON(&req)
-	log.Printf("ChatCompletionsHandler: %+v", req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
