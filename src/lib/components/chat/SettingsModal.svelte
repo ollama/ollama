@@ -30,6 +30,7 @@
 	let repeat_penalty = 1.1;
 	let top_k = 40;
 	let top_p = 0.9;
+	let num_ctx = 2048;
 
 	// Models
 	let modelTag = '';
@@ -231,6 +232,7 @@
 		repeat_penalty = settings.repeat_penalty ?? 1.1;
 		top_k = settings.top_k ?? 40;
 		top_p = settings.top_p ?? 0.9;
+		num_ctx = settings.num_ctx ?? 2048;
 
 		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
@@ -732,8 +734,24 @@
 									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 								/>
 							</div>
+							<div>
+								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
+									<div>Context Length</div>
+									<div>
+										{num_ctx}
+									</div></label
+								>
+								<input
+									id="steps-range"
+									type="range"
+									min="1"
+									max="16000"
+									bind:value={num_ctx}
+									step="1"
+									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+								/>
+							</div>
 						</div>
-
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
@@ -743,7 +761,8 @@
 										temperature: temperature !== 0.8 ? temperature : undefined,
 										repeat_penalty: repeat_penalty !== 1.1 ? repeat_penalty : undefined,
 										top_k: top_k !== 40 ? top_k : undefined,
-										top_p: top_p !== 0.9 ? top_p : undefined
+										top_p: top_p !== 0.9 ? top_p : undefined,
+										num_ctx: num_ctx !== 2048 ? num_ctx : undefined
 									});
 									show = false;
 								}}
