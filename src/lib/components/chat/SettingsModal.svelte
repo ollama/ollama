@@ -26,11 +26,11 @@
 	// Advanced
 	let requestFormat = '';
 	let seed = 0;
-	let temperature = 0.8;
-	let repeat_penalty = 1.1;
-	let top_k = 40;
-	let top_p = 0.9;
-	let num_ctx = 2048;
+	let temperature = '';
+	let repeat_penalty = '';
+	let top_k = '';
+	let top_p = '';
+	let num_ctx = '';
 
 	// Models
 	let modelTag = '';
@@ -228,11 +228,11 @@
 
 		requestFormat = settings.requestFormat ?? '';
 		seed = settings.seed ?? 0;
-		temperature = settings.temperature ?? 0.8;
-		repeat_penalty = settings.repeat_penalty ?? 1.1;
-		top_k = settings.top_k ?? 40;
-		top_p = settings.top_p ?? 0.9;
-		num_ctx = settings.num_ctx ?? 2048;
+		temperature = settings.temperature ?? '';
+		repeat_penalty = settings.repeat_penalty ?? '';
+		top_k = settings.top_k ?? '';
+		top_p = settings.top_p ?? '';
+		num_ctx = settings.num_ctx ?? '';
 
 		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
@@ -616,6 +616,234 @@
 						<div class=" space-y-3">
 							<div>
 								<div class=" py-1 flex w-full justify-between">
+									<div class=" w-20 text-sm font-medium self-center">Seed</div>
+									<div class=" flex-1 self-center">
+										<input
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											type="number"
+											placeholder="Enter Seed"
+											bind:value={seed}
+											autocomplete="off"
+											min="0"
+										/>
+									</div>
+								</div>
+							</div>
+
+							<div class=" py-0.5 w-full justify-between">
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Temperature</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											temperature = temperature === '' ? 0.8 : '';
+										}}
+									>
+										{#if temperature === ''}
+											<span class="ml-2 self-center"> Default </span>
+										{:else}
+											<span class="ml-2 self-center"> Custom </span>
+										{/if}
+									</button>
+								</div>
+
+								{#if temperature !== ''}
+									<div class="flex mt-0.5 space-x-2">
+										<div class=" flex-1">
+											<input
+												id="steps-range"
+												type="range"
+												min="0"
+												max="1"
+												bind:value={temperature}
+												step="0.05"
+												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+											/>
+										</div>
+										<div>
+											<input
+												bind:value={temperature}
+												type="number"
+												class=" bg-transparent text-center w-10"
+											/>
+										</div>
+									</div>
+								{/if}
+							</div>
+
+							<div class=" py-0.5 w-full justify-between">
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Repeat Penalty</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											repeat_penalty = repeat_penalty === '' ? 1.1 : '';
+										}}
+									>
+										{#if repeat_penalty === ''}
+											<span class="ml-2 self-center"> Default </span>
+										{:else}
+											<span class="ml-2 self-center"> Custom </span>
+										{/if}
+									</button>
+								</div>
+
+								{#if repeat_penalty !== ''}
+									<div class="flex mt-0.5 space-x-2">
+										<div class=" flex-1">
+											<input
+												id="steps-range"
+												type="range"
+												min="0"
+												max="2"
+												bind:value={repeat_penalty}
+												step="0.05"
+												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+											/>
+										</div>
+										<div>
+											<input
+												bind:value={repeat_penalty}
+												type="number"
+												class=" bg-transparent text-center w-10"
+											/>
+										</div>
+									</div>
+								{/if}
+							</div>
+
+							<div class=" py-0.5 w-full justify-between">
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Top K</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											top_k = top_k === '' ? 40 : '';
+										}}
+									>
+										{#if top_k === ''}
+											<span class="ml-2 self-center"> Default </span>
+										{:else}
+											<span class="ml-2 self-center"> Custom </span>
+										{/if}
+									</button>
+								</div>
+
+								{#if top_k !== ''}
+									<div class="flex mt-0.5 space-x-2">
+										<div class=" flex-1">
+											<input
+												id="steps-range"
+												type="range"
+												min="0"
+												max="100"
+												bind:value={top_k}
+												step="0.5"
+												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+											/>
+										</div>
+										<div>
+											<input
+												bind:value={top_k}
+												type="number"
+												class=" bg-transparent text-center w-10"
+											/>
+										</div>
+									</div>
+								{/if}
+							</div>
+
+							<div class=" py-0.5 w-full justify-between">
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Top P</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											top_p = top_p === '' ? 0.9 : '';
+										}}
+									>
+										{#if top_p === ''}
+											<span class="ml-2 self-center"> Default </span>
+										{:else}
+											<span class="ml-2 self-center"> Custom </span>
+										{/if}
+									</button>
+								</div>
+
+								{#if top_p !== ''}
+									<div class="flex mt-0.5 space-x-2">
+										<div class=" flex-1">
+											<input
+												id="steps-range"
+												type="range"
+												min="0"
+												max="1"
+												bind:value={top_p}
+												step="0.05"
+												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+											/>
+										</div>
+										<div>
+											<input
+												bind:value={top_p}
+												type="number"
+												class=" bg-transparent text-center w-10"
+											/>
+										</div>
+									</div>
+								{/if}
+							</div>
+
+							<div class=" py-0.5 w-full justify-between">
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Context Length</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											num_ctx = num_ctx === '' ? 2048 : '';
+										}}
+									>
+										{#if num_ctx === ''}
+											<span class="ml-2 self-center"> Default </span>
+										{:else}
+											<span class="ml-2 self-center"> Custom </span>
+										{/if}
+									</button>
+								</div>
+
+								{#if num_ctx !== ''}
+									<div class="flex mt-0.5 space-x-2">
+										<div class=" flex-1">
+											<input
+												id="steps-range"
+												type="range"
+												min="1"
+												max="16000"
+												bind:value={num_ctx}
+												step="1"
+												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+											/>
+										</div>
+										<div>
+											<input
+												bind:value={num_ctx}
+												type="number"
+												class=" bg-transparent text-center w-10"
+											/>
+										</div>
+									</div>
+								{/if}
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
+							<div>
+								<div class=" py-1 flex w-full justify-between">
 									<div class=" self-center text-sm font-medium">Request Mode</div>
 
 									<button
@@ -642,115 +870,6 @@
 									</button>
 								</div>
 							</div>
-
-							<hr class=" dark:border-gray-700" />
-
-							<div>
-								<div class=" py-1 flex w-full justify-between">
-									<div class=" w-20 text-sm font-medium self-center">Seed</div>
-									<div class=" flex-1 self-center">
-										<input
-											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-											type="number"
-											placeholder="Enter Seed"
-											bind:value={seed}
-											autocomplete="off"
-											min="0"
-										/>
-									</div>
-								</div>
-							</div>
-
-							<hr class=" dark:border-gray-700" />
-
-							<div>
-								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
-									<div>Temperature</div>
-									<div>
-										{temperature}
-									</div></label
-								>
-								<input
-									id="steps-range"
-									type="range"
-									min="0"
-									max="1"
-									bind:value={temperature}
-									step="0.05"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-								/>
-							</div>
-
-							<div>
-								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
-									<div>Repeat Penalty</div>
-									<div>
-										{repeat_penalty}
-									</div></label
-								>
-								<input
-									id="steps-range"
-									type="range"
-									min="0"
-									max="2"
-									bind:value={repeat_penalty}
-									step="0.05"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-								/>
-							</div>
-
-							<div>
-								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
-									<div>Top K</div>
-									<div>
-										{top_k}
-									</div></label
-								>
-								<input
-									id="steps-range"
-									type="range"
-									min="0"
-									max="100"
-									bind:value={top_k}
-									step="0.5"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-								/>
-							</div>
-
-							<div>
-								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
-									<div>Top P</div>
-									<div>
-										{top_p}
-									</div></label
-								>
-								<input
-									id="steps-range"
-									type="range"
-									min="0"
-									max="1"
-									bind:value={top_p}
-									step="0.05"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-								/>
-							</div>
-							<div>
-								<label for="steps-range" class=" mb-2 text-sm font-medium flex justify-between">
-									<div>Context Length</div>
-									<div>
-										{num_ctx}
-									</div></label
-								>
-								<input
-									id="steps-range"
-									type="range"
-									min="1"
-									max="16000"
-									bind:value={num_ctx}
-									step="1"
-									class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-								/>
-							</div>
 						</div>
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
@@ -758,11 +877,11 @@
 								on:click={() => {
 									saveSettings({
 										seed: (seed !== 0 ? seed : undefined) ?? undefined,
-										temperature: temperature !== 0.8 ? temperature : undefined,
-										repeat_penalty: repeat_penalty !== 1.1 ? repeat_penalty : undefined,
-										top_k: top_k !== 40 ? top_k : undefined,
-										top_p: top_p !== 0.9 ? top_p : undefined,
-										num_ctx: num_ctx !== 2048 ? num_ctx : undefined
+										temperature: temperature !== '' ? temperature : undefined,
+										repeat_penalty: repeat_penalty !== '' ? repeat_penalty : undefined,
+										top_k: top_k !== '' ? top_k : undefined,
+										top_p: top_p !== '' ? top_p : undefined,
+										num_ctx: num_ctx !== '' ? num_ctx : undefined
 									});
 									show = false;
 								}}
