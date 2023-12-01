@@ -375,6 +375,15 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			layer.MediaType = mediatype
 			layers = append(layers, layer)
 		case "adapter":
+			if strings.HasPrefix(c.Args, "@") {
+				blobPath, err := GetBlobsPath(strings.TrimPrefix(c.Args, "@"))
+				if err != nil {
+					return err
+				}
+
+				c.Args = blobPath
+			}
+			
 			fn(api.ProgressResponse{Status: "creating adapter layer"})
 			bin, err := os.Open(realpath(modelFileDir, c.Args))
 			if err != nil {
