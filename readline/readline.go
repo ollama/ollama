@@ -191,6 +191,15 @@ func (i *Instance) Readline() (string, error) {
 			buf.ClearScreen()
 		case CharCtrlW:
 			buf.DeleteWord()
+		case CharCtrlZ:
+			if err := UnsetRawMode(fd, termios); err != nil {
+				return "", err
+			}
+
+			syscall.Kill(0, syscall.SIGSTOP)
+
+			// on resume...
+			return "", nil
 		case CharEnter:
 			output := buf.String()
 			if output != "" {
