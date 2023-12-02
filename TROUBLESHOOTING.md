@@ -31,11 +31,11 @@ By following these troubleshooting steps, you should be able to identify and res
 If you are running Docker on a M{1..3} based Mac and have taken the steps to run an x86 container, add "--platform linux/amd64" to the docker run command.
 Example:
 ```bash
-docker run -d -p 3000:8080  --env-file=$OLLAMA_ENV_FILE  --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d -p 3000:8080 --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 Becomes
 ```
-docker run -it --platform linux/amd64 -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://10.10.10.20:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -it --platform linux/amd64 -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://example.com:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 
 ```
 
