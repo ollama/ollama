@@ -84,8 +84,8 @@
 	};
 </script>
 
-<div class="fixed bottom-0 w-full">
-	<div class="  pt-5">
+<div class="fixed bottom-0 w-full bg-white dark:bg-gray-800">
+	<div class=" absolute right-0 left-0 bottom-0 mb-20">
 		<div class="max-w-3xl px-2.5 pt-2.5 -mb-0.5 mx-auto inset-x-0">
 			{#if messages.length == 0 && suggestions !== 'false'}
 				<Suggestions {submitPrompt} />
@@ -115,7 +115,10 @@
 					</button>
 				</div>
 			{/if}
-
+		</div>
+	</div>
+	<div>
+		<div class="max-w-3xl px-2.5 -mb-0.5 mx-auto inset-x-0">
 			<div class="bg-gradient-to-t from-white dark:from-gray-800 from-40% pb-2">
 				<input
 					bind:this={filesInputElement}
