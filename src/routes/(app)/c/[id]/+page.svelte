@@ -161,7 +161,8 @@
 					repeat_penalty: $settings.repeat_penalty ?? undefined,
 					top_k: $settings.top_k ?? undefined,
 					top_p: $settings.top_p ?? undefined,
-					num_ctx:  $settings.num_ctx ?? undefined
+					num_ctx: $settings.num_ctx ?? undefined,
+					...($settings.options ?? {})
 				},
 				format: $settings.requestFormat ?? undefined,
 				context:
@@ -233,7 +234,8 @@
 					repeat_penalty: $settings.repeat_penalty ?? undefined,
 					top_k: $settings.top_k ?? undefined,
 					top_p: $settings.top_p ?? undefined,
-					num_ctx:  $settings.num_ctx ?? undefined
+					num_ctx: $settings.num_ctx ?? undefined,
+					...($settings.options ?? {})
 				},
 				messages: messages,
 				history: history
@@ -301,7 +303,7 @@
 							.map((message) => ({ role: message.role, content: message.content })),
 						temperature: $settings.temperature ?? undefined,
 						top_p: $settings.top_p ?? undefined,
-						num_ctx:  $settings.num_ctx ?? undefined,
+						num_ctx: $settings.num_ctx ?? undefined,
 						frequency_penalty: $settings.repeat_penalty ?? undefined
 					})
 				});
@@ -362,7 +364,8 @@
 							repeat_penalty: $settings.repeat_penalty ?? undefined,
 							top_k: $settings.top_k ?? undefined,
 							top_p: $settings.top_p ?? undefined,
-							num_ctx:  $settings.num_ctx ?? undefined
+							num_ctx: $settings.num_ctx ?? undefined,
+							...($settings.options ?? {})
 						},
 						messages: messages,
 						history: history
@@ -424,7 +427,8 @@
 						repeat_penalty: $settings.repeat_penalty ?? undefined,
 						top_k: $settings.top_k ?? undefined,
 						top_p: $settings.top_p ?? undefined,
-						num_ctx:  $settings.num_ctx ?? undefined
+						num_ctx: $settings.num_ctx ?? undefined,
+						...($settings.options ?? {})
 					},
 					messages: messages,
 					history: history
