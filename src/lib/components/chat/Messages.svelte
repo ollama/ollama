@@ -40,7 +40,7 @@
 		blocks.forEach((block) => {
 			// only add button if browser supports Clipboard API
 
-			if (navigator.clipboard && block.childNodes.length < 2) {
+			if (navigator.clipboard && block.childNodes.length < 2 && block.id !== 'user-message') {
 				let code = block.querySelector('code');
 				code.style.borderTopRightRadius = 0;
 				code.style.borderTopLeftRadius = 0;
@@ -425,7 +425,7 @@
 													{/each}
 												</div>
 											{/if}
-											<pre class="">{message.content}</pre>
+											<pre id="user-message">{message.content}</pre>
 
 											<div class=" flex justify-start space-x-1">
 												{#if message.parentId !== null && message.parentId in history.messages && (history.messages[message.parentId]?.childrenIds.length ?? 0) > 1}
