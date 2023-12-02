@@ -25,3 +25,20 @@ Ensure that the Ollama URL is correctly formatted in the application settings. F
 It is crucial to include the `/api` at the end of the URL to ensure that the Ollama Web UI can communicate with the server.
 
 By following these troubleshooting steps, you should be able to identify and resolve connection issues with your Ollama server configuration. If you require further assistance or have additional questions, please don't hesitate to reach out or refer to our documentation for comprehensive guidance.
+
+## Running ollama-webui as a cintainer on Apple Silicon Mac
+
+If you are running Docker on a M{1..3} based Mac and have taken the steps to run an x86 container, add "--platform linux/amd64" to the docker run command.
+Example:
+```bash
+docker run -d -p 3000:8080  --env-file=$OLLAMA_ENV_FILE  --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+```
+Becomes
+```
+docker run -it --platform linux/amd64 -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://10.10.10.20:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+
+```
+
+## References
+[Change Docker Desktop Settings on Mac](https://docs.docker.com/desktop/settings/mac/) Search for "x86" in that page.
+[Run x86 (Intel) and ARM based images on Apple Silicon (M1) Macs?](https://forums.docker.com/t/run-x86-intel-and-arm-based-images-on-apple-silicon-m1-macs/117123)
