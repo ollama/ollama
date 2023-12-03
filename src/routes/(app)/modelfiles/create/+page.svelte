@@ -3,18 +3,6 @@
 	import { goto } from '$app/navigation';
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
 
-	let categories = {
-		Character: false,
-		Assistant: false,
-		Writing: false,
-		Productivity: false,
-		Programming: false,
-		'Data Analysis': false,
-		Lifestyle: false,
-		Education: false,
-		Business: false
-	};
-
 	let loading = false;
 
 	let filesInputElement;
@@ -27,12 +15,17 @@
 	let raw = true;
 	let advanced = false;
 
+	// Raw Mode
+	let content = '';
+
+	// Builder Mode
 	let model = '';
 	let system = '';
 	let template = '';
 	let options = {
 		// Advanced
 		seed: 0,
+		stop: '',
 		temperature: '',
 		repeat_penalty: '',
 		repeat_last_n: '',
@@ -41,11 +34,29 @@
 		mirostat_tau: '',
 		top_k: '',
 		top_p: '',
-		stop: '',
 		tfs_z: '',
 		num_ctx: ''
 	};
-	let content = '';
+
+	$: if (!raw) {
+		content = `FROM ${model}
+${template !== '' ? `TEMPLATE """${template}"""` : ''}
+${options.seed !== 0 ? `PARAMETER seed ${options.seed}` : ''}
+${options.stop !== '' ? `PARAMETER stop ${options.stop}` : ''}
+${options.temperature !== '' ? `PARAMETER temperature ${options.temperature}` : ''}
+${options.repeat_penalty !== '' ? `PARAMETER repeat_penalty ${options.repeat_penalty}` : ''}
+${options.repeat_last_n !== '' ? `PARAMETER repeat_last_n ${options.repeat_last_n}` : ''}
+${options.mirostat !== '' ? `PARAMETER mirostat ${options.mirostat}` : ''}
+${options.mirostat_eta !== '' ? `PARAMETER mirostat_eta ${options.mirostat_eta}` : ''}
+${options.mirostat_tau !== '' ? `PARAMETER mirostat_tau ${options.mirostat_tau}` : ''}
+${options.top_k !== '' ? `PARAMETER top_k ${options.top_k}` : ''}
+${options.top_p !== '' ? `PARAMETER top_p ${options.top_p}` : ''}
+${options.tfs_z !== '' ? `PARAMETER tfs_z ${options.tfs_z}` : ''}
+${options.num_ctx !== '' ? `PARAMETER num_ctx ${options.num_ctx}` : ''}
+SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
+	} else {
+		// content = '';
+	}
 
 	let suggestions = [
 		{
@@ -53,8 +64,27 @@
 		}
 	];
 
+	let categories = {
+		Character: false,
+		Assistant: false,
+		Writing: false,
+		Productivity: false,
+		Programming: false,
+		'Data Analysis': false,
+		Lifestyle: false,
+		Education: false,
+		Business: false
+	};
+
 	const submitHandler = async () => {
 		loading = true;
+
+		if (Object.keys(categories).filter((category) => categories[category]).length == 0) {
+			toast.error(
+				'Uh-oh! It looks like you missed selecting a category. Please choose one to complete your modelfile.'
+			);
+		}
+
 		if (
 			title !== '' &&
 			desc !== '' &&
@@ -389,7 +419,6 @@
 									class="px-3 py-1.5 text-sm w-full bg-transparent outline-none border-r dark:border-gray-600"
 									placeholder="Write a prompt suggestion (e.g. Who are you?)"
 									bind:value={prompt.content}
-									required
 								/>
 
 								<button
