@@ -1,8 +1,9 @@
 <script>
+	import { v4 as uuidv4 } from 'uuid';
 	import { toast } from 'svelte-french-toast';
 	import { goto } from '$app/navigation';
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
-	import { settings, db, user, config } from '$lib/stores';
+	import { settings, db, user, config, modelfiles } from '$lib/stores';
 
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
 	import { splitStream } from '$lib/utils';
@@ -21,6 +22,7 @@
 	// ///////////
 
 	let title = '';
+	let tagName = '';
 	let desc = '';
 
 	let raw = true;
@@ -48,6 +50,8 @@
 		tfs_z: '',
 		num_ctx: ''
 	};
+
+	$: tagName = title !== '' ? `${title.replace(/\s+/g, '-').toLowerCase()}:latest` : '';
 
 	$: if (!raw) {
 		content = `FROM ${model}
@@ -85,6 +89,11 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 		Business: false
 	};
 
+	const saveModelfile = async (modelfile) => {
+		await modelfiles.set([...$modelfiles, modelfile]);
+		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
+	};
+
 	const submitHandler = async () => {
 		loading = true;
 
@@ -108,7 +117,7 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 					...($user && { Authorization: `Bearer ${localStorage.token}` })
 				},
 				body: JSON.stringify({
-					name: title.replace(/\s+/g, '-').toLowerCase(),
+					name: tagName,
 					modelfile: content
 				})
 			});
@@ -170,8 +179,22 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 					}
 				}
 			}
+
+			if (success) {
+				await saveModelfile({
+					tagName: tagName,
+					imageUrl: imageUrl,
+					title: title,
+					desc: desc,
+					content: content,
+					suggestionPrompts: suggestions.filter((prompt) => prompt.content !== ''),
+					categories: Object.keys(categories).filter((category) => categories[category])
+				});
+				await goto('/modelfiles');
+			}
 		}
 		loading = false;
+		success = false;
 	};
 </script>
 
@@ -196,15 +219,32 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 							const canvas = document.createElement('canvas');
 							const ctx = canvas.getContext('2d');
 
-							// Set canvas dimensions to the original image dimensions
-							canvas.width = img.width;
-							canvas.height = img.height;
+							// Calculate the aspect ratio of the image
+							const aspectRatio = img.width / img.height;
 
-							// Draw the original image on the canvas
-							ctx.drawImage(img, 0, 0);
+							// Calculate the new width and height to fit within 100x100
+							let newWidth, newHeight;
+							if (aspectRatio > 1) {
+								newWidth = 100 * aspectRatio;
+								newHeight = 100;
+							} else {
+								newWidth = 100;
+								newHeight = 100 / aspectRatio;
+							}
+
+							// Set the canvas size
+							canvas.width = 100;
+							canvas.height = 100;
+
+							// Calculate the position to center the image
+							const offsetX = (100 - newWidth) / 2;
+							const offsetY = (100 - newHeight) / 2;
+
+							// Draw the image on the canvas
+							ctx.drawImage(img, offsetX, offsetY, newWidth, newHeight);
 
 							// Get the base64 representation of the compressed image
-							const compressedSrc = canvas.toDataURL('image/jpeg', 0.1);
+							const compressedSrc = canvas.toDataURL('image/jpeg');
 
 							// Display the compressed image
 							imageUrl = compressedSrc;
@@ -293,16 +333,31 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 					</div>
 				</div>
 
-				<div class="my-2">
-					<div class=" text-sm font-semibold mb-2">Name*</div>
+				<div class="my-2 flex space-x-2">
+					<div class="flex-1">
+						<div class=" text-sm font-semibold mb-2">Name*</div>
 
-					<div>
-						<input
-							class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg"
-							placeholder="Name your modelfile"
-							bind:value={title}
-							required
-						/>
+						<div>
+							<input
+								class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg"
+								placeholder="Name your modelfile"
+								bind:value={title}
+								required
+							/>
+						</div>
+					</div>
+
+					<div class="flex-1">
+						<div class=" text-sm font-semibold mb-2">Model Tag Name*</div>
+
+						<div>
+							<input
+								class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg"
+								placeholder="Add a model tag name"
+								bind:value={tagName}
+								required
+							/>
+						</div>
 					</div>
 				</div>
 
