@@ -875,19 +875,28 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	)
 
 	defaultRouter.POST("/api/pull", PullModelHandler)
+	defaultRouter.OPTIONS("/api/pull", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.POST("/api/generate", GenerateHandler)
+	defaultRouter.OPTIONS("/api/generate", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.POST("/api/embeddings", EmbeddingHandler)
+	defaultRouter.OPTIONS("/api/embeddings", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.POST("/api/create", CreateModelHandler)
+	defaultRouter.OPTIONS("/api/create", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.POST("/api/push", PushModelHandler)
+	defaultRouter.OPTIONS("/api/push", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.POST("/api/copy", CopyModelHandler)
+	defaultRouter.OPTIONS("/api/copy", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.DELETE("/api/delete", DeleteModelHandler)
+	defaultRouter.OPTIONS("/api/delete", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.POST("/api/show", ShowModelHandler)
+	defaultRouter.OPTIONS("/api/show", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.POST("/api/blobs/:digest", CreateBlobHandler)
+	defaultRouter.OPTIONS("/api/blobs/:digest", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.HEAD("/api/blobs/:digest", HeadBlobHandler)
 	publicRouter.POST("/api/authorize", CreateAuthorizationHandler)
 	defaultRouter.GET("/api/authorizations", ListAuthorizationsHandler)
-	defaultRouter.OPTIONS("/api/authorizations/:id", func(_ *gin.Context) {}) // needs to be present for cors
 	defaultRouter.DELETE("/api/authorizations/:id", DeleteAuthorizationHandler)
+	defaultRouter.OPTIONS("/api/authorizations/:id", func(_ *gin.Context) {}) // needs to be present for cors
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		defaultRouter.Handle(method, "/", func(c *gin.Context) {

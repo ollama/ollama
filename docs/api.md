@@ -680,7 +680,7 @@ Request authorization to use the Ollama API from the origin specified in either 
 #### Request
 
 ```shell
-curl http://localhost:11434/api/authorize -X POST -H 'Origin: https://ollama-gui.vercel.app/' 
+curl http://localhost:11434/api/authorize -X POST -H 'Origin: https://ollama-gui.vercel.app' 
 ```
 
 #### Response
