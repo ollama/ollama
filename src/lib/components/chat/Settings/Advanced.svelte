@@ -22,7 +22,7 @@
 			<div class=" w-20 text-xs font-medium self-center">Seed</div>
 			<div class=" flex-1 self-center">
 				<input
-					class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none border border-gray-600"
+					class="w-full rounded py-1.5 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none border border-gray-100 dark:border-gray-600"
 					type="number"
 					placeholder="Enter Seed"
 					bind:value={options.seed}
@@ -38,7 +38,7 @@
 			<div class=" w-20 text-xs font-medium self-center">Stop Sequence</div>
 			<div class=" flex-1 self-center">
 				<input
-					class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none border border-gray-600"
+					class="w-full rounded py-1.5 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none border border-gray-100 dark:border-gray-600"
 					type="text"
 					placeholder="Enter Stop Sequence"
 					bind:value={options.stop}
@@ -84,7 +84,7 @@
 					<input
 						bind:value={options.temperature}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -127,7 +127,7 @@
 					<input
 						bind:value={options.mirostat}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -170,7 +170,7 @@
 					<input
 						bind:value={options.mirostat_eta}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -213,7 +213,7 @@
 					<input
 						bind:value={options.mirostat_tau}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -256,7 +256,7 @@
 					<input
 						bind:value={options.top_k}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -299,7 +299,7 @@
 					<input
 						bind:value={options.top_p}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -342,7 +342,7 @@
 					<input
 						bind:value={options.repeat_penalty}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -385,7 +385,7 @@
 					<input
 						bind:value={options.repeat_last_n}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -428,7 +428,7 @@
 					<input
 						bind:value={options.tfs_z}
 						type="number"
-						class=" bg-transparent text-center w-10"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
@@ -471,7 +471,7 @@
 					<input
 						bind:value={options.num_ctx}
 						type="number"
-						class=" bg-transparent text-center w-16"
+						class=" bg-transparent text-center w-14"
 					/>
 				</div>
 			</div>
