@@ -739,7 +739,7 @@
 											{pullProgress ?? 0}%
 										</div>
 									</div>
-									<div class="mt-1 text-xs dark:text-gray-700" style="font-size: 0.5rem;">
+									<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
 										{digest}
 									</div>
 								</div>
