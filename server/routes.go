@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,11 +12,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +27,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/ncruces/zenity"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
@@ -32,6 +36,8 @@ import (
 )
 
 var mode string = gin.DebugMode
+var defaultCorsConfig cors.Config = cors.DefaultConfig()
+var defaultCors gin.HandlerFunc
 
 func init() {
 	switch mode {
@@ -714,6 +720,78 @@ func CreateBlobHandler(c *gin.Context) {
 	c.Status(http.StatusCreated)
 }
 
+func CreateAuthorizationHandler(c *gin.Context) {
+	origin := c.GetHeader("Origin")
+
+	if origin == "" {
+		referer := c.GetHeader("Referer")
+		if referer == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "\"Origin\"- or \"Referer\"-header are required"})
+			return
+		}
+
+		refererUrl, err := url.Parse(referer)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("\"Referer\"-header has to be a valid url: %s", err.Error())})
+		}
+
+		origin = fmt.Sprintf("%s://%s", refererUrl.Scheme, refererUrl.Host)
+	}
+
+	err := zenity.Question(fmt.Sprintf("\"%s\" requested access to use the Ollama. Do you want to grant access?", origin),
+		zenity.Title("Ollama API access request"),
+		zenity.OKLabel("Grant access"),
+		zenity.CancelLabel("Reject"),
+		zenity.QuestionIcon,
+	)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "user rejected request"})
+		return
+	}
+
+	defaultCorsConfig.AllowOrigins = append(defaultCorsConfig.AllowOrigins,
+		origin,
+	)
+	defaultCors = cors.New(defaultCorsConfig)
+
+	c.Status(http.StatusOK)
+}
+
+func ListAuthorizationsHandler(c *gin.Context) {
+	authorizations := make([]api.Authorization, len(defaultCorsConfig.AllowOrigins))
+
+	for i, origin := range defaultCorsConfig.AllowOrigins {
+		authorizations[i] = api.Authorization{
+			Id:     base64.StdEncoding.Strict().EncodeToString([]byte(origin)),
+			Origin: origin,
+		}
+	}
+
+	c.JSON(http.StatusOK, authorizations)
+}
+
+func DeleteAuthorizationHandler(c *gin.Context) {
+	id := c.Param("id")
+	decodedId, err := base64.StdEncoding.Strict().DecodeString(id)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "id is malformed"})
+		return
+	}
+	origin := string(decodedId)
+
+	deleted := false
+	defaultCorsConfig.AllowOrigins = slices.DeleteFunc(defaultCorsConfig.AllowOrigins, func(s string) bool {
+		deleted = true
+		return s == origin
+	})
+	if !deleted {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "no such authorization found"})
+		return
+	}
+
+	defaultCors = cors.New(defaultCorsConfig)
+}
+
 var defaultAllowOrigins = []string{
 	"localhost",
 	"127.0.0.1",
@@ -737,18 +815,17 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		}
 	}
 
-	config := cors.DefaultConfig()
-	config.AllowWildcard = true
-
-	config.AllowOrigins = allowOrigins
+	defaultCorsConfig.AllowWildcard = true
+	defaultCorsConfig.AllowOrigins = allowOrigins
 	for _, allowOrigin := range defaultAllowOrigins {
-		config.AllowOrigins = append(config.AllowOrigins,
+		defaultCorsConfig.AllowOrigins = append(defaultCorsConfig.AllowOrigins,
 			fmt.Sprintf("http://%s", allowOrigin),
 			fmt.Sprintf("https://%s", allowOrigin),
 			fmt.Sprintf("http://%s:*", allowOrigin),
 			fmt.Sprintf("https://%s:*", allowOrigin),
 		)
 	}
+	defaultCors = cors.New(defaultCorsConfig)
 
 	workDir, err := os.MkdirTemp("", "ollama")
 	if err != nil {
@@ -756,37 +833,50 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	}
 	defer os.RemoveAll(workDir)
 
-	r := gin.Default()
-	r.Use(
-		cors.New(config),
+	rootRouter := gin.Default()
+
+	publicRouter := rootRouter.Group("")
+	publicRouter.Use(
+		cors.Default(),
+	)
+
+	defaultRouter := rootRouter.Group("/")
+	defaultRouter.Use(
+		func(c *gin.Context) {
+			defaultCors(c)
+		},
 		func(c *gin.Context) {
 			c.Set("workDir", workDir)
 			c.Next()
 		},
 	)
 
-	r.POST("/api/pull", PullModelHandler)
-	r.POST("/api/generate", GenerateHandler)
-	r.POST("/api/embeddings", EmbeddingHandler)
-	r.POST("/api/create", CreateModelHandler)
-	r.POST("/api/push", PushModelHandler)
-	r.POST("/api/copy", CopyModelHandler)
-	r.DELETE("/api/delete", DeleteModelHandler)
-	r.POST("/api/show", ShowModelHandler)
-	r.POST("/api/blobs/:digest", CreateBlobHandler)
-	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
+	defaultRouter.POST("/api/pull", PullModelHandler)
+	defaultRouter.POST("/api/generate", GenerateHandler)
+	defaultRouter.POST("/api/embeddings", EmbeddingHandler)
+	defaultRouter.POST("/api/create", CreateModelHandler)
+	defaultRouter.POST("/api/push", PushModelHandler)
+	defaultRouter.POST("/api/copy", CopyModelHandler)
+	defaultRouter.DELETE("/api/delete", DeleteModelHandler)
+	defaultRouter.POST("/api/show", ShowModelHandler)
+	defaultRouter.POST("/api/blobs/:digest", CreateBlobHandler)
+	defaultRouter.HEAD("/api/blobs/:digest", HeadBlobHandler)
+	publicRouter.POST("/api/authorize", CreateAuthorizationHandler)
+	defaultRouter.GET("/api/authorizations", ListAuthorizationsHandler)
+	defaultRouter.OPTIONS("/api/authorizations/:id", func(_ *gin.Context) {}) // needs to be present for cors
+	defaultRouter.DELETE("/api/authorizations/:id", DeleteAuthorizationHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		r.Handle(method, "/", func(c *gin.Context) {
+		defaultRouter.Handle(method, "/", func(c *gin.Context) {
 			c.String(http.StatusOK, "Ollama is running")
 		})
 
-		r.Handle(method, "/api/tags", ListModelsHandler)
+		defaultRouter.Handle(method, "/api/tags", ListModelsHandler)
 	}
 
 	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
 	s := &http.Server{
-		Handler: r,
+		Handler: rootRouter,
 	}
 
 	// listen for a ctrl+c and stop any loaded llm

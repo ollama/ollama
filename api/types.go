@@ -181,6 +181,11 @@ type GenerateResponse struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
+type Authorization struct {
+	Id     string `json:"id"`
+	Origin string `json:"origin"`
+}
+
 func (r *GenerateResponse) Summary() {
 	if r.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", r.TotalDuration)
