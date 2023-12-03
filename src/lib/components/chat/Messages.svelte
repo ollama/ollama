@@ -7,7 +7,7 @@
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
 	import 'katex/dist/katex.min.css';
 
-	import { config, db, settings, user } from '$lib/stores';
+	import { config, db, modelfiles, settings, user } from '$lib/stores';
 	import { tick } from 'svelte';
 
 	import toast from 'svelte-french-toast';
@@ -16,8 +16,11 @@
 	export let regenerateResponse: Function;
 
 	export let autoScroll;
+	export let selectedModels;
 	export let history = {};
 	export let messages = [];
+
+	export let selectedModelfile = null;
 
 	$: if (messages && messages.length > 0 && (messages.at(-1).done ?? false)) {
 		(async () => {
@@ -306,10 +309,18 @@
 {#if messages.length == 0}
 	<div class="m-auto text-center max-w-md pb-56 px-2">
 		<div class="flex justify-center mt-8">
-			<img src="/ollama.png" class=" w-16 invert-[10%] dark:invert-[100%] rounded-full" />
+			{#if selectedModelfile && selectedModelfile.imageUrl}
+				<img src={selectedModelfile?.imageUrl} class=" w-20 mb-2 rounded-full" />
+			{:else}
+				<img src="/ollama.png" class=" w-16 invert-[10%] dark:invert-[100%] rounded-full" />
+			{/if}
 		</div>
-		<div class=" mt-1 text-2xl text-gray-800 dark:text-gray-100 font-semibold">
-			How can I help you today?
+		<div class=" mt-2 text-2xl text-gray-800 dark:text-gray-100 font-semibold">
+			{#if selectedModelfile}
+				{selectedModelfile.desc}
+			{:else}
+				How can I help you today?
+			{/if}
 		</div>
 	</div>
 {:else}
@@ -332,6 +343,12 @@
 									alt="User profile"
 								/>
 							{/if}
+						{:else if selectedModelfile}
+							<img
+								src={selectedModelfile?.imageUrl ?? '/favicon.png'}
+								class=" max-w-[28px] object-cover rounded-full"
+								alt="Ollama profile"
+							/>
 						{:else}
 							<img
 								src="/favicon.png"
@@ -345,6 +362,8 @@
 						<div class=" self-center font-bold mb-0.5">
 							{#if message.role === 'user'}
 								You
+							{:else if selectedModelfile}
+								{selectedModelfile.title}
 							{:else}
 								Ollama <span class=" text-gray-500 text-sm font-medium"
 									>{message.model ? ` ${message.model}` : ''}</span
