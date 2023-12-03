@@ -1,13 +1,24 @@
 <script>
 	import { toast } from 'svelte-french-toast';
 	import { goto } from '$app/navigation';
+	import { OLLAMA_API_BASE_URL } from '$lib/constants';
+	import { settings, db, user, config } from '$lib/stores';
+
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
+	import { splitStream } from '$lib/utils';
 
 	let loading = false;
 
 	let filesInputElement;
 	let inputFiles;
 	let imageUrl = null;
+	let digest = '';
+	let pullProgress = null;
+	let success = false;
+
+	// ///////////
+	// Modelfile
+	// ///////////
 
 	let title = '';
 	let desc = '';
@@ -54,8 +65,6 @@ ${options.top_p !== '' ? `PARAMETER top_p ${options.top_p}` : ''}
 ${options.tfs_z !== '' ? `PARAMETER tfs_z ${options.tfs_z}` : ''}
 ${options.num_ctx !== '' ? `PARAMETER num_ctx ${options.num_ctx}` : ''}
 SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
-	} else {
-		// content = '';
 	}
 
 	let suggestions = [
@@ -91,31 +100,75 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 			content !== '' &&
 			Object.keys(categories).filter((category) => categories[category]).length > 0
 		) {
-			const res = await fetch(`/api/create`, {
+			const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/create`, {
 				method: 'POST',
 				headers: {
-					'Content-Type': 'application/json'
+					'Content-Type': 'text/event-stream',
+					...($settings.authHeader && { Authorization: $settings.authHeader }),
+					...($user && { Authorization: `Bearer ${localStorage.token}` })
 				},
 				body: JSON.stringify({
-					title: title,
-					desc: desc,
-					content: content,
-					imageUrl: imageUrl,
-					categories: Object.keys(categories).filter((category) => categories[category])
+					name: title.replace(/\s+/g, '-').toLowerCase(),
+					modelfile: content
 				})
-			})
-				.then(async (res) => {
-					if (!res.ok) throw await res.json();
-					return res.json();
-				})
-				.catch((error) => {
-					console.log(error);
-					return null;
-				});
+			});
 
-			if (res?.status ?? false) {
-				toast.success(`Success! Your model file is now available.`);
-				await goto(`/models/${res.id}`);
+			if (res) {
+				const reader = res.body
+					.pipeThrough(new TextDecoderStream())
+					.pipeThrough(splitStream('\n'))
+					.getReader();
+
+				while (true) {
+					const { value, done } = await reader.read();
+					if (done) break;
+
+					try {
+						let lines = value.split('\n');
+
+						for (const line of lines) {
+							if (line !== '') {
+								console.log(line);
+								let data = JSON.parse(line);
+								console.log(data);
+
+								if (data.error) {
+									throw data.error;
+								}
+								if (data.detail) {
+									throw data.detail;
+								}
+
+								if (data.status) {
+									if (
+										!data.digest &&
+										!data.status.includes('writing') &&
+										!data.status.includes('sha256')
+									) {
+										toast.success(data.status);
+
+										if (data.status === 'success') {
+											success = true;
+										}
+									} else {
+										if (data.digest) {
+											digest = data.digest;
+
+											if (data.completed) {
+												pullProgress = Math.round((data.completed / data.total) * 1000) / 10;
+											} else {
+												pullProgress = 100;
+											}
+										}
+									}
+								}
+							}
+						}
+					} catch (error) {
+						console.log(error);
+						toast.error(error);
+					}
+				}
 			}
 		}
 		loading = false;
@@ -331,9 +384,17 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 									required
 								/>
 							</div>
+
+							<div class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+								To access the available model names for downloading, <a
+									class=" text-gray-500 dark:text-gray-300 font-medium"
+									href="https://ollama.ai/library"
+									target="_blank">click here.</a
+								>
+							</div>
 						</div>
 
-						<div class="my-2">
+						<div class="my-1">
 							<div class=" text-xs font-semibold mb-2">System Prompt</div>
 
 							<div>
@@ -458,6 +519,23 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 						{/each}
 					</div>
 				</div>
+
+				{#if pullProgress !== null}
+					<div class="my-2">
+						<div class=" text-sm font-semibold mb-2">Pull Progress</div>
+						<div class="w-full rounded-full dark:bg-gray-800">
+							<div
+								class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+								style="width: {Math.max(15, pullProgress ?? 0)}%"
+							>
+								{pullProgress ?? 0}%
+							</div>
+						</div>
+						<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
+							{digest}
+						</div>
+					</div>
+				{/if}
 
 				<div class="my-2 flex justify-end">
 					<button
