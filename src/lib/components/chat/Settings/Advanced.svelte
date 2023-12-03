@@ -16,7 +16,7 @@
 	};
 </script>
 
-<div class=" space-y-3">
+<div class=" space-y-3 text-xs">
 	<div>
 		<div class=" py-0.5 flex w-full justify-between">
 			<div class=" w-20 text-xs font-medium self-center">Seed</div>
@@ -75,8 +75,8 @@
 						type="range"
 						min="0"
 						max="1"
-						bind:value={options.temperature}
 						step="0.05"
+						bind:value={options.temperature}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -85,6 +85,9 @@
 						bind:value={options.temperature}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="0"
+						max="1"
+						step="0.05"
 					/>
 				</div>
 			</div>
@@ -118,8 +121,8 @@
 						type="range"
 						min="0"
 						max="2"
-						bind:value={options.mirostat}
 						step="1"
+						bind:value={options.mirostat}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -128,6 +131,9 @@
 						bind:value={options.mirostat}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="0"
+						max="2"
+						step="1"
 					/>
 				</div>
 			</div>
@@ -161,8 +167,8 @@
 						type="range"
 						min="0"
 						max="1"
-						bind:value={options.mirostat_eta}
 						step="0.05"
+						bind:value={options.mirostat_eta}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -171,6 +177,9 @@
 						bind:value={options.mirostat_eta}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="0"
+						max="1"
+						step="0.05"
 					/>
 				</div>
 			</div>
@@ -204,8 +213,8 @@
 						type="range"
 						min="0"
 						max="10"
-						bind:value={options.mirostat_tau}
 						step="0.5"
+						bind:value={options.mirostat_tau}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -214,6 +223,9 @@
 						bind:value={options.mirostat_tau}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="0"
+						max="10"
+						step="0.5"
 					/>
 				</div>
 			</div>
@@ -247,8 +259,8 @@
 						type="range"
 						min="0"
 						max="100"
-						bind:value={options.top_k}
 						step="0.5"
+						bind:value={options.top_k}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -257,6 +269,9 @@
 						bind:value={options.top_k}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="0"
+						max="100"
+						step="0.5"
 					/>
 				</div>
 			</div>
@@ -290,8 +305,8 @@
 						type="range"
 						min="0"
 						max="1"
-						bind:value={options.top_p}
 						step="0.05"
+						bind:value={options.top_p}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -300,6 +315,9 @@
 						bind:value={options.top_p}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="0"
+						max="1"
+						step="0.05"
 					/>
 				</div>
 			</div>
@@ -333,8 +351,8 @@
 						type="range"
 						min="0"
 						max="2"
-						bind:value={options.repeat_penalty}
 						step="0.05"
+						bind:value={options.repeat_penalty}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -343,6 +361,9 @@
 						bind:value={options.repeat_penalty}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="0"
+						max="2"
+						step="0.05"
 					/>
 				</div>
 			</div>
@@ -376,8 +397,8 @@
 						type="range"
 						min="-1"
 						max="128"
-						bind:value={options.repeat_last_n}
 						step="1"
+						bind:value={options.repeat_last_n}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -386,6 +407,9 @@
 						bind:value={options.repeat_last_n}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="-1"
+						max="128"
+						step="1"
 					/>
 				</div>
 			</div>
@@ -419,8 +443,8 @@
 						type="range"
 						min="0"
 						max="2"
-						bind:value={options.tfs_z}
 						step="0.05"
+						bind:value={options.tfs_z}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -429,6 +453,9 @@
 						bind:value={options.tfs_z}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="0"
+						max="2"
+						step="0.05"
 					/>
 				</div>
 			</div>
@@ -462,8 +489,8 @@
 						type="range"
 						min="1"
 						max="16000"
-						bind:value={options.num_ctx}
 						step="1"
+						bind:value={options.num_ctx}
 						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
 					/>
 				</div>
@@ -472,6 +499,9 @@
 						bind:value={options.num_ctx}
 						type="number"
 						class=" bg-transparent text-center w-14"
+						min="1"
+						max="16000"
+						step="1"
 					/>
 				</div>
 			</div>
