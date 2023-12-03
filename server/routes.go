@@ -39,6 +39,8 @@ var mode string = gin.DebugMode
 var defaultCorsConfig cors.Config = cors.DefaultConfig()
 var defaultCors gin.HandlerFunc
 
+var blockedOrigins []string = make([]string, 0)
+
 func init() {
 	switch mode {
 	case gin.DebugMode:
@@ -738,14 +740,34 @@ func CreateAuthorizationHandler(c *gin.Context) {
 		origin = fmt.Sprintf("%s://%s", refererUrl.Scheme, refererUrl.Host)
 	}
 
+	if slices.Contains(blockedOrigins, origin) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "user blocked authorization"})
+		return
+	}
+
+	if slices.Contains(defaultCorsConfig.AllowOrigins, origin) {
+		c.AbortWithStatusJSON(http.StatusConflict, gin.H{"error": "authorized origin already exists"})
+		return
+	}
+
 	err := zenity.Question(fmt.Sprintf("\"%s\" requested access to use the Ollama. Do you want to grant access?", origin),
 		zenity.Title("Ollama API access request"),
-		zenity.OKLabel("Grant access"),
 		zenity.CancelLabel("Reject"),
+		zenity.ExtraButton("Block"),
+		zenity.OKLabel("Grant access"),
 		zenity.QuestionIcon,
 	)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "user rejected request"})
+
+	switch {
+	case err == zenity.ErrCanceled:
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "user rejected authorization"})
+		return
+	case err == zenity.ErrExtraButton:
+		blockedOrigins = append(blockedOrigins, origin)
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "user blocked authorization"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("authorization failed during user interaction with unexpected error: %s", err.Error())})
 		return
 	}
 
@@ -754,7 +776,8 @@ func CreateAuthorizationHandler(c *gin.Context) {
 	)
 	defaultCors = cors.New(defaultCorsConfig)
 
-	c.Status(http.StatusOK)
+	c.Header("Location", fmt.Sprintf("/api/authorizations/%s", base64.StdEncoding.Strict().EncodeToString([]byte(origin))))
+	c.Status(http.StatusCreated)
 }
 
 func ListAuthorizationsHandler(c *gin.Context) {
