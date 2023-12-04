@@ -93,7 +93,7 @@
 						</div>
 
 						<div class=" flex-1 self-center">
-							<div class=" font-bold">{modelfile.title}</div>
+							<div class=" font-bold capitalize">{modelfile.title}</div>
 							<div class=" text-sm overflow-hidden text-ellipsis line-clamp-2">
 								{modelfile.desc}
 							</div>

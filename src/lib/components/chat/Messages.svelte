@@ -359,7 +359,7 @@
 					</div>
 
 					<div class="w-full">
-						<div class=" self-center font-bold mb-0.5">
+						<div class=" self-center font-bold mb-0.5 capitalize">
 							{#if message.role === 'user'}
 								You
 							{:else if selectedModelfile}
