@@ -359,11 +359,13 @@
 					</div>
 
 					<div class="w-full">
-						<div class=" self-center font-bold mb-0.5 capitalize">
+						<div class=" self-center font-bold mb-0.5">
 							{#if message.role === 'user'}
 								You
 							{:else if selectedModelfile}
-								{selectedModelfile.title}
+								<span class="capitalize">
+									{selectedModelfile.title}
+								</span>
 							{:else}
 								Ollama <span class=" text-gray-500 text-sm font-medium"
 									>{message.model ? ` ${message.model}` : ''}</span
