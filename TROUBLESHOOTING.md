@@ -39,7 +39,7 @@ docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://example.com:11434/api -
 Becomes
 
 ```
-docker run -it --platform linux/amd64 -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://example.com:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run --platform linux/amd64 -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://example.com:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 ## References
