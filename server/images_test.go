@@ -2,17 +2,15 @@ package server
 
 import (
 	"testing"
-
-	"github.com/jmorganca/ollama/api"
 )
 
 func TestModelPrompt(t *testing.T) {
-	var m Model
-	req := api.GenerateRequest{
+	m := Model{
 		Template: "a{{ .Prompt }}b",
-		Prompt:   "<h1>",
 	}
-	s, err := m.Prompt(req)
+	s, err := m.Prompt(PromptVars{
+		Prompt: "<h1>",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
