@@ -35,6 +35,8 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
 
+- 🗃️ **Modelfile Builder**: Easily create Ollama modelfiles via the web UI. Create and add your own character to Ollama by customizing system prompts, conversation starters, and more.
+
 - ⚙️ **Many Models Conversations**: Effortlessly engage with various models simultaneously, harnessing their unique strengths for optimal responses. Enhance your experience by leveraging a diverse set of models in parallel.
 
 - 🤝 **OpenAI Model Integration**: Seamlessly utilize OpenAI models alongside Ollama models for a versatile conversational experience.
@@ -205,10 +207,13 @@ See [TROUBLESHOOTING.md](/TROUBLESHOOTING.md) for information on how to troubles
 
 ## What's Next? 🚀
 
-### To-Do List 📝
+### Roadmap 📝
 
-Here are some exciting tasks on our to-do list:
+Here are some exciting tasks on our roadmap:
 
+
+- 🔄 **Multi-Modal Support**: Seamlessly engage with models that support multimodal interactions, including images (e.g., LLava).
+- 📚 **RAG Integration**: Experience first-class retrieval augmented generation support, enabling chat with your documents.
 - 🔐 **Access Control**: Securely manage requests to Ollama by utilizing the backend as a reverse proxy gateway, ensuring only authenticated users can send specific requests.
 - 🧪 **Research-Centric Features**: Empower researchers in the fields of LLM and HCI with a comprehensive web UI for conducting user studies. Stay tuned for ongoing feature enhancements (e.g., surveys, analytics, and participant tracking) to facilitate their research.
 - 📈 **User Study Tools**: Providing specialized tools, like heat maps and behavior tracking modules, to empower researchers in capturing and analyzing user behavior patterns with precision and accuracy.

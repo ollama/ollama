@@ -6,7 +6,7 @@
 	import { onMount, tick } from 'svelte';
 	import { convertMessagesToHistory, splitStream } from '$lib/utils';
 	import { goto } from '$app/navigation';
-	import { config, user, settings, db, chats, chatId } from '$lib/stores';
+	import { config, modelfiles, user, settings, db, chats, chatId } from '$lib/stores';
 
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
@@ -20,6 +20,12 @@
 
 	// let chatId = $page.params.id;
 	let selectedModels = [''];
+	let selectedModelfile = null;
+	$: selectedModelfile =
+		selectedModels.length === 1 &&
+		$modelfiles.filter((modelfile) => modelfile.tagName === selectedModels[0]).length > 0
+			? $modelfiles.filter((modelfile) => modelfile.tagName === selectedModels[0])[0]
+			: null;
 
 	let title = '';
 	let prompt = '';
@@ -161,7 +167,8 @@
 					repeat_penalty: $settings.repeat_penalty ?? undefined,
 					top_k: $settings.top_k ?? undefined,
 					top_p: $settings.top_p ?? undefined,
-					num_ctx:  $settings.num_ctx ?? undefined
+					num_ctx: $settings.num_ctx ?? undefined,
+					...($settings.options ?? {})
 				},
 				format: $settings.requestFormat ?? undefined,
 				context:
@@ -233,7 +240,8 @@
 					repeat_penalty: $settings.repeat_penalty ?? undefined,
 					top_k: $settings.top_k ?? undefined,
 					top_p: $settings.top_p ?? undefined,
-					num_ctx:  $settings.num_ctx ?? undefined
+					num_ctx: $settings.num_ctx ?? undefined,
+					...($settings.options ?? {})
 				},
 				messages: messages,
 				history: history
@@ -301,7 +309,7 @@
 							.map((message) => ({ role: message.role, content: message.content })),
 						temperature: $settings.temperature ?? undefined,
 						top_p: $settings.top_p ?? undefined,
-						num_ctx:  $settings.num_ctx ?? undefined,
+						num_ctx: $settings.num_ctx ?? undefined,
 						frequency_penalty: $settings.repeat_penalty ?? undefined
 					})
 				});
@@ -362,7 +370,8 @@
 							repeat_penalty: $settings.repeat_penalty ?? undefined,
 							top_k: $settings.top_k ?? undefined,
 							top_p: $settings.top_p ?? undefined,
-							num_ctx:  $settings.num_ctx ?? undefined
+							num_ctx: $settings.num_ctx ?? undefined,
+							...($settings.options ?? {})
 						},
 						messages: messages,
 						history: history
@@ -424,7 +433,8 @@
 						repeat_penalty: $settings.repeat_penalty ?? undefined,
 						top_k: $settings.top_k ?? undefined,
 						top_p: $settings.top_p ?? undefined,
-						num_ctx:  $settings.num_ctx ?? undefined
+						num_ctx: $settings.num_ctx ?? undefined,
+						...($settings.options ?? {})
 					},
 					messages: messages,
 					history: history
@@ -517,10 +527,42 @@
 			</div>
 
 			<div class=" h-full mt-10 mb-32 w-full flex flex-col">
-				<Messages bind:history bind:messages bind:autoScroll {sendPrompt} {regenerateResponse} />
+				<Messages
+					{selectedModels}
+					{selectedModelfile}
+					bind:history
+					bind:messages
+					bind:autoScroll
+					{sendPrompt}
+					{regenerateResponse}
+				/>
 			</div>
 		</div>
 
-		<MessageInput bind:prompt bind:autoScroll {messages} {submitPrompt} {stopResponse} />
+		<MessageInput
+			bind:prompt
+			bind:autoScroll
+			suggestionPrompts={selectedModelfile?.suggestionPrompts ?? [
+				{
+					title: ['Help me study', 'vocabulary for a college entrance exam'],
+					content: `Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.`
+				},
+				{
+					title: ['Give me ideas', `for what to do with my kids' art`],
+					content: `What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.`
+				},
+				{
+					title: ['Tell me a fun fact', 'about the Roman Empire'],
+					content: 'Tell me a random fun fact about the Roman Empire'
+				},
+				{
+					title: ['Show me a code snippet', `of a website's sticky header`],
+					content: `Show me a code snippet of a website's sticky header in CSS and JavaScript.`
+				}
+			]}
+			{messages}
+			{submitPrompt}
+			{stopResponse}
+		/>
 	</div>
 {/if}

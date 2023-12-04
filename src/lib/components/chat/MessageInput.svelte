@@ -6,7 +6,7 @@
 	export let submitPrompt: Function;
 	export let stopResponse: Function;
 
-	export let suggestions = 'true';
+	export let suggestionPrompts = [];
 	export let autoScroll = true;
 
 	let filesInputElement;
@@ -87,8 +87,8 @@
 <div class="fixed bottom-0 w-full bg-white dark:bg-gray-800">
 	<div class=" absolute right-0 left-0 bottom-0 mb-20">
 		<div class="max-w-3xl px-2.5 pt-2.5 -mb-0.5 mx-auto inset-x-0">
-			{#if messages.length == 0 && suggestions !== 'false'}
-				<Suggestions {submitPrompt} />
+			{#if messages.length == 0 && suggestionPrompts.length !== 0}
+				<Suggestions {suggestionPrompts} {submitPrompt} />
 			{/if}
 
 			{#if autoScroll === false && messages.length > 0}

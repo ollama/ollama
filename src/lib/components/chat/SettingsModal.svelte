@@ -6,6 +6,7 @@
 	import { onMount } from 'svelte';
 	import { config, models, settings, user } from '$lib/stores';
 	import { splitStream, getGravatarURL } from '$lib/utils';
+	import Advanced from './Settings/Advanced.svelte';
 
 	export let show = false;
 
@@ -25,12 +26,21 @@
 
 	// Advanced
 	let requestFormat = '';
-	let seed = 0;
-	let temperature = '';
-	let repeat_penalty = '';
-	let top_k = '';
-	let top_p = '';
-	let num_ctx = '';
+	let options = {
+		// Advanced
+		seed: 0,
+		temperature: '',
+		repeat_penalty: '',
+		repeat_last_n: '',
+		mirostat: '',
+		mirostat_eta: '',
+		mirostat_tau: '',
+		top_k: '',
+		top_p: '',
+		stop: '',
+		tfs_z: '',
+		num_ctx: ''
+	};
 
 	// Models
 	let modelTag = '';
@@ -218,28 +228,6 @@
 		models.set(await getModels());
 	};
 
-	$: if (show) {
-		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
-		console.log(settings);
-
-		theme = localStorage.theme ?? 'dark';
-		API_BASE_URL = settings.API_BASE_URL ?? OLLAMA_API_BASE_URL;
-		system = settings.system ?? '';
-
-		requestFormat = settings.requestFormat ?? '';
-		seed = settings.seed ?? 0;
-		temperature = settings.temperature ?? '';
-		repeat_penalty = settings.repeat_penalty ?? '';
-		top_k = settings.top_k ?? '';
-		top_p = settings.top_p ?? '';
-		num_ctx = settings.num_ctx ?? '';
-
-		titleAutoGenerate = settings.titleAutoGenerate ?? true;
-		speechAutoSend = settings.speechAutoSend ?? false;
-		gravatarEmail = settings.gravatarEmail ?? '';
-		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
-	}
-
 	const getModels = async (url = '', type = 'all') => {
 		let models = [];
 		const res = await fetch(`${url ? url : $settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/tags`, {
@@ -306,6 +294,26 @@
 
 	onMount(() => {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+		console.log(settings);
+
+		theme = localStorage.theme ?? 'dark';
+		API_BASE_URL = settings.API_BASE_URL ?? OLLAMA_API_BASE_URL;
+		system = settings.system ?? '';
+
+		requestFormat = settings.requestFormat ?? '';
+
+		options.seed = settings.seed ?? 0;
+		options.temperature = settings.temperature ?? '';
+		options.repeat_penalty = settings.repeat_penalty ?? '';
+		options.top_k = settings.top_k ?? '';
+		options.top_p = settings.top_p ?? '';
+		options.num_ctx = settings.num_ctx ?? '';
+		options = { ...options, ...settings.options };
+
+		titleAutoGenerate = settings.titleAutoGenerate ?? true;
+		speechAutoSend = settings.speechAutoSend ?? false;
+		gravatarEmail = settings.gravatarEmail ?? '';
+		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 
 		authEnabled = settings.authHeader !== undefined ? true : false;
 		if (authEnabled) {
@@ -497,7 +505,7 @@
 					<div class=" self-center">About</div>
 				</button>
 			</div>
-			<div class="flex-1 md:min-h-[330px]">
+			<div class="flex-1 md:min-h-[340px]">
 				{#if selectedTab === 'general'}
 					<div class="flex flex-col space-y-3">
 						<div>
@@ -612,234 +620,11 @@
 						</div>
 					</div>
 				{:else if selectedTab === 'advanced'}
-					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
-						<div class=" space-y-3">
-							<div>
-								<div class=" py-1 flex w-full justify-between">
-									<div class=" w-20 text-sm font-medium self-center">Seed</div>
-									<div class=" flex-1 self-center">
-										<input
-											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-											type="number"
-											placeholder="Enter Seed"
-											bind:value={seed}
-											autocomplete="off"
-											min="0"
-										/>
-									</div>
-								</div>
-							</div>
+					<div class="flex flex-col h-full justify-between text-sm">
+						<div class=" space-y-3 pr-1.5 overflow-y-scroll max-h-72">
+							<div class=" text-sm font-medium">Parameters</div>
 
-							<div class=" py-0.5 w-full justify-between">
-								<div class="flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Temperature</div>
-
-									<button
-										class="p-1 px-3 text-xs flex rounded transition"
-										on:click={() => {
-											temperature = temperature === '' ? 0.8 : '';
-										}}
-									>
-										{#if temperature === ''}
-											<span class="ml-2 self-center"> Default </span>
-										{:else}
-											<span class="ml-2 self-center"> Custom </span>
-										{/if}
-									</button>
-								</div>
-
-								{#if temperature !== ''}
-									<div class="flex mt-0.5 space-x-2">
-										<div class=" flex-1">
-											<input
-												id="steps-range"
-												type="range"
-												min="0"
-												max="1"
-												bind:value={temperature}
-												step="0.05"
-												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-											/>
-										</div>
-										<div>
-											<input
-												bind:value={temperature}
-												type="number"
-												class=" bg-transparent text-center w-10"
-											/>
-										</div>
-									</div>
-								{/if}
-							</div>
-
-							<div class=" py-0.5 w-full justify-between">
-								<div class="flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Repeat Penalty</div>
-
-									<button
-										class="p-1 px-3 text-xs flex rounded transition"
-										on:click={() => {
-											repeat_penalty = repeat_penalty === '' ? 1.1 : '';
-										}}
-									>
-										{#if repeat_penalty === ''}
-											<span class="ml-2 self-center"> Default </span>
-										{:else}
-											<span class="ml-2 self-center"> Custom </span>
-										{/if}
-									</button>
-								</div>
-
-								{#if repeat_penalty !== ''}
-									<div class="flex mt-0.5 space-x-2">
-										<div class=" flex-1">
-											<input
-												id="steps-range"
-												type="range"
-												min="0"
-												max="2"
-												bind:value={repeat_penalty}
-												step="0.05"
-												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-											/>
-										</div>
-										<div>
-											<input
-												bind:value={repeat_penalty}
-												type="number"
-												class=" bg-transparent text-center w-10"
-											/>
-										</div>
-									</div>
-								{/if}
-							</div>
-
-							<div class=" py-0.5 w-full justify-between">
-								<div class="flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Top K</div>
-
-									<button
-										class="p-1 px-3 text-xs flex rounded transition"
-										on:click={() => {
-											top_k = top_k === '' ? 40 : '';
-										}}
-									>
-										{#if top_k === ''}
-											<span class="ml-2 self-center"> Default </span>
-										{:else}
-											<span class="ml-2 self-center"> Custom </span>
-										{/if}
-									</button>
-								</div>
-
-								{#if top_k !== ''}
-									<div class="flex mt-0.5 space-x-2">
-										<div class=" flex-1">
-											<input
-												id="steps-range"
-												type="range"
-												min="0"
-												max="100"
-												bind:value={top_k}
-												step="0.5"
-												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-											/>
-										</div>
-										<div>
-											<input
-												bind:value={top_k}
-												type="number"
-												class=" bg-transparent text-center w-10"
-											/>
-										</div>
-									</div>
-								{/if}
-							</div>
-
-							<div class=" py-0.5 w-full justify-between">
-								<div class="flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Top P</div>
-
-									<button
-										class="p-1 px-3 text-xs flex rounded transition"
-										on:click={() => {
-											top_p = top_p === '' ? 0.9 : '';
-										}}
-									>
-										{#if top_p === ''}
-											<span class="ml-2 self-center"> Default </span>
-										{:else}
-											<span class="ml-2 self-center"> Custom </span>
-										{/if}
-									</button>
-								</div>
-
-								{#if top_p !== ''}
-									<div class="flex mt-0.5 space-x-2">
-										<div class=" flex-1">
-											<input
-												id="steps-range"
-												type="range"
-												min="0"
-												max="1"
-												bind:value={top_p}
-												step="0.05"
-												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-											/>
-										</div>
-										<div>
-											<input
-												bind:value={top_p}
-												type="number"
-												class=" bg-transparent text-center w-10"
-											/>
-										</div>
-									</div>
-								{/if}
-							</div>
-
-							<div class=" py-0.5 w-full justify-between">
-								<div class="flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Context Length</div>
-
-									<button
-										class="p-1 px-3 text-xs flex rounded transition"
-										on:click={() => {
-											num_ctx = num_ctx === '' ? 2048 : '';
-										}}
-									>
-										{#if num_ctx === ''}
-											<span class="ml-2 self-center"> Default </span>
-										{:else}
-											<span class="ml-2 self-center"> Custom </span>
-										{/if}
-									</button>
-								</div>
-
-								{#if num_ctx !== ''}
-									<div class="flex mt-0.5 space-x-2">
-										<div class=" flex-1">
-											<input
-												id="steps-range"
-												type="range"
-												min="1"
-												max="16000"
-												bind:value={num_ctx}
-												step="1"
-												class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-											/>
-										</div>
-										<div>
-											<input
-												bind:value={num_ctx}
-												type="number"
-												class=" bg-transparent text-center w-10"
-											/>
-										</div>
-									</div>
-								{/if}
-							</div>
-
+							<Advanced bind:options />
 							<hr class=" dark:border-gray-700" />
 
 							<div>
@@ -871,17 +656,28 @@
 								</div>
 							</div>
 						</div>
+
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
 								on:click={() => {
 									saveSettings({
-										seed: (seed !== 0 ? seed : undefined) ?? undefined,
-										temperature: temperature !== '' ? temperature : undefined,
-										repeat_penalty: repeat_penalty !== '' ? repeat_penalty : undefined,
-										top_k: top_k !== '' ? top_k : undefined,
-										top_p: top_p !== '' ? top_p : undefined,
-										num_ctx: num_ctx !== '' ? num_ctx : undefined
+										options: {
+											seed: (options.seed !== 0 ? options.seed : undefined) ?? undefined,
+											stop: options.stop !== '' ? options.stop : undefined,
+											temperature: options.temperature !== '' ? options.temperature : undefined,
+											repeat_penalty:
+												options.repeat_penalty !== '' ? options.repeat_penalty : undefined,
+											repeat_last_n:
+												options.repeat_last_n !== '' ? options.repeat_last_n : undefined,
+											mirostat: options.mirostat !== '' ? options.mirostat : undefined,
+											mirostat_eta: options.mirostat_eta !== '' ? options.mirostat_eta : undefined,
+											mirostat_tau: options.mirostat_tau !== '' ? options.mirostat_tau : undefined,
+											top_k: options.top_k !== '' ? options.top_k : undefined,
+											top_p: options.top_p !== '' ? options.top_p : undefined,
+											tfs_z: options.tfs_z !== '' ? options.tfs_z : undefined,
+											num_ctx: options.num_ctx !== '' ? options.num_ctx : undefined
+										}
 									});
 									show = false;
 								}}
@@ -943,7 +739,7 @@
 											{pullProgress ?? 0}%
 										</div>
 									</div>
-									<div class="mt-1 text-xs dark:text-gray-700" style="font-size: 0.5rem;">
+									<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
 										{digest}
 									</div>
 								</div>
