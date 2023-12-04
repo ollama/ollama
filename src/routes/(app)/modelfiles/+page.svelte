@@ -40,6 +40,7 @@
 	const deleteModelfilebyTagName = async (tagName) => {
 		await deleteModelHandler(tagName);
 		await modelfiles.set($modelfiles.filter((modelfile) => modelfile.tagName != tagName));
+		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
 	};
 </script>
 
