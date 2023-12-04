@@ -33,7 +33,7 @@ If you are running Docker on a M{1..3} based Mac and have taken the steps to run
 Example:
 
 ```bash
-docker run -d -p 3000:8080 --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://example.com:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 Becomes
