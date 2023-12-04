@@ -241,7 +241,10 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 				categories[category.toLowerCase()] = true;
 			}
 		});
-		window.opener.postMessage('loaded', '*');
+
+		if (window.opener ?? false) {
+			window.opener.postMessage('loaded', '*');
+		}
 	});
 </script>
 
