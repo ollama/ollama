@@ -103,7 +103,7 @@
 						<a
 							class=" w-fit text-sm px-3 py-2 border dark:border-gray-600 rounded-xl"
 							type="button"
-							href={`/modelfiles/edit/${modelfile.tagName}`}
+							href={`/modelfiles/edit?tag=${modelfile.tagName}`}
 						>
 							Edit</a
 						>

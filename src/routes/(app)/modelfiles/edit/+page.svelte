@@ -50,27 +50,31 @@
 	};
 
 	onMount(() => {
-		tagName = $page.params.tag;
+		tagName = $page.url.searchParams.get('tag');
 
-		modelfile = $modelfiles.filter((modelfile) => modelfile.tagName === tagName)[0];
+		if (tagName) {
+			modelfile = $modelfiles.filter((modelfile) => modelfile.tagName === tagName)[0];
 
-		console.log(modelfile);
+			console.log(modelfile);
 
-		imageUrl = modelfile.imageUrl;
-		title = modelfile.title;
-		desc = modelfile.desc;
-		content = modelfile.content;
-		suggestions =
-			modelfile.suggestionPrompts.length != 0
-				? modelfile.suggestionPrompts
-				: [
-						{
-							content: ''
-						}
-				  ];
+			imageUrl = modelfile.imageUrl;
+			title = modelfile.title;
+			desc = modelfile.desc;
+			content = modelfile.content;
+			suggestions =
+				modelfile.suggestionPrompts.length != 0
+					? modelfile.suggestionPrompts
+					: [
+							{
+								content: ''
+							}
+					  ];
 
-		for (const category of modelfile.categories) {
-			categories[category.toLowerCase()] = true;
+			for (const category of modelfile.categories) {
+				categories[category.toLowerCase()] = true;
+			}
+		} else {
+			goto('/modelfiles');
 		}
 	});
 

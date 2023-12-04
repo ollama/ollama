@@ -7,6 +7,7 @@
 
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
 	import { splitStream } from '$lib/utils';
+	import { onMount, tick } from 'svelte';
 
 	let loading = false;
 
@@ -209,6 +210,39 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 		loading = false;
 		success = false;
 	};
+
+	onMount(() => {
+		window.addEventListener('message', async (event) => {
+			if (
+				!['https://ollamahub.com', 'https://www.ollamahub.com', 'http://localhost:5173'].includes(
+					event.origin
+				)
+			)
+				return;
+			const modelfile = JSON.parse(event.data);
+			console.log(modelfile);
+
+			imageUrl = modelfile.imageUrl;
+			title = modelfile.title;
+			await tick();
+			tagName = `${modelfile.user.username}/${modelfile.tagName}`;
+			desc = modelfile.desc;
+			content = modelfile.content;
+			suggestions =
+				modelfile.suggestionPrompts.length != 0
+					? modelfile.suggestionPrompts
+					: [
+							{
+								content: ''
+							}
+					  ];
+
+			for (const category of modelfile.categories) {
+				categories[category.toLowerCase()] = true;
+			}
+		});
+		window.opener.postMessage('loaded', '*');
+	});
 </script>
 
 <div class="min-h-screen w-full flex justify-center dark:text-white">
