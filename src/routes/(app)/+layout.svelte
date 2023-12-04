@@ -4,7 +4,17 @@
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 
-	import { config, user, showSettings, settings, models, db, chats, chatId } from '$lib/stores';
+	import {
+		config,
+		user,
+		showSettings,
+		settings,
+		models,
+		db,
+		chats,
+		chatId,
+		modelfiles
+	} from '$lib/stores';
 
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -78,7 +88,7 @@
 	};
 
 	const getDB = async () => {
-		const _db = await openDB('Chats', 1, {
+		const DB = await openDB('Chats', 1, {
 			upgrade(db) {
 				const store = db.createObjectStore('chats', {
 					keyPath: 'id',
@@ -89,7 +99,7 @@
 		});
 
 		return {
-			db: _db,
+			db: DB,
 			getChatById: async function (id) {
 				return await this.db.get('chats', id);
 			},
@@ -161,6 +171,14 @@
 		await models.set(_models);
 		let _db = await getDB();
 		await db.set(_db);
+
+		await modelfiles.set(
+			JSON.parse(localStorage.getItem('modelfiles') ?? JSON.stringify($modelfiles))
+		);
+
+		modelfiles.subscribe(async () => {
+			await models.set(await getModels());
+		});
 
 		await tick();
 		loaded = true;

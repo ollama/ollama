@@ -3,9 +3,7 @@ import { PUBLIC_API_BASE_URL } from '$env/static/public';
 
 export const OLLAMA_API_BASE_URL =
 	PUBLIC_API_BASE_URL === ''
-		? dev
-			? `http://${location.hostname}:8080/ollama/api`
-			: browser
+		? browser
 			? `http://${location.hostname}:11434/api`
 			: `http://localhost:11434/api`
 		: PUBLIC_API_BASE_URL;
