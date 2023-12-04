@@ -3,7 +3,7 @@
 	import { toast } from 'svelte-french-toast';
 	import { goto } from '$app/navigation';
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
-	import { settings, db, user, config, modelfiles } from '$lib/stores';
+	import { settings, db, user, config, modelfiles, models } from '$lib/stores';
 
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
 	import { splitStream } from '$lib/utils';
@@ -101,13 +101,26 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 			toast.error(
 				'Uh-oh! It looks like you missed selecting a category. Please choose one to complete your modelfile.'
 			);
+			loading = false;
+			success = false;
+			return success;
+		}
+
+		if ($models.includes(tagName)) {
+			toast.error(
+				`Uh-oh! It looks like you already have a model named '${tagName}'. Please choose a different name to complete your modelfile.`
+			);
+			loading = false;
+			success = false;
+			return success;
 		}
 
 		if (
 			title !== '' &&
 			desc !== '' &&
 			content !== '' &&
-			Object.keys(categories).filter((category) => categories[category]).length > 0
+			Object.keys(categories).filter((category) => categories[category]).length > 0 &&
+			!$models.includes(tagName)
 		) {
 			const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/create`, {
 				method: 'POST',

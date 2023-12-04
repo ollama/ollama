@@ -60,7 +60,14 @@
 		title = modelfile.title;
 		desc = modelfile.desc;
 		content = modelfile.content;
-		suggestions = modelfile.suggestionPrompts;
+		suggestions =
+			modelfile.suggestionPrompts.length != 0
+				? modelfile.suggestionPrompts
+				: [
+						{
+							content: ''
+						}
+				  ];
 
 		for (const category of modelfile.categories) {
 			categories[category.toLowerCase()] = true;
