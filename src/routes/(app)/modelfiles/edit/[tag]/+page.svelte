@@ -7,6 +7,8 @@
 
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
 	import { splitStream } from '$lib/utils';
+	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 
 	let loading = false;
 
@@ -17,6 +19,7 @@
 	let pullProgress = null;
 	let success = false;
 
+	let modelfile = null;
 	// ///////////
 	// Modelfile
 	// ///////////
@@ -25,51 +28,8 @@
 	let tagName = '';
 	let desc = '';
 
-	let raw = true;
-	let advanced = false;
-
 	// Raw Mode
 	let content = '';
-
-	// Builder Mode
-	let model = '';
-	let system = '';
-	let template = '';
-	let options = {
-		// Advanced
-		seed: 0,
-		stop: '',
-		temperature: '',
-		repeat_penalty: '',
-		repeat_last_n: '',
-		mirostat: '',
-		mirostat_eta: '',
-		mirostat_tau: '',
-		top_k: '',
-		top_p: '',
-		tfs_z: '',
-		num_ctx: ''
-	};
-
-	$: tagName = title !== '' ? `${title.replace(/\s+/g, '-').toLowerCase()}:latest` : '';
-
-	$: if (!raw) {
-		content = `FROM ${model}
-${template !== '' ? `TEMPLATE """${template}"""` : ''}
-${options.seed !== 0 ? `PARAMETER seed ${options.seed}` : ''}
-${options.stop !== '' ? `PARAMETER stop ${options.stop}` : ''}
-${options.temperature !== '' ? `PARAMETER temperature ${options.temperature}` : ''}
-${options.repeat_penalty !== '' ? `PARAMETER repeat_penalty ${options.repeat_penalty}` : ''}
-${options.repeat_last_n !== '' ? `PARAMETER repeat_last_n ${options.repeat_last_n}` : ''}
-${options.mirostat !== '' ? `PARAMETER mirostat ${options.mirostat}` : ''}
-${options.mirostat_eta !== '' ? `PARAMETER mirostat_eta ${options.mirostat_eta}` : ''}
-${options.mirostat_tau !== '' ? `PARAMETER mirostat_tau ${options.mirostat_tau}` : ''}
-${options.top_k !== '' ? `PARAMETER top_k ${options.top_k}` : ''}
-${options.top_p !== '' ? `PARAMETER top_p ${options.top_p}` : ''}
-${options.tfs_z !== '' ? `PARAMETER tfs_z ${options.tfs_z}` : ''}
-${options.num_ctx !== '' ? `PARAMETER num_ctx ${options.num_ctx}` : ''}
-SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
-	}
 
 	let suggestions = [
 		{
@@ -89,12 +49,38 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 		business: false
 	};
 
+	onMount(() => {
+		tagName = $page.params.tag;
+
+		modelfile = $modelfiles.filter((modelfile) => modelfile.tagName === tagName)[0];
+
+		console.log(modelfile);
+
+		imageUrl = modelfile.imageUrl;
+		title = modelfile.title;
+		desc = modelfile.desc;
+		content = modelfile.content;
+		suggestions = modelfile.suggestionPrompts;
+
+		for (const category of modelfile.categories) {
+			categories[category.toLowerCase()] = true;
+		}
+	});
+
 	const saveModelfile = async (modelfile) => {
-		await modelfiles.set([...$modelfiles, modelfile]);
+		await modelfiles.set(
+			$modelfiles.map((e) => {
+				if (e.tagName === modelfile.tagName) {
+					return modelfile;
+				} else {
+					return e;
+				}
+			})
+		);
 		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
 	};
 
-	const submitHandler = async () => {
+	const updateHandler = async () => {
 		loading = true;
 
 		if (Object.keys(categories).filter((category) => categories[category]).length == 0) {
@@ -295,7 +281,7 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 			<form
 				class="flex flex-col"
 				on:submit|preventDefault={() => {
-					submitHandler();
+					updateHandler();
 				}}
 			>
 				<div class="flex justify-center my-4">
@@ -352,9 +338,10 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 
 						<div>
 							<input
-								class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg"
+								class="px-3 py-1.5 text-sm w-full bg-transparent disabled:text-gray-500 border dark:border-gray-600 outline-none rounded-lg"
 								placeholder="Add a model tag name"
-								bind:value={tagName}
+								value={tagName}
+								disabled
 								required
 							/>
 						</div>
@@ -377,132 +364,23 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 				<div class="my-2">
 					<div class="flex w-full justify-between">
 						<div class=" self-center text-sm font-semibold">Modelfile</div>
-
-						<button
-							class="p-1 px-3 text-xs flex rounded transition"
-							type="button"
-							on:click={() => {
-								raw = !raw;
-							}}
-						>
-							{#if raw}
-								<span class="ml-2 self-center"> Raw Format </span>
-							{:else}
-								<span class="ml-2 self-center"> Builder Mode </span>
-							{/if}
-						</button>
 					</div>
 
 					<!-- <div class=" text-sm font-semibold mb-2"></div> -->
 
-					{#if raw}
-						<div class="mt-2">
-							<div class=" text-xs font-semibold mb-2">Content*</div>
+					<div class="mt-2">
+						<div class=" text-xs font-semibold mb-2">Content*</div>
 
-							<div>
-								<textarea
-									class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg"
-									placeholder={`FROM llama2\nPARAMETER temperature 1\nSYSTEM """\nYou are Mario from Super Mario Bros, acting as an assistant.\n"""`}
-									rows="6"
-									bind:value={content}
-									required
-								/>
-							</div>
-
-							<div class="text-xs text-gray-400 dark:text-gray-500">
-								Not sure what to write? Switch to <button
-									class="text-gray-500 dark:text-gray-300 font-medium cursor-pointer"
-									type="button"
-									on:click={() => {
-										raw = !raw;
-									}}>Builder Mode</button
-								>
-								or
-								<a
-									class=" text-gray-500 dark:text-gray-300 font-medium"
-									href="https://ollamahub.com"
-									target="_blank"
-								>
-									Click here to check other modelfiles.
-								</a>
-							</div>
+						<div>
+							<textarea
+								class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg"
+								placeholder={`FROM llama2\nPARAMETER temperature 1\nSYSTEM """\nYou are Mario from Super Mario Bros, acting as an assistant.\n"""`}
+								rows="6"
+								bind:value={content}
+								required
+							/>
 						</div>
-					{:else}
-						<div class="my-2">
-							<div class=" text-xs font-semibold mb-2">From (Base Model)*</div>
-
-							<div>
-								<input
-									class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg"
-									placeholder="Write a modelfile base model name (e.g. llama2, mistral)"
-									bind:value={model}
-									required
-								/>
-							</div>
-
-							<div class="mt-1 text-xs text-gray-400 dark:text-gray-500">
-								To access the available model names for downloading, <a
-									class=" text-gray-500 dark:text-gray-300 font-medium"
-									href="https://ollama.ai/library"
-									target="_blank">click here.</a
-								>
-							</div>
-						</div>
-
-						<div class="my-1">
-							<div class=" text-xs font-semibold mb-2">System Prompt</div>
-
-							<div>
-								<textarea
-									class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg -mb-1"
-									placeholder={`Write your modelfile system prompt content here\ne.g.) You are Mario from Super Mario Bros, acting as an assistant.`}
-									rows="4"
-									bind:value={system}
-								/>
-							</div>
-						</div>
-
-						<div class="flex w-full justify-between">
-							<div class=" self-center text-sm font-semibold">Modelfile Advanced Settings</div>
-
-							<button
-								class="p-1 px-3 text-xs flex rounded transition"
-								type="button"
-								on:click={() => {
-									advanced = !advanced;
-								}}
-							>
-								{#if advanced}
-									<span class="ml-2 self-center"> Custom </span>
-								{:else}
-									<span class="ml-2 self-center"> Default </span>
-								{/if}
-							</button>
-						</div>
-
-						{#if advanced}
-							<div class="my-2">
-								<div class=" text-xs font-semibold mb-2">Template</div>
-
-								<div>
-									<textarea
-										class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg -mb-1"
-										placeholder="Write your modelfile template content here"
-										rows="4"
-										bind:value={template}
-									/>
-								</div>
-							</div>
-
-							<div class="my-2">
-								<div class=" text-xs font-semibold mb-2">Parameters</div>
-
-								<div>
-									<Advanced bind:options />
-								</div>
-							</div>
-						{/if}
-					{/if}
+					</div>
 				</div>
 
 				<div class="my-2">
@@ -570,7 +448,8 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 						{#each Object.keys(categories) as category}
 							<div class="flex space-x-2 text-sm">
 								<input type="checkbox" bind:checked={categories[category]} />
-								<div class="capitalize">{category}</div>
+
+								<div class=" capitalize">{category}</div>
 							</div>
 						{/each}
 					</div>
@@ -601,7 +480,7 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 						type="submit"
 						disabled={loading}
 					>
-						<div class=" self-center font-medium">Save & Create</div>
+						<div class=" self-center font-medium">Save & Update</div>
 
 						{#if loading}
 							<div class="ml-1.5 self-center">

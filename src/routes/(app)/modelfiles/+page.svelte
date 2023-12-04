@@ -1,8 +1,46 @@
 <script lang="ts">
-	import { modelfiles } from '$lib/stores';
+	import { modelfiles, settings, user } from '$lib/stores';
 	import { onMount } from 'svelte';
+	import toast from 'svelte-french-toast';
 
-	onMount(() => {});
+	import { OLLAMA_API_BASE_URL } from '$lib/constants';
+
+	const deleteModelHandler = async (tagName) => {
+		let success = null;
+		const res = await fetch(`${OLLAMA_API_BASE_URL}/delete`, {
+			method: 'DELETE',
+			headers: {
+				'Content-Type': 'text/event-stream',
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
+			},
+			body: JSON.stringify({
+				name: tagName
+			})
+		})
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.then((json) => {
+				console.log(json);
+				toast.success(`Deleted ${tagName}`);
+				success = true;
+				return json;
+			})
+			.catch((err) => {
+				console.log(err);
+				toast.error(err.error);
+				return null;
+			});
+
+		return success;
+	};
+
+	const deleteModelfilebyTagName = async (tagName) => {
+		await deleteModelHandler(tagName);
+		await modelfiles.set($modelfiles.filter((modelfile) => modelfile.tagName != tagName));
+	};
 </script>
 
 <div class="min-h-screen w-full flex justify-center dark:text-white">
@@ -38,25 +76,48 @@
 
 			{#each $modelfiles as modelfile}
 				<hr class=" dark:border-gray-700 my-2.5" />
-				<a
-					class=" flex space-x-4 cursor-pointer w-full mb-3"
-					href={`/?models=${modelfile.tagName}`}
-				>
-					<div class=" self-center w-10">
-						<div class=" rounded-full bg-stone-700">
-							<img
-								src={modelfile.imageUrl ?? '/user.png'}
-								alt="modelfile profile"
-								class=" rounded-full w-full h-auto object-cover"
-							/>
+				<div class=" flex space-x-4 cursor-pointer w-full mb-3">
+					<a
+						class=" flex flex-1 space-x-4 cursor-pointer w-full"
+						href={`/?models=${modelfile.tagName}`}
+					>
+						<div class=" self-center w-10">
+							<div class=" rounded-full bg-stone-700">
+								<img
+									src={modelfile.imageUrl ?? '/user.png'}
+									alt="modelfile profile"
+									class=" rounded-full w-full h-auto object-cover"
+								/>
+							</div>
 						</div>
-					</div>
 
-					<div class=" flex-1 self-center">
-						<div class=" font-bold">{modelfile.title}</div>
-						<div class=" text-sm overflow-hidden text-ellipsis line-clamp-2">{modelfile.desc}</div>
+						<div class=" flex-1 self-center">
+							<div class=" font-bold">{modelfile.title}</div>
+							<div class=" text-sm overflow-hidden text-ellipsis line-clamp-2">
+								{modelfile.desc}
+							</div>
+						</div>
+					</a>
+					<div class=" self-center">
+						<a
+							class=" w-fit text-sm px-3 py-2 border dark:border-gray-600 rounded-xl"
+							type="button"
+							href={`/modelfiles/edit/${modelfile.tagName}`}
+						>
+							Edit</a
+						>
+
+						<button
+							class=" w-fit text-sm px-3 py-2 border dark:border-gray-600 rounded-xl"
+							type="button"
+							on:click={() => {
+								deleteModelfilebyTagName(modelfile.tagName);
+							}}
+						>
+							Delete</button
+						>
 					</div>
-				</a>
+				</div>
 			{/each}
 
 			<div class=" my-16">
