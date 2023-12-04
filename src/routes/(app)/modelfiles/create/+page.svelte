@@ -51,7 +51,7 @@
 		num_ctx: ''
 	};
 
-	$: tagName = title !== '' ? `${title.replace(/\s+/g, '-').toLowerCase()}:latest` : '';
+	$: tagName = title !== '' ? `${title.replace(/\s+/g, '-').toLowerCase()}` : '';
 
 	$: if (!raw) {
 		content = `FROM ${model}
