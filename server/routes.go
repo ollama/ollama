@@ -416,6 +416,11 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
+	if err := ParseModelPath(req.Name).Validate(); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	if req.Path == "" && req.Modelfile == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "path or modelfile are required"})
 		return
@@ -637,6 +642,11 @@ func CopyModelHandler(c *gin.Context) {
 
 	if req.Source == "" || req.Destination == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "source add destination are required"})
+		return
+	}
+
+	if err := ParseModelPath(req.Destination).Validate(); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 

@@ -47,6 +47,8 @@ Here are some example open-source models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
+| Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
+| Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
 | Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
@@ -216,10 +218,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
-### Mobile
-
-- [Mobile Artificial Intelligence Distribution](https://github.com/MaidFoundation/Maid) (Maid)
-
 ### Web & Desktop
 
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
@@ -231,6 +229,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [big-AGI](https://github.com/enricoros/big-agi/blob/main/docs/config-ollama.md)
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
 - [Amica](https://github.com/semperai/amica)
+- [chatd](https://github.com/BruceMacD/chatd)
 
 ### Terminal
 
@@ -274,6 +273,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
+- [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
 - [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)

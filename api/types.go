@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -359,4 +360,64 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	}
 
 	return nil
+}
+
+// FormatParams converts specified parameter options to their correct types
+func FormatParams(params map[string][]string) (map[string]interface{}, error) {
+	opts := Options{}
+	valueOpts := reflect.ValueOf(&opts).Elem() // names of the fields in the options struct
+	typeOpts := reflect.TypeOf(opts)           // types of the fields in the options struct
+
+	// build map of json struct tags to their types
+	jsonOpts := make(map[string]reflect.StructField)
+	for _, field := range reflect.VisibleFields(typeOpts) {
+		jsonTag := strings.Split(field.Tag.Get("json"), ",")[0]
+		if jsonTag != "" {
+			jsonOpts[jsonTag] = field
+		}
+	}
+
+	out := make(map[string]interface{})
+	// iterate params and set values based on json struct tags
+	for key, vals := range params {
+		if opt, ok := jsonOpts[key]; !ok {
+			return nil, fmt.Errorf("unknown parameter '%s'", key)
+		} else {
+			field := valueOpts.FieldByName(opt.Name)
+			if field.IsValid() && field.CanSet() {
+				switch field.Kind() {
+				case reflect.Float32:
+					floatVal, err := strconv.ParseFloat(vals[0], 32)
+					if err != nil {
+						return nil, fmt.Errorf("invalid float value %s", vals)
+					}
+
+					out[key] = float32(floatVal)
+				case reflect.Int:
+					intVal, err := strconv.ParseInt(vals[0], 10, 64)
+					if err != nil {
+						return nil, fmt.Errorf("invalid int value %s", vals)
+					}
+
+					out[key] = intVal
+				case reflect.Bool:
+					boolVal, err := strconv.ParseBool(vals[0])
+					if err != nil {
+						return nil, fmt.Errorf("invalid bool value %s", vals)
+					}
+
+					out[key] = boolVal
+				case reflect.String:
+					out[key] = vals[0]
+				case reflect.Slice:
+					// TODO: only string slices are supported right now
+					out[key] = vals
+				default:
+					return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
+				}
+			}
+		}
+	}
+
+	return out, nil
 }

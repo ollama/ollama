@@ -23,7 +23,7 @@ Ollama binds to 127.0.0.1 port 11434 by default. Change the bind address with th
 On macOS:
 
 ```bash
-OLLAMA_HOST=0.0.0.0:11435 ollama serve
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
 
 On Linux:
@@ -59,7 +59,7 @@ OLLAMA_ORIGINS=http://192.168.1.1:*,https://example.com ollama serve
 On Linux:
 
 ```bash
-echo 'Environment="OLLAMA_ORIGINS=http://129.168.1.1:*,https://example.com"' >>/etc/systemd/system/ollama.service.d/environment.conf
+echo 'Environment="OLLAMA_ORIGINS=http://192.168.1.1:*,https://example.com"' >>/etc/systemd/system/ollama.service.d/environment.conf
 ```
 
 Reload `systemd` and restart Ollama:
@@ -139,7 +139,7 @@ Ensure the certificate is installed as a system certificate when using HTTPS. Th
 ```dockerfile
 FROM ollama/ollama
 COPY my-ca.pem /usr/local/share/ca-certificates/my-ca.crt
-RUN update-ca-certificate
+RUN update-ca-certificates
 ```
 
 Build and run this image:
