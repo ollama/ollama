@@ -36,7 +36,7 @@ type GenerateRequest struct {
 	Prompt   string `json:"prompt"`
 	System   string `json:"system"`
 	Template string `json:"template"`
-	Context  []int  `json:"context,omitempty"` // DEPRECATED: context is deprecated, use the /chat endpoint instead for chat history
+	Context  []int  `json:"context,omitempty"`
 	Stream   *bool  `json:"stream,omitempty"`
 	Raw      bool   `json:"raw,omitempty"`
 	Format   string `json:"format"`

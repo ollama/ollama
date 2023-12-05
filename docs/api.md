@@ -36,8 +36,6 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 ### Parameters
 
-`model` is required.
-
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
 
@@ -45,8 +43,9 @@ Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
 - `system`: system prompt to (overrides what is defined in the `Modelfile`)
+- `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
+- `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API.
 
@@ -90,7 +89,7 @@ The final response in the stream also includes additional data about the generat
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
 - `eval_count`: number of tokens the response
 - `eval_duration`: time in nanoseconds spent generating the response
-- `context`: deprecated, an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
+- `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
 
 To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration`.
@@ -299,8 +298,6 @@ POST /api/chat
 Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include statistics and additional data from the request.
 
 ### Parameters
-
-`model` is required.
 
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
