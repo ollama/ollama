@@ -121,6 +121,26 @@ docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name
 
 While we strongly recommend using our convenient Docker container installation for optimal support, we understand that some situations may require a non-Docker setup, especially for development purposes. Please note that non-Docker installations are not officially supported, and you might need to troubleshoot on your own.
 
+### TL;DR
+
+Run the following commands to install:
+
+```sh
+git clone https://github.com/ollama-webui/ollama-webui.git
+cd ollama-webui/
+
+# Building Frontend
+cp -RPp example.env .env
+npm i
+npm run build
+
+# Serve Frontend with the Backend
+cd ./backend
+pip install -r requirements.txt
+sh start.sh
+```
+You should have the Ollama Web UI up and running at http://localhost:8080/. Enjoy! 😄
+
 ### Project Components
 
 The Ollama Web UI consists of two primary components: the frontend and the backend (which serves as a reverse proxy, handling static frontend files, and additional features). Both need to be running concurrently for the development environment using `npm run dev`. Alternatively, you can set the `PUBLIC_API_BASE_URL` during the build process to have the frontend connect directly to your Ollama instance or build the frontend as static files and serve them with the backend.
