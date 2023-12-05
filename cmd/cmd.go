@@ -521,9 +521,17 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 
 		latest = response
 
-		if opts.WordWrap {
+		termWidth, _, _ = term.GetSize(int(os.Stdout.Fd()))
+		if opts.WordWrap && termWidth >= 10 {
 			for _, ch := range response.Response {
 				if currentLineLength+1 > termWidth-5 {
+					if len(wordBuffer) > termWidth-10 {
+						fmt.Printf("%s%c", wordBuffer, ch)
+						wordBuffer = ""
+						currentLineLength = 0
+						continue
+					}
+
 					// backtrack the length of the last word and clear to the end of the line
 					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
 					fmt.Printf("%s%c", wordBuffer, ch)
@@ -543,7 +551,10 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 				}
 			}
 		} else {
-			fmt.Print(response.Response)
+			fmt.Printf("%s%s", wordBuffer, response.Response)
+			if len(wordBuffer) > 0 {
+				wordBuffer = ""
+			}
 		}
 
 		return nil
