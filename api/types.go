@@ -44,6 +44,39 @@ type GenerateRequest struct {
 	Options map[string]interface{} `json:"options"`
 }
 
+type ChatRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+	Stream   *bool     `json:"stream,omitempty"`
+	Format   string    `json:"format"`
+
+	Options map[string]interface{} `json:"options"`
+}
+
+type Message struct {
+	Role    string `json:"role"` // one of ["system", "user", "assistant"]
+	Content string `json:"content"`
+}
+
+type ChatResponse struct {
+	Model     string    `json:"model"`
+	CreatedAt time.Time `json:"created_at"`
+	Message   *Message  `json:"message,omitempty"`
+
+	Done bool `json:"done"`
+
+	Metrics
+}
+
+type Metrics struct {
+	TotalDuration      time.Duration `json:"total_duration,omitempty"`
+	LoadDuration       time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
+	EvalCount          int           `json:"eval_count,omitempty"`
+	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+}
+
 // Options specfied in GenerateRequest, if you add a new option here add it to the API docs also
 type Options struct {
 	Runner
@@ -173,39 +206,34 @@ type GenerateResponse struct {
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`
 
-	TotalDuration      time.Duration `json:"total_duration,omitempty"`
-	LoadDuration       time.Duration `json:"load_duration,omitempty"`
-	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int           `json:"eval_count,omitempty"`
-	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	Metrics
 }
 
-func (r *GenerateResponse) Summary() {
-	if r.TotalDuration > 0 {
-		fmt.Fprintf(os.Stderr, "total duration:       %v\n", r.TotalDuration)
+func (m *Metrics) Summary() {
+	if m.TotalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "total duration:       %v\n", m.TotalDuration)
 	}
 
-	if r.LoadDuration > 0 {
-		fmt.Fprintf(os.Stderr, "load duration:        %v\n", r.LoadDuration)
+	if m.LoadDuration > 0 {
+		fmt.Fprintf(os.Stderr, "load duration:        %v\n", m.LoadDuration)
 	}
 
-	if r.PromptEvalCount > 0 {
-		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", r.PromptEvalCount)
+	if m.PromptEvalCount > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", m.PromptEvalCount)
 	}
 
-	if r.PromptEvalDuration > 0 {
-		fmt.Fprintf(os.Stderr, "prompt eval duration: %s\n", r.PromptEvalDuration)
-		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(r.PromptEvalCount)/r.PromptEvalDuration.Seconds())
+	if m.PromptEvalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval duration: %s\n", m.PromptEvalDuration)
+		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(m.PromptEvalCount)/m.PromptEvalDuration.Seconds())
 	}
 
-	if r.EvalCount > 0 {
-		fmt.Fprintf(os.Stderr, "eval count:           %d token(s)\n", r.EvalCount)
+	if m.EvalCount > 0 {
+		fmt.Fprintf(os.Stderr, "eval count:           %d token(s)\n", m.EvalCount)
 	}
 
-	if r.EvalDuration > 0 {
-		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", r.EvalDuration)
-		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(r.EvalCount)/r.EvalDuration.Seconds())
+	if m.EvalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", m.EvalDuration)
+		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
 	}
 }
 
