@@ -24,7 +24,7 @@ All durations are returned in nanoseconds.
 
 ### Streaming responses
 
-Certain endpoints stream responses as JSON objects.
+Certain endpoints stream responses as JSON objects delineated with the newline (`\n`) character.
 
 ## Generate a completion
 
@@ -32,11 +32,9 @@ Certain endpoints stream responses as JSON objects.
 POST /api/generate
 ```
 
-Generate a response for a given prompt with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include statistics and additional data from the request.
+Generate a response for a given prompt with a provided model. This is a streaming endpoint, so will be a series of responses. The final response object will include statistics and additional data from the request.
 
 ### Parameters
-
-`model` is required.
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
@@ -45,10 +43,11 @@ Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
 - `system`: system prompt to (overrides what is defined in the `Modelfile`)
+- `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
+- `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
-- `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API.
+- `raw`: if `true` no formatting will be applied to the prompt and no context will be returned. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API, and are managing history yourself.
 
 ### JSON mode
 
@@ -58,7 +57,7 @@ Enable JSON mode by setting the `format` parameter to `json`. This will structur
 
 ### Examples
 
-#### Request (Prompt)
+#### Request
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -90,7 +89,7 @@ The final response in the stream also includes additional data about the generat
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
 - `eval_count`: number of tokens the response
 - `eval_duration`: time in nanoseconds spent generating the response
-- `context`: deprecated, an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
+- `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
 
 To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration`.
@@ -114,8 +113,6 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 ```
 
 #### Request (No streaming)
-
-A response can be recieved in one reply when streaming is off.
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -147,9 +144,9 @@ If `stream` is set to `false`, the response will be a single JSON object:
 }
 ```
 
-#### Request (Raw Mode)
+#### Request (Raw mode)
 
-In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting.
+In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting and context.
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -167,7 +164,6 @@ curl http://localhost:11434/api/generate -d '{
   "model": "mistral",
   "created_at": "2023-11-03T15:36:02.583064Z",
   "response": " The sky appears blue because of a phenomenon called Rayleigh scattering.",
-  "context": [1, 2, 3],
   "done": true,
   "total_duration": 14648695333,
   "load_duration": 3302671417,
@@ -279,6 +275,7 @@ curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
+  "context": [1, 2, 3],
   "done": true,
   "total_duration": 5589157167,
   "load_duration": 3013701500,
@@ -287,135 +284,6 @@ curl http://localhost:11434/api/generate -d '{
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 13,
-  "eval_duration": 1325948000
-}
-```
-
-## Send Chat Messages
-```shell
-POST /api/chat
-```
-
-Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include statistics and additional data from the request.
-
-### Parameters
-
-`model` is required.
-
-- `model`: (required) the [model name](#model-names)
-- `messages`: the messages of the chat, this can be used to keep a chat memory
-
-Advanced parameters (optional):
-
-- `format`: the format to return a response in. Currently the only accepted value is `json`
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
-- `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
-
-### Examples
-
-#### Request
-Send a chat message with a streaming response.
-
-```shell
-curl http://localhost:11434/api/generate -d '{
-  "model": "llama2",
-  "messages": [
-    {
-      "role": "user",
-      "content": "why is the sky blue?"
-    }
-  ]
-}'
-```
-
-#### Response
-
-A stream of JSON objects is returned:
-
-```json
-{
-  "model": "llama2",
-  "created_at": "2023-08-04T08:52:19.385406455-07:00",
-  "message": {
-    "role": "assisant",
-    "content": "The"
-  },
-  "done": false
-}
-```
-
-Final response:
-
-```json
-{
-  "model": "llama2",
-  "created_at": "2023-08-04T19:22:45.499127Z",
-  "done": true,
-  "total_duration": 5589157167,
-  "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
-  "prompt_eval_count": 46,
-  "prompt_eval_duration": 1160282000,
-  "eval_count": 113,
-  "eval_duration": 1325948000
-}
-```
-
-#### Request (With History)
-Send a chat message with a conversation history.
-
-```shell
-curl http://localhost:11434/api/generate -d '{
-  "model": "llama2",
-  "messages": [
-    {
-      "role": "user",
-      "content": "why is the sky blue?"
-    },
-    {
-      "role": "assistant",
-      "content": "due to rayleigh scattering."
-    },
-    {
-      "role": "user",
-      "content": "how is that different than mie scattering?"
-    }
-  ]
-}'
-```
-
-#### Response
-
-A stream of JSON objects is returned:
-
-```json
-{
-  "model": "llama2",
-  "created_at": "2023-08-04T08:52:19.385406455-07:00",
-  "message": {
-    "role": "assisant",
-    "content": "The"
-  },
-  "done": false
-}
-```
-
-Final response:
-
-```json
-{
-  "model": "llama2",
-  "created_at": "2023-08-04T19:22:45.499127Z",
-  "done": true,
-  "total_duration": 5589157167,
-  "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
-  "prompt_eval_count": 46,
-  "prompt_eval_duration": 1160282000,
-  "eval_count": 113,
   "eval_duration": 1325948000
 }
 ```

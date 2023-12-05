@@ -221,19 +221,6 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn Generate
 	})
 }
 
-type ChatResponseFunc func(ChatResponse) error
-
-func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc) error {
-	return c.stream(ctx, http.MethodPost, "/api/chat", req, func(bts []byte) error {
-		var resp ChatResponse
-		if err := json.Unmarshal(bts, &resp); err != nil {
-			return err
-		}
-
-		return fn(resp)
-	})
-}
-
 type PullProgressFunc func(ProgressResponse) error
 
 func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {

@@ -531,31 +531,21 @@ type prediction struct {
 
 const maxBufferSize = 512 * format.KiloByte
 
-type PredictRequest struct {
-	Model            string
-	Prompt           string
-	Format           string
-	CheckpointStart  time.Time
-	CheckpointLoaded time.Time
-}
+func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, format string, fn func(api.GenerateResponse)) error {
+	prevConvo, err := llm.Decode(ctx, prevContext)
+	if err != nil {
+		return err
+	}
 
-type PredictResponse struct {
-	Model              string
-	CreatedAt          time.Time
-	TotalDuration      time.Duration
-	LoadDuration       time.Duration
-	Content            string
-	Done               bool
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalCount          int
-	EvalDuration       time.Duration
-	Context            []int
-}
+	// Remove leading spaces from prevConvo if present
+	prevConvo = strings.TrimPrefix(prevConvo, " ")
 
-func (llm *llama) Predict(ctx context.Context, predict PredictRequest, fn func(PredictResponse)) error {
+	var nextContext strings.Builder
+	nextContext.WriteString(prevConvo)
+	nextContext.WriteString(prompt)
+
 	request := map[string]any{
-		"prompt":            predict.Prompt,
+		"prompt":            nextContext.String(),
 		"stream":            true,
 		"n_predict":         llm.NumPredict,
 		"n_keep":            llm.NumKeep,
@@ -577,7 +567,7 @@ func (llm *llama) Predict(ctx context.Context, predict PredictRequest, fn func(P
 		"stop":              llm.Stop,
 	}
 
-	if predict.Format == "json" {
+	if format == "json" {
 		request["grammar"] = jsonGrammar
 	}
 
@@ -634,25 +624,25 @@ func (llm *llama) Predict(ctx context.Context, predict PredictRequest, fn func(P
 				}
 
 				if p.Content != "" {
-					fn(PredictResponse{
-						Model:     predict.Model,
-						CreatedAt: time.Now().UTC(),
-						Content:   p.Content,
-					})
+					fn(api.GenerateResponse{Response: p.Content})
+					nextContext.WriteString(p.Content)
 				}
 
 				if p.Stop {
-					fn(PredictResponse{
-						Model:         predict.Model,
-						CreatedAt:     time.Now().UTC(),
-						TotalDuration: time.Since(predict.CheckpointStart),
+					embd, err := llm.Encode(ctx, nextContext.String())
+					if err != nil {
+						return fmt.Errorf("encoding context: %v", err)
+					}
 
+					fn(api.GenerateResponse{
 						Done:               true,
+						Context:            embd,
 						PromptEvalCount:    p.Timings.PromptN,
 						PromptEvalDuration: parseDurationMs(p.Timings.PromptMS),
 						EvalCount:          p.Timings.PredictedN,
 						EvalDuration:       parseDurationMs(p.Timings.PredictedMS),
 					})
+
 					return nil
 				}
 			}
