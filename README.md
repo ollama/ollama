@@ -35,7 +35,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
 
-- 🗃️ **Modelfile Builder**: Easily create Ollama modelfiles via the web UI. Create and add your own character to Ollama by customizing system prompts, conversation starters, and more.
+- 🧩 **Modelfile Builder**: Easily create Ollama modelfiles via the web UI. Create and add characters/agents, customize chat elements, and import modelfiles effortlessly through [OllamaHub](https://ollamahub.com/) integration.
 
 - ⚙️ **Many Models Conversations**: Effortlessly engage with various models simultaneously, harnessing their unique strengths for optimal responses. Enhance your experience by leveraging a diverse set of models in parallel.
 
@@ -59,7 +59,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - 🌟 **Continuous Updates**: We are committed to improving Ollama Web UI with regular updates and new features.
 
-## 🔗 Also Check Out OllamaHub! 
+## 🔗 Also Check Out OllamaHub!
 
 Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/), where you can discover, download, and explore customized Modelfiles. OllamaHub offers a wide range of exciting possibilities for enhancing your chat interactions with Ollama! 🚀
 
@@ -121,7 +121,7 @@ docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name
 
 While we strongly recommend using our convenient Docker container installation for optimal support, we understand that some situations may require a non-Docker setup, especially for development purposes. Please note that non-Docker installations are not officially supported, and you might need to troubleshoot on your own.
 
-### TL;DR
+### TL;DR 🚀
 
 Run the following commands to install:
 
@@ -129,16 +129,19 @@ Run the following commands to install:
 git clone https://github.com/ollama-webui/ollama-webui.git
 cd ollama-webui/
 
-# Building Frontend
+# Copying required .env file
 cp -RPp example.env .env
+
+# Building Frontend
 npm i
 npm run build
 
-# Serve Frontend with the Backend
+# Serving Frontend with the Backend
 cd ./backend
 pip install -r requirements.txt
 sh start.sh
 ```
+
 You should have the Ollama Web UI up and running at http://localhost:8080/. Enjoy! 😄
 
 ### Project Components
@@ -230,7 +233,6 @@ See [TROUBLESHOOTING.md](/TROUBLESHOOTING.md) for information on how to troubles
 ### Roadmap 📝
 
 Here are some exciting tasks on our roadmap:
-
 
 - 🔄 **Multi-Modal Support**: Seamlessly engage with models that support multimodal interactions, including images (e.g., LLava).
 - 📚 **RAG Integration**: Experience first-class retrieval augmented generation support, enabling chat with your documents.
