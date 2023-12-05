@@ -37,10 +37,13 @@ func Parse(reader io.Reader) ([]Command, error) {
 		switch string(bytes.ToUpper(fields[0])) {
 		case "FROM":
 			command.Name = "model"
-			command.Args = string(fields[1])
+			command.Args = string(bytes.TrimSpace(fields[1]))
 			// copy command for validation
 			modelCommand = command
-		case "LICENSE", "TEMPLATE", "SYSTEM", "PROMPT", "ADAPTER":
+		case "ADAPTER":
+			command.Name = string(bytes.ToLower(fields[0]))
+			command.Args = string(bytes.TrimSpace(fields[1]))
+		case "LICENSE", "TEMPLATE", "SYSTEM", "PROMPT":
 			command.Name = string(bytes.ToLower(fields[0]))
 			command.Args = string(fields[1])
 		case "PARAMETER":
@@ -50,7 +53,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 			}
 
 			command.Name = string(fields[0])
-			command.Args = string(fields[1])
+			command.Args = string(bytes.TrimSpace(fields[1]))
 		case "EMBED":
 			return nil, fmt.Errorf("deprecated command: EMBED is no longer supported, use the /embed API endpoint instead")
 		default:
