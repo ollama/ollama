@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { installed } from './install'
 
 require('@electron/remote/main').initialize()
+const shell = require('electron').shell
 
 if (require('electron-squirrel-startup')) {
   app.quit()
@@ -98,9 +99,16 @@ function trayIconPath() {
     : path.join(assetPath, 'iconTemplate.png')
 }
 
-function updateTrayIcon() {
+function dashboardIconPath() {
+  return nativeTheme.shouldUseDarkColors
+    ? path.join(assetPath, 'dashboard.png')
+    : path.join(assetPath, 'dashboardDark.png')
+}
+
+function updateTrayIcons() {
   if (tray) {
     tray.setImage(trayIconPath())
+    updateTray()
   }
 }
 
@@ -115,6 +123,37 @@ function updateTray() {
   ]
 
   const menu = Menu.buildFromTemplate([
+    { label: 'Ollama is running', icon: path.join(assetPath, 'live.png') },
+    { type: 'separator' },
+    {
+      label: 'Dashboard (soon)',
+      click: () => {
+        if (welcomeWindow) {
+          welcomeWindow.show()
+        }
+      },
+      icon: dashboardIconPath(),
+    },
+    { type: 'separator' },
+    {
+      label: 'Documentation',
+      click: () => {
+        shell.openExternal('https://github.com/jmorganca/ollama/tree/main/docs')
+      },
+    },
+    {
+      label: 'Quick start',
+      click: () => {
+        shell.openExternal('https://github.com/jmorganca/ollama?tab=readme-ov-file#quickstart')
+      },
+    },
+    {
+      label: 'Model Hub',
+      click: () => {
+        shell.openExternal('https://ollama.ai/library')
+      },
+    },
+    { type: 'separator' },
     ...(updateAvailable ? updateItems : []),
     { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
   ])
@@ -127,8 +166,8 @@ function updateTray() {
   tray.setContextMenu(menu)
   tray.setImage(trayIconPath())
 
-  nativeTheme.off('updated', updateTrayIcon)
-  nativeTheme.on('updated', updateTrayIcon)
+  nativeTheme.off('updated', updateTrayIcons)
+  nativeTheme.on('updated', updateTrayIcons)
 }
 
 let proc: ChildProcess = null
