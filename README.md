@@ -214,6 +214,17 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
+Or send a chat message:
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "mistral",
+  "messages": [ 
+    { "role": "user", "content": "why is the sky blue?" } 
+  ]
+}'
+```
+
 See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
