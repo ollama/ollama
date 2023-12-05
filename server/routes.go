@@ -105,7 +105,7 @@ func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sess
 			loaded.Options = nil
 		}
 
-		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, opts)
+		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
@@ -198,7 +198,11 @@ func GenerateHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if req.Prompt == "" && req.Template == "" && req.System == "" {
-		c.JSON(http.StatusOK, api.GenerateResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true})
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			CreatedAt:          time.Now().UTC(),
+			Model:              req.Model,
+			ModelConfiguration: model.Config.ModelConfiguration,
+			Done:               true})
 		return
 	}
 
@@ -257,10 +261,11 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			resp := api.GenerateResponse{
-				Model:     r.Model,
-				CreatedAt: r.CreatedAt,
-				Done:      r.Done,
-				Response:  r.Content,
+				Model:              r.Model,
+				ModelConfiguration: model.Config.ModelConfiguration,
+				CreatedAt:          r.CreatedAt,
+				Done:               r.Done,
+				Response:           r.Content,
 				Metrics: api.Metrics{
 					TotalDuration:      r.TotalDuration,
 					LoadDuration:       r.LoadDuration,

@@ -35,16 +35,18 @@ type RegistryOptions struct {
 }
 
 type Model struct {
-	Name          string `json:"name"`
-	ShortName     string
-	ModelPath     string
-	OriginalModel string
-	AdapterPaths  []string
-	Template      string
-	System        string
-	License       []string
-	Digest        string
-	Options       map[string]interface{}
+	Name           string `json:"name"`
+	Config         ConfigV2
+	ShortName      string
+	ModelPath      string
+	OriginalModel  string
+	AdapterPaths   []string
+	ProjectorPaths []string
+	Template       string
+	System         string
+	License        []string
+	Digest         string
+	Options        map[string]interface{}
 }
 
 type PromptVars struct {
@@ -136,16 +138,12 @@ type ManifestV2 struct {
 }
 
 type ConfigV2 struct {
-	ModelFormat   string   `json:"model_format"`
-	ModelFamily   string   `json:"model_family"`
-	ModelFamilies []string `json:"model_families"`
-	ModelType     string   `json:"model_type"`
-	FileType      string   `json:"file_type"`
-	RootFS        RootFS   `json:"rootfs"`
-
 	// required by spec
 	Architecture string `json:"architecture"`
 	OS           string `json:"os"`
+	RootFS       RootFS `json:"rootfs"`
+
+	api.ModelConfiguration
 }
 
 func (c *ConfigV2) SetModelFormat(format string) {
@@ -234,6 +232,21 @@ func GetModel(name string) (*Model, error) {
 		License:   []string{},
 	}
 
+	filename, err := GetBlobsPath(manifest.Config.Digest)
+	if err != nil {
+		return nil, err
+	}
+
+	configFile, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer configFile.Close()
+
+	if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
+		return nil, err
+	}
+
 	for _, layer := range manifest.Layers {
 		filename, err := GetBlobsPath(layer.Digest)
 		if err != nil {
@@ -250,6 +263,8 @@ func GetModel(name string) (*Model, error) {
 			log.Print("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
 			model.AdapterPaths = append(model.AdapterPaths, filename)
+		case "application/vnd.ollama.image.projector":
+			model.ProjectorPaths = append(model.ProjectorPaths, filename)
 		case "application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
