@@ -777,7 +777,10 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 
 	r := gin.Default()
 
-	r.Use(RequestLogger())
+	var logLevel = strings.ToLower(os.Getenv("OLLAMA_LOG_LEVEL"))
+	if logLevel == "debug" {
+		r.Use(RequestLogger())
+	}
 
 	r.Use(
 		cors.New(config),
