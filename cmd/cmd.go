@@ -412,10 +412,19 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 }
 
 func RunGenerate(cmd *cobra.Command, args []string) error {
+	interactive := true
+
+	opts := generateOptions{
+		Model:    args[0],
+		WordWrap: os.Getenv("TERM") == "xterm-256color",
+		Options:  map[string]interface{}{},
+	}
+
 	format, err := cmd.Flags().GetString("format")
 	if err != nil {
 		return err
 	}
+	opts.Format = format
 
 	prompts := args[1:]
 
@@ -427,34 +436,40 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 		}
 
 		prompts = append([]string{string(in)}, prompts...)
+		opts.WordWrap = false
+		interactive = false
 	}
-
-	// output is being piped
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return generate(cmd, args[0], strings.Join(prompts, " "), false, format)
+	opts.Prompt = strings.Join(prompts, " ")
+	if len(prompts) > 0 {
+		interactive = false
 	}
-
-	wordWrap := os.Getenv("TERM") == "xterm-256color"
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
 	if err != nil {
 		return err
 	}
-	if nowrap {
-		wordWrap = false
+	opts.WordWrap = !nowrap
+
+	if !interactive {
+		return generate(cmd, opts)
 	}
 
-	// prompts are provided via stdin or args so don't enter interactive mode
-	if len(prompts) > 0 {
-		return generate(cmd, args[0], strings.Join(prompts, " "), wordWrap, format)
-	}
-
-	return generateInteractive(cmd, args[0], wordWrap, format)
+	return generateInteractive(cmd, opts)
 }
 
 type generateContextKey string
 
-func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format string) error {
+type generateOptions struct {
+	Model    string
+	Prompt   string
+	WordWrap bool
+	Format   string
+	System   string
+	Template string
+	Options  map[string]interface{}
+}
+
+func generate(cmd *cobra.Command, opts generateOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -475,7 +490,7 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 
 	termWidth, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
-		wordWrap = false
+		opts.WordWrap = false
 	}
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
@@ -483,26 +498,40 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT)
-	var abort bool
 
 	go func() {
 		<-sigChan
 		cancel()
-		abort = true
 	}()
 
 	var currentLineLength int
 	var wordBuffer string
 
-	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext, Format: format}
+	request := api.GenerateRequest{
+		Model:    opts.Model,
+		Prompt:   opts.Prompt,
+		Context:  generateContext,
+		Format:   opts.Format,
+		System:   opts.System,
+		Template: opts.Template,
+		Options:  opts.Options,
+	}
 	fn := func(response api.GenerateResponse) error {
 		p.StopAndClear()
 
 		latest = response
 
-		if wordWrap {
+		termWidth, _, _ = term.GetSize(int(os.Stdout.Fd()))
+		if opts.WordWrap && termWidth >= 10 {
 			for _, ch := range response.Response {
 				if currentLineLength+1 > termWidth-5 {
+					if len(wordBuffer) > termWidth-10 {
+						fmt.Printf("%s%c", wordBuffer, ch)
+						wordBuffer = ""
+						currentLineLength = 0
+						continue
+					}
+
 					// backtrack the length of the last word and clear to the end of the line
 					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
 					fmt.Printf("%s%c", wordBuffer, ch)
@@ -522,28 +551,28 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 				}
 			}
 		} else {
-			fmt.Print(response.Response)
+			fmt.Printf("%s%s", wordBuffer, response.Response)
+			if len(wordBuffer) > 0 {
+				wordBuffer = ""
+			}
 		}
 
 		return nil
 	}
 
 	if err := client.Generate(cancelCtx, &request, fn); err != nil {
-		if strings.Contains(err.Error(), "context canceled") && abort {
+		if errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return err
 	}
-	if prompt != "" {
+	if opts.Prompt != "" {
 		fmt.Println()
 		fmt.Println()
 	}
 
 	if !latest.Done {
-		if abort {
-			return nil
-		}
-		return errors.New("unexpected end of response")
+		return nil
 	}
 
 	verbose, err := cmd.Flags().GetBool("verbose")
@@ -562,9 +591,22 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 	return nil
 }
 
-func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format string) error {
+type MultilineState int
+
+const (
+	MultilineNone MultilineState = iota
+	MultilinePrompt
+	MultilineSystem
+	MultilineTemplate
+)
+
+func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 	// load the model
-	if err := generate(cmd, model, "", false, ""); err != nil {
+	loadOpts := generateOptions{
+		Model:  opts.Model,
+		Prompt: "",
+	}
+	if err := generate(cmd, loadOpts); err != nil {
 		return err
 	}
 
@@ -581,14 +623,17 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 
 	usageSet := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set history      Enable history")
-		fmt.Fprintln(os.Stderr, "  /set nohistory    Disable history")
-		fmt.Fprintln(os.Stderr, "  /set wordwrap     Enable wordwrap")
-		fmt.Fprintln(os.Stderr, "  /set nowordwrap   Disable wordwrap")
-		fmt.Fprintln(os.Stderr, "  /set format json  Enable JSON mode")
-		fmt.Fprintln(os.Stderr, "  /set noformat     Disable formatting")
-		fmt.Fprintln(os.Stderr, "  /set verbose      Show LLM stats")
-		fmt.Fprintln(os.Stderr, "  /set quiet        Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set parameter ...     Set a parameter")
+		fmt.Fprintln(os.Stderr, "  /set system <string>   Set system prompt")
+		fmt.Fprintln(os.Stderr, "  /set template <string> Set prompt template")
+		fmt.Fprintln(os.Stderr, "  /set history           Enable history")
+		fmt.Fprintln(os.Stderr, "  /set nohistory         Disable history")
+		fmt.Fprintln(os.Stderr, "  /set wordwrap          Enable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set nowordwrap        Disable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set format json       Enable JSON mode")
+		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
+		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -599,6 +644,22 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 		fmt.Fprintln(os.Stderr, "  /show parameters   Show parameters for this model")
 		fmt.Fprintln(os.Stderr, "  /show system       Show system prompt")
 		fmt.Fprintln(os.Stderr, "  /show template     Show prompt template")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	// only list out the most common parameters
+	usageParameters := func() {
+		fmt.Fprintln(os.Stderr, "Available Parameters:")
+		fmt.Fprintln(os.Stderr, "  /set parameter seed <int>             Random number seed")
+		fmt.Fprintln(os.Stderr, "  /set parameter num_predict <int>      Max number of tokens to predict")
+		fmt.Fprintln(os.Stderr, "  /set parameter top_k <int>            Pick from top k num of tokens")
+		fmt.Fprintln(os.Stderr, "  /set parameter top_p <float>          Pick token based on sum of probabilities")
+		fmt.Fprintln(os.Stderr, "  /set parameter num_ctx <int>          Set the context size")
+		fmt.Fprintln(os.Stderr, "  /set parameter temperature <float>    Set creativity level")
+		fmt.Fprintln(os.Stderr, "  /set parameter repeat_penalty <float> How strongly to penalize repetitions")
+		fmt.Fprintln(os.Stderr, "  /set parameter repeat_last_n <int>    Set how far back to look for repetitions")
+		fmt.Fprintln(os.Stderr, "  /set parameter num_gpu <int>          The number of layers to send to the GPU")
+		fmt.Fprintln(os.Stderr, "  /set parameter stop \"<string>\", ...   Set the stop parameters")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -615,6 +676,7 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 	fmt.Print(readline.StartBracketedPaste)
 	defer fmt.Printf(readline.EndBracketedPaste)
 
+	var multiline MultilineState
 	var prompt string
 
 	for {
@@ -649,8 +711,21 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 
 			prompt = strings.TrimPrefix(prompt, `"""`)
 			scanner.Prompt.UseAlt = false
+
+			switch multiline {
+			case MultilineSystem:
+				opts.System = prompt
+				prompt = ""
+				fmt.Println("Set system template.\n")
+			case MultilineTemplate:
+				opts.Template = prompt
+				prompt = ""
+				fmt.Println("Set model template.\n")
+			}
+			multiline = MultilineNone
 		case strings.HasPrefix(line, `"""`) && len(prompt) == 0:
 			scanner.Prompt.UseAlt = true
+			multiline = MultilinePrompt
 			prompt += line + "\n"
 			continue
 		case scanner.Pasting:
@@ -670,10 +745,10 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 				case "nohistory":
 					scanner.HistoryDisable()
 				case "wordwrap":
-					wordWrap = true
+					opts.WordWrap = true
 					fmt.Println("Set 'wordwrap' mode.")
 				case "nowordwrap":
-					wordWrap = false
+					opts.WordWrap = false
 					fmt.Println("Set 'nowordwrap' mode.")
 				case "verbose":
 					cmd.Flags().Set("verbose", "true")
@@ -685,12 +760,59 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 					if len(args) < 3 || args[2] != "json" {
 						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
 					} else {
-						format = args[2]
+						opts.Format = args[2]
 						fmt.Printf("Set format to '%s' mode.\n", args[2])
 					}
 				case "noformat":
-					format = ""
+					opts.Format = ""
 					fmt.Println("Disabled format.")
+				case "parameter":
+					if len(args) < 4 {
+						usageParameters()
+						continue
+					}
+					var params []string
+					for _, p := range args[3:] {
+						params = append(params, p)
+					}
+					fp, err := api.FormatParams(map[string][]string{args[2]: params})
+					if err != nil {
+						fmt.Printf("Couldn't set parameter: %q\n\n", err)
+						continue
+					}
+					fmt.Printf("Set parameter '%s' to '%s'\n\n", args[2], strings.Join(params, ", "))
+					opts.Options[args[2]] = fp[args[2]]
+				case "system", "template":
+					if len(args) < 3 {
+						usageSet()
+						continue
+					}
+					line := strings.Join(args[2:], " ")
+					line = strings.TrimPrefix(line, `"""`)
+					if strings.HasPrefix(args[2], `"""`) {
+						cut, found := strings.CutSuffix(line, `"""`)
+						prompt += cut + "\n"
+						if found {
+							opts.System = prompt
+							if args[1] == "system" {
+								fmt.Println("Set system template.\n")
+							} else {
+								fmt.Println("Set prompt template.\n")
+							}
+							prompt = ""
+						} else {
+							prompt = `"""` + prompt
+							if args[1] == "system" {
+								multiline = MultilineSystem
+							} else {
+								multiline = MultilineTemplate
+							}
+							scanner.Prompt.UseAlt = true
+						}
+					} else {
+						opts.System = line
+						fmt.Println("Set system template.\n")
+					}
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
@@ -705,7 +827,7 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 					fmt.Println("error: couldn't connect to ollama server")
 					return err
 				}
-				resp, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model})
+				resp, err := client.Show(cmd.Context(), &api.ShowRequest{Name: opts.Model})
 				if err != nil {
 					fmt.Println("error: couldn't get model")
 					return err
@@ -724,19 +846,33 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 					if resp.Parameters == "" {
 						fmt.Print("No parameters were specified for this model.\n\n")
 					} else {
+						if len(opts.Options) > 0 {
+							fmt.Println("User defined parameters:")
+							for k, v := range opts.Options {
+								fmt.Printf("%-*s %v\n", 30, k, v)
+							}
+							fmt.Println()
+						}
+						fmt.Println("Model defined parameters:")
 						fmt.Println(resp.Parameters)
 					}
 				case "system":
-					if resp.System == "" {
+					switch {
+					case opts.System != "":
+						fmt.Println(opts.System + "\n")
+					case resp.System != "":
+						fmt.Println(resp.System + "\n")
+					default:
 						fmt.Print("No system prompt was specified for this model.\n\n")
-					} else {
-						fmt.Println(resp.System)
 					}
 				case "template":
-					if resp.Template == "" {
-						fmt.Print("No prompt template was specified for this model.\n\n")
-					} else {
+					switch {
+					case opts.Template != "":
+						fmt.Println(opts.Template + "\n")
+					case resp.Template != "":
 						fmt.Println(resp.Template)
+					default:
+						fmt.Print("No prompt template was specified for this model.\n\n")
 					}
 				default:
 					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
@@ -766,8 +902,9 @@ func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format
 			prompt += line
 		}
 
-		if len(prompt) > 0 && prompt[0] != '/' {
-			if err := generate(cmd, model, prompt, wordWrap, format); err != nil {
+		if len(prompt) > 0 && multiline == MultilineNone {
+			opts.Prompt = prompt
+			if err := generate(cmd, opts); err != nil {
 				return err
 			}
 

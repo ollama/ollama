@@ -40,8 +40,8 @@ func (s *Spinner) String() string {
 		}
 
 		fmt.Fprintf(&sb, "%s", message)
-		if s.messageWidth-sb.Len() >= 0 {
-			sb.WriteString(strings.Repeat(" ", s.messageWidth-sb.Len()))
+		if padding := s.messageWidth - sb.Len(); padding > 0 {
+			sb.WriteString(strings.Repeat(" ", padding))
 		}
 
 		sb.WriteString(" ")

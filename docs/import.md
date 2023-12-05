@@ -43,7 +43,6 @@ Ollama supports a set of model architectures, with support for more coming soon:
 
 - Llama & Mistral
 - Falcon & RW
-- GPT-NeoX
 - BigCode
 
 To view a model's architecture, check the `config.json` file in its HuggingFace repo. You should see an entry under `architectures` (e.g. `LlamaForCausalLM`).
@@ -183,9 +182,6 @@ python convert.py <path to model directory>
 
 # FalconForCausalLM
 python convert-falcon-hf-to-gguf.py <path to model directory>
-
-# GPTNeoXForCausalLM
-python convert-gptneox-hf-to-gguf.py <path to model directory>
 
 # GPTBigCodeForCausalLM
 python convert-starcoder-hf-to-gguf.py <path to model directory>

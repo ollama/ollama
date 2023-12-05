@@ -67,6 +67,20 @@ func ParseModelPath(name string) ModelPath {
 	return mp
 }
 
+var errModelPathInvalid = errors.New("invalid model path")
+
+func (mp ModelPath) Validate() error {
+	if mp.Repository == "" {
+		return fmt.Errorf("%w: model repository name is required", errModelPathInvalid)
+	}
+
+	if strings.Contains(mp.Tag, ":") {
+		return fmt.Errorf("%w: ':' (colon) is not allowed in tag names", errModelPathInvalid)
+	}
+
+	return nil
+}
+
 func (mp ModelPath) GetNamespaceRepository() string {
 	return fmt.Sprintf("%s/%s", mp.Namespace, mp.Repository)
 }
