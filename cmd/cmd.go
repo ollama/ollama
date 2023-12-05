@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -1048,22 +1049,13 @@ func getBase64Image(filePath string) (string, error) {
 
 	contentType := http.DetectContentType(data)
 	allowedTypes := []string{"image/jpeg", "image/jpg", "image/svg+xml", "image/png"}
-	if !contains(allowedTypes, contentType) {
+	if !slices.Contains(allowedTypes, contentType) {
 		return "", fmt.Errorf("invalid image type: %s", contentType)
 	}
 
 	// Convert the image data to base64
 	imgBase64 := base64.StdEncoding.EncodeToString(data)
 	return imgBase64, nil
-}
-
-func contains(s []string, e string) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
 }
 
 func initializeKeypair() error {

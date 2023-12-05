@@ -292,7 +292,7 @@ func GenerateHandler(c *gin.Context) {
 			Format:           req.Format,
 			CheckpointStart:  checkpointStart,
 			CheckpointLoaded: checkpointLoaded,
-			Images:           req.ImageData,
+			Images:           req.Images,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
