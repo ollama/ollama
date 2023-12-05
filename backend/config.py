@@ -6,8 +6,7 @@ from secrets import token_bytes
 from base64 import b64encode
 import os
 
-
-load_dotenv(find_dotenv())
+load_dotenv(find_dotenv("../.env"))
 
 ####################################
 # ENV (dev,test,prod)
@@ -38,7 +37,7 @@ WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.21")
 ####################################
 
 
-WEBUI_AUTH = True if os.environ.get("WEBUI_AUTH", "TRUE") == "TRUE" else False
+WEBUI_AUTH = True if os.environ.get("WEBUI_AUTH", "FALSE") == "TRUE" else False
 
 
 ####################################
