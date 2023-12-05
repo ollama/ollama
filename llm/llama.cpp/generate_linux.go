@@ -21,6 +21,6 @@ package llm
 //go:generate cmake -S ggml -B ggml/build/cuda -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on
 //go:generate cmake --build ggml/build/cuda --target server --config Release
 //go:generate mv ggml/build/cuda/bin/server ggml/build/cuda/bin/ollama-runner
-//go:generate cmake -S gguf -B gguf/build/cuda -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off
+//go:generate cmake -S gguf -B gguf/build/cuda -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DLLAMA_CUDA_PEER_MAX_BATCH_SIZE=0
 //go:generate cmake --build gguf/build/cuda --target server --config Release
 //go:generate mv gguf/build/cuda/bin/server gguf/build/cuda/bin/ollama-runner

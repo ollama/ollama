@@ -76,11 +76,3 @@ const (
 	CharBracketedPasteStart = "00~"
 	CharBracketedPasteEnd   = "01~"
 )
-
-type PasteMode int
-
-const (
-	PastModeOff = iota
-	PasteModeStart
-	PasteModeEnd
-)

@@ -181,6 +181,9 @@ install_cuda_driver_apt() {
         debian)
             status 'Enabling contrib sources...'
             $SUDO sed 's/main/contrib/' < /etc/apt/sources.list | $SUDO tee /etc/apt/sources.list.d/contrib.list > /dev/null
+            if [ -f "/etc/apt/sources.list.d/debian.sources" ]; then
+                $SUDO sed 's/main/contrib/' < /etc/apt/sources.list.d/debian.sources | $SUDO tee /etc/apt/sources.list.d/contrib.sources > /dev/null
+            fi
             ;;
     esac
 
@@ -214,7 +217,7 @@ fi
 
 if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
     case $OS_NAME in
-        centos|rhel) install_cuda_driver_yum 'rhel' $OS_VERSION ;;
+        centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
         rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
         fedora) install_cuda_driver_yum $OS_NAME $OS_VERSION ;;
         amzn) install_cuda_driver_yum 'fedora' '35' ;;
@@ -227,7 +230,8 @@ fi
 if ! lsmod | grep -q nvidia; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
-        centos|rhel|rocky|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
+        centos|rhel|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
         fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
         debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
         *) exit ;;

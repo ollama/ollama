@@ -14,7 +14,7 @@ import (
 )
 
 type LLM interface {
-	Predict(context.Context, []int, string, string, func(api.GenerateResponse)) error
+	Predict(context.Context, PredictRequest, func(PredictResponse)) error
 	Embedding(context.Context, string) ([]float64, error)
 	Encode(context.Context, string) ([]int, error)
 	Decode(context.Context, []int) (string, error)
@@ -41,16 +41,9 @@ func New(workDir, model string, adapters []string, opts api.Options) (LLM, error
 
 	if runtime.GOOS == "darwin" {
 		switch ggml.FileType() {
-		case "Q8_0":
+		case "F32", "Q5_0", "Q5_1", "Q8_0":
 			if ggml.Name() != "gguf" && opts.NumGPU != 0 {
 				// GGML Q8_0 do not support Metal API and will
-				// cause the runner to segmentation fault so disable GPU
-				log.Printf("WARNING: GPU disabled for F32, Q5_0, Q5_1, and Q8_0")
-				opts.NumGPU = 0
-			}
-		case "F32", "Q5_0", "Q5_1":
-			if opts.NumGPU != 0 {
-				// F32, Q5_0, Q5_1, and Q8_0 do not support Metal API and will
 				// cause the runner to segmentation fault so disable GPU
 				log.Printf("WARNING: GPU disabled for F32, Q5_0, Q5_1, and Q8_0")
 				opts.NumGPU = 0

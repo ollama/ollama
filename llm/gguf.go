@@ -335,7 +335,7 @@ func (llm *ggufModel) readArrayV1(r io.Reader) (arr []any, err error) {
 		case ggufTypeUint8:
 			arr = append(arr, llm.readU8(r))
 		case ggufTypeInt8:
-			arr = append(arr, llm.readU8(r))
+			arr = append(arr, llm.readI8(r))
 		case ggufTypeUint16:
 			arr = append(arr, llm.readU16(r))
 		case ggufTypeInt16:
@@ -376,7 +376,7 @@ func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
 		case ggufTypeUint8:
 			arr = append(arr, llm.readU8(r))
 		case ggufTypeInt8:
-			arr = append(arr, llm.readU8(r))
+			arr = append(arr, llm.readI8(r))
 		case ggufTypeUint16:
 			arr = append(arr, llm.readU16(r))
 		case ggufTypeInt16:

@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,12 +36,47 @@ type GenerateRequest struct {
 	Prompt   string `json:"prompt"`
 	System   string `json:"system"`
 	Template string `json:"template"`
-	Context  []int  `json:"context,omitempty"`
+	Context  []int  `json:"context,omitempty"` // DEPRECATED: context is deprecated, use the /chat endpoint instead for chat history
 	Stream   *bool  `json:"stream,omitempty"`
 	Raw      bool   `json:"raw,omitempty"`
 	Format   string `json:"format"`
 
 	Options map[string]interface{} `json:"options"`
+}
+
+type ChatRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+	Template string    `json:"template"`
+	Stream   *bool     `json:"stream,omitempty"`
+	Format   string    `json:"format"`
+
+	Options map[string]interface{} `json:"options"`
+}
+
+type Message struct {
+	Role    string `json:"role"` // one of ["system", "user", "assistant"]
+	Content string `json:"content"`
+}
+
+type ChatResponse struct {
+	Model     string    `json:"model"`
+	CreatedAt time.Time `json:"created_at"`
+	Message   *Message  `json:"message,omitempty"`
+
+	Done    bool  `json:"done"`
+	Context []int `json:"context,omitempty"`
+
+	EvalMetrics
+}
+
+type EvalMetrics struct {
+	TotalDuration      time.Duration `json:"total_duration,omitempty"`
+	LoadDuration       time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
+	EvalCount          int           `json:"eval_count,omitempty"`
+	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
 // Options specfied in GenerateRequest, if you add a new option here add it to the API docs also
@@ -101,9 +137,10 @@ type EmbeddingResponse struct {
 }
 
 type CreateRequest struct {
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	Stream *bool  `json:"stream,omitempty"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Modelfile string `json:"modelfile"`
+	Stream    *bool  `json:"stream,omitempty"`
 }
 
 type DeleteRequest struct {
@@ -173,39 +210,34 @@ type GenerateResponse struct {
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`
 
-	TotalDuration      time.Duration `json:"total_duration,omitempty"`
-	LoadDuration       time.Duration `json:"load_duration,omitempty"`
-	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int           `json:"eval_count,omitempty"`
-	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	EvalMetrics
 }
 
-func (r *GenerateResponse) Summary() {
-	if r.TotalDuration > 0 {
-		fmt.Fprintf(os.Stderr, "total duration:       %v\n", r.TotalDuration)
+func (m *EvalMetrics) Summary() {
+	if m.TotalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "total duration:       %v\n", m.TotalDuration)
 	}
 
-	if r.LoadDuration > 0 {
-		fmt.Fprintf(os.Stderr, "load duration:        %v\n", r.LoadDuration)
+	if m.LoadDuration > 0 {
+		fmt.Fprintf(os.Stderr, "load duration:        %v\n", m.LoadDuration)
 	}
 
-	if r.PromptEvalCount > 0 {
-		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", r.PromptEvalCount)
+	if m.PromptEvalCount > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", m.PromptEvalCount)
 	}
 
-	if r.PromptEvalDuration > 0 {
-		fmt.Fprintf(os.Stderr, "prompt eval duration: %s\n", r.PromptEvalDuration)
-		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(r.PromptEvalCount)/r.PromptEvalDuration.Seconds())
+	if m.PromptEvalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval duration: %s\n", m.PromptEvalDuration)
+		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(m.PromptEvalCount)/m.PromptEvalDuration.Seconds())
 	}
 
-	if r.EvalCount > 0 {
-		fmt.Fprintf(os.Stderr, "eval count:           %d token(s)\n", r.EvalCount)
+	if m.EvalCount > 0 {
+		fmt.Fprintf(os.Stderr, "eval count:           %d token(s)\n", m.EvalCount)
 	}
 
-	if r.EvalDuration > 0 {
-		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", r.EvalDuration)
-		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(r.EvalCount)/r.EvalDuration.Seconds())
+	if m.EvalDuration > 0 {
+		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", m.EvalDuration)
+		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
 	}
 }
 
@@ -360,4 +392,64 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	}
 
 	return nil
+}
+
+// FormatParams converts specified parameter options to their correct types
+func FormatParams(params map[string][]string) (map[string]interface{}, error) {
+	opts := Options{}
+	valueOpts := reflect.ValueOf(&opts).Elem() // names of the fields in the options struct
+	typeOpts := reflect.TypeOf(opts)           // types of the fields in the options struct
+
+	// build map of json struct tags to their types
+	jsonOpts := make(map[string]reflect.StructField)
+	for _, field := range reflect.VisibleFields(typeOpts) {
+		jsonTag := strings.Split(field.Tag.Get("json"), ",")[0]
+		if jsonTag != "" {
+			jsonOpts[jsonTag] = field
+		}
+	}
+
+	out := make(map[string]interface{})
+	// iterate params and set values based on json struct tags
+	for key, vals := range params {
+		if opt, ok := jsonOpts[key]; !ok {
+			return nil, fmt.Errorf("unknown parameter '%s'", key)
+		} else {
+			field := valueOpts.FieldByName(opt.Name)
+			if field.IsValid() && field.CanSet() {
+				switch field.Kind() {
+				case reflect.Float32:
+					floatVal, err := strconv.ParseFloat(vals[0], 32)
+					if err != nil {
+						return nil, fmt.Errorf("invalid float value %s", vals)
+					}
+
+					out[key] = float32(floatVal)
+				case reflect.Int:
+					intVal, err := strconv.ParseInt(vals[0], 10, 64)
+					if err != nil {
+						return nil, fmt.Errorf("invalid int value %s", vals)
+					}
+
+					out[key] = intVal
+				case reflect.Bool:
+					boolVal, err := strconv.ParseBool(vals[0])
+					if err != nil {
+						return nil, fmt.Errorf("invalid bool value %s", vals)
+					}
+
+					out[key] = boolVal
+				case reflect.String:
+					out[key] = vals[0]
+				case reflect.Slice:
+					// TODO: only string slices are supported right now
+					out[key] = vals
+				default:
+					return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
+				}
+			}
+		}
+	}
+
+	return out, nil
 }

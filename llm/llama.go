@@ -43,9 +43,10 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	// IMPORTANT: the order of the runners in the array is the priority order
 	switch runtime.GOOS {
 	case "darwin":
-		runners = []ModelRunner{
-			{Path: path.Join(buildPath, "metal", "bin", "ollama-runner")},
-			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
+		if runtime.GOARCH == "arm64" {
+			runners = []ModelRunner{{Path: path.Join(buildPath, "metal", "bin", "ollama-runner")}}
+		} else {
+			runners = []ModelRunner{{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")}}
 		}
 	case "linux":
 		runners = []ModelRunner{
@@ -55,6 +56,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	case "windows":
 		// TODO: select windows GPU runner here when available
 		runners = []ModelRunner{
+			{Path: path.Join(buildPath, "cuda", "bin", "Release", "ollama-runner.exe"), Accelerated: true},
 			{Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
 		}
 	default:
@@ -197,7 +199,7 @@ type llama struct {
 }
 
 var (
-	errNvidiaSMI     = errors.New("nvidia-smi command failed")
+	errNvidiaSMI     = errors.New("warning: gpu support may not be enabled, check that you have installed GPU drivers: nvidia-smi command failed")
 	errAvailableVRAM = errors.New("not enough VRAM available, falling back to CPU only")
 )
 
@@ -240,7 +242,7 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	if opts.NumGPU != -1 {
 		return opts.NumGPU
 	}
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
 		freeBytes, err := CheckVRAM()
 		if err != nil {
 			if !errors.Is(err, errNvidiaSMI) {
@@ -312,6 +314,10 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
 		"--embedding",
+	}
+
+	if opts.MainGPU > 0 {
+		params = append(params, "--main-gpu", fmt.Sprintf("%d", opts.MainGPU))
 	}
 
 	if opts.RopeFrequencyBase > 0 {
@@ -497,24 +503,35 @@ type prediction struct {
 
 const maxBufferSize = 512 * format.KiloByte
 
-func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, outputFormat string, fn func(api.GenerateResponse)) error {
-	prevConvo, err := llm.Decode(ctx, prevContext)
-	if err != nil {
-		return err
-	}
+type PredictRequest struct {
+	Model            string
+	Prompt           string
+	Format           string
+	CheckpointStart  time.Time
+	CheckpointLoaded time.Time
+}
 
-	// Remove leading spaces from prevConvo if present
-	prevConvo = strings.TrimPrefix(prevConvo, " ")
+type PredictResponse struct {
+	Model              string
+	CreatedAt          time.Time
+	TotalDuration      time.Duration
+	LoadDuration       time.Duration
+	Content            string
+	Done               bool
+	PromptEvalCount    int
+	PromptEvalDuration time.Duration
+	EvalCount          int
+	EvalDuration       time.Duration
+	Context            []int
+}
 
-	var nextContext strings.Builder
-	nextContext.WriteString(prevConvo)
-	nextContext.WriteString(prompt)
-
+func (llm *llama) Predict(ctx context.Context, predict PredictRequest, fn func(PredictResponse)) error {
 	request := map[string]any{
-		"prompt":            nextContext.String(),
+		"prompt":            predict.Prompt,
 		"stream":            true,
 		"n_predict":         llm.NumPredict,
 		"n_keep":            llm.NumKeep,
+		"main_gpu":          llm.MainGPU,
 		"temperature":       llm.Temperature,
 		"top_k":             llm.TopK,
 		"top_p":             llm.TopP,
@@ -533,7 +550,7 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"grammar":           llm.Grammar,
 	}
 
-	if outputFormat == "json" {
+	if predict.Format == "json" {
 		// If json schema is provided, convert it to a grammar and use that
 		if llm.Schema != "" {
 			if llm.Grammar != "" {
@@ -602,25 +619,25 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 				}
 
 				if p.Content != "" {
-					fn(api.GenerateResponse{Response: p.Content})
-					nextContext.WriteString(p.Content)
+					fn(PredictResponse{
+						Model:     predict.Model,
+						CreatedAt: time.Now().UTC(),
+						Content:   p.Content,
+					})
 				}
 
 				if p.Stop {
-					embd, err := llm.Encode(ctx, nextContext.String())
-					if err != nil {
-						return fmt.Errorf("encoding context: %v", err)
-					}
+					fn(PredictResponse{
+						Model:         predict.Model,
+						CreatedAt:     time.Now().UTC(),
+						TotalDuration: time.Since(predict.CheckpointStart),
 
-					fn(api.GenerateResponse{
 						Done:               true,
-						Context:            embd,
 						PromptEvalCount:    p.Timings.PromptN,
 						PromptEvalDuration: parseDurationMs(p.Timings.PromptMS),
 						EvalCount:          p.Timings.PredictedN,
 						EvalDuration:       parseDurationMs(p.Timings.PredictedMS),
 					})
-
 					return nil
 				}
 			}

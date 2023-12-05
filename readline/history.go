@@ -43,9 +43,12 @@ func (h *History) Init() error {
 	}
 
 	path := filepath.Join(home, ".ollama", "history")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
 	h.Filename = path
 
-	//todo check if the file exists
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0600)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
