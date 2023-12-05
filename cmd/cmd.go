@@ -600,7 +600,13 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 	}
 
 	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
-	ctx = context.WithValue(ctx, "multimodal", latest.MultiModal)
+
+	for _, f := range latest.ModelConfiguration.ModelFamilies {
+		if f == "clip" {
+			ctx = context.WithValue(ctx, "multimodal", true)
+		}
+	}
+
 	cmd.SetContext(ctx)
 
 	return nil
