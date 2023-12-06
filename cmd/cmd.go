@@ -935,7 +935,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 				if err != nil {
 					return err
 				}
-				prompt = newPrompt
+				opts.Prompt = newPrompt
 
 				// reset the context if we find another image
 				if len(images) > 0 {
