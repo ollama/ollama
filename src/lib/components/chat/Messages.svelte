@@ -317,7 +317,17 @@
 		</div>
 		<div class=" mt-2 text-2xl text-gray-800 dark:text-gray-100 font-semibold">
 			{#if selectedModelfile}
-				{selectedModelfile.desc}
+				<span class=" capitalize">
+					{selectedModelfile.title}
+				</span>
+				<div class="mt-0.5 text-base font-normal text-gray-600 dark:text-gray-400">
+					{selectedModelfile.desc}
+				</div>
+				{#if selectedModelfile.user}
+					<div class="mt-0.5 text-sm font-normal text-gray-500 dark:text-gray-500">
+						By <a href="https://ollamahub.com/">@{selectedModelfile.user.username}</a>
+					</div>
+				{/if}
 			{:else}
 				How can I help you today?
 			{/if}
