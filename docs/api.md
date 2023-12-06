@@ -3,6 +3,7 @@
 ## Endpoints
 
 - [Generate a completion](#generate-a-completion)
+- [Send Chat Messages](#send-chat-messages)
 - [Create a Model](#create-a-model)
 - [List Local Models](#list-local-models)
 - [Show Model Information](#show-model-information)
