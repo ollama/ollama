@@ -325,7 +325,11 @@
 				</div>
 				{#if selectedModelfile.user}
 					<div class="mt-0.5 text-sm font-normal text-gray-500 dark:text-gray-500">
-						By <a href="https://ollamahub.com/">@{selectedModelfile.user.username}</a>
+						By <a href="https://ollamahub.com/"
+							>{selectedModelfile.user.name
+								? selectedModelfile.user.name
+								: `@${selectedModelfile.user.username}`}</a
+						>
 					</div>
 				{/if}
 			{:else}
