@@ -52,6 +52,8 @@
 		num_ctx: ''
 	};
 
+	let modelfileCreator = null;
+
 	$: tagName = title !== '' ? `${title.replace(/\s+/g, '-').toLowerCase()}:latest` : '';
 
 	$: if (!raw) {
@@ -202,7 +204,8 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 					desc: desc,
 					content: content,
 					suggestionPrompts: suggestions.filter((prompt) => prompt.content !== ''),
-					categories: Object.keys(categories).filter((category) => categories[category])
+					categories: Object.keys(categories).filter((category) => categories[category]),
+					user: modelfileCreator !== null ? modelfileCreator : undefined
 				});
 				await goto('/modelfiles');
 			}
@@ -237,6 +240,10 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 							}
 					  ];
 
+			modelfileCreator = {
+				username: modelfile.user.username,
+				name: modelfile.user.name
+			};
 			for (const category of modelfile.categories) {
 				categories[category.toLowerCase()] = true;
 			}

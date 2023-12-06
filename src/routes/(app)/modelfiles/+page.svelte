@@ -7,7 +7,7 @@
 
 	const deleteModelHandler = async (tagName) => {
 		let success = null;
-		const res = await fetch(`${OLLAMA_API_BASE_URL}/delete`, {
+		const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/delete`, {
 			method: 'DELETE',
 			headers: {
 				'Content-Type': 'text/event-stream',
