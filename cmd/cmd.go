@@ -565,14 +565,14 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 		images = append(images, api.ImageData(i.Data))
 	}
 	request := api.GenerateRequest{
-		Model:     opts.Model,
-		Prompt:    opts.Prompt,
-		Context:   generateContext,
-		Format:    opts.Format,
-		System:    opts.System,
-		Template:  opts.Template,
-		Options:   opts.Options,
-		ImageData: images,
+		Model:    opts.Model,
+		Prompt:   opts.Prompt,
+		Context:  generateContext,
+		Format:   opts.Format,
+		System:   opts.System,
+		Template: opts.Template,
+		Options:  opts.Options,
+		Images:   images,
 	}
 
 	if err := client.Generate(ctx, &request, fn); err != nil {
