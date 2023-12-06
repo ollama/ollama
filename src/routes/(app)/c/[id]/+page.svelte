@@ -179,6 +179,39 @@
 			})
 		});
 
+		// const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/chat`, {
+		// 	method: 'POST',
+		// 	headers: {
+		// 		'Content-Type': 'text/event-stream',
+		// 		...($settings.authHeader && { Authorization: $settings.authHeader }),
+		// 		...($user && { Authorization: `Bearer ${localStorage.token}` })
+		// 	},
+		// 	body: JSON.stringify({
+		// 		model: model,
+		// 		messages: [
+		// 			$settings.system
+		// 				? {
+		// 						role: 'system',
+		// 						content: $settings.system
+		// 				  }
+		// 				: undefined,
+		// 			...messages
+		// 		]
+		// 			.filter((message) => message)
+		// 			.map((message) => ({ role: message.role, content: message.content })),
+		// 		options: {
+		// 			seed: $settings.seed ?? undefined,
+		// 			temperature: $settings.temperature ?? undefined,
+		// 			repeat_penalty: $settings.repeat_penalty ?? undefined,
+		// 			top_k: $settings.top_k ?? undefined,
+		// 			top_p: $settings.top_p ?? undefined,
+		// 			num_ctx: $settings.num_ctx ?? undefined,
+		// 			...($settings.options ?? {})
+		// 		},
+		// 		format: $settings.requestFormat ?? undefined
+		// 	})
+		// });
+
 		const reader = res.body
 			.pipeThrough(new TextDecoderStream())
 			.pipeThrough(splitStream('\n'))
