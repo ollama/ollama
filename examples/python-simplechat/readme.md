@@ -17,7 +17,7 @@ With the **generate** endpoint, you need to provide a `prompt`. But with **chat*
 
 The final JSON object doesn't provide the full content, so you will need to build the content yourself.
 
-In the **main** function, we collect `user_input` and add it as a message to our messages and that is passed to the chat function. And the output is added as another message.
+In the **main** function, we collect `user_input` and add it as a message to our messages and that is passed to the chat function. When the LLM is done responding the output is added as another message.
 
 ## Next Steps
 
