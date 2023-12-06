@@ -46,6 +46,8 @@
 				currentMessage.parentId !== null ? history.messages[currentMessage.parentId] : null;
 		}
 		messages = _messages;
+	} else {
+		messages = [];
 	}
 
 	// onMount(async () => {
@@ -113,13 +115,13 @@
 	// Ollama functions
 	//////////////////////////
 
-	const sendPrompt = async (userPrompt, parentId) => {
+	const sendPrompt = async (userPrompt, parentId, _chatId) => {
 		await Promise.all(
 			selectedModels.map(async (model) => {
 				if (model.includes('gpt-')) {
-					await sendPromptOpenAI(model, userPrompt, parentId);
+					await sendPromptOpenAI(model, userPrompt, parentId, _chatId);
 				} else {
-					await sendPromptOllama(model, userPrompt, parentId);
+					await sendPromptOllama(model, userPrompt, parentId, _chatId);
 				}
 			})
 		);
@@ -127,7 +129,8 @@
 		await chats.set(await $db.getChats());
 	};
 
-	const sendPromptOllama = async (model, userPrompt, parentId) => {
+	const sendPromptOllama = async (model, userPrompt, parentId, _chatId) => {
+		console.log('sendPromptOllama');
 		let responseMessageId = uuidv4();
 
 		let responseMessage = {
@@ -178,6 +181,39 @@
 						: undefined
 			})
 		});
+
+		// const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/chat`, {
+		// 	method: 'POST',
+		// 	headers: {
+		// 		'Content-Type': 'text/event-stream',
+		// 		...($settings.authHeader && { Authorization: $settings.authHeader }),
+		// 		...($user && { Authorization: `Bearer ${localStorage.token}` })
+		// 	},
+		// 	body: JSON.stringify({
+		// 		model: model,
+		// 		messages: [
+		// 			$settings.system
+		// 				? {
+		// 						role: 'system',
+		// 						content: $settings.system
+		// 				  }
+		// 				: undefined,
+		// 			...messages
+		// 		]
+		// 			.filter((message) => message)
+		// 			.map((message) => ({ role: message.role, content: message.content })),
+		// 		options: {
+		// 			seed: $settings.seed ?? undefined,
+		// 			temperature: $settings.temperature ?? undefined,
+		// 			repeat_penalty: $settings.repeat_penalty ?? undefined,
+		// 			top_k: $settings.top_k ?? undefined,
+		// 			top_p: $settings.top_p ?? undefined,
+		// 			num_ctx: $settings.num_ctx ?? undefined,
+		// 			...($settings.options ?? {})
+		// 		},
+		// 		format: $settings.requestFormat ?? undefined
+		// 	})
+		// });
 
 		const reader = res.body
 			.pipeThrough(new TextDecoderStream())
@@ -230,7 +266,7 @@
 				window.scrollTo({ top: document.body.scrollHeight });
 			}
 
-			await $db.updateChatById($chatId, {
+			await $db.updateChatById(_chatId, {
 				title: title === '' ? 'New Chat' : title,
 				models: selectedModels,
 				system: $settings.system ?? undefined,
@@ -255,12 +291,12 @@
 		}
 
 		if (messages.length == 2 && messages.at(1).content !== '') {
-			window.history.replaceState(history.state, '', `/c/${$chatId}`);
-			await generateChatTitle($chatId, userPrompt);
+			window.history.replaceState(history.state, '', `/c/${_chatId}`);
+			await generateChatTitle(_chatId, userPrompt);
 		}
 	};
 
-	const sendPromptOpenAI = async (model, userPrompt, parentId) => {
+	const sendPromptOpenAI = async (model, userPrompt, parentId, _chatId) => {
 		if ($settings.OPENAI_API_KEY) {
 			if (models) {
 				let responseMessageId = uuidv4();
@@ -360,7 +396,7 @@
 						window.scrollTo({ top: document.body.scrollHeight });
 					}
 
-					await $db.updateChatById($chatId, {
+					await $db.updateChatById(_chatId, {
 						title: title === '' ? 'New Chat' : title,
 						models: selectedModels,
 						system: $settings.system ?? undefined,
@@ -386,15 +422,16 @@
 				}
 
 				if (messages.length == 2) {
-					window.history.replaceState(history.state, '', `/c/${$chatId}`);
-					await setChatTitle($chatId, userPrompt);
+					window.history.replaceState(history.state, '', `/c/${_chatId}`);
+					await setChatTitle(_chatId, userPrompt);
 				}
 			}
 		}
 	};
 
 	const submitPrompt = async (userPrompt) => {
-		console.log('submitPrompt');
+		const _chatId = JSON.parse(JSON.stringify($chatId));
+		console.log('submitPrompt', _chatId);
 
 		if (selectedModels.includes('')) {
 			toast.error('Model not selected');
@@ -409,7 +446,8 @@
 				parentId: messages.length !== 0 ? messages.at(-1).id : null,
 				childrenIds: [],
 				role: 'user',
-				content: userPrompt
+				content: userPrompt,
+				files: files.length > 0 ? files : undefined
 			};
 
 			if (messages.length !== 0) {
@@ -419,11 +457,10 @@
 			history.messages[userMessageId] = userMessage;
 			history.currentId = userMessageId;
 
-			prompt = '';
-
-			if (messages.length == 0) {
+			await tick();
+			if (messages.length == 1) {
 				await $db.createNewChat({
-					id: $chatId,
+					id: _chatId,
 					title: 'New Chat',
 					models: selectedModels,
 					system: $settings.system ?? undefined,
@@ -441,11 +478,14 @@
 				});
 			}
 
+			prompt = '';
+			files = [];
+
 			setTimeout(() => {
 				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 			}, 50);
 
-			await sendPrompt(userPrompt, userMessageId);
+			await sendPrompt(userPrompt, userMessageId, _chatId);
 		}
 	};
 
@@ -455,7 +495,9 @@
 	};
 
 	const regenerateResponse = async () => {
-		console.log('regenerateResponse');
+		const _chatId = JSON.parse(JSON.stringify($chatId));
+		console.log('regenerateResponse', _chatId);
+
 		if (messages.length != 0 && messages.at(-1).done == true) {
 			messages.splice(messages.length - 1, 1);
 			messages = messages;
@@ -463,7 +505,7 @@
 			let userMessage = messages.at(-1);
 			let userPrompt = userMessage.content;
 
-			await sendPrompt(userPrompt, userMessage.id);
+			await sendPrompt(userPrompt, userMessage.id, _chatId);
 		}
 	};
 
