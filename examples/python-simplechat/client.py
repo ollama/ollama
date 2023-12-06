@@ -32,7 +32,6 @@ def chat(messages):
 
 def main():
     messages = []
-    )  # the context stores a conversation history, you can use this to make the model more context aware
     while True:
         user_input = input("Enter a prompt: ")
         print()
