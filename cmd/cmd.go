@@ -38,10 +38,7 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
-type ImageData struct {
-	Data []byte `json:"data"`
-	Path string `json:"path"`
-}
+type ImageData []byte
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
@@ -561,7 +558,7 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 
 	images := make([]api.ImageData, 0)
 	for _, i := range opts.Images {
-		images = append(images, api.ImageData(i.Data))
+		images = append(images, api.ImageData(i))
 	}
 	request := api.GenerateRequest{
 		Model:    opts.Model,
@@ -1004,7 +1001,7 @@ func extractFileNames(input string) (string, []ImageData, error) {
 		}
 		fmt.Printf("Added image '%s'\n", nfp)
 		input = strings.ReplaceAll(input, fp, "")
-		imgs = append(imgs, ImageData{Data: data, Path: nfp})
+		imgs = append(imgs, data)
 	}
 	return input, imgs, nil
 }
