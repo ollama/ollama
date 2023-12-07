@@ -30,7 +30,7 @@ async function chat(messages: Message[]): Promise<Message> {
   if (!reader) {
     throw new Error("Failed to read response body")
   }
-  const content: string[] = []
+  let content = ""
   while (true) {
     const { done, value } = await reader.read()
     if (done) {
@@ -41,7 +41,7 @@ async function chat(messages: Message[]): Promise<Message> {
 
     if (json.done === false) {
       process.stdout.write(json.message.content);
-      content.push(json.message.content)
+      content += json.message.content
     }
 
   }
