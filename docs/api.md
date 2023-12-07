@@ -291,7 +291,7 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-## Send Chat Messages
+## Send Chat Messages (coming in 0.1.14)
 
 ```shell
 POST /api/chat

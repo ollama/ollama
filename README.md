@@ -214,13 +214,13 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-Or send a chat message:
+Or send a chat message (coming in 0.1.14):
 
 ```
 curl http://localhost:11434/api/chat -d '{
   "model": "mistral",
-  "messages": [ 
-    { "role": "user", "content": "why is the sky blue?" } 
+  "messages": [
+    { "role": "user", "content": "why is the sky blue?" }
   ]
 }'
 ```
