@@ -42,6 +42,24 @@
 		await modelfiles.set($modelfiles.filter((modelfile) => modelfile.tagName != tagName));
 		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
 	};
+
+	const shareModelfile = async (modelfile) => {
+		toast.success('Redirecting you to OllamaHub');
+
+		const url = 'https://ollamahub.com';
+
+		const tab = await window.open(`${url}/create`, '_blank');
+		window.addEventListener(
+			'message',
+			(event) => {
+				if (event.origin !== url) return;
+				if (event.data === 'loaded') {
+					tab.postMessage(JSON.stringify(modelfile), '*');
+				}
+			},
+			false
+		);
+	};
 </script>
 
 <div class="min-h-screen w-full flex justify-center dark:text-white">
@@ -106,6 +124,16 @@
 							href={`/modelfiles/edit?tag=${modelfile.tagName}`}
 						>
 							Edit</a
+						>
+
+						<button
+							class=" w-fit text-sm px-3 py-2 border dark:border-gray-600 rounded-xl"
+							type="button"
+							on:click={() => {
+								shareModelfile(modelfile);
+							}}
+						>
+							Share</button
 						>
 
 						<button
