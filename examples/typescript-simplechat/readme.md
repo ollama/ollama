@@ -2,6 +2,14 @@
 
 The **chat** endpoint is one of two ways to generate text from an LLM with Ollama. At a high level you provide the endpoint an array of message objects with a role and content specified. Then with each output and prompt, you add more messages, which builds up the history.
 
+## Run the Example
+
+There are a few ways to run this, just like any Typescript code:
+
+1. Compile with `tsc` and then run it with `node client.js`.
+2. Install `tsx` and run it with `tsx client.ts`.
+3. Install `bun` and run it with `bun client.ts`.
+
 ## Review the Code
 
 You can see in the **chat** function that is actually calling the endpoint is simply done with:
