@@ -29,6 +29,7 @@
 
 	let title = '';
 	let prompt = '';
+	let files = [];
 
 	let messages = [];
 	let history = {
