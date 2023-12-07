@@ -4,7 +4,7 @@ The **chat** endpoint is one of two ways to generate text from an LLM with Ollam
 
 ## Review the Code
 
-You can see in the **chat** function that actually calling the endpoint is done simply with:
+You can see in the **chat** function that is actually calling the endpoint is simply done with:
 
 ```typescript
 const body = {
