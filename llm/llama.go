@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -574,7 +575,7 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 	imageData := llm.ImageData
 	if len(predict.Images) > 0 {
 		for cnt, i := range predict.Images {
-			data := fmt.Sprintf("%s", i)
+			data := base64.StdEncoding.EncodeToString(i)
 			imageData = append(imageData, ImageData{Data: data, ID: cnt})
 		}
 	}

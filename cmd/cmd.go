@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -40,7 +39,7 @@ import (
 )
 
 type ImageData struct {
-	Data string `json:"data"`
+	Data []byte `json:"data"`
 	Path string `json:"path"`
 }
 
@@ -946,6 +945,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 				}
 				if len(opts.Images) == 0 {
 					fmt.Println("This model requires you to add a jpeg, png, or svg image.\n")
+					prompt = ""
 					continue
 				}
 			}
@@ -994,7 +994,7 @@ func extractFileNames(input string) (string, []ImageData, error) {
 
 	for _, fp := range filePaths {
 		nfp := normalizeFilePath(fp)
-		data, err := getBase64Image(nfp)
+		data, err := getImageData(nfp)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -1035,33 +1035,51 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 	return server.Serve(ln, origins)
 }
 
-func getBase64Image(filePath string) (string, error) {
-	_, err := os.Stat(filePath)
-	if err != nil {
-		fmt.Printf("Couldn't find image %s\n", filePath)
-		return "", err
-	}
-
+func getImageData(filePath string) ([]byte, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(file)
+	buf := make([]byte, 512)
+	n, err := file.Read(buf)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	contentType := http.DetectContentType(data)
+	if n != 512 {
+		return nil, fmt.Errorf("invalid image type")
+	}
+	contentType := http.DetectContentType(buf)
 	allowedTypes := []string{"image/jpeg", "image/jpg", "image/svg+xml", "image/png"}
 	if !slices.Contains(allowedTypes, contentType) {
-		return "", fmt.Errorf("invalid image type: %s", contentType)
+		return nil, fmt.Errorf("invalid image type: %s", contentType)
 	}
 
-	// Convert the image data to base64
-	imgBase64 := base64.StdEncoding.EncodeToString(data)
-	return imgBase64, nil
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if the file size exceeds 100MB
+	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
+	if info.Size() > maxSize {
+		return nil, fmt.Errorf("file size exceeds maximum limit (100MB).")
+	}
+
+	buf = make([]byte, info.Size())
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = io.ReadFull(file, buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
 }
 
 func initializeKeypair() error {

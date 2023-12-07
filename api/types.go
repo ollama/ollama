@@ -31,7 +31,7 @@ func (e StatusError) Error() string {
 	}
 }
 
-type ImageData string
+type ImageData []byte
 
 type GenerateRequest struct {
 	Model    string      `json:"model"`
