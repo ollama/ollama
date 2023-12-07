@@ -42,7 +42,6 @@ async function chat(messages: Message[]): Promise<Message> {
     if (json.done === false) {
       process.stdout.write(json.message.content);
       content.push(json.message.content)
-      // messages.push({role: "system", content: text})
     }
 
   }
