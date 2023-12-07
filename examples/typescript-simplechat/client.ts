@@ -45,7 +45,7 @@ async function chat(messages: Message[]): Promise<Message> {
     }
 
   }
-  return { role: "assistant", content: content.join("") };
+  return { role: "assistant", content: content };
 }
 
 async function askQuestion(): Promise<void> {
