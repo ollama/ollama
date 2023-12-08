@@ -277,7 +277,7 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			if r.Done && !req.Raw {
-				embd, err := loaded.runner.Encode(c.Request.Context(), req.Prompt+generated.String())
+				embd, err := loaded.runner.Encode(c.Request.Context(), prompt+generated.String())
 				if err != nil {
 					ch <- gin.H{"error": err.Error()}
 					return
