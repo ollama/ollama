@@ -14,11 +14,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
 
 	"golang.org/x/exp/slices"
 
@@ -58,8 +58,28 @@ type PromptVars struct {
 	First    bool
 }
 
-// responseTagRegex matches the {{ .Response }} tag in a template, allowing for whitespace
-var responseTagRegex = regexp.MustCompile(`{{\s*\.Response\s*}}`)
+// extractParts extracts the parts of the template before and after the {{.Response}} node.
+func extractParts(tmplStr string) (pre string, post string, err error) {
+	tmpl, err := template.New("").Parse(tmplStr)
+	if err != nil {
+		return "", "", err
+	}
+
+	var foundResponse bool
+
+	for _, node := range tmpl.Tree.Root.Nodes {
+		if node.Type() == parse.NodeAction && node.String() == "{{.Response}}" {
+			foundResponse = true
+		}
+		if !foundResponse {
+			pre += node.String()
+		} else {
+			post += node.String()
+		}
+	}
+
+	return pre, post, nil
+}
 
 func Prompt(promptTemplate string, p PromptVars) (string, error) {
 	var prompt strings.Builder
@@ -81,46 +101,46 @@ func Prompt(promptTemplate string, p PromptVars) (string, error) {
 		return "", err
 	}
 	prompt.WriteString(sb.String())
-	if responseTagRegex.FindStringIndex(promptTemplate) == nil {
-		// append the response to the end of the prompt if not templated
+
+	if !strings.Contains(prompt.String(), p.Response) {
+		// if the response is not in the prompt template, append it to the end
 		prompt.WriteString(p.Response)
 	}
 
 	return prompt.String(), nil
 }
 
-// Prompt returns a prompt string given a template and a set of variables, if response is not in the template it is appended to the end when set in the variables
-func (m *Model) Prompt(p PromptVars) (string, error) {
+// PreResponsePrompt returns the prompt before the response tag
+func (m *Model) PreResponsePrompt(p PromptVars) (string, error) {
 	if p.System == "" {
 		// use the default system prompt for this model if one is not specified
 		p.System = m.System
 	}
-	return Prompt(m.Template, p)
-}
-
-// PreResponsePrompt returns the prompt before the response tag
-func (m *Model) PreResponsePrompt(p PromptVars) (string, error) {
-	// Find the index of the first occurrence of the response tag
-	loc := responseTagRegex.FindStringIndex(m.Template)
-	if loc != nil {
-		// Extract the part of the template before {{ .Response }}
-		return Prompt(m.Template[:loc[0]], p)
+	pre, _, err := extractParts(m.Template)
+	if err != nil {
+		return "", err
 	}
 
-	// If {{ .Response }} is not in the template, just apply the template to the prompt
-	return m.Prompt(p)
+	return Prompt(pre, p)
 }
 
 // PostResponseTemplate returns the template after the response tag
-func (m *Model) PostResponseTemplate(response string) (string, error) {
-	// Find the index of the first occurrence of the response tag
-	loc := responseTagRegex.FindStringIndex(m.Template)
-	if loc != nil {
-		return Prompt(m.Template[loc[0]:], PromptVars{Response: response})
+func (m *Model) PostResponseTemplate(p PromptVars) (string, error) {
+	if p.System == "" {
+		// use the default system prompt for this model if one is not specified
+		p.System = m.System
+	}
+	_, post, err := extractParts(m.Template)
+	if err != nil {
+		return "", err
 	}
 
-	// If {{ .Response }} is not in the template, the response does not need to be templated
-	return response, nil
+	if post == "" {
+		// if there is no post-response template, return the provided response
+		return p.Response, nil
+	}
+
+	return Prompt(post, p)
 }
 
 func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) {
@@ -128,7 +148,8 @@ func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) 
 	var prompt strings.Builder
 	var currentImages []api.ImageData
 	currentVars := PromptVars{
-		First: true,
+		First:  true,
+		System: m.System,
 	}
 
 	writePrompt := func() error {
