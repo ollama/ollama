@@ -64,6 +64,11 @@ func (m *Model) Prompt(p PromptVars) (string, error) {
 		return "", err
 	}
 
+	if p.System == "" {
+		// use the default system prompt for this model if one is not specified
+		p.System = m.System
+	}
+
 	vars := map[string]any{
 		"System":   p.System,
 		"Prompt":   p.Prompt,
