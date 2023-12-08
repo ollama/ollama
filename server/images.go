@@ -98,7 +98,7 @@ func (m *Model) ChatPrompt(msgs []api.Message) (string, error) {
 	}
 
 	for _, msg := range msgs {
-		switch msg.Role {
+		switch strings.ToLower(msg.Role) {
 		case "system":
 			if currentVars.System != "" {
 				if err := writePrompt(); err != nil {
