@@ -14,6 +14,12 @@ html {
 	word-break: break-word;
 }
 
+code {
+	white-space-collapse: preserve !important;
+	white-space: nowrap;
+	width: auto;
+}
+
 math {
 	margin-top: 1rem;
 }
@@ -31,8 +37,8 @@ math {
 }
 
 ::-webkit-scrollbar {
-	height: 1rem;
-	width: 0.5rem;
+	height: 0.45rem;
+	width: 0.35rem;
 }
 
 ::-webkit-scrollbar-track {
