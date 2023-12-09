@@ -14,6 +14,14 @@ html {
 	word-break: break-word;
 }
 
+code {
+	white-space-collapse: preserve !important;
+	/* text-wrap: nowrap !important; */
+
+	white-space: nowrap;
+	width: auto;
+}
+
 math {
 	margin-top: 1rem;
 }

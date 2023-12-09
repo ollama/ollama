@@ -372,7 +372,7 @@
 						{/if}
 					</div>
 
-					<div class="w-full">
+					<div class="w-full overflow-hidden">
 						<div class=" self-center font-bold mb-0.5">
 							{#if message.role === 'user'}
 								You
