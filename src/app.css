@@ -16,8 +16,6 @@ html {
 
 code {
 	white-space-collapse: preserve !important;
-	/* text-wrap: nowrap !important; */
-
 	white-space: nowrap;
 	width: auto;
 }
