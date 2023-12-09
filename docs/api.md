@@ -57,7 +57,7 @@ Enable JSON mode by setting the `format` parameter to `json`. This will structur
 
 ### Examples
 
-#### Request (Prompt)
+#### Request
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
