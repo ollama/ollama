@@ -95,6 +95,10 @@ The manifest lists all the layers used in this model. You will see a `media type
 
 To modify where models are stored, you can use the `OLLAMA_MODELS` environment variable. Note that on Linux this means defining `OLLAMA_MODELS` in a drop-in `/etc/systemd/system/ollama.service.d` service file, reloading systemd, and restarting the ollama service.
 
+### I downloaded most of a model yesterday, but it's gone today. What happened?
+
+When the Ollama server starts, it looks for fragments of models that still exist on the system and cleans them out. If you have an Internet connection that can't complete a model download all at once, this can be frustrating. Adding the OLLAMA_NOPRUNE environment variable will prevent the server from pruning incomplete files.
+
 ## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
 
 No. Anything you do with Ollama, such as generate a response from the model, stays with you. We don't collect any data about how you use the model. You are always in control of your own data.
