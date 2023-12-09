@@ -146,12 +146,16 @@ type ManifestV2 struct {
 }
 
 type ConfigV2 struct {
+	ModelFormat   string   `json:"model_format"`
+	ModelFamily   string   `json:"model_family"`
+	ModelFamilies []string `json:"model_families"`
+	ModelType     string   `json:"model_type"`
+	FileType      string   `json:"file_type"`
+
 	// required by spec
 	Architecture string `json:"architecture"`
 	OS           string `json:"os"`
 	RootFS       RootFS `json:"rootfs"`
-
-	api.ModelConfiguration
 }
 
 func (c *ConfigV2) SetModelFormat(format string) {

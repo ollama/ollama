@@ -199,10 +199,9 @@ func GenerateHandler(c *gin.Context) {
 	// an empty request loads the model
 	if req.Prompt == "" && req.Template == "" && req.System == "" {
 		c.JSON(http.StatusOK, api.GenerateResponse{
-			CreatedAt:          time.Now().UTC(),
-			Model:              req.Model,
-			ModelConfiguration: model.Config.ModelConfiguration,
-			Done:               true})
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true})
 		return
 	}
 
@@ -261,11 +260,10 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			resp := api.GenerateResponse{
-				Model:              r.Model,
-				ModelConfiguration: model.Config.ModelConfiguration,
-				CreatedAt:          r.CreatedAt,
-				Done:               r.Done,
-				Response:           r.Content,
+				Model:     r.Model,
+				CreatedAt: r.CreatedAt,
+				Done:      r.Done,
+				Response:  r.Content,
 				Metrics: api.Metrics{
 					TotalDuration:      r.TotalDuration,
 					LoadDuration:       r.LoadDuration,

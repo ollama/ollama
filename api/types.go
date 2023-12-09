@@ -203,20 +203,10 @@ type GenerateResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 	Response  string    `json:"response"`
 
-	ModelConfiguration ModelConfiguration `json:"model_configuration"`
-
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`
 
 	Metrics
-}
-
-type ModelConfiguration struct {
-	ModelFormat   string   `json:"model_format"`
-	ModelFamily   string   `json:"model_family"`
-	ModelFamilies []string `json:"model_families"`
-	ModelType     string   `json:"model_type"`
-	FileType      string   `json:"file_type"`
 }
 
 func (m *Metrics) Summary() {
