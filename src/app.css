@@ -37,8 +37,8 @@ math {
 }
 
 ::-webkit-scrollbar {
-	height: 1rem;
-	width: 0.5rem;
+	height: 0.35rem;
+	width: 0.35rem;
 }
 
 ::-webkit-scrollbar-track {
