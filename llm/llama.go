@@ -341,6 +341,7 @@ func newLlama(model string, adapters, projectors []string, runners []ModelRunner
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
+		"--parallel", "2",
 		"--embedding",
 	}
 
@@ -631,34 +632,37 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 				continue
 			}
 
-			if evt, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
-				var p prediction
-				if err := json.Unmarshal(evt, &p); err != nil {
-					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
-				}
+			evt, ok := bytes.CutPrefix(line, []byte("data: "))
+			if !ok {
+				return fmt.Errorf("error parsing llm response stream: %s", line)
+			}
 
-				if p.Content != "" {
-					fn(PredictResult{
-						Model:     predict.Model,
-						CreatedAt: time.Now().UTC(),
-						Content:   p.Content,
-					})
-				}
+			var p prediction
+			if err := json.Unmarshal(evt, &p); err != nil {
+				return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
+			}
 
-				if p.Stop {
-					fn(PredictResult{
-						Model:         predict.Model,
-						CreatedAt:     time.Now().UTC(),
-						TotalDuration: time.Since(predict.CheckpointStart),
+			if p.Content != "" {
+				fn(PredictResult{
+					Model:     predict.Model,
+					CreatedAt: time.Now().UTC(),
+					Content:   p.Content,
+				})
+			}
 
-						Done:               true,
-						PromptEvalCount:    p.Timings.PromptN,
-						PromptEvalDuration: parseDurationMs(p.Timings.PromptMS),
-						EvalCount:          p.Timings.PredictedN,
-						EvalDuration:       parseDurationMs(p.Timings.PredictedMS),
-					})
-					return nil
-				}
+			if p.Stop {
+				fn(PredictResult{
+					Model:         predict.Model,
+					CreatedAt:     time.Now().UTC(),
+					TotalDuration: time.Since(predict.CheckpointStart),
+
+					Done:               true,
+					PromptEvalCount:    p.Timings.PromptN,
+					PromptEvalDuration: parseDurationMs(p.Timings.PromptMS),
+					EvalCount:          p.Timings.PredictedN,
+					EvalDuration:       parseDurationMs(p.Timings.PredictedMS),
+				})
+				return nil
 			}
 		}
 	}
