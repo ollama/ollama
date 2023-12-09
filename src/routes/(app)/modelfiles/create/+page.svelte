@@ -228,7 +228,9 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 			imageUrl = modelfile.imageUrl;
 			title = modelfile.title;
 			await tick();
-			tagName = `${modelfile.user.username}/${modelfile.tagName}`;
+			tagName = `${modelfile.user.username === 'hub' ? '' : `hub/`}${modelfile.user.username}/${
+				modelfile.tagName
+			}`;
 			desc = modelfile.desc;
 			content = modelfile.content;
 			suggestions =
