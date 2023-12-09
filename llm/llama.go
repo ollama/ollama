@@ -341,6 +341,7 @@ func newLlama(model string, adapters, projectors []string, runners []ModelRunner
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
+		"--parallel", "2",
 		"--embedding",
 	}
 
