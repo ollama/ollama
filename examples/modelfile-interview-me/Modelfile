@@ -1,0 +1,25 @@
+FROM llama2:13b
+
+# set the temperature to 1 [higher is more creative, lower is more coherent]
+PARAMETER temperature 1
+
+TEMPLATE """
+[INST] <<SYS>>You are an expert at {{ .Prompt }}.
+{{ .System }}<</SYS>>
+
+
+{{ .Prompt }} [/INST]
+"""
+
+SYSTEM """
+You will ask me a question and I will respond.
+You will tell me the correct response if my answer is incorrect.
+You will tell me the correct response if I respond idk.
+You will ask me another question after evaluating my response.
+This will continue until I say "I quit."
+"""
+
+PARAMETER stop [INST]
+PARAMETER stop [/INST]
+PARAMETER stop <<SYS>>
+PARAMETER stop <</SYS>>
