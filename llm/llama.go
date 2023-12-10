@@ -59,6 +59,7 @@ ws ::= ([ \t\n] ws)?
 var llamaCppEmbed embed.FS
 
 type ModelRunner struct {
+	Type        string // "gguf" or "ggml"
 	Path        string // path to the model runner executable
 	Accelerated bool
 }
@@ -72,25 +73,25 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	switch runtime.GOOS {
 	case "darwin":
 		if runtime.GOARCH == "arm64" {
-			runners = []ModelRunner{{Path: path.Join(buildPath, "metal", "bin", "ollama-runner")}}
+			runners = []ModelRunner{{Type: runnerType, Path: path.Join(buildPath, "metal", "bin", "ollama-runner")}}
 		} else {
-			runners = []ModelRunner{{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")}}
+			runners = []ModelRunner{{Type: runnerType, Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")}}
 		}
 	case "linux":
 		runners = []ModelRunner{
-			{Path: path.Join(buildPath, "cuda", "bin", "ollama-runner"), Accelerated: true},
-			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
+			{Type: runnerType, Path: path.Join(buildPath, "cuda", "bin", "ollama-runner"), Accelerated: true},
+			{Type: runnerType, Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
 		runners = []ModelRunner{
-			{Path: path.Join(buildPath, "cuda", "bin", "Release", "ollama-runner.exe"), Accelerated: true},
-			{Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
+			{Type: runnerType, Path: path.Join(buildPath, "cuda", "bin", "Release", "ollama-runner.exe"), Accelerated: true},
+			{Type: runnerType, Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
 		}
 	default:
 		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
 		runners = []ModelRunner{
-			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
+			{Type: runnerType, Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	}
 
@@ -148,6 +149,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	for _, r := range runners {
 		// clean the ModelRunner paths so that they match the OS we are running on
 		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{
+			Type:        r.Type,
 			Path:        filepath.Clean(path.Join(workDir, r.Path)),
 			Accelerated: r.Accelerated,
 		})
@@ -341,7 +343,6 @@ func newLlama(model string, adapters, projectors []string, runners []ModelRunner
 		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--n-gpu-layers", fmt.Sprintf("%d", numGPU),
-		"--parallel", "2",
 		"--embedding",
 	}
 
@@ -403,11 +404,17 @@ func newLlama(model string, adapters, projectors []string, runners []ModelRunner
 		}
 
 		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
+		params := append(params, "--port", strconv.Itoa(port))
+
+		if runner.Type == "gguf" {
+			params = append(params, "--parallel", "2")
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
 		cmd := exec.CommandContext(
 			ctx,
 			runner.Path,
-			append(params, "--port", strconv.Itoa(port))...,
+			params...,
 		)
 
 		var libraryPaths []string
