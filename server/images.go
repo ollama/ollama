@@ -545,6 +545,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 		}
 
+		// xxx - can this be removed?
 		if config.ModelType == "65B" {
 			if gqa, ok := formattedParams["gqa"].(int); ok && gqa == 8 {
 				config.ModelType = "70B"

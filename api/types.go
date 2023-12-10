@@ -151,11 +151,12 @@ type ShowRequest struct {
 }
 
 type ShowResponse struct {
-	License    string `json:"license,omitempty"`
-	Modelfile  string `json:"modelfile,omitempty"`
-	Parameters string `json:"parameters,omitempty"`
-	Template   string `json:"template,omitempty"`
-	System     string `json:"system,omitempty"`
+	License    string       `json:"license,omitempty"`
+	Modelfile  string       `json:"modelfile,omitempty"`
+	Parameters string       `json:"parameters,omitempty"`
+	Template   string       `json:"template,omitempty"`
+	System     string       `json:"system,omitempty"`
+	Details    ModelDetails `json:"details,omitempty"`
 }
 
 type CopyRequest struct {
@@ -210,6 +211,14 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
+}
+
+type ModelDetails struct {
+	Format            string   `json:"format"`
+	Family            string   `json:"family"`
+	Families          []string `json:"families"`
+	Type              string   `json:"type"`
+	QuantizationLevel string   `json:"quantization_level"`
 }
 
 func (m *Metrics) Summary() {

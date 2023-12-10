@@ -596,13 +596,6 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 	}
 
 	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
-
-	for _, f := range latest.ModelConfiguration.ModelFamilies {
-		if f == "clip" {
-			ctx = context.WithValue(ctx, "multimodal", true)
-		}
-	}
-
 	cmd.SetContext(ctx)
 
 	return nil
@@ -617,7 +610,26 @@ const (
 	MultilineTemplate
 )
 
+func modelIsMultiModal(cmd *cobra.Command, name string) bool {
+	// get model details
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		fmt.Println("error: couldn't connect to ollama server")
+		return false
+	}
+
+	req := api.ShowRequest{Name: name}
+	resp, err := client.Show(cmd.Context(), &req)
+	if err != nil {
+		return false
+	}
+
+	return slices.Contains(resp.Details.Families, "clip")
+}
+
 func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
+	multiModal := modelIsMultiModal(cmd, opts.Model)
+
 	// load the model
 	loadOpts := generateOptions{
 		Model:  opts.Model,
@@ -626,10 +638,6 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 	}
 	if err := generate(cmd, loadOpts); err != nil {
 		return err
-	}
-	multiModal, ok := cmd.Context().Value("multimodal").(bool)
-	if !ok {
-		multiModal = false
 	}
 
 	usage := func() {

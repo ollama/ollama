@@ -615,10 +615,19 @@ func GetModelInfo(name string) (*api.ShowResponse, error) {
 		return nil, err
 	}
 
+	modelDetails := api.ModelDetails{
+		Format:            model.Config.ModelFormat,
+		Family:            model.Config.ModelFamily,
+		Families:          model.Config.ModelFamilies,
+		Type:              model.Config.ModelType,
+		QuantizationLevel: model.Config.FileType,
+	}
+
 	resp := &api.ShowResponse{
 		License:  strings.Join(model.License, "\n"),
 		System:   model.System,
 		Template: model.Template,
+		Details:  modelDetails,
 	}
 
 	mf, err := ShowModelfile(model)
