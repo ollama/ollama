@@ -20,9 +20,10 @@ This configuration allows Ollama to accept connections from any source.
 
 Ensure that the Ollama URL is correctly formatted in the application settings. Follow these steps:
 
+- If your Ollama runs in a different host than Web UI make sure Ollama host address is provided when running Web UI container via `OLLAMA_API_BASE_URL` environment variable. [(e.g. OLLAMA_API_BASE_URL=http://192.168.1.1/api)](https://github.com/ollama-webui/ollama-webui#accessing-external-ollama-on-a-different-server)
 - Go to "Settings" within the Ollama WebUI.
 - Navigate to the "General" section.
-- Verify that the Ollama URL is in the following format: `http://localhost:11434/api`.
+- Verify that the Ollama Server URL is set to: `/ollama/api`.
 
 It is crucial to include the `/api` at the end of the URL to ensure that the Ollama Web UI can communicate with the server.
 
