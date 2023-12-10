@@ -205,7 +205,8 @@ Finally, in a separate shell, run a model:
 ## REST API
 
 Ollama has a REST API for running and managing models.
-For example, to generate text from a model:
+
+### Generate a response
 
 ```
 curl http://localhost:11434/api/generate -d '{
@@ -214,7 +215,7 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-Or send a chat message (coming in 0.1.14):
+### Chat with a model
 
 ```
 curl http://localhost:11434/api/chat -d '{

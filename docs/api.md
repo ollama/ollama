@@ -3,6 +3,7 @@
 ## Endpoints
 
 - [Generate a completion](#generate-a-completion)
+- [Generate a chat completion](#generate-a-chat-completion)
 - [Create a Model](#create-a-model)
 - [List Local Models](#list-local-models)
 - [Show Model Information](#show-model-information)
@@ -290,7 +291,7 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-## Send Chat Messages (coming in 0.1.14)
+## Generate a chat completion
 
 ```shell
 POST /api/chat
