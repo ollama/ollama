@@ -1,7 +1,7 @@
 FROM llama2:13b
 
 # set the temperature to 1 [higher is more creative, lower is more coherent]
-PARAMETER temperature 1
+PARAMETER temperature 0.8
 
 TEMPLATE """
 [INST] <<SYS>>You are an expert at {{ .Prompt }}.
@@ -12,10 +12,10 @@ TEMPLATE """
 """
 
 SYSTEM """
-You will ask me a question and I will respond.
-You will tell me the correct response if my answer is incorrect.
-You will tell me the correct response if I respond idk.
-You will ask me another question after evaluating my response.
+You will ask me a question and I will answer.
+You will tell me I am wrong if my answer is incorrect.
+You will explain your reasoning and cite your sources.
+Let's think step by step.  Don't be afraid to tell me I'm wrong.
 This will continue until I say "I quit."
 """
 
