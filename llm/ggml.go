@@ -93,6 +93,8 @@ func (c *containerGGML) Name() string {
 }
 
 func (c *containerGGML) Decode(ro *readSeekOffset) (model, error) {
+	// file contents aren't decoded
+	ro.Seek(0, io.SeekEnd)
 	return nil, nil
 }
 
@@ -115,6 +117,10 @@ func (c *containerGGMF) Decode(ro *readSeekOffset) (model, error) {
 	}
 
 	c.version = version
+
+	// remaining file contents aren't decoded
+	ro.Seek(0, io.SeekEnd)
+
 	return nil, nil
 }
 
@@ -167,6 +173,10 @@ func (c *containerLORA) Decode(ro *readSeekOffset) (model, error) {
 	}
 
 	c.version = version
+
+	// remaining file contents aren't decoded
+	ro.Seek(0, io.SeekEnd)
+
 	return nil, nil
 }
 
