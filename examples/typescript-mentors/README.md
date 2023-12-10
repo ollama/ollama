@@ -4,18 +4,62 @@ This example demonstrates how one would create a set of 'mentors' you can have a
 
 ## Usage
 
-```bash
-ts-node ./character-generator.ts "Lorne Greene"
-```
+1. Add llama2 to have the mentors ask your questions:
 
-This will create `lornegreene/Modelfile`. Now you can create a model with this command:
+   ```bash
+   ollama pull llama2
+   ```
 
-```bash
-ollama create lornegreene -f lornegreene/Modelfile
-```
+2. Install prerequisites:
 
-If you want to add your own mentors, you will have to update the code to look at your namespace instead of **mattw**. Also set the list of mentors to include yours.
+   ```bash
+   npm install
+   ```
 
-```bash
-ts-node ./mentors.ts "What is a Jackalope?"
-```
+3. Ask a question:
+
+   ```bash
+   npm start "what is a jackalope"
+   ```
+
+You can also add your own character to be chosen at random when you ask a question.
+
+1. Make sure you have the right model installed:
+
+   ```bash
+   ollama pull stablebeluga2:70b-q4_K_M
+   ```
+  
+2. Create a new character:
+  
+   ```bash
+   npm run charactergen "Lorne Greene"
+   ```
+
+   You can choose any well-known person you like. This example will create `lornegreene/Modelfile`.
+
+3. Now you can create a model with this command:
+
+   ```bash
+   ollama create <YourNamespace>/lornegreene -f lornegreene/Modelfile
+   ```
+
+   `YourNamespace` is whatever name you set up when you signed up at [https://ollama.ai/signup](https://ollama.ai/signup).
+
+4. To add this to your mentors, you will have to update the code as follows. On line 8 of `mentors.ts`, add an object to the array, replacing `<YourNamespace>` with the namespace you used above.
+
+   ```bash
+   {ns: "<YourNamespace>", char: "Lorne Greene"}
+   ```
+
+## Review the Code
+
+There are two scripts you can run in this example. The first is the main script to ask the mentors a question. The other one lets you generate a character to add to the mentors. Both scripts are mostly about adjusting the prompts at each inference stage.
+
+### mentors.ts
+
+In the **main** function, it starts by generating a list of mentors. This chooses 3 from a list of interesting characters. Then we ask for a question, and then things get interesting. We set the prompt for each of the 3 mentors a little differently. And the 2nd and 3rd mentors see what the previous folks said. The other functions in mentors sets the prompts for each mentor.
+
+### character-generator.ts
+
+**Character Generator** simply customizes the prompt to build a character profile for any famous person. And most of the script is just tweaking the prompt. This uses Stable Beluga 2 70b parameters. The 70b models tend to do better writing a bio about a character than smaller models, and Stable Beluga seemed to do better than Llama 2. Since this is used at development time for the characters, it doesn't affect the runtime of asking the mentors for their input.
