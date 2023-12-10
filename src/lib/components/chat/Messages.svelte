@@ -7,7 +7,7 @@
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
 	import 'katex/dist/katex.min.css';
 
-	import { config, db, modelfiles, settings, user } from '$lib/stores';
+	import { chatId, config, db, modelfiles, settings, user } from '$lib/stores';
 	import { tick } from 'svelte';
 
 	import toast from 'svelte-french-toast';
@@ -192,7 +192,7 @@
 		history.currentId = userMessageId;
 
 		await tick();
-		await sendPrompt(userPrompt, userMessageId);
+		await sendPrompt(userPrompt, userMessageId, $chatId);
 	};
 
 	const cancelEditMessage = (messageId) => {
