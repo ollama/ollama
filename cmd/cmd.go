@@ -991,7 +991,7 @@ func normalizeFilePath(fp string) string {
 func extractFileNames(input string) (string, []ImageData, error) {
 	// Regex to match file paths starting with / or ./ and include escaped spaces (\ or %20)
 	// and followed by more characters and a file extension
-	regexPattern := `(?:\./|/)[\S\\ ]+?\.(?:jpg|jpeg|png|svg)\b`
+	regexPattern := `(?:\./|/)[\S\\ ]+?\.(?i:jpg|jpeg|png|svg)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	filePaths := re.FindAllString(input, -1)
@@ -1048,14 +1048,11 @@ func getImageData(filePath string) ([]byte, error) {
 	defer file.Close()
 
 	buf := make([]byte, 512)
-	n, err := file.Read(buf)
+	_, err = file.Read(buf)
 	if err != nil {
 		return nil, err
 	}
 
-	if n != 512 {
-		return nil, fmt.Errorf("invalid image type")
-	}
 	contentType := http.DetectContentType(buf)
 	allowedTypes := []string{"image/jpeg", "image/jpg", "image/svg+xml", "image/png"}
 	if !slices.Contains(allowedTypes, contentType) {
