@@ -141,6 +141,10 @@ func (c *containerGGJT) Decode(ro *readSeekOffset) (model, error) {
 	// different model types may have different layouts for hyperparameters
 	var llama llamaModel
 	binary.Read(ro, binary.LittleEndian, &llama.hyperparameters)
+
+	// remaining file contents aren't decoded
+	ro.Seek(0, io.SeekEnd)
+
 	return &llama, nil
 }
 
