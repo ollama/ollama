@@ -545,7 +545,6 @@ type prediction struct {
 const maxBufferSize = 512 * format.KiloByte
 
 type PredictOpts struct {
-	Model            string
 	Prompt           string
 	Format           string
 	CheckpointStart  time.Time
@@ -553,7 +552,6 @@ type PredictOpts struct {
 }
 
 type PredictResult struct {
-	Model              string
 	CreatedAt          time.Time
 	TotalDuration      time.Duration
 	LoadDuration       time.Duration
@@ -651,7 +649,6 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 
 			if p.Content != "" {
 				fn(PredictResult{
-					Model:     predict.Model,
 					CreatedAt: time.Now().UTC(),
 					Content:   p.Content,
 				})
@@ -659,7 +656,6 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 
 			if p.Stop {
 				fn(PredictResult{
-					Model:         predict.Model,
 					CreatedAt:     time.Now().UTC(),
 					TotalDuration: time.Since(predict.CheckpointStart),
 

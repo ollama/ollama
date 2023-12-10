@@ -260,7 +260,7 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			resp := api.GenerateResponse{
-				Model:     r.Model,
+				Model:     req.Model,
 				CreatedAt: r.CreatedAt,
 				Done:      r.Done,
 				Response:  r.Content,
@@ -288,7 +288,6 @@ func GenerateHandler(c *gin.Context) {
 
 		// Start prediction
 		predictReq := llm.PredictOpts{
-			Model:            model.Name,
 			Prompt:           prompt,
 			Format:           req.Format,
 			CheckpointStart:  checkpointStart,
@@ -985,7 +984,7 @@ func ChatHandler(c *gin.Context) {
 			loaded.expireTimer.Reset(sessionDuration)
 
 			resp := api.ChatResponse{
-				Model:     r.Model,
+				Model:     req.Model,
 				CreatedAt: r.CreatedAt,
 				Done:      r.Done,
 				Metrics: api.Metrics{
@@ -1007,7 +1006,6 @@ func ChatHandler(c *gin.Context) {
 
 		// Start prediction
 		predictReq := llm.PredictOpts{
-			Model:            model.Name,
 			Prompt:           prompt,
 			Format:           req.Format,
 			CheckpointStart:  checkpointStart,
