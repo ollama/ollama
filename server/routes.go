@@ -300,19 +300,30 @@ func GenerateHandler(c *gin.Context) {
 	}()
 
 	if req.Stream != nil && !*req.Stream {
-		// Wait for the channel to close
-		var r api.GenerateResponse
+		// Accumulate responses into the final response
+		var final api.GenerateResponse
 		var sb strings.Builder
 		for resp := range ch {
-			var ok bool
-			if r, ok = resp.(api.GenerateResponse); !ok {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			switch r := resp.(type) {
+			case api.GenerateResponse:
+				sb.WriteString(r.Response)
+				final = r
+			case gin.H:
+				if errorMsg, ok := r["error"].(string); ok {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+					return
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in response"})
+					return
+				}
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error"})
 				return
 			}
-			sb.WriteString(r.Response)
 		}
-		r.Response = sb.String()
-		c.JSON(http.StatusOK, r)
+
+		final.Response = sb.String()
+		c.JSON(http.StatusOK, final)
 		return
 	}
 
@@ -1008,21 +1019,30 @@ func ChatHandler(c *gin.Context) {
 	}()
 
 	if req.Stream != nil && !*req.Stream {
-		// Wait for the channel to close
-		var r api.ChatResponse
+		// Accumulate responses into the final response
+		var final api.ChatResponse
 		var sb strings.Builder
 		for resp := range ch {
-			var ok bool
-			if r, ok = resp.(api.ChatResponse); !ok {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			switch r := resp.(type) {
+			case api.ChatResponse:
+				sb.WriteString(r.Message.Content)
+				final = r
+			case gin.H:
+				if errorMsg, ok := r["error"].(string); ok {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+					return
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in response"})
+					return
+				}
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error"})
 				return
 			}
-			if r.Message != nil {
-				sb.WriteString(r.Message.Content)
-			}
 		}
-		r.Message = &api.Message{Role: "assistant", Content: sb.String()}
-		c.JSON(http.StatusOK, r)
+
+		final.Message = &api.Message{Role: "assistant", Content: sb.String()}
+		c.JSON(http.StatusOK, final)
 		return
 	}
 

@@ -252,7 +252,7 @@ curl http://localhost:11434/api/generate -d '{
     "penalize_newline": true,
     "stop": ["\n", "user:"],
     "numa": false,
-    "num_ctx": 4,
+    "num_ctx": 1024,
     "num_batch": 2,
     "num_gqa": 1,
     "num_gpu": 1,
@@ -267,7 +267,7 @@ curl http://localhost:11434/api/generate -d '{
     "rope_frequency_base": 1.1,
     "rope_frequency_scale": 0.8,
     "num_thread": 8
-    }
+  }
 }'
 ```
 
