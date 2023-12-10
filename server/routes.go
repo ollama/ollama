@@ -860,7 +860,7 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 	if runtime.GOOS == "linux" {
 		// check compatibility to log warnings
 		if _, err := llm.CheckVRAM(); err != nil {
-			log.Printf(err.Error())
+			log.Print(err.Error())
 		}
 	}
 
