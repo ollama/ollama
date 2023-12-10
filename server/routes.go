@@ -1025,7 +1025,10 @@ func ChatHandler(c *gin.Context) {
 		for resp := range ch {
 			switch r := resp.(type) {
 			case api.ChatResponse:
-				sb.WriteString(r.Message.Content)
+				if r.Message != nil {
+					sb.WriteString(r.Message.Content)
+				}
+
 				final = r
 			case gin.H:
 				if errorMsg, ok := r["error"].(string); ok {
