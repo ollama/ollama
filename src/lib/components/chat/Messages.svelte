@@ -162,6 +162,7 @@
 	const editMessageHandler = async (messageId) => {
 		// let editMessage = history.messages[messageId];
 		history.messages[messageId].edit = true;
+		history.messages[messageId].originalContent = history.messages[messageId].content;
 		history.messages[messageId].editedContent = history.messages[messageId].content;
 
 		await tick();
