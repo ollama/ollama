@@ -46,6 +46,7 @@ type Model struct {
 	System         string
 	License        []string
 	Digest         string
+	Size           int64
 	Options        map[string]interface{}
 }
 
@@ -242,6 +243,7 @@ func GetModel(name string) (*Model, error) {
 		Digest:    digest,
 		Template:  "{{ .Prompt }}",
 		License:   []string{},
+		Size:      manifest.GetTotalSize(),
 	}
 
 	filename, err := GetBlobsPath(manifest.Config.Digest)

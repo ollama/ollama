@@ -192,10 +192,11 @@ type ListResponse struct {
 }
 
 type ModelResponse struct {
-	Name       string    `json:"name"`
-	ModifiedAt time.Time `json:"modified_at"`
-	Size       int64     `json:"size"`
-	Digest     string    `json:"digest"`
+	Name       string       `json:"name"`
+	ModifiedAt time.Time    `json:"modified_at"`
+	Size       int64        `json:"size"`
+	Digest     string       `json:"digest"`
+	Details    ModelDetails `json:"details,omitempty"`
 }
 
 type TokenResponse struct {
@@ -217,7 +218,7 @@ type ModelDetails struct {
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
 	Families          []string `json:"families"`
-	Type              string   `json:"type"`
+	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
 }
 

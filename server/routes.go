@@ -619,7 +619,7 @@ func GetModelInfo(name string) (*api.ShowResponse, error) {
 		Format:            model.Config.ModelFormat,
 		Family:            model.Config.ModelFamily,
 		Families:          model.Config.ModelFamilies,
-		Type:              model.Config.ModelType,
+		ParameterSize:     model.Config.ModelType,
 		QuantizationLevel: model.Config.FileType,
 	}
 
@@ -677,25 +677,42 @@ func ListModelsHandler(c *gin.Context) {
 		return
 	}
 
+	modelResponse := func(modelName string) (api.ModelResponse, error) {
+		model, err := GetModel(modelName)
+		if err != nil {
+			return api.ModelResponse{}, err
+		}
+
+		modelDetails := api.ModelDetails{
+			Format:            model.Config.ModelFormat,
+			Family:            model.Config.ModelFamily,
+			Families:          model.Config.ModelFamilies,
+			ParameterSize:     model.Config.ModelType,
+			QuantizationLevel: model.Config.FileType,
+		}
+
+		return api.ModelResponse{
+			Name:    model.ShortName,
+			Size:    model.Size,
+			Digest:  model.Digest,
+			Details: modelDetails,
+		}, nil
+	}
+
 	walkFunc := func(path string, info os.FileInfo, _ error) error {
 		if !info.IsDir() {
 			dir, file := filepath.Split(path)
 			dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
 			tag := strings.Join([]string{dir, file}, ":")
 
-			mp := ParseModelPath(tag)
-			manifest, digest, err := GetManifest(mp)
+			resp, err := modelResponse(tag)
 			if err != nil {
 				log.Printf("skipping file: %s", fp)
 				return nil
 			}
 
-			models = append(models, api.ModelResponse{
-				Name:       mp.GetShortTagname(),
-				Size:       manifest.GetTotalSize(),
-				Digest:     digest,
-				ModifiedAt: info.ModTime(),
-			})
+			resp.ModifiedAt = info.ModTime()
+			models = append(models, resp)
 		}
 
 		return nil
