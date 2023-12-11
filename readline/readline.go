@@ -192,7 +192,7 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
-			return i.handleCharCtrlZ(fd, termios)
+			return handleCharCtrlZ(fd, termios)
 		case CharEnter:
 			output := buf.String()
 			if output != "" {

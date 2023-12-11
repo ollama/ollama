@@ -1,6 +1,6 @@
 package readline
 
-func (i *Instance) handleCharCtrlZ(fd int, termios *Termios) (string, error) {
+func (i *Instance) handleCharCtrlZ(fd int, state *State) (string, error) {
 	// not supported
 	return "", nil
 }
