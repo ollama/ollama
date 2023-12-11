@@ -2,6 +2,8 @@
 
 ## Connection Errors
 
+Make sure you have the **latest version of Ollama** installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
+
 If you encounter difficulties connecting to the Ollama server, please follow these steps to diagnose and resolve the issue:
 
 **1. Verify Ollama Server Configuration**
@@ -43,5 +45,6 @@ docker run --platform linux/amd64 -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://
 ```
 
 ## References
+
 [Change Docker Desktop Settings on Mac](https://docs.docker.com/desktop/settings/mac/) Search for "x86" in that page.
 [Run x86 (Intel) and ARM based images on Apple Silicon (M1) Macs?](https://forums.docker.com/t/run-x86-intel-and-arm-based-images-on-apple-silicon-m1-macs/117123)

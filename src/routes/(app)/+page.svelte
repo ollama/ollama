@@ -76,6 +76,13 @@
 		selectedModels = $page.url.searchParams.get('models')
 			? $page.url.searchParams.get('models')?.split(',')
 			: $settings.models ?? [''];
+
+		let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+		console.log(_settings);
+		settings.set({
+			...$settings,
+			..._settings
+		});
 	};
 
 	//////////////////////////
@@ -118,38 +125,11 @@
 			];
 		}
 
+		await tick();
+
 		window.scrollTo({ top: document.body.scrollHeight });
 
-		const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/generate`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'text/event-stream',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			},
-			body: JSON.stringify({
-				model: model,
-				prompt: userPrompt,
-				system: $settings.system ?? undefined,
-				options: {
-					seed: $settings.seed ?? undefined,
-					temperature: $settings.temperature ?? undefined,
-					repeat_penalty: $settings.repeat_penalty ?? undefined,
-					top_k: $settings.top_k ?? undefined,
-					top_p: $settings.top_p ?? undefined,
-					num_ctx: $settings.num_ctx ?? undefined,
-					...($settings.options ?? {})
-				},
-				format: $settings.requestFormat ?? undefined,
-				context:
-					history.messages[parentId] !== null &&
-					history.messages[parentId].parentId in history.messages
-						? history.messages[history.messages[parentId].parentId]?.context ?? undefined
-						: undefined
-			})
-		});
-
-		// const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/chat`, {
+		// const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/generate`, {
 		// 	method: 'POST',
 		// 	headers: {
 		// 		'Content-Type': 'text/event-stream',
@@ -158,17 +138,8 @@
 		// 	},
 		// 	body: JSON.stringify({
 		// 		model: model,
-		// 		messages: [
-		// 			$settings.system
-		// 				? {
-		// 						role: 'system',
-		// 						content: $settings.system
-		// 				  }
-		// 				: undefined,
-		// 			...messages
-		// 		]
-		// 			.filter((message) => message)
-		// 			.map((message) => ({ role: message.role, content: message.content })),
+		// 		prompt: userPrompt,
+		// 		system: $settings.system ?? undefined,
 		// 		options: {
 		// 			seed: $settings.seed ?? undefined,
 		// 			temperature: $settings.temperature ?? undefined,
@@ -178,9 +149,47 @@
 		// 			num_ctx: $settings.num_ctx ?? undefined,
 		// 			...($settings.options ?? {})
 		// 		},
-		// 		format: $settings.requestFormat ?? undefined
+		// 		format: $settings.requestFormat ?? undefined,
+		// 		context:
+		// 			history.messages[parentId] !== null &&
+		// 			history.messages[parentId].parentId in history.messages
+		// 				? history.messages[history.messages[parentId].parentId]?.context ?? undefined
+		// 				: undefined
 		// 	})
 		// });
+
+		const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/chat`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'text/event-stream',
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
+			},
+			body: JSON.stringify({
+				model: model,
+				messages: [
+					$settings.system
+						? {
+								role: 'system',
+								content: $settings.system
+						  }
+						: undefined,
+					...messages
+				]
+					.filter((message) => message)
+					.map((message) => ({ role: message.role, content: message.content })),
+				options: {
+					seed: $settings.seed ?? undefined,
+					temperature: $settings.temperature ?? undefined,
+					repeat_penalty: $settings.repeat_penalty ?? undefined,
+					top_k: $settings.top_k ?? undefined,
+					top_p: $settings.top_p ?? undefined,
+					num_ctx: $settings.num_ctx ?? undefined,
+					...($settings.options ?? {})
+				},
+				format: $settings.requestFormat ?? undefined
+			})
+		});
 
 		const reader = res.body
 			.pipeThrough(new TextDecoderStream())
@@ -189,12 +198,9 @@
 
 		while (true) {
 			const { value, done } = await reader.read();
-			if (done || stopResponseFlag) {
-				if (stopResponseFlag) {
-					responseMessage.done = true;
-					messages = messages;
-				}
-
+			if (done || stopResponseFlag || _chatId !== $chatId) {
+				responseMessage.done = true;
+				messages = messages;
 				break;
 			}
 
@@ -205,18 +211,28 @@
 					if (line !== '') {
 						console.log(line);
 						let data = JSON.parse(line);
+
+						if ('detail' in data) {
+							throw data;
+						}
+
 						if (data.done == false) {
-							if (responseMessage.content == '' && data.response == '\n') {
+							if (responseMessage.content == '' && data.message.content == '\n') {
 								continue;
 							} else {
-								responseMessage.content += data.response;
+								responseMessage.content += data.message.content;
 								messages = messages;
 							}
-						} else if ('detail' in data) {
-							throw data;
 						} else {
 							responseMessage.done = true;
-							responseMessage.context = data.context;
+							responseMessage.context = data.context ?? null;
+							responseMessage.info = {
+								total_duration: data.total_duration,
+								prompt_eval_count: data.prompt_eval_count,
+								prompt_eval_duration: data.prompt_eval_duration,
+								eval_count: data.eval_count,
+								eval_duration: data.eval_duration
+							};
 							messages = messages;
 						}
 					}
@@ -324,12 +340,9 @@
 
 				while (true) {
 					const { value, done } = await reader.read();
-					if (done || stopResponseFlag) {
-						if (stopResponseFlag) {
-							responseMessage.done = true;
-							messages = messages;
-						}
-
+					if (done || stopResponseFlag || _chatId !== $chatId) {
+						responseMessage.done = true;
+						messages = messages;
 						break;
 					}
 
