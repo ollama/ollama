@@ -223,8 +223,14 @@ type Running struct {
 	*StatusWriter            // captures error messages from the llama runner process
 }
 
+type ImageData struct {
+	Data []byte `json:"data"`
+	ID   int    `json:"id"`
+}
+
 type llama struct {
 	api.Options
+	ImageData []ImageData
 	Running
 }
 
@@ -547,6 +553,7 @@ const maxBufferSize = 512 * format.KiloByte
 type PredictOpts struct {
 	Prompt           string
 	Format           string
+	Images           []api.ImageData
 	CheckpointStart  time.Time
 	CheckpointLoaded time.Time
 }
@@ -564,6 +571,14 @@ type PredictResult struct {
 }
 
 func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(PredictResult)) error {
+	imageData := llm.ImageData
+	if len(predict.Images) > 0 {
+		for cnt, i := range predict.Images {
+			imageData = append(imageData, ImageData{Data: i, ID: cnt})
+		}
+	}
+	log.Printf("loaded %d images", len(imageData))
+
 	request := map[string]any{
 		"prompt":            predict.Prompt,
 		"stream":            true,
@@ -585,6 +600,7 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
+		"image_data":        imageData,
 	}
 
 	if predict.Format == "json" {

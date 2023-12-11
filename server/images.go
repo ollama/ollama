@@ -46,6 +46,7 @@ type Model struct {
 	System         string
 	License        []string
 	Digest         string
+	Size           int64
 	Options        map[string]interface{}
 }
 
@@ -242,6 +243,7 @@ func GetModel(name string) (*Model, error) {
 		Digest:    digest,
 		Template:  "{{ .Prompt }}",
 		License:   []string{},
+		Size:      manifest.GetTotalSize(),
 	}
 
 	filename, err := GetBlobsPath(manifest.Config.Digest)
@@ -545,6 +547,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 		}
 
+		// xxx - can this be removed?
 		if config.ModelType == "65B" {
 			if gqa, ok := formattedParams["gqa"].(int); ok && gqa == 8 {
 				config.ModelType = "70B"

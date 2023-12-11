@@ -156,9 +156,9 @@ func GenerateHandler(c *gin.Context) {
 	defer loaded.mu.Unlock()
 
 	checkpointStart := time.Now()
-
 	var req api.GenerateRequest
 	err := c.ShouldBindJSON(&req)
+
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -292,6 +292,7 @@ func GenerateHandler(c *gin.Context) {
 			Format:           req.Format,
 			CheckpointStart:  checkpointStart,
 			CheckpointLoaded: checkpointLoaded,
+			Images:           req.Images,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
@@ -614,10 +615,19 @@ func GetModelInfo(name string) (*api.ShowResponse, error) {
 		return nil, err
 	}
 
+	modelDetails := api.ModelDetails{
+		Format:            model.Config.ModelFormat,
+		Family:            model.Config.ModelFamily,
+		Families:          model.Config.ModelFamilies,
+		ParameterSize:     model.Config.ModelType,
+		QuantizationLevel: model.Config.FileType,
+	}
+
 	resp := &api.ShowResponse{
 		License:  strings.Join(model.License, "\n"),
 		System:   model.System,
 		Template: model.Template,
+		Details:  modelDetails,
 	}
 
 	mf, err := ShowModelfile(model)
@@ -667,25 +677,42 @@ func ListModelsHandler(c *gin.Context) {
 		return
 	}
 
+	modelResponse := func(modelName string) (api.ModelResponse, error) {
+		model, err := GetModel(modelName)
+		if err != nil {
+			return api.ModelResponse{}, err
+		}
+
+		modelDetails := api.ModelDetails{
+			Format:            model.Config.ModelFormat,
+			Family:            model.Config.ModelFamily,
+			Families:          model.Config.ModelFamilies,
+			ParameterSize:     model.Config.ModelType,
+			QuantizationLevel: model.Config.FileType,
+		}
+
+		return api.ModelResponse{
+			Name:    model.ShortName,
+			Size:    model.Size,
+			Digest:  model.Digest,
+			Details: modelDetails,
+		}, nil
+	}
+
 	walkFunc := func(path string, info os.FileInfo, _ error) error {
 		if !info.IsDir() {
 			dir, file := filepath.Split(path)
 			dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
 			tag := strings.Join([]string{dir, file}, ":")
 
-			mp := ParseModelPath(tag)
-			manifest, digest, err := GetManifest(mp)
+			resp, err := modelResponse(tag)
 			if err != nil {
 				log.Printf("skipping file: %s", fp)
 				return nil
 			}
 
-			models = append(models, api.ModelResponse{
-				Name:       mp.GetShortTagname(),
-				Size:       manifest.GetTotalSize(),
-				Digest:     digest,
-				ModifiedAt: info.ModTime(),
-			})
+			resp.ModifiedAt = info.ModTime()
+			models = append(models, resp)
 		}
 
 		return nil
