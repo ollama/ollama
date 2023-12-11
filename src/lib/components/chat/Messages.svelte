@@ -7,7 +7,7 @@
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
 	import 'katex/dist/katex.min.css';
 
-	import { config, db, modelfiles, settings, user } from '$lib/stores';
+	import { chatId, config, db, modelfiles, settings, user } from '$lib/stores';
 	import { tick } from 'svelte';
 
 	import toast from 'svelte-french-toast';
@@ -192,7 +192,7 @@
 		history.currentId = userMessageId;
 
 		await tick();
-		await sendPrompt(userPrompt, userMessageId);
+		await sendPrompt(userPrompt, userMessageId, $chatId);
 	};
 
 	const cancelEditMessage = (messageId) => {
@@ -325,7 +325,7 @@
 				</div>
 				{#if selectedModelfile.user}
 					<div class="mt-0.5 text-sm font-normal text-gray-500 dark:text-gray-500">
-						By <a href="https://ollamahub.com/"
+						By <a href="https://ollamahub.com/m/{selectedModelfile.user.username}"
 							>{selectedModelfile.user.name
 								? selectedModelfile.user.name
 								: `@${selectedModelfile.user.username}`}</a
