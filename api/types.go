@@ -82,23 +82,24 @@ type Options struct {
 	Runner
 
 	// Predict options used at runtime
-	NumKeep          int      `json:"num_keep,omitempty"`
-	Seed             int      `json:"seed,omitempty"`
-	NumPredict       int      `json:"num_predict,omitempty"`
-	TopK             int      `json:"top_k,omitempty"`
-	TopP             float32  `json:"top_p,omitempty"`
-	TFSZ             float32  `json:"tfs_z,omitempty"`
-	TypicalP         float32  `json:"typical_p,omitempty"`
-	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
-	Temperature      float32  `json:"temperature,omitempty"`
-	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
-	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
-	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	Mirostat         int      `json:"mirostat,omitempty"`
-	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
-	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
-	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
-	Stop             []string `json:"stop,omitempty"`
+	NumKeep          int      			  `json:"num_keep,omitempty"`
+	Seed             int      			  `json:"seed,omitempty"`
+	NumPredict       int      			  `json:"num_predict,omitempty"`
+	TopK             int      			  `json:"top_k,omitempty"`
+	TopP             float32  			  `json:"top_p,omitempty"`
+	TFSZ             float32  			  `json:"tfs_z,omitempty"`
+	TypicalP         float32  			  `json:"typical_p,omitempty"`
+	RepeatLastN      int     		 	    `json:"repeat_last_n,omitempty"`
+	Temperature      float32  			  `json:"temperature,omitempty"`
+	RepeatPenalty    float32  			  `json:"repeat_penalty,omitempty"`
+	PresencePenalty  float32  			  `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float32  			  `json:"frequency_penalty,omitempty"`
+	Mirostat         int      			  `json:"mirostat,omitempty"`
+	MirostatTau      float32  			  `json:"mirostat_tau,omitempty"`
+	MirostatEta      float32  			  `json:"mirostat_eta,omitempty"`
+	PenalizeNewline  bool     			  `json:"penalize_newline,omitempty"`
+	Stop             []string 			  `json:"stop,omitempty"`
+	LogitBias        [][]interface{}	`json:"logit_bias,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -292,21 +293,38 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					}
 					field.SetString(val)
 				case reflect.Slice:
-					// JSON unmarshals to []interface{}, not []string
-					val, ok := val.([]interface{})
-					if !ok {
-						return fmt.Errorf("option %q must be of type array", key)
-					}
-					// convert []interface{} to []string
-					slice := make([]string, len(val))
-					for i, item := range val {
-						str, ok := item.(string)
+					if key == "logit_bias" {
+						// Assuming val is the actual interface{} value from the map
+						logitBias, ok := val.([]interface{})
 						if !ok {
-							return fmt.Errorf("option %q must be of an array of strings", key)
+							return fmt.Errorf("option %q must be an array", key)
 						}
-						slice[i] = str
-					}
-					field.Set(reflect.ValueOf(slice))
+						logitBiasSlice := make([][]interface{}, len(logitBias))
+						for i, item := range logitBias {
+							innerSlice, ok := item.([]interface{})
+							if !ok || len(innerSlice) != 2 {
+								return fmt.Errorf("each item in \"logit_bias\" must be an array of two elements")
+							}
+							logitBiasSlice[i] = innerSlice
+						}
+						field.Set(reflect.ValueOf(logitBiasSlice))
+					} else {
+						// JSON unmarshals to []interface{}, not []string
+						val, ok := val.([]interface{})
+						if !ok {
+							return fmt.Errorf("option %q must be of type array", key)
+						}
+						// convert []interface{} to []string
+						slice := make([]string, len(val))
+						for i, item := range val {
+							str, ok := item.(string)
+							if !ok {
+								return fmt.Errorf("option %q must be of an array of strings", key)
+							}
+							slice[i] = str
+						}
+						field.Set(reflect.ValueOf(slice))
+				}
 				default:
 					return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 				}

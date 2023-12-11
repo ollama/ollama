@@ -585,6 +585,7 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
+		"logit_bias":        llm.LogitBias,
 	}
 
 	if predict.Format == "json" {
