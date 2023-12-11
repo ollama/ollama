@@ -254,6 +254,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [gptel Emacs client](https://github.com/karthink/gptel)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
 
+### Database
+
+- [MindsDB] (https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md)
+  
 ### Package managers
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
