@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"embed"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -225,7 +224,7 @@ type Running struct {
 }
 
 type ImageData struct {
-	Data string `json:"data"`
+	Data []byte `json:"data"`
 	ID   int    `json:"id"`
 }
 
@@ -575,8 +574,7 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 	imageData := llm.ImageData
 	if len(predict.Images) > 0 {
 		for cnt, i := range predict.Images {
-			data := base64.StdEncoding.EncodeToString(i)
-			imageData = append(imageData, ImageData{Data: data, ID: cnt})
+			imageData = append(imageData, ImageData{Data: i, ID: cnt})
 		}
 	}
 	log.Printf("loaded %d images", len(imageData))
