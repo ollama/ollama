@@ -432,11 +432,6 @@
 												class=" bg-transparent outline-none w-full resize-none"
 												bind:value={history.messages[message.id].editedContent}
 												on:input={(e) => {
-													e.target.style.height = '';
-													e.target.style.height = `${e.target.scrollHeight}px`;
-												}}
-												on:focus={(e) => {
-													e.target.style.height = '';
 													e.target.style.height = `${e.target.scrollHeight}px`;
 												}}
 											/>
@@ -634,17 +629,8 @@
 													class=" bg-transparent outline-none w-full resize-none"
 													bind:value={history.messages[message.id].editedContent}
 													on:input={(e) => {
-														e.target.style.height = '';
 														e.target.style.height = `${e.target.scrollHeight}px`;
 													}}
-													on:focus={(e) => {
-														e.target.style.height = '';
-														e.target.style.height = `${e.target.scrollHeight}px`;
-													}}
-													on:load={() => {
-														console.log('loadeddd');
-													}}
-													on:loadstart
 												/>
 
 												<div class=" mt-2 mb-1 flex justify-center space-x-2 text-sm font-medium">
