@@ -191,80 +191,90 @@
 			})
 		});
 
-		const reader = res.body
-			.pipeThrough(new TextDecoderStream())
-			.pipeThrough(splitStream('\n'))
-			.getReader();
-
-		while (true) {
-			const { value, done } = await reader.read();
-			if (done || stopResponseFlag || _chatId !== $chatId) {
-				responseMessage.done = true;
-				messages = messages;
-				break;
+		if (!res.ok) {
+			const error = await res.json();
+			console.log(error);
+			if ('detail' in error) {
+				toast.error(error.detail);
+			} else {
+				toast.error(error.error);
 			}
+		} else {
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
 
-			try {
-				let lines = value.split('\n');
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done || stopResponseFlag || _chatId !== $chatId) {
+					responseMessage.done = true;
+					messages = messages;
+					break;
+				}
 
-				for (const line of lines) {
-					if (line !== '') {
-						console.log(line);
-						let data = JSON.parse(line);
+				try {
+					let lines = value.split('\n');
 
-						if ('detail' in data) {
-							throw data;
-						}
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							let data = JSON.parse(line);
 
-						if (data.done == false) {
-							if (responseMessage.content == '' && data.message.content == '\n') {
-								continue;
+							if ('detail' in data) {
+								throw data;
+							}
+
+							if (data.done == false) {
+								if (responseMessage.content == '' && data.message.content == '\n') {
+									continue;
+								} else {
+									responseMessage.content += data.message.content;
+									messages = messages;
+								}
 							} else {
-								responseMessage.content += data.message.content;
+								responseMessage.done = true;
+								responseMessage.context = data.context ?? null;
+								responseMessage.info = {
+									total_duration: data.total_duration,
+									prompt_eval_count: data.prompt_eval_count,
+									prompt_eval_duration: data.prompt_eval_duration,
+									eval_count: data.eval_count,
+									eval_duration: data.eval_duration
+								};
 								messages = messages;
 							}
-						} else {
-							responseMessage.done = true;
-							responseMessage.context = data.context ?? null;
-							responseMessage.info = {
-								total_duration: data.total_duration,
-								prompt_eval_count: data.prompt_eval_count,
-								prompt_eval_duration: data.prompt_eval_duration,
-								eval_count: data.eval_count,
-								eval_duration: data.eval_duration
-							};
-							messages = messages;
 						}
 					}
+				} catch (error) {
+					console.log(error);
+					if ('detail' in error) {
+						toast.error(error.detail);
+					}
+					break;
 				}
-			} catch (error) {
-				console.log(error);
-				if ('detail' in error) {
-					toast.error(error.detail);
+
+				if (autoScroll) {
+					window.scrollTo({ top: document.body.scrollHeight });
 				}
-				break;
-			}
 
-			if (autoScroll) {
-				window.scrollTo({ top: document.body.scrollHeight });
+				await $db.updateChatById(_chatId, {
+					title: title === '' ? 'New Chat' : title,
+					models: selectedModels,
+					system: $settings.system ?? undefined,
+					options: {
+						seed: $settings.seed ?? undefined,
+						temperature: $settings.temperature ?? undefined,
+						repeat_penalty: $settings.repeat_penalty ?? undefined,
+						top_k: $settings.top_k ?? undefined,
+						top_p: $settings.top_p ?? undefined,
+						num_ctx: $settings.num_ctx ?? undefined,
+						...($settings.options ?? {})
+					},
+					messages: messages,
+					history: history
+				});
 			}
-
-			await $db.updateChatById(_chatId, {
-				title: title === '' ? 'New Chat' : title,
-				models: selectedModels,
-				system: $settings.system ?? undefined,
-				options: {
-					seed: $settings.seed ?? undefined,
-					temperature: $settings.temperature ?? undefined,
-					repeat_penalty: $settings.repeat_penalty ?? undefined,
-					top_k: $settings.top_k ?? undefined,
-					top_p: $settings.top_p ?? undefined,
-					num_ctx: $settings.num_ctx ?? undefined,
-					...($settings.options ?? {})
-				},
-				messages: messages,
-				history: history
-			});
 		}
 
 		stopResponseFlag = false;
