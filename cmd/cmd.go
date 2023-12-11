@@ -34,6 +34,8 @@ import (
 	"github.com/jmorganca/ollama/readline"
 	"github.com/jmorganca/ollama/server"
 	"github.com/jmorganca/ollama/version"
+
+	"github.com/xyproto/env/v2"
 )
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
@@ -416,7 +418,7 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 
 	opts := generateOptions{
 		Model:    args[0],
-		WordWrap: os.Getenv("TERM") == "xterm-256color",
+		WordWrap: env.Str("TERM") == "xterm-256color",
 		Options:  map[string]interface{}{},
 	}
 
@@ -912,10 +914,10 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, err := net.SplitHostPort(os.Getenv("OLLAMA_HOST"))
+	host, port, err := net.SplitHostPort(env.Str("OLLAMA_HOST"))
 	if err != nil {
 		host, port = "127.0.0.1", "11434"
-		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
+		if ip := net.ParseIP(strings.Trim(env.Str("OLLAMA_HOST"), "[]")); ip != nil {
 			host = ip.String()
 		}
 	}
@@ -930,7 +932,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 	}
 
 	var origins []string
-	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
+	if o := env.Str("OLLAMA_ORIGINS"); o != "" {
 		origins = strings.Split(o, ",")
 	}
 
