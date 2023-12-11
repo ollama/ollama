@@ -761,7 +761,7 @@
 										{/if}
 										{#each $models.filter((m) => m.size != null) as model}
 											<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
-												>{model.name}</option
+												>{model.name + ' (' + (model.size / 1024 ** 3).toFixed(1) + ' GB)'}</option
 											>
 										{/each}
 									</select>
