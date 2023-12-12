@@ -256,7 +256,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Database
 
-- [MindsDB] (https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md)
+- [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md)
   
 ### Package managers
 
