@@ -30,14 +30,14 @@ The format of the `Modelfile`:
 INSTRUCTION arguments
 ```
 
-| Instruction                         | Description                                                   |
-| ----------------------------------- | ------------------------------------------------------------- |
-| [`FROM`](#from-required) (required) | Defines the base model to use.                                |
-| [`PARAMETER`](#parameter)           | Sets the parameters for how Ollama will run the model.        |
-| [`TEMPLATE`](#template)             | The full prompt template to be sent to the model.             |
-| [`SYSTEM`](#system)                 | Specifies the system prompt that will be set in the template. |
-| [`ADAPTER`](#adapter)               | Defines the (Q)LoRA adapters to apply to the model.           |
-| [`LICENSE`](#license)               | Specifies the legal license.                                  |
+| Instruction                         | Description                                                    |
+| ----------------------------------- | -------------------------------------------------------------- |
+| [`FROM`](#from-required) (required) | Defines the base model to use.                                 |
+| [`PARAMETER`](#parameter)           | Sets the parameters for how Ollama will run the model.         |
+| [`TEMPLATE`](#template)             | The full prompt template to be sent to the model.              |
+| [`SYSTEM`](#system)                 | Specifies the system message that will be set in the template. |
+| [`ADAPTER`](#adapter)               | Defines the (Q)LoRA adapters to apply to the model.            |
+| [`LICENSE`](#license)               | Specifies the legal license.                                   |
 
 ## Examples
 
@@ -52,7 +52,7 @@ PARAMETER temperature 1
 # sets the context window size to 4096, this controls how many tokens the LLM can use as context to generate the next token
 PARAMETER num_ctx 4096
 
-# sets a custom system prompt to specify the behavior of the chat assistant
+# sets a custom system message to specify the behavior of the chat assistant
 SYSTEM You are Mario from super mario bros, acting as an assistant.
 ```
 
@@ -70,9 +70,9 @@ More examples are available in the [examples directory](../examples).
 There are two ways to view `Modelfile`s underlying the models in [ollama.ai/library][1]:
 
 - Option 1: view a details page from a model's tags page:
-   1. Go to a particular model's tags (e.g. https://ollama.ai/library/llama2/tags)
-   2. Click on a tag (e.g. https://ollama.ai/library/llama2:13b)
-   3. Scroll down to "Layers"
+  1.  Go to a particular model's tags (e.g. https://ollama.ai/library/llama2/tags)
+  2.  Click on a tag (e.g. https://ollama.ai/library/llama2:13b)
+  3.  Scroll down to "Layers"
       - Note: if the [`FROM` instruction](#from-required) is not present,
         it means the model was created from a local file
 - Option 2: use `ollama show` to print the `Modelfile` like so:
@@ -150,18 +150,17 @@ PARAMETER <parameter> <parametervalue>
 | top_k          | Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)                                                                        | int        | top_k 40             |
 | top_p          | Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)                                                                 | float      | top_p 0.9            |
 
-
 ### TEMPLATE
 
-`TEMPLATE` of the full prompt template to be passed into the model. It may include (optionally) a system prompt and a user's prompt. This is used to create a full custom prompt, and syntax may be model specific. You can usually find the template for a given model in the readme for that model.
+`TEMPLATE` of the full prompt template to be passed into the model. It may include (optionally) a system message and a user's prompt. This is used to create a full custom prompt, and syntax may be model specific. You can usually find the template for a given model in the readme for that model.
 
 #### Template Variables
 
-| Variable        | Description                                                                                                  |
-| --------------- | ------------------------------------------------------------------------------------------------------------ |
-| `{{ .System }}` | The system prompt used to specify custom behavior, this must also be set in the Modelfile as an instruction. |
-| `{{ .Prompt }}` | The incoming prompt, this is not specified in the model file and will be set based on input.                 |
-| `{{ .First }}`  | A boolean value used to render specific template information for the first generation of a session.          |
+| Variable        | Description                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------- |
+| `{{ .System }}` | The system message used to specify custom behavior, this must also be set in the Modelfile as an instruction. |
+| `{{ .Prompt }}` | The incoming prompt, this is not specified in the model file and will be set based on input.                  |
+| `{{ .First }}`  | A boolean value used to render specific template information for the first generation of a session.           |
 
 ```modelfile
 TEMPLATE """
@@ -181,7 +180,7 @@ SYSTEM """<system message>"""
 
 ### SYSTEM
 
-The `SYSTEM` instruction specifies the system prompt to be used in the template, if applicable.
+The `SYSTEM` instruction specifies the system message to be used in the template, if applicable.
 
 ```modelfile
 SYSTEM """<system message>"""

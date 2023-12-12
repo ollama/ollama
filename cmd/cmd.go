@@ -654,7 +654,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 	usageSet := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set parameter ...     Set a parameter")
-		fmt.Fprintln(os.Stderr, "  /set system <string>   Set system prompt")
+		fmt.Fprintln(os.Stderr, "  /set system <string>   Set system message")
 		fmt.Fprintln(os.Stderr, "  /set template <string> Set prompt template")
 		fmt.Fprintln(os.Stderr, "  /set history           Enable history")
 		fmt.Fprintln(os.Stderr, "  /set nohistory         Disable history")
@@ -672,7 +672,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 		fmt.Fprintln(os.Stderr, "  /show license      Show model license")
 		fmt.Fprintln(os.Stderr, "  /show modelfile    Show Modelfile for this model")
 		fmt.Fprintln(os.Stderr, "  /show parameters   Show parameters for this model")
-		fmt.Fprintln(os.Stderr, "  /show system       Show system prompt")
+		fmt.Fprintln(os.Stderr, "  /show system       Show system message")
 		fmt.Fprintln(os.Stderr, "  /show template     Show prompt template")
 		fmt.Fprintln(os.Stderr, "")
 	}
@@ -733,9 +733,10 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			// if the prompt so far starts with """ then we're in multiline mode
 			// and we need to keep reading until we find a line that ends with """
 			cut, found := strings.CutSuffix(line, `"""`)
-			prompt += cut + "\n"
+			prompt += cut
 
 			if !found {
+				prompt += "\n"
 				continue
 			}
 
@@ -746,11 +747,11 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			case MultilineSystem:
 				opts.System = prompt
 				prompt = ""
-				fmt.Println("Set system template.")
+				fmt.Println("Set system message.")
 			case MultilineTemplate:
 				opts.Template = prompt
 				prompt = ""
-				fmt.Println("Set model template.")
+				fmt.Println("Set prompt template.")
 			}
 			multiline = MultilineNone
 		case strings.HasPrefix(line, `"""`) && len(prompt) == 0:
@@ -821,17 +822,18 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					line = strings.TrimPrefix(line, `"""`)
 					if strings.HasPrefix(args[2], `"""`) {
 						cut, found := strings.CutSuffix(line, `"""`)
-						prompt += cut + "\n"
+						prompt += cut
 						if found {
-							opts.System = prompt
 							if args[1] == "system" {
-								fmt.Println("Set system template.")
+								opts.System = prompt
+								fmt.Println("Set system message.")
 							} else {
+								opts.Template = prompt
 								fmt.Println("Set prompt template.")
 							}
 							prompt = ""
 						} else {
-							prompt = `"""` + prompt
+							prompt = `"""` + prompt + "\n"
 							if args[1] == "system" {
 								multiline = MultilineSystem
 							} else {
@@ -841,7 +843,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 						}
 					} else {
 						opts.System = line
-						fmt.Println("Set system template.")
+						fmt.Println("Set system message.")
 					}
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
@@ -893,7 +895,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					case resp.System != "":
 						fmt.Println(resp.System + "\n")
 					default:
-						fmt.Print("No system prompt was specified for this model.\n\n")
+						fmt.Print("No system message was specified for this model.\n\n")
 					}
 				case "template":
 					switch {
@@ -1250,7 +1252,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("modelfile", false, "Show Modelfile of a model")
 	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")
 	showCmd.Flags().Bool("template", false, "Show template of a model")
-	showCmd.Flags().Bool("system", false, "Show system prompt of a model")
+	showCmd.Flags().Bool("system", false, "Show system message of a model")
 
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",

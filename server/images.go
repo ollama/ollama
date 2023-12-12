@@ -66,7 +66,7 @@ func (m *Model) Prompt(p PromptVars) (string, error) {
 	}
 
 	if p.System == "" {
-		// use the default system prompt for this model if one is not specified
+		// use the default system message for this model if one is not specified
 		p.System = m.System
 	}
 
