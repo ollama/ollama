@@ -545,8 +545,7 @@ type prediction struct {
 }
 
 const maxBufferSize = 512 * format.KiloByte
-const maxRetries = 3
-const retryDelay = 1 * time.Second
+const maxRetries = 6
 
 type PredictOpts struct {
 	Prompt           string
@@ -610,9 +609,11 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 		request["grammar"] = jsonGrammar
 	}
 
+	retryDelay := 100 * time.Microsecond
 	for retries := 0; retries < maxRetries; retries++ {
 		if retries > 0 {
 			time.Sleep(retryDelay) // wait before retrying
+			retryDelay *= 2        // exponential backoff
 		}
 
 		// Handling JSON marshaling with special characters unescaped.
