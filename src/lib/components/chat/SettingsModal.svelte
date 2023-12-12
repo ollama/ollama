@@ -751,11 +751,20 @@
 							<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
 							<div class="flex w-full">
 								<div class="flex-1 mr-2">
-									<input
+									<select
 										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter model tag (e.g. mistral:7b)"
 										bind:value={deleteModelTag}
-									/>
+										placeholder="Select a model"
+									>
+										{#if !deleteModelTag}
+											<option value="" disabled selected>Select a model</option>
+										{/if}
+										{#each $models.filter((m) => m.size != null) as model}
+											<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
+												>{model.name + ' (' + (model.size / 1024 ** 3).toFixed(1) + ' GB)'}</option
+											>
+										{/each}
+									</select>
 								</div>
 								<button
 									class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
