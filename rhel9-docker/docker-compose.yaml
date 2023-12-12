@@ -1,0 +1,43 @@
+version: '3.8'
+services:
+  ollama-litellm:
+    build: .
+    environment:
+      - MODEL
+      - HOST
+      - PORT
+      - HOST_PATH
+    entrypoint: [ "/bin/bash" , "./entrypoint.sh" ]
+    user: "ollama"
+    ports:
+    # Expose ports for LiteLLM API
+      - "${PORT}:${PORT}"
+    ipc: "host"
+    restart: unless-stopped
+    volumes:
+      - "${HOST_PATH}:/home/ollama/.ollama"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              #device_ids: [ '0' ]
+              capabilities: [ gpu ]
+    #stdin_open: true
+    #tty: true
+    #ulimits:
+    #  memlock: -1
+    #  stack: 67108864
+    labels:
+      com.example.description: "RHEL 9 Base with Ollama and litellm applications"
+      com.example.maintainer: "Adam Fugate"
+      com.example.contact: "ibbobud@gmail.com"
+    #healthcheck:
+      #test: ["CMD", "curl", "-f", "http://localhost:8000/v1"]
+      #interval: 30s
+      #timeout: 10s
+      #retries: 3
+      #start_period: 30s
+
+       #     --quantization "${QUANTIZATION}"

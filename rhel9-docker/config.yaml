@@ -1,0 +1,3 @@
+litellm_settings: # module level litellm settings - https://github.com/BerriAI/litellm/blob/main/litellm/__init__.py
+  drop_params: True
+#  set_verbose: True
