@@ -39,7 +39,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
-- `images`: an array of base64-encoded images to submit to the model (multimodal models only)
+- `images`: a list of base64-encoded images (for multimodal models such as `llava`)
 
 Advanced parameters (optional):
 
@@ -340,7 +340,7 @@ The `message` object has the following fields:
 
 - `role`: the role of the message, either `system`, `user` or `assistant`
 - `content`: the content of the message
-- `images` (optional): a list of images to include in the message for multimodal models such as `llava`
+- `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
 
 Advanced parameters (optional):
 
