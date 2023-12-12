@@ -150,7 +150,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 
 #### Request (with images)
 
-To submit images to multimodal models such as `llava` or `bakllava`, you can provide an array of base64-encoded images in the `images` parameter:
+To submit images to multimodal models such as `llava` or `bakllava`, provide a list of base64-encoded `images`:
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
