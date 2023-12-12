@@ -86,9 +86,10 @@ func (m *Model) Prompt(p PromptVars) (string, error) {
 	return prompt.String(), nil
 }
 
-func (m *Model) ChatPrompt(msgs []api.Message) (string, error) {
+func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) {
 	// build the prompt from the list of messages
 	var prompt strings.Builder
+	var currentImages []api.ImageData
 	currentVars := PromptVars{
 		First: true,
 	}
@@ -108,35 +109,36 @@ func (m *Model) ChatPrompt(msgs []api.Message) (string, error) {
 		case "system":
 			if currentVars.System != "" {
 				if err := writePrompt(); err != nil {
-					return "", err
+					return "", nil, err
 				}
 			}
 			currentVars.System = msg.Content
 		case "user":
 			if currentVars.Prompt != "" {
 				if err := writePrompt(); err != nil {
-					return "", err
+					return "", nil, err
 				}
 			}
 			currentVars.Prompt = msg.Content
+			currentImages = msg.Images
 		case "assistant":
 			currentVars.Response = msg.Content
 			if err := writePrompt(); err != nil {
-				return "", err
+				return "", nil, err
 			}
 		default:
-			return "", fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
+			return "", nil, fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
 		}
 	}
 
 	// Append the last set of vars if they are non-empty
 	if currentVars.Prompt != "" || currentVars.System != "" {
 		if err := writePrompt(); err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 
-	return prompt.String(), nil
+	return prompt.String(), currentImages, nil
 }
 
 type ManifestV2 struct {

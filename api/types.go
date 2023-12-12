@@ -57,8 +57,9 @@ type ChatRequest struct {
 }
 
 type Message struct {
-	Role    string `json:"role"` // one of ["system", "user", "assistant"]
-	Content string `json:"content"`
+	Role    string      `json:"role"` // one of ["system", "user", "assistant"]
+	Content string      `json:"content"`
+	Images  []ImageData `json:"images, omitempty"`
 }
 
 type ChatResponse struct {

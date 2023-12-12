@@ -994,7 +994,7 @@ func ChatHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	prompt, err := model.ChatPrompt(req.Messages)
+	prompt, images, err := model.ChatPrompt(req.Messages)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1037,6 +1037,7 @@ func ChatHandler(c *gin.Context) {
 			Format:           req.Format,
 			CheckpointStart:  checkpointStart,
 			CheckpointLoaded: checkpointLoaded,
+			Images:           images,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
