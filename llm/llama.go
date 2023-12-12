@@ -611,7 +611,6 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 
 	retryDelay := 100 * time.Microsecond
 	for retries := 0; retries < maxRetries; retries++ {
-		fmt.Println("retries", retries)
 		if retries > 0 {
 			time.Sleep(retryDelay) // wait before retrying
 			retryDelay *= 2        // exponential backoff
