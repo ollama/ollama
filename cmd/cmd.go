@@ -733,9 +733,10 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			// if the prompt so far starts with """ then we're in multiline mode
 			// and we need to keep reading until we find a line that ends with """
 			cut, found := strings.CutSuffix(line, `"""`)
-			prompt += cut + "\n"
+			prompt += cut
 
 			if !found {
+				prompt += "\n"
 				continue
 			}
 
@@ -746,11 +747,11 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			case MultilineSystem:
 				opts.System = prompt
 				prompt = ""
-				fmt.Println("Set system template.")
+				fmt.Println("Set system prompt.")
 			case MultilineTemplate:
 				opts.Template = prompt
 				prompt = ""
-				fmt.Println("Set model template.")
+				fmt.Println("Set prompt template.")
 			}
 			multiline = MultilineNone
 		case strings.HasPrefix(line, `"""`) && len(prompt) == 0:
@@ -821,17 +822,18 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					line = strings.TrimPrefix(line, `"""`)
 					if strings.HasPrefix(args[2], `"""`) {
 						cut, found := strings.CutSuffix(line, `"""`)
-						prompt += cut + "\n"
+						prompt += cut
 						if found {
-							opts.System = prompt
 							if args[1] == "system" {
-								fmt.Println("Set system template.")
+								opts.System = prompt
+								fmt.Println("Set system prompt.")
 							} else {
+								opts.Template = prompt
 								fmt.Println("Set prompt template.")
 							}
 							prompt = ""
 						} else {
-							prompt = `"""` + prompt
+							prompt = `"""` + prompt + "\n"
 							if args[1] == "system" {
 								multiline = MultilineSystem
 							} else {
@@ -841,7 +843,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 						}
 					} else {
 						opts.System = line
-						fmt.Println("Set system template.")
+						fmt.Println("Set system prompt.")
 					}
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
