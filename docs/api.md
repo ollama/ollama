@@ -304,6 +304,10 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 
+  A message is an object with the following fields:
+  - `role`: the role of the message, either `user`, `assistant` or `system`
+  - `content`: the content of the message
+
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
