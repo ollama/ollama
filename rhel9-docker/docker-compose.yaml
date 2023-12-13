@@ -10,7 +10,6 @@ services:
     entrypoint: [ "/bin/bash" , "./entrypoint.sh" ]
     user: "ollama"
     ports:
-    # Expose ports for LiteLLM API
       - "${PORT}:${PORT}"
     ipc: "host"
     restart: unless-stopped
@@ -39,5 +38,3 @@ services:
       #timeout: 10s
       #retries: 3
       #start_period: 30s
-
-       #     --quantization "${QUANTIZATION}"
