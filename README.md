@@ -58,7 +58,7 @@ Here are some example open-source models that can be downloaded:
 | Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | Vicuna             | 7B         | 3.8GB | `ollama run vicuna`            |
 
-> Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
+> Note: You should have at least 8 GB of RAM to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
 ## Customize your own model
 
@@ -125,17 +125,23 @@ For more examples, see the [examples](examples) directory. For more information 
 
 ### Create a model
 
-`ollama create` is used to create a model from a Modelfile.
+Create a model from a Modelfile
+
+```
+ollama create <modelname> -f ./Modelfile
+```
 
 ### Pull a model
+
+Pull a model from the library at [ollama.ai/library](https://ollama.ai/library).
 
 ```
 ollama pull llama2
 ```
 
-> This command can also be used to update a local model. Only the diff will be pulled.
-
 ### Remove a model
+
+Remove the model files from your local system.
 
 ```
 ollama rm llama2
@@ -143,8 +149,26 @@ ollama rm llama2
 
 ### Copy a model
 
+Copy a model on your local system, giving it a new name. The underlying files, such as the model weights, are not duplicated.
+
 ```
 ollama cp llama2 my-llama2
+```
+
+### Show model information
+
+Show the information about a model. You must include an option for what you want to show: template, modelfile, system, parameters, or license.
+
+```
+ollama show --modelfile llama2
+```
+
+### List local models
+
+List all the models you have pulled.
+
+```
+ollama list
 ```
 
 ### Multiline input
@@ -165,15 +189,17 @@ $ ollama run llama2 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
-### List models on your computer
-
-```
-ollama list
-```
-
 ### Start Ollama
 
-`ollama serve` is used when you want to start ollama without running the desktop application.
+If you installed Ollama using the installations on the website, you will usually not need to do this. If you built Ollama yourself, or you need to change some parameters, it may be necessary to run the service manually:
+
+```
+ollama serve
+```
+
+## Upgrading Ollama
+
+To upgrade Ollama, just run the installation process again. On the Mac, you can click the Ollama icon in the menubar and choose the restart option if an update is available.
 
 ## Building
 

@@ -17,7 +17,7 @@
 
 ### Model names
 
-Model names follow a `model:tag` format. Some examples are `orca-mini:3b-q4_1` and `llama2:70b`. The tag is optional and, if not provided, will default to `latest`. The tag is used to identify a specific version.
+Model names follow a `model:tag` format. Some examples are `orca-mini:3b-q4_1` and `llama2:70b`. The tag is optional and, if not provided, will default to `latest`. The tag is used to identify a specific version. Models uploaded by users will have the format `namespace/model:tag`.
 
 ### Durations
 
@@ -25,7 +25,9 @@ All durations are returned in nanoseconds.
 
 ### Streaming responses
 
-Certain endpoints stream responses as JSON objects.
+Certain endpoints stream responses as JSON objects and can optional return non-streamed responses.
+
+<hr>
 
 ## Generate a completion
 
@@ -50,7 +52,7 @@ Advanced parameters (optional):
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API.
 
-### JSON mode
+#### JSON mode
 
 Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as valid JSON. See the JSON mode [example](#request-json-mode) below.
 
@@ -58,7 +60,9 @@ Enable JSON mode by setting the `format` parameter to `json`. This will structur
 
 ### Examples
 
-#### Request
+#### Generate request (Streaming)
+
+##### Request
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -67,7 +71,7 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 A stream of JSON objects is returned:
 
@@ -100,12 +104,9 @@ To calculate how fast the response is generated in tokens per second (token/s), 
   "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "",
-  "context": [1, 2, 3],
   "done": true,
+  "context": [1, 2, 3],
   "total_duration": 5589157167,
-  "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 113,
@@ -113,9 +114,11 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 }
 ```
 
-#### Request (No streaming)
+#### Generate request (No streaming)
 
-A response can be recieved in one reply when streaming is off.
+##### Request
+
+A response can be received in one reply when streaming is off.
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -125,7 +128,7 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 If `stream` is set to `false`, the response will be a single JSON object:
 
@@ -134,12 +137,9 @@ If `stream` is set to `false`, the response will be a single JSON object:
   "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
-  "context": [1, 2, 3],
   "done": true,
+  "context": [1, 2, 3],
   "total_duration": 5589157167,
-  "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 13,
@@ -147,9 +147,11 @@ If `stream` is set to `false`, the response will be a single JSON object:
 }
 ```
 
-#### Request (Raw Mode)
+#### Generate request (Raw Mode)
 
-In some cases you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable formatting.
+In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
+
+##### Request
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -160,17 +162,15 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 ```json
 {
   "model": "mistral",
   "created_at": "2023-11-03T15:36:02.583064Z",
   "response": " The sky appears blue because of a phenomenon called Rayleigh scattering.",
-  "context": [1, 2, 3],
   "done": true,
   "total_duration": 14648695333,
-  "load_duration": 3302671417,
   "prompt_eval_count": 14,
   "prompt_eval_duration": 286243000,
   "eval_count": 129,
@@ -178,7 +178,11 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-#### Request (JSON mode)
+#### Generate request (JSON mode)
+
+When `format` is set to `json`, the output will always be a well-formed JSON object. You must also include text like 'respond using JSON' or 'output in JSON' in the prompt. If you include a schema in the prompt listing the desired property names and types, most models tend to use it. In cases where results aren't perfect, few-shot prompting has a positive effect.
+
+##### Request 
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -189,7 +193,7 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 ```json
 {
@@ -197,8 +201,8 @@ curl http://localhost:11434/api/generate -d '{
   "created_at": "2023-11-09T21:07:55.186497Z",
   "response": "{\n\"morning\": {\n\"color\": \"blue\"\n},\n\"noon\": {\n\"color\": \"blue-gray\"\n},\n\"afternoon\": {\n\"color\": \"warm gray\"\n},\n\"evening\": {\n\"color\": \"orange\"\n}\n}\n",
   "done": true,
+  "context": [1, 2, 3], 
   "total_duration": 4661289125,
-  "load_duration": 1714434500,
   "prompt_eval_count": 36,
   "prompt_eval_duration": 264132000,
   "eval_count": 75,
@@ -225,9 +229,12 @@ The value of `response` will be a string containing JSON similar to:
 }
 ```
 
-#### Request (With options)
+
+#### Generate request (With options)
 
 If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but you can set any of them individually and omit the ones you do not want to override.
+
+##### Request
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -272,7 +279,7 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 ```json
 {
@@ -280,14 +287,44 @@ curl http://localhost:11434/api/generate -d '{
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
+  "context": [1, 2, 3], 
   "total_duration": 5589157167,
-  "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 13,
   "eval_duration": 1325948000
+}
+```
+
+#### Load a model
+
+If you post a body with just the model, it will load the model into memory, but not do a generation.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama2"
+}
+```
+
+##### Response
+
+A single JSON object is returned:
+
+```json
+{
+  "model": "llama2",
+  "created_at": "2023-12-12T02:34:16.373531Z",
+  "response": "",
+  "model_configuration": {
+    "model_format": "gguf",
+    "model_family": "llama",
+    "model_families": null,
+    "model_type": "7B",
+    "file_type": "Q4_0"
+  },
+  "done": true
 }
 ```
 
@@ -297,7 +334,7 @@ curl http://localhost:11434/api/generate -d '{
 POST /api/chat
 ```
 
-Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include statistics and additional data from the request.
+Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using `stream: false`. The final response object will include statistics and additional data from the request.
 
 ### Parameters
 
@@ -313,7 +350,9 @@ Advanced parameters (optional):
 
 ### Examples
 
-#### Request
+#### Chat Request (Streaming)
+
+##### Request
 
 Send a chat message with a streaming response.
 
@@ -329,7 +368,7 @@ curl http://localhost:11434/api/chat -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 A stream of JSON objects is returned:
 
@@ -353,9 +392,6 @@ Final response:
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
   "total_duration": 5589157167,
-  "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 113,
@@ -363,9 +399,47 @@ Final response:
 }
 ```
 
-#### Request (With History)
+#### Chat request (No streaming)
 
-Send a chat message with a conversation history.
+##### Request
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "why is the sky blue?"
+    }
+  ], 
+  "stream": false
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "registry.ollama.ai/library/llama2:latest",
+  "created_at": "2023-12-12T14:13:43.416799Z",
+  "message": {
+    "role": "assistant",
+    "content": "Hello! How are you today?"
+  },
+  "done": true,
+  "total_duration": 390291583,
+  "prompt_eval_count": 21,
+  "prompt_eval_duration": 285840000,
+  "eval_count": 7,
+  "eval_duration": 96220000
+}
+```
+
+#### Chat request (With History)
+
+Send a chat message with a conversation history. You can use this same approach to start the conversation using multi-shot prompting.
+
+##### Request
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
@@ -387,7 +461,7 @@ curl http://localhost:11434/api/chat -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 A stream of JSON objects is returned:
 
@@ -411,9 +485,6 @@ Final response:
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
   "total_duration": 5589157167,
-  "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 113,
@@ -427,7 +498,7 @@ Final response:
 POST /api/create
 ```
 
-Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `modelfile` to the content of the Modelfile rather than just set `path`. This is a requirement for remote create. Remote model creation should also create any file blobs, fields such as `FROM` and `ADAPTER`, explicitly with the server using [Create a Blob](#create-a-blob) and the value to the path indicated in the response.
+Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `modelfile` to the content of the Modelfile rather than just set `path`. This is a requirement for remote create. Remote model creation must also create any file blobs, fields such as `FROM` and `ADAPTER`, explicitly with the server using [Create a Blob](#create-a-blob) and the value to the path indicated in the response. Note that this just creates the model on the Ollama server and doesn't push it to Ollama.ai.
 
 ### Parameters
 
@@ -438,7 +509,11 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 
 ### Examples
 
-#### Request
+#### Create a new model
+
+Create a new model from a modelfile.
+
+##### Request
 
 ```shell
 curl http://localhost:11434/api/create -d '{
@@ -447,14 +522,22 @@ curl http://localhost:11434/api/create -d '{
 }'
 ```
 
-#### Response
+##### Response
 
-A stream of JSON objects. When finished, `status` is `success`.
+A stream of JSON objects. Notice that the final JSON object shows a `"status": "success"`.
 
 ```json
-{
-  "status": "parsing modelfile"
-}
+{"status":"reading model metadata"}
+{"status":"creating system layer"}
+{"status":"using already created layer sha256:22f7f8ef5f4c791c1b03d7eb414399294764d7cc82c7e94aa81a1feb80a983a2"}
+{"status":"using already created layer sha256:8c17c2ebb0ea011be9981cc3922db8ca8fa61e828c5d3f44cb6ae342bf80460b"}
+{"status":"using already created layer sha256:7c23fb36d80141c4ab8cdbb61ee4790102ebd2bf7aeff414453177d4f2110e5d"}
+{"status":"using already created layer sha256:2e0493f67d0c8c9c68a8aeacdf6a38a2151cb3c4c1d42accf296e19810527988"}
+{"status":"using already created layer sha256:2759286baa875dc22de5394b4a925701b1896a7e3f8e53275c36f75a877a82c9"}
+{"status":"writing layer sha256:df30045fe90f0d750db82a058109cecd6d4de9c90a3d75b19c09e5f64580bb42"}
+{"status":"writing layer sha256:f18a68eb09bf925bb1b669490407c1b1251c5db98dc4d3d81f3088498ea55690"}
+{"status":"writing manifest"}
+{"status":"success"}
 ```
 
 ### Check if a Blob Exists
@@ -463,7 +546,8 @@ A stream of JSON objects. When finished, `status` is `success`.
 HEAD /api/blobs/:digest
 ```
 
-Check if a blob is known to the server.
+Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is just checking your Ollama server and not Ollama.ai.
+
 
 #### Query Parameters
 
@@ -487,7 +571,7 @@ Return 200 OK if the blob exists, 404 Not Found if it does not.
 POST /api/blobs/:digest
 ```
 
-Create a blob from a file. Returns the server file path.
+Create a blob from a file on the server. Returns the server file path.
 
 #### Query Parameters
 
@@ -503,7 +587,7 @@ curl -T model.bin -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf08
 
 ##### Response
 
-Return 201 Created if the blob was successfully created.
+Return 201 Created if the blob was successfully created, 400 Bad Request if the digest used is not expected.
 
 ## List Local Models
 
@@ -529,14 +613,30 @@ A single JSON object will be returned.
 {
   "models": [
     {
-      "name": "llama2",
-      "modified_at": "2023-08-02T17:02:23.713454393-07:00",
-      "size": 3791730596
+      "name": "codellama:13b",
+      "modified_at": "2023-11-04T14:56:49.277302595-07:00",
+      "size": 7365960935,
+      "digest": "9f438cb9cd581fc025612d27f7c1a6669ff83a8bb0ed86c94fcf4c5440555697",
+      "details": {
+        "format": "gguf",
+        "family": "llama",
+        "families": null,
+        "parameter_size": "13B",
+        "quantization_level": "Q4_0"
+      }
     },
     {
-      "name": "llama2:13b",
-      "modified_at": "2023-08-08T12:08:38.093596297-07:00",
-      "size": 7323310500
+      "name": "llama2:latest",
+      "modified_at": "2023-12-07T09:32:18.757212583-08:00",
+      "size": 3825819519,
+      "digest": "fe938a131f40e6f6d40083c9f0f430a515233eb2edaa6d72eb85c50d64f2300e",
+      "details": {
+        "format": "gguf",
+        "family": "llama",
+        "families": null,
+        "parameter_size": "7B",
+        "quantization_level": "Q4_0"
+      }
     }
   ]
 }
@@ -572,6 +672,13 @@ curl http://localhost:11434/api/show -d '{
   "modelfile": "# Modelfile generated by \"ollama show\"\n# To build a new Modelfile based on this one, replace the FROM line with:\n# FROM llama2:latest\n\nFROM /Users/username/.ollama/models/blobs/sha256:8daa9615cce30c259a9555b1cc250d461d1bc69980a274b44d7eda0be78076d8\nTEMPLATE \"\"\"[INST] {{ if and .First .System }}<<SYS>>{{ .System }}<</SYS>>\n\n{{ end }}{{ .Prompt }} [/INST] \"\"\"\nSYSTEM \"\"\"\"\"\"\nPARAMETER stop [INST]\nPARAMETER stop [/INST]\nPARAMETER stop <<SYS>>\nPARAMETER stop <</SYS>>\n",
   "parameters": "stop                           [INST]\nstop                           [/INST]\nstop                           <<SYS>>\nstop                           <</SYS>>",
   "template": "[INST] {{ if and .First .System }}<<SYS>>{{ .System }}<</SYS>>\n\n{{ end }}{{ .Prompt }} [/INST] "
+  "details": {
+    "format": "gguf",
+    "family": "llama",
+    "families": null,
+    "parameter_size": "7B",
+    "quantization_level": "Q4_0"
+  }
 }
 ```
 
@@ -596,7 +703,7 @@ curl http://localhost:11434/api/copy -d '{
 
 #### Response
 
-The only response is a 200 OK if successful.
+Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't exist.
 
 ## Delete a Model
 
@@ -622,7 +729,7 @@ curl -X DELETE http://localhost:11434/api/delete -d '{
 
 #### Response
 
-If successful, the only response is a 200 OK.
+Returns a 200 OK if successful, 404 Not Found if the model to be deleted doesn't exist.
 
 ## Pull a Model
 

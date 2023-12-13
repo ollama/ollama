@@ -1,21 +1,5 @@
 # FAQ
 
-## How can I view the logs?
-
-On macOS:
-
-```
-cat ~/.ollama/logs/server.log
-```
-
-On Linux:
-
-```
-journalctl -u ollama
-```
-
-If you're running `ollama serve` directly, the logs will be printed to the console.
-
 ## How can I expose Ollama on my network?
 
 Ollama binds to 127.0.0.1 port 11434 by default. Change the bind address with the `OLLAMA_HOST` environment variable.
@@ -68,36 +52,6 @@ Reload `systemd` and restart Ollama:
 systemctl daemon-reload
 systemctl restart ollama
 ```
-
-## Where are models stored?
-
-- macOS: Raw model data is stored under `~/.ollama/models`.
-- Linux: Raw model data is stored under `/usr/share/ollama/.ollama/models`
-
-Below the models directory you will find a structure similar to the following:
-
-```shell
-.
-├── blobs
-└── manifests
-   └── registry.ollama.ai
-      ├── f0rodo
-      ├── library
-      ├── mattw
-      └── saikatkumardey
-```
-
-There is a `manifests/registry.ollama.ai/namespace` path. In example above, the user has downloaded models from the official `library`, `f0rodo`, `mattw`, and `saikatkumardey` namespaces. Within each of those directories, you will find directories for each of the models downloaded. And in there you will find a file name representing each tag. Each tag file is the manifest for the model.  
-
-The manifest lists all the layers used in this model. You will see a `media type` for each layer, along with a digest. That digest corresponds with a file in the `models/blobs directory`.
-
-### How can I change where Ollama stores models?
-
-To modify where models are stored, you can use the `OLLAMA_MODELS` environment variable. Note that on Linux this means defining `OLLAMA_MODELS` in a drop-in `/etc/systemd/system/ollama.service.d` service file, reloading systemd, and restarting the ollama service.
-
-## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
-
-No. Anything you do with Ollama, such as generate a response from the model, stays with you. We don't collect any data about how you use the model. You are always in control of your own data.
 
 ## How can I use Ollama in Visual Studio Code?
 

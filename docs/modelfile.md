@@ -1,6 +1,6 @@
 # Ollama Model File
 
-> Note: this `Modelfile` syntax is in development
+> Note: `Modelfile` syntax is in development
 
 A model file is the blueprint to create and share models with Ollama.
 
@@ -75,7 +75,7 @@ There are two ways to view `Modelfile`s underlying the models in [ollama.ai/libr
    3. Scroll down to "Layers"
       - Note: if the [`FROM` instruction](#from-required) is not present,
         it means the model was created from a local file
-- Option 2: use `ollama show` to print the `Modelfile` like so:
+- Option 2: use `ollama show` to print the `Modelfile` for any local models like so:
 
   ```bash
   > ollama show --modelfile llama2:13b
