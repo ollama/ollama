@@ -31,15 +31,18 @@ func (e StatusError) Error() string {
 	}
 }
 
+type ImageData []byte
+
 type GenerateRequest struct {
-	Model    string `json:"model"`
-	Prompt   string `json:"prompt"`
-	System   string `json:"system"`
-	Template string `json:"template"`
-	Context  []int  `json:"context,omitempty"`
-	Stream   *bool  `json:"stream,omitempty"`
-	Raw      bool   `json:"raw,omitempty"`
-	Format   string `json:"format"`
+	Model    string      `json:"model"`
+	Prompt   string      `json:"prompt"`
+	System   string      `json:"system"`
+	Template string      `json:"template"`
+	Context  []int       `json:"context,omitempty"`
+	Stream   *bool       `json:"stream,omitempty"`
+	Raw      bool        `json:"raw,omitempty"`
+	Format   string      `json:"format"`
+	Images   []ImageData `json:"images,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -54,8 +57,9 @@ type ChatRequest struct {
 }
 
 type Message struct {
-	Role    string `json:"role"` // one of ["system", "user", "assistant"]
-	Content string `json:"content"`
+	Role    string      `json:"role"` // one of ["system", "user", "assistant"]
+	Content string      `json:"content"`
+	Images  []ImageData `json:"images, omitempty"`
 }
 
 type ChatResponse struct {
@@ -148,11 +152,12 @@ type ShowRequest struct {
 }
 
 type ShowResponse struct {
-	License    string `json:"license,omitempty"`
-	Modelfile  string `json:"modelfile,omitempty"`
-	Parameters string `json:"parameters,omitempty"`
-	Template   string `json:"template,omitempty"`
-	System     string `json:"system,omitempty"`
+	License    string       `json:"license,omitempty"`
+	Modelfile  string       `json:"modelfile,omitempty"`
+	Parameters string       `json:"parameters,omitempty"`
+	Template   string       `json:"template,omitempty"`
+	System     string       `json:"system,omitempty"`
+	Details    ModelDetails `json:"details,omitempty"`
 }
 
 type CopyRequest struct {
@@ -188,10 +193,11 @@ type ListResponse struct {
 }
 
 type ModelResponse struct {
-	Name       string    `json:"name"`
-	ModifiedAt time.Time `json:"modified_at"`
-	Size       int64     `json:"size"`
-	Digest     string    `json:"digest"`
+	Name       string       `json:"name"`
+	ModifiedAt time.Time    `json:"modified_at"`
+	Size       int64        `json:"size"`
+	Digest     string       `json:"digest"`
+	Details    ModelDetails `json:"details,omitempty"`
 }
 
 type TokenResponse struct {
@@ -207,6 +213,14 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
+}
+
+type ModelDetails struct {
+	Format            string   `json:"format"`
+	Family            string   `json:"family"`
+	Families          []string `json:"families"`
+	ParameterSize     string   `json:"parameter_size"`
+	QuantizationLevel string   `json:"quantization_level"`
 }
 
 func (m *Metrics) Summary() {

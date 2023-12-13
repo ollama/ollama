@@ -120,27 +120,6 @@ func (llm *ggufModel) ModelType() string {
 		return format.HumanNumber(llm.parameters)
 	}
 
-	switch llm.ModelFamily() {
-	case "llama":
-		if blocks, ok := llm.kv["llama.block_count"].(uint32); ok {
-			heads, headsOK := llm.kv["llama.head_count"].(uint32)
-			headKVs, headsKVsOK := llm.kv["llama.head_count_kv"].(uint32)
-			if headsOK && headsKVsOK && heads/headKVs == 8 {
-				return "70B"
-			}
-
-			return llamaModelType(blocks)
-		}
-	case "falcon":
-		if blocks, ok := llm.kv["falcon.block_count"].(uint32); ok {
-			return falconModelType(blocks)
-		}
-	case "starcoder":
-		if blocks, ok := llm.kv["starcoder.block_count"].(uint32); ok {
-			return starCoderModelType(blocks)
-		}
-	}
-
 	return "unknown"
 }
 

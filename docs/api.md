@@ -46,7 +46,7 @@ Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `system`: system prompt to (overrides what is defined in the `Modelfile`)
+- `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the full prompt or prompt template (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
@@ -340,6 +340,10 @@ Generate the next message in a chat with a provided model. This is a streaming e
 
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
+
+  A message is an object with the following fields:
+  - `role`: the role of the message, either `user`, `assistant` or `system`
+  - `content`: the content of the message
 
 Advanced parameters (optional):
 
@@ -648,7 +652,7 @@ A single JSON object will be returned.
 POST /api/show
 ```
 
-Show details about a model including modelfile, template, parameters, license, and system prompt.
+Show details about a model including modelfile, template, parameters, license, and system message.
 
 ### Parameters
 
