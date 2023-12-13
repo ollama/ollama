@@ -81,7 +81,7 @@ func TestChat(t *testing.T) {
 			Template: tt.template,
 		}
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := m.ChatPrompt(tt.msgs)
+			got, _, err := m.ChatPrompt(tt.msgs)
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Errorf("ChatPrompt() expected error, got nil")
