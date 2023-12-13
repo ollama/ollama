@@ -276,12 +276,20 @@
 				console.log(error);
 				if ('detail' in error) {
 					toast.error(error.detail);
+					responseMessage.content = error.detail;
 				} else {
 					toast.error(error.error);
+					responseMessage.content = error.error;
 				}
 			} else {
 				toast.error(`Uh-oh! There was an issue connecting to Ollama.`);
+				responseMessage.content = `Uh-oh! There was an issue connecting to Ollama.`;
 			}
+
+			responseMessage.error = true;
+			responseMessage.content = `Uh-oh! There was an issue connecting to Ollama.`;
+			responseMessage.done = true;
+			messages = messages;
 		}
 
 		stopResponseFlag = false;
