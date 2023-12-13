@@ -216,17 +216,12 @@
 				},
 				format: $settings.requestFormat ?? undefined
 			})
+		}).catch((err) => {
+			console.log(err);
+			return null;
 		});
 
-		if (!res.ok) {
-			const error = await res.json();
-			console.log(error);
-			if ('detail' in error) {
-				toast.error(error.detail);
-			} else {
-				toast.error(error.error);
-			}
-		} else {
+		if (res && res.ok) {
 			const reader = res.body
 				.pipeThrough(new TextDecoderStream())
 				.pipeThrough(splitStream('\n'))
@@ -301,6 +296,18 @@
 					messages: messages,
 					history: history
 				});
+			}
+		} else {
+			if (res !== null) {
+				const error = await res.json();
+				console.log(error);
+				if ('detail' in error) {
+					toast.error(error.detail);
+				} else {
+					toast.error(error.error);
+				}
+			} else {
+				toast.error(`Uh-oh! There was an issue connecting to Ollama.`);
 			}
 		}
 
