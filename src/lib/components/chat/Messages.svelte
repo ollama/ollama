@@ -15,6 +15,7 @@
 	export let sendPrompt: Function;
 	export let regenerateResponse: Function;
 
+	export let bottomPadding = false;
 	export let autoScroll;
 	export let selectedModels;
 	export let history = {};
@@ -28,6 +29,13 @@
 			renderLatex();
 			hljs.highlightAll();
 			createCopyCodeBlockButton();
+		})();
+	}
+
+	$: if (autoScroll && bottomPadding) {
+		(async () => {
+			await tick();
+			window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 		})();
 	}
 
@@ -184,7 +192,8 @@
 			parentId: history.messages[messageId].parentId,
 			childrenIds: [],
 			role: 'user',
-			content: userPrompt
+			content: userPrompt,
+			...(history.messages[messageId].files && { files: history.messages[messageId].files })
 		};
 
 		let messageParentId = history.messages[messageId].parentId;
@@ -425,6 +434,18 @@
 								class="prose chat-{message.role} w-full max-w-full dark:prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-6 prose-ol:-mb-6 prose-li:-mb-4 whitespace-pre-line"
 							>
 								{#if message.role == 'user'}
+									{#if message.files}
+										<div class="my-3 w-full flex overflow-x-auto space-x-2">
+											{#each message.files as file}
+												<div>
+													{#if file.type === 'image'}
+														<img src={file.url} alt="input" class=" max-h-96 rounded-lg" />
+													{/if}
+												</div>
+											{/each}
+										</div>
+									{/if}
+
 									{#if message?.edit === true}
 										<div class=" w-full">
 											<textarea
@@ -458,17 +479,6 @@
 										</div>
 									{:else}
 										<div class="w-full">
-											{#if message.files}
-												<div class="my-3">
-													{#each message.files as file}
-														<div>
-															{#if file.type === 'image'}
-																<img src={file.url} alt="input" class=" max-h-96" />
-															{/if}
-														</div>
-													{/each}
-												</div>
-											{/if}
 											<pre id="user-message">{message.content}</pre>
 
 											<div class=" flex justify-start space-x-1">
@@ -889,4 +899,8 @@
 			</div>
 		</div>
 	{/each}
+
+	{#if bottomPadding}
+		<div class=" mb-10" />
+	{/if}
 {/if}

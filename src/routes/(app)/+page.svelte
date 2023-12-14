@@ -50,6 +50,10 @@
 		messages = [];
 	}
 
+	$: if (files) {
+		console.log(files);
+	}
+
 	onMount(async () => {
 		await chatId.set(uuidv4());
 
@@ -146,7 +150,15 @@
 					...messages
 				]
 					.filter((message) => message)
-					.map((message) => ({ role: message.role, content: message.content })),
+					.map((message) => ({
+						role: message.role,
+						content: message.content,
+						...(message.files && {
+							images: message.files
+								.filter((file) => file.type === 'image')
+								.map((file) => file.url.slice(file.url.indexOf(',') + 1))
+						})
+					})),
 				options: {
 					seed: $settings.seed ?? undefined,
 					temperature: $settings.temperature ?? undefined,
@@ -548,6 +560,7 @@
 				bind:history
 				bind:messages
 				bind:autoScroll
+				bottomPadding={files.length > 0}
 				{sendPrompt}
 				{regenerateResponse}
 			/>
@@ -555,8 +568,8 @@
 	</div>
 
 	<MessageInput
-		bind:prompt
 		bind:files
+		bind:prompt
 		bind:autoScroll
 		suggestionPrompts={selectedModelfile?.suggestionPrompts ?? [
 			{
