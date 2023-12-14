@@ -291,11 +291,9 @@ func GenerateHandler(c *gin.Context) {
 
 		// Start prediction
 		predictReq := llm.PredictOpts{
-			Prompt:           prompt,
-			Format:           req.Format,
-			CheckpointStart:  checkpointStart,
-			CheckpointLoaded: checkpointLoaded,
-			Images:           req.Images,
+			Prompt: prompt,
+			Format: req.Format,
+			Images: req.Images,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
@@ -1037,11 +1035,9 @@ func ChatHandler(c *gin.Context) {
 
 		// Start prediction
 		predictReq := llm.PredictOpts{
-			Prompt:           prompt,
-			Format:           req.Format,
-			CheckpointStart:  checkpointStart,
-			CheckpointLoaded: checkpointLoaded,
-			Images:           images,
+			Prompt: prompt,
+			Format: req.Format,
+			Images: images,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
