@@ -50,6 +50,10 @@
 		messages = [];
 	}
 
+	$: if (files) {
+		console.log(files);
+	}
+
 	onMount(async () => {
 		await chatId.set(uuidv4());
 
@@ -106,7 +110,6 @@
 	const sendPromptOllama = async (model, userPrompt, parentId, _chatId) => {
 		console.log('sendPromptOllama');
 		let responseMessageId = uuidv4();
-
 		let responseMessage = {
 			parentId: parentId,
 			id: responseMessageId,
@@ -126,37 +129,7 @@
 		}
 
 		await tick();
-
 		window.scrollTo({ top: document.body.scrollHeight });
-
-		// const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/generate`, {
-		// 	method: 'POST',
-		// 	headers: {
-		// 		'Content-Type': 'text/event-stream',
-		// 		...($settings.authHeader && { Authorization: $settings.authHeader }),
-		// 		...($user && { Authorization: `Bearer ${localStorage.token}` })
-		// 	},
-		// 	body: JSON.stringify({
-		// 		model: model,
-		// 		prompt: userPrompt,
-		// 		system: $settings.system ?? undefined,
-		// 		options: {
-		// 			seed: $settings.seed ?? undefined,
-		// 			temperature: $settings.temperature ?? undefined,
-		// 			repeat_penalty: $settings.repeat_penalty ?? undefined,
-		// 			top_k: $settings.top_k ?? undefined,
-		// 			top_p: $settings.top_p ?? undefined,
-		// 			num_ctx: $settings.num_ctx ?? undefined,
-		// 			...($settings.options ?? {})
-		// 		},
-		// 		format: $settings.requestFormat ?? undefined,
-		// 		context:
-		// 			history.messages[parentId] !== null &&
-		// 			history.messages[parentId].parentId in history.messages
-		// 				? history.messages[history.messages[parentId].parentId]?.context ?? undefined
-		// 				: undefined
-		// 	})
-		// });
 
 		const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/chat`, {
 			method: 'POST',
@@ -177,7 +150,15 @@
 					...messages
 				]
 					.filter((message) => message)
-					.map((message) => ({ role: message.role, content: message.content })),
+					.map((message) => ({
+						role: message.role,
+						content: message.content,
+						...(message.files && {
+							images: message.files
+								.filter((file) => file.type === 'image')
+								.map((file) => file.url.slice(file.url.indexOf(',') + 1))
+						})
+					})),
 				options: {
 					seed: $settings.seed ?? undefined,
 					temperature: $settings.temperature ?? undefined,
@@ -189,82 +170,107 @@
 				},
 				format: $settings.requestFormat ?? undefined
 			})
+		}).catch((err) => {
+			console.log(err);
+			return null;
 		});
 
-		const reader = res.body
-			.pipeThrough(new TextDecoderStream())
-			.pipeThrough(splitStream('\n'))
-			.getReader();
+		if (res && res.ok) {
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
 
-		while (true) {
-			const { value, done } = await reader.read();
-			if (done || stopResponseFlag || _chatId !== $chatId) {
-				responseMessage.done = true;
-				messages = messages;
-				break;
-			}
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done || stopResponseFlag || _chatId !== $chatId) {
+					responseMessage.done = true;
+					messages = messages;
+					break;
+				}
 
-			try {
-				let lines = value.split('\n');
+				try {
+					let lines = value.split('\n');
 
-				for (const line of lines) {
-					if (line !== '') {
-						console.log(line);
-						let data = JSON.parse(line);
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							let data = JSON.parse(line);
 
-						if ('detail' in data) {
-							throw data;
-						}
+							if ('detail' in data) {
+								throw data;
+							}
 
-						if (data.done == false) {
-							if (responseMessage.content == '' && data.message.content == '\n') {
-								continue;
+							if (data.done == false) {
+								if (responseMessage.content == '' && data.message.content == '\n') {
+									continue;
+								} else {
+									responseMessage.content += data.message.content;
+									messages = messages;
+								}
 							} else {
-								responseMessage.content += data.message.content;
+								responseMessage.done = true;
+								responseMessage.context = data.context ?? null;
+								responseMessage.info = {
+									total_duration: data.total_duration,
+									prompt_eval_count: data.prompt_eval_count,
+									prompt_eval_duration: data.prompt_eval_duration,
+									eval_count: data.eval_count,
+									eval_duration: data.eval_duration
+								};
 								messages = messages;
 							}
-						} else {
-							responseMessage.done = true;
-							responseMessage.context = data.context ?? null;
-							responseMessage.info = {
-								total_duration: data.total_duration,
-								prompt_eval_count: data.prompt_eval_count,
-								prompt_eval_duration: data.prompt_eval_duration,
-								eval_count: data.eval_count,
-								eval_duration: data.eval_duration
-							};
-							messages = messages;
 						}
 					}
+				} catch (error) {
+					console.log(error);
+					if ('detail' in error) {
+						toast.error(error.detail);
+					}
+					break;
 				}
-			} catch (error) {
+
+				if (autoScroll) {
+					window.scrollTo({ top: document.body.scrollHeight });
+				}
+
+				await $db.updateChatById(_chatId, {
+					title: title === '' ? 'New Chat' : title,
+					models: selectedModels,
+					system: $settings.system ?? undefined,
+					options: {
+						seed: $settings.seed ?? undefined,
+						temperature: $settings.temperature ?? undefined,
+						repeat_penalty: $settings.repeat_penalty ?? undefined,
+						top_k: $settings.top_k ?? undefined,
+						top_p: $settings.top_p ?? undefined,
+						num_ctx: $settings.num_ctx ?? undefined,
+						...($settings.options ?? {})
+					},
+					messages: messages,
+					history: history
+				});
+			}
+		} else {
+			if (res !== null) {
+				const error = await res.json();
 				console.log(error);
 				if ('detail' in error) {
 					toast.error(error.detail);
+					responseMessage.content = error.detail;
+				} else {
+					toast.error(error.error);
+					responseMessage.content = error.error;
 				}
-				break;
+			} else {
+				toast.error(`Uh-oh! There was an issue connecting to Ollama.`);
+				responseMessage.content = `Uh-oh! There was an issue connecting to Ollama.`;
 			}
 
-			if (autoScroll) {
-				window.scrollTo({ top: document.body.scrollHeight });
-			}
-
-			await $db.updateChatById(_chatId, {
-				title: title === '' ? 'New Chat' : title,
-				models: selectedModels,
-				system: $settings.system ?? undefined,
-				options: {
-					seed: $settings.seed ?? undefined,
-					temperature: $settings.temperature ?? undefined,
-					repeat_penalty: $settings.repeat_penalty ?? undefined,
-					top_k: $settings.top_k ?? undefined,
-					top_p: $settings.top_p ?? undefined,
-					num_ctx: $settings.num_ctx ?? undefined,
-					...($settings.options ?? {})
-				},
-				messages: messages,
-				history: history
-			});
+			responseMessage.error = true;
+			responseMessage.content = `Uh-oh! There was an issue connecting to Ollama.`;
+			responseMessage.done = true;
+			messages = messages;
 		}
 
 		stopResponseFlag = false;
@@ -325,7 +331,27 @@
 							...messages
 						]
 							.filter((message) => message)
-							.map((message) => ({ role: message.role, content: message.content })),
+							.map((message) => ({
+								role: message.role,
+								...(message.files
+									? {
+											content: [
+												{
+													type: 'text',
+													text: message.content
+												},
+												...message.files
+													.filter((file) => file.type === 'image')
+													.map((file) => ({
+														type: 'image_url',
+														image_url: {
+															url: file.url
+														}
+													}))
+											]
+									  }
+									: { content: message.content })
+							})),
 						temperature: $settings.temperature ?? undefined,
 						top_p: $settings.top_p ?? undefined,
 						num_ctx: $settings.num_ctx ?? undefined,
@@ -554,6 +580,7 @@
 				bind:history
 				bind:messages
 				bind:autoScroll
+				bottomPadding={files.length > 0}
 				{sendPrompt}
 				{regenerateResponse}
 			/>
@@ -561,8 +588,8 @@
 	</div>
 
 	<MessageInput
-		bind:prompt
 		bind:files
+		bind:prompt
 		bind:autoScroll
 		suggestionPrompts={selectedModelfile?.suggestionPrompts ?? [
 			{

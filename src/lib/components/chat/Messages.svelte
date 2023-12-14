@@ -15,6 +15,7 @@
 	export let sendPrompt: Function;
 	export let regenerateResponse: Function;
 
+	export let bottomPadding = false;
 	export let autoScroll;
 	export let selectedModels;
 	export let history = {};
@@ -28,6 +29,13 @@
 			renderLatex();
 			hljs.highlightAll();
 			createCopyCodeBlockButton();
+		})();
+	}
+
+	$: if (autoScroll && bottomPadding) {
+		(async () => {
+			await tick();
+			window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 		})();
 	}
 
@@ -184,7 +192,8 @@
 			parentId: history.messages[messageId].parentId,
 			childrenIds: [],
 			role: 'user',
-			content: userPrompt
+			content: userPrompt,
+			...(history.messages[messageId].files && { files: history.messages[messageId].files })
 		};
 
 		let messageParentId = history.messages[messageId].parentId;
@@ -425,6 +434,18 @@
 								class="prose chat-{message.role} w-full max-w-full dark:prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-6 prose-ol:-mb-6 prose-li:-mb-4 whitespace-pre-line"
 							>
 								{#if message.role == 'user'}
+									{#if message.files}
+										<div class="my-3 w-full flex overflow-x-auto space-x-2">
+											{#each message.files as file}
+												<div>
+													{#if file.type === 'image'}
+														<img src={file.url} alt="input" class=" max-h-96 rounded-lg" />
+													{/if}
+												</div>
+											{/each}
+										</div>
+									{/if}
+
 									{#if message?.edit === true}
 										<div class=" w-full">
 											<textarea
@@ -458,17 +479,6 @@
 										</div>
 									{:else}
 										<div class="w-full">
-											{#if message.files}
-												<div class="my-3">
-													{#each message.files as file}
-														<div>
-															{#if file.type === 'image'}
-																<img src={file.url} alt="input" class=" max-h-96" />
-															{/if}
-														</div>
-													{/each}
-												</div>
-											{/if}
 											<pre id="user-message">{message.content}</pre>
 
 											<div class=" flex justify-start space-x-1">
@@ -655,7 +665,32 @@
 											</div>
 										{:else}
 											<div class="w-full">
-												{@html marked(message.content.replace('\\\\', '\\\\\\'))}
+												{#if message?.error === true}
+													<div
+														class="flex mt-2 mb-4 space-x-2 border px-4 py-3 border-red-800 bg-red-800/30 font-medium rounded-lg"
+													>
+														<svg
+															xmlns="http://www.w3.org/2000/svg"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke-width="1.5"
+															stroke="currentColor"
+															class="w-5 h-5 self-center"
+														>
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+															/>
+														</svg>
+
+														<div class=" self-center">
+															{message.content}
+														</div>
+													</div>
+												{:else}
+													{@html marked(message.content.replace('\\\\', '\\\\\\'))}
+												{/if}
 
 												{#if message.done}
 													<div class=" flex justify-start space-x-1 -mt-2">
@@ -864,4 +899,8 @@
 			</div>
 		</div>
 	{/each}
+
+	{#if bottomPadding}
+		<div class=" mb-10" />
+	{/if}
 {/if}

@@ -14,7 +14,7 @@
 
 	export let files = [];
 
-	export let fileUploadEnabled = false;
+	export let fileUploadEnabled = true;
 	export let speechRecognitionEnabled = true;
 	export let speechRecognitionListening = false;
 
@@ -84,40 +84,40 @@
 	};
 </script>
 
-<div class="fixed bottom-0 w-full bg-white dark:bg-gray-800">
-	<div class=" absolute right-0 left-0 bottom-0 mb-20">
-		<div class="max-w-3xl px-2.5 pt-2.5 -mb-0.5 mx-auto inset-x-0">
-			{#if messages.length == 0 && suggestionPrompts.length !== 0}
+<div class="fixed bottom-0 w-full">
+	<div class="px-2.5 pt-2.5 -mb-0.5 mx-auto inset-x-0 bg-transparent flex justify-center">
+		{#if messages.length == 0 && suggestionPrompts.length !== 0}
+			<div class="max-w-3xl">
 				<Suggestions {suggestionPrompts} {submitPrompt} />
-			{/if}
+			</div>
+		{/if}
 
-			{#if autoScroll === false && messages.length > 0}
-				<div class=" flex justify-center mb-4">
-					<button
-						class=" bg-white border border-gray-100 dark:border-none dark:bg-white/20 p-1.5 rounded-full"
-						on:click={() => {
-							autoScroll = true;
-							window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-						}}
+		{#if autoScroll === false && messages.length > 0}
+			<div class=" flex justify-center mb-4">
+				<button
+					class=" bg-white border border-gray-100 dark:border-none dark:bg-white/20 p-1.5 rounded-full"
+					on:click={() => {
+						autoScroll = true;
+						window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+					}}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 20 20"
+						fill="currentColor"
+						class="w-5 h-5"
 					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 20 20"
-							fill="currentColor"
-							class="w-5 h-5"
-						>
-							<path
-								fill-rule="evenodd"
-								d="M10 3a.75.75 0 01.75.75v10.638l3.96-4.158a.75.75 0 111.08 1.04l-5.25 5.5a.75.75 0 01-1.08 0l-5.25-5.5a.75.75 0 111.08-1.04l3.96 4.158V3.75A.75.75 0 0110 3z"
-								clip-rule="evenodd"
-							/>
-						</svg>
-					</button>
-				</div>
-			{/if}
-		</div>
+						<path
+							fill-rule="evenodd"
+							d="M10 3a.75.75 0 01.75.75v10.638l3.96-4.158a.75.75 0 111.08 1.04l-5.25 5.5a.75.75 0 01-1.08 0l-5.25-5.5a.75.75 0 111.08-1.04l3.96 4.158V3.75A.75.75 0 0110 3z"
+							clip-rule="evenodd"
+						/>
+					</svg>
+				</button>
+			</div>
+		{/if}
 	</div>
-	<div>
+	<div class="bg-white dark:bg-gray-800">
 		<div class="max-w-3xl px-2.5 -mb-0.5 mx-auto inset-x-0">
 			<div class="bg-gradient-to-t from-white dark:from-gray-800 from-40% pb-2">
 				<input
@@ -136,6 +136,7 @@
 								}
 							];
 							inputFiles = null;
+							filesInputElement.value = '';
 						};
 
 						if (
