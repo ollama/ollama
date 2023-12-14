@@ -225,6 +225,9 @@
 								responseMessage.context = data.context ?? null;
 								responseMessage.info = {
 									total_duration: data.total_duration,
+									load_duration: data.load_duration,
+									sample_count: data.sample_count,
+									sample_duration: data.sample_duration,
 									prompt_eval_count: data.prompt_eval_count,
 									prompt_eval_duration: data.prompt_eval_duration,
 									eval_count: data.eval_count,

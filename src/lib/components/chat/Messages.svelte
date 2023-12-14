@@ -2,6 +2,7 @@
 	import { marked } from 'marked';
 
 	import { v4 as uuidv4 } from 'uuid';
+	import tippy from 'tippy.js';
 	import hljs from 'highlight.js';
 	import 'highlight.js/styles/github-dark.min.css';
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
@@ -29,6 +30,24 @@
 			renderLatex();
 			hljs.highlightAll();
 			createCopyCodeBlockButton();
+
+			for (const message of messages) {
+				if (message.info) {
+					tippy(`#info-${message.id}`, {
+						content: `<span class="text-xs">total_duration: ${
+							message.info.total_duration ?? 'N/A'
+						}<br/>
+						load_duration: ${message.info.load_duration ?? 'N/A'}<br/>
+						sample_count: ${message.info.sample_count ?? 'N/A'}<br/>
+						sample_duration: ${message.info.sample_duration ?? 'N/A'}<br/>
+						prompt_eval_count: ${message.info.prompt_eval_count ?? 'N/A'}<br/>
+						prompt_eval_duration: ${message.info.prompt_eval_duration ?? 'N/A'}<br/>
+						eval_count: ${message.info.eval_count ?? 'N/A'}<br/>
+						eval_duration: ${message.info.eval_duration ?? 'N/A'}</span>`,
+						allowHTML: true
+					});
+				}
+			}
 		})();
 	}
 
@@ -860,6 +879,33 @@
 																/>
 															</svg>
 														</button>
+
+														{#if message.info}
+															<button
+																class=" {messageIdx + 1 === messages.length
+																	? 'visible'
+																	: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition whitespace-pre-wrap"
+																on:click={() => {
+																	console.log(message);
+																}}
+																id="info-{message.id}"
+															>
+																<svg
+																	xmlns="http://www.w3.org/2000/svg"
+																	fill="none"
+																	viewBox="0 0 24 24"
+																	stroke-width="1.5"
+																	stroke="currentColor"
+																	class="w-4 h-4"
+																>
+																	<path
+																		stroke-linecap="round"
+																		stroke-linejoin="round"
+																		d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"
+																	/>
+																</svg>
+															</button>
+														{/if}
 
 														{#if messageIdx + 1 === messages.length}
 															<button
