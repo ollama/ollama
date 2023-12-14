@@ -548,11 +548,9 @@ const maxBufferSize = 512 * format.KiloByte
 const maxRetries = 6
 
 type PredictOpts struct {
-	Prompt           string
-	Format           string
-	Images           []api.ImageData
-	CheckpointStart  time.Time
-	CheckpointLoaded time.Time
+	Prompt string
+	Format string
+	Images []api.ImageData
 }
 
 type PredictResult struct {
