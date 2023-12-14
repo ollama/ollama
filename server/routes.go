@@ -261,12 +261,10 @@ func GenerateHandler(c *gin.Context) {
 
 			resp := api.GenerateResponse{
 				Model:     req.Model,
-				CreatedAt: r.CreatedAt,
+				CreatedAt: time.Now().UTC(),
 				Done:      r.Done,
 				Response:  r.Content,
 				Metrics: api.Metrics{
-					TotalDuration:      r.TotalDuration,
-					LoadDuration:       r.LoadDuration,
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
 					EvalCount:          r.EvalCount,
@@ -274,13 +272,18 @@ func GenerateHandler(c *gin.Context) {
 				},
 			}
 
-			if r.Done && !req.Raw {
-				embd, err := loaded.runner.Encode(c.Request.Context(), prompt+generated.String())
-				if err != nil {
-					ch <- gin.H{"error": err.Error()}
-					return
+			if r.Done {
+				resp.TotalDuration = time.Since(checkpointStart)
+				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+				if !req.Raw {
+					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+generated.String())
+					if err != nil {
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
+					resp.Context = embd
 				}
-				resp.Context = embd
 			}
 
 			ch <- resp
@@ -1012,11 +1015,9 @@ func ChatHandler(c *gin.Context) {
 
 			resp := api.ChatResponse{
 				Model:     req.Model,
-				CreatedAt: r.CreatedAt,
+				CreatedAt: time.Now().UTC(),
 				Done:      r.Done,
 				Metrics: api.Metrics{
-					TotalDuration:      r.TotalDuration,
-					LoadDuration:       r.LoadDuration,
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
 					EvalCount:          r.EvalCount,
@@ -1024,7 +1025,10 @@ func ChatHandler(c *gin.Context) {
 				},
 			}
 
-			if !r.Done {
+			if r.Done {
+				resp.TotalDuration = time.Since(checkpointStart)
+				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			} else {
 				resp.Message = &api.Message{Role: "assistant", Content: r.Content}
 			}
 
