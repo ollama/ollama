@@ -42,6 +42,7 @@
 		"@sveltejs/adapter-node": "^1.3.1",
 		"file-saver": "^2.0.5",
 		"highlight.js": "^11.9.0",
+		"hint.css": "^3.0.0",
 		"http-server": "^14.1.1",
 		"idb": "^7.1.1",
 		"js-sha256": "^0.10.1",
