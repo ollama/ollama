@@ -49,8 +49,10 @@
 	let pullProgress = null;
 
 	// Addons
+	let responseNotification = false;
 	let titleAutoGenerate = true;
 	let speechAutoSend = false;
+
 	let gravatarEmail = '';
 	let OPENAI_API_KEY = '';
 
@@ -106,6 +108,19 @@
 	const toggleTitleAutoGenerate = async () => {
 		titleAutoGenerate = !titleAutoGenerate;
 		saveSettings({ titleAutoGenerate: titleAutoGenerate });
+	};
+
+	const toggleResponseNotification = async () => {
+		const permission = await Notification.requestPermission();
+
+		if (permission === 'granted') {
+			responseNotification = !responseNotification;
+			saveSettings({ responseNotification: responseNotification });
+		} else {
+			toast.error(
+				'Response notifications cannot be activated as the website permissions have been denied. Please visit your browser settings to grant the necessary access.'
+			);
+		}
 	};
 
 	const toggleAuthHeader = async () => {
@@ -802,44 +817,66 @@
 					>
 						<div class=" space-y-3">
 							<div>
-								<div class=" py-1 flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Title Auto Generation</div>
+								<div class=" mb-1 text-sm font-medium">WebUI Add-ons</div>
 
-									<button
-										class="p-1 px-3 text-xs flex rounded transition"
-										on:click={() => {
-											toggleTitleAutoGenerate();
-										}}
-										type="button"
-									>
-										{#if titleAutoGenerate === true}
-											<span class="ml-2 self-center">On</span>
-										{:else}
-											<span class="ml-2 self-center">Off</span>
-										{/if}
-									</button>
+								<div>
+									<div class=" py-0.5 flex w-full justify-between">
+										<div class=" self-center text-xs font-medium">Response Notification</div>
+
+										<button
+											class="p-1 px-3 text-xs flex rounded transition"
+											on:click={() => {
+												toggleResponseNotification();
+											}}
+											type="button"
+										>
+											{#if responseNotification === true}
+												<span class="ml-2 self-center">On</span>
+											{:else}
+												<span class="ml-2 self-center">Off</span>
+											{/if}
+										</button>
+									</div>
 								</div>
-							</div>
 
-							<hr class=" dark:border-gray-700" />
+								<div>
+									<div class=" py-0.5 flex w-full justify-between">
+										<div class=" self-center text-xs font-medium">Title Auto Generation</div>
 
-							<div>
-								<div class=" py-1 flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Voice Input Auto-Send</div>
+										<button
+											class="p-1 px-3 text-xs flex rounded transition"
+											on:click={() => {
+												toggleTitleAutoGenerate();
+											}}
+											type="button"
+										>
+											{#if titleAutoGenerate === true}
+												<span class="ml-2 self-center">On</span>
+											{:else}
+												<span class="ml-2 self-center">Off</span>
+											{/if}
+										</button>
+									</div>
+								</div>
 
-									<button
-										class="p-1 px-3 text-xs flex rounded transition"
-										on:click={() => {
-											toggleSpeechAutoSend();
-										}}
-										type="button"
-									>
-										{#if speechAutoSend === true}
-											<span class="ml-2 self-center">On</span>
-										{:else}
-											<span class="ml-2 self-center">Off</span>
-										{/if}
-									</button>
+								<div>
+									<div class=" py-0.5 flex w-full justify-between">
+										<div class=" self-center text-xs font-medium">Voice Input Auto-Send</div>
+
+										<button
+											class="p-1 px-3 text-xs flex rounded transition"
+											on:click={() => {
+												toggleSpeechAutoSend();
+											}}
+											type="button"
+										>
+											{#if speechAutoSend === true}
+												<span class="ml-2 self-center">On</span>
+											{:else}
+												<span class="ml-2 self-center">Off</span>
+											{/if}
+										</button>
+									</div>
 								</div>
 							</div>
 

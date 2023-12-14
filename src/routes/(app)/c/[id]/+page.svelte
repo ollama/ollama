@@ -234,6 +234,21 @@
 									eval_duration: data.eval_duration
 								};
 								messages = messages;
+
+								if ($settings.responseNotification && !document.hasFocus()) {
+									const notification = new Notification(
+										selectedModelfile
+											? `${
+													selectedModelfile.title.charAt(0).toUpperCase() +
+													selectedModelfile.title.slice(1)
+											  }`
+											: `Ollama - ${model}`,
+										{
+											body: responseMessage.content,
+											icon: selectedModelfile?.imageUrl ?? '/favicon.png'
+										}
+									);
+								}
 							}
 						}
 					}
