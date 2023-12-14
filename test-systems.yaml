@@ -1,0 +1,46 @@
+# All systems must have ssh access enabled
+# Windows systems must have powershell configured as the primary/default shell for ssh
+
+
+# Always has 3 top level keys: cpu, cuda, and rocm
+  # Next level is the name of the node (assumed to be hostname)
+    # Next level has optional settings
+    # connect: Use alterate connection string instead of just hostname
+    # port: Use alternate ssh port to connect to remote system
+    # variant: if set, we'll force that specific variant when testing 
+
+# DO NOT MERGE AS IS
+
+cpu:
+  # Use Orac to test the various CPU builds
+  orac_cpu:
+    connect: dhiltgen@orac
+    variant: cpu
+  orac_avx:
+    connect: dhiltgen@orac
+    variant: cpu_avx
+  orac_avx2:
+    connect: dhiltgen@orac
+    variant: cpu_avx2
+  windows-pa_cpu:
+    connect: daniel@desktop-puni632
+    variant: cpu
+  windows-pa_avx:
+    connect: daniel@desktop-puni632
+    variant: cpu_avx
+  windows-pa_avx2:
+    connect: daniel@desktop-puni632
+    variant: cpu_avx2
+
+cuda:
+  # ssh tunnel to a NVIDIA GeForce GTX 1650 CC 7.5
+  # daniel-laptop:
+  #   connect: daniel@localhost
+  #   port: 2022
+  windows-pa:
+    connect: daniel@desktop-puni632
+
+rocm:
+  orac:
+    connect: dhiltgen@orac
+    variant: rocm_v6

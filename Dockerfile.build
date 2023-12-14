@@ -79,6 +79,7 @@ COPY --from=cuda-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/b
 COPY --from=rocm-5-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
 COPY --from=rocm-6-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
 RUN go build .
+RUN go build -cover -o ollama-cov .
 
 FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
 ENV CGO_ENABLED 1
@@ -89,5 +90,6 @@ WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
 COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
 RUN go build .
+RUN go build -cover -o ollama-cov .
 
 FROM build-$TARGETARCH

@@ -40,6 +40,9 @@ var (
 		"once upon a time",
 		"united states thanksgiving",
 	}
+	// TODO - consider adjusting this based on CPU vs. GPU
+	//        For now, set to accomodate CPU based running
+	ContextTimeout = time.Second * 420
 )
 
 func TestIntegrationSimpleOrcaMini(t *testing.T) {
@@ -48,7 +51,7 @@ func TestIntegrationSimpleOrcaMini(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(workDir)
 	require.NoError(t, llm.Init(workDir))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
 	defer cancel()
 	opts := api.DefaultOptions()
 	opts.Seed = 42
@@ -72,7 +75,7 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(workDir)
 	require.NoError(t, llm.Init(workDir))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
 	defer cancel()
 	opts := api.DefaultOptions()
 	opts.Seed = 42
@@ -98,7 +101,7 @@ func TestIntegrationConcurrentRunnersOrcaMini(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(workDir)
 	require.NoError(t, llm.Init(workDir))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
 	defer cancel()
 	opts := api.DefaultOptions()
 	opts.Seed = 42

@@ -5,4 +5,4 @@ dist
 llm/llama.cpp
 .env
 .cache
-test_data
+coverage
