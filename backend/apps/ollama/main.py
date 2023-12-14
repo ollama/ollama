@@ -59,27 +59,32 @@ def proxy(path):
     else:
         pass
 
-    # Make a request to the target server
-    target_response = requests.request(
-        method=request.method,
-        url=target_url,
-        data=data,
-        headers=headers,
-        stream=True,  # Enable streaming for server-sent events
-    )
+    try:
+        # Make a request to the target server
+        target_response = requests.request(
+            method=request.method,
+            url=target_url,
+            data=data,
+            headers=headers,
+            stream=True,  # Enable streaming for server-sent events
+        )
 
-    # Proxy the target server's response to the client
-    def generate():
-        for chunk in target_response.iter_content(chunk_size=8192):
-            yield chunk
+        target_response.raise_for_status()
 
-    response = Response(generate(), status=target_response.status_code)
+        # Proxy the target server's response to the client
+        def generate():
+            for chunk in target_response.iter_content(chunk_size=8192):
+                yield chunk
 
-    # Copy headers from the target server's response to the client's response
-    for key, value in target_response.headers.items():
-        response.headers[key] = value
+        response = Response(generate(), status=target_response.status_code)
 
-    return response
+        # Copy headers from the target server's response to the client's response
+        for key, value in target_response.headers.items():
+            response.headers[key] = value
+
+        return response
+    except Exception as e:
+        return jsonify({"detail": "Server Connection Error", "message": str(e)}), 400
 
 
 if __name__ == "__main__":
