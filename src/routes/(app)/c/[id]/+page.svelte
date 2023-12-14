@@ -343,7 +343,27 @@
 							...messages
 						]
 							.filter((message) => message)
-							.map((message) => ({ role: message.role, content: message.content })),
+							.map((message) => ({
+								role: message.role,
+								...(message.files
+									? {
+											content: [
+												{
+													type: 'text',
+													text: message.content
+												},
+												...message.files
+													.filter((file) => file.type === 'image')
+													.map((file) => ({
+														type: 'image_url',
+														image_url: {
+															url: file.url
+														}
+													}))
+											]
+									  }
+									: { content: message.content })
+							})),
 						temperature: $settings.temperature ?? undefined,
 						top_p: $settings.top_p ?? undefined,
 						num_ctx: $settings.num_ctx ?? undefined,
@@ -358,12 +378,9 @@
 
 				while (true) {
 					const { value, done } = await reader.read();
-					if (done || stopResponseFlag) {
-						if (stopResponseFlag) {
-							responseMessage.done = true;
-							messages = messages;
-						}
-
+					if (done || stopResponseFlag || _chatId !== $chatId) {
+						responseMessage.done = true;
+						messages = messages;
 						break;
 					}
 
