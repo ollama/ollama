@@ -235,6 +235,30 @@
 								e.target.style.height = '';
 								e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
 							}}
+							on:paste={(e) => {
+								const clipboardData = e.clipboardData || window.clipboardData;
+
+								if (clipboardData && clipboardData.items) {
+									for (const item of clipboardData.items) {
+										if (item.type.indexOf('image') !== -1) {
+											const blob = item.getAsFile();
+											const reader = new FileReader();
+
+											reader.onload = function (e) {
+												files = [
+													...files,
+													{
+														type: 'image',
+														url: `${e.target.result}`
+													}
+												];
+											};
+
+											reader.readAsDataURL(blob);
+										}
+									}
+								}
+							}}
 						/>
 
 						<div class="self-end mb-2 flex space-x-0.5 mr-2">
