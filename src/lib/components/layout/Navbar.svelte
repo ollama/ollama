@@ -2,7 +2,7 @@
 	import { v4 as uuidv4 } from 'uuid';
 
 	import { goto } from '$app/navigation';
-	import { chatId, db } from '$lib/stores';
+	import { chatId, db, modelfiles } from '$lib/stores';
 	import toast from 'svelte-french-toast';
 
 	export let title: string = 'Ollama Web UI';
@@ -13,7 +13,8 @@
 		console.log('share', chat);
 		toast.success('Redirecting you to OllamaHub');
 
-		const url = 'https://ollamahub.com';
+		// const url = 'https://ollamahub.com';
+		const url = 'http://localhost:5173';
 
 		const tab = await window.open(`${url}/chats/upload`, '_blank');
 		window.addEventListener(
@@ -21,7 +22,13 @@
 			(event) => {
 				if (event.origin !== url) return;
 				if (event.data === 'loaded') {
-					tab.postMessage(JSON.stringify(chat), '*');
+					tab.postMessage(
+						JSON.stringify({
+							chat: chat,
+							modelfiles: $modelfiles.filter((modelfile) => chat.models.includes(modelfile.tagName))
+						}),
+						'*'
+					);
 				}
 			},
 			false
