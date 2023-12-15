@@ -13,8 +13,8 @@
 		console.log('share', chat);
 		toast.success('Redirecting you to OllamaHub');
 
-		// const url = 'https://ollamahub.com';
-		const url = 'http://localhost:5173';
+		const url = 'https://ollamahub.com';
+		// const url = 'http://localhost:5173';
 
 		const tab = await window.open(`${url}/chats/upload`, '_blank');
 		window.addEventListener(
