@@ -41,7 +41,7 @@ WEBUI_AUTH = True if os.environ.get("WEBUI_AUTH", "FALSE") == "TRUE" else False
 
 
 ####################################
-# WEBUI_DB
+# WEBUI_DB (Deprecated, Should be removed)
 ####################################
 
 
