@@ -138,7 +138,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 	}
 	defer file.Close()
 
-	file.Truncate(b.Total)
+	_ = file.Truncate(b.Total)
 
 	g, inner := errgroup.WithContext(ctx)
 	g.SetLimit(numDownloadParts)
@@ -340,6 +340,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 			return err
 		}
 
+		// nolint: contextcheck
 		go download.Run(context.Background(), requestURL, opts.regOpts)
 	}
 

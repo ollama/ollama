@@ -23,7 +23,7 @@ type History struct {
 func NewHistory() (*History, error) {
 	h := &History{
 		Buf:      arraylist.New(),
-		Limit:    100, //resizeme
+		Limit:    100, // resizeme
 		Autosave: true,
 		Enabled:  true,
 	}
@@ -84,7 +84,7 @@ func (h *History) Add(l []rune) {
 	h.Compact()
 	h.Pos = h.Size()
 	if h.Autosave {
-		h.Save()
+		_ = h.Save()
 	}
 }
 
