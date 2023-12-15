@@ -4,7 +4,7 @@
 	import { WEB_UI_VERSION, OLLAMA_API_BASE_URL } from '$lib/constants';
 	import toast from 'svelte-french-toast';
 	import { onMount } from 'svelte';
-	import { config, models, settings, user } from '$lib/stores';
+	import { config, info, models, settings, user } from '$lib/stores';
 	import { splitStream, getGravatarURL } from '$lib/utils';
 	import Advanced from './Settings/Advanced.svelte';
 
@@ -1069,6 +1069,17 @@
 								<div class="flex w-full">
 									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">
 										{$config && $config.version ? $config.version : WEB_UI_VERSION}
+									</div>
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Ollama Version</div>
+								<div class="flex w-full">
+									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">
+										{$info?.ollama?.version ?? 'N/A'}
 									</div>
 								</div>
 							</div>
