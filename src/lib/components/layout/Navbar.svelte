@@ -2,10 +2,31 @@
 	import { v4 as uuidv4 } from 'uuid';
 
 	import { goto } from '$app/navigation';
-	import { chatId } from '$lib/stores';
+	import { chatId, db } from '$lib/stores';
+	import toast from 'svelte-french-toast';
 
 	export let title: string = 'Ollama Web UI';
 	export let shareEnabled: boolean = false;
+
+	const shareChat = async () => {
+		const chat = await $db.getChatById($chatId);
+		console.log('share', chat);
+		toast.success('Redirecting you to OllamaHub');
+
+		const url = 'https://ollamahub.com';
+
+		const tab = await window.open(`${url}/chats/upload`, '_blank');
+		window.addEventListener(
+			'message',
+			(event) => {
+				if (event.origin !== url) return;
+				if (event.data === 'loaded') {
+					tab.postMessage(JSON.stringify(chat), '*');
+				}
+			},
+			false
+		);
+	};
 </script>
 
 <nav
@@ -49,7 +70,7 @@
 					<button
 						class=" cursor-pointer p-2 flex dark:hover:bg-gray-700 rounded-lg transition border dark:border-gray-600"
 						on:click={async () => {
-							console.log('share');
+							shareChat();
 						}}
 					>
 						<div class=" m-auto self-center">
