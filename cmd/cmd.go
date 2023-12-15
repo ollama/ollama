@@ -23,11 +23,10 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/exp/slices"
-
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
