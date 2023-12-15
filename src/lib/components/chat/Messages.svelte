@@ -35,16 +35,26 @@
 				if (message.info) {
 					tippy(`#info-${message.id}`, {
 						content: `<span class="text-xs">token/s: ${
-							(message.info.eval_count ?? 0) / message.info.eval_duration ?? 'N/A'
+							`${
+								Math.round(
+									((message.info.eval_count ?? 0) / (message.info.eval_duration / 1000000000)) * 100
+								) / 100
+							} tokens` ?? 'N/A'
 						}<br/>
-						total_duration: ${message.info.total_duration ?? 'N/A'}<br/>
-						load_duration: ${message.info.load_duration ?? 'N/A'}<br/>
-						sample_count: ${message.info.sample_count ?? 'N/A'}<br/>
-						sample_duration: ${message.info.sample_duration ?? 'N/A'}<br/>
+						total_duration: ${
+							Math.round(((message.info.total_duration ?? 0) / 1000000) * 100) / 100 ?? 'N/A'
+						}ms<br/>
+						load_duration: ${
+							Math.round(((message.info.load_duration ?? 0) / 1000000) * 100) / 100 ?? 'N/A'
+						}ms<br/>
 						prompt_eval_count: ${message.info.prompt_eval_count ?? 'N/A'}<br/>
-						prompt_eval_duration: ${message.info.prompt_eval_duration ?? 'N/A'}<br/>
+						prompt_eval_duration: ${
+							Math.round(((message.info.prompt_eval_duration ?? 0) / 1000000) * 100) / 100 ?? 'N/A'
+						}ms<br/>
 						eval_count: ${message.info.eval_count ?? 'N/A'}<br/>
-						eval_duration: ${message.info.eval_duration ?? 'N/A'}</span>`,
+						eval_duration: ${
+							Math.round(((message.info.eval_duration ?? 0) / 1000000) * 100) / 100 ?? 'N/A'
+						}ms</span>`,
 						allowHTML: true
 					});
 				}
