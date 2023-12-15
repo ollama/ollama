@@ -269,6 +269,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Package managers
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
+- [Homebrew](https://formulae.brew.sh/formula/ollama)
 
 ### Libraries
 
