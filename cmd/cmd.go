@@ -19,10 +19,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/exp/slices"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
