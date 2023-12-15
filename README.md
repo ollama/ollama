@@ -286,7 +286,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Mobile
 
-- [Maid](https://github.com/danemadsen/Maid) (Mobile Artificial Intelligence Distribution)
+- [Enchanted](https://github.com/AugustDev/enchanted)
+- [Maid](https://github.com/danemadsen/Maid)
 
 ### Extensions & Plugins
 
