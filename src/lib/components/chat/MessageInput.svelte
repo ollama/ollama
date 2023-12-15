@@ -161,7 +161,7 @@
 						<div class="ml-2 mt-2 mb-1 flex space-x-2">
 							{#each files as file, fileIdx}
 								<div class=" relative group">
-									<img src={file.url} alt="input" class=" h-16 w-16 rounded-xl bg-cover" />
+									<img src={file.url} alt="input" class=" h-16 w-16 rounded-xl object-cover" />
 
 									<div class=" absolute -top-1 -right-1">
 										<button
