@@ -34,9 +34,10 @@
 			for (const message of messages) {
 				if (message.info) {
 					tippy(`#info-${message.id}`, {
-						content: `<span class="text-xs">total_duration: ${
-							message.info.total_duration ?? 'N/A'
+						content: `<span class="text-xs">token/s: ${
+							(message.info.eval_count ?? 0) / message.info.eval_duration ?? 'N/A'
 						}<br/>
+						total_duration: ${message.info.total_duration ?? 'N/A'}<br/>
 						load_duration: ${message.info.load_duration ?? 'N/A'}<br/>
 						sample_count: ${message.info.sample_count ?? 'N/A'}<br/>
 						sample_duration: ${message.info.sample_duration ?? 'N/A'}<br/>
