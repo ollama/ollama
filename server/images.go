@@ -35,38 +35,50 @@ type RegistryOptions struct {
 }
 
 type Model struct {
-	Name          string `json:"name"`
-	ShortName     string
-	ModelPath     string
-	OriginalModel string
-	AdapterPaths  []string
-	Template      string
-	System        string
-	License       []string
-	Digest        string
-	Options       map[string]interface{}
+	Name           string `json:"name"`
+	Config         ConfigV2
+	ShortName      string
+	ModelPath      string
+	OriginalModel  string
+	AdapterPaths   []string
+	ProjectorPaths []string
+	Template       string
+	System         string
+	License        []string
+	Digest         string
+	Size           int64
+	Options        map[string]interface{}
 }
 
 type PromptVars struct {
 	System   string
 	Prompt   string
 	Response string
+	First    bool
 }
 
 func (m *Model) Prompt(p PromptVars) (string, error) {
 	var prompt strings.Builder
-	tmpl, err := template.New("").Parse(m.Template)
+	// Use the "missingkey=zero" option to handle missing variables without panicking
+	tmpl, err := template.New("").Option("missingkey=zero").Parse(m.Template)
 	if err != nil {
 		return "", err
 	}
 
 	if p.System == "" {
-		// use the default system prompt for this model if one is not specified
+		// use the default system message for this model if one is not specified
 		p.System = m.System
 	}
 
+	vars := map[string]any{
+		"System":   p.System,
+		"Prompt":   p.Prompt,
+		"Response": p.Response,
+		"First":    p.First,
+	}
+
 	var sb strings.Builder
-	if err := tmpl.Execute(&sb, p); err != nil {
+	if err := tmpl.Execute(&sb, vars); err != nil {
 		return "", err
 	}
 	prompt.WriteString(sb.String())
@@ -74,10 +86,13 @@ func (m *Model) Prompt(p PromptVars) (string, error) {
 	return prompt.String(), nil
 }
 
-func (m *Model) ChatPrompt(msgs []api.Message) (string, error) {
+func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) {
 	// build the prompt from the list of messages
 	var prompt strings.Builder
-	currentVars := PromptVars{}
+	var currentImages []api.ImageData
+	currentVars := PromptVars{
+		First: true,
+	}
 
 	writePrompt := func() error {
 		p, err := m.Prompt(currentVars)
@@ -90,70 +105,90 @@ func (m *Model) ChatPrompt(msgs []api.Message) (string, error) {
 	}
 
 	for _, msg := range msgs {
-		switch msg.Role {
+		switch strings.ToLower(msg.Role) {
 		case "system":
-			if currentVars.Prompt != "" || currentVars.System != "" {
+			if currentVars.System != "" {
 				if err := writePrompt(); err != nil {
-					return "", err
+					return "", nil, err
 				}
 			}
 			currentVars.System = msg.Content
 		case "user":
-			if currentVars.Prompt != "" || currentVars.System != "" {
+			if currentVars.Prompt != "" {
 				if err := writePrompt(); err != nil {
-					return "", err
+					return "", nil, err
 				}
 			}
 			currentVars.Prompt = msg.Content
+			currentImages = msg.Images
 		case "assistant":
 			currentVars.Response = msg.Content
 			if err := writePrompt(); err != nil {
-				return "", err
+				return "", nil, err
 			}
 		default:
-			return "", fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
+			return "", nil, fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
 		}
 	}
 
 	// Append the last set of vars if they are non-empty
 	if currentVars.Prompt != "" || currentVars.System != "" {
 		if err := writePrompt(); err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 
-	return prompt.String(), nil
+	return prompt.String(), currentImages, nil
 }
 
 type ManifestV2 struct {
 	SchemaVersion int      `json:"schemaVersion"`
 	MediaType     string   `json:"mediaType"`
-	Config        Layer    `json:"config"`
+	Config        *Layer   `json:"config"`
 	Layers        []*Layer `json:"layers"`
 }
 
-type Layer struct {
-	MediaType string `json:"mediaType"`
-	Digest    string `json:"digest"`
-	Size      int64  `json:"size"`
-	From      string `json:"from,omitempty"`
-}
-
-type LayerReader struct {
-	Layer
-	io.Reader
-}
-
 type ConfigV2 struct {
-	ModelFormat string `json:"model_format"`
-	ModelFamily string `json:"model_family"`
-	ModelType   string `json:"model_type"`
-	FileType    string `json:"file_type"`
-	RootFS      RootFS `json:"rootfs"`
+	ModelFormat   string   `json:"model_format"`
+	ModelFamily   string   `json:"model_family"`
+	ModelFamilies []string `json:"model_families"`
+	ModelType     string   `json:"model_type"`
+	FileType      string   `json:"file_type"`
 
 	// required by spec
 	Architecture string `json:"architecture"`
 	OS           string `json:"os"`
+	RootFS       RootFS `json:"rootfs"`
+}
+
+func (c *ConfigV2) SetModelFormat(format string) {
+	if c.ModelFormat == "" {
+		c.ModelFormat = format
+	}
+}
+
+func (c *ConfigV2) SetModelFamily(families ...string) {
+	for _, family := range families {
+		if c.ModelFamily == "" {
+			c.ModelFamily = family
+		}
+
+		if !slices.Contains(c.ModelFamilies, family) {
+			c.ModelFamilies = append(c.ModelFamilies, family)
+		}
+	}
+}
+
+func (c *ConfigV2) SetModelType(modelType string) {
+	if c.ModelType == "" {
+		c.ModelType = modelType
+	}
+}
+
+func (c *ConfigV2) SetFileType(fileType string) {
+	if c.FileType == "" {
+		c.FileType = fileType
+	}
 }
 
 type RootFS struct {
@@ -210,6 +245,22 @@ func GetModel(name string) (*Model, error) {
 		Digest:    digest,
 		Template:  "{{ .Prompt }}",
 		License:   []string{},
+		Size:      manifest.GetTotalSize(),
+	}
+
+	filename, err := GetBlobsPath(manifest.Config.Digest)
+	if err != nil {
+		return nil, err
+	}
+
+	configFile, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer configFile.Close()
+
+	if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
+		return nil, err
 	}
 
 	for _, layer := range manifest.Layers {
@@ -228,6 +279,8 @@ func GetModel(name string) (*Model, error) {
 			log.Print("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
 			model.AdapterPaths = append(model.AdapterPaths, filename)
+		case "application/vnd.ollama.image.projector":
+			model.ProjectorPaths = append(model.ProjectorPaths, filename)
 		case "application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
@@ -301,11 +354,14 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
+		RootFS: RootFS{
+			Type: "layers",
+		},
 	}
 
 	deleteMap := make(map[string]struct{})
 
-	var layers []*LayerReader
+	var layers Layers
 
 	params := make(map[string][]string)
 	fromParams := make(map[string]any)
@@ -362,10 +418,10 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 					return err
 				}
 
-				config.ModelFormat = fromConfig.ModelFormat
-				config.ModelFamily = fromConfig.ModelFamily
-				config.ModelType = fromConfig.ModelType
-				config.FileType = fromConfig.FileType
+				config.SetModelFormat(fromConfig.ModelFormat)
+				config.SetModelFamily(append(fromConfig.ModelFamilies, fromConfig.ModelFamily)...)
+				config.SetModelType(fromConfig.ModelType)
+				config.SetFileType(fromConfig.FileType)
 
 				for _, layer := range manifest.Layers {
 					deleteMap[layer.Digest] = struct{}{}
@@ -386,13 +442,12 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 						}
 					}
 
-					layer, err := GetLayerWithBufferFromLayer(layer)
+					layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, modelpath.GetShortTagname())
 					if err != nil {
 						return err
 					}
 
-					layer.From = modelpath.GetShortTagname()
-					layers = append(layers, layer)
+					layers.Add(layer)
 				}
 
 				deleteMap[manifest.Config.Digest] = struct{}{}
@@ -400,25 +455,38 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 			defer bin.Close()
 
-			fn(api.ProgressResponse{Status: "creating model layer"})
-			ggml, err := llm.DecodeGGML(bin)
-			if err != nil {
-				return err
+			var offset int64
+			for {
+				fn(api.ProgressResponse{Status: "creating model layer"})
+
+				bin.Seek(offset, io.SeekStart)
+				ggml, err := llm.DecodeGGML(bin)
+				if errors.Is(err, io.EOF) {
+					break
+				} else if err != nil {
+					return err
+				}
+
+				config.SetModelFormat(ggml.Name())
+				config.SetModelFamily(ggml.ModelFamily())
+				config.SetModelType(ggml.ModelType())
+				config.SetFileType(ggml.FileType())
+
+				mediatype := mediatype
+				if ggml.ModelFamily() == "clip" {
+					mediatype = "application/vnd.ollama.image.projector"
+				}
+
+				sr := io.NewSectionReader(bin, offset, ggml.Size)
+				layer, err := NewLayer(sr, mediatype)
+				if err != nil {
+					return err
+				}
+
+				layers.Add(layer)
+
+				offset += ggml.Size
 			}
-
-			config.ModelFormat = ggml.Name()
-			config.ModelFamily = ggml.ModelFamily()
-			config.ModelType = ggml.ModelType()
-			config.FileType = ggml.FileType()
-
-			bin.Seek(0, io.SeekStart)
-			layer, err := CreateLayer(bin)
-			if err != nil {
-				return err
-			}
-
-			layer.MediaType = mediatype
-			layers = append(layers, layer)
 		case "adapter":
 			if strings.HasPrefix(c.Args, "@") {
 				blobPath, err := GetBlobsPath(strings.TrimPrefix(c.Args, "@"))
@@ -428,7 +496,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 				c.Args = blobPath
 			}
-			
+
 			fn(api.ProgressResponse{Status: "creating adapter layer"})
 			bin, err := os.Open(realpath(modelFileDir, c.Args))
 			if err != nil {
@@ -436,41 +504,32 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 			defer bin.Close()
 
-			layer, err := CreateLayer(bin)
+			layer, err := NewLayer(bin, mediatype)
 			if err != nil {
 				return err
 			}
 
-			if layer.Size > 0 {
-				layer.MediaType = mediatype
-				layers = append(layers, layer)
-			}
+			layers.Add(layer)
 		case "license":
 			fn(api.ProgressResponse{Status: "creating license layer"})
-			layer, err := CreateLayer(strings.NewReader(c.Args))
+
+			bin := strings.NewReader(c.Args)
+			layer, err := NewLayer(bin, mediatype)
 			if err != nil {
 				return err
 			}
 
-			if layer.Size > 0 {
-				layer.MediaType = mediatype
-				layers = append(layers, layer)
-			}
+			layers.Add(layer)
 		case "template", "system":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating %s layer", c.Name)})
 
-			// remove duplicate layers
-			layers = removeLayerFromLayers(layers, mediatype)
-
-			layer, err := CreateLayer(strings.NewReader(c.Args))
+			bin := strings.NewReader(c.Args)
+			layer, err := NewLayer(bin, mediatype)
 			if err != nil {
 				return err
 			}
 
-			if layer.Size > 0 {
-				layer.MediaType = mediatype
-				layers = append(layers, layer)
-			}
+			layers.Replace(layer)
 		default:
 			params[c.Name] = append(params[c.Name], c.Args)
 		}
@@ -490,6 +549,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 		}
 
+		// xxx - can this be removed?
 		if config.ModelType == "65B" {
 			if gqa, ok := formattedParams["gqa"].(int); ok && gqa == 8 {
 				config.ModelType = "70B"
@@ -502,40 +562,51 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 		}
 
 		fn(api.ProgressResponse{Status: "creating config layer"})
-		layer, err := CreateLayer(bytes.NewReader(b.Bytes()))
+		layer, err := NewLayer(&b, "application/vnd.ollama.image.params")
 		if err != nil {
 			return err
 		}
 
-		layer.MediaType = "application/vnd.ollama.image.params"
-		layers = append(layers, layer)
+		layers.Replace(layer)
 	}
 
-	digests, err := getLayerDigests(layers)
+	digests := make([]string, len(layers.items))
+	for i, layer := range layers.items {
+		digests[i] = layer.Digest
+	}
+
+	config.RootFS.DiffIDs = digests
+
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(config); err != nil {
+		return err
+	}
+
+	configLayer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		return err
 	}
 
-	configLayer, err := createConfigLayer(config, digests)
-	if err != nil {
-		return err
-	}
-
-	layers = append(layers, configLayer)
 	delete(deleteMap, configLayer.Digest)
 
-	if err := SaveLayers(layers, fn, false); err != nil {
-		return err
-	}
+	for _, layer := range append(layers.items, configLayer) {
+		committed, err := layer.Commit()
+		if err != nil {
+			return err
+		}
 
-	var contentLayers []*Layer
-	for _, layer := range layers {
-		contentLayers = append(contentLayers, &layer.Layer)
+		status := "writing layer"
+		if !committed {
+			status = "using already created layer"
+		}
+
+		fn(api.ProgressResponse{Status: fmt.Sprintf("%s %s", status, layer.Digest)})
+
 		delete(deleteMap, layer.Digest)
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := CreateManifest(name, configLayer, contentLayers); err != nil {
+	if err := WriteManifest(name, configLayer, layers.items); err != nil {
 		return err
 	}
 
@@ -547,119 +618,6 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 	fn(api.ProgressResponse{Status: "success"})
 	return nil
-}
-
-func removeLayerFromLayers(layers []*LayerReader, mediaType string) []*LayerReader {
-	return slices.DeleteFunc(layers, func(layer *LayerReader) bool {
-		return layer.MediaType == mediaType
-	})
-}
-
-func SaveLayers(layers []*LayerReader, fn func(resp api.ProgressResponse), force bool) error {
-	// Write each of the layers to disk
-	for _, layer := range layers {
-		fp, err := GetBlobsPath(layer.Digest)
-		if err != nil {
-			return err
-		}
-
-		_, err = os.Stat(fp)
-		if os.IsNotExist(err) || force {
-			fn(api.ProgressResponse{Status: fmt.Sprintf("writing layer %s", layer.Digest)})
-
-			out, err := os.Create(fp)
-			if err != nil {
-				log.Printf("couldn't create %s", fp)
-				return err
-			}
-			defer out.Close()
-
-			if _, err = io.Copy(out, layer.Reader); err != nil {
-				return err
-			}
-
-		} else {
-			fn(api.ProgressResponse{Status: fmt.Sprintf("using already created layer %s", layer.Digest)})
-		}
-	}
-
-	return nil
-}
-
-func CreateManifest(name string, cfg *LayerReader, layers []*Layer) error {
-	mp := ParseModelPath(name)
-	manifest := ManifestV2{
-		SchemaVersion: 2,
-		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
-		Config: Layer{
-			MediaType: cfg.MediaType,
-			Size:      cfg.Size,
-			Digest:    cfg.Digest,
-		},
-		Layers: layers,
-	}
-
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-
-	fp, err := mp.GetManifestPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(fp, manifestJSON, 0o644)
-}
-
-func GetLayerWithBufferFromLayer(layer *Layer) (*LayerReader, error) {
-	fp, err := GetBlobsPath(layer.Digest)
-	if err != nil {
-		return nil, err
-	}
-
-	file, err := os.Open(fp)
-	if err != nil {
-		return nil, fmt.Errorf("could not open blob: %w", err)
-	}
-	defer file.Close()
-
-	newLayer, err := CreateLayer(file)
-	if err != nil {
-		return nil, err
-	}
-	newLayer.MediaType = layer.MediaType
-	return newLayer, nil
-}
-
-func getLayerDigests(layers []*LayerReader) ([]string, error) {
-	var digests []string
-	for _, l := range layers {
-		if l.Digest == "" {
-			return nil, fmt.Errorf("layer is missing a digest")
-		}
-		digests = append(digests, l.Digest)
-	}
-	return digests, nil
-}
-
-// CreateLayer creates a Layer object from a given file
-func CreateLayer(f io.ReadSeeker) (*LayerReader, error) {
-	digest, size := GetSHA256Digest(f)
-	f.Seek(0, io.SeekStart)
-
-	layer := &LayerReader{
-		Layer: Layer{
-			MediaType: "application/vnd.docker.image.rootfs.diff.tar",
-			Digest:    digest,
-			Size:      size,
-		},
-		Reader: f,
-	}
-
-	return layer, nil
 }
 
 func CopyModel(src, dest string) error {
@@ -929,7 +887,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	var layers []*Layer
 	layers = append(layers, manifest.Layers...)
-	layers = append(layers, &manifest.Config)
+	layers = append(layers, manifest.Config)
 
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
@@ -1000,7 +958,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	var layers []*Layer
 	layers = append(layers, manifest.Layers...)
-	layers = append(layers, &manifest.Config)
+	layers = append(layers, manifest.Config)
 
 	for _, layer := range layers {
 		if err := downloadBlob(
@@ -1086,30 +1044,6 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptio
 	}
 
 	return m, err
-}
-
-func createConfigLayer(config ConfigV2, layers []string) (*LayerReader, error) {
-	config.RootFS = RootFS{
-		Type:    "layers",
-		DiffIDs: layers,
-	}
-
-	configJSON, err := json.Marshal(config)
-	if err != nil {
-		return nil, err
-	}
-
-	digest, size := GetSHA256Digest(bytes.NewBuffer(configJSON))
-
-	layer := &LayerReader{
-		Layer: Layer{
-			MediaType: "application/vnd.docker.container.image.v1+json",
-			Digest:    digest,
-			Size:      size,
-		},
-		Reader: bytes.NewBuffer(configJSON),
-	}
-	return layer, nil
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer

@@ -57,6 +57,7 @@ Here are some example open-source models that can be downloaded:
 | Llama 2 70B        | 70B        | 39GB  | `ollama run llama2:70b`        |
 | Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | Vicuna             | 7B         | 3.8GB | `ollama run vicuna`            |
+| LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 
 > Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
 
@@ -104,7 +105,7 @@ FROM llama2
 # set the temperature to 1 [higher is more creative, lower is more coherent]
 PARAMETER temperature 1
 
-# set the system prompt
+# set the system message
 SYSTEM """
 You are Mario from Super Mario Bros. Answer as Mario, the assistant, only.
 """
@@ -158,6 +159,13 @@ For multiline input, you can wrap text with `"""`:
 I'm a basic program that prints the famous "Hello, world!" message to the console.
 ```
 
+### Multimodal models
+
+```
+>>> What's in this image? /Users/jmorgan/Desktop/smile.png
+The image features a yellow smiley face, which is likely the central focus of the picture.
+```
+
 ### Pass in prompt as arguments
 
 ```
@@ -205,12 +213,24 @@ Finally, in a separate shell, run a model:
 ## REST API
 
 Ollama has a REST API for running and managing models.
-For example, to generate text from a model:
+
+### Generate a response
 
 ```
 curl http://localhost:11434/api/generate -d '{
   "model": "llama2",
   "prompt":"Why is the sky blue?"
+}'
+```
+
+### Chat with a model
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "mistral",
+  "messages": [
+    { "role": "user", "content": "why is the sky blue?" }
+  ]
 }'
 ```
 
@@ -241,6 +261,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
+
+### Database
+
+- [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md)
 
 ### Package managers
 

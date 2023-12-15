@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +31,10 @@ import (
 )
 
 var mode string = gin.DebugMode
+
+type Server struct {
+	WorkDir string
+}
 
 func init() {
 	switch mode {
@@ -106,7 +109,7 @@ func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sess
 			loaded.Options = nil
 		}
 
-		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, opts)
+		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
@@ -157,9 +160,9 @@ func GenerateHandler(c *gin.Context) {
 	defer loaded.mu.Unlock()
 
 	checkpointStart := time.Now()
-
 	var req api.GenerateRequest
 	err := c.ShouldBindJSON(&req)
+
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -199,14 +202,16 @@ func GenerateHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if req.Prompt == "" && req.Template == "" && req.System == "" {
-		c.JSON(http.StatusOK, api.GenerateResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true})
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true})
 		return
 	}
 
 	checkpointLoaded := time.Now()
 
 	var prompt string
-	sendContext := false
 	switch {
 	case req.Raw:
 		prompt = req.Prompt
@@ -232,6 +237,7 @@ func GenerateHandler(c *gin.Context) {
 		p, err := model.Prompt(PromptVars{
 			System: req.System,
 			Prompt: req.Prompt,
+			First:  len(req.Context) == 0,
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -239,7 +245,6 @@ func GenerateHandler(c *gin.Context) {
 		}
 		rebuild.WriteString(p)
 		prompt = rebuild.String()
-		sendContext = true
 	}
 
 	ch := make(chan any)
@@ -247,7 +252,7 @@ func GenerateHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 
-		fn := func(r llm.PredictResponse) {
+		fn := func(r llm.PredictResult) {
 			// Update model expiration
 			loaded.expireAt = time.Now().Add(sessionDuration)
 			loaded.expireTimer.Reset(sessionDuration)
@@ -259,13 +264,11 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			resp := api.GenerateResponse{
-				Model:     r.Model,
-				CreatedAt: r.CreatedAt,
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
 				Done:      r.Done,
 				Response:  r.Content,
-				EvalMetrics: api.EvalMetrics{
-					TotalDuration:      r.TotalDuration,
-					LoadDuration:       r.LoadDuration,
+				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
 					EvalCount:          r.EvalCount,
@@ -273,171 +276,59 @@ func GenerateHandler(c *gin.Context) {
 				},
 			}
 
-			if r.Done && sendContext {
-				embd, err := loaded.runner.Encode(c.Request.Context(), req.Prompt+generated.String())
-				if err != nil {
-					ch <- gin.H{"error": err.Error()}
+			if r.Done {
+				resp.TotalDuration = time.Since(checkpointStart)
+				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+				if !req.Raw {
+					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+generated.String())
+					if err != nil {
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
+					resp.Context = embd
+				}
+			}
+
+			ch <- resp
+		}
+
+		// Start prediction
+		predictReq := llm.PredictOpts{
+			Prompt: prompt,
+			Format: req.Format,
+			Images: req.Images,
+		}
+		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
+			ch <- gin.H{"error": err.Error()}
+		}
+	}()
+
+	if req.Stream != nil && !*req.Stream {
+		// Accumulate responses into the final response
+		var final api.GenerateResponse
+		var sb strings.Builder
+		for resp := range ch {
+			switch r := resp.(type) {
+			case api.GenerateResponse:
+				sb.WriteString(r.Response)
+				final = r
+			case gin.H:
+				if errorMsg, ok := r["error"].(string); ok {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+					return
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in response"})
 					return
 				}
-				r.Context = embd
-			}
-
-			ch <- resp
-		}
-
-		// Start prediction
-		predictReq := llm.PredictRequest{
-			Model:            model.Name,
-			Prompt:           prompt,
-			Format:           req.Format,
-			CheckpointStart:  checkpointStart,
-			CheckpointLoaded: checkpointLoaded,
-		}
-		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
-		}
-	}()
-
-	if req.Stream != nil && !*req.Stream {
-		// Wait for the channel to close
-		var r api.GenerateResponse
-		var sb strings.Builder
-		for resp := range ch {
-			var ok bool
-			if r, ok = resp.(api.GenerateResponse); !ok {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error"})
 				return
 			}
-			sb.WriteString(r.Response)
-		}
-		r.Response = sb.String()
-		c.JSON(http.StatusOK, r)
-		return
-	}
-
-	streamResponse(c, ch)
-}
-
-func ChatHandler(c *gin.Context) {
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
-
-	checkpointStart := time.Now()
-
-	var req api.ChatRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
-		return
-	case err != nil:
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// validate the request
-	switch {
-	case req.Model == "":
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
-	case len(req.Format) > 0 && req.Format != "json":
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
-		return
-	}
-
-	sessionDuration := defaultSessionDuration
-	model, err := load(c, req.Model, req.Options, sessionDuration)
-	if err != nil {
-		var pErr *fs.PathError
-		switch {
-		case errors.As(err, &pErr):
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
-		case errors.Is(err, api.ErrInvalidOpts):
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
-		return
-	}
-
-	// an empty request loads the model
-	if len(req.Messages) == 0 {
-		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true})
-		return
-	}
-
-	checkpointLoaded := time.Now()
-
-	if req.Template != "" {
-		// override the default model template
-		model.Template = req.Template
-	}
-	prompt, err := model.ChatPrompt(req.Messages)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	ch := make(chan any)
-
-	go func() {
-		defer close(ch)
-
-		fn := func(r llm.PredictResponse) {
-			// Update model expiration
-			loaded.expireAt = time.Now().Add(sessionDuration)
-			loaded.expireTimer.Reset(sessionDuration)
-
-			resp := api.ChatResponse{
-				Model:     r.Model,
-				CreatedAt: r.CreatedAt,
-				Done:      r.Done,
-				EvalMetrics: api.EvalMetrics{
-					TotalDuration:      r.TotalDuration,
-					LoadDuration:       r.LoadDuration,
-					PromptEvalCount:    r.PromptEvalCount,
-					PromptEvalDuration: r.PromptEvalDuration,
-					EvalCount:          r.EvalCount,
-					EvalDuration:       r.EvalDuration,
-				},
-			}
-
-			if !r.Done {
-				resp.Message = &api.Message{Role: "assistant", Content: r.Content}
-			}
-
-			ch <- resp
 		}
 
-		// Start prediction
-		predictReq := llm.PredictRequest{
-			Model:            model.Name,
-			Prompt:           prompt,
-			Format:           req.Format,
-			CheckpointStart:  checkpointStart,
-			CheckpointLoaded: checkpointLoaded,
-		}
-		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
-		}
-	}()
-
-	if req.Stream != nil && !*req.Stream {
-		// Wait for the channel to close
-		var r api.ChatResponse
-		var sb strings.Builder
-		for resp := range ch {
-			var ok bool
-			if r, ok = resp.(api.ChatResponse); !ok {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			if r.Message != nil {
-				sb.WriteString(r.Message.Content)
-			}
-		}
-		r.Message = &api.Message{Role: "assistant", Content: sb.String()}
-		c.JSON(http.StatusOK, r)
+		final.Response = sb.String()
+		c.JSON(http.StatusOK, final)
 		return
 	}
 
@@ -729,10 +620,19 @@ func GetModelInfo(name string) (*api.ShowResponse, error) {
 		return nil, err
 	}
 
+	modelDetails := api.ModelDetails{
+		Format:            model.Config.ModelFormat,
+		Family:            model.Config.ModelFamily,
+		Families:          model.Config.ModelFamilies,
+		ParameterSize:     model.Config.ModelType,
+		QuantizationLevel: model.Config.FileType,
+	}
+
 	resp := &api.ShowResponse{
 		License:  strings.Join(model.License, "\n"),
 		System:   model.System,
 		Template: model.Template,
+		Details:  modelDetails,
 	}
 
 	mf, err := ShowModelfile(model)
@@ -782,25 +682,42 @@ func ListModelsHandler(c *gin.Context) {
 		return
 	}
 
+	modelResponse := func(modelName string) (api.ModelResponse, error) {
+		model, err := GetModel(modelName)
+		if err != nil {
+			return api.ModelResponse{}, err
+		}
+
+		modelDetails := api.ModelDetails{
+			Format:            model.Config.ModelFormat,
+			Family:            model.Config.ModelFamily,
+			Families:          model.Config.ModelFamilies,
+			ParameterSize:     model.Config.ModelType,
+			QuantizationLevel: model.Config.FileType,
+		}
+
+		return api.ModelResponse{
+			Name:    model.ShortName,
+			Size:    model.Size,
+			Digest:  model.Digest,
+			Details: modelDetails,
+		}, nil
+	}
+
 	walkFunc := func(path string, info os.FileInfo, _ error) error {
 		if !info.IsDir() {
 			dir, file := filepath.Split(path)
 			dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
 			tag := strings.Join([]string{dir, file}, ":")
 
-			mp := ParseModelPath(tag)
-			manifest, digest, err := GetManifest(mp)
+			resp, err := modelResponse(tag)
 			if err != nil {
 				log.Printf("skipping file: %s", fp)
 				return nil
 			}
 
-			models = append(models, api.ModelResponse{
-				Name:       mp.GetShortTagname(),
-				Size:       manifest.GetTotalSize(),
-				Digest:     digest,
-				ModifiedAt: info.ModTime(),
-			})
+			resp.ModifiedAt = info.ModTime()
+			models = append(models, resp)
 		}
 
 		return nil
@@ -862,37 +779,18 @@ func HeadBlobHandler(c *gin.Context) {
 }
 
 func CreateBlobHandler(c *gin.Context) {
-	targetPath, err := GetBlobsPath(c.Param("digest"))
+	layer, err := NewLayer(c.Request.Body, "")
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	hash := sha256.New()
-	temp, err := os.CreateTemp(filepath.Dir(targetPath), c.Param("digest")+"-")
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer temp.Close()
-	defer os.Remove(temp.Name())
-
-	if _, err := io.Copy(temp, io.TeeReader(c.Request.Body, hash)); err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if layer.Digest != c.Param("digest") {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("digest mismatch, expected %q, got %q", c.Param("digest"), layer.Digest)})
 		return
 	}
 
-	if fmt.Sprintf("sha256:%x", hash.Sum(nil)) != c.Param("digest") {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "digest does not match body"})
-		return
-	}
-
-	if err := temp.Close(); err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := os.Rename(temp.Name(), targetPath); err != nil {
+	if _, err := layer.Commit(); err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -906,27 +804,27 @@ var defaultAllowOrigins = []string{
 	"0.0.0.0",
 }
 
-func Serve(ln net.Listener, allowOrigins []string) error {
-	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
-		// clean up unused layers and manifests
-		if err := PruneLayers(); err != nil {
-			return err
-		}
+func NewServer() (*Server, error) {
+	workDir, err := os.MkdirTemp("", "ollama")
+	if err != nil {
+		return nil, err
+	}
 
-		manifestsPath, err := GetManifestPath()
-		if err != nil {
-			return err
-		}
+	return &Server{
+		WorkDir: workDir,
+	}, nil
+}
 
-		if err := PruneDirectory(manifestsPath); err != nil {
-			return err
-		}
+func (s *Server) GenerateRoutes() http.Handler {
+	var origins []string
+	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
+		origins = strings.Split(o, ",")
 	}
 
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 
-	config.AllowOrigins = allowOrigins
+	config.AllowOrigins = origins
 	for _, allowOrigin := range defaultAllowOrigins {
 		config.AllowOrigins = append(config.AllowOrigins,
 			fmt.Sprintf("http://%s", allowOrigin),
@@ -936,17 +834,11 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		)
 	}
 
-	workDir, err := os.MkdirTemp("", "ollama")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(workDir)
-
 	r := gin.Default()
 	r.Use(
 		cors.New(config),
 		func(c *gin.Context) {
-			c.Set("workDir", workDir)
+			c.Set("workDir", s.WorkDir)
 			c.Next()
 		},
 	)
@@ -969,10 +861,39 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		})
 
 		r.Handle(method, "/api/tags", ListModelsHandler)
+		r.Handle(method, "/api/version", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"version": version.Version})
+		})
 	}
 
+	return r
+}
+
+func Serve(ln net.Listener) error {
+	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+		// clean up unused layers and manifests
+		if err := PruneLayers(); err != nil {
+			return err
+		}
+
+		manifestsPath, err := GetManifestPath()
+		if err != nil {
+			return err
+		}
+
+		if err := PruneDirectory(manifestsPath); err != nil {
+			return err
+		}
+	}
+
+	s, err := NewServer()
+	if err != nil {
+		return err
+	}
+	r := s.GenerateRoutes()
+
 	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
-	s := &http.Server{
+	srvr := &http.Server{
 		Handler: r,
 	}
 
@@ -984,18 +905,18 @@ func Serve(ln net.Listener, allowOrigins []string) error {
 		if loaded.runner != nil {
 			loaded.runner.Close()
 		}
-		os.RemoveAll(workDir)
+		os.RemoveAll(s.WorkDir)
 		os.Exit(0)
 	}()
 
 	if runtime.GOOS == "linux" {
 		// check compatibility to log warnings
 		if _, err := llm.CheckVRAM(); err != nil {
-			log.Printf(err.Error())
+			log.Print(err.Error())
 		}
 	}
 
-	return s.Serve(ln)
+	return srvr.Serve(ln)
 }
 
 func waitForStream(c *gin.Context, ch chan interface{}) {
@@ -1046,4 +967,137 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 		return true
 	})
+}
+
+func ChatHandler(c *gin.Context) {
+	loaded.mu.Lock()
+	defer loaded.mu.Unlock()
+
+	checkpointStart := time.Now()
+
+	var req api.ChatRequest
+	err := c.ShouldBindJSON(&req)
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// validate the request
+	switch {
+	case req.Model == "":
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	case len(req.Format) > 0 && req.Format != "json":
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
+		return
+	}
+
+	sessionDuration := defaultSessionDuration
+	model, err := load(c, req.Model, req.Options, sessionDuration)
+	if err != nil {
+		var pErr *fs.PathError
+		switch {
+		case errors.As(err, &pErr):
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+		case errors.Is(err, api.ErrInvalidOpts):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	// an empty request loads the model
+	if len(req.Messages) == 0 {
+		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true})
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	prompt, images, err := model.ChatPrompt(req.Messages)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ch := make(chan any)
+
+	go func() {
+		defer close(ch)
+
+		fn := func(r llm.PredictResult) {
+			// Update model expiration
+			loaded.expireAt = time.Now().Add(sessionDuration)
+			loaded.expireTimer.Reset(sessionDuration)
+
+			resp := api.ChatResponse{
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Done:      r.Done,
+				Metrics: api.Metrics{
+					PromptEvalCount:    r.PromptEvalCount,
+					PromptEvalDuration: r.PromptEvalDuration,
+					EvalCount:          r.EvalCount,
+					EvalDuration:       r.EvalDuration,
+				},
+			}
+
+			if r.Done {
+				resp.TotalDuration = time.Since(checkpointStart)
+				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			} else {
+				resp.Message = &api.Message{Role: "assistant", Content: r.Content}
+			}
+
+			ch <- resp
+		}
+
+		// Start prediction
+		predictReq := llm.PredictOpts{
+			Prompt: prompt,
+			Format: req.Format,
+			Images: images,
+		}
+		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
+			ch <- gin.H{"error": err.Error()}
+		}
+	}()
+
+	if req.Stream != nil && !*req.Stream {
+		// Accumulate responses into the final response
+		var final api.ChatResponse
+		var sb strings.Builder
+		for resp := range ch {
+			switch r := resp.(type) {
+			case api.ChatResponse:
+				if r.Message != nil {
+					sb.WriteString(r.Message.Content)
+				}
+
+				final = r
+			case gin.H:
+				if errorMsg, ok := r["error"].(string); ok {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+					return
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in response"})
+					return
+				}
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error"})
+				return
+			}
+		}
+
+		final.Message = &api.Message{Role: "assistant", Content: sb.String()}
+		c.JSON(http.StatusOK, final)
+		return
+	}
+
+	streamResponse(c, ch)
 }

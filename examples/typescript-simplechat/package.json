@@ -1,0 +1,1 @@
+{ "dependencies": { "@types/node": "^20.10.4", "prompt-sync": "^4.2.0", "readline": "^1.3.0" } }
