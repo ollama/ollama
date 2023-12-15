@@ -82,10 +82,11 @@
 					: convertMessagesToHistory(chat.messages);
 			title = chat.title;
 
+			let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 			await settings.set({
-				...$settings,
-				system: chat.system ?? $settings.system,
-				options: chat.options ?? $settings.options
+				..._settings,
+				system: chat.system ?? _settings.system,
+				options: chat.options ?? _settings.options
 			});
 			autoScroll = true;
 

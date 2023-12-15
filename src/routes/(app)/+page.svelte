@@ -84,7 +84,6 @@
 		let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(_settings);
 		settings.set({
-			...$settings,
 			..._settings
 		});
 	};
