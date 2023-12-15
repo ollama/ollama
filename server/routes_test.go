@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"gotest.tools/v3/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func setupServer(t *testing.T) (*Server, error) {
@@ -36,41 +36,35 @@ func Test_Routes(t *testing.T) {
 				contentType := resp.Header.Get("Content-Type")
 				assert.Equal(t, contentType, "application/json; charset=utf-8")
 				body, err := io.ReadAll(resp.Body)
-				assert.NilError(t, err)
+				assert.Nil(t, err)
 				assert.Equal(t, `{"version":"0.0.0"}`, string(body))
 			},
 		},
 	}
 
 	s, err := setupServer(t)
-	assert.NilError(t, err)
+	assert.Nil(t, err)
 
 	router := s.GenerateRoutes()
 
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)
 
-	run := func(t *testing.T, tc testCase) {
+	for _, tc := range testCases {
 		u := httpSrv.URL + tc.Path
 		req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
-		assert.NilError(t, err)
+		assert.Nil(t, err)
 
 		if tc.Setup != nil {
 			tc.Setup(t, req)
 		}
 
 		resp, err := httpSrv.Client().Do(req)
-		assert.NilError(t, err)
+		assert.Nil(t, err)
 
 		if tc.Expected != nil {
 			tc.Expected(t, resp)
 		}
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			run(t, tc)
-		})
 	}
 
 }
