@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,6 +34,7 @@ func Test_Routes(t *testing.T) {
 		Setup    func(t *testing.T, req *http.Request)
 		Expected func(t *testing.T, resp *http.Response)
 	}
+	var tempModelFile string
 
 	testCases := []testCase{
 		{
@@ -70,7 +74,7 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodGet,
 			Path:   "/api/tags",
 			Setup: func(t *testing.T, req *http.Request) {
-				f, err := os.CreateTemp("", "ollama-modelfile")
+				f, err := os.CreateTemp("", "ollama-model")
 				assert.Nil(t, err)
 				defer os.RemoveAll(f.Name())
 
@@ -88,12 +92,41 @@ func Test_Routes(t *testing.T) {
 				assert.Nil(t, err)
 
 				var modelList api.ListResponse
-
 				err = json.Unmarshal(body, &modelList)
 				assert.Nil(t, err)
 
 				assert.Equal(t, 1, len(modelList.Models))
 				assert.Equal(t, modelList.Models[0].Name, "test:latest")
+			},
+		},
+		{
+			Name:   "Create Model Handler",
+			Method: http.MethodPost,
+			Path:   "/api/create",
+			Setup: func(t *testing.T, req *http.Request) {
+				f, err := os.CreateTemp("", "ollama-model")
+				assert.Nil(t, err)
+				tempModelFile = f.Name()
+
+				stream := false
+				createReq := api.CreateRequest{
+					Name:      "t-bone",
+					Modelfile: fmt.Sprintf("FROM %s", f.Name()),
+					Stream:    &stream,
+				}
+				jsonData, err := json.Marshal(createReq)
+				assert.Nil(t, err)
+
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				os.RemoveAll(tempModelFile)
+
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+				assert.Equal(t, resp.StatusCode, 200)
 			},
 		},
 	}
@@ -121,11 +154,13 @@ func Test_Routes(t *testing.T) {
 		}
 
 		resp, err := httpSrv.Client().Do(req)
+		defer resp.Body.Close()
 		assert.Nil(t, err)
 
 		if tc.Expected != nil {
 			tc.Expected(t, resp)
 		}
+
 	}
 
 }
