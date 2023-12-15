@@ -22,6 +22,7 @@
 	// General
 	let API_BASE_URL = OLLAMA_API_BASE_URL;
 	let theme = 'dark';
+	let notificationEnabled = false;
 	let system = '';
 
 	// Advanced
@@ -49,7 +50,6 @@
 	let pullProgress = null;
 
 	// Addons
-	let responseNotification = false;
 	let titleAutoGenerate = true;
 	let speechAutoSend = false;
 
@@ -110,12 +110,12 @@
 		saveSettings({ titleAutoGenerate: titleAutoGenerate });
 	};
 
-	const toggleResponseNotification = async () => {
+	const toggleNotification = async () => {
 		const permission = await Notification.requestPermission();
 
 		if (permission === 'granted') {
-			responseNotification = !responseNotification;
-			saveSettings({ responseNotification: responseNotification });
+			notificationEnabled = !notificationEnabled;
+			saveSettings({ notificationEnabled: notificationEnabled });
 		} else {
 			toast.error(
 				'Response notifications cannot be activated as the website permissions have been denied. Please visit your browser settings to grant the necessary access.'
@@ -168,6 +168,13 @@
 						if (data.status) {
 							if (!data.digest) {
 								toast.success(data.status);
+
+								if (data.status === 'success') {
+									const notification = new Notification(`Ollama`, {
+										body: `Model '${modelTag}' has been successfully downloaded.`,
+										icon: '/favicon.png'
+									});
+								}
 							} else {
 								digest = data.digest;
 								if (data.completed) {
@@ -524,8 +531,10 @@
 				{#if selectedTab === 'general'}
 					<div class="flex flex-col space-y-3">
 						<div>
-							<div class=" py-1 flex w-full justify-between">
-								<div class=" self-center text-sm font-medium">Theme</div>
+							<div class=" mb-1 text-sm font-medium">WebUI Settings</div>
+
+							<div class=" py-0.5 flex w-full justify-between">
+								<div class=" self-center text-xs font-medium">Theme</div>
 
 								<button
 									class="p-1 px-3 text-xs flex rounded transition"
@@ -562,6 +571,26 @@
 										<span class="ml-2 self-center"> Light </span>
 									{/if}
 								</button>
+							</div>
+
+							<div>
+								<div class=" py-0.5 flex w-full justify-between">
+									<div class=" self-center text-xs font-medium">Notification</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										on:click={() => {
+											toggleNotification();
+										}}
+										type="button"
+									>
+										{#if notificationEnabled === true}
+											<span class="ml-2 self-center">On</span>
+										{:else}
+											<span class="ml-2 self-center">Off</span>
+										{/if}
+									</button>
+								</div>
 							</div>
 						</div>
 
@@ -818,26 +847,6 @@
 						<div class=" space-y-3">
 							<div>
 								<div class=" mb-1 text-sm font-medium">WebUI Add-ons</div>
-
-								<div>
-									<div class=" py-0.5 flex w-full justify-between">
-										<div class=" self-center text-xs font-medium">Response Notification</div>
-
-										<button
-											class="p-1 px-3 text-xs flex rounded transition"
-											on:click={() => {
-												toggleResponseNotification();
-											}}
-											type="button"
-										>
-											{#if responseNotification === true}
-												<span class="ml-2 self-center">On</span>
-											{:else}
-												<span class="ml-2 self-center">Off</span>
-											{/if}
-										</button>
-									</div>
-								</div>
 
 								<div>
 									<div class=" py-0.5 flex w-full justify-between">

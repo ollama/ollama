@@ -222,7 +222,7 @@
 								};
 								messages = messages;
 
-								if ($settings.responseNotification && !document.hasFocus()) {
+								if ($settings.notificationEnabled && !document.hasFocus()) {
 									const notification = new Notification(
 										selectedModelfile
 											? `${
