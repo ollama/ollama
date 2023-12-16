@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,15 +35,30 @@ func Test_Routes(t *testing.T) {
 	}
 	var tempModelFile string
 
-	createTestModel := func(t *testing.T, name string) {
-		f, err := os.CreateTemp("", "ollama-model")
-		assert.Nil(t, err)
-		defer os.RemoveAll(f.Name())
+	createTestFile := func(t *testing.T, name string) string {
+		data := make([]byte, 6)
 
-		modelfile := strings.NewReader(fmt.Sprintf("FROM %s", f.Name()))
+		copy(data[0:4], []byte("GGUF"))
+		copy(data[4:6], []byte{0x2, 0})
+
+		f, err := os.CreateTemp("", name)
+		assert.Nil(t, err)
+		_, err = f.Write(data)
+		assert.Nil(t, err)
+
+		return f.Name()
+	}
+
+	createTestModel := func(t *testing.T, name string) {
+		fname := createTestFile(t, "ollama-model")
+		defer os.RemoveAll(fname)
+
+		modelfile := strings.NewReader(fmt.Sprintf("FROM %s", fname))
 		commands, err := parser.Parse(modelfile)
 		assert.Nil(t, err)
-		fn := func(resp api.ProgressResponse) {}
+		fn := func(resp api.ProgressResponse) {
+			log.Printf("Status: %s", resp.Status)
+		}
 		err = CreateModel(context.TODO(), name, "", commands, fn)
 		assert.Nil(t, err)
 	}
@@ -173,6 +188,7 @@ func Test_Routes(t *testing.T) {
 	os.Setenv("OLLAMA_MODELS", workDir)
 
 	for _, tc := range testCases {
+		log.Printf("Running Test: [%s]", tc.Name)
 		u := httpSrv.URL + tc.Path
 		req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
 		assert.Nil(t, err)
