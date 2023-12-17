@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
@@ -1035,12 +1035,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	var origins []string
-	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
-		origins = strings.Split(o, ",")
-	}
-
-	return server.Serve(ln, origins)
+	return server.Serve(ln)
 }
 
 func getImageData(filePath string) ([]byte, error) {

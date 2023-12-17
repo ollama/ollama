@@ -85,8 +85,6 @@ The final response in the stream also includes additional data about the generat
 
 - `total_duration`: time spent generating the response
 - `load_duration`: time spent in nanoseconds loading the model
-- `sample_count`: number of samples generated
-- `sample_duration`: time spent generating samples
 - `prompt_eval_count`: number of tokens in the prompt
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
 - `eval_count`: number of tokens the response
@@ -105,8 +103,6 @@ To calculate how fast the response is generated in tokens per second (token/s), 
   "done": true,
   "total_duration": 5589157167,
   "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 113,
@@ -139,8 +135,6 @@ If `stream` is set to `false`, the response will be a single JSON object:
   "done": true,
   "total_duration": 5589157167,
   "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 13,
@@ -314,8 +308,6 @@ curl http://localhost:11434/api/generate -d '{
   "done": true,
   "total_duration": 5589157167,
   "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 13,
@@ -392,8 +384,6 @@ Final response:
   "done": true,
   "total_duration": 5589157167,
   "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 113,
@@ -450,8 +440,6 @@ Final response:
   "done": true,
   "total_duration": 5589157167,
   "load_duration": 3013701500,
-  "sample_count": 114,
-  "sample_duration": 81442000,
   "prompt_eval_count": 46,
   "prompt_eval_duration": 1160282000,
   "eval_count": 113,

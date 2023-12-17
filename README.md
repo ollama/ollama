@@ -239,7 +239,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ## Community Integrations
 
 ### Web & Desktop
-
+- [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
