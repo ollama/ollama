@@ -55,7 +55,7 @@ Advanced parameters (optional):
 
 #### JSON mode
 
-Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as valid JSON. See the JSON mode [example](#request-json-mode) below.
+Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#generate-request-json-mode) below.
 
 > Note: it's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
 
@@ -89,8 +89,6 @@ The final response in the stream also includes additional data about the generat
 
 - `total_duration`: time spent generating the response
 - `load_duration`: time spent in nanoseconds loading the model
-- `sample_count`: number of samples generated
-- `sample_duration`: time spent generating samples
 - `prompt_eval_count`: number of tokens in the prompt
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
 - `eval_count`: number of tokens the response
@@ -107,11 +105,12 @@ To calculate how fast the response is generated in tokens per second (token/s), 
   "response": "",
   "done": true,
   "context": [1, 2, 3],
-  "total_duration": 5589157167,
-  "prompt_eval_count": 46,
-  "prompt_eval_duration": 1160282000,
-  "eval_count": 113,
-  "eval_duration": 1325948000
+  "total_duration":10706818083,
+  "load_duration":6338219291,
+  "prompt_eval_count":26,
+  "prompt_eval_duration":130079000,
+  "eval_count":259,
+  "eval_duration":4232710000
 }
 ```
 
@@ -140,11 +139,12 @@ If `stream` is set to `false`, the response will be a single JSON object:
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
   "context": [1, 2, 3],
-  "total_duration": 5589157167,
-  "prompt_eval_count": 46,
-  "prompt_eval_duration": 1160282000,
-  "eval_count": 13,
-  "eval_duration": 1325948000
+  "total_duration": 5043500667,
+  "load_duration": 5025959,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 325953000,
+  "eval_count": 290,
+  "eval_duration": 4709213000
 }
 ```
 
@@ -172,11 +172,12 @@ curl http://localhost:11434/api/generate -d '{
   "response": "{\n\"morning\": {\n\"color\": \"blue\"\n},\n\"noon\": {\n\"color\": \"blue-gray\"\n},\n\"afternoon\": {\n\"color\": \"warm gray\"\n},\n\"evening\": {\n\"color\": \"orange\"\n}\n}\n",
   "done": true,
   "context": [1, 2, 3], 
-  "total_duration": 4661289125,
+  "total_duration": 4648158584,
+  "load_duration": 4071084,
   "prompt_eval_count": 36,
-  "prompt_eval_duration": 264132000,
-  "eval_count": 75,
-  "eval_duration": 2112149000
+  "prompt_eval_duration": 439038000,
+  "eval_count": 180,
+  "eval_duration": 4196918000
 }
 ```
 
@@ -223,11 +224,12 @@ curl http://localhost:11434/api/generate -d '{
   "response": "A happy cartoon character, which is cute and cheerful.",
   "done": true,
   "context": [1, 2, 3],
-  "total_duration": 14648695333,
-  "prompt_eval_count": 14,
-  "prompt_eval_duration": 286243000,
-  "eval_count": 129,
-  "eval_duration": 10931424000
+  "total_duration": 2938432250,
+  "load_duration": 2559292,
+  "prompt_eval_count": 1,
+  "prompt_eval_duration": 2195557000,
+  "eval_count": 44,
+  "eval_duration": 736432000
 }
 ```
 
@@ -253,11 +255,12 @@ curl http://localhost:11434/api/generate -d '{
   "created_at": "2023-11-03T15:36:02.583064Z",
   "response": " The sky appears blue because of a phenomenon called Rayleigh scattering.",
   "done": true,
-  "total_duration": 14648695333,
+  "total_duration": 8493852375,
+  "load_duration": 6589624375,
   "prompt_eval_count": 14,
-  "prompt_eval_duration": 286243000,
-  "eval_count": 129,
-  "eval_duration": 10931424000
+  "prompt_eval_duration": 119039000,
+  "eval_count": 110,
+  "eval_duration": 1779061000
 }
 ```
 
@@ -319,11 +322,12 @@ curl http://localhost:11434/api/generate -d '{
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
   "context": [1, 2, 3], 
-  "total_duration": 5589157167,
-  "prompt_eval_count": 46,
-  "prompt_eval_duration": 1160282000,
-  "eval_count": 13,
-  "eval_duration": 1325948000
+  "total_duration": 4935886791,
+  "load_duration": 534986708,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 107345000,
+  "eval_count": 237,
+  "eval_duration": 4289432000
 }
 ```
 

@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
@@ -951,7 +951,8 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					cmd.SetContext(ctx)
 				}
 				if len(opts.Images) == 0 {
-					fmt.Println("This model requires you to add a jpeg, png, or svg image.\n")
+					fmt.Println("This model requires you to add a jpeg, png, or svg image.")
+					fmt.Println()
 					prompt = ""
 					continue
 				}
@@ -1034,12 +1035,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	var origins []string
-	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
-		origins = strings.Split(o, ",")
-	}
-
-	return server.Serve(ln, origins)
+	return server.Serve(ln)
 }
 
 func getImageData(filePath string) ([]byte, error) {
@@ -1069,7 +1065,7 @@ func getImageData(filePath string) ([]byte, error) {
 	// Check if the file size exceeds 100MB
 	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
 	if info.Size() > maxSize {
-		return nil, fmt.Errorf("file size exceeds maximum limit (100MB).")
+		return nil, fmt.Errorf("file size exceeds maximum limit (100MB)")
 	}
 
 	buf = make([]byte, info.Size())
