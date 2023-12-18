@@ -928,8 +928,18 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			return nil
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
-			if multiModal && slices.Contains(extractFileNames(line), args[0]) {
-				// this is a file path, not a command, add it to the prompt
+			isFile := false
+
+			if multiModal {
+				for _, f := range extractFileNames(line) {
+					if strings.HasPrefix(f, args[0]) {
+						isFile = true
+						break
+					}
+				}
+			}
+
+			if isFile {
 				prompt += line
 			} else {
 				fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
