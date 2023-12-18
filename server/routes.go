@@ -1013,7 +1013,7 @@ func ChatHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if len(req.Messages) == 0 {
-		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true})
+		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true, Message: api.Message{Role: "assistant"}})
 		return
 	}
 
@@ -1038,6 +1038,7 @@ func ChatHandler(c *gin.Context) {
 			resp := api.ChatResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
+				Message:   api.Message{Role: "assistant", Content: r.Content},
 				Done:      r.Done,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
@@ -1050,8 +1051,6 @@ func ChatHandler(c *gin.Context) {
 			if r.Done {
 				resp.TotalDuration = time.Since(checkpointStart)
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-			} else {
-				resp.Message = &api.Message{Role: "assistant", Content: r.Content}
 			}
 
 			ch <- resp
@@ -1075,10 +1074,7 @@ func ChatHandler(c *gin.Context) {
 		for resp := range ch {
 			switch r := resp.(type) {
 			case api.ChatResponse:
-				if r.Message != nil {
-					sb.WriteString(r.Message.Content)
-				}
-
+				sb.WriteString(r.Message.Content)
 				final = r
 			case gin.H:
 				if errorMsg, ok := r["error"].(string); ok {
@@ -1094,7 +1090,7 @@ func ChatHandler(c *gin.Context) {
 			}
 		}
 
-		final.Message = &api.Message{Role: "assistant", Content: sb.String()}
+		final.Message = api.Message{Role: "assistant", Content: sb.String()}
 		c.JSON(http.StatusOK, final)
 		return
 	}
