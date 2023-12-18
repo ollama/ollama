@@ -46,7 +46,7 @@ You should see a folder for every model you have pulled. Now go into `llama2`. I
 cat latest | jq
 ```
 
-Here we can see each of the layers of this model. And you can see that the big file, as indicated by the size, is the model. There are also a couple of licenses, a template layer, and a params layer. Notice that the digest for each of those appears in the other terminal that showed the output from our pull operation. 
+Here we can see each of the layers of this model. And you can see that the big file, as indicated by the size, is the model. There are also a couple of licenses, a template layer, and a params layer. Notice that the digest for each of those appears in the other terminal that showed the output from our pull operation.
 
 Now try pulling a different model:
 

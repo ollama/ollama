@@ -141,8 +141,6 @@ ollama pull llama2
 
 ### Remove a model
 
-Remove the model files from your local system.
-
 ```
 ollama rm llama2
 ```
@@ -164,8 +162,6 @@ ollama show --modelfile llama2
 ```
 
 ### List local models
-
-List all the models you have pulled.
 
 ```
 ollama list
@@ -191,11 +187,13 @@ $ ollama run llama2 "Summarize this file: $(cat README.md)"
 
 ### Manually start Ollama
 
-If you installed Ollama using the installations on the website, you will usually not need to do this. If you built Ollama yourself, or you need to change some parameters, it may be necessary to run the service manually:
+By default, the Ollama service starts automatically. If you choose to build Ollama, you may need to manually run the service:
 
 ```
 ollama serve
 ```
+
+There are a few environment variables you can use with `ollama serve` to influence how it functions, including `OLLAMA_HOST`, `OLLAMA_MODELS`, and more.  
 
 ## Upgrading Ollama
 

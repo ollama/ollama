@@ -6,11 +6,13 @@ Sometimes Ollama may not perform as you expect. One of the best ways to figure o
 cat ~/.ollama/logs/server.log
 ```
 
-On Linux, the logs can be found with this command:
+On Linux systems with systemd, the logs can be found with this command:
 
 ```shell
 journalctl -u ollama
 ```
+
+If you are manually running `ollama serve` in a terminal, the logs will be on that terminal.
 
 If you need help interpreting what you see, try signing in to the Discord at [discord.gg/ollama](https://discord.gg/ollama).
 
