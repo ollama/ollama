@@ -41,7 +41,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
-- `images`: a list of base64-encoded images (for multimodal models such as `llava`)
+- `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
 
 Advanced parameters (optional):
 
@@ -340,7 +340,7 @@ If you post a body with just the model, it will load the model into memory, but 
 ```shell
 curl http://localhost:11434/api/generate -d '{
   "model": "llama2"
-}
+}'
 ```
 
 ##### Response
@@ -349,17 +349,10 @@ A single JSON object is returned:
 
 ```json
 {
-  "model": "llama2",
-  "created_at": "2023-12-12T02:34:16.373531Z",
-  "response": "",
-  "model_configuration": {
-    "model_format": "gguf",
-    "model_family": "llama",
-    "model_families": null,
-    "model_type": "7B",
-    "file_type": "Q4_0"
-  },
-  "done": true
+  "model":"llama2",
+  "created_at":"2023-12-18T19:52:07.071755Z",
+  "response":"",
+  "done":true
 }
 ```
 
@@ -419,7 +412,8 @@ A stream of JSON objects is returned:
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assisant",
-    "content": "The"
+    "content": "The", 
+    "images": null
   },
   "done": false
 }
@@ -432,11 +426,12 @@ Final response:
   "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
-  "total_duration": 5589157167,
-  "prompt_eval_count": 46,
-  "prompt_eval_duration": 1160282000,
-  "eval_count": 113,
-  "eval_duration": 1325948000
+  "total_duration":4883583458,
+  "load_duration":1334875,
+  "prompt_eval_count":26,
+  "prompt_eval_duration":342546000,
+  "eval_count":282,
+  "eval_duration":4535599000
 }
 ```
 
@@ -468,11 +463,12 @@ curl http://localhost:11434/api/chat -d '{
     "content": "Hello! How are you today?"
   },
   "done": true,
-  "total_duration": 390291583,
-  "prompt_eval_count": 21,
-  "prompt_eval_duration": 285840000,
-  "eval_count": 7,
-  "eval_duration": 96220000
+  "total_duration": 5191566416,
+  "load_duration": 2154458,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 383809000,
+  "eval_count": 298,
+  "eval_duration": 4799921000
 }
 ```
 
@@ -512,7 +508,8 @@ A stream of JSON objects is returned:
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assisant",
-    "content": "The"
+    "content": "The", 
+    "images": null
   },
   "done": false
 }
@@ -525,11 +522,12 @@ Final response:
   "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
-  "total_duration": 5589157167,
-  "prompt_eval_count": 46,
-  "prompt_eval_duration": 1160282000,
-  "eval_count": 113,
-  "eval_duration": 1325948000
+  "total_duration":8113331500,
+  "load_duration":6396458,
+  "prompt_eval_count":61,
+  "prompt_eval_duration":398801000,
+  "eval_count":468,
+  "eval_duration":7701267000
 }
 ```
 
@@ -564,11 +562,12 @@ curl http://localhost:11434/api/chat -d '{
     "images": null
   },
   "done": true,
-  "total_duration": 4861191167,
-  "prompt_eval_count": 1,
-  "prompt_eval_duration": 2093384000,
-  "eval_count": 50,
-  "eval_duration": 822417000
+  "total_duration":1668506709,
+  "load_duration":1986209,
+  "prompt_eval_count":26,
+  "prompt_eval_duration":359682000,
+  "eval_count":83,
+  "eval_duration":1303285000
 }
 ```
 
