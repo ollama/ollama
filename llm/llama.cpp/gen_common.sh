@@ -15,13 +15,20 @@ init_vars() {
 }
 
 git_module_setup() {
-    # TODO add flags to skip the init/patch logic to make it easier to mod llama.cpp code in-repo
+    if [ -n "${OLLAMA_SKIP_PATCHING}" ] ; then
+        echo "Skipping submodule initialization"
+        return
+    fi
     git submodule init
     git submodule update --force gguf
 
 }
 
 apply_patches() {
+    if [ -n "${OLLAMA_SKIP_PATCHING}" ] ; then
+        echo "Skipping submodule patching"
+        return
+    fi
     # Workaround git apply not handling creation well for iteration
     rm -f gguf/examples/server/server.h
     for patch in ${PATCHES} ; do

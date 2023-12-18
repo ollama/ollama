@@ -3,13 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifndef _WIN32
+#ifdef __linux__
 #include <dlfcn.h>
-#define LOAD_LIBRARY(lib, flags) dlopen(lib, flags)
+#define LOAD_LIBRARY(lib, flags) dlopen(lib, flags | RTLD_DEEPBIND)
 #define LOAD_SYMBOL(handle, sym) dlsym(handle, sym)
 #define LOAD_ERR() dlerror()
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
-#else
+#elif _WIN32
 #include <windows.h>
 #define LOAD_LIBRARY(lib, flags) LoadLibrary(lib)
 #define LOAD_SYMBOL(handle, sym) GetProcAddress(handle, sym)
@@ -20,6 +20,12 @@ inline static char *LOAD_ERR() {
   snprintf(errbuf, 8, "0x%lx", GetLastError());
   return errbuf;
 }
+#else
+#include <dlfcn.h>
+#define LOAD_LIBRARY(lib, flags) dlopen(lib, flags)
+#define LOAD_SYMBOL(handle, sym) dlsym(handle, sym)
+#define LOAD_ERR() dlerror()
+#define UNLOAD_LIBRARY(handle) dlclose(handle)
 #endif
 
 void rocm_shim_init(const char *libPath, struct rocm_llama_server *s,
@@ -48,7 +54,7 @@ void rocm_shim_init(const char *libPath, struct rocm_llama_server *s,
   };
 
   printf("Lazy loading %s library\n", libPath);
-  s->handle = LOAD_LIBRARY(libPath, RTLD_LAZY);
+  s->handle = LOAD_LIBRARY(libPath, RTLD_NOW);
   if (!s->handle) {
     err->id = -1;
     snprintf(
