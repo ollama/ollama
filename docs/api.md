@@ -539,7 +539,7 @@ Send a chat message with a conversation history.
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama2",
+  "model": "llava",
   "messages": [
     {
       "role": "user",
