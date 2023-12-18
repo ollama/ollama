@@ -59,13 +59,13 @@ type ChatRequest struct {
 type Message struct {
 	Role    string      `json:"role"` // one of ["system", "user", "assistant"]
 	Content string      `json:"content"`
-	Images  []ImageData `json:"images"`
+	Images  []ImageData `json:"images,omitempty"`
 }
 
 type ChatResponse struct {
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
-	Message   *Message  `json:"message"`
+	Message   Message   `json:"message"`
 
 	Done bool `json:"done"`
 
