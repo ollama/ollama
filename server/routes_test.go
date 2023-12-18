@@ -41,6 +41,7 @@ func Test_Routes(t *testing.T) {
 		_, err = f.Write([]byte("GGUF"))
 		assert.Nil(t, err)
 		_, err = f.Write([]byte{0x2, 0})
+		assert.Nil(t, err)
 
 		return f.Name()
 	}
