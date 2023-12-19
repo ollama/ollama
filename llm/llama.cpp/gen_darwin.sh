@@ -9,15 +9,14 @@ set -o pipefail
 echo "Starting darwin generate script"
 source $(dirname $0)/gen_common.sh
 init_vars
-CMAKE_DEFS="-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 ${CMAKE_DEFS}"
+CMAKE_DEFS="-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DLLAMA_METAL=on ${CMAKE_DEFS}"
+BUILD_DIR="gguf/build/metal"
 case "${GOARCH}" in
     "amd64")
-        CMAKE_DEFS="-DLLAMA_METAL=off -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 ${CMAKE_DEFS}"
-        BUILD_DIR="gguf/build/cpu"
+        CMAKE_DEFS="-DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 ${CMAKE_DEFS}"
         ;;
      "arm64")
-        CMAKE_DEFS="-DLLAMA_METAL=on -DCMAKE_SYSTEM_PROCESSOR=arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 ${CMAKE_DEFS}"
-        BUILD_DIR="gguf/build/metal"
+        CMAKE_DEFS="-DCMAKE_SYSTEM_PROCESSOR=arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 ${CMAKE_DEFS}"
         ;;
     *)
         echo "GOARCH must be set"
@@ -29,9 +28,3 @@ esac
 git_module_setup
 apply_patches
 build
-
-# TODO - improve this to handle test cases that need it to be in "." around the tree
-# Enable local debug/run usecase
-if [ -e "gguf/ggml-metal.metal" ]; then
-    cp gguf/ggml-metal.metal ../../
-fi

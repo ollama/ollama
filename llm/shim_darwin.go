@@ -9,7 +9,7 @@ import (
 	"github.com/jmorganca/ollama/api"
 )
 
-//go:embed llama.cpp/gguf/build/*/bin/ggml-metal.metal
+//go:embed llama.cpp/gguf/ggml-metal.metal
 var libEmbed embed.FS
 
 func newRocmShimExtServer(model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
@@ -18,7 +18,7 @@ func newRocmShimExtServer(model string, adapters, projectors []string, numLayers
 }
 
 func nativeInit(workdir string) error {
-	err := extractLib(workdir, "llama.cpp/gguf/build/*/bin/ggml-metal.metal")
+	err := extractLib(workdir, "llama.cpp/gguf/ggml-metal.metal")
 	if err != nil {
 		if err == payloadMissing {
 			// TODO perhaps consider this a hard failure on arm macs?

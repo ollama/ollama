@@ -4,6 +4,8 @@ package gpu
 
 import "C"
 import (
+	"runtime"
+
 	"github.com/jmorganca/ollama/api"
 )
 
@@ -25,8 +27,12 @@ func GetGPUInfo() GpuInfo {
 }
 
 func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
-	// default to enable metal on macOS
-	return 1
+	if runtime.GOARCH == "arm64" {
+		return 1
+	}
+
+	// metal only supported on arm64
+	return 0
 }
 
 func nativeInit() error {
