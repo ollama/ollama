@@ -84,9 +84,43 @@
 		let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(_settings);
 		settings.set({
-			...$settings,
 			..._settings
 		});
+	};
+
+	const copyToClipboard = (text) => {
+		if (!navigator.clipboard) {
+			var textArea = document.createElement('textarea');
+			textArea.value = text;
+
+			// Avoid scrolling to bottom
+			textArea.style.top = '0';
+			textArea.style.left = '0';
+			textArea.style.position = 'fixed';
+
+			document.body.appendChild(textArea);
+			textArea.focus();
+			textArea.select();
+
+			try {
+				var successful = document.execCommand('copy');
+				var msg = successful ? 'successful' : 'unsuccessful';
+				console.log('Fallback: Copying text command was ' + msg);
+			} catch (err) {
+				console.error('Fallback: Oops, unable to copy', err);
+			}
+
+			document.body.removeChild(textArea);
+			return;
+		}
+		navigator.clipboard.writeText(text).then(
+			function () {
+				console.log('Async: Copying to clipboard was successful!');
+			},
+			function (err) {
+				console.error('Async: Could not copy text: ', err);
+			}
+		);
 	};
 
 	//////////////////////////
@@ -213,12 +247,34 @@
 								responseMessage.context = data.context ?? null;
 								responseMessage.info = {
 									total_duration: data.total_duration,
+									load_duration: data.load_duration,
+									sample_count: data.sample_count,
+									sample_duration: data.sample_duration,
 									prompt_eval_count: data.prompt_eval_count,
 									prompt_eval_duration: data.prompt_eval_duration,
 									eval_count: data.eval_count,
 									eval_duration: data.eval_duration
 								};
 								messages = messages;
+
+								if ($settings.notificationEnabled && !document.hasFocus()) {
+									const notification = new Notification(
+										selectedModelfile
+											? `${
+													selectedModelfile.title.charAt(0).toUpperCase() +
+													selectedModelfile.title.slice(1)
+											  }`
+											: `Ollama - ${model}`,
+										{
+											body: responseMessage.content,
+											icon: selectedModelfile?.imageUrl ?? '/favicon.png'
+										}
+									);
+								}
+
+								if ($settings.responseAutoCopy) {
+									copyToClipboard(responseMessage.content);
+								}
 							}
 						}
 					}
@@ -423,6 +479,18 @@
 				stopResponseFlag = false;
 
 				await tick();
+
+				if ($settings.notificationEnabled && !document.hasFocus()) {
+					const notification = new Notification(`OpenAI ${model}`, {
+						body: responseMessage.content,
+						icon: '/favicon.png'
+					});
+				}
+
+				if ($settings.responseAutoCopy) {
+					copyToClipboard(responseMessage.content);
+				}
+
 				if (autoScroll) {
 					window.scrollTo({ top: document.body.scrollHeight });
 				}
@@ -566,7 +634,7 @@
 	}}
 />
 
-<Navbar {title} />
+<Navbar {title} shareEnabled={messages.length > 0} />
 <div class="min-h-screen w-full flex justify-center">
 	<div class=" py-2.5 flex flex-col justify-between w-full">
 		<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-10">

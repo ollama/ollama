@@ -59,9 +59,11 @@ def proxy(path):
     else:
         pass
 
+    r = None
+
     try:
         # Make a request to the target server
-        target_response = requests.request(
+        r = requests.request(
             method=request.method,
             url=target_url,
             data=data,
@@ -69,22 +71,37 @@ def proxy(path):
             stream=True,  # Enable streaming for server-sent events
         )
 
-        target_response.raise_for_status()
+        r.raise_for_status()
 
         # Proxy the target server's response to the client
         def generate():
-            for chunk in target_response.iter_content(chunk_size=8192):
+            for chunk in r.iter_content(chunk_size=8192):
                 yield chunk
 
-        response = Response(generate(), status=target_response.status_code)
+        response = Response(generate(), status=r.status_code)
 
         # Copy headers from the target server's response to the client's response
-        for key, value in target_response.headers.items():
+        for key, value in r.headers.items():
             response.headers[key] = value
 
         return response
     except Exception as e:
-        return jsonify({"detail": "Server Connection Error", "message": str(e)}), 400
+        error_detail = "Ollama WebUI: Server Connection Error"
+        if r != None:
+            res = r.json()
+            if "error" in res:
+                error_detail = f"Ollama: {res['error']}"
+            print(res)
+
+        return (
+            jsonify(
+                {
+                    "detail": error_detail,
+                    "message": str(e),
+                }
+            ),
+            400,
+        )
 
 
 if __name__ == "__main__":

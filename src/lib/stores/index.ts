@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 
 // Backend
+export const info = writable({});
 export const config = writable(undefined);
 export const user = writable(undefined);
 
