@@ -469,7 +469,12 @@
 											{#each message.files as file}
 												<div>
 													{#if file.type === 'image'}
-														<img src={file.url} alt="input" class=" max-h-96 rounded-lg" />
+														<img
+															src={file.url}
+															alt="input"
+															class=" max-h-96 rounded-lg"
+															draggable="false"
+														/>
 													{/if}
 												</div>
 											{/each}
