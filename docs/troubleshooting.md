@@ -16,7 +16,7 @@ If you are manually running `ollama serve` in a terminal, the logs will be on th
 
 If you need help interpreting what you see, try signing in to the Discord at [discord.gg/ollama](https://discord.gg/ollama).
 
-## Error Index
+## Known issues
 
 This is a list of some of the errors that can pop up and their solutions:
 
