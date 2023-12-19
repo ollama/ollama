@@ -3,7 +3,6 @@
 	"version": "0.0.1",
 	"private": true,
 	"scripts": {
-		"start": "http-server ./build -P http://localhost:8080?",
 		"dev": "vite dev --host",
 		"build": "vite build",
 		"preview": "vite preview",
