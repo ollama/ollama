@@ -49,7 +49,7 @@ Here are some example open-source models that can be downloaded:
 | ------------------ | ---------- | ----- | ------------------------------ |
 | Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
-| Phi                | 2.7B       | 1.7GB | `ollama run phi`               |
+| Phi-2              | 2.7B       | 1.7GB | `ollama run phi`               |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
 | Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
