@@ -148,15 +148,11 @@ ollama rm llama2
 
 ### Copy a model
 
-Copy a model on your local system, giving it a new name. The underlying files, such as the model weights, are not duplicated.
-
 ```
 ollama cp llama2 my-llama2
 ```
 
 ### Show model information
-
-Show the information about a model. You must include an option for what you want to show: template, modelfile, system, parameters, or license.
 
 ```
 ollama show --modelfile llama2
