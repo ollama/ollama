@@ -123,6 +123,10 @@
 
 			dragged = false;
 		});
+
+		dropZone?.addEventListener('dragleave', () => {
+			dragged = false;
+		});
 	});
 </script>
 
