@@ -6,6 +6,7 @@
 
 	import {
 		config,
+		info,
 		user,
 		showSettings,
 		settings,
@@ -21,6 +22,7 @@
 	import toast from 'svelte-french-toast';
 	import { OLLAMA_API_BASE_URL, WEBUI_API_BASE_URL } from '$lib/constants';
 
+	let requiredOllamaVersion = '0.1.16';
 	let loaded = false;
 
 	const getModels = async () => {
@@ -160,25 +162,67 @@
 		};
 	};
 
+	const getOllamaVersion = async () => {
+		const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/version`, {
+			method: 'GET',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json',
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
+			}
+		})
+			.then(async (res) => {
+				if (!res.ok) throw await res.json();
+				return res.json();
+			})
+			.catch((error) => {
+				console.log(error);
+				if ('detail' in error) {
+					toast.error(error.detail);
+				} else {
+					toast.error('Server connection failed');
+				}
+				return null;
+			});
+
+		console.log(res);
+
+		return res?.version ?? '0';
+	};
+
+	const setOllamaVersion = async (ollamaVersion) => {
+		await info.set({ ...$info, ollama: { version: ollamaVersion } });
+
+		if (
+			ollamaVersion.localeCompare(requiredOllamaVersion, undefined, {
+				numeric: true,
+				sensitivity: 'case',
+				caseFirst: 'upper'
+			}) < 0
+		) {
+			toast.error(`Ollama Version: ${ollamaVersion}`);
+		}
+	};
+
 	onMount(async () => {
 		if ($config && $config.auth && $user === undefined) {
 			await goto('/auth');
 		}
 
-		await settings.set(JSON.parse(localStorage.getItem('settings') ?? JSON.stringify($settings)));
+		await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
 
-		let _models = await getModels();
-		await models.set(_models);
-		let _db = await getDB();
-		await db.set(_db);
-
-		await modelfiles.set(
-			JSON.parse(localStorage.getItem('modelfiles') ?? JSON.stringify($modelfiles))
-		);
+		await models.set(await getModels());
+		await modelfiles.set(JSON.parse(localStorage.getItem('modelfiles') ?? '[]'));
 
 		modelfiles.subscribe(async () => {
 			await models.set(await getModels());
 		});
+
+		let _db = await getDB();
+		await db.set(_db);
+
+		await setOllamaVersion(await getOllamaVersion());
 
 		await tick();
 		loaded = true;
@@ -186,7 +230,48 @@
 </script>
 
 {#if loaded}
-	<div class="app">
+	<div class="app relative">
+		{#if ($info?.ollama?.version ?? '0').localeCompare( requiredOllamaVersion, undefined, { numeric: true, sensitivity: 'case', caseFirst: 'upper' } ) < 0}
+			<div class="absolute w-full h-full flex z-50">
+				<div
+					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-900/60 flex justify-center"
+				>
+					<div class="m-auto pb-44">
+						<div class="text-center dark:text-white text-2xl font-medium z-50">
+							Ollama Update Required
+						</div>
+
+						<div class=" mt-4 text-center max-w-md text-sm dark:text-gray-200">
+							Oops! It seems like your Ollama needs a little attention. <br
+								class=" hidden sm:flex"
+							/>
+							We encountered a connection issue or noticed that you're running an outdated version. Please
+							update to
+							<span class=" dark:text-white font-medium">{requiredOllamaVersion} or above</span>.
+						</div>
+
+						<div class=" mt-6 mx-auto relative group w-fit">
+							<button
+								class="relative z-20 flex px-5 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition font-medium text-sm"
+								on:click={async () => {
+									await setOllamaVersion(await getOllamaVersion());
+								}}
+							>
+								Check Again
+							</button>
+
+							<button
+								class="text-xs text-center w-full mt-2 text-gray-400 underline"
+								on:click={async () => {
+									await setOllamaVersion(requiredOllamaVersion);
+								}}>Close</button
+							>
+						</div>
+					</div>
+				</div>
+			</div>
+		{/if}
+
 		<div
 			class=" text-gray-700 dark:text-gray-100 bg-white dark:bg-gray-800 min-h-screen overflow-auto flex flex-row"
 		>

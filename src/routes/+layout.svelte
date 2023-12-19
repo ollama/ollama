@@ -7,7 +7,7 @@
 
 	import '../app.css';
 	import '../tailwind.css';
-
+	import 'tippy.js/dist/tippy.css';
 	let loaded = false;
 
 	onMount(async () => {

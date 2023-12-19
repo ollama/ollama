@@ -48,6 +48,7 @@
 		"katex": "^0.16.9",
 		"marked": "^9.1.0",
 		"svelte-french-toast": "^1.2.0",
+		"tippy.js": "^6.3.7",
 		"uuid": "^9.0.1"
 	}
 }

@@ -161,7 +161,7 @@
 						<div class="ml-2 mt-2 mb-1 flex space-x-2">
 							{#each files as file, fileIdx}
 								<div class=" relative group">
-									<img src={file.url} alt="input" class=" h-16 w-16 rounded-xl bg-cover" />
+									<img src={file.url} alt="input" class=" h-16 w-16 rounded-xl object-cover" />
 
 									<div class=" absolute -top-1 -right-1">
 										<button
@@ -234,6 +234,30 @@
 							on:input={(e) => {
 								e.target.style.height = '';
 								e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+							}}
+							on:paste={(e) => {
+								const clipboardData = e.clipboardData || window.clipboardData;
+
+								if (clipboardData && clipboardData.items) {
+									for (const item of clipboardData.items) {
+										if (item.type.indexOf('image') !== -1) {
+											const blob = item.getAsFile();
+											const reader = new FileReader();
+
+											reader.onload = function (e) {
+												files = [
+													...files,
+													{
+														type: 'image',
+														url: `${e.target.result}`
+													}
+												];
+											};
+
+											reader.readAsDataURL(blob);
+										}
+									}
+								}
 							}}
 						/>
 
