@@ -14,7 +14,6 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -109,13 +108,15 @@ func (llm *shimExtServer) Close() {
 }
 
 func nativeInit(workdir string) error {
-	err := extractLib(workdir)
+	err := extractLib(workdir, "llama.cpp/gguf/build/*/lib/*rocm_server*")
 	if err != nil {
-		if err == RocmShimMissing {
-			log.Printf("%s", err)
+		if err == payloadMissing {
+			log.Printf("%s", RocmShimMissing)
 			return nil
 		}
 		return err
+	} else {
+		ShimPresent = true
 	}
 
 	// Verify we have permissions - either running as root, or we have group access to the driver
@@ -166,46 +167,5 @@ func nativeInit(workdir string) error {
 		s:       srv,
 		options: api.DefaultOptions(),
 	}
-	return nil
-}
-
-func extractLib(workDir string) error {
-	files, err := fs.Glob(libEmbed, "llama.cpp/gguf/build/*/lib/*rocm_server*")
-	if err != nil || len(files) == 0 {
-		// this is expected, ollama may be compiled without shim library packed in
-		return RocmShimMissing
-	}
-
-	if len(files) != 1 {
-		// Shouldn't happen, but just use the first one we find
-		log.Printf("WARNING: multiple rocm libraries detected - using %s", files[0])
-	}
-
-	srcFile, err := libEmbed.Open(files[0])
-	if err != nil {
-		return fmt.Errorf("read ROCm shim %s: %v", files[0], err)
-	}
-	defer srcFile.Close()
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		return fmt.Errorf("create ROCm shim temp dir %s: %v", workDir, err)
-	}
-
-	destFile := filepath.Join(workDir, filepath.Base(files[0]))
-
-	_, err = os.Stat(destFile)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-		if err != nil {
-			return fmt.Errorf("write ROCm shim %s: %v", files[0], err)
-		}
-		defer destFile.Close()
-		if _, err := io.Copy(destFile, srcFile); err != nil {
-			return fmt.Errorf("copy ROCm shim %s: %v", files[0], err)
-		}
-	case err != nil:
-		return fmt.Errorf("stat ROCm shim %s: %v", files[0], err)
-	}
-	ShimPresent = true
 	return nil
 }

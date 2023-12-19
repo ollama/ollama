@@ -6,8 +6,12 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -116,6 +120,7 @@ type ImageData struct {
 var (
 	errNvidiaSMI     = errors.New("warning: gpu support may not be enabled, check that you have installed GPU drivers: nvidia-smi command failed")
 	errAvailableVRAM = errors.New("not enough VRAM available, falling back to CPU only")
+	payloadMissing   = fmt.Errorf("expected payload not included in this build of ollama")
 )
 
 // StatusWriter is a writer that captures error messages from the llama runner process
@@ -201,4 +206,43 @@ type EmbeddingRequest struct {
 
 type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
+}
+
+func extractLib(workDir, glob string) error {
+	files, err := fs.Glob(libEmbed, glob)
+	if err != nil || len(files) == 0 {
+		return payloadMissing
+	}
+
+	if len(files) != 1 {
+		// Shouldn't happen, but just use the first one we find
+		log.Printf("WARNING: multiple payloads detected - using %s", files[0])
+	}
+
+	srcFile, err := libEmbed.Open(files[0])
+	if err != nil {
+		return fmt.Errorf("read payload %s: %v", files[0], err)
+	}
+	defer srcFile.Close()
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
+	}
+
+	destFile := filepath.Join(workDir, filepath.Base(files[0]))
+
+	_, err = os.Stat(destFile)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+		if err != nil {
+			return fmt.Errorf("write payload %s: %v", files[0], err)
+		}
+		defer destFile.Close()
+		if _, err := io.Copy(destFile, srcFile); err != nil {
+			return fmt.Errorf("copy payload %s: %v", files[0], err)
+		}
+	case err != nil:
+		return fmt.Errorf("stat payload %s: %v", files[0], err)
+	}
+	return nil
 }
