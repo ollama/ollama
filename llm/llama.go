@@ -59,6 +59,7 @@ ws ::= ([ \t\n] ws)?
 var llamaCppEmbed embed.FS
 
 type ModelRunner struct {
+	Type        string // "gguf" or "ggml"
 	Path        string // path to the model runner executable
 	Accelerated bool
 }
@@ -72,25 +73,25 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	switch runtime.GOOS {
 	case "darwin":
 		if runtime.GOARCH == "arm64" {
-			runners = []ModelRunner{{Path: path.Join(buildPath, "metal", "bin", "ollama-runner")}}
+			runners = []ModelRunner{{Type: runnerType, Path: path.Join(buildPath, "metal", "bin", "ollama-runner")}}
 		} else {
-			runners = []ModelRunner{{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")}}
+			runners = []ModelRunner{{Type: runnerType, Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")}}
 		}
 	case "linux":
 		runners = []ModelRunner{
-			{Path: path.Join(buildPath, "cuda", "bin", "ollama-runner"), Accelerated: true},
-			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
+			{Type: runnerType, Path: path.Join(buildPath, "cuda", "bin", "ollama-runner"), Accelerated: true},
+			{Type: runnerType, Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	case "windows":
 		// TODO: select windows GPU runner here when available
 		runners = []ModelRunner{
-			{Path: path.Join(buildPath, "cuda", "bin", "Release", "ollama-runner.exe"), Accelerated: true},
-			{Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
+			{Type: runnerType, Path: path.Join(buildPath, "cuda", "bin", "Release", "ollama-runner.exe"), Accelerated: true},
+			{Type: runnerType, Path: path.Join(buildPath, "cpu", "bin", "Release", "ollama-runner.exe")},
 		}
 	default:
 		log.Printf("unknown OS, running on CPU: %s", runtime.GOOS)
 		runners = []ModelRunner{
-			{Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
+			{Type: runnerType, Path: path.Join(buildPath, "cpu", "bin", "ollama-runner")},
 		}
 	}
 
@@ -148,6 +149,7 @@ func chooseRunners(workDir, runnerType string) []ModelRunner {
 	for _, r := range runners {
 		// clean the ModelRunner paths so that they match the OS we are running on
 		localRunnersByPriority = append(localRunnersByPriority, ModelRunner{
+			Type:        r.Type,
 			Path:        filepath.Clean(path.Join(workDir, r.Path)),
 			Accelerated: r.Accelerated,
 		})
@@ -221,8 +223,14 @@ type Running struct {
 	*StatusWriter            // captures error messages from the llama runner process
 }
 
+type ImageData struct {
+	Data []byte `json:"data"`
+	ID   int    `json:"id"`
+}
+
 type llama struct {
 	api.Options
+	ImageData []ImageData
 	Running
 }
 
@@ -325,7 +333,7 @@ func (w *StatusWriter) Write(b []byte) (int, error) {
 	return os.Stderr.Write(b)
 }
 
-func newLlama(model string, adapters []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
+func newLlama(model string, adapters, projectors []string, runners []ModelRunner, numLayers int64, opts api.Options) (*llama, error) {
 	fileInfo, err := os.Stat(model)
 	if err != nil {
 		return nil, err
@@ -365,6 +373,11 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		params = append(params, "--lora", adapters[0])
 	}
 
+	if len(projectors) > 0 {
+		// TODO: applying multiple projectors is not supported by the llama.cpp server yet
+		params = append(params, "--mmproj", projectors[0])
+	}
+
 	if opts.NumThread > 0 {
 		params = append(params, "--threads", fmt.Sprintf("%d", opts.NumThread))
 	}
@@ -397,11 +410,13 @@ func newLlama(model string, adapters []string, runners []ModelRunner, numLayers 
 		}
 
 		port := rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
+		params := append(params, "--port", strconv.Itoa(port))
+
 		ctx, cancel := context.WithCancel(context.Background())
 		cmd := exec.CommandContext(
 			ctx,
 			runner.Path,
-			append(params, "--port", strconv.Itoa(port))...,
+			params...,
 		)
 
 		var libraryPaths []string
@@ -530,22 +545,39 @@ type prediction struct {
 }
 
 const maxBufferSize = 512 * format.KiloByte
+const maxRetries = 6
 
-func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string, format string, fn func(api.GenerateResponse)) error {
-	prevConvo, err := llm.Decode(ctx, prevContext)
-	if err != nil {
-		return err
+type PredictOpts struct {
+	Prompt string
+	Format string
+	Images []api.ImageData
+}
+
+type PredictResult struct {
+	Content            string
+	Done               bool
+	PromptEvalCount    int
+	PromptEvalDuration time.Duration
+	EvalCount          int
+	EvalDuration       time.Duration
+}
+
+// IsRetryable checks if the line matches a condition that can be retried
+func isRetryable(line []byte) bool {
+	return bytes.Contains(line, []byte("slot unavailable"))
+}
+
+func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(PredictResult)) error {
+	imageData := llm.ImageData
+	if len(predict.Images) > 0 {
+		for cnt, i := range predict.Images {
+			imageData = append(imageData, ImageData{Data: i, ID: cnt})
+		}
 	}
-
-	// Remove leading spaces from prevConvo if present
-	prevConvo = strings.TrimPrefix(prevConvo, " ")
-
-	var nextContext strings.Builder
-	nextContext.WriteString(prevConvo)
-	nextContext.WriteString(prompt)
+	log.Printf("loaded %d images", len(imageData))
 
 	request := map[string]any{
-		"prompt":            nextContext.String(),
+		"prompt":            predict.Prompt,
 		"stream":            true,
 		"n_predict":         llm.NumPredict,
 		"n_keep":            llm.NumKeep,
@@ -565,103 +597,121 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
+		"image_data":        imageData,
 	}
 
-	if format == "json" {
+	if predict.Format == "json" {
 		request["grammar"] = jsonGrammar
 	}
 
-	// Handling JSON marshaling with special characters unescaped.
-	buffer := &bytes.Buffer{}
-	enc := json.NewEncoder(buffer)
-	enc.SetEscapeHTML(false)
-
-	if err := enc.Encode(request); err != nil {
-		return fmt.Errorf("failed to marshal data: %v", err)
-	}
-
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
-	if err != nil {
-		return fmt.Errorf("error creating POST request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("POST predict: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("failed reading llm error response: %w", err)
+	retryDelay := 100 * time.Microsecond
+	for retries := 0; retries < maxRetries; retries++ {
+		if retries > 0 {
+			time.Sleep(retryDelay) // wait before retrying
+			retryDelay *= 2        // exponential backoff
 		}
-		log.Printf("llm predict error: %s", bodyBytes)
-		return fmt.Errorf("%s", bodyBytes)
-	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	// increase the buffer size to avoid running out of space
-	buf := make([]byte, 0, maxBufferSize)
-	scanner.Buffer(buf, maxBufferSize)
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			// This handles the request cancellation
-			return ctx.Err()
-		default:
-			line := scanner.Bytes()
-			if len(line) == 0 {
-				continue
+		// Handling JSON marshaling with special characters unescaped.
+		buffer := &bytes.Buffer{}
+		enc := json.NewEncoder(buffer)
+		enc.SetEscapeHTML(false)
+
+		if err := enc.Encode(request); err != nil {
+			return fmt.Errorf("failed to marshal data: %v", err)
+		}
+
+		endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", llm.Port)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
+		if err != nil {
+			return fmt.Errorf("error creating POST request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("POST predict: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 400 {
+			bodyBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("failed reading llm error response: %w", err)
 			}
+			log.Printf("llm predict error: %s", bodyBytes)
+			return fmt.Errorf("%s", bodyBytes)
+		}
 
-			if evt, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
+		scanner := bufio.NewScanner(resp.Body)
+		// increase the buffer size to avoid running out of space
+		buf := make([]byte, 0, maxBufferSize)
+		scanner.Buffer(buf, maxBufferSize)
+
+		retryNeeded := false
+		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				// This handles the request cancellation
+				return ctx.Err()
+			default:
+				line := scanner.Bytes()
+				if len(line) == 0 {
+					continue
+				}
+
+				if isRetryable(line) {
+					retryNeeded = true
+					break
+				}
+
+				evt, ok := bytes.CutPrefix(line, []byte("data: "))
+				if !ok {
+					return fmt.Errorf("error parsing llm response stream: %s", line)
+				}
+
 				var p prediction
 				if err := json.Unmarshal(evt, &p); err != nil {
 					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
 				}
 
 				if p.Content != "" {
-					fn(api.GenerateResponse{Response: p.Content})
-					nextContext.WriteString(p.Content)
+					fn(PredictResult{
+						Content: p.Content,
+					})
 				}
 
 				if p.Stop {
-					embd, err := llm.Encode(ctx, nextContext.String())
-					if err != nil {
-						return fmt.Errorf("encoding context: %v", err)
-					}
-
-					fn(api.GenerateResponse{
+					fn(PredictResult{
 						Done:               true,
-						Context:            embd,
 						PromptEvalCount:    p.Timings.PromptN,
 						PromptEvalDuration: parseDurationMs(p.Timings.PromptMS),
 						EvalCount:          p.Timings.PredictedN,
 						EvalDuration:       parseDurationMs(p.Timings.PredictedMS),
 					})
-
 					return nil
 				}
 			}
 		}
-	}
 
-	if err := scanner.Err(); err != nil {
-		if strings.Contains(err.Error(), "unexpected EOF") {
-			// this means the llama runner subprocess crashed
-			llm.Close()
-			if llm.StatusWriter != nil && llm.StatusWriter.LastErrMsg != "" {
-				return fmt.Errorf("llama runner exited: %v", llm.StatusWriter.LastErrMsg)
+		if err := scanner.Err(); err != nil {
+			if strings.Contains(err.Error(), "unexpected EOF") {
+				// this means the llama runner subprocess crashed
+				llm.Close()
+				if llm.StatusWriter != nil && llm.StatusWriter.LastErrMsg != "" {
+					return fmt.Errorf("llama runner exited: %v", llm.StatusWriter.LastErrMsg)
+				}
+				return fmt.Errorf("llama runner exited, you may not have enough available memory to run this model")
 			}
-			return fmt.Errorf("llama runner exited, you may not have enough available memory to run this model")
+			return fmt.Errorf("error reading llm response: %v", err)
 		}
-		return fmt.Errorf("error reading llm response: %v", err)
+
+		if !retryNeeded {
+			return nil // success
+		}
 	}
 
-	return nil
+	// should never reach here ideally
+	return fmt.Errorf("max retries exceeded")
 }
 
 type TokenizeRequest struct {

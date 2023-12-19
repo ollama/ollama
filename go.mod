@@ -5,17 +5,19 @@ go 1.20
 require (
 	github.com/emirpasic/gods v1.18.1
 	github.com/gin-gonic/gin v1.9.1
-	github.com/mattn/go-runewidth v0.0.14
-	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.7.0
+	github.com/stretchr/testify v1.8.3
 	golang.org/x/sync v0.3.0
 )
 
 require (
 	github.com/akavel/rsrc v0.10.2 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dchest/jsmin v0.0.0-20220218165748-59f39799265f // indirect
 	github.com/josephspurrier/goversioninfo v1.4.0 // indirect
+	github.com/mattn/go-runewidth v0.0.14 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/randall77/makefat v0.0.0-20210315173500-7ddd0e42c844 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	golang.org/x/image v0.10.0 // indirect
