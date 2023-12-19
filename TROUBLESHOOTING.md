@@ -45,6 +45,15 @@ Becomes
 docker run --platform linux/amd64 -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://example.com:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
+## Running ollama-webui as a container on WSL Ubuntu
+If you're running ollama-webui via docker on WSL Ubuntu and have chosen to install webui and ollama separately, you might encounter connection issues. This is often due to the docker container being unable to reach the Ollama server at 127.0.0.1:11434. To resolve this, you can use the `--network=host` flag in the docker command. 
+
+Here's an example of the command you should run:
+
+```bash
+sudo docker run -d --network=host -e OLLAMA_API_BASE_URL=http://127.0.0.1:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+```
+
 ## References
 
 [Change Docker Desktop Settings on Mac](https://docs.docker.com/desktop/settings/mac/) Search for "x86" in that page.
