@@ -75,7 +75,14 @@ If you don't have Ollama installed yet, you can use the provided Docker Compose 
 docker compose up -d --build
 ```
 
-This command will install both Ollama and Ollama Web UI on your system. Ensure to modify the `compose.yaml` file for GPU support and Exposing Ollama API outside the container stack if needed.
+This command will install both Ollama and Ollama Web UI on your system. 
+Enable GPU support or Exposing Ollama API outside the container stack with the following command:
+```bash
+docker compose -f docker-compose.yml \
+   -f docker-compose.gpu.yml \
+   -f docker-compose.api.yml \
+   up -d --build
+```
 
 ### Installing Ollama Web UI Only
 
