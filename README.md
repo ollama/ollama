@@ -13,6 +13,8 @@
 
 ChatGPT-Style Web Interface for Ollama 🦙
 
+**Disclaimer:** *ollama-webui is a community-driven project and is not affiliated with the Ollama team in any way. This initiative is independent, and any inquiries or feedback should be directed to [our community on Discord](https://discord.gg/5rJgQTnV4s). We kindly request users to refrain from contacting or harassing the Ollama team regarding this project.*
+
 ![Ollama Web UI Demo](./demo.gif)
 
 Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you can discover, download, and explore customized Modelfiles for Ollama! 🦙🔍
