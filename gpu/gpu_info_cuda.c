@@ -8,6 +8,7 @@
 const char *cuda_lib_paths[] = {
     "libnvidia-ml.so",
     "/usr/local/cuda/lib64/libnvidia-ml.so",
+    "/usr/lib/x86_64-linux-gnu/nvidia/current/libnvidia-ml.so",
     "/usr/lib/wsl/lib/libnvidia-ml.so.1",  // TODO Maybe glob?
     NULL,
 };
@@ -40,6 +41,8 @@ void cuda_init(cuda_init_resp_t *resp) {
     resp->ch.handle = LOAD_LIBRARY(cuda_lib_paths[i], RTLD_LAZY);
   }
   if (!resp->ch.handle) {
+    // TODO improve error message, as the LOAD_ERR will have typically have the
+    // final path that was checked which might be confusing.
     snprintf(buf, buflen,
              "Unable to load %s library to query for Nvidia GPUs: %s",
              cuda_lib_paths[0], LOAD_ERR());
