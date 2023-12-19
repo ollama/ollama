@@ -16,6 +16,7 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/parser"
+	"github.com/jmorganca/ollama/version"
 )
 
 func setupServer(t *testing.T) (*Server, error) {
@@ -71,7 +72,7 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, contentType, "application/json; charset=utf-8")
 				body, err := io.ReadAll(resp.Body)
 				assert.Nil(t, err)
-				assert.Equal(t, `{"version":"0.0.0"}`, string(body))
+				assert.Equal(t, fmt.Sprintf(`{"version":"%s"}`, version.Version), string(body))
 			},
 		},
 		{
