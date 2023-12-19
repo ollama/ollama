@@ -285,6 +285,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
 - [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
+- [LangChainDart](https://github.com/davidmigloz/langchain_dart)
 
 ### Mobile
 
