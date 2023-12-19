@@ -2,6 +2,7 @@
 	import { settings } from '$lib/stores';
 	import toast from 'svelte-french-toast';
 	import Suggestions from './MessageInput/Suggestions.svelte';
+	import { onMount } from 'svelte';
 
 	export let submitPrompt: Function;
 	export let stopResponse: Function;
@@ -11,6 +12,7 @@
 
 	let filesInputElement;
 	let inputFiles;
+	let dragged = false;
 
 	export let files = [];
 
@@ -82,7 +84,73 @@
 			}
 		}
 	};
+
+	onMount(() => {
+		const dropZone = document.querySelector('body');
+
+		dropZone?.addEventListener('dragover', (e) => {
+			e.preventDefault();
+			dragged = true;
+		});
+
+		dropZone.addEventListener('drop', (e) => {
+			e.preventDefault();
+			console.log(e);
+
+			if (e.dataTransfer?.files) {
+				let reader = new FileReader();
+
+				reader.onload = (event) => {
+					files = [
+						...files,
+						{
+							type: 'image',
+							url: `${event.target.result}`
+						}
+					];
+				};
+
+				if (
+					e.dataTransfer?.files &&
+					e.dataTransfer?.files.length > 0 &&
+					['image/gif', 'image/jpeg', 'image/png'].includes(e.dataTransfer?.files[0]['type'])
+				) {
+					reader.readAsDataURL(e.dataTransfer?.files[0]);
+				} else {
+					toast.error(`Unsupported File Type '${e.dataTransfer?.files[0]['type']}'.`);
+				}
+			}
+
+			dragged = false;
+		});
+
+		dropZone?.addEventListener('dragleave', () => {
+			dragged = false;
+		});
+	});
 </script>
+
+{#if dragged}
+	<div
+		class="absolute w-full h-full flex z-50 touch-none pointer-events-none"
+		id="dropzone"
+		role="region"
+		aria-label="Drag and Drop Container"
+	>
+		<div class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-800/40 flex justify-center">
+			<div class="m-auto pt-48 flex flex-col justify-center">
+				<div class="max-w-md">
+					<div class="  text-center text-6xl mb-3">🏞️</div>
+					<div class="text-center dark:text-white text-2xl font-semibold z-50">Add Images</div>
+
+					<div class=" mt-2 text-center text-sm dark:text-gray-200 w-full">
+						Drop any images here to add to the conversation
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <div class="fixed bottom-0 w-full">
 	<div class="px-2.5 pt-2.5 -mb-0.5 mx-auto inset-x-0 bg-transparent flex justify-center">
