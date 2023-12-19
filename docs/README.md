@@ -22,6 +22,8 @@ Installing on Linux in most cases is easy using the script on Ollama.ai. To get 
 
 Many of our users like the flexibility of using our official Docker Image. You can learn more about using Docker with Ollama using the **[Docker Documentation](./docker.md)**.
 
+It is possible to specify a directory for models, configure different hosts, and setup proxies when you use environment variables with the Ollama server. See the [Server Documentation](./server.md) to learn more about using them.
+
 We made it really easy to install on Linux and Mac, but many of our users will choose to build Ollama on their own. If this is you, refer to the **[Development Documentation](./development.md)**.
 
 If you encounter a problem with Ollama, the best place to start is the logs. You can find more information about them here in the **[Troubleshooting Guide](./troubleshooting.md)**.
