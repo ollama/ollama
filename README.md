@@ -261,6 +261,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
+- [cmdh](https://github.com/pgibler/cmdh)
 
 ### Database
 
