@@ -51,7 +51,7 @@ If you're running ollama-webui via docker on WSL Ubuntu and have chosen to insta
 Here's an example of the command you should run:
 
 ```bash
-sudo docker run -d --network=host -e OLLAMA_API_BASE_URL=http://127.0.0.1:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d --network=host -e OLLAMA_API_BASE_URL=http://127.0.0.1:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 ## References
