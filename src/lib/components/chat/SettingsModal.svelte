@@ -52,6 +52,7 @@
 	// Addons
 	let titleAutoGenerate = true;
 	let speechAutoSend = false;
+	let responseAutoCopy = false;
 
 	let gravatarEmail = '';
 	let OPENAI_API_KEY = '';
@@ -119,6 +120,28 @@
 		} else {
 			toast.error(
 				'Response notifications cannot be activated as the website permissions have been denied. Please visit your browser settings to grant the necessary access.'
+			);
+		}
+	};
+
+	const toggleResponseAutoCopy = async () => {
+		const permission = await navigator.clipboard
+			.readText()
+			.then(() => {
+				return 'granted';
+			})
+			.catch(() => {
+				return '';
+			});
+
+		console.log(permission);
+
+		if (permission === 'granted') {
+			responseAutoCopy = !responseAutoCopy;
+			saveSettings({ responseAutoCopy: responseAutoCopy });
+		} else {
+			toast.error(
+				'Clipboard write permission denied. Please check your browser settings to grant the necessary access.'
 			);
 		}
 	};
@@ -319,6 +342,8 @@
 		console.log(settings);
 
 		theme = localStorage.theme ?? 'dark';
+		notificationEnabled = settings.notificationEnabled ?? false;
+
 		API_BASE_URL = settings.API_BASE_URL ?? OLLAMA_API_BASE_URL;
 		system = settings.system ?? '';
 
@@ -334,6 +359,8 @@
 
 		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
+		responseAutoCopy = settings.responseAutoCopy ?? false;
+
 		gravatarEmail = settings.gravatarEmail ?? '';
 		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
 
@@ -880,6 +907,28 @@
 											type="button"
 										>
 											{#if speechAutoSend === true}
+												<span class="ml-2 self-center">On</span>
+											{:else}
+												<span class="ml-2 self-center">Off</span>
+											{/if}
+										</button>
+									</div>
+								</div>
+
+								<div>
+									<div class=" py-0.5 flex w-full justify-between">
+										<div class=" self-center text-xs font-medium">
+											Response AutoCopy to Clipboard
+										</div>
+
+										<button
+											class="p-1 px-3 text-xs flex rounded transition"
+											on:click={() => {
+												toggleResponseAutoCopy();
+											}}
+											type="button"
+										>
+											{#if responseAutoCopy === true}
 												<span class="ml-2 self-center">On</span>
 											{:else}
 												<span class="ml-2 self-center">Off</span>

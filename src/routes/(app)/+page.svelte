@@ -88,6 +88,41 @@
 		});
 	};
 
+	const copyToClipboard = (text) => {
+		if (!navigator.clipboard) {
+			var textArea = document.createElement('textarea');
+			textArea.value = text;
+
+			// Avoid scrolling to bottom
+			textArea.style.top = '0';
+			textArea.style.left = '0';
+			textArea.style.position = 'fixed';
+
+			document.body.appendChild(textArea);
+			textArea.focus();
+			textArea.select();
+
+			try {
+				var successful = document.execCommand('copy');
+				var msg = successful ? 'successful' : 'unsuccessful';
+				console.log('Fallback: Copying text command was ' + msg);
+			} catch (err) {
+				console.error('Fallback: Oops, unable to copy', err);
+			}
+
+			document.body.removeChild(textArea);
+			return;
+		}
+		navigator.clipboard.writeText(text).then(
+			function () {
+				console.log('Async: Copying to clipboard was successful!');
+			},
+			function (err) {
+				console.error('Async: Could not copy text: ', err);
+			}
+		);
+	};
+
 	//////////////////////////
 	// Ollama functions
 	//////////////////////////
@@ -235,6 +270,10 @@
 											icon: selectedModelfile?.imageUrl ?? '/favicon.png'
 										}
 									);
+								}
+
+								if ($settings.responseAutoCopy) {
+									copyToClipboard(responseMessage.content);
 								}
 							}
 						}
@@ -440,6 +479,18 @@
 				stopResponseFlag = false;
 
 				await tick();
+
+				if ($settings.notificationEnabled && !document.hasFocus()) {
+					const notification = new Notification(`OpenAI ${model}`, {
+						body: responseMessage.content,
+						icon: '/favicon.png'
+					});
+				}
+
+				if ($settings.responseAutoCopy) {
+					copyToClipboard(responseMessage.content);
+				}
+
 				if (autoScroll) {
 					window.scrollTo({ top: document.body.scrollHeight });
 				}
