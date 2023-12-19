@@ -594,6 +594,7 @@ func (llm *llama) Predict(ctx context.Context, predict PredictOpts, fn func(Pred
 		"mirostat":          llm.Mirostat,
 		"mirostat_tau":      llm.MirostatTau,
 		"mirostat_eta":      llm.MirostatEta,
+		"grammar":           llm.Grammar,
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
