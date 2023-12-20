@@ -25,7 +25,7 @@ Coming soon!
 curl https://ollama.ai/install.sh | sh
 ```
 
-[Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
+[Manual install instructions.](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
 
 ### Docker
 
@@ -41,7 +41,7 @@ ollama run llama2
 
 ## Model library
 
-Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
+Ollama supports a list of open-source models available on [ollama.ai/library].(https://ollama.ai/library 'ollama model library')
 
 Here are some example open-source models that can be downloaded:
 
@@ -60,7 +60,7 @@ Here are some example open-source models that can be downloaded:
 | Vicuna             | 7B         | 3.8GB | `ollama run vicuna`            |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 
-> Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
+> Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models and 32 GB to run the 13B models.
 
 ## Customize your own model
 
@@ -74,13 +74,13 @@ Ollama supports importing GGUF models in the Modelfile:
    FROM ./vicuna-33b.Q4_0.gguf
    ```
 
-2. Create the model in Ollama
+2. Create the model in Ollama.
 
    ```
    ollama create example -f Modelfile
    ```
 
-3. Run the model
+3. Run the model.
 
    ```
    ollama run example
