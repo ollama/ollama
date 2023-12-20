@@ -8,11 +8,9 @@ Everything you need to learn about Ollama beyond the main README can be found in
 
 ## Documentation Topics
 
-Ollama is a tool for running AI models on your hardware. Many users will choose to use the Command Line Interface (CLI) to work with Ollama. You can learn more about all the commands in the CLI in the **[main README](../README.md#cli-reference)** in this GitHub Repository.
+Ollama is a tool for running AI models on your hardware. Many users will choose to use the Command Line Interface (CLI) to work with Ollama. You can learn more about all the commands in the CLI in the **[CLI Reference](./cli.md)**.
 
 You can also choose to use the RESTful API using any language you like, including Python, JavaScript, Typescript, Go, Rust, and many more. You can learn more about using the API in the **[API Documentation](./api.md)**.
-
-Understand how Ollama works by using the API in our **[Deep Dive](./deepdive.md)**.
 
 You can create your own models or modify models already in the library using the Modelfile. Learn more about the Modelfile syntax in the **[Modelfile Documentation](./modelfile.md)**.
 
