@@ -1,6 +1,6 @@
 # Community Resources
 
-The Ollama maintainer team is incredibly excited to see how many in the community have created resources showing how Ollama works. At the bottom of the main Readme, you will find a list of Community Projects that use Ollama. This page shows the Blogs, Videos, and Tutorials that many of our users have gotten value out of.
+The Ollama maintainer team is incredibly excited to see how many in the community have created resources showing how Ollama works. At the bottom of the main `README`, you will find a list of Community Projects that use Ollama. This page shows the Blogs, Videos, and Tutorials that many of our users have gotten value out of.
 
 ## Videos
 
