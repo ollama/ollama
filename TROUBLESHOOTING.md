@@ -46,7 +46,7 @@ docker run --platform linux/amd64 -d -p 3000:8080 -e OLLAMA_API_BASE_URL=http://
 ```
 
 ## Running ollama-webui as a container on WSL Ubuntu
-If you're running ollama-webui via docker on WSL Ubuntu and have chosen to install webui and ollama separately, you might encounter connection issues. This is often due to the docker container being unable to reach the Ollama server at 127.0.0.1:11434. To resolve this, you can use the `--network=host` flag in the docker command. 
+If you're running ollama-webui via docker on WSL Ubuntu and have chosen to install webui and ollama separately, you might encounter connection issues. This is often due to the docker container being unable to reach the Ollama server at 127.0.0.1:11434. To resolve this, you can use the `--network=host` flag in the docker command. When done so port would be changed from 3000 to 8080, and the link would be: http://localhost:8080.
 
 Here's an example of the command you should run:
 
