@@ -22,8 +22,8 @@ package llm
 #cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libllama.a
 #cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libggml_static.a
 #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
-#cgo windows LDFLAGS: -L${SRCDIR}/llama.cpp/gguf/build/wincuda/dist/bin
-#cgo windows LDFLAGS: -lext_server_shared -lpthread
+#cgo windows LDFLAGS: -L${SRCDIR}/llama.cpp/gguf/build/wincpu/dist/lib
+#cgo windows LDFLAGS: -lcpu_server -lpthread
 
 #include <stdlib.h>
 #include "server.h"
