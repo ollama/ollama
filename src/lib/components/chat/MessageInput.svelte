@@ -132,13 +132,13 @@
 
 {#if dragged}
 	<div
-		class="absolute w-full h-full flex z-50 touch-none pointer-events-none"
+		class="fixed w-full h-full flex z-50 touch-none pointer-events-none"
 		id="dropzone"
 		role="region"
 		aria-label="Drag and Drop Container"
 	>
 		<div class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-800/40 flex justify-center">
-			<div class="m-auto pt-48 flex flex-col justify-center">
+			<div class="m-auto pt-64 flex flex-col justify-center">
 				<div class="max-w-md">
 					<div class="  text-center text-6xl mb-3">🏞️</div>
 					<div class="text-center dark:text-white text-2xl font-semibold z-50">Add Images</div>
