@@ -1,81 +1,81 @@
 #!/bin/bash
 # This script is intended to run inside the go generate
-# working directory must be ../llm/llama.cpp
+# working directory must be llm/llama.cpp
+
+# First we build our default built-in library which will be linked into the CGO
+# binary as a normal dependency. This default build is CPU based.
+#
+# Then we build a CUDA dynamic library (although statically linked with the CUDA
+# library dependencies for maximum portability)
+#
+# Then if we detect ROCm, we build a dynamically loaded ROCm lib.  ROCm is particularly
+# important to be a dynamic lib even if it's the only GPU library detected because
+# we can't redistribute the objectfiles but must rely on dynamic libraries at
+# runtime, which could lead the server not to start if not present.
 
 set -ex
 set -o pipefail
 
 echo "Starting linux generate script"
-if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ] ; then
+if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ]; then
     export CUDACXX=/usr/local/cuda/bin/nvcc
 fi
+COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_ACCELERATE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
+OLLAMA_DYN_LIB_DIR="gguf/build/lib"
+mkdir -p ${OLLAMA_DYN_LIB_DIR}
+touch ${OLLAMA_DYN_LIB_DIR}/.generated
 source $(dirname $0)/gen_common.sh
 init_vars
 git_module_setup
 apply_patches
-if [ -d /usr/local/cuda/lib64/ ] ; then
-    CMAKE_DEFS="-DLLAMA_CUBLAS=on -DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-else
-    CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-fi
-BUILD_DIR="gguf/build/cuda"
-LIB_DIR="${BUILD_DIR}/lib"
-mkdir -p ../../dist/
+
+#
+# CPU first for the default library
+#
+CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
+BUILD_DIR="gguf/build/cpu"
 build
 
-if [ -d /usr/local/cuda/lib64/ ] ; then
-    pwd
-    ar -M <<EOF
-create ${BUILD_DIR}/libollama.a
-addlib ${BUILD_DIR}/examples/server/libext_server.a
-addlib ${BUILD_DIR}/common/libcommon.a
-addlib ${BUILD_DIR}/libllama.a
-addlib ${BUILD_DIR}/libggml_static.a
-addlib /usr/local/cuda/lib64/libcudart_static.a
-addlib /usr/local/cuda/lib64/libcublas_static.a
-addlib /usr/local/cuda/lib64/libcublasLt_static.a
-addlib /usr/local/cuda/lib64/libcudadevrt.a
-addlib /usr/local/cuda/lib64/libculibos.a
-save
-end
-EOF
-else
-    ar -M <<EOF
-create ${BUILD_DIR}/libollama.a
-addlib ${BUILD_DIR}/examples/server/libext_server.a
-addlib ${BUILD_DIR}/common/libcommon.a
-addlib ${BUILD_DIR}/libllama.a
-addlib ${BUILD_DIR}/libggml_static.a
-save
-end
-EOF
+if [ -d /usr/local/cuda/lib64/ ]; then
+    echo "CUDA libraries detected - building dynamic CUDA library"
+    init_vars
+    CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
+    BUILD_DIR="gguf/build/cuda"
+    CUDA_LIB_DIR=/usr/local/cuda/lib64
+    build
+    gcc -fPIC -g -shared -o ${OLLAMA_DYN_LIB_DIR}/libcuda_server.so \
+        -Wl,--whole-archive \
+        ${BUILD_DIR}/examples/server/libext_server.a \
+        ${BUILD_DIR}/common/libcommon.a \
+        ${BUILD_DIR}/libllama.a \
+        -Wl,--no-whole-archive \
+        ${CUDA_LIB_DIR}/libcudart_static.a \
+        ${CUDA_LIB_DIR}/libcublas_static.a \
+        ${CUDA_LIB_DIR}/libcublasLt_static.a \
+        ${CUDA_LIB_DIR}/libcudadevrt.a \
+        ${CUDA_LIB_DIR}/libculibos.a \
+        -lrt -lpthread -ldl -lstdc++ -lm
 fi
 
-if [ -z "${ROCM_PATH}" ] ; then
+if [ -z "${ROCM_PATH}" ]; then
     # Try the default location in case it exists
     ROCM_PATH=/opt/rocm
 fi
 
-if [ -z "${CLBlast_DIR}" ] ; then
+if [ -z "${CLBlast_DIR}" ]; then
     # Try the default location in case it exists
     if [ -d /usr/lib/cmake/CLBlast ]; then
         export CLBlast_DIR=/usr/lib/cmake/CLBlast
     fi
 fi
 
-BUILD_DIR="gguf/build/rocm"
-LIB_DIR="${BUILD_DIR}/lib"
-mkdir -p ${LIB_DIR}
-# Ensure we have at least one file present for the embed
-touch ${LIB_DIR}/.generated 
-
-if [ -d "${ROCM_PATH}" ] ; then
-    echo "Building ROCm"
+if [ -d "${ROCM_PATH}" ]; then
+    echo "ROCm libraries detected - building dynamic ROCm library"
     init_vars
-    CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DCMAKE_VERBOSE_MAKEFILE=on -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS='gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102' -DGPU_TARGETS='gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'"
-    CMAKE_DEFS="-DLLAMA_ACCELERATE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS='gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102' -DGPU_TARGETS='gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'"
+    BUILD_DIR="gguf/build/rocm"
     build
-    gcc -fPIC -g -shared -o ${LIB_DIR}/librocm_server.so \
+    gcc -fPIC -g -shared -o ${OLLAMA_DYN_LIB_DIR}/librocm_server.so \
         -Wl,--whole-archive \
         ${BUILD_DIR}/examples/server/libext_server.a \
         ${BUILD_DIR}/common/libcommon.a \

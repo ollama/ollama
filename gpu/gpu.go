@@ -65,7 +65,7 @@ func GetGPUInfo() GpuInfo {
 	}
 
 	var memInfo C.mem_info_t
-	resp := GpuInfo{"", 0, 0}
+	resp := GpuInfo{"", "", 0, 0}
 	if gpuHandles.cuda != nil {
 		C.cuda_check_vram(*gpuHandles.cuda, &memInfo)
 		if memInfo.err != nil {
@@ -73,6 +73,7 @@ func GetGPUInfo() GpuInfo {
 			C.free(unsafe.Pointer(memInfo.err))
 		} else {
 			resp.Driver = "CUDA"
+			resp.Library = "cuda_server"
 		}
 	} else if gpuHandles.rocm != nil {
 		C.rocm_check_vram(*gpuHandles.rocm, &memInfo)
@@ -81,11 +82,14 @@ func GetGPUInfo() GpuInfo {
 			C.free(unsafe.Pointer(memInfo.err))
 		} else {
 			resp.Driver = "ROCM"
+			resp.Library = "rocm_server"
 		}
 	}
 	if resp.Driver == "" {
 		C.cpu_check_ram(&memInfo)
 		resp.Driver = "CPU"
+		// In the future we may offer multiple CPU variants to tune CPU features
+		resp.Library = "default"
 	}
 	if memInfo.err != nil {
 		log.Printf("error looking up CPU memory: %s", C.GoString(memInfo.err))

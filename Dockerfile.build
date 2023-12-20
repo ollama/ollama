@@ -3,7 +3,7 @@ FROM --platform=linux/amd64 ubuntu:20.04 AS base-amd64
 ARG CUDA_VERSION=11.3.1-1
 ARG CMAKE_VERSION=3.22.1
 # ROCm only supports amd64
-ARG ROCM_VERSION=5.7
+ARG ROCM_VERSION=6.0
 
 # Note: https://rocm.docs.amd.com/en/latest/release/user_kernel_space_compat_matrix.html
 RUN apt-get update && \

@@ -1,4 +1,4 @@
-#include "rocm_shim.h"
+#include "dynamic_shim.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -28,8 +28,8 @@ inline static char *LOAD_ERR() {
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
 #endif
 
-void rocm_shim_init(const char *libPath, struct rocm_llama_server *s,
-                    ext_server_resp_t *err) {
+void dynamic_shim_init(const char *libPath, struct dynamic_llama_server *s,
+                       ext_server_resp_t *err) {
   int i = 0;
   struct lookup {
     char *s;
@@ -57,11 +57,8 @@ void rocm_shim_init(const char *libPath, struct rocm_llama_server *s,
   s->handle = LOAD_LIBRARY(libPath, RTLD_NOW);
   if (!s->handle) {
     err->id = -1;
-    snprintf(
-        err->msg, err->msg_len,
-        "Unable to load rocm server library: %s (If you have a Radeon card, "
-        "did you install the ROCM libraries?)",
-        LOAD_ERR());
+    snprintf(err->msg, err->msg_len,
+             "Unable to load dynamic server library: %s", LOAD_ERR());
     return;
   }
 
@@ -77,64 +74,63 @@ void rocm_shim_init(const char *libPath, struct rocm_llama_server *s,
   }
 }
 
-inline void rocm_shim_llama_server_init(struct rocm_llama_server s,
-                                        ext_server_params_t *sparams,
-                                        ext_server_resp_t *err) {
+inline void dynamic_shim_llama_server_init(struct dynamic_llama_server s,
+                                           ext_server_params_t *sparams,
+                                           ext_server_resp_t *err) {
   s.llama_server_init(sparams, err);
 }
 
-inline void rocm_shim_llama_server_start(struct rocm_llama_server s) {
+inline void dynamic_shim_llama_server_start(struct dynamic_llama_server s) {
   s.llama_server_start();
 }
 
-inline void rocm_shim_llama_server_stop(struct rocm_llama_server s) {
+inline void dynamic_shim_llama_server_stop(struct dynamic_llama_server s) {
   s.llama_server_stop();
 }
 
-inline void rocm_shim_llama_server_completion(struct rocm_llama_server s,
-                                              const char *json_req,
-                                              ext_server_resp_t *resp) {
+inline void dynamic_shim_llama_server_completion(struct dynamic_llama_server s,
+                                                 const char *json_req,
+                                                 ext_server_resp_t *resp) {
   s.llama_server_completion(json_req, resp);
 }
 
-inline void rocm_shim_llama_server_completion_next_result(
-    struct rocm_llama_server s, const int task_id,
+inline void dynamic_shim_llama_server_completion_next_result(
+    struct dynamic_llama_server s, const int task_id,
     ext_server_task_result_t *result) {
   s.llama_server_completion_next_result(task_id, result);
 }
 
-inline void rocm_shim_llama_server_completion_cancel(struct rocm_llama_server s,
-                                                     const int task_id,
-                                                     ext_server_resp_t *err) {
+inline void dynamic_shim_llama_server_completion_cancel(
+    struct dynamic_llama_server s, const int task_id, ext_server_resp_t *err) {
   s.llama_server_completion_cancel(task_id, err);
 }
-inline void rocm_shim_llama_server_release_task_result(
-    struct rocm_llama_server s, ext_server_task_result_t *result) {
+inline void dynamic_shim_llama_server_release_task_result(
+    struct dynamic_llama_server s, ext_server_task_result_t *result) {
   s.llama_server_release_task_result(result);
 }
 
-inline void rocm_shim_llama_server_tokenize(struct rocm_llama_server s,
-                                            const char *json_req,
-                                            char **json_resp,
-                                            ext_server_resp_t *err) {
+inline void dynamic_shim_llama_server_tokenize(struct dynamic_llama_server s,
+                                               const char *json_req,
+                                               char **json_resp,
+                                               ext_server_resp_t *err) {
   s.llama_server_tokenize(json_req, json_resp, err);
 }
 
-inline void rocm_shim_llama_server_detokenize(struct rocm_llama_server s,
-                                              const char *json_req,
-                                              char **json_resp,
-                                              ext_server_resp_t *err) {
+inline void dynamic_shim_llama_server_detokenize(struct dynamic_llama_server s,
+                                                 const char *json_req,
+                                                 char **json_resp,
+                                                 ext_server_resp_t *err) {
   s.llama_server_detokenize(json_req, json_resp, err);
 }
 
-inline void rocm_shim_llama_server_embedding(struct rocm_llama_server s,
-                                             const char *json_req,
-                                             char **json_resp,
-                                             ext_server_resp_t *err) {
+inline void dynamic_shim_llama_server_embedding(struct dynamic_llama_server s,
+                                                const char *json_req,
+                                                char **json_resp,
+                                                ext_server_resp_t *err) {
   s.llama_server_embedding(json_req, json_resp, err);
 }
 
-inline void rocm_shim_llama_server_release_json_resp(struct rocm_llama_server s,
-                                                     char **json_resp) {
+inline void dynamic_shim_llama_server_release_json_resp(
+    struct dynamic_llama_server s, char **json_resp) {
   s.llama_server_release_json_resp(json_resp);
 }

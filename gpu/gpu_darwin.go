@@ -21,6 +21,7 @@ func GetGPUInfo() GpuInfo {
 
 	return GpuInfo{
 		Driver:      "METAL",
+		Library:     "default",
 		TotalMemory: 0,
 		FreeMemory:  0,
 	}

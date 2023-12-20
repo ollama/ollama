@@ -17,7 +17,10 @@ package llm
 #cgo linux CFLAGS: -D_GNU_SOURCE
 #cgo linux windows CFLAGS: -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_MMV_Y=1 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_USE_CUBLAS
 #cgo linux LDFLAGS: -L/usr/local/cuda/targets/x86_64-linux/lib -L/usr/local/cuda/lib64 -L/usr/local/cuda/targets/x86_64-linux/lib/stubs
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cuda/libollama.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/examples/server/libext_server.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/common/libcommon.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libllama.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libggml_static.a
 #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
 #cgo windows LDFLAGS: -L${SRCDIR}/llama.cpp/gguf/build/wincuda/dist/bin
 #cgo windows LDFLAGS: -lext_server_shared -lpthread
@@ -121,7 +124,7 @@ func (llm *llamaExtServer) llama_server_release_json_resp(json_resp **C.char) {
 	C.llama_server_release_json_resp(json_resp)
 }
 
-func newLlamaExtServer(model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
+func newDefaultExtServer(model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
 	server := &llamaExtServer{opts}
 	return newExtServer(server, model, adapters, projectors, numLayers, opts)
 }

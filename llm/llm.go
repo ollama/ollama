@@ -22,8 +22,7 @@ type LLM interface {
 	Close()
 }
 
-// Set to false on linux/windows if we are able to load the shim
-var ShimPresent = false
+var AvailableShims = map[string]string{}
 
 func New(workDir, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	if _, err := os.Stat(model); err != nil {
@@ -82,15 +81,23 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	opts.RopeFrequencyBase = 0.0
 	opts.RopeFrequencyScale = 0.0
 	gpuInfo := gpu.GetGPUInfo()
-	if gpuInfo.Driver == "ROCM" && ShimPresent {
-		return newRocmShimExtServer(model, adapters, projectors, ggml.NumLayers(), opts)
-	} else {
-		// Rely on the built-in CUDA/Metal based server which will fall back to CPU
-		return newLlamaExtServer(model, adapters, projectors, ggml.NumLayers(), opts)
-	}
+	return newLlmServer(gpuInfo.Library, model, adapters, projectors, ggml.NumLayers(), opts)
 }
 
 // Give any native cgo implementations an opportunity to initialize
 func Init(workdir string) error {
 	return nativeInit(workdir)
+}
+
+func newLlmServer(library, model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
+	if _, libPresent := AvailableShims[library]; libPresent && library != "default" {
+		srv, err := newDynamicShimExtServer(AvailableShims[library], model, adapters, projectors, numLayers, opts)
+		if err == nil {
+			return srv, nil
+		}
+		log.Printf("Failed to load dynamic library - falling back to CPU mode %s", err)
+	}
+
+	return newDefaultExtServer(model, adapters, projectors, numLayers, opts)
+
 }
