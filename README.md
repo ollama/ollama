@@ -17,7 +17,7 @@ Get up and running with large language models locally.
 
 ### Windows
 
-Coming soon!
+Coming soon! For now, you can install Ollama on Windows via WSL2.
 
 ### Linux & WSL2
 
