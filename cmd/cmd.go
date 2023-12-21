@@ -928,8 +928,23 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			return nil
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
-			fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
-			continue
+			isFile := false
+
+			if multiModal {
+				for _, f := range extractFileNames(line) {
+					if strings.HasPrefix(f, args[0]) {
+						isFile = true
+						break
+					}
+				}
+			}
+
+			if isFile {
+				prompt += line
+			} else {
+				fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
+				continue
+			}
 		default:
 			prompt += line
 		}
@@ -937,7 +952,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 		if len(prompt) > 0 && multiline == MultilineNone {
 			opts.Prompt = prompt
 			if multiModal {
-				newPrompt, images, err := extractFileNames(prompt)
+				newPrompt, images, err := extractFileData(prompt)
 				if err != nil {
 					return err
 				}
@@ -991,13 +1006,17 @@ func normalizeFilePath(fp string) string {
 	return fp
 }
 
-func extractFileNames(input string) (string, []ImageData, error) {
+func extractFileNames(input string) []string {
 	// Regex to match file paths starting with / or ./ and include escaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	regexPattern := `(?:\./|/)[\S\\ ]+?\.(?i:jpg|jpeg|png|svg)\b`
 	re := regexp.MustCompile(regexPattern)
 
-	filePaths := re.FindAllString(input, -1)
+	return re.FindAllString(input, -1)
+}
+
+func extractFileData(input string) (string, []ImageData, error) {
+	filePaths := extractFileNames(input)
 	var imgs []ImageData
 
 	for _, fp := range filePaths {
