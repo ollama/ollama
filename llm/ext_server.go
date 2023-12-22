@@ -234,7 +234,8 @@ func predict(llm extServer, opts api.Options, ctx context.Context, predict Predi
 		"penalize_nl":       opts.PenalizeNewline,
 		"seed":              opts.Seed,
 		"stop":              opts.Stop,
-		"image_data":        imageData,
+		"image_data":        imageData,		
+		"cache_prompt":      opts.Cache,
 	}
 
 	if predict.Format == "json" {

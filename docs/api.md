@@ -306,7 +306,8 @@ curl http://localhost:11434/api/generate -d '{
     "embedding_only": false,
     "rope_frequency_base": 1.1,
     "rope_frequency_scale": 0.8,
-    "num_thread": 8
+    "num_thread": 8,
+    "cache": true
   }
 }'
 ```
