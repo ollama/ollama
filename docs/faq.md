@@ -62,8 +62,6 @@ Refer to the section above for how to use environment variables on your platform
 - macOS: `~/.ollama/models`.
 - Linux: `/usr/share/ollama/.ollama/models`
 
-See [the CLI Documentation](./cli.md) for more on this.
-
 ## How do I set them to a different location?
 
 If a different directory needs to be used, set the environment variable `OLLAMA_MODELS` to the chosen directory. Refer to the section above for how to use environment variables on your platform.
