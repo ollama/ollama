@@ -14,7 +14,13 @@ Install required tools:
 brew install go cmake gcc
 ```
 
-Get the required libraries:
+Optionally enable debugging and more verbose logging:
+
+```bash
+export CGO_CFLAGS="-g"
+```
+
+Get the required libraries and build the native LLM code:
 
 ```bash
 go generate ./...

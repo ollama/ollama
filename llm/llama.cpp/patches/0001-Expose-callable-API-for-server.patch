@@ -1,22 +1,22 @@
-From 4c72576c5f6c2217b1ecf7fd8523616acc5526ae Mon Sep 17 00:00:00 2001
+From 90c332fe2ef61149b38561d02836e66715df214d Mon Sep 17 00:00:00 2001
 From: Daniel Hiltgen <daniel@ollama.com>
 Date: Mon, 13 Nov 2023 12:25:58 -0800
 Subject: [PATCH] Expose callable API for server
 
 This adds an extern "C" interface within the example server
 ---
- examples/server/CMakeLists.txt |  24 +++
- examples/server/server.cpp     | 279 +++++++++++++++++++++++++++++++++
+ examples/server/CMakeLists.txt |  27 ++++
+ examples/server/server.cpp     | 280 +++++++++++++++++++++++++++++++++
  examples/server/server.h       |  89 +++++++++++
  ggml-cuda.cu                   |   1 +
- 4 files changed, 393 insertions(+)
+ 4 files changed, 397 insertions(+)
  create mode 100644 examples/server/server.h
 
 diff --git a/examples/server/CMakeLists.txt b/examples/server/CMakeLists.txt
-index 859cd12..4ea47a7 100644
+index 859cd12..da2b9bf 100644
 --- a/examples/server/CMakeLists.txt
 +++ b/examples/server/CMakeLists.txt
-@@ -11,3 +11,27 @@ if (WIN32)
+@@ -11,3 +11,30 @@ if (WIN32)
      TARGET_LINK_LIBRARIES(${TARGET} PRIVATE ws2_32)
  endif()
  target_compile_features(${TARGET} PRIVATE cxx_std_11)
@@ -29,6 +29,9 @@ index 859cd12..4ea47a7 100644
 +target_compile_features(${TARGET} PRIVATE cxx_std_11)
 +target_compile_definitions(${TARGET} PUBLIC LLAMA_SERVER_LIBRARY=1)
 +target_link_libraries(${TARGET} PRIVATE common llama llava ${CMAKE_THREAD_LIBS_INIT})
++target_compile_definitions(${TARGET} PRIVATE
++    SERVER_VERBOSE=$<BOOL:${LLAMA_SERVER_VERBOSE}>
++)
 +
 +if (BUILD_SHARED_LIBS)
 +    set_target_properties(ext_server PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -46,7 +49,7 @@ index 859cd12..4ea47a7 100644
 +endif()
 \ No newline at end of file
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index 0403853..5e78e4d 100644
+index 0403853..07fb05c 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
 @@ -5,6 +5,9 @@
@@ -67,7 +70,7 @@ index 0403853..5e78e4d 100644
  int main(int argc, char **argv)
  {
  #if SERVER_VERBOSE != 1
-@@ -3123,3 +3127,278 @@ int main(int argc, char **argv)
+@@ -3123,3 +3127,279 @@ int main(int argc, char **argv)
      llama_backend_free();
      return 0;
  }
@@ -81,6 +84,7 @@ index 0403853..5e78e4d 100644
 +void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err)
 +{
 +#if SERVER_VERBOSE != 1
++    LOG_TEE("disabling verbose llm logging\n");
 +    log_disable();
 +#endif
 +    assert(err != NULL && sparams != NULL);
