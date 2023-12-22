@@ -1,6 +1,6 @@
 # FAQ
 
-## How can I upgrade Ollama
+## How can I upgrade Ollama?
 
 To upgrade Ollama, run the installation process again. On the Mac, click the Ollama icon in the menubar and choose the restart option if an update is available.
 
