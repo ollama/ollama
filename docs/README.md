@@ -16,7 +16,7 @@ Create new models or modify models already in the [library](https://ollama.ai/li
 
 Import models using source model weights found on Hugging Face and similar sites by referring to the **[Import Documentation](./import.md)**.
 
-Installing on Linux in most cases is easy using the script on Ollama.ai. To get more detail about the install, including CUDA drivers, see the **[Linux Documentation](./linux.md)**.
+For customizing installs of Ollama on Linux see the **[Linux Documentation](./linux.md)**.
 
 Ollama can be deployed using Docker. Learn more about using Docker with Ollama using the **[Docker Documentation](./docker.md)**.
 
