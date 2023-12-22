@@ -577,7 +577,7 @@ curl http://localhost:11434/api/chat -d '{
 POST /api/create
 ```
 
-Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `modelfile` to the content of the Modelfile rather than just set `path`. This is a requirement for remote create. Remote model creation must also create any file blobs, fields such as `FROM` and `ADAPTER`, explicitly with the server using [Create a Blob](#create-a-blob) and the value to the path indicated in the response. Note that this just creates the model on the Ollama server and doesn't push it to Ollama.ai.
+Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `modelfile` to the content of the Modelfile rather than just set `path`. This is a requirement for remote create. Remote model creation must also create any file blobs, fields such as `FROM` and `ADAPTER`, explicitly with the server using [Create a Blob](#create-a-blob) and the value to the path indicated in the response. Note that this creates the model on the Ollama server and doesn't push it to Ollama.ai.
 
 ### Parameters
 
@@ -625,7 +625,7 @@ A stream of JSON objects. Notice that the final JSON object shows a `"status": "
 HEAD /api/blobs/:digest
 ```
 
-Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is just checking your Ollama server and not Ollama.ai.
+Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not Ollama.ai.
 
 
 #### Query Parameters

@@ -2,7 +2,7 @@
 
 ## How can I upgrade Ollama
 
-To upgrade Ollama, just run the installation process again. On the Mac, you can click the Ollama icon in the menubar and choose the restart option if an update is available.
+To upgrade Ollama, run the installation process again. On the Mac, click the Ollama icon in the menubar and choose the restart option if an update is available.
 
 ## How can I view the logs?
 
@@ -10,11 +10,11 @@ Review the [Troubleshooting](./troubleshooting.md) docs for more about using log
 
 ## How can I expose Ollama on my network?
 
-To expose Ollama to another host, you need to use the `OLLAMA_HOST` environment variable. See [Serving Ollama in the CLI Documentation](./cli.md#serving-ollama) for more on using this.
+To expose Ollama to another host, use the `OLLAMA_HOST` environment variable. See [Serving Ollama in the CLI Documentation](./cli.md#serving-ollama) for more on using this.
 
 ## How can I allow additional web origins to access Ollama?
 
-You will need to use `OLLAMA_ORIGINS` to allow additional web origins. See [Serving Ollama in the CLI Documentation](./cli.md#serving-ollama) for more on using this.
+Use `OLLAMA_ORIGINS` to allow additional web origins. See [Serving Ollama in the CLI Documentation](./cli.md#serving-ollama) for more on using this.
 
 ## Where are models stored?
 
@@ -25,11 +25,11 @@ See [the CLI Documentation](./cli.md) for more on this.
 
 ## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
 
-No, Ollama runs 100% locally wherever you have installed it. Other than downloading the models, we never reach out anywhere, and models are never updated using your questions and answers.
+No, Ollama runs 100% locally wherever it is installed. Other than downloading the models, Ollama never reaches out anywhere, and models are never updated using your questions and answers.
 
 ## How can I use Ollama in Visual Studio Code?
 
-There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. You can see the list of [extensions & plugins](https://github.com/jmorganca/ollama#extensions--plugins) at the bottom of the main repository readme.
+There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. See the list of [extensions & plugins](https://github.com/jmorganca/ollama#extensions--plugins) at the bottom of the main repository readme.
 
 ## How do I use Ollama behind a proxy?
 
