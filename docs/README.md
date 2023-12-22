@@ -10,7 +10,7 @@ All information about Ollama beyond the main README can be found in three main a
 
 To get started, see the project's **[quicktart](../README.md#quickstart)**.
 
-Use the RESTful API using any language, including Python, JavaScript, Typescript, Go, Rust, and many more. Learn more about using the API in the **[API Documentation](./api.md)**.
+Ollama has a REST API. For more information see the **[API Documentation](./api.md)**.
 
 Create new models or modify models already in the library using the Modelfile. Learn more about the Modelfile syntax in the **[Modelfile Documentation](./modelfile.md)**.
 
