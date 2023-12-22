@@ -333,7 +333,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Load a model
 
-If you post a body with just the model, it will load the model into memory, but not do a generation.
+If an empty prompt is provided, the model will be loaded into memory.
 
 ##### Request
 
