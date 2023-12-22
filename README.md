@@ -192,13 +192,19 @@ Install `cmake` and `go`:
 brew install cmake go
 ```
 
-Then generate dependencies and build:
-
+Then generate dependencies:
 ```
 go generate ./...
+```
+Then build the binary:
+```
 go build .
 ```
 
+More detailed instructions can be found in the [developer guide](https://github.com/jmorganca/ollama/blob/main/docs/development.md)
+
+
+### Running local builds
 Next, start the server:
 
 ```

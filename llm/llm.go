@@ -11,6 +11,7 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
+	"github.com/jmorganca/ollama/gpu"
 )
 
 type LLM interface {
@@ -18,10 +19,10 @@ type LLM interface {
 	Embedding(context.Context, string) ([]float64, error)
 	Encode(context.Context, string) ([]int, error)
 	Decode(context.Context, []int) (string, error)
-	SetOptions(api.Options)
 	Close()
-	Ping(context.Context) error
 }
+
+var AvailableShims = map[string]string{}
 
 func New(workDir, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	if _, err := os.Stat(model); err != nil {
@@ -76,16 +77,27 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		}
 	}
 
-	switch ggml.Name() {
-	case "gguf":
-		// TODO: gguf will load these options automatically from the model binary
-		opts.NumGQA = 0
-		opts.RopeFrequencyBase = 0.0
-		opts.RopeFrequencyScale = 0.0
-		return newLlama(model, adapters, projectors, chooseRunners(workDir, "gguf"), ggml.NumLayers(), opts)
-	case "ggml", "ggmf", "ggjt", "ggla":
-		return newLlama(model, adapters, projectors, chooseRunners(workDir, "ggml"), ggml.NumLayers(), opts)
-	default:
-		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
+	opts.NumGQA = 0
+	opts.RopeFrequencyBase = 0.0
+	opts.RopeFrequencyScale = 0.0
+	gpuInfo := gpu.GetGPUInfo()
+	return newLlmServer(gpuInfo.Library, model, adapters, projectors, ggml.NumLayers(), opts)
+}
+
+// Give any native cgo implementations an opportunity to initialize
+func Init(workdir string) error {
+	return nativeInit(workdir)
+}
+
+func newLlmServer(library, model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
+	if _, libPresent := AvailableShims[library]; libPresent && library != "default" {
+		srv, err := newDynamicShimExtServer(AvailableShims[library], model, adapters, projectors, numLayers, opts)
+		if err == nil {
+			return srv, nil
+		}
+		log.Printf("Failed to load dynamic library - falling back to CPU mode %s", err)
 	}
+
+	return newDefaultExtServer(model, adapters, projectors, numLayers, opts)
+
 }
