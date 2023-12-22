@@ -59,8 +59,8 @@ Refer to the section above for how to use environment variables on your platform
 
 ## Where are models stored?
 
-- macOS: All model data is stored under `~/.ollama/models`.
-- Linux: All model data is stored under `/usr/share/ollama/.ollama/models`
+- macOS: `~/.ollama/models`.
+- Linux: `/usr/share/ollama/.ollama/models`
 
 See [the CLI Documentation](./cli.md) for more on this.
 
