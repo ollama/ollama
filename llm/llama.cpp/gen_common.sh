@@ -3,7 +3,7 @@
 init_vars() {
     LLAMACPP_DIR=gguf
     PATCHES="0001-Expose-callable-API-for-server.patch"
-    CMAKE_DEFS="-DLLAMA_ACCELERATE=on"
+    CMAKE_DEFS="-DLLAMA_ACCELERATE=on -DLLAMA_SERVER_VERBOSE=off"
     # TODO - LLAMA_K_QUANTS is stale and needs to be mapped to newer cmake settings
     CMAKE_TARGETS="--target ggml --target ggml_static --target llama --target build_info --target common --target ext_server --target llava_static"
     if echo "${CGO_CFLAGS}" | grep -- '-g' >/dev/null; then

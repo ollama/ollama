@@ -22,12 +22,13 @@ if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ]; then
 fi
 COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_ACCELERATE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
 OLLAMA_DYN_LIB_DIR="gguf/build/lib"
-mkdir -p ${OLLAMA_DYN_LIB_DIR}
-touch ${OLLAMA_DYN_LIB_DIR}/.generated
 source $(dirname $0)/gen_common.sh
 init_vars
 git_module_setup
 apply_patches
+
+mkdir -p ${OLLAMA_DYN_LIB_DIR}
+touch ${OLLAMA_DYN_LIB_DIR}/.generated
 
 #
 # CPU first for the default library

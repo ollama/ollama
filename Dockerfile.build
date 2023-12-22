@@ -4,6 +4,7 @@ ARG CUDA_VERSION=11.3.1-1
 ARG CMAKE_VERSION=3.22.1
 # ROCm only supports amd64
 ARG ROCM_VERSION=6.0
+ARG CLBLAST_VER=1.6.1
 
 # Note: https://rocm.docs.amd.com/en/latest/release/user_kernel_space_compat_matrix.html
 RUN apt-get update && \
@@ -22,6 +23,10 @@ RUN apt-get update && \
     echo "Pin-Priority: 600" >> /etc/apt/preferences.d/rocm-pin-600 && \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install cuda=${CUDA_VERSION} rocm-hip-libraries rocm-device-libs rocm-libs rocm-ocl-icd rocm-hip-sdk rocm-hip-libraries rocm-cmake rocm-clang-ocl rocm-dev
+
+# CLBlast
+RUN wget -qO- https://github.com/CNugteren/CLBlast/archive/refs/tags/${CLBLAST_VER}.tar.gz | tar zxv -C /tmp/ && \
+    cd /tmp/CLBlast-${CLBLAST_VER} && mkdir build && cd build && cmake .. && make && make install
 
 ENV ROCM_PATH=/opt/rocm
 
@@ -45,17 +50,12 @@ FROM base-${TARGETARCH}
 ARG TARGETARCH
 ARG GOFLAGS="'-ldflags -w -s'"
 ARG CGO_CFLAGS
-ARG CLBLAST_VER=1.6.1
 ARG GOLANG_VERSION=1.21.3
 
 # Common toolchain
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-10 g++-10 cpp-10 git ocl-icd-opencl-dev && \
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 --slave /usr/bin/g++ g++ /usr/bin/g++-10 --slave /usr/bin/gcov gcov /usr/bin/gcov-10
-
-# CLBlast
-RUN wget -qO- https://github.com/CNugteren/CLBlast/archive/refs/tags/${CLBLAST_VER}.tar.gz | tar zxv -C /tmp/ && \
-    cd /tmp/CLBlast-${CLBLAST_VER} && mkdir build && cd build && cmake .. && make && make install
 
 # install go
 ADD https://dl.google.com/go/go${GOLANG_VERSION}.linux-$TARGETARCH.tar.gz /tmp/go${GOLANG_VERSION}.tar.gz

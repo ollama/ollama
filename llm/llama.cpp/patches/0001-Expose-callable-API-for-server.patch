@@ -1,4 +1,4 @@
-From 7184ae16e8fd0e9e91cac4c81daa323057fa992b Mon Sep 17 00:00:00 2001
+From 4c72576c5f6c2217b1ecf7fd8523616acc5526ae Mon Sep 17 00:00:00 2001
 From: Daniel Hiltgen <daniel@ollama.com>
 Date: Mon, 13 Nov 2023 12:25:58 -0800
 Subject: [PATCH] Expose callable API for server
@@ -6,10 +6,10 @@ Subject: [PATCH] Expose callable API for server
 This adds an extern "C" interface within the example server
 ---
  examples/server/CMakeLists.txt |  24 +++
- examples/server/server.cpp     | 276 +++++++++++++++++++++++++++++++++
+ examples/server/server.cpp     | 279 +++++++++++++++++++++++++++++++++
  examples/server/server.h       |  89 +++++++++++
  ggml-cuda.cu                   |   1 +
- 4 files changed, 390 insertions(+)
+ 4 files changed, 393 insertions(+)
  create mode 100644 examples/server/server.h
 
 diff --git a/examples/server/CMakeLists.txt b/examples/server/CMakeLists.txt
@@ -46,7 +46,7 @@ index 859cd12..4ea47a7 100644
 +endif()
 \ No newline at end of file
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index 0403853..065420c 100644
+index 0403853..5e78e4d 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
 @@ -5,6 +5,9 @@
@@ -67,7 +67,7 @@ index 0403853..065420c 100644
  int main(int argc, char **argv)
  {
  #if SERVER_VERBOSE != 1
-@@ -3123,3 +3127,275 @@ int main(int argc, char **argv)
+@@ -3123,3 +3127,278 @@ int main(int argc, char **argv)
      llama_backend_free();
      return 0;
  }
@@ -80,6 +80,9 @@ index 0403853..065420c 100644
 +
 +void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err)
 +{
++#if SERVER_VERBOSE != 1
++    log_disable();
++#endif
 +    assert(err != NULL && sparams != NULL);
 +    err->id = 0;
 +    err->msg[0] = '\0';
