@@ -8,17 +8,17 @@ All information about Ollama beyond the main README can be found in three main a
 
 ## Documentation Topics
 
-Ollama is a tool for running AI models on your hardware. Many users will choose to use the Command Line Interface (CLI) to work with Ollama. Learn more about all the commands in the CLI in the **[Main Readme](../README.md)**.
+To get started, see the project's **[quicktart](../README.md#quickstart)**.
 
-Use the RESTful API using any language, including Python, JavaScript, Typescript, Go, Rust, and many more. Learn more about using the API in the **[API Documentation](./api.md)**.
+Ollama has a REST API. For more information see the **[API Documentation](./api.md)**.
 
-Create new models or modify models already in the library using the Modelfile. Learn more about the Modelfile syntax in the **[Modelfile Documentation](./modelfile.md)**.
+Create new models or modify models already in the [library](https://ollama.ai/library) using the Modelfile. Learn more about the Modelfile syntax in the **[Modelfile Documentation](./modelfile.md)**.
 
 Import models using source model weights found on Hugging Face and similar sites by referring to the **[Import Documentation](./import.md)**.
 
-Installing on Linux in most cases is easy using the script on Ollama.ai. To get more detail about the install, including CUDA drivers, see the **[Linux Documentation](./linux.md)**.
+For customizing installs of Ollama on Linux see the **[Linux Documentation](./linux.md)**.
 
-Many of our users like the flexibility of using our official Docker Image. Learn more about using Docker with Ollama using the **[Docker Documentation](./docker.md)**.
+Ollama can be deployed using Docker. Learn more about using Docker with Ollama using the **[Docker Documentation](./docker.md)**.
 
 It is easy to install on Linux and Mac, but many users will choose to build Ollama on their own. To do this, refer to the **[Development Documentation](./development.md)**.
 

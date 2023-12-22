@@ -17,7 +17,7 @@
 
 ### Model names
 
-Model names follow a `model:tag` format. Some examples are `orca-mini:3b-q4_1` and `llama2:70b`. The tag is optional and, if not provided, will default to `latest`. The tag is used to identify a specific version. Models uploaded by users will have the format `namespace/model:tag`.
+Model names follow a `model:tag` format, where `model` can have an optional namespace such as `example/model`. Some examples are `orca-mini:3b-q4_1` and `llama2:70b`. The tag is optional and, if not provided, will default to `latest`. The tag is used to identify a specific version.
 
 ### Durations
 
@@ -27,7 +27,6 @@ All durations are returned in nanoseconds.
 
 Certain endpoints stream responses as JSON objects and can optional return non-streamed responses.
 
-<hr>
 
 ## Generate a completion
 
@@ -114,7 +113,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 }
 ```
 
-#### Generate request (No streaming)
+#### Request (No streaming)
 
 ##### Request
 
@@ -148,7 +147,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 }
 ```
 
-#### Generate request (JSON mode)
+#### Request (JSON mode)
 
 When `format` is set to `json`, the output will always be a well-formed JSON object. You must also include text like 'respond using JSON' or 'output in JSON' in the prompt. If you include a schema in the prompt listing the desired property names and types, most models tend to use it. In cases where results aren't perfect, few-shot prompting has a positive effect.
 
@@ -200,7 +199,7 @@ The value of `response` will be a string containing JSON similar to:
 }
 ```
 
-#### Generate request (with images)
+#### Request (with images)
 
 To submit images to multimodal models such as `llava` or `bakllava`, provide a list of base64-encoded `images`:
 
@@ -233,7 +232,7 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-#### Generate request (Raw Mode)
+#### Request (Raw Mode)
 
 In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
 ##### Request
@@ -333,7 +332,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Load a model
 
-If you post a body with just the model, it will load the model into memory, but not do a generation.
+If an empty prompt is provided, the model will be loaded into memory.
 
 ##### Request
 
@@ -362,7 +361,7 @@ A single JSON object is returned:
 POST /api/chat
 ```
 
-Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using `stream: false`. The final response object will include statistics and additional data from the request.
+Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using `"stream": false`. The final response object will include statistics and additional data from the request.
 
 ### Parameters
 
@@ -474,7 +473,7 @@ curl http://localhost:11434/api/chat -d '{
 
 #### Chat request (With History)
 
-Send a chat message with a conversation history. You can use this same approach to start the conversation using multi-shot prompting.
+Send a chat message with a conversation history. You can use this same approach to start the conversation using multi-shot or chain-of-thought prompting.
 
 ##### Request
 
@@ -508,8 +507,7 @@ A stream of JSON objects is returned:
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assisant",
-    "content": "The", 
-    "images": null
+    "content": "The"
   },
   "done": false
 }
