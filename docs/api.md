@@ -508,8 +508,7 @@ A stream of JSON objects is returned:
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assisant",
-    "content": "The", 
-    "images": null
+    "content": "The"
   },
   "done": false
 }
