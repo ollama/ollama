@@ -362,7 +362,7 @@ A single JSON object is returned:
 POST /api/chat
 ```
 
-Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using `stream: false`. The final response object will include statistics and additional data from the request.
+Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using `"stream": false`. The final response object will include statistics and additional data from the request.
 
 ### Parameters
 
