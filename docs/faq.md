@@ -114,3 +114,7 @@ This can impact both installing Ollama, as well as downloading models.
 Open `Control Panel > Networking and Internet > View network status and tasks` and click on `Change adapter settings` on the left panel. Find the `vEthernel (WSL)` adapter, right click and select `Properties`.
 Click on `Configure` and open the `Advanced` tab. Search through each of the properties until you find `Large Send Offload Version 2 (IPv4)` and `Large Send Offload Version 2 (IPv6)`. *Disable* both of these
 properties.
+
+## What is context, can I increase it, and why doesn't every model support a huge context?
+
+Context refers to the size of the input that can be sent to a model and get sensible output back. Many models have a context size of 2048 tokens. It's sometimes possible to give it more, but the answers start to degrade. Newer models have been able to increase that context size using different methods. This increase in context size results in a corresponding increase in memory required, sometimes by orders of magnitude.
