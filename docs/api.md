@@ -233,7 +233,7 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-#### Generate request (Raw Mode)
+#### Request (Raw Mode)
 
 In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
 ##### Request
