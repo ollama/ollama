@@ -27,7 +27,6 @@ All durations are returned in nanoseconds.
 
 Certain endpoints stream responses as JSON objects and can optional return non-streamed responses.
 
-<hr>
 
 ## Generate a completion
 
