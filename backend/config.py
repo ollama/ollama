@@ -30,7 +30,7 @@ if ENV == "prod":
 # WEBUI_VERSION
 ####################################
 
-WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.33")
+WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.34")
 
 ####################################
 # WEBUI_AUTH
