@@ -7,9 +7,10 @@ function init_vars {
     $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off", "-DLLAMA_F16C=off", "-DLLAMA_FMA=off", "-DLLAMA_AVX512=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX=on", "-DLLAMA_K_QUANTS=on", "-DLLAMA_ACCELERATE=on", "-A","x64")
 
     if ($env:CGO_CFLAGS -contains "-g") {
-        $script:cmakeDefs += @("-DCMAKE_VERBOSE_MAKEFILE=on")
+        $script:cmakeDefs += @("-DCMAKE_VERBOSE_MAKEFILE=on", "-DLLAMA_SERVER_VERBOSE=on")
         $script:config = "RelWithDebInfo"
     } else {
+        $script:cmakeDefs += @("-DLLAMA_SERVER_VERBOSE=off")
         $script:config = "Release"
     }
 }
