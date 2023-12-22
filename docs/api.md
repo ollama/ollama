@@ -590,7 +590,7 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 
 #### Create a new model
 
-Create a new model from a modelfile.
+Create a new model from a `Modelfile`.
 
 ##### Request
 
