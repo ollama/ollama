@@ -122,6 +122,67 @@ Hello! It's your friend Mario.
 
 For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation. For details about using the CLI, refer to our [CLI Documentation](./docs/cli.md).
 
+## CLI Reference
+
+### Create a model
+
+`ollama create` is used to create a model from a Modelfile.
+
+### Pull a model
+
+```
+ollama pull llama2
+```
+
+> This command can also be used to update a local model. Only the diff will be pulled.
+
+### Remove a model
+
+```
+ollama rm llama2
+```
+
+### Copy a model
+
+```
+ollama cp llama2 my-llama2
+```
+
+### Multiline input
+
+For multiline input, you can wrap text with `"""`:
+
+```
+>>> """Hello,
+... world!
+... """
+I'm a basic program that prints the famous "Hello, world!" message to the console.
+```
+
+### Multimodal models
+
+```
+>>> What's in this image? /Users/jmorgan/Desktop/smile.png
+The image features a yellow smiley face, which is likely the central focus of the picture.
+```
+
+### Pass in prompt as arguments
+
+```
+$ ollama run llama2 "Summarize this file: $(cat README.md)"
+ Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
+```
+
+### List models on your computer
+
+```
+ollama list
+```
+
+### Start Ollama
+
+`ollama serve` is used when you want to start ollama without running the desktop application.
+
 ## Building
 
 Install `cmake` and `go`:
