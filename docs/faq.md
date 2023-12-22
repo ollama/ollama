@@ -19,7 +19,7 @@ On macOS, Ollama runs in the background and is managed by the menubar app. If ad
    OLLAMA_HOST=123.1.1.1 ollama serve
    ```
 
-## How do I use Ollama server environment variables on Linux
+## How do I use Ollama server environment variables on Linux?
 
 If Ollama is installed with the install script, a systemd service was created, running as the Ollama user. To add an environment variable, such as OLLAMA_HOST, follow these steps:
 
