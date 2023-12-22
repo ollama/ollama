@@ -37,7 +37,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -185,11 +184,7 @@ func newExtServer(server extServer, model string, adapters, projectors []string,
 		sparams.mmproj = nil
 	}
 
-	if opts.NumThread > 0 {
-		sparams.n_threads = C.uint(opts.NumThread)
-	} else {
-		sparams.n_threads = C.uint(runtime.NumCPU())
-	}
+	sparams.n_threads = C.uint(opts.NumThread)
 
 	log.Printf("Initializing internal llama server")
 	resp := newExtServerResp(128)
