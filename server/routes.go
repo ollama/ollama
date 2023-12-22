@@ -195,6 +195,7 @@ func GenerateHandler(c *gin.Context) {
 	checkpointLoaded := time.Now()
 
 	var prompt string
+	var promptVars PromptVars
 	switch {
 	case req.Raw:
 		prompt = req.Prompt
@@ -217,11 +218,12 @@ func GenerateHandler(c *gin.Context) {
 			prevCtx = strings.TrimPrefix(prevCtx, " ")
 			rebuild.WriteString(prevCtx)
 		}
-		p, err := model.Prompt(PromptVars{
+		promptVars = PromptVars{
 			System: req.System,
 			Prompt: req.Prompt,
 			First:  len(req.Context) == 0,
-		})
+		}
+		p, err := model.PreResponsePrompt(promptVars)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -264,7 +266,14 @@ func GenerateHandler(c *gin.Context) {
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
 				if !req.Raw {
-					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+generated.String())
+					// append the generated text to the history and template it if needed
+					promptVars.Response = generated.String()
+					result, err := model.PostResponseTemplate(promptVars)
+					if err != nil {
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
+					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+result)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
