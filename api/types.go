@@ -103,6 +103,7 @@ type Options struct {
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+	Cache            bool     `json:"cache,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -355,6 +356,7 @@ func DefaultOptions() Options {
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
 		Seed:             -1,
+		Cache:            true,
 
 		Runner: Runner{
 			// options set when the model is loaded
