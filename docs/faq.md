@@ -70,7 +70,7 @@ If a different directory needs to be used, set the environment variable `OLLAMA_
 
 ## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
 
-No, Ollama runs 100% locally wherever it is installed. Other than downloading the models, Ollama never reaches out anywhere, and models are never updated using your questions and answers.
+No, Ollama runs entirely locally, and conversation data will never leave your machine.
 
 ## How can I use Ollama in Visual Studio Code?
 
