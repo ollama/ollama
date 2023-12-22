@@ -1,7 +1,7 @@
 package llm
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common -I${SRCDIR}/llama.cpp/gguf/examples/server
+#cgo CFLAGS: -I${SRCDIR}/llama.cpp -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common -I${SRCDIR}/llama.cpp/gguf/examples/server
 #cgo CFLAGS: -DNDEBUG -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo CFLAGS: -Wmissing-noreturn -Wall -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
 #cgo CPPFLAGS: -Ofast -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
@@ -22,11 +22,11 @@ package llm
 #cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libllama.a
 #cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libggml_static.a
 #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
-#cgo windows LDFLAGS: -L${SRCDIR}/llama.cpp/gguf/build/wincpu/dist/lib
-#cgo windows LDFLAGS: -lcpu_server -lpthread
+#cgo windows LDFLAGS: -L${SRCDIR}/llama.cpp/gguf/build/lib
+#cgo windows LDFLAGS: -lext_server_shared -lpthread
 
 #include <stdlib.h>
-#include "server.h"
+#include "ext_server.h"
 
 */
 import "C"
