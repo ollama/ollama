@@ -1,14 +1,10 @@
 # Simple Chat Example
 
-The **chat** endpoint is one of two ways to generate text from an LLM with Ollama. At a high level you provide the endpoint an array of message objects with a role and content specified. Then with each output and prompt, you add more messages, which builds up the history.
+The **chat** endpoint, available as of v0.1.14, is one of two ways to generate text from an LLM with Ollama. At a high level, you provide the endpoint an array of message objects with a role and content specified. Then with each output and prompt, you add more messages, which builds up the history.
 
 ## Run the Example
 
-There are a few ways to run this, just like any Typescript code:
-
-1. Compile with `tsc` and then run it with `node client.js`.
-2. Install `tsx` and run it with `tsx client.ts`.
-3. Install `bun` and run it with `bun client.ts`.
+`npm start`
 
 ## Review the Code
 
@@ -30,7 +26,7 @@ With the **generate** endpoint, you need to provide a `prompt`. But with **chat*
 
 The final JSON object doesn't provide the full content, so you will need to build the content yourself. In this example, **chat** takes the full array of messages and outputs the resulting message from this call of the chat endpoint.
 
-In the **askQuestion** function, we collect `user_input` and add it as a message to our messages and that is passed to the chat function. When the LLM is done responding the output is added as another message to the messages array.
+In the **askQuestion** function, we collect `user_input` and add it as a message to our messages, and that is passed to the chat function. When the LLM is done responding, the output is added as another message to the messages array.
 
 At the end, you will see a printout of all the messages.
 
