@@ -200,7 +200,7 @@ The value of `response` will be a string containing JSON similar to:
 }
 ```
 
-#### Generate request (with images)
+#### Request (with images)
 
 To submit images to multimodal models such as `llava` or `bakllava`, provide a list of base64-encoded `images`:
 
