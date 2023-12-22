@@ -4,7 +4,7 @@ All information about Ollama beyond the main README can be found in three main a
 
 1. The documentation describes all the features and functionality of Ollama.
 2. [Tutorials](./tutorials.md) apply the documentation to tasks.
-3. [Examples](./examples) include working tools and applications that use Ollama in interesting ways.
+3. [Examples](../examples) include working tools and applications that use Ollama in interesting ways.
 
 ## Documentation Topics
 
