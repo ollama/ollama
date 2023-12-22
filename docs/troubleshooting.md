@@ -14,7 +14,7 @@ journalctl -u ollama
 
 If manually running `ollama serve` in a terminal, the logs will be on that terminal.
 
-Sign in to the Discord at [discord.gg/ollama](https://discord.gg/ollama) for help interpreting the logs.
+Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.
 
 ## Known issues
 
