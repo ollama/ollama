@@ -114,7 +114,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 }
 ```
 
-#### Generate request (No streaming)
+#### Request (No streaming)
 
 ##### Request
 
