@@ -23,4 +23,19 @@ func TestBasicGetGPUInfo(t *testing.T) {
 	}
 }
 
+func TestCPUMemInfo(t *testing.T) {
+	info, err := getCPUMem()
+	assert.NoError(t, err)
+	switch runtime.GOOS {
+	case "darwin":
+		t.Skip("CPU memory not populated on darwin")
+	case "linux", "windows":
+		assert.Greater(t, info.TotalMemory, uint64(0))
+		assert.Greater(t, info.FreeMemory, uint64(0))
+	default:
+		return
+	}
+
+}
+
 // TODO - add some logic to figure out card type through other means and actually verify we got back what we expected

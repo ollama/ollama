@@ -43,9 +43,11 @@ void cuda_init(cuda_init_resp_t *resp) {
   if (!resp->ch.handle) {
     // TODO improve error message, as the LOAD_ERR will have typically have the
     // final path that was checked which might be confusing.
+    char *msg = LOAD_ERR();
     snprintf(buf, buflen,
              "Unable to load %s library to query for Nvidia GPUs: %s",
-             cuda_lib_paths[0], LOAD_ERR());
+             cuda_lib_paths[0], msg);
+    free(msg);
     resp->err = strdup(buf);
     return;
   }
@@ -55,8 +57,10 @@ void cuda_init(cuda_init_resp_t *resp) {
     if (!l[i].p) {
       UNLOAD_LIBRARY(resp->ch.handle);
       resp->ch.handle = NULL;
+      char *msg = LOAD_ERR();
       snprintf(buf, buflen, "symbol lookup for %s failed: %s", l[i].s,
-               LOAD_ERR());
+               msg);
+      free(msg);
       resp->err = strdup(buf);
       return;
     }

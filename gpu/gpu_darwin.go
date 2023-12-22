@@ -18,12 +18,18 @@ func CheckVRAM() (int64, error) {
 
 func GetGPUInfo() GpuInfo {
 	// TODO - Metal vs. x86 macs...
-
+	mem, _ := getCPUMem()
 	return GpuInfo{
-		Library:     "default",
+		Library: "default",
+		memInfo: mem,
+	}
+}
+
+func getCPUMem() (memInfo, error) {
+	return memInfo{
 		TotalMemory: 0,
 		FreeMemory:  0,
-	}
+	}, nil
 }
 
 func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {

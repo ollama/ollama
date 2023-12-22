@@ -66,7 +66,7 @@ func GetGPUInfo() GpuInfo {
 	}
 
 	var memInfo C.mem_info_t
-	resp := GpuInfo{"", 0, 0}
+	resp := GpuInfo{}
 	if gpuHandles.cuda != nil {
 		C.cuda_check_vram(*gpuHandles.cuda, &memInfo)
 		if memInfo.err != nil {
@@ -101,6 +101,19 @@ func GetGPUInfo() GpuInfo {
 	resp.FreeMemory = uint64(memInfo.free)
 	resp.TotalMemory = uint64(memInfo.total)
 	return resp
+}
+
+func getCPUMem() (memInfo, error) {
+	var ret memInfo
+	var info C.mem_info_t
+	C.cpu_check_ram(&info)
+	if info.err != nil {
+		defer C.free(unsafe.Pointer(info.err))
+		return ret, fmt.Errorf(C.GoString(info.err))
+	}
+	ret.FreeMemory = uint64(info.free)
+	ret.TotalMemory = uint64(info.total)
+	return ret, nil
 }
 
 func CheckVRAM() (int64, error) {
