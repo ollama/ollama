@@ -149,7 +149,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 
 #### Request (JSON mode)
 
-When `format` is set to `json`, the output will always be a well-formed JSON object. You must also include text like 'respond using JSON' or 'output in JSON' in the prompt. If you include a schema in the prompt listing the desired property names and types, most models tend to use it. In cases where results aren't perfect, few-shot prompting has a positive effect.
+> When `format` is set to `json`, the output will always be a well-formed JSON object. It's important to also instruct the model to respond in JSON.
 
 ##### Request
 
