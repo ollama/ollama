@@ -12,7 +12,7 @@ To get started, see the project's **[quicktart](../README.md#quickstart)**.
 
 Ollama has a REST API. For more information see the **[API Documentation](./api.md)**.
 
-Create new models or modify models already in the library using the Modelfile. Learn more about the Modelfile syntax in the **[Modelfile Documentation](./modelfile.md)**.
+Create new models or modify models already in the [library](https://ollama.ai/library) using the Modelfile. Learn more about the Modelfile syntax in the **[Modelfile Documentation](./modelfile.md)**.
 
 Import models using source model weights found on Hugging Face and similar sites by referring to the **[Import Documentation](./import.md)**.
 
