@@ -129,7 +129,7 @@ For more examples, see the [examples](examples) directory. For more information 
 `ollama create` is used to create a model from a Modelfile.
 
 ```
-ollama create updatedllama -f ./Modelfile
+ollama create mymodel -f ./Modelfile
 ```
 
 ### Pull a model
