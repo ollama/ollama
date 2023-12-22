@@ -207,6 +207,6 @@ LICENSE """
 ## Notes
 
 - the **`Modelfile` is not case sensitive**. In the examples, uppercase instructions are used to make it easier to distinguish it from arguments.
-- Instructions can be in any order. In the examples, the FROM instruction is first to keep it easily readable.
+- Instructions can be in any order. In the examples, the `FROM` instruction is first to keep it easily readable.
 
 [1]: https://ollama.ai/library
