@@ -753,7 +753,7 @@ curl http://localhost:11434/api/show -d '{
   "details": {
     "format": "gguf",
     "family": "llama",
-    "families": [ "llama", "clip" ],
+    "families": ["llama", "clip"],
     "parameter_size": "7B",
     "quantization_level": "Q4_0"
   }
