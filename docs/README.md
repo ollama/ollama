@@ -22,4 +22,4 @@ Finally for all the questions that don't fit anywhere else, there is the **[FAQ]
 
 [Tutorials](./tutorials.md) apply the documentation to tasks.
 
-[Examples](../examples) include working tools and applications that use Ollama in interesting ways.
+For working code examples of using Ollama, see [Examples](../examples).
