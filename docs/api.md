@@ -474,7 +474,7 @@ curl http://localhost:11434/api/chat -d '{
 
 #### Chat request (With History)
 
-Send a chat message with a conversation history. You can use this same approach to start the conversation using multi-shot prompting.
+Send a chat message with a conversation history. You can use this same approach to start the conversation using multi-shot or chain-of-thought prompting.
 
 ##### Request
 
