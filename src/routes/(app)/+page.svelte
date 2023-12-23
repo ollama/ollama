@@ -375,9 +375,7 @@
 						method: 'POST',
 						headers: {
 							Authorization: `Bearer ${$settings.OPENAI_API_KEY}`,
-							'Content-Type': 'application/json',
-							'HTTP-Referer': `https://ollamahub.com/`,
-							'X-Title': `Ollama WebUI`
+							'Content-Type': 'application/json'
 						},
 						body: JSON.stringify({
 							model: model,
