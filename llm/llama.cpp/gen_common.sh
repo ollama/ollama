@@ -39,6 +39,15 @@ build() {
     cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8
 }
 
+install() {
+    rm -rf ${BUILD_DIR}/lib
+    mkdir -p ${BUILD_DIR}/lib
+    cp ${BUILD_DIR}/examples/server/libext_server.a ${BUILD_DIR}/lib
+    cp ${BUILD_DIR}/common/libcommon.a ${BUILD_DIR}/lib
+    cp ${BUILD_DIR}/libllama.a ${BUILD_DIR}/lib
+    cp ${BUILD_DIR}/libggml_static.a ${BUILD_DIR}/lib
+}
+
 # Keep the local tree clean after we're done with the build
 cleanup() {
     (cd gguf/examples/server/ && git checkout CMakeLists.txt server.cpp)

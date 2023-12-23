@@ -44,6 +44,13 @@ function build {
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
+function install {
+    rm -ea 0 -recurse -force -path "${script:buildDir}/lib"
+    md "${script:buildDir}/lib" -ea 0 > $null
+    cp "${script:buildDir}/bin/${script:config}/ext_server_shared.dll" "${script:buildDir}/lib"
+    cp "${script:buildDir}/bin/${script:config}/llama.dll" "${script:buildDir}/lib"
+}
+
 function cleanup {
     Set-Location "gguf/examples/server"
     git checkout CMakeLists.txt server.cpp
@@ -54,42 +61,24 @@ git_module_setup
 apply_patches
 
 # first build CPU based
-$script:buildDir="gguf/build/wincpu"
+$script:buildDir="gguf/build/windows/cpu"
 
 build
-# install
-
-md gguf/build/lib -ea 0
-md gguf/build/wincpu/dist/lib -ea 0
-cp -force gguf/build/wincpu/bin/$script:config/ext_server_shared.dll gguf/build/lib/ext_server_shared.dll
-cp -force gguf/build/wincpu/bin/$script:config/llama.dll gguf/build/lib/llama.dll
-
-# Nope, this barfs on lots of symbol problems
-#mv gguf/build/wincpu/examples/server/$script:config/ext_server_shared.dll gguf/build/wincpu/dist/lib/cpu_server.lib
-# Nope: this needs lots of include paths to pull in things like msvcprt.lib and other deps
-# & cl.exe `
-#     gguf/build/wincpu/examples/server/$script:config/ext_server.lib `
-#     gguf/build/wincpu/common/$script:config/common.lib `
-#     gguf/build/wincpu/$script:config/llama.lib `
-#     gguf/build/wincpu/$script:config/ggml_static.lib `
-#     /link /DLL /DEF:cpu_server.def /NOENTRY /MACHINE:X64  /OUT:gguf/build/wincpu/dist/lib/cpu_server.dll
-# if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+install
 
 # Then build cuda as a dynamically loaded library
 init_vars
-$script:buildDir="gguf/build/wincuda"
-$script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DBUILD_SHARED_LIBS=on")
+$script:buildDir="gguf/build/windows/cuda"
+$script:cmakeDefs += @("-DLLAMA_CUBLAS=ON")
 build
-# install
-cp -force gguf/build/wincuda/bin/$script:config/ext_server_shared.dll gguf/build/lib/cuda_server.dll
+install
 
-# TODO - more to do here to create a usable dll
+# TODO - actually implement ROCm support on windows
+$script:buildDir="gguf/build/windows/rocm"
 
-
-# TODO - implement ROCm support on windows
-md gguf/build/winrocm/lib -ea 0
-echo $null >> gguf/build/winrocm/lib/.generated
+rm -ea 0 -recurse -force -path "${script:buildDir}/lib"
+md "${script:buildDir}/lib" -ea 0 > $null
+echo $null >> "${script:buildDir}/lib/.generated"
 
 cleanup
-
-write-host "go generate completed"
+write-host "`ngo generate completed"

@@ -10,7 +10,7 @@ echo "Starting darwin generate script"
 source $(dirname $0)/gen_common.sh
 init_vars
 CMAKE_DEFS="-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DLLAMA_METAL=on ${CMAKE_DEFS}"
-BUILD_DIR="gguf/build/metal"
+BUILD_DIR="gguf/build/darwin/metal"
 case "${GOARCH}" in
 "amd64")
     CMAKE_DEFS="-DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 ${CMAKE_DEFS}"
@@ -28,4 +28,5 @@ esac
 git_module_setup
 apply_patches
 build
+install
 cleanup
