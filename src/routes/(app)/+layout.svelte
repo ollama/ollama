@@ -74,7 +74,9 @@
 					return null;
 				});
 
-			const openAIModels = openaiModelRes?.data ?? null;
+			const openAIModels = Array.isArray(openaiModelRes)
+				? openaiModelRes
+				: openaiModelRes?.data ?? null;
 
 			models.push(
 				...(openAIModels
