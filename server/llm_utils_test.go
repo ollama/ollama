@@ -1,3 +1,5 @@
+//go:build integration
+
 package server
 
 import (
@@ -38,7 +40,7 @@ func PrepareModelForPrompts(t *testing.T, modelName string, opts api.Options) (*
 }
 
 func OneShotPromptResponse(t *testing.T, ctx context.Context, req api.GenerateRequest, model *Model, runner llm.LLM) string {
-	prompt, err := model.Prompt(PromptVars{
+	prompt, err := model.PreResponsePrompt(PromptVars{
 		System: req.System,
 		Prompt: req.Prompt,
 		First:  len(req.Context) == 0,
@@ -54,6 +56,7 @@ func OneShotPromptResponse(t *testing.T, ctx context.Context, req api.GenerateRe
 			success <- true
 		}
 	}
+
 	predictReq := llm.PredictOpts{
 		Prompt: prompt,
 		Format: req.Format,
