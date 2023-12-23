@@ -1,12 +1,18 @@
 <script lang="ts">
 	import Modal from '../common/Modal.svelte';
 
-	import { WEB_UI_VERSION, OLLAMA_API_BASE_URL } from '$lib/constants';
+	import {
+		WEB_UI_VERSION,
+		OLLAMA_API_BASE_URL,
+		WEBUI_API_BASE_URL,
+		WEBUI_BASE_URL
+	} from '$lib/constants';
 	import toast from 'svelte-french-toast';
 	import { onMount } from 'svelte';
 	import { config, info, models, settings, user } from '$lib/stores';
 	import { splitStream, getGravatarURL } from '$lib/utils';
 	import Advanced from './Settings/Advanced.svelte';
+	import { stringify } from 'postcss';
 
 	export let show = false;
 
@@ -45,6 +51,10 @@
 
 	// Models
 	let modelTag = '';
+	let modelInputFile = '';
+	let modelInputFileBlob = '';
+	let modelFileContent = `TEMPLATE """{{ .System }}\nUSER: {{ .Prompt }}\nASSSISTANT: """\nPARAMETER num_ctx 4096\nPARAMETER stop "</s>"\nPARAMETER stop "USER:"\nPARAMETER stop "ASSSISTANT:"`;
+
 	let deleteModelTag = '';
 	let digest = '';
 	let pullProgress = null;
@@ -213,6 +223,170 @@
 			} catch (error) {
 				console.log(error);
 				toast.error(error);
+			}
+		}
+
+		modelTag = '';
+		models.set(await getModels());
+	};
+
+	const calculateSHA256 = async (file) => {
+		console.log(file);
+		// Create a FileReader to read the file asynchronously
+		const reader = new FileReader();
+
+		// Define a promise to handle the file reading
+		const readFile = new Promise((resolve, reject) => {
+			reader.onload = () => resolve(reader.result);
+			reader.onerror = reject;
+		});
+
+		// Read the file as an ArrayBuffer
+		reader.readAsArrayBuffer(file);
+
+		try {
+			// Wait for the FileReader to finish reading the file
+			const buffer = await readFile;
+
+			// Convert the ArrayBuffer to a Uint8Array
+			const uint8Array = new Uint8Array(buffer);
+
+			// Calculate the SHA-256 hash using Web Crypto API
+			const hashBuffer = await crypto.subtle.digest('SHA-256', uint8Array);
+
+			// Convert the hash to a hexadecimal string
+			const hashArray = Array.from(new Uint8Array(hashBuffer));
+			const hashHex = hashArray.map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+			return `sha256:${hashHex}`;
+		} catch (error) {
+			console.error('Error calculating SHA-256 hash:', error);
+			throw error;
+		}
+	};
+
+	const uploadModelHandler = async () => {
+		const file = modelInputFile[0];
+		const formData = new FormData();
+		formData.append('file', file);
+
+		let uploaded = false;
+
+		const res = await fetch(`${WEBUI_API_BASE_URL}/utils/upload`, {
+			method: 'POST',
+			headers: {
+				...($settings.authHeader && { Authorization: $settings.authHeader }),
+				...($user && { Authorization: `Bearer ${localStorage.token}` })
+			},
+			body: formData
+		}).catch((error) => {
+			console.log(error);
+			return null;
+		});
+
+		if (res && res.ok) {
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
+
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+
+				try {
+					let lines = value.split('\n');
+
+					for (const line of lines) {
+						if (line !== '') {
+							let data = JSON.parse(line.replace(/^data: /, ''));
+							console.log(data);
+
+							if (data.error) {
+								throw data.error;
+							}
+
+							if (data.done) {
+								modelInputFileBlob = data.blob;
+								uploaded = true;
+							}
+						}
+					}
+				} catch (error) {
+					console.log(error);
+				}
+			}
+		}
+
+		if (uploaded) {
+			const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/create`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'text/event-stream',
+					...($settings.authHeader && { Authorization: $settings.authHeader }),
+					...($user && { Authorization: `Bearer ${localStorage.token}` })
+				},
+				body: JSON.stringify({
+					name: `${file.name}:latest`,
+					modelfile: `FROM @${modelInputFileBlob}\n${modelFileContent}`
+				})
+			}).catch((err) => {
+				console.log(err);
+				return null;
+			});
+
+			if (res && res.ok) {
+				const reader = res.body
+					.pipeThrough(new TextDecoderStream())
+					.pipeThrough(splitStream('\n'))
+					.getReader();
+
+				while (true) {
+					const { value, done } = await reader.read();
+					if (done) break;
+
+					try {
+						let lines = value.split('\n');
+
+						for (const line of lines) {
+							if (line !== '') {
+								console.log(line);
+								let data = JSON.parse(line);
+								console.log(data);
+
+								if (data.error) {
+									throw data.error;
+								}
+								if (data.detail) {
+									throw data.detail;
+								}
+
+								if (data.status) {
+									if (
+										!data.digest &&
+										!data.status.includes('writing') &&
+										!data.status.includes('sha256')
+									) {
+										toast.success(data.status);
+									} else {
+										if (data.digest) {
+											digest = data.digest;
+
+											if (data.completed) {
+												pullProgress = Math.round((data.completed / data.total) * 1000) / 10;
+											} else {
+												pullProgress = 100;
+											}
+										}
+									}
+								}
+							}
+						}
+					} catch (error) {
+						console.log(error);
+						toast.error(error);
+					}
+				}
 			}
 		}
 
@@ -790,104 +964,201 @@
 						</div>
 					</div>
 				{:else if selectedTab === 'models'}
-					<div class="flex flex-col space-y-3 text-sm mb-10">
-						<div>
-							<div class=" mb-2.5 text-sm font-medium">Pull a model</div>
-							<div class="flex w-full">
-								<div class="flex-1 mr-2">
-									<input
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter model tag (e.g. mistral:7b)"
-										bind:value={modelTag}
-									/>
-								</div>
-								<button
-									class="px-3 text-gray-100 bg-emerald-600 hover:bg-emerald-700 rounded transition"
-									on:click={() => {
-										pullModelHandler();
-									}}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										class="w-4 h-4"
+					<div class="flex flex-col h-full justify-between text-sm">
+						<div class=" space-y-3 pr-1.5 overflow-y-scroll h-80">
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Pull a model from Ollama.ai</div>
+								<div class="flex w-full">
+									<div class="flex-1 mr-2">
+										<input
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											placeholder="Enter model tag (e.g. mistral:7b)"
+											bind:value={modelTag}
+										/>
+									</div>
+									<button
+										class="px-3 text-gray-100 bg-emerald-600 hover:bg-emerald-700 rounded transition"
+										on:click={() => {
+											pullModelHandler();
+										}}
 									>
-										<path
-											d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"
-										/>
-										<path
-											d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"
-										/>
-									</svg>
-								</button>
-							</div>
-
-							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-								To access the available model names for downloading, <a
-									class=" text-gray-500 dark:text-gray-300 font-medium"
-									href="https://ollama.ai/library"
-									target="_blank">click here.</a
-								>
-							</div>
-
-							{#if pullProgress !== null}
-								<div class="mt-2">
-									<div class=" mb-2 text-xs">Pull Progress</div>
-									<div class="w-full rounded-full dark:bg-gray-800">
-										<div
-											class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
-											style="width: {Math.max(15, pullProgress ?? 0)}%"
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-4 h-4"
 										>
-											{pullProgress ?? 0}%
+											<path
+												d="M8.75 2.75a.75.75 0 0 0-1.5 0v5.69L5.03 6.22a.75.75 0 0 0-1.06 1.06l3.5 3.5a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0-1.06-1.06L8.75 8.44V2.75Z"
+											/>
+											<path
+												d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
+											/>
+										</svg>
+									</button>
+								</div>
+
+								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+									To access the available model names for downloading, <a
+										class=" text-gray-500 dark:text-gray-300 font-medium"
+										href="https://ollama.ai/library"
+										target="_blank">click here.</a
+									>
+								</div>
+
+								{#if pullProgress !== null}
+									<div class="mt-2">
+										<div class=" mb-2 text-xs">Pull Progress</div>
+										<div class="w-full rounded-full dark:bg-gray-800">
+											<div
+												class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+												style="width: {Math.max(15, pullProgress ?? 0)}%"
+											>
+												{pullProgress ?? 0}%
+											</div>
+										</div>
+										<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
+											{digest}
 										</div>
 									</div>
-									<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
-										{digest}
-									</div>
-								</div>
-							{/if}
-						</div>
-						<hr class=" dark:border-gray-700" />
+								{/if}
+							</div>
+							<hr class=" dark:border-gray-700" />
 
-						<div>
-							<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
-							<div class="flex w-full">
-								<div class="flex-1 mr-2">
-									<select
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										bind:value={deleteModelTag}
-										placeholder="Select a model"
-									>
-										{#if !deleteModelTag}
-											<option value="" disabled selected>Select a model</option>
-										{/if}
-										{#each $models.filter((m) => m.size != null) as model}
-											<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
-												>{model.name + ' (' + (model.size / 1024 ** 3).toFixed(1) + ' GB)'}</option
-											>
-										{/each}
-									</select>
-								</div>
-								<button
-									class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
-									on:click={() => {
-										deleteModelHandler();
-									}}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											fill-rule="evenodd"
-											d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
-											clip-rule="evenodd"
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Upload a GGUF model</div>
+								<div class="flex w-full mb-1.5">
+									<div class="flex-1 {modelInputFile && modelInputFile.length > 0 ? 'mr-2' : ''}">
+										<input
+											id="model-upload-input"
+											type="file"
+											bind:files={modelInputFile}
+											on:change={() => {
+												console.log(modelInputFile);
+											}}
+											hidden
 										/>
-									</svg>
-								</button>
+
+										<button
+											type="button"
+											class="w-full rounded text-left py-2 px-4 dark:text-gray-300 dark:bg-gray-800"
+											on:click={() => {
+												document.getElementById('model-upload-input').click();
+											}}
+										>
+											{#if modelInputFile && modelInputFile.length > 0}
+												{modelInputFile[0].name}
+											{:else}
+												Click here to select
+											{/if}
+										</button>
+									</div>
+
+									{#if modelInputFile && modelInputFile.length > 0}
+										<button
+											class="px-3 text-gray-100 bg-emerald-600 hover:bg-emerald-700 rounded transition"
+											on:click={() => {
+												uploadModelHandler();
+											}}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 16 16"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													d="M7.25 10.25a.75.75 0 0 0 1.5 0V4.56l2.22 2.22a.75.75 0 1 0 1.06-1.06l-3.5-3.5a.75.75 0 0 0-1.06 0l-3.5 3.5a.75.75 0 0 0 1.06 1.06l2.22-2.22v5.69Z"
+												/>
+												<path
+													d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
+												/>
+											</svg>
+										</button>
+									{/if}
+								</div>
+
+								{#if modelInputFile && modelInputFile.length > 0}
+									<div>
+										<div>
+											<div class=" my-2.5 text-sm font-medium">Modelfile Content</div>
+											<textarea
+												bind:value={modelFileContent}
+												class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none resize-none"
+												rows="6"
+											/>
+										</div>
+									</div>
+								{/if}
+								<div class=" mt-1 text-xs text-gray-400 dark:text-gray-500">
+									To access the GGUF models available for downloading, <a
+										class=" text-gray-500 dark:text-gray-300 font-medium"
+										href="https://huggingface.co/models?search=gguf"
+										target="_blank">click here.</a
+									>
+								</div>
+
+								{#if pullProgress !== null}
+									<div class="mt-2">
+										<div class=" mb-2 text-xs">Pull Progress</div>
+										<div class="w-full rounded-full dark:bg-gray-800">
+											<div
+												class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+												style="width: {Math.max(15, pullProgress ?? 0)}%"
+											>
+												{pullProgress ?? 0}%
+											</div>
+										</div>
+										<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
+											{digest}
+										</div>
+									</div>
+								{/if}
+							</div>
+							<hr class=" dark:border-gray-700" />
+
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
+								<div class="flex w-full">
+									<div class="flex-1 mr-2">
+										<select
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											bind:value={deleteModelTag}
+											placeholder="Select a model"
+										>
+											{#if !deleteModelTag}
+												<option value="" disabled selected>Select a model</option>
+											{/if}
+											{#each $models.filter((m) => m.size != null) as model}
+												<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
+													>{model.name +
+														' (' +
+														(model.size / 1024 ** 3).toFixed(1) +
+														' GB)'}</option
+												>
+											{/each}
+										</select>
+									</div>
+									<button
+										class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
+										on:click={() => {
+											deleteModelHandler();
+										}}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5a.75.75 0 0 1 .786-.711Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</button>
+								</div>
 							</div>
 						</div>
 					</div>
