@@ -362,9 +362,19 @@
 	<div class="m-auto text-center max-w-md pb-56 px-2">
 		<div class="flex justify-center mt-8">
 			{#if selectedModelfile && selectedModelfile.imageUrl}
-				<img src={selectedModelfile?.imageUrl} class=" w-20 mb-2 rounded-full" />
+				<img
+					src={selectedModelfile?.imageUrl}
+					alt="modelfile"
+					class=" w-20 mb-2 rounded-full"
+					draggable="false"
+				/>
 			{:else}
-				<img src="/ollama.png" class=" w-16 invert-[10%] dark:invert-[100%] rounded-full" />
+				<img
+					src="/ollama.png"
+					class=" w-16 invert-[10%] dark:invert-[100%] rounded-full"
+					alt="ollama"
+					draggable="false"
+				/>
 			{/if}
 		</div>
 		<div class=" mt-2 text-2xl text-gray-800 dark:text-gray-100 font-semibold">
@@ -401,12 +411,14 @@
 									src="{$settings.gravatarUrl ? $settings.gravatarUrl : '/user'}.png"
 									class=" max-w-[28px] object-cover rounded-full"
 									alt="User profile"
+									draggable="false"
 								/>
 							{:else}
 								<img
 									src={$user ? $user.profile_image_url : '/user.png'}
 									class=" max-w-[28px] object-cover rounded-full"
 									alt="User profile"
+									draggable="false"
 								/>
 							{/if}
 						{:else if selectedModelfile}
@@ -414,12 +426,14 @@
 								src={selectedModelfile?.imageUrl ?? '/favicon.png'}
 								class=" max-w-[28px] object-cover rounded-full"
 								alt="Ollama profile"
+								draggable="false"
 							/>
 						{:else}
 							<img
 								src="/favicon.png"
 								class=" max-w-[28px] object-cover rounded-full"
 								alt="Ollama profile"
+								draggable="false"
 							/>
 						{/if}
 					</div>
@@ -469,7 +483,12 @@
 											{#each message.files as file}
 												<div>
 													{#if file.type === 'image'}
-														<img src={file.url} alt="input" class=" max-h-96 rounded-lg" />
+														<img
+															src={file.url}
+															alt="input"
+															class=" max-h-96 rounded-lg"
+															draggable="false"
+														/>
 													{/if}
 												</div>
 											{/each}

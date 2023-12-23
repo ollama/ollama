@@ -93,7 +93,10 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 	};
 
 	const saveModelfile = async (modelfile) => {
-		await modelfiles.set([...$modelfiles, modelfile]);
+		await modelfiles.set([
+			...$modelfiles.filter((m) => m.tagName !== modelfile.tagName),
+			modelfile
+		]);
 		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
 	};
 

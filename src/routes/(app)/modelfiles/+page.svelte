@@ -98,7 +98,7 @@
 				<div class=" flex space-x-4 cursor-pointer w-full mb-3">
 					<a
 						class=" flex flex-1 space-x-4 cursor-pointer w-full"
-						href={`/?models=${modelfile.tagName}`}
+						href={`/?models=${encodeURIComponent(modelfile.tagName)}`}
 					>
 						<div class=" self-center w-10">
 							<div class=" rounded-full bg-stone-700">
@@ -121,7 +121,7 @@
 						<a
 							class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
 							type="button"
-							href={`/modelfiles/edit?tag=${modelfile.tagName}`}
+							href={`/modelfiles/edit?tag=${encodeURIComponent(modelfile.tagName)}`}
 						>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"

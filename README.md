@@ -13,6 +13,8 @@
 
 ChatGPT-Style Web Interface for Ollama 🦙
 
+**Disclaimer:** *ollama-webui is a community-driven project and is not affiliated with the Ollama team in any way. This initiative is independent, and any inquiries or feedback should be directed to [our community on Discord](https://discord.gg/5rJgQTnV4s). We kindly request users to refrain from contacting or harassing the Ollama team regarding this project.*
+
 ![Ollama Web UI Demo](./demo.gif)
 
 Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you can discover, download, and explore customized Modelfiles for Ollama! 🦙🔍
@@ -129,6 +131,10 @@ docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name
 ## How to Install Without Docker
 
 While we strongly recommend using our convenient Docker container installation for optimal support, we understand that some situations may require a non-Docker setup, especially for development purposes. Please note that non-Docker installations are not officially supported, and you might need to troubleshoot on your own.
+
+**Warning: Backend Dependency for Proper Functionality**
+
+In order to ensure the seamless operation of our application, it is crucial to run both the backend and frontend components simultaneously. Serving only the frontend in isolation is not supported and may lead to unpredictable outcomes, rendering the application inoperable. Attempting to raise an issue when solely serving the frontend will not be addressed, as it falls outside the intended usage. To achieve optimal results, please strictly adhere to the specified steps outlined in this documentation. Utilize the frontend solely for building static files, and subsequently run the complete application with the provided backend commands. Failure to follow these instructions may result in unsupported configurations, and we may not be able to provide assistance in such cases. Your cooperation in following the prescribed procedures is essential for a smooth user experience and effective issue resolution.
 
 ### TL;DR 🚀
 

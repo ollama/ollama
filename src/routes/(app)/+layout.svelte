@@ -55,7 +55,9 @@
 		// If OpenAI API Key exists
 		if ($settings.OPENAI_API_KEY) {
 			// Validate OPENAI_API_KEY
-			const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
+
+			const API_BASE_URL = $settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+			const openaiModelRes = await fetch(`${API_BASE_URL}/models`, {
 				method: 'GET',
 				headers: {
 					'Content-Type': 'application/json',
@@ -72,15 +74,19 @@
 					return null;
 				});
 
-			const openAIModels = openaiModelRes?.data ?? null;
+			const openAIModels = Array.isArray(openaiModelRes)
+				? openaiModelRes
+				: openaiModelRes?.data ?? null;
 
 			models.push(
 				...(openAIModels
 					? [
 							{ name: 'hr' },
 							...openAIModels
-								.map((model) => ({ name: model.id, label: 'OpenAI' }))
-								.filter((model) => model.name.includes('gpt'))
+								.map((model) => ({ name: model.id, external: true }))
+								.filter((model) =>
+									API_BASE_URL.includes('openai') ? model.name.includes('gpt') : true
+								)
 					  ]
 					: [])
 			);
@@ -236,36 +242,39 @@
 				<div
 					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-900/60 flex justify-center"
 				>
-					<div class="m-auto pb-44">
-						<div class="text-center dark:text-white text-2xl font-medium z-50">
-							Ollama Update Required
-						</div>
+					<div class="m-auto pb-44 flex flex-col justify-center">
+						<div class="max-w-md">
+							<div class="text-center dark:text-white text-2xl font-medium z-50">
+								Connection Issue or Update Needed
+							</div>
 
-						<div class=" mt-4 text-center max-w-md text-sm dark:text-gray-200">
-							Oops! It seems like your Ollama needs a little attention. <br
-								class=" hidden sm:flex"
-							/>
-							We encountered a connection issue or noticed that you're running an outdated version. Please
-							update to
-							<span class=" dark:text-white font-medium">{requiredOllamaVersion} or above</span>.
-						</div>
+							<div class=" mt-4 text-center text-sm dark:text-gray-200 w-full">
+								Oops! It seems like your Ollama needs a little attention. <br
+									class=" hidden sm:flex"
+								/>We've detected either a connection hiccup or observed that you're using an older
+								version. Ensure you're on the latest Ollama version
+								<br class=" hidden sm:flex" />(version
+								<span class=" dark:text-white font-medium">{requiredOllamaVersion} or higher</span>)
+								or check your connection.
+							</div>
 
-						<div class=" mt-6 mx-auto relative group w-fit">
-							<button
-								class="relative z-20 flex px-5 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition font-medium text-sm"
-								on:click={async () => {
-									await setOllamaVersion(await getOllamaVersion());
-								}}
-							>
-								Check Again
-							</button>
+							<div class=" mt-6 mx-auto relative group w-fit">
+								<button
+									class="relative z-20 flex px-5 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition font-medium text-sm"
+									on:click={async () => {
+										await setOllamaVersion(await getOllamaVersion());
+									}}
+								>
+									Check Again
+								</button>
 
-							<button
-								class="text-xs text-center w-full mt-2 text-gray-400 underline"
-								on:click={async () => {
-									await setOllamaVersion(requiredOllamaVersion);
-								}}>Close</button
-							>
+								<button
+									class="text-xs text-center w-full mt-2 text-gray-400 underline"
+									on:click={async () => {
+										await setOllamaVersion(requiredOllamaVersion);
+									}}>Close</button
+								>
+							</div>
 						</div>
 					</div>
 				</div>
