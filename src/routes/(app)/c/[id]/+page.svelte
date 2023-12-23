@@ -379,8 +379,6 @@
 					];
 				}
 
-				await tick();
-
 				window.scrollTo({ top: document.body.scrollHeight });
 
 				const res = await fetch(
