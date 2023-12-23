@@ -7,7 +7,7 @@
 	import { splitStream } from '$lib/utils';
 	import { goto } from '$app/navigation';
 
-	import { config, modelfiles, user, settings, db, chats, chatId } from '$lib/stores';
+	import { config, models, modelfiles, user, settings, db, chats, chatId } from '$lib/stores';
 
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
@@ -130,7 +130,8 @@
 	const sendPrompt = async (userPrompt, parentId, _chatId) => {
 		await Promise.all(
 			selectedModels.map(async (model) => {
-				if (model.includes('gpt-')) {
+				console.log(model);
+				if ($models.filter((m) => m.name === model)[0].external) {
 					await sendPromptOpenAI(model, userPrompt, parentId, _chatId);
 				} else {
 					await sendPromptOllama(model, userPrompt, parentId, _chatId);
@@ -364,132 +365,162 @@
 					];
 				}
 
-				await tick();
-
 				window.scrollTo({ top: document.body.scrollHeight });
 
-				const res = await fetch(`https://api.openai.com/v1/chat/completions`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${$settings.OPENAI_API_KEY}`
-					},
-					body: JSON.stringify({
-						model: model,
-						stream: true,
-						messages: [
-							$settings.system
-								? {
-										role: 'system',
-										content: $settings.system
-								  }
-								: undefined,
-							...messages
-						]
-							.filter((message) => message)
-							.map((message) => ({
-								role: message.role,
-								...(message.files
+				const res = await fetch(
+					`${$settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1'}/chat/completions`,
+					{
+						method: 'POST',
+						headers: {
+							Authorization: `Bearer ${$settings.OPENAI_API_KEY}`,
+							'Content-Type': 'application/json'
+						},
+						body: JSON.stringify({
+							model: model,
+							stream: true,
+							messages: [
+								$settings.system
 									? {
-											content: [
-												{
-													type: 'text',
-													text: message.content
-												},
-												...message.files
-													.filter((file) => file.type === 'image')
-													.map((file) => ({
-														type: 'image_url',
-														image_url: {
-															url: file.url
-														}
-													}))
-											]
+											role: 'system',
+											content: $settings.system
 									  }
-									: { content: message.content })
-							})),
-						temperature: $settings.temperature ?? undefined,
-						top_p: $settings.top_p ?? undefined,
-						num_ctx: $settings.num_ctx ?? undefined,
-						frequency_penalty: $settings.repeat_penalty ?? undefined
-					})
+									: undefined,
+								...messages
+							]
+								.filter((message) => message)
+								.map((message) => ({
+									role: message.role,
+									...(message.files
+										? {
+												content: [
+													{
+														type: 'text',
+														text: message.content
+													},
+													...message.files
+														.filter((file) => file.type === 'image')
+														.map((file) => ({
+															type: 'image_url',
+															image_url: {
+																url: file.url
+															}
+														}))
+												]
+										  }
+										: { content: message.content })
+								})),
+							temperature: $settings.temperature ?? undefined,
+							top_p: $settings.top_p ?? undefined,
+							num_ctx: $settings.num_ctx ?? undefined,
+							frequency_penalty: $settings.repeat_penalty ?? undefined
+						})
+					}
+				).catch((err) => {
+					console.log(err);
+					return null;
 				});
 
-				const reader = res.body
-					.pipeThrough(new TextDecoderStream())
-					.pipeThrough(splitStream('\n'))
-					.getReader();
+				if (res && res.ok) {
+					const reader = res.body
+						.pipeThrough(new TextDecoderStream())
+						.pipeThrough(splitStream('\n'))
+						.getReader();
 
-				while (true) {
-					const { value, done } = await reader.read();
-					if (done || stopResponseFlag || _chatId !== $chatId) {
-						responseMessage.done = true;
-						messages = messages;
-						break;
-					}
+					while (true) {
+						const { value, done } = await reader.read();
+						if (done || stopResponseFlag || _chatId !== $chatId) {
+							responseMessage.done = true;
+							messages = messages;
+							break;
+						}
 
-					try {
-						let lines = value.split('\n');
+						try {
+							let lines = value.split('\n');
 
-						for (const line of lines) {
-							if (line !== '') {
-								console.log(line);
-								if (line === 'data: [DONE]') {
-									responseMessage.done = true;
-									messages = messages;
-								} else {
-									let data = JSON.parse(line.replace(/^data: /, ''));
-									console.log(data);
-
-									if (responseMessage.content == '' && data.choices[0].delta.content == '\n') {
-										continue;
-									} else {
-										responseMessage.content += data.choices[0].delta.content ?? '';
+							for (const line of lines) {
+								if (line !== '') {
+									console.log(line);
+									if (line === 'data: [DONE]') {
+										responseMessage.done = true;
 										messages = messages;
+									} else {
+										let data = JSON.parse(line.replace(/^data: /, ''));
+										console.log(data);
+
+										if (responseMessage.content == '' && data.choices[0].delta.content == '\n') {
+											continue;
+										} else {
+											responseMessage.content += data.choices[0].delta.content ?? '';
+											messages = messages;
+										}
 									}
 								}
 							}
+						} catch (error) {
+							console.log(error);
 						}
-					} catch (error) {
+
+						if ($settings.notificationEnabled && !document.hasFocus()) {
+							const notification = new Notification(`OpenAI ${model}`, {
+								body: responseMessage.content,
+								icon: '/favicon.png'
+							});
+						}
+
+						if ($settings.responseAutoCopy) {
+							copyToClipboard(responseMessage.content);
+						}
+
+						if (autoScroll) {
+							window.scrollTo({ top: document.body.scrollHeight });
+						}
+
+						await $db.updateChatById(_chatId, {
+							title: title === '' ? 'New Chat' : title,
+							models: selectedModels,
+							system: $settings.system ?? undefined,
+							options: {
+								seed: $settings.seed ?? undefined,
+								temperature: $settings.temperature ?? undefined,
+								repeat_penalty: $settings.repeat_penalty ?? undefined,
+								top_k: $settings.top_k ?? undefined,
+								top_p: $settings.top_p ?? undefined,
+								num_ctx: $settings.num_ctx ?? undefined,
+								...($settings.options ?? {})
+							},
+							messages: messages,
+							history: history
+						});
+					}
+				} else {
+					if (res !== null) {
+						const error = await res.json();
 						console.log(error);
+						if ('detail' in error) {
+							toast.error(error.detail);
+							responseMessage.content = error.detail;
+						} else {
+							if ('message' in error.error) {
+								toast.error(error.error.message);
+								responseMessage.content = error.error.message;
+							} else {
+								toast.error(error.error);
+								responseMessage.content = error.error;
+							}
+						}
+					} else {
+						toast.error(`Uh-oh! There was an issue connecting to ${model}.`);
+						responseMessage.content = `Uh-oh! There was an issue connecting to ${model}.`;
 					}
 
-					if (autoScroll) {
-						window.scrollTo({ top: document.body.scrollHeight });
-					}
-
-					await $db.updateChatById(_chatId, {
-						title: title === '' ? 'New Chat' : title,
-						models: selectedModels,
-						system: $settings.system ?? undefined,
-						options: {
-							seed: $settings.seed ?? undefined,
-							temperature: $settings.temperature ?? undefined,
-							repeat_penalty: $settings.repeat_penalty ?? undefined,
-							top_k: $settings.top_k ?? undefined,
-							top_p: $settings.top_p ?? undefined,
-							num_ctx: $settings.num_ctx ?? undefined,
-							...($settings.options ?? {})
-						},
-						messages: messages,
-						history: history
-					});
+					responseMessage.error = true;
+					responseMessage.content = `Uh-oh! There was an issue connecting to ${model}.`;
+					responseMessage.done = true;
+					messages = messages;
 				}
 
 				stopResponseFlag = false;
-
 				await tick();
-
-				if ($settings.notificationEnabled && !document.hasFocus()) {
-					const notification = new Notification(`OpenAI ${model}`, {
-						body: responseMessage.content,
-						icon: '/favicon.png'
-					});
-				}
-
-				if ($settings.responseAutoCopy) {
-					copyToClipboard(responseMessage.content);
-				}
 
 				if (autoScroll) {
 					window.scrollTo({ top: document.body.scrollHeight });
