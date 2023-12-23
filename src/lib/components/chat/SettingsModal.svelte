@@ -56,6 +56,7 @@
 
 	let gravatarEmail = '';
 	let OPENAI_API_KEY = '';
+	let OPENAI_API_BASE_URL = '';
 
 	// Auth
 	let authEnabled = false;
@@ -302,8 +303,10 @@
 
 		// If OpenAI API Key exists
 		if (type === 'all' && $settings.OPENAI_API_KEY) {
+			const API_BASE_URL = $settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+
 			// Validate OPENAI_API_KEY
-			const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
+			const openaiModelRes = await fetch(`${API_BASE_URL}/models`, {
 				method: 'GET',
 				headers: {
 					'Content-Type': 'application/json',
@@ -327,8 +330,10 @@
 					? [
 							{ name: 'hr' },
 							...openAIModels
-								.map((model) => ({ name: model.id, label: 'OpenAI' }))
-								.filter((model) => model.name.includes('gpt'))
+								.map((model) => ({ name: model.id, external: true }))
+								.filter((model) =>
+									API_BASE_URL.includes('openai') ? model.name.includes('gpt') : true
+								)
 					  ]
 					: [])
 			);
@@ -363,6 +368,7 @@
 
 		gravatarEmail = settings.gravatarEmail ?? '';
 		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
+		OPENAI_API_BASE_URL = settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
 
 		authEnabled = settings.authHeader !== undefined ? true : false;
 		if (authEnabled) {
@@ -474,6 +480,30 @@
 						</svg>
 					</div>
 					<div class=" self-center">Models</div>
+				</button>
+
+				<button
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'external'
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+					on:click={() => {
+						selectedTab = 'external';
+					}}
+				>
+					<div class=" self-center mr-2">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								d="M1 9.5A3.5 3.5 0 0 0 4.5 13H12a3 3 0 0 0 .917-5.857 2.503 2.503 0 0 0-3.198-3.019 3.5 3.5 0 0 0-6.628 2.171A3.5 3.5 0 0 0 1 9.5Z"
+							/>
+						</svg>
+					</div>
+					<div class=" self-center">External</div>
 				</button>
 
 				<button
@@ -859,14 +889,73 @@
 							</div>
 						</div>
 					</div>
+				{:else if selectedTab === 'external'}
+					<form
+						class="flex flex-col h-full justify-between space-y-3 text-sm"
+						on:submit|preventDefault={() => {
+							saveSettings({
+								OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined,
+								OPENAI_API_BASE_URL: OPENAI_API_BASE_URL !== '' ? OPENAI_API_BASE_URL : undefined
+							});
+							show = false;
+						}}
+					>
+						<div class=" space-y-3">
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">OpenAI API Key</div>
+								<div class="flex w-full">
+									<div class="flex-1">
+										<input
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											placeholder="Enter OpenAI API Key"
+											bind:value={OPENAI_API_KEY}
+											autocomplete="off"
+										/>
+									</div>
+								</div>
+								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+									Adds optional support for online models.
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">OpenAI API Base URL</div>
+								<div class="flex w-full">
+									<div class="flex-1">
+										<input
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											placeholder="Enter OpenAI API Key"
+											bind:value={OPENAI_API_BASE_URL}
+											autocomplete="off"
+										/>
+									</div>
+								</div>
+								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+									WebUI will make requests to <span class=" text-gray-200"
+										>'{OPENAI_API_BASE_URL}/chat'</span
+									>
+								</div>
+							</div>
+						</div>
+
+						<div class="flex justify-end pt-3 text-sm font-medium">
+							<button
+								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
+								type="submit"
+							>
+								Save
+							</button>
+						</div>
+					</form>
 				{:else if selectedTab === 'addons'}
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
 						on:submit|preventDefault={() => {
 							saveSettings({
 								gravatarEmail: gravatarEmail !== '' ? gravatarEmail : undefined,
-								gravatarUrl: gravatarEmail !== '' ? getGravatarURL(gravatarEmail) : undefined,
-								OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined
+								gravatarUrl: gravatarEmail !== '' ? getGravatarURL(gravatarEmail) : undefined
 							});
 							show = false;
 						}}
@@ -960,26 +1049,6 @@
 										href="https://gravatar.com/"
 										target="_blank">Gravatar.</a
 									>
-								</div>
-							</div>
-
-							<hr class=" dark:border-gray-700" />
-							<div>
-								<div class=" mb-2.5 text-sm font-medium">
-									OpenAI API Key <span class=" text-gray-400 text-sm">(optional)</span>
-								</div>
-								<div class="flex w-full">
-									<div class="flex-1">
-										<input
-											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-											placeholder="Enter OpenAI API Key"
-											bind:value={OPENAI_API_KEY}
-											autocomplete="off"
-										/>
-									</div>
-								</div>
-								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-									Adds optional support for 'gpt-*' models available.
 								</div>
 							</div>
 						</div>
