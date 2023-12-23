@@ -94,12 +94,6 @@ extract_value() {
     echo "$1" | sed -E 's/.*\[.*=(.*)\].*/\1/; t; s/.*//'
 }
 
-# Check if no arguments were provided
-# if [ $# -eq 0 ]; then
-#     usage
-#     exit 1
-# fi
-
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     key="$1"
@@ -144,6 +138,7 @@ if [[ $enable_gpu == true ]]; then
         echo "Enabling GPU with $gpu_count GPUs"
         # Add your GPU allocation logic here
         export OLLAMA_GPU_DRIVER=$(get_gpu_driver)
+        export OLLAMA_GPU_COUNT=$gpu_count # Set OLLAMA_GPU_COUNT environment variable
     fi
     DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.gpu.yaml"
 fi
@@ -159,6 +154,7 @@ DEFAULT_COMPOSE_COMMAND+=" up -d > /dev/null 2>&1"
 echo
 echo -e "${WHITE}${BOLD}Current Setup:${NC}"
 echo -e "   ${GREEN}${BOLD}GPU Driver:${NC} ${OLLAMA_GPU_DRIVER:-Not Enabled}"
+echo -e "   ${GREEN}${BOLD}GPU Count:${NC} ${OLLAMA_GPU_COUNT:-Not Enabled}"
 echo -e "   ${GREEN}${BOLD}WebAPI Port:${NC} ${OLLAMA_WEBAPI_PORT:-Not Enabled}"
 echo -e "   ${GREEN}${BOLD}WebUI Port:${NC} $webui_port"
 echo
