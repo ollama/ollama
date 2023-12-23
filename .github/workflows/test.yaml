@@ -174,3 +174,7 @@ jobs:
           path: llm/llama.cpp/build
       - run: go build
       - run: go test -v ./...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-binaries
+          path: ollama
