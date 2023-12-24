@@ -75,6 +75,7 @@ usage() {
     echo "  --webui[port=PORT]         Set the port for the web user interface."
     echo "  --data[folder=PATH]        Bind mount for ollama data folder (by default will create the 'ollama' volume)."
     echo "  --build                    Build the docker image before running the compose project."
+    echo "  --drop                     Drop the compose project."
     echo "  -q, --quiet                Run script in headless mode."
     echo "  -h, --help                 Show this help message."
     echo ""
@@ -95,6 +96,7 @@ api_port=11435
 webui_port=3000
 headless=false
 build_image=false
+kill_compose=false
 
 # Function to extract value from the parameter
 extract_value() {
@@ -124,6 +126,9 @@ while [[ $# -gt 0 ]]; do
             value=$(extract_value "$key")
             data_dir=${value:-"./ollama-data"}
             ;;
+        --drop)
+            kill_compose=true
+            ;;
         --build)
             build_image=true
             ;;
@@ -144,38 +149,43 @@ while [[ $# -gt 0 ]]; do
     shift # past argument or value
 done
 
-DEFAULT_COMPOSE_COMMAND="docker compose -f docker-compose.yaml"
-if [[ $enable_gpu == true ]]; then
-    # Validate and process command-line arguments
-    if [[ -n $gpu_count ]]; then
-        if ! [[ $gpu_count =~ ^[0-9]+$ ]]; then
-            echo "Invalid GPU count: $gpu_count"
-            exit 1
+if [[ $kill_compose == true ]]; then
+    docker compose down --remove-orphans
+    echo -e "${GREEN}${BOLD}Compose project dropped successfully.${NC}"
+    exit
+else
+    DEFAULT_COMPOSE_COMMAND="docker compose -f docker-compose.yaml"
+    if [[ $enable_gpu == true ]]; then
+        # Validate and process command-line arguments
+        if [[ -n $gpu_count ]]; then
+            if ! [[ $gpu_count =~ ^[0-9]+$ ]]; then
+                echo "Invalid GPU count: $gpu_count"
+                exit 1
+            fi
+            echo "Enabling GPU with $gpu_count GPUs"
+            # Add your GPU allocation logic here
+            export OLLAMA_GPU_DRIVER=$(get_gpu_driver)
+            export OLLAMA_GPU_COUNT=$gpu_count # Set OLLAMA_GPU_COUNT environment variable
         fi
-        echo "Enabling GPU with $gpu_count GPUs"
-        # Add your GPU allocation logic here
-        export OLLAMA_GPU_DRIVER=$(get_gpu_driver)
-        export OLLAMA_GPU_COUNT=$gpu_count # Set OLLAMA_GPU_COUNT environment variable
+        DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.gpu.yaml"
     fi
-    DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.gpu.yaml"
-fi
-if [[ $enable_api == true ]]; then
-    DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.api.yaml"
-    if [[ -n $api_port ]]; then
-        export OLLAMA_WEBAPI_PORT=$api_port # Set OLLAMA_WEBAPI_PORT environment variable
+    if [[ $enable_api == true ]]; then
+        DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.api.yaml"
+        if [[ -n $api_port ]]; then
+            export OLLAMA_WEBAPI_PORT=$api_port # Set OLLAMA_WEBAPI_PORT environment variable
+        fi
+    fi
+    if [[ -n $data_dir ]]; then
+        DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.data.yaml"
+        export OLLAMA_DATA_DIR=$data_dir # Set OLLAMA_DATA_DIR environment variable
+    fi
+    DEFAULT_COMPOSE_COMMAND+=" up -d"
+    DEFAULT_COMPOSE_COMMAND+=" --remove-orphans"
+    DEFAULT_COMPOSE_COMMAND+=" --force-recreate"
+    if [[ $build_image == true ]]; then
+        DEFAULT_COMPOSE_COMMAND+=" --build"
     fi
 fi
-if [[ -n $data_dir ]]; then
-    DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.data.yaml"
-    export OLLAMA_DATA_DIR=$data_dir # Set OLLAMA_DATA_DIR environment variable
-fi
-DEFAULT_COMPOSE_COMMAND+=" up -d"
-DEFAULT_COMPOSE_COMMAND+=" --remove-orphans"
-DEFAULT_COMPOSE_COMMAND+=" --force-recreate"
-if [[ -n $build_image ]]; then
-    DEFAULT_COMPOSE_COMMAND+=" --build"
-fi
-DEFAULT_COMPOSE_COMMAND+=" > /dev/null 2>&1"
 
 # Recap of environment variables
 echo
@@ -195,12 +205,8 @@ else
     echo -ne "${WHITE}${BOLD}Do you want to proceed with current setup? (Y/n): ${NC}"
     read -n1 -s choice
 fi
-echo -e "   ${GREEN}${BOLD}WebUI Port:${NC} $webui_port"
-echo
 
-# Ask for user acceptance
-echo -ne "${WHITE}${BOLD}Do you want to proceed with current setup? (Y/n): ${NC}"
-read -n1 -s choice
+echo
 
 if [[ $choice == "" || $choice == "y" ]]; then
     # Execute the command with the current user
@@ -210,7 +216,7 @@ if [[ $choice == "" || $choice == "y" ]]; then
     PID=$!
 
     # Display the loading animation
-    show_loading $PID
+    #show_loading $PID
 
     # Wait for the command to finish
     wait $PID
