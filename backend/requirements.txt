@@ -12,6 +12,7 @@ passlib[bcrypt]
 uuid
 
 requests
+aiohttp
 pymongo
 bcrypt
 

@@ -3,7 +3,7 @@
 	export let suggestionPrompts = [];
 </script>
 
-<div class=" flex flex-wrap-reverse mb-3 md:p-1 text-left">
+<div class=" flex flex-wrap-reverse mb-3 md:p-1 text-left w-full">
 	{#each suggestionPrompts as prompt, promptIdx}
 		<div class="{promptIdx > 1 ? 'hidden sm:inline-flex' : ''} basis-full sm:basis-1/2 p-[5px]">
 			<button

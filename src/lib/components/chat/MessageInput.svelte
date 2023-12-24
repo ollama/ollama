@@ -155,7 +155,7 @@
 <div class="fixed bottom-0 w-full">
 	<div class="px-2.5 pt-2.5 -mb-0.5 mx-auto inset-x-0 bg-transparent flex justify-center">
 		{#if messages.length == 0 && suggestionPrompts.length !== 0}
-			<div class="max-w-3xl">
+			<div class="max-w-3xl w-full">
 				<Suggestions {suggestionPrompts} {submitPrompt} />
 			</div>
 		{/if}
