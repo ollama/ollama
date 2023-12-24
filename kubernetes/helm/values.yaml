@@ -1,0 +1,23 @@
+namespace: ollama-namespace
+
+ollama:
+  replicaCount: 1
+  image: ollama/ollama:latest
+  servicePort: 11434
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+      nvidia.com/gpu: "1"
+  volumeSize: 1Gi
+
+webui:
+  replicaCount: 1
+  image: ghcr.io/ollama-webui/ollama-webui:main
+  servicePort: 8080
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "500Mi"
+  ingress:
+    host: ollama.minikube.local

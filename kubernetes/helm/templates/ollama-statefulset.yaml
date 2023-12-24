@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ollama
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: "ollama"
+  replicas: {{ .Values.ollama.replicaCount }}
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+      - name: ollama
+        image: {{ .Values.ollama.image }}
+        ports:
+        - containerPort: {{ .Values.ollama.servicePort }}
+        resources:
+          limits:
+            cpu: {{ .Values.ollama.resources.limits.cpu }}
+            memory: {{ .Values.ollama.resources.limits.memory }}
+            nvidia.com/gpu: {{ .Values.ollama.resources.limits.gpu }}
+        volumeMounts:
+        - name: ollama-volume
+          mountPath: /root/.ollama
+        tty: true
+  volumeClaimTemplates:
+  - metadata:
+      name: ollama-volume
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
