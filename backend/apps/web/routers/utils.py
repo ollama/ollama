@@ -42,7 +42,7 @@ def parse_huggingface_url(hf_url):
         return None
 
 
-async def download_file_stream(url, file_path, chunk_size=1024 * 1024):
+async def download_file_stream(url, file_path, file_name, chunk_size=1024 * 1024):
     done = False
 
     if os.path.exists(file_path):
@@ -79,7 +79,7 @@ async def download_file_stream(url, file_path, chunk_size=1024 * 1024):
                         res = {
                             "done": done,
                             "blob": f"sha256:{hashed}",
-                            "name": file.name,
+                            "name": file_name,
                         }
                         os.remove(file_path)
 
@@ -93,14 +93,15 @@ async def download(
     url: str,
 ):
     # url = "https://huggingface.co/TheBloke/stablelm-zephyr-3b-GGUF/resolve/main/stablelm-zephyr-3b.Q2_K.gguf"
-    model_file = parse_huggingface_url(url)
+    file_name = parse_huggingface_url(url)
 
-    if model_file:
+    if file_name:
         os.makedirs("./uploads", exist_ok=True)
-        file_path = os.path.join("./uploads", f"{model_file}")
+        file_path = os.path.join("./uploads", f"{file_name}")
 
         return StreamingResponse(
-            download_file_stream(url, file_path), media_type="text/event-stream"
+            download_file_stream(url, file_path, file_name),
+            media_type="text/event-stream",
         )
     else:
         return None

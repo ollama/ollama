@@ -276,6 +276,7 @@
 
 	const uploadModelHandler = async () => {
 		modelTransferring = true;
+		uploadProgress = 0;
 		let uploaded = false;
 		let fileResponse = null;
 		let name = '';
@@ -422,6 +423,8 @@
 		modelFileUrl = '';
 		modelInputFile = '';
 		modelTransferring = false;
+		uploadProgress = null;
+
 		models.set(await getModels());
 	};
 
