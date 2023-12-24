@@ -8,7 +8,7 @@ ollama:
     limits:
       cpu: "2000m"
       memory: "2Gi"
-      nvidia.com/gpu: "1"
+      nvidia.com/gpu: "0"
   volumeSize: 1Gi
 
 webui:
