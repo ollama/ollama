@@ -1,0 +1,7 @@
+version: '3.6'
+
+services:
+  ollama:
+    # Expose Ollama API outside the container stack
+    ports:
+      - 11434:11434

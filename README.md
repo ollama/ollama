@@ -45,7 +45,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ⚙️ **Many Models Conversations**: Effortlessly engage with various models simultaneously, harnessing their unique strengths for optimal responses. Enhance your experience by leveraging a diverse set of models in parallel.
 
-- 🤝 **OpenAI Model Integration**: Seamlessly utilize OpenAI models alongside Ollama models for a versatile conversational experience.
+- 🤝 **OpenAI API Integration**: Effortlessly integrate OpenAI-compatible API for versatile conversations alongside Ollama models. Customize the API Base URL to link with **LMStudio, Mistral, OpenRouter, and more**.
 
 - 🔄 **Regeneration History Access**: Easily revisit and explore your entire regeneration history.
 
@@ -79,7 +79,19 @@ If you don't have Ollama installed yet, you can use the provided Docker Compose 
 docker compose up -d --build
 ```
 
-This command will install both Ollama and Ollama Web UI on your system. Ensure to modify the `compose.yaml` file for GPU support and Exposing Ollama API outside the container stack if needed.
+This command will install both Ollama and Ollama Web UI on your system.
+
+#### Enable GPU
+Use the additional Docker Compose file designed to enable GPU support by running the following command:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+#### Expose Ollama API outside the container stack
+Deploy the service with an additional Docker Compose file designed for API exposure:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.api.yml up -d --build
+```
 
 ### Installing Ollama Web UI Only
 
