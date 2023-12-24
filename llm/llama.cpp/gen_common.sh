@@ -26,8 +26,8 @@ git_module_setup() {
 
 apply_patches() {
     # Wire up our CMakefile
-    if ! grep ollama.txt gguf/examples/server/CMakeLists.txt; then
-        echo 'include (../../../ollama.txt)' >>gguf/examples/server/CMakeLists.txt
+    if ! grep ollama gguf/examples/server/CMakeLists.txt; then
+        echo 'include (../../../CMakeLists.txt) # ollama' >>gguf/examples/server/CMakeLists.txt
     fi
     # Avoid duplicate main symbols when we link into the cgo binary
     sed -e 's/int main(/int __main(/g' <./gguf/examples/server/server.cpp >./gguf/examples/server/server.cpp.tmp &&

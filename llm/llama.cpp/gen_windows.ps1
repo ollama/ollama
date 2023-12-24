@@ -25,8 +25,8 @@ function git_module_setup {
 
 function apply_patches {
     # Wire up our CMakefile
-    if (!(Select-String -Path "gguf/examples/server/CMakeLists.txt" -Pattern 'ollama.txt')) {
-        Add-Content -Path "gguf/examples/server/CMakeLists.txt" -Value 'include (../../../ollama.txt)'
+    if (!(Select-String -Path "gguf/examples/server/CMakeLists.txt" -Pattern 'ollama')) {
+        Add-Content -Path "gguf/examples/server/CMakeLists.txt" -Value 'include (../../../CMakeLists.txt) # ollama'
     }
     # Avoid duplicate main symbols when we link into the cgo binary
     $content = Get-Content -Path "./gguf/examples/server/server.cpp"
