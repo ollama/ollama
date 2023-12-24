@@ -35,7 +35,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - 📥🗑️ **Download/Delete Models**: Easily download or remove models directly from the web UI.
 
-- ⬆️ **GGUF File Model Creation**: Upload or download GGUF file from HuggingFace seamlessly within the web UI for convenient Ollama GGUF file model creation.
+- ⬆️ **GGUF File Model Creation**: Effortlessly create Ollama models by uploading GGUF files directly from the web UI. Streamlined process with options to upload from your machine or download GGUF files from Hugging Face.
 
 - 🤖 **Multiple Model Support**: Seamlessly switch between different chat models for diverse interactions.
 
