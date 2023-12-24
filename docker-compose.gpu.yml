@@ -1,0 +1,13 @@
+version: '3.6'
+
+services:
+  ollama:
+    # GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu

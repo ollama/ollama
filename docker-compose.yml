@@ -2,20 +2,8 @@ version: '3.6'
 
 services:
   ollama:
-    # Uncomment below for GPU support
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities:
-    #             - gpu
     volumes:
       - ollama:/root/.ollama
-    # Uncomment below to expose Ollama API outside the container stack
-    # ports:
-    #   - 11434:11434
     container_name: ollama
     pull_policy: always
     tty: true
