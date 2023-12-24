@@ -45,7 +45,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ⚙️ **Many Models Conversations**: Effortlessly engage with various models simultaneously, harnessing their unique strengths for optimal responses. Enhance your experience by leveraging a diverse set of models in parallel.
 
-- 🤝 **OpenAI API Integration**: Effortlessly integrate OpenAI-compatible API for versatile conversations with Ollama models. Customize the API Base URL to link with **LMStudio, Mistral, OpenRouter, and more**.
+- 🤝 **OpenAI API Integration**: Effortlessly integrate OpenAI-compatible API for versatile conversations alongside Ollama models. Customize the API Base URL to link with **LMStudio, Mistral, OpenRouter, and more**.
 
 - 🔄 **Regeneration History Access**: Easily revisit and explore your entire regeneration history.
 
