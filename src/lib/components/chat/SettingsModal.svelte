@@ -277,6 +277,7 @@
 	const uploadModelHandler = async () => {
 		modelTransferring = true;
 		uploadProgress = 0;
+
 		let uploaded = false;
 		let fileResponse = null;
 		let name = '';
@@ -1221,7 +1222,7 @@
 											<textarea
 												bind:value={modelFileContent}
 												class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none resize-none"
-												rows="8"
+												rows="6"
 											/>
 										</div>
 									</div>
