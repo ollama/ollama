@@ -147,6 +147,7 @@ if [[ $enable_gpu == true ]]; then
             echo "Invalid GPU count: $gpu_count"
             exit 1
         fi
+        echo "Enabling GPU with $gpu_count GPUs"
         # Add your GPU allocation logic here
         export OLLAMA_GPU_DRIVER=$(get_gpu_driver)
         export OLLAMA_GPU_COUNT=$gpu_count # Set OLLAMA_GPU_COUNT environment variable
@@ -183,6 +184,12 @@ else
     echo -ne "${WHITE}${BOLD}Do you want to proceed with current setup? (Y/n): ${NC}"
     read -n1 -s choice
 fi
+echo -e "   ${GREEN}${BOLD}WebUI Port:${NC} $webui_port"
+echo
+
+# Ask for user acceptance
+echo -ne "${WHITE}${BOLD}Do you want to proceed with current setup? (Y/n): ${NC}"
+read -n1 -s choice
 
 if [[ $choice == "" || $choice == "y" ]]; then
     # Execute the command with the current user

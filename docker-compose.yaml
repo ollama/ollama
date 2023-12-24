@@ -1,21 +1,9 @@
-version: '3.6'
+version: '3.8'
 
 services:
   ollama:
-    # Uncomment below for GPU support
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities:
-    #             - gpu
     volumes:
       - ollama:/root/.ollama
-    # Uncomment below to expose Ollama API outside the container stack
-    # ports:
-    #   - 11434:11434
     container_name: ollama
     pull_policy: always
     tty: true
@@ -33,7 +21,7 @@ services:
     depends_on:
       - ollama
     ports:
-      - 3000:8080
+      - ${OLLAMA_WEBUI_PORT-3000}:8080
     environment:
       - "OLLAMA_API_BASE_URL=http://ollama:11434/api"
     extra_hosts:

@@ -1,0 +1,6 @@
+version: '3.8'
+
+services:
+  ollama:
+    ports:
+      - ${OLLAMA_WEBAPI_PORT-11434}:11434
