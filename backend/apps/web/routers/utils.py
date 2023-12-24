@@ -26,17 +26,20 @@ from urllib.parse import urlparse
 
 
 def parse_huggingface_url(hf_url):
-    # Parse the URL
-    parsed_url = urlparse(hf_url)
+    try:
+        # Parse the URL
+        parsed_url = urlparse(hf_url)
 
-    # Get the path and split it into components
-    path_components = parsed_url.path.split("/")
+        # Get the path and split it into components
+        path_components = parsed_url.path.split("/")
 
-    # Extract the desired output
-    user_repo = "/".join(path_components[1:3])
-    model_file = path_components[-1]
+        # Extract the desired output
+        user_repo = "/".join(path_components[1:3])
+        model_file = path_components[-1]
 
-    return [user_repo, model_file]
+        return model_file
+    except ValueError:
+        return None
 
 
 async def download_file_stream(url, file_path, chunk_size=1024 * 1024):
@@ -49,7 +52,7 @@ async def download_file_stream(url, file_path, chunk_size=1024 * 1024):
 
     headers = {"Range": f"bytes={current_size}-"} if current_size > 0 else {}
 
-    timeout = aiohttp.ClientTimeout(total=60)  # Set the timeout
+    timeout = aiohttp.ClientTimeout(total=600)  # Set the timeout
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url, headers=headers) as response:
@@ -62,7 +65,7 @@ async def download_file_stream(url, file_path, chunk_size=1024 * 1024):
 
                     done = current_size == total_size
                     progress = round((current_size / total_size) * 100, 2)
-                    yield f'data: {{"progress": {progress}, "current": {current_size}, "total": {total_size}}}\n\n'
+                    yield f'data: {{"progress": {progress}, "completed": {current_size}, "total": {total_size}}}\n\n'
 
                 if done:
                     file.seek(0)
@@ -76,6 +79,7 @@ async def download_file_stream(url, file_path, chunk_size=1024 * 1024):
                         res = {
                             "done": done,
                             "blob": f"sha256:{hashed}",
+                            "name": file.name,
                         }
                         os.remove(file_path)
 
@@ -86,16 +90,20 @@ async def download_file_stream(url, file_path, chunk_size=1024 * 1024):
 
 @router.get("/download")
 async def download(
-    url: str = "https://huggingface.co/TheBloke/stablelm-zephyr-3b-GGUF/resolve/main/stablelm-zephyr-3b.Q2_K.gguf",
+    url: str,
 ):
-    user_repo, model_file = parse_huggingface_url(url)
+    # url = "https://huggingface.co/TheBloke/stablelm-zephyr-3b-GGUF/resolve/main/stablelm-zephyr-3b.Q2_K.gguf"
+    model_file = parse_huggingface_url(url)
 
-    os.makedirs("./uploads", exist_ok=True)
-    file_path = os.path.join("./uploads", f"{model_file}")
+    if model_file:
+        os.makedirs("./uploads", exist_ok=True)
+        file_path = os.path.join("./uploads", f"{model_file}")
 
-    return StreamingResponse(
-        download_file_stream(url, file_path), media_type="text/event-stream"
-    )
+        return StreamingResponse(
+            download_file_stream(url, file_path), media_type="text/event-stream"
+        )
+    else:
+        return None
 
 
 @router.post("/upload")
@@ -118,10 +126,12 @@ async def upload(file: UploadFile = File(...)):
                     f.write(chunk)
                     total += len(chunk)
                     done = total_size == total
+                    progress = round((total / total_size) * 100, 2)
 
                     res = {
+                        "progress": progress,
                         "total": total_size,
-                        "uploaded": total,
+                        "completed": total,
                     }
 
                     yield f"data: {json.dumps(res)}\n\n"
@@ -138,6 +148,7 @@ async def upload(file: UploadFile = File(...)):
                         res = {
                             "done": done,
                             "blob": f"sha256:{hashed}",
+                            "name": file.filename,
                         }
                         os.remove(file_path)
 
