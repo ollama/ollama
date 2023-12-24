@@ -74,6 +74,7 @@ usage() {
     echo "  --enable-api[port=PORT]    Enable API and expose it on the specified port."
     echo "  --webui[port=PORT]         Set the port for the web user interface."
     echo "  --data[folder=PATH]        Bind mount for ollama data folder (by default will create the 'ollama' volume)."
+    echo "  --build                    Build the docker image before running the compose project."
     echo "  -q, --quiet                Run script in headless mode."
     echo "  -h, --help                 Show this help message."
     echo ""
@@ -93,6 +94,7 @@ gpu_count=1
 api_port=11435
 webui_port=3000
 headless=false
+build_image=false
 
 # Function to extract value from the parameter
 extract_value() {
@@ -121,6 +123,9 @@ while [[ $# -gt 0 ]]; do
         --data*)
             value=$(extract_value "$key")
             data_dir=${value:-"./ollama-data"}
+            ;;
+        --build)
+            build_image=true
             ;;
         -q|--quiet)
             headless=true
@@ -164,7 +169,13 @@ if [[ -n $data_dir ]]; then
     DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.data.yaml"
     export OLLAMA_DATA_DIR=$data_dir # Set OLLAMA_DATA_DIR environment variable
 fi
-DEFAULT_COMPOSE_COMMAND+=" up -d > /dev/null 2>&1"
+DEFAULT_COMPOSE_COMMAND+=" up -d"
+DEFAULT_COMPOSE_COMMAND+=" --remove-orphans"
+DEFAULT_COMPOSE_COMMAND+=" --force-recreate"
+if [[ -n $build_image ]]; then
+    DEFAULT_COMPOSE_COMMAND+=" --build"
+fi
+DEFAULT_COMPOSE_COMMAND+=" > /dev/null 2>&1"
 
 # Recap of environment variables
 echo
@@ -193,7 +204,7 @@ read -n1 -s choice
 
 if [[ $choice == "" || $choice == "y" ]]; then
     # Execute the command with the current user
-    eval "docker compose down > /dev/null 2>&1; $DEFAULT_COMPOSE_COMMAND" &
+    eval "$DEFAULT_COMPOSE_COMMAND" &
 
     # Capture the background process PID
     PID=$!
