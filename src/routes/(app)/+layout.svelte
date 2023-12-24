@@ -55,7 +55,9 @@
 		// If OpenAI API Key exists
 		if ($settings.OPENAI_API_KEY) {
 			// Validate OPENAI_API_KEY
-			const openaiModelRes = await fetch(`https://api.openai.com/v1/models`, {
+
+			const API_BASE_URL = $settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+			const openaiModelRes = await fetch(`${API_BASE_URL}/models`, {
 				method: 'GET',
 				headers: {
 					'Content-Type': 'application/json',
@@ -72,15 +74,19 @@
 					return null;
 				});
 
-			const openAIModels = openaiModelRes?.data ?? null;
+			const openAIModels = Array.isArray(openaiModelRes)
+				? openaiModelRes
+				: openaiModelRes?.data ?? null;
 
 			models.push(
 				...(openAIModels
 					? [
 							{ name: 'hr' },
 							...openAIModels
-								.map((model) => ({ name: model.id, label: 'OpenAI' }))
-								.filter((model) => model.name.includes('gpt'))
+								.map((model) => ({ name: model.id, external: true }))
+								.filter((model) =>
+									API_BASE_URL.includes('openai') ? model.name.includes('gpt') : true
+								)
 					  ]
 					: [])
 			);
