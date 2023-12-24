@@ -259,6 +259,13 @@
 								}
 							} else {
 								responseMessage.done = true;
+
+								if (responseMessage.content == '') {
+									responseMessage.error = true;
+									responseMessage.content =
+										'Oops! No text generated from Ollama, Please try again.';
+								}
+
 								responseMessage.context = data.context ?? null;
 								responseMessage.info = {
 									total_duration: data.total_duration,
