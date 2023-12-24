@@ -73,13 +73,22 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 
 ### Installing Both Ollama and Ollama Web UI Using Docker Compose
 
-If you don't have Ollama installed yet, you can use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
+If you don't have Ollama installed yet, you can use the provided bash script for a hassle-free installation. Simply run the following command:
 
+For cpu-only container
 ```bash
-docker compose up -d --build
+chmod +x run-compose.sh && ./run-compose.sh
 ```
 
-This command will install both Ollama and Ollama Web UI on your system. Ensure to modify the `compose.yaml` file for GPU support and Exposing Ollama API outside the container stack if needed.
+For gpu-enabled container (to enable this you must have your gpu driver for docker, it mostly works with nvidia so this is the official install guide: [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html))
+```bash
+chmod +x run-compose.sh && ./run-compose.sh --enable-gpu[count=1]
+```
+
+Note that both the above commands will use the latest production docker image in repository, to be able to build the latest local version you'll need to append the `--build` parameter, for example:
+```bash
+./run-compose.sh --build --enable-gpu[count=1]
+```
 
 ### Installing Ollama Web UI Only
 
