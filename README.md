@@ -27,7 +27,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ⚡ **Swift Responsiveness**: Enjoy fast and responsive performance.
 
-- 🚀 **Effortless Setup**: Install seamlessly using Docker for a hassle-free experience.
+- 🚀 **Effortless Setup**: Install seamlessly using Docker or Kubernetes (kubectl, kustomize or helm) for a hassle-free experience.
 
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
 
@@ -89,6 +89,33 @@ Note that both the above commands will use the latest production docker image in
 ```bash
 ./run-compose.sh --build --enable-gpu[count=1]
 ```
+
+### Installing Both Ollama and Ollama Web UI Using Kustomize
+For cpu-only pod
+```bash
+kubectl apply -f ./kubernetes/manifest/base
+```
+For gpu-enabled pod
+```bash
+kubectl apply -k ./kubernetes/manifest
+```
+
+### Installing Both Ollama and Ollama Web UI Using Helm
+Package Helm file first
+```bash
+helm package ./kubernetes/helm/
+```
+
+For cpu-only pod
+```bash
+helm install ollama-webui ./ollama-webui-*.tgz
+```
+For gpu-enabled pod
+```bash
+helm install ollama-webui ./ollama-webui-*.tgz --set ollama.resources.limits.nvidia.com/gpu="1"
+```
+
+Check the `kubernetes/helm/values.yaml` file to know which parameters are available for customization
 
 ### Installing Ollama Web UI Only
 
