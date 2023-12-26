@@ -61,10 +61,10 @@ def proxy(path):
 
     r = None
 
-    del headers["Host"]
-    del headers["Authorization"]
-    del headers["Origin"]
-    del headers["Referer"]
+    headers.pop("Host", None)
+    headers.pop("Authorization", None)
+    headers.pop("Origin", None)
+    headers.pop("Referer", None)
 
     print(headers)
 
