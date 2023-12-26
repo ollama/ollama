@@ -98,21 +98,23 @@ class AuthsTable:
 
     def authenticate_user(self, email: str, password: str) -> Optional[UserModel]:
         print("authenticate_user", email)
+        try:
+            auth = Auth.get(Auth.email == email, Auth.active == True)
+            print(auth.email)
 
-        auth = Auth.get(Auth.email == email, Auth.active == True)
-        print(auth.email)
+            if auth:
+                print(password, str(auth.password))
+                print(verify_password(password, str(auth.password)))
+                if verify_password(password, auth.password):
+                    user = Users.get_user_by_id(auth.id)
 
-        if auth:
-            print(password, str(auth.password))
-            print(verify_password(password, str(auth.password)))
-            if verify_password(password, auth.password):
-                user = Users.get_user_by_id(auth.id)
-
-                print(user)
-                return user
+                    print(user)
+                    return user
+                else:
+                    return None
             else:
                 return None
-        else:
+        except:
             return None
 
 

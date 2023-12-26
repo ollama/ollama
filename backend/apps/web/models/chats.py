@@ -18,7 +18,7 @@ from apps.web.internal.db import DB
 
 class Chat(Model):
     id = CharField(unique=True)
-    user_id: CharField()
+    user_id = CharField()
     title = CharField()
     chat = TextField()  # Save Chat JSON as Text
     timestamp = DateField()
@@ -31,7 +31,7 @@ class ChatModel(BaseModel):
     id: str
     user_id: str
     title: str
-    chat: dict
+    chat: str
     timestamp: int  # timestamp in epoch
 
 
@@ -64,8 +64,10 @@ class ChatTable:
             **{
                 "id": id,
                 "user_id": user_id,
-                "title": form_data.chat["title"],
-                "chat": json.dump(form_data.chat),
+                "title": form_data.chat["title"]
+                if "title" in form_data.chat
+                else "New Chat",
+                "chat": json.dumps(form_data.chat),
                 "timestamp": int(time.time()),
             }
         )
@@ -75,7 +77,7 @@ class ChatTable:
 
     def update_chat_by_id(self, id: str, chat: dict) -> Optional[ChatModel]:
         try:
-            query = Chat.update(chat=json.dump(chat)).where(Chat.id == id)
+            query = Chat.update(chat=json.dumps(chat)).where(Chat.id == id)
             query.execute()
 
             chat = Chat.get(Chat.id == id)
@@ -88,7 +90,7 @@ class ChatTable:
     ) -> List[ChatModel]:
         return [
             ChatModel(**model_to_dict(chat))
-            for chat in Chat.select(Chat.id, Chat.title)
+            for chat in Chat.select()
             .where(Chat.user_id == user_id)
             .limit(limit)
             .offset(skip)
