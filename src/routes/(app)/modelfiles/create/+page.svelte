@@ -132,7 +132,6 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 				method: 'POST',
 				headers: {
 					'Content-Type': 'text/event-stream',
-					...($settings.authHeader && { Authorization: $settings.authHeader }),
 					...($user && { Authorization: `Bearer ${localStorage.token}` })
 				},
 				body: JSON.stringify({

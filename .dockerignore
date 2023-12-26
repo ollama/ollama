@@ -12,5 +12,5 @@ __pycache__
 _old
 uploads
 .ipynb_checkpoints
-*.db
+**/*.db
 _test

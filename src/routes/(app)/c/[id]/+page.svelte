@@ -27,6 +27,8 @@
 			? $modelfiles.filter((modelfile) => modelfile.tagName === selectedModels[0])[0]
 			: null;
 
+	let chat = null;
+
 	let title = '';
 	let prompt = '';
 	let files = [];
@@ -53,10 +55,8 @@
 
 	$: if ($page.params.id) {
 		(async () => {
-			let chat = await loadChat();
-
-			await tick();
-			if (chat) {
+			if (await loadChat()) {
+				await tick();
 				loaded = true;
 			} else {
 				await goto('/');
@@ -70,33 +70,38 @@
 
 	const loadChat = async () => {
 		await chatId.set($page.params.id);
-		const chat = await $db.getChatById($chatId);
+		chat = await $db.getChatById($chatId);
 
-		if (chat) {
-			console.log(chat);
+		const chatContent = chat.chat;
 
-			selectedModels = (chat?.models ?? undefined) !== undefined ? chat.models : [chat.model ?? ''];
+		if (chatContent) {
+			console.log(chatContent);
+
+			selectedModels =
+				(chatContent?.models ?? undefined) !== undefined
+					? chatContent.models
+					: [chatContent.model ?? ''];
 			history =
-				(chat?.history ?? undefined) !== undefined
-					? chat.history
-					: convertMessagesToHistory(chat.messages);
-			title = chat.title;
+				(chatContent?.history ?? undefined) !== undefined
+					? chatContent.history
+					: convertMessagesToHistory(chatContent.messages);
+			title = chatContent.title;
 
 			let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 			await settings.set({
 				..._settings,
-				system: chat.system ?? _settings.system,
-				options: chat.options ?? _settings.options
+				system: chatContent.system ?? _settings.system,
+				options: chatContent.options ?? _settings.options
 			});
 			autoScroll = true;
-
 			await tick();
+
 			if (messages.length > 0) {
 				history.messages[messages.at(-1).id].done = true;
 			}
 			await tick();
 
-			return chat;
+			return true;
 		} else {
 			return null;
 		}
@@ -141,14 +146,15 @@
 	// Ollama functions
 	//////////////////////////
 
-	const sendPrompt = async (userPrompt, parentId, _chatId) => {
+	const sendPrompt = async (prompt, parentId) => {
+		const _chatId = JSON.parse(JSON.stringify($chatId));
 		await Promise.all(
 			selectedModels.map(async (model) => {
 				console.log(model);
 				if ($models.filter((m) => m.name === model)[0].external) {
-					await sendPromptOpenAI(model, userPrompt, parentId, _chatId);
+					await sendPromptOpenAI(model, prompt, parentId, _chatId);
 				} else {
-					await sendPromptOllama(model, userPrompt, parentId, _chatId);
+					await sendPromptOllama(model, prompt, parentId, _chatId);
 				}
 			})
 		);
@@ -311,8 +317,11 @@
 				if (autoScroll) {
 					window.scrollTo({ top: document.body.scrollHeight });
 				}
+			}
 
-				await $db.updateChatById(_chatId, {
+			if ($chatId == _chatId) {
+				chat = await $db.updateChatById(_chatId, {
+					...chat.chat,
 					title: title === '' ? 'New Chat' : title,
 					models: selectedModels,
 					system: $settings.system ?? undefined,
@@ -495,8 +504,11 @@
 						if (autoScroll) {
 							window.scrollTo({ top: document.body.scrollHeight });
 						}
+					}
 
-						await $db.updateChatById(_chatId, {
+					if ($chatId == _chatId) {
+						chat = await $db.updateChatById(_chatId, {
+							...chat.chat,
 							title: title === '' ? 'New Chat' : title,
 							models: selectedModels,
 							system: $settings.system ?? undefined,
@@ -556,8 +568,7 @@
 	};
 
 	const submitPrompt = async (userPrompt) => {
-		const _chatId = JSON.parse(JSON.stringify($chatId));
-		console.log('submitPrompt', _chatId);
+		console.log('submitPrompt', $chatId);
 
 		if (selectedModels.includes('')) {
 			toast.error('Model not selected');
@@ -584,9 +595,10 @@
 			history.currentId = userMessageId;
 
 			await tick();
+
 			if (messages.length == 1) {
-				await $db.createNewChat({
-					id: _chatId,
+				chat = await $db.createNewChat({
+					id: $chatId,
 					title: 'New Chat',
 					models: selectedModels,
 					system: $settings.system ?? undefined,
@@ -602,6 +614,11 @@
 					messages: messages,
 					history: history
 				});
+
+				console.log(chat);
+
+				await chatId.set(chat.id);
+				await tick();
 			}
 
 			prompt = '';
@@ -611,7 +628,7 @@
 				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 			}, 50);
 
-			await sendPrompt(userPrompt, userMessageId, _chatId);
+			await sendPrompt(userPrompt, userMessageId);
 		}
 	};
 
@@ -673,7 +690,10 @@
 	};
 
 	const setChatTitle = async (_chatId, _title) => {
-		await $db.updateChatById(_chatId, { title: _title });
+		chat = await $db.updateChatById(_chatId, {
+			...chat.chat,
+			title: _title
+		});
 		if (_chatId === $chatId) {
 			title = _title;
 		}
@@ -687,7 +707,13 @@
 />
 
 {#if loaded}
-	<Navbar {title} shareEnabled={messages.length > 0} />
+	<Navbar
+		{title}
+		shareEnabled={messages.length > 0}
+		initNewChat={() => {
+			goto('/');
+		}}
+	/>
 	<div class="min-h-screen w-full flex justify-center">
 		<div class=" py-2.5 flex flex-col justify-between w-full">
 			<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-10">
@@ -696,6 +722,7 @@
 
 			<div class=" h-full mt-10 mb-32 w-full flex flex-col">
 				<Messages
+					chatId={$chatId}
 					{selectedModels}
 					{selectedModelfile}
 					bind:history

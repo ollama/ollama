@@ -37,7 +37,7 @@
 	};
 
 	const getUsers = async () => {
-		const res = await fetch(`${WEBUI_API_BASE_URL}/users/`, {
+		const res = await fetch(`${WEBUI_API_BASE_URL}/users`, {
 			method: 'GET',
 			headers: {
 				'Content-Type': 'application/json',
@@ -58,7 +58,7 @@
 	};
 
 	onMount(async () => {
-		if ($config === null || !$config.auth || ($config.auth && $user && $user.role !== 'admin')) {
+		if ($user?.role !== 'admin') {
 			await goto('/');
 		} else {
 			await getUsers();

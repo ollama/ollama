@@ -105,7 +105,7 @@
 			</div>
 		</div>
 
-		<div class="w-full max-w-xl px-10 md:px-16 bg-white min-h-screen w-full flex flex-col">
+		<div class="w-full max-w-xl px-10 md:px-16 bg-white min-h-screen flex flex-col">
 			<div class=" my-auto pb-10 w-full">
 				<form
 					class=" flex flex-col justify-center"

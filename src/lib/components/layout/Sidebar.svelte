@@ -55,7 +55,7 @@
 	};
 
 	const importChats = async (chatHistory) => {
-		await $db.addChats(chatHistory);
+		await $db.importChats(chatHistory);
 	};
 
 	const exportChats = async () => {
@@ -81,7 +81,7 @@
 	bind:this={navElement}
 	class="h-screen {show
 		? ''
-		: '-translate-x-[260px]'}  w-[260px] fixed top-0 left-0 z-40 transition bg-[#0a0a0a] text-gray-200 shadow-2xl text-sm
+		: '-translate-x-[260px]'}  w-[260px] fixed top-0 left-0 z-40 transition bg-black text-gray-200 shadow-2xl text-sm
         "
 >
 	<div class="py-2.5 my-auto flex flex-col justify-between h-screen">
@@ -91,8 +91,11 @@
 				on:click={async () => {
 					goto('/');
 
-					await chatId.set(uuidv4());
-					// createNewChat();
+					const newChatButton = document.getElementById('new-chat-button');
+
+					if (newChatButton) {
+						newChatButton.click();
+					}
 				}}
 			>
 				<div class="flex self-center">
@@ -153,7 +156,7 @@
 
 		<div class="px-2.5 mt-1 mb-2 flex justify-center space-x-2">
 			<div class="flex w-full">
-				<div class="self-center pl-3 py-2 rounded-l bg-gray-900">
+				<div class="self-center pl-3 py-2 rounded-l bg-gray-950">
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						viewBox="0 0 20 20"
@@ -169,7 +172,7 @@
 				</div>
 
 				<input
-					class="w-full rounded-r py-1.5 pl-2.5 pr-4 text-sm text-gray-300 bg-gray-900 outline-none"
+					class="w-full rounded-r py-1.5 pl-2.5 pr-4 text-sm text-gray-300 bg-gray-950 outline-none"
 					placeholder="Search"
 					bind:value={search}
 				/>
@@ -394,10 +397,10 @@
 		</div>
 
 		<div class="px-2.5">
-			<hr class=" border-gray-800 mb-2 w-full" />
+			<hr class=" border-gray-900 mb-1 w-full" />
 
 			<div class="flex flex-col">
-				<div class="flex">
+				<!-- <div class="flex">
 					<input bind:this={importFileInputElement} bind:files={importFiles} type="file" hidden />
 					<button
 						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
@@ -534,7 +537,7 @@
 						</div>
 						<span>Clear conversations</span>
 					</button>
-				{/if}
+				{/if} -->
 
 				{#if $user !== undefined}
 					<button

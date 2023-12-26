@@ -8,11 +8,12 @@
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
 	import 'katex/dist/katex.min.css';
 
-	import { chatId, config, db, modelfiles, settings, user } from '$lib/stores';
+	import { config, db, modelfiles, settings, user } from '$lib/stores';
 	import { tick } from 'svelte';
 
 	import toast from 'svelte-french-toast';
 
+	export let chatId = '';
 	export let sendPrompt: Function;
 	export let regenerateResponse: Function;
 
@@ -239,7 +240,7 @@
 		history.currentId = userMessageId;
 
 		await tick();
-		await sendPrompt(userPrompt, userMessageId, $chatId);
+		await sendPrompt(userPrompt, userMessageId, chatId);
 	};
 
 	const confirmEditResponseMessage = async (messageId) => {
