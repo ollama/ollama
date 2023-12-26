@@ -33,7 +33,7 @@ async def get_user_chats(skip: int = 0, limit: int = 50, cred=Depends(bearer_sch
     user = Users.get_user_by_token(token)
 
     if user:
-        return Chats.get_chat_titles_and_ids_by_user_id(user.id, skip, limit)
+        return Chats.get_chat_lists_by_user_id(user.id, skip, limit)
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -92,7 +92,14 @@ async def update_chat_by_id(
     user = Users.get_user_by_token(token)
 
     if user:
-        return Chats.update_chat_by_id_and_user_id(id, user.id, form_data.chat)
+        chat = Chats.get_chat_by_id_and_user_id(id, user.id)
+        if chat:
+            return Chats.update_chat_by_id(id, form_data.chat)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+            )
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -88,7 +88,10 @@ class ChatTable:
     ) -> List[ChatModel]:
         return [
             ChatModel(**model_to_dict(chat))
-            for chat in Chat.select(Chat.user_id == user_id).limit(limit).offset(skip)
+            for chat in Chat.select(Chat.id, Chat.title)
+            .where(Chat.user_id == user_id)
+            .limit(limit)
+            .offset(skip)
         ]
 
     def get_chat_by_id_and_user_id(self, id: str, user_id: str) -> Optional[ChatModel]:
