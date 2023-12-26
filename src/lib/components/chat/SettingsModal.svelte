@@ -9,10 +9,11 @@
 	} from '$lib/constants';
 	import toast from 'svelte-french-toast';
 	import { onMount } from 'svelte';
-	import { config, info, models, settings, user } from '$lib/stores';
+	import { config, models, settings, user } from '$lib/stores';
 	import { splitStream, getGravatarURL } from '$lib/utils';
 	import Advanced from './Settings/Advanced.svelte';
 	import { stringify } from 'postcss';
+	import { getOllamaVersion } from '$lib/apis/ollama';
 
 	export let show = false;
 
@@ -78,6 +79,9 @@
 	let authEnabled = false;
 	let authType = 'Basic';
 	let authContent = '';
+
+	// About
+	let ollamaVersion = '';
 
 	const checkOllamaConnection = async () => {
 		if (API_BASE_URL === '') {
@@ -553,7 +557,7 @@
 		return models;
 	};
 
-	onMount(() => {
+	onMount(async () => {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(settings);
 
@@ -586,6 +590,13 @@
 			authType = settings.authHeader.split(' ')[0];
 			authContent = settings.authHeader.split(' ')[1];
 		}
+
+		ollamaVersion = await getOllamaVersion(
+			API_BASE_URL ?? OLLAMA_API_BASE_URL,
+			localStorage.token
+		).catch((error) => {
+			return '';
+		});
 	});
 </script>
 
@@ -1607,7 +1618,7 @@
 								<div class=" mb-2.5 text-sm font-medium">Ollama Version</div>
 								<div class="flex w-full">
 									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">
-										{$info?.ollama?.version ?? 'N/A'}
+										{ollamaVersion ?? 'N/A'}
 									</div>
 								</div>
 							</div>

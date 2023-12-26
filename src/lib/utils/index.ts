@@ -100,3 +100,13 @@ export const copyToClipboard = (text) => {
 		}
 	);
 };
+
+export const checkVersion = (required, current) => {
+	return (
+		current.localeCompare(required, undefined, {
+			numeric: true,
+			sensitivity: 'case',
+			caseFirst: 'upper'
+		}) < 0
+	);
+};

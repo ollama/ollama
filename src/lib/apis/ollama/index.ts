@@ -32,7 +32,7 @@ export const getOllamaVersion = async (
 		throw error;
 	}
 
-	return res?.version ?? '0';
+	return res?.version ?? '';
 };
 
 export const getOllamaModels = async (

@@ -1,24 +1,31 @@
 <script lang="ts">
-	import { v4 as uuidv4 } from 'uuid';
+	import toast from 'svelte-french-toast';
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
-	import toast from 'svelte-french-toast';
 
-	import { info, user, showSettings, settings, models, modelfiles } from '$lib/stores';
-
-	import { OLLAMA_API_BASE_URL, REQUIRED_OLLAMA_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 	import { getOllamaModels, getOllamaVersion } from '$lib/apis/ollama';
 	import { getOpenAIModels } from '$lib/apis/openai';
 
+	import { user, showSettings, settings, models, modelfiles } from '$lib/stores';
+	import { OLLAMA_API_BASE_URL, REQUIRED_OLLAMA_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
+
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
+	import { checkVersion } from '$lib/utils';
 
+	let ollamaVersion = '';
 	let loaded = false;
 
 	const getModels = async () => {
 		let models = [];
 		models.push(
-			...(await getOllamaModels($settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL, localStorage.token))
+			...(await getOllamaModels(
+				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+				localStorage.token
+			).catch((error) => {
+				toast.error(error);
+				return [];
+			}))
 		);
 		// If OpenAI API Key exists
 		if ($settings.OPENAI_API_KEY) {
@@ -42,42 +49,36 @@
 				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
 				localStorage.token
 			).catch((error) => {
-				return '0';
+				return '';
 			});
 		}
-		await info.set({ ...$info, ollama: { version: version } });
 
-		if (
-			version.localeCompare(REQUIRED_OLLAMA_VERSION, undefined, {
-				numeric: true,
-				sensitivity: 'case',
-				caseFirst: 'upper'
-			}) < 0
-		) {
-			toast.error(`Ollama Version: ${version}`);
+		ollamaVersion = version;
+
+		console.log(ollamaVersion);
+		if (checkVersion(REQUIRED_OLLAMA_VERSION, ollamaVersion)) {
+			toast.error(`Ollama Version: ${ollamaVersion !== '' ? ollamaVersion : 'Not Detected'}`);
 		}
 	};
 
 	onMount(async () => {
 		if ($user === undefined) {
 			await goto('/auth');
+		} else if (['user', 'admin'].includes($user.role)) {
+			await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
+			await models.set(await getModels());
+
+			await modelfiles.set(JSON.parse(localStorage.getItem('modelfiles') ?? '[]'));
+			modelfiles.subscribe(async () => {
+				// should fetch models
+			});
+
+			await setOllamaVersion();
+			await tick();
 		}
 
-		await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
-		await models.set(await getModels());
-		await modelfiles.set(JSON.parse(localStorage.getItem('modelfiles') ?? '[]'));
-
-		modelfiles.subscribe(async () => {
-			// should fetch models
-		});
-
-		await setOllamaVersion();
-
-		await tick();
 		loaded = true;
 	});
-
-	let child;
 </script>
 
 {#if loaded}
@@ -121,7 +122,7 @@
 					</div>
 				</div>
 			</div>
-		{:else if ($info?.ollama?.version ?? '0').localeCompare( REQUIRED_OLLAMA_VERSION, undefined, { numeric: true, sensitivity: 'case', caseFirst: 'upper' } ) < 0}
+		{:else if checkVersion(REQUIRED_OLLAMA_VERSION, ollamaVersion ?? '0')}
 			<div class="absolute w-full h-full flex z-50">
 				<div
 					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-900/60 flex justify-center"
