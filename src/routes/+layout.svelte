@@ -18,6 +18,7 @@
 		const backendConfig = await getBackendConfig();
 
 		if (backendConfig) {
+			// Save Backend Status to Store
 			await config.set(backendConfig);
 			console.log(backendConfig);
 
@@ -30,8 +31,10 @@
 					});
 
 					if (sessionUser) {
+						// Save Session User to Store
 						await user.set(sessionUser);
 					} else {
+						// Redirect Invalid Session User to /auth Page
 						localStorage.removeItem('token');
 						await goto('/auth');
 					}
@@ -40,6 +43,7 @@
 				}
 			}
 		} else {
+			// Redirect to /error when Backend Not Detected
 			await goto(`/error`);
 		}
 
