@@ -25,7 +25,7 @@ TARGET_SERVER_URL = OLLAMA_API_BASE_URL
 def proxy(path):
     # Combine the base URL of the target server with the requested path
     target_url = f"{TARGET_SERVER_URL}/{path}"
-    print(path)
+    print(target_url)
 
     # Get data from the original request
     data = request.get_data()

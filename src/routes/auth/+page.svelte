@@ -66,7 +66,7 @@
 
 		if (res) {
 			console.log(res);
-			toast.success(`Account creation successful."`);
+			toast.success(`Account creation successful.`);
 			localStorage.token = res.token;
 			await user.set(res);
 			goto('/');

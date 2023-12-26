@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from typing import List, Union, Optional
 import time
 import uuid
+from peewee import *
 
 
 from apps.web.models.users import UserModel, Users
@@ -12,13 +13,21 @@ from utils.utils import (
     create_token,
 )
 
-import config
-
-DB = config.DB
+from apps.web.internal.db import DB
 
 ####################
 # DB MODEL
 ####################
+
+
+class Auth(Model):
+    id = CharField(unique=True)
+    email = CharField()
+    password = CharField()
+    active = BooleanField()
+
+    class Meta:
+        database = DB
 
 
 class AuthModel(BaseModel):
@@ -64,7 +73,7 @@ class SignupForm(BaseModel):
 class AuthsTable:
     def __init__(self, db):
         self.db = db
-        self.table = db.auths
+        self.db.create_tables([Auth])
 
     def insert_new_auth(
         self, email: str, password: str, name: str, role: str = "pending"
@@ -76,7 +85,9 @@ class AuthsTable:
         auth = AuthModel(
             **{"id": id, "email": email, "password": password, "active": True}
         )
-        result = self.table.insert_one(auth.model_dump())
+        result = Auth.create(**auth.model_dump())
+        print(result)
+
         user = Users.insert_new_user(id, name, email, role)
 
         print(result, user)
@@ -86,14 +97,19 @@ class AuthsTable:
             return None
 
     def authenticate_user(self, email: str, password: str) -> Optional[UserModel]:
-        print("authenticate_user")
+        print("authenticate_user", email)
 
-        auth = self.table.find_one({"email": email, "active": True})
+        auth = Auth.get(Auth.email == email, Auth.active == True)
+        print(auth.email)
 
         if auth:
-            if verify_password(password, auth["password"]):
-                user = self.db.users.find_one({"id": auth["id"]})
-                return UserModel(**user)
+            print(password, str(auth.password))
+            print(verify_password(password, str(auth.password)))
+            if verify_password(password, auth.password):
+                user = Users.get_user_by_id(auth.id)
+
+                print(user)
+                return user
             else:
                 return None
         else:
