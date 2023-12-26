@@ -22,7 +22,7 @@
 	import toast from 'svelte-french-toast';
 	import { OLLAMA_API_BASE_URL, WEBUI_API_BASE_URL } from '$lib/constants';
 	import { getOllamaModels, getOllamaVersion } from '$lib/apis/ollama';
-	import { getOpenAIModels } from '$lib/apis';
+	import { getOpenAIModels } from '$lib/apis/openai';
 	import {
 		createNewChat,
 		deleteChatById,

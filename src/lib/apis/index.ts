@@ -1,35 +1,23 @@
-export const getOpenAIModels = async (
-	base_url: string = 'https://api.openai.com/v1',
-	api_key: string = ''
-) => {
+import { WEBUI_API_BASE_URL } from '$lib/constants';
+
+export const getBackendConfig = async () => {
 	let error = null;
 
-	const res = await fetch(`${base_url}/models`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/`, {
 		method: 'GET',
 		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${api_key}`
+			'Content-Type': 'application/json'
 		}
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
 			return res.json();
 		})
-		.catch((error) => {
-			console.log(error);
-			error = `OpenAI: ${error?.error?.message ?? 'Network Problem'}`;
+		.catch((err) => {
+			console.log(err);
+			error = err;
 			return null;
 		});
 
-	if (error) {
-		throw error;
-	}
-
-	let models = Array.isArray(res) ? res : res?.data ?? null;
-
-	console.log(models);
-
-	return models
-		.map((model) => ({ name: model.id, external: true }))
-		.filter((model) => (base_url.includes('openai') ? model.name.includes('gpt') : true));
+	return res;
 };

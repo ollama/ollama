@@ -18,10 +18,10 @@ export const getOllamaVersion = async (
 			if (!res.ok) throw await res.json();
 			return res.json();
 		})
-		.catch((error) => {
-			console.log(error);
-			if ('detail' in error) {
-				error = error.detail;
+		.catch((err) => {
+			console.log(err);
+			if ('detail' in err) {
+				error = err.detail;
 			} else {
 				error = 'Server connection failed';
 			}
@@ -53,10 +53,10 @@ export const getOllamaModels = async (
 			if (!res.ok) throw await res.json();
 			return res.json();
 		})
-		.catch((error) => {
-			console.log(error);
-			if ('detail' in error) {
-				error = error.detail;
+		.catch((err) => {
+			console.log(err);
+			if ('detail' in err) {
+				error = err.detail;
 			} else {
 				error = 'Server connection failed';
 			}

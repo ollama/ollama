@@ -18,9 +18,9 @@ export const updateUserRole = async (token: string, id: string, role: string) =>
 			if (!res.ok) throw await res.json();
 			return res.json();
 		})
-		.catch((error) => {
-			console.log(error);
-			error = error.detail;
+		.catch((err) => {
+			console.log(err);
+			error = err.detail;
 			return null;
 		});
 
