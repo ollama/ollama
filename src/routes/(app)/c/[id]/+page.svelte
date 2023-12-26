@@ -71,40 +71,45 @@
 
 	const loadChat = async () => {
 		await chatId.set($page.params.id);
-		chat = await getChatById(localStorage.token, $chatId);
-
-		const chatContent = chat.chat;
-
-		if (chatContent) {
-			console.log(chatContent);
-
-			selectedModels =
-				(chatContent?.models ?? undefined) !== undefined
-					? chatContent.models
-					: [chatContent.model ?? ''];
-			history =
-				(chatContent?.history ?? undefined) !== undefined
-					? chatContent.history
-					: convertMessagesToHistory(chatContent.messages);
-			title = chatContent.title;
-
-			let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
-			await settings.set({
-				..._settings,
-				system: chatContent.system ?? _settings.system,
-				options: chatContent.options ?? _settings.options
-			});
-			autoScroll = true;
-			await tick();
-
-			if (messages.length > 0) {
-				history.messages[messages.at(-1).id].done = true;
-			}
-			await tick();
-
-			return true;
-		} else {
+		chat = await getChatById(localStorage.token, $chatId).catch(async (error) => {
+			await goto('/');
 			return null;
+		});
+
+		if (chat) {
+			const chatContent = chat.chat;
+
+			if (chatContent) {
+				console.log(chatContent);
+
+				selectedModels =
+					(chatContent?.models ?? undefined) !== undefined
+						? chatContent.models
+						: [chatContent.model ?? ''];
+				history =
+					(chatContent?.history ?? undefined) !== undefined
+						? chatContent.history
+						: convertMessagesToHistory(chatContent.messages);
+				title = chatContent.title;
+
+				let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+				await settings.set({
+					..._settings,
+					system: chatContent.system ?? _settings.system,
+					options: chatContent.options ?? _settings.options
+				});
+				autoScroll = true;
+				await tick();
+
+				if (messages.length > 0) {
+					history.messages[messages.at(-1).id].done = true;
+				}
+				await tick();
+
+				return true;
+			} else {
+				return null;
+			}
 		}
 	};
 

@@ -26,5 +26,6 @@ class ERROR_MESSAGES(str, Enum):
     ACTION_PROHIBITED = (
         "The requested action has been restricted as a security measure."
     )
+    NOT_FOUND = "We could not find what you're looking for :/"
     USER_NOT_FOUND = "We could not find what you're looking for :/"
     MALICIOUS = "Unusual activities detected, please try again in a few minutes."

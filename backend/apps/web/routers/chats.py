@@ -75,7 +75,14 @@ async def get_chat_by_id(id: str, cred=Depends(bearer_scheme)):
 
     if user:
         chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-        return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
+
+        if chat:
+            return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=ERROR_MESSAGES.NOT_FOUND,
+            )
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
