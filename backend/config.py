@@ -31,13 +31,13 @@ if ENV == "prod":
 # WEBUI_VERSION
 ####################################
 
-WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.40")
+WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.42")
 
 ####################################
-# WEBUI_AUTH
+# WEBUI_AUTH (Required for security)
 ####################################
 
-WEBUI_AUTH = True if os.environ.get("WEBUI_AUTH", "FALSE") == "TRUE" else False
+WEBUI_AUTH = True
 
 ####################################
 # WEBUI_JWT_SECRET_KEY

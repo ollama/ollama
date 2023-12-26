@@ -11,7 +11,8 @@
 	let loaded = false;
 
 	onMount(async () => {
-		const resBackend = await fetch(`${WEBUI_API_BASE_URL}/`, {
+		// Check Backend Status
+		const res = await fetch(`${WEBUI_API_BASE_URL}/`, {
 			method: 'GET',
 			headers: {
 				'Content-Type': 'application/json'
@@ -26,13 +27,14 @@
 				return null;
 			});
 
-		console.log(resBackend);
-		await config.set(resBackend);
+		if (res) {
+			await config.set(res);
+			console.log(res);
 
-		if ($config) {
-			if ($config.auth) {
+			if ($config) {
 				if (localStorage.token) {
-					const res = await fetch(`${WEBUI_API_BASE_URL}/auths`, {
+					// Get Session User Info
+					const sessionUser = await fetch(`${WEBUI_API_BASE_URL}/auths`, {
 						method: 'GET',
 						headers: {
 							'Content-Type': 'application/json',
@@ -49,8 +51,8 @@
 							return null;
 						});
 
-					if (res) {
-						await user.set(res);
+					if (sessionUser) {
+						await user.set(sessionUser);
 					} else {
 						localStorage.removeItem('token');
 						await goto('/auth');
@@ -59,6 +61,8 @@
 					await goto('/auth');
 				}
 			}
+		} else {
+			await goto(`/error`);
 		}
 
 		await tick();
@@ -69,8 +73,9 @@
 <svelte:head>
 	<title>Ollama</title>
 </svelte:head>
-<Toaster />
 
-{#if $config !== undefined && loaded}
+{#if loaded}
 	<slot />
 {/if}
+
+<Toaster />
