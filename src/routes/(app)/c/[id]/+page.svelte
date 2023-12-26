@@ -4,7 +4,7 @@
 
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
-	import { convertMessagesToHistory, splitStream } from '$lib/utils';
+	import { convertMessagesToHistory, copyToClipboard, splitStream } from '$lib/utils';
 	import { goto } from '$app/navigation';
 	import { config, models, modelfiles, user, settings, db, chats, chatId } from '$lib/stores';
 
@@ -111,41 +111,6 @@
 				return null;
 			}
 		}
-	};
-
-	const copyToClipboard = (text) => {
-		if (!navigator.clipboard) {
-			var textArea = document.createElement('textarea');
-			textArea.value = text;
-
-			// Avoid scrolling to bottom
-			textArea.style.top = '0';
-			textArea.style.left = '0';
-			textArea.style.position = 'fixed';
-
-			document.body.appendChild(textArea);
-			textArea.focus();
-			textArea.select();
-
-			try {
-				var successful = document.execCommand('copy');
-				var msg = successful ? 'successful' : 'unsuccessful';
-				console.log('Fallback: Copying text command was ' + msg);
-			} catch (err) {
-				console.error('Fallback: Oops, unable to copy', err);
-			}
-
-			document.body.removeChild(textArea);
-			return;
-		}
-		navigator.clipboard.writeText(text).then(
-			function () {
-				console.log('Async: Copying to clipboard was successful!');
-			},
-			function (err) {
-				console.error('Async: Could not copy text: ', err);
-			}
-		);
 	};
 
 	//////////////////////////

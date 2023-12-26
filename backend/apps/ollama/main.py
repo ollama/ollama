@@ -61,6 +61,13 @@ def proxy(path):
 
     r = None
 
+    del headers["Host"]
+    del headers["Authorization"]
+    del headers["Origin"]
+    del headers["Referer"]
+
+    print(headers)
+
     try:
         # Make a request to the target server
         r = requests.request(
@@ -86,8 +93,10 @@ def proxy(path):
 
         return response
     except Exception as e:
+        print(e)
         error_detail = "Ollama WebUI: Server Connection Error"
         if r != None:
+            print(r.text)
             res = r.json()
             if "error" in res:
                 error_detail = f"Ollama: {res['error']}"

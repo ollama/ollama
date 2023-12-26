@@ -1,12 +1,13 @@
 import { dev, browser } from '$app/environment';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 
-export const OLLAMA_API_BASE_URL =
-	PUBLIC_API_BASE_URL === ''
-		? browser
-			? `http://${location.hostname}:11434/api`
-			: `http://localhost:11434/api`
-		: PUBLIC_API_BASE_URL;
+export const OLLAMA_API_BASE_URL = dev
+	? `http://${location.hostname}:8080/ollama/api`
+	: PUBLIC_API_BASE_URL === ''
+	? browser
+		? `http://${location.hostname}:11434/api`
+		: `http://localhost:11434/api`
+	: PUBLIC_API_BASE_URL;
 
 export const WEBUI_BASE_URL = dev ? `http://${location.hostname}:8080` : ``;
 export const WEBUI_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1`;
