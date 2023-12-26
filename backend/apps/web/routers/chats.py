@@ -11,6 +11,7 @@ from apps.web.models.users import Users
 from apps.web.models.chats import (
     ChatModel,
     ChatResponse,
+    ChatTitleForm,
     ChatForm,
     ChatTitleIdResponse,
     Chats,
@@ -95,7 +96,9 @@ async def update_chat_by_id(id: str, form_data: ChatForm, cred=Depends(bearer_sc
     if user:
         chat = Chats.get_chat_by_id_and_user_id(id, user.id)
         if chat:
-            chat = Chats.update_chat_by_id(id, form_data.chat)
+            updated_chat = {**json.loads(chat.chat), **form_data.chat}
+
+            chat = Chats.update_chat_by_id(id, updated_chat)
             return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
         else:
             raise HTTPException(

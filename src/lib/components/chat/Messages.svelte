@@ -254,6 +254,7 @@
 	};
 
 	const rateMessage = async (messageIdx, rating) => {
+		// TODO: Move this function to parent
 		messages = messages.map((message, idx) => {
 			if (messageIdx === idx) {
 				message.rating = rating;
