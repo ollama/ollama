@@ -64,6 +64,8 @@
 	//////////////////////////
 
 	const initNewChat = async () => {
+		window.history.replaceState(history.state, '', `/`);
+
 		console.log('initNewChat');
 
 		await chatId.set('');
