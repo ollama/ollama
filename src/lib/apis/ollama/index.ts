@@ -69,3 +69,68 @@ export const getOllamaModels = async (
 
 	return res?.models ?? [];
 };
+
+export const generateTitle = async (
+	base_url: string = OLLAMA_API_BASE_URL,
+	token: string = '',
+	model: string,
+	prompt: string
+) => {
+	let error = null;
+
+	const res = await fetch(`${base_url}/generate`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'text/event-stream',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			model: model,
+			prompt: `Generate a brief 3-5 word title for this question, excluding the term 'title.' Then, please reply with only the title: ${prompt}`,
+			stream: false
+		})
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			console.log(err);
+			if ('detail' in err) {
+				error = err.detail;
+			}
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res?.response ?? 'New Chat';
+};
+
+export const generateChatCompletion = async (
+	base_url: string = OLLAMA_API_BASE_URL,
+	token: string = '',
+	body: object
+) => {
+	let error = null;
+
+	const res = await fetch(`${base_url}/chat`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'text/event-stream',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify(body)
+	}).catch((err) => {
+		error = err;
+		return null;
+	});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};

@@ -1,37 +1,18 @@
 <script lang="ts">
 	import { v4 as uuidv4 } from 'uuid';
-	import { openDB, deleteDB } from 'idb';
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
+	import toast from 'svelte-french-toast';
 
-	import {
-		config,
-		info,
-		user,
-		showSettings,
-		settings,
-		models,
-		db,
-		chats,
-		chatId,
-		modelfiles
-	} from '$lib/stores';
+	import { info, user, showSettings, settings, models, modelfiles } from '$lib/stores';
+
+	import { OLLAMA_API_BASE_URL, REQUIRED_OLLAMA_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
+	import { getOllamaModels, getOllamaVersion } from '$lib/apis/ollama';
+	import { getOpenAIModels } from '$lib/apis/openai';
 
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
-	import toast from 'svelte-french-toast';
-	import { OLLAMA_API_BASE_URL, WEBUI_API_BASE_URL } from '$lib/constants';
-	import { getOllamaModels, getOllamaVersion } from '$lib/apis/ollama';
-	import { getOpenAIModels } from '$lib/apis/openai';
-	import {
-		createNewChat,
-		deleteChatById,
-		getChatById,
-		getChatlist,
-		updateChatById
-	} from '$lib/apis/chats';
 
-	let requiredOllamaVersion = '0.1.16';
 	let loaded = false;
 
 	const getModels = async () => {
@@ -55,92 +36,19 @@
 		return models;
 	};
 
-	const getDB = async () => {
-		const DB = await openDB('Chats', 1, {
-			upgrade(db) {
-				const store = db.createObjectStore('chats', {
-					keyPath: 'id',
-					autoIncrement: true
-				});
-				store.createIndex('timestamp', 'timestamp');
-			}
-		});
-
-		return {
-			db: DB,
-			getChatById: async function (id) {
-				const chat = await getChatById(localStorage.token, id);
-				return chat;
-			},
-			getChats: async function () {
-				const chats = await getChatlist(localStorage.token);
-				return chats;
-			},
-			createNewChat: async function (_chat) {
-				const chat = await createNewChat(localStorage.token, { ..._chat, timestamp: Date.now() });
-				console.log(chat);
-				await chats.set(await this.getChats());
-
-				return chat;
-			},
-
-			addChat: async function (chat) {
-				await this.db.put('chats', {
-					...chat
-				});
-			},
-
-			updateChatById: async function (id, updated) {
-				const chat = await updateChatById(localStorage.token, id, {
-					...updated,
-					timestamp: Date.now()
-				});
-				await chats.set(await this.getChats());
-				return chat;
-			},
-			deleteChatById: async function (id) {
-				if ($chatId === id) {
-					goto('/');
-					await chatId.set(uuidv4());
-				}
-
-				await deleteChatById(localStorage.token, id);
-				await chats.set(await this.getChats());
-			},
-
-			deleteAllChat: async function () {
-				const tx = this.db.transaction('chats', 'readwrite');
-				await Promise.all([tx.store.clear(), tx.done]);
-				await chats.set(await this.getChats());
-			},
-			exportChats: async function () {
-				let chats = await this.db.getAllFromIndex('chats', 'timestamp');
-				chats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
-				return chats;
-			},
-			importChats: async function (_chats) {
-				for (const chat of _chats) {
-					console.log(chat);
-					await this.addChat(chat);
-				}
-				await chats.set(await this.getChats());
-			}
-		};
-	};
-
-	const setOllamaVersion = async () => {
-		const version = await getOllamaVersion(
-			$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-			localStorage.token
-		).catch((error) => {
-			toast.error(error);
-			return '0';
-		});
-
+	const setOllamaVersion = async (version: string = '') => {
+		if (version === '') {
+			version = await getOllamaVersion(
+				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+				localStorage.token
+			).catch((error) => {
+				return '0';
+			});
+		}
 		await info.set({ ...$info, ollama: { version: version } });
 
 		if (
-			version.localeCompare(requiredOllamaVersion, undefined, {
+			version.localeCompare(REQUIRED_OLLAMA_VERSION, undefined, {
 				numeric: true,
 				sensitivity: 'case',
 				caseFirst: 'upper'
@@ -151,19 +59,18 @@
 	};
 
 	onMount(async () => {
-		if ($config && $user === undefined) {
+		if ($user === undefined) {
 			await goto('/auth');
 		}
 
 		await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
 		await models.set(await getModels());
-
 		await modelfiles.set(JSON.parse(localStorage.getItem('modelfiles') ?? '[]'));
 
-		modelfiles.subscribe(async () => {});
+		modelfiles.subscribe(async () => {
+			// should fetch models
+		});
 
-		let _db = await getDB();
-		await db.set(_db);
 		await setOllamaVersion();
 
 		await tick();
@@ -214,7 +121,7 @@
 					</div>
 				</div>
 			</div>
-		{:else if ($info?.ollama?.version ?? '0').localeCompare( requiredOllamaVersion, undefined, { numeric: true, sensitivity: 'case', caseFirst: 'upper' } ) < 0}
+		{:else if ($info?.ollama?.version ?? '0').localeCompare( REQUIRED_OLLAMA_VERSION, undefined, { numeric: true, sensitivity: 'case', caseFirst: 'upper' } ) < 0}
 			<div class="absolute w-full h-full flex z-50">
 				<div
 					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-900/60 flex justify-center"
@@ -231,15 +138,15 @@
 								/>We've detected either a connection hiccup or observed that you're using an older
 								version. Ensure you're on the latest Ollama version
 								<br class=" hidden sm:flex" />(version
-								<span class=" dark:text-white font-medium">{requiredOllamaVersion} or higher</span>)
-								or check your connection.
+								<span class=" dark:text-white font-medium">{REQUIRED_OLLAMA_VERSION} or higher</span
+								>) or check your connection.
 							</div>
 
 							<div class=" mt-6 mx-auto relative group w-fit">
 								<button
 									class="relative z-20 flex px-5 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition font-medium text-sm"
 									on:click={async () => {
-										await setOllamaVersion(await getOllamaVersion());
+										await setOllamaVersion();
 									}}
 								>
 									Check Again
@@ -248,7 +155,7 @@
 								<button
 									class="text-xs text-center w-full mt-2 text-gray-400 underline"
 									on:click={async () => {
-										await setOllamaVersion(requiredOllamaVersion);
+										await setOllamaVersion(REQUIRED_OLLAMA_VERSION);
 									}}>Close</button
 								>
 							</div>

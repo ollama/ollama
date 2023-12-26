@@ -31,7 +31,7 @@ export const createNewChat = async (token: string, chat: object) => {
 	return res;
 };
 
-export const getChatlist = async (token: string = '') => {
+export const getChatList = async (token: string = '') => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/`, {

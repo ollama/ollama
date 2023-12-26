@@ -13,6 +13,7 @@
 	import ModelSelector from '$lib/components/chat/ModelSelector.svelte';
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import { page } from '$app/stores';
+	import { createNewChat, getChatById, getChatList } from '$lib/apis/chats';
 
 	let loaded = false;
 	let stopResponseFlag = false;
@@ -70,7 +71,7 @@
 
 	const loadChat = async () => {
 		await chatId.set($page.params.id);
-		chat = await $db.getChatById($chatId);
+		chat = await getChatById(localStorage.token, $chatId);
 
 		const chatContent = chat.chat;
 
@@ -159,11 +160,11 @@
 			})
 		);
 
-		await chats.set(await $db.getChats());
+		await chats.set(await getChatList(localStorage.token));
 	};
 
 	const sendPromptOllama = async (model, userPrompt, parentId, _chatId) => {
-		console.log('sendPromptOllama');
+		// Create response message
 		let responseMessageId = uuidv4();
 		let responseMessage = {
 			parentId: parentId,
@@ -174,8 +175,11 @@
 			model: model
 		};
 
+		// Add message to history and Set currentId to messageId
 		history.messages[responseMessageId] = responseMessage;
 		history.currentId = responseMessageId;
+
+		// Append messageId to childrenIds of parent message
 		if (parentId !== null) {
 			history.messages[parentId].childrenIds = [
 				...history.messages[parentId].childrenIds,
@@ -183,17 +187,16 @@
 			];
 		}
 
+		// Wait until history/message have been updated
 		await tick();
+
+		// Scroll down
 		window.scrollTo({ top: document.body.scrollHeight });
 
-		const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/chat`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'text/event-stream',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			},
-			body: JSON.stringify({
+		const res = await generateChatCompletion(
+			$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+			localStorage.token,
+			{
 				model: model,
 				messages: [
 					$settings.system
@@ -215,20 +218,11 @@
 						})
 					})),
 				options: {
-					seed: $settings.seed ?? undefined,
-					temperature: $settings.temperature ?? undefined,
-					repeat_penalty: $settings.repeat_penalty ?? undefined,
-					top_k: $settings.top_k ?? undefined,
-					top_p: $settings.top_p ?? undefined,
-					num_ctx: $settings.num_ctx ?? undefined,
 					...($settings.options ?? {})
 				},
 				format: $settings.requestFormat ?? undefined
-			})
-		}).catch((err) => {
-			console.log(err);
-			return null;
-		});
+			}
+		);
 
 		if (res && res.ok) {
 			const reader = res.body
@@ -320,23 +314,11 @@
 			}
 
 			if ($chatId == _chatId) {
-				chat = await $db.updateChatById(_chatId, {
-					...chat.chat,
-					title: title === '' ? 'New Chat' : title,
-					models: selectedModels,
-					system: $settings.system ?? undefined,
-					options: {
-						seed: $settings.seed ?? undefined,
-						temperature: $settings.temperature ?? undefined,
-						repeat_penalty: $settings.repeat_penalty ?? undefined,
-						top_k: $settings.top_k ?? undefined,
-						top_p: $settings.top_p ?? undefined,
-						num_ctx: $settings.num_ctx ?? undefined,
-						...($settings.options ?? {})
-					},
+				chat = await updateChatById(localStorage.token, _chatId, {
 					messages: messages,
 					history: history
 				});
+				await chats.set(await getChatList(localStorage.token));
 			}
 		} else {
 			if (res !== null) {
@@ -362,6 +344,7 @@
 
 		stopResponseFlag = false;
 		await tick();
+
 		if (autoScroll) {
 			window.scrollTo({ top: document.body.scrollHeight });
 		}
@@ -507,23 +490,11 @@
 					}
 
 					if ($chatId == _chatId) {
-						chat = await $db.updateChatById(_chatId, {
-							...chat.chat,
-							title: title === '' ? 'New Chat' : title,
-							models: selectedModels,
-							system: $settings.system ?? undefined,
-							options: {
-								seed: $settings.seed ?? undefined,
-								temperature: $settings.temperature ?? undefined,
-								repeat_penalty: $settings.repeat_penalty ?? undefined,
-								top_k: $settings.top_k ?? undefined,
-								top_p: $settings.top_p ?? undefined,
-								num_ctx: $settings.num_ctx ?? undefined,
-								...($settings.options ?? {})
-							},
+						chat = await updateChatById(localStorage.token, _chatId, {
 							messages: messages,
 							history: history
 						});
+						await chats.set(await getChatList(localStorage.token));
 					}
 				} else {
 					if (res !== null) {
@@ -573,10 +544,13 @@
 		if (selectedModels.includes('')) {
 			toast.error('Model not selected');
 		} else if (messages.length != 0 && messages.at(-1).done != true) {
+			// Response not done
 			console.log('wait');
 		} else {
+			// Reset chat message textarea height
 			document.getElementById('chat-textarea').style.height = '';
 
+			// Create user message
 			let userMessageId = uuidv4();
 			let userMessage = {
 				id: userMessageId,
@@ -587,47 +561,42 @@
 				files: files.length > 0 ? files : undefined
 			};
 
+			// Add message to history and Set currentId to messageId
+			history.messages[userMessageId] = userMessage;
+			history.currentId = userMessageId;
+
+			// Append messageId to childrenIds of parent message
 			if (messages.length !== 0) {
 				history.messages[messages.at(-1).id].childrenIds.push(userMessageId);
 			}
 
-			history.messages[userMessageId] = userMessage;
-			history.currentId = userMessageId;
-
+			// Wait until history/message have been updated
 			await tick();
 
+			// Create new chat if only one message in messages
 			if (messages.length == 1) {
-				chat = await $db.createNewChat({
+				chat = await createNewChat(localStorage.token, {
 					id: $chatId,
 					title: 'New Chat',
 					models: selectedModels,
 					system: $settings.system ?? undefined,
 					options: {
-						seed: $settings.seed ?? undefined,
-						temperature: $settings.temperature ?? undefined,
-						repeat_penalty: $settings.repeat_penalty ?? undefined,
-						top_k: $settings.top_k ?? undefined,
-						top_p: $settings.top_p ?? undefined,
-						num_ctx: $settings.num_ctx ?? undefined,
 						...($settings.options ?? {})
 					},
 					messages: messages,
-					history: history
+					history: history,
+					timestamp: Date.now()
 				});
-
-				console.log(chat);
-
+				await chats.set(await getChatList(localStorage.token));
 				await chatId.set(chat.id);
 				await tick();
 			}
 
+			// Reset chat input textarea
 			prompt = '';
 			files = [];
 
-			setTimeout(() => {
-				window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-			}, 50);
-
+			// Send prompt
 			await sendPrompt(userPrompt, userMessageId);
 		}
 	};
@@ -638,9 +607,7 @@
 	};
 
 	const regenerateResponse = async () => {
-		const _chatId = JSON.parse(JSON.stringify($chatId));
-		console.log('regenerateResponse', _chatId);
-
+		console.log('regenerateResponse');
 		if (messages.length != 0 && messages.at(-1).done == true) {
 			messages.splice(messages.length - 1, 1);
 			messages = messages;
@@ -648,41 +615,21 @@
 			let userMessage = messages.at(-1);
 			let userPrompt = userMessage.content;
 
-			await sendPrompt(userPrompt, userMessage.id, _chatId);
+			await sendPrompt(userPrompt, userMessage.id);
 		}
 	};
 
 	const generateChatTitle = async (_chatId, userPrompt) => {
 		if ($settings.titleAutoGenerate ?? true) {
-			console.log('generateChatTitle');
+			const title = await generateTitle(
+				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+				localStorage.token,
+				selectedModels[0],
+				userPrompt
+			);
 
-			const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/generate`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'text/event-stream',
-					...($settings.authHeader && { Authorization: $settings.authHeader }),
-					...($user && { Authorization: `Bearer ${localStorage.token}` })
-				},
-				body: JSON.stringify({
-					model: selectedModels[0],
-					prompt: `Generate a brief 3-5 word title for this question, excluding the term 'title.' Then, please reply with only the title: ${userPrompt}`,
-					stream: false
-				})
-			})
-				.then(async (res) => {
-					if (!res.ok) throw await res.json();
-					return res.json();
-				})
-				.catch((error) => {
-					if ('detail' in error) {
-						toast.error(error.detail);
-					}
-					console.log(error);
-					return null;
-				});
-
-			if (res) {
-				await setChatTitle(_chatId, res.response === '' ? 'New Chat' : res.response);
+			if (title) {
+				await setChatTitle(_chatId, title);
 			}
 		} else {
 			await setChatTitle(_chatId, `${userPrompt}`);
@@ -690,13 +637,12 @@
 	};
 
 	const setChatTitle = async (_chatId, _title) => {
-		chat = await $db.updateChatById(_chatId, {
-			...chat.chat,
-			title: _title
-		});
 		if (_chatId === $chatId) {
 			title = _title;
 		}
+
+		chat = await updateChatById(localStorage.token, _chatId, { title: _title });
+		await chats.set(await getChatList(localStorage.token));
 	};
 </script>
 

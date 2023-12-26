@@ -13,6 +13,8 @@ export const WEBUI_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1`;
 
 export const WEB_UI_VERSION = 'v1.0.0-alpha-static';
 
+export const REQUIRED_OLLAMA_VERSION = '0.1.16';
+
 // Source: https://kit.svelte.dev/docs/modules#$env-static-public
 // This feature, akin to $env/static/private, exclusively incorporates environment variables
 // that are prefixed with config.kit.env.publicPrefix (usually set to PUBLIC_).

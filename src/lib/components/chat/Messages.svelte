@@ -8,10 +8,11 @@
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
 	import 'katex/dist/katex.min.css';
 
-	import { config, db, modelfiles, settings, user } from '$lib/stores';
+	import { chats, config, db, modelfiles, settings, user } from '$lib/stores';
 	import { tick } from 'svelte';
 
 	import toast from 'svelte-french-toast';
+	import { getChatList, updateChatById } from '$lib/apis/chats';
 
 	export let chatId = '';
 	export let sendPrompt: Function;
@@ -262,10 +263,12 @@
 			return message;
 		});
 
-		$db.updateChatById(chatId, {
+		await updateChatById(localStorage.token, chatId, {
 			messages: messages,
 			history: history
 		});
+
+		await chats.set(await getChatList(localStorage.token));
 	};
 
 	const showPreviousMessage = async (message) => {

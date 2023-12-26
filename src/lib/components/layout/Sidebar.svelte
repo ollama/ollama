@@ -8,6 +8,7 @@
 	import { page } from '$app/stores';
 	import { user, db, chats, showSettings, chatId } from '$lib/stores';
 	import { onMount } from 'svelte';
+	import { deleteChatById, getChatList, updateChatById } from '$lib/apis/chats';
 
 	let show = false;
 	let navElement;
@@ -31,7 +32,7 @@
 			show = true;
 		}
 
-		await chats.set(await $db.getChats());
+		await chats.set(await getChatList(localStorage.token));
 	});
 
 	const loadChat = async (id) => {
@@ -39,42 +40,46 @@
 	};
 
 	const editChatTitle = async (id, _title) => {
-		await $db.updateChatById(id, {
+		title = _title;
+
+		await updateChatById(localStorage.token, id, {
 			title: _title
 		});
-		title = _title;
+		await chats.set(await getChatList(localStorage.token));
 	};
 
 	const deleteChat = async (id) => {
 		goto('/');
-		$db.deleteChatById(id);
+
+		await deleteChatById(localStorage.token, id);
+		await chats.set(await getChatList(localStorage.token));
 	};
 
-	const deleteChatHistory = async () => {
-		await $db.deleteAllChat();
-	};
+	// const deleteChatHistory = async () => {
+	// 	await $db.deleteAllChat();
+	// };
 
-	const importChats = async (chatHistory) => {
-		await $db.importChats(chatHistory);
-	};
+	// const importChats = async (chatHistory) => {
+	// 	await $db.importChats(chatHistory);
+	// };
 
-	const exportChats = async () => {
-		let blob = new Blob([JSON.stringify(await $db.exportChats())], { type: 'application/json' });
-		saveAs(blob, `chat-export-${Date.now()}.json`);
-	};
+	// const exportChats = async () => {
+	// 	let blob = new Blob([JSON.stringify(await $db.exportChats())], { type: 'application/json' });
+	// 	saveAs(blob, `chat-export-${Date.now()}.json`);
+	// };
 
-	$: if (importFiles) {
-		console.log(importFiles);
+	// $: if (importFiles) {
+	// 	console.log(importFiles);
 
-		let reader = new FileReader();
-		reader.onload = (event) => {
-			let chats = JSON.parse(event.target.result);
-			console.log(chats);
-			importChats(chats);
-		};
+	// 	let reader = new FileReader();
+	// 	reader.onload = (event) => {
+	// 		let chats = JSON.parse(event.target.result);
+	// 		console.log(chats);
+	// 		importChats(chats);
+	// 	};
 
-		reader.readAsText(importFiles[0]);
-	}
+	// 	reader.readAsText(importFiles[0]);
+	// }
 </script>
 
 <div

@@ -27,8 +27,6 @@ export const getOpenAIModels = async (
 
 	let models = Array.isArray(res) ? res : res?.data ?? null;
 
-	console.log(models);
-
 	return models
 		.map((model) => ({ name: model.id, external: true }))
 		.filter((model) => (base_url.includes('openai') ? model.name.includes('gpt') : true));
