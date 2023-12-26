@@ -27,9 +27,6 @@ class User(Model):
 
 
 class UserModel(BaseModel):
-    class Config:
-        orm_mode = True
-
     id: str
     name: str
     email: str

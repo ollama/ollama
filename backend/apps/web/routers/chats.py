@@ -5,12 +5,13 @@ from typing import List, Union, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+import json
 
 from apps.web.models.users import Users
 from apps.web.models.chats import (
     ChatModel,
+    ChatResponse,
     ChatForm,
-    ChatUpdateForm,
     ChatTitleIdResponse,
     Chats,
 )
@@ -46,13 +47,14 @@ async def get_user_chats(skip: int = 0, limit: int = 50, cred=Depends(bearer_sch
 ############################
 
 
-@router.post("/new", response_model=Optional[ChatModel])
+@router.post("/new", response_model=Optional[ChatResponse])
 async def create_new_chat(form_data: ChatForm, cred=Depends(bearer_scheme)):
     token = cred.credentials
     user = Users.get_user_by_token(token)
 
     if user:
-        return Chats.insert_new_chat(user.id, form_data)
+        chat = Chats.insert_new_chat(user.id, form_data)
+        return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -65,13 +67,14 @@ async def create_new_chat(form_data: ChatForm, cred=Depends(bearer_scheme)):
 ############################
 
 
-@router.get("/{id}", response_model=Optional[ChatModel])
+@router.get("/{id}", response_model=Optional[ChatResponse])
 async def get_chat_by_id(id: str, cred=Depends(bearer_scheme)):
     token = cred.credentials
     user = Users.get_user_by_token(token)
 
     if user:
-        return Chats.get_chat_by_id_and_user_id(id, user.id)
+        chat = Chats.get_chat_by_id_and_user_id(id, user.id)
+        return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -84,22 +87,41 @@ async def get_chat_by_id(id: str, cred=Depends(bearer_scheme)):
 ############################
 
 
-@router.post("/{id}", response_model=Optional[ChatModel])
-async def update_chat_by_id(
-    id: str, form_data: ChatUpdateForm, cred=Depends(bearer_scheme)
-):
+@router.post("/{id}", response_model=Optional[ChatResponse])
+async def update_chat_by_id(id: str, form_data: ChatForm, cred=Depends(bearer_scheme)):
     token = cred.credentials
     user = Users.get_user_by_token(token)
 
     if user:
         chat = Chats.get_chat_by_id_and_user_id(id, user.id)
         if chat:
-            return Chats.update_chat_by_id(id, form_data.chat)
+            chat = Chats.update_chat_by_id(id, form_data.chat)
+            return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
             )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.INVALID_TOKEN,
+        )
+
+
+############################
+# DeleteChatById
+############################
+
+
+@router.delete("/{id}", response_model=bool)
+async def delete_chat_by_id(id: str, cred=Depends(bearer_scheme)):
+    token = cred.credentials
+    user = Users.get_user_by_token(token)
+
+    if user:
+        result = Chats.delete_chat_by_id_and_user_id(id, user.id)
+        return result
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

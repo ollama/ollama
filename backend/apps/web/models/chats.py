@@ -44,8 +44,12 @@ class ChatForm(BaseModel):
     chat: dict
 
 
-class ChatUpdateForm(ChatForm):
+class ChatResponse(BaseModel):
     id: str
+    user_id: str
+    title: str
+    chat: dict
+    timestamp: int  # timestamp in epoch
 
 
 class ChatTitleIdResponse(BaseModel):
@@ -77,7 +81,11 @@ class ChatTable:
 
     def update_chat_by_id(self, id: str, chat: dict) -> Optional[ChatModel]:
         try:
-            query = Chat.update(chat=json.dumps(chat)).where(Chat.id == id)
+            query = Chat.update(
+                chat=json.dumps(chat),
+                title=chat["title"] if "title" in chat else "New Chat",
+                timestamp=int(time.time()),
+            ).where(Chat.id == id)
             query.execute()
 
             chat = Chat.get(Chat.id == id)
@@ -92,6 +100,7 @@ class ChatTable:
             ChatModel(**model_to_dict(chat))
             for chat in Chat.select()
             .where(Chat.user_id == user_id)
+            .order_by(Chat.timestamp.desc())
             .limit(limit)
             .offset(skip)
         ]
@@ -108,6 +117,15 @@ class ChatTable:
             ChatModel(**model_to_dict(chat))
             for chat in Chat.select().limit(limit).offset(skip)
         ]
+
+    def delete_chat_by_id_and_user_id(self, id: str, user_id: str) -> bool:
+        try:
+            query = Chat.delete().where((Chat.id == id) & (Chat.user_id == user_id))
+            query.execute()  # Remove the rows, return number of rows removed.
+
+            return True
+        except:
+            return False
 
 
 Chats = ChatTable(DB)
