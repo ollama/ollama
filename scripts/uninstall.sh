@@ -3,6 +3,12 @@
 
 set -eu
 
+# default error condition
+error() { echo "ERROR $*"; exit 1; }
+
+# Validate a command exists
+available() { command -v "$1" >/dev/null; }
+
 # Validate script is running on Linux
 if [ "$(uname -s)" != "Linux" ]; then
     echo 'This script is intended to run on Linux only.'
@@ -10,10 +16,16 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 # Make sure script is run as root
-# Else exit with message
+# if user is running as root $SUDO will be set to empty string
+SUDO=
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Please run this script as root"
-    exit 1
+    # Make sure sudo is installed on the system
+    # if not, ask the user to run as root and exit
+    if ! available sudo; then
+        error "Please re-run this script as root"
+    fi
+
+    SUDO="sudo"
 fi
 
 # Confirmation prompt
@@ -30,41 +42,45 @@ esac
 
 # Remove stop and remove any systemd services if they exist
 if [ -f '/etc/systemd/system/ollama.service' ]; then
+
+    # inform user we are stopping and disabling the service at startup
+    echo "Stopping and disabling ollama service at system startup..."
+
     # Stop and disable the ollama service if its running
-    systemctl is-enabled --quiet ollama && systemctl disable --now --quiet ollama 
+    systemctl is-enabled --quiet ollama && $SUDO systemctl disable --now --quiet ollama 
 
     # Delete the ollama unit file
     echo "Deleting the ollama service file..."
-    rm -f /etc/systemd/system/ollama.service
+    $SUDO rm -f /etc/systemd/system/ollama.service
 
     # Validate system is up to date
-    systemctl daemon-reload
+    $SUDO systemctl daemon-reload
 
     # Inform user ollama is stopped and disabled
     echo "Ollama service stopped and removed."
 fi
 
 # Delete the ollama binary if it exists
-if command -v ollama > /dev/null; then
+if available ollama; then
     echo "Deleting the ollama binary..."
-    rm -f "$(command -v ollama)"
+    $SUDO rm -f "$(command -v ollama)"
 fi
 
 # Remove any locally installed models if they exist
 if [ -d '/usr/share/ollama' ]; then
     echo "Deleting locally installed Ollama models..."
-    rm -rf /usr/share/ollama/
+    $SUDO rm -rf /usr/share/ollama/
 fi
 
 # Remove the ollama group and user from the system if they exist
 if getent passwd ollama > /dev/null; then
     echo "Deleting the ollama user..."
-    userdel ollama > /dev/null 2>&1
+    $SUDO userdel ollama > /dev/null 2>&1
 fi
 
 if getent group ollama > /dev/null; then
     echo "Deleting the ollama group..."
-    groupdel ollama > /dev/null 2>&1
+    $SUDO groupdel ollama > /dev/null 2>&1
 fi
 # Inform user ollama is uninstall
 echo "Ollama has been successfully uninstalled from the system."
