@@ -109,6 +109,8 @@ After installing Ollama, verify that Ollama is running by accessing the followin
 
 #### Using Docker 🐳
 
+**Important:** When using Docker to install Ollama Web UI, make sure to include the `-v ollama-webui:/app/backend/data` in your Docker command. This step is crucial as it ensures your database is properly mounted and prevents any loss of data.
+
 If Ollama is hosted on your local machine and accessible at [http://127.0.0.1:11434/](http://127.0.0.1:11434/), run the following command:
 
 ```bash
