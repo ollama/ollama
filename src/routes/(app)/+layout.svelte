@@ -8,6 +8,8 @@
 	const { saveAs } = fileSaver;
 
 	import { getOllamaModels, getOllamaVersion } from '$lib/apis/ollama';
+	import { getModelfiles } from '$lib/apis/modelfiles';
+
 	import { getOpenAIModels } from '$lib/apis/openai';
 
 	import { user, showSettings, settings, models, modelfiles } from '$lib/stores';
@@ -95,11 +97,14 @@
 
 			console.log();
 			await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
-			await models.set(await getModels());
+			// await models.set(await getModels());
+			// JSON.parse(localStorage.getItem('modelfiles') ?? '[]')
+			await modelfiles.set(await getModelfiles(localStorage.token));
+			console.log($modelfiles);
 
-			await modelfiles.set(JSON.parse(localStorage.getItem('modelfiles') ?? '[]'));
 			modelfiles.subscribe(async () => {
 				// should fetch models
+				await models.set(await getModels());
 			});
 
 			await setOllamaVersion();
@@ -176,7 +181,8 @@
 								<button
 									class="relative z-20 flex px-5 py-2 rounded-full bg-white border border-gray-100 dark:border-none hover:bg-gray-100 transition font-medium text-sm"
 									on:click={async () => {
-										await setOllamaVersion();
+										location.href = '/';
+										// await setOllamaVersion();
 									}}
 								>
 									Check Again

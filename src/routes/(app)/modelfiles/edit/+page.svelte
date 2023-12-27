@@ -2,13 +2,19 @@
 	import { v4 as uuidv4 } from 'uuid';
 	import { toast } from 'svelte-french-toast';
 	import { goto } from '$app/navigation';
-	import { OLLAMA_API_BASE_URL } from '$lib/constants';
-	import { settings, db, user, config, modelfiles } from '$lib/stores';
 
-	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
-	import { splitStream } from '$lib/utils';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+
+	import { settings, db, user, config, modelfiles } from '$lib/stores';
+
+	import { OLLAMA_API_BASE_URL } from '$lib/constants';
+	import { splitStream } from '$lib/utils';
+
+	import { createModel } from '$lib/apis/ollama';
+	import { getModelfiles, updateModelfileByTagName } from '$lib/apis/modelfiles';
+
+	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
 
 	let loading = false;
 
@@ -78,17 +84,20 @@
 		}
 	});
 
-	const saveModelfile = async (modelfile) => {
-		await modelfiles.set(
-			$modelfiles.map((e) => {
-				if (e.tagName === modelfile.tagName) {
-					return modelfile;
-				} else {
-					return e;
-				}
-			})
-		);
-		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
+	const updateModelfile = async (modelfile) => {
+		// await modelfiles.set(
+		// 	$modelfiles.map((e) => {
+		// 		if (e.tagName === modelfile.tagName) {
+		// 			return modelfile;
+		// 		} else {
+		// 			return e;
+		// 		}
+		// 	})
+		// );
+		// localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
+
+		await updateModelfileByTagName(localStorage.token, modelfile.tagName, modelfile);
+		await modelfiles.set(await getModelfiles(localStorage.token));
 	};
 
 	const updateHandler = async () => {
@@ -106,18 +115,12 @@
 			content !== '' &&
 			Object.keys(categories).filter((category) => categories[category]).length > 0
 		) {
-			const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/create`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'text/event-stream',
-					...($settings.authHeader && { Authorization: $settings.authHeader }),
-					...($user && { Authorization: `Bearer ${localStorage.token}` })
-				},
-				body: JSON.stringify({
-					name: tagName,
-					modelfile: content
-				})
-			});
+			const res = await createModel(
+				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+				localStorage.token,
+				tagName,
+				content
+			);
 
 			if (res) {
 				const reader = res.body
@@ -178,7 +181,7 @@
 			}
 
 			if (success) {
-				await saveModelfile({
+				await updateModelfile({
 					tagName: tagName,
 					imageUrl: imageUrl,
 					title: title,

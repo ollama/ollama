@@ -42,6 +42,14 @@ class ModelfileForm(BaseModel):
     modelfile: dict
 
 
+class ModelfileTagNameForm(BaseModel):
+    tag_name: str
+
+
+class ModelfileUpdateForm(ModelfileForm, ModelfileTagNameForm):
+    pass
+
+
 class ModelfileResponse(BaseModel):
     tag_name: str
     user_id: str
@@ -57,11 +65,11 @@ class ModelfilesTable:
     def insert_new_modelfile(
         self, user_id: str, form_data: ModelfileForm
     ) -> Optional[ModelfileModel]:
-        if "title" in form_data.modelfile:
+        if "tagName" in form_data.modelfile:
             modelfile = ModelfileModel(
                 **{
                     "user_id": user_id,
-                    "tag_name": form_data.modelfile["title"],
+                    "tag_name": form_data.modelfile["tagName"],
                     "modelfile": json.dumps(form_data.modelfile),
                     "timestamp": int(time.time()),
                 }

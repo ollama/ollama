@@ -4,43 +4,29 @@
 	import toast from 'svelte-french-toast';
 
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
+	import { deleteModel } from '$lib/apis/ollama';
+	import { deleteModelfileByTagName, getModelfiles } from '$lib/apis/modelfiles';
 
 	const deleteModelHandler = async (tagName) => {
 		let success = null;
-		const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/delete`, {
-			method: 'DELETE',
-			headers: {
-				'Content-Type': 'text/event-stream',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			},
-			body: JSON.stringify({
-				name: tagName
-			})
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.then((json) => {
-				console.log(json);
-				toast.success(`Deleted ${tagName}`);
-				success = true;
-				return json;
-			})
-			.catch((err) => {
-				console.log(err);
-				toast.error(err.error);
-				return null;
-			});
+
+		success = await deleteModel(
+			$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+			localStorage.token,
+			tagName
+		);
+
+		if (success) {
+			toast.success(`Deleted ${tagName}`);
+		}
 
 		return success;
 	};
 
-	const deleteModelfilebyTagName = async (tagName) => {
+	const deleteModelfile = async (tagName) => {
 		await deleteModelHandler(tagName);
-		await modelfiles.set($modelfiles.filter((modelfile) => modelfile.tagName != tagName));
-		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
+		await deleteModelfileByTagName(localStorage.token, tagName);
+		await modelfiles.set(await getModelfiles(localStorage.token));
 	};
 
 	const shareModelfile = async (modelfile) => {
@@ -167,7 +153,7 @@
 							class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
 							type="button"
 							on:click={() => {
-								deleteModelfilebyTagName(modelfile.tagName);
+								deleteModelfile(modelfile.tagName);
 							}}
 						>
 							<svg

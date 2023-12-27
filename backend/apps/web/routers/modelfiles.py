@@ -11,6 +11,8 @@ from apps.web.models.users import Users
 from apps.web.models.modelfiles import (
     Modelfiles,
     ModelfileForm,
+    ModelfileTagNameForm,
+    ModelfileUpdateForm,
     ModelfileResponse,
 )
 
@@ -77,13 +79,15 @@ async def create_new_modelfile(form_data: ModelfileForm, cred=Depends(bearer_sch
 ############################
 
 
-@router.get("/{tag_name}", response_model=Optional[ModelfileResponse])
-async def get_modelfile_by_tag_name(tag_name: str, cred=Depends(bearer_scheme)):
+@router.post("/", response_model=Optional[ModelfileResponse])
+async def get_modelfile_by_tag_name(
+    form_data: ModelfileTagNameForm, cred=Depends(bearer_scheme)
+):
     token = cred.credentials
     user = Users.get_user_by_token(token)
 
     if user:
-        modelfile = Modelfiles.get_modelfile_by_tag_name(tag_name)
+        modelfile = Modelfiles.get_modelfile_by_tag_name(form_data.tag_name)
 
         if modelfile:
             return ModelfileResponse(
@@ -109,16 +113,16 @@ async def get_modelfile_by_tag_name(tag_name: str, cred=Depends(bearer_scheme)):
 ############################
 
 
-@router.post("/{tag_name}", response_model=Optional[ModelfileResponse])
+@router.post("/update", response_model=Optional[ModelfileResponse])
 async def update_modelfile_by_tag_name(
-    tag_name: str, form_data: ModelfileForm, cred=Depends(bearer_scheme)
+    form_data: ModelfileUpdateForm, cred=Depends(bearer_scheme)
 ):
     token = cred.credentials
     user = Users.get_user_by_token(token)
 
     if user:
         if user.role == "admin":
-            modelfile = Modelfiles.get_modelfile_by_tag_name(tag_name)
+            modelfile = Modelfiles.get_modelfile_by_tag_name(form_data.tag_name)
             if modelfile:
                 updated_modelfile = {
                     **json.loads(modelfile.modelfile),
@@ -126,7 +130,7 @@ async def update_modelfile_by_tag_name(
                 }
 
                 modelfile = Modelfiles.update_modelfile_by_tag_name(
-                    tag_name, updated_modelfile
+                    form_data.tag_name, updated_modelfile
                 )
 
                 return ModelfileResponse(
@@ -157,14 +161,16 @@ async def update_modelfile_by_tag_name(
 ############################
 
 
-@router.delete("/{tag_name}", response_model=bool)
-async def delete_modelfile_by_tag_name(tag_name: str, cred=Depends(bearer_scheme)):
+@router.delete("/delete", response_model=bool)
+async def delete_modelfile_by_tag_name(
+    form_data: ModelfileTagNameForm, cred=Depends(bearer_scheme)
+):
     token = cred.credentials
     user = Users.get_user_by_token(token)
 
     if user:
         if user.role == "admin":
-            result = Modelfiles.delete_modelfile_by_tag_name(tag_name)
+            result = Modelfiles.delete_modelfile_by_tag_name(form_data.tag_name)
             return result
         else:
             raise HTTPException(

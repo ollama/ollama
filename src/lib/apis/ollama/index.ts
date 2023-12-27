@@ -134,3 +134,71 @@ export const generateChatCompletion = async (
 
 	return res;
 };
+
+export const createModel = async (
+	base_url: string = OLLAMA_API_BASE_URL,
+	token: string,
+	tagName: string,
+	content: string
+) => {
+	let error = null;
+
+	const res = await fetch(`${base_url}/create`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'text/event-stream',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			name: tagName,
+			modelfile: content
+		})
+	}).catch((err) => {
+		error = err;
+		return null;
+	});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+export const deleteModel = async (
+	base_url: string = OLLAMA_API_BASE_URL,
+	token: string,
+	tagName: string
+) => {
+	let error = null;
+
+	const res = await fetch(`${base_url}/delete`, {
+		method: 'DELETE',
+		headers: {
+			'Content-Type': 'text/event-stream',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			name: tagName
+		})
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.then((json) => {
+			console.log(json);
+			return true;
+		})
+		.catch((err) => {
+			console.log(err);
+			error = err.error;
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
