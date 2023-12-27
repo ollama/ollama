@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
@@ -244,6 +245,45 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	table.SetBorder(false)
 	table.SetNoWhiteSpace(true)
 	table.SetTablePadding("\t")
+	table.AppendBulk(data)
+	table.Render()
+
+	return nil
+}
+
+func ListRemoteHandler(cmd *cobra.Command, args []string) error {
+	client := http.DefaultClient
+	url := "https://ollama.ai/library"
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %s", resp.Status)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	var data [][]string
+	doc.Find("#repo ul li").Each(func(i int, s *goquery.Selection) {
+		name := s.Find("h2").Text()
+		id := strings.TrimPrefix(s.Find("a").AttrOr("href", ""), "/library/")
+		size := s.Find("svg").First().Next().Text()
+		modified := s.Find("span.flex.items-center").Last().Text()
+
+		data = append(data, []string{name, id, size, modified})
+	})
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.AppendBulk(data)
 	table.Render()
 
@@ -837,6 +877,14 @@ func NewCLI() *cobra.Command {
 		RunE:    ListHandler,
 	}
 
+	listRemoteCmd := &cobra.Command{
+		Use:     "list-remote",
+		Aliases: []string{"lsr"},
+		Short:   "List remote models",
+		PreRunE: checkServerHeartbeat,
+		RunE:    ListRemoteHandler,
+	}
+
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE TARGET",
 		Short:   "Copy a model",
@@ -861,6 +909,7 @@ func NewCLI() *cobra.Command {
 		pullCmd,
 		pushCmd,
 		listCmd,
+		listRemoteCmd,
 		copyCmd,
 		deleteCmd,
 	)
