@@ -27,7 +27,6 @@ All durations are returned in nanoseconds.
 
 Certain endpoints stream responses as JSON objects and can optional return non-streamed responses.
 
-
 ## Generate a completion
 
 ```shell
@@ -104,12 +103,12 @@ To calculate how fast the response is generated in tokens per second (token/s), 
   "response": "",
   "done": true,
   "context": [1, 2, 3],
-  "total_duration":10706818083,
-  "load_duration":6338219291,
-  "prompt_eval_count":26,
-  "prompt_eval_duration":130079000,
-  "eval_count":259,
-  "eval_duration":4232710000
+  "total_duration": 10706818083,
+  "load_duration": 6338219291,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 130079000,
+  "eval_count": 259,
+  "eval_duration": 4232710000
 }
 ```
 
@@ -170,7 +169,7 @@ curl http://localhost:11434/api/generate -d '{
   "created_at": "2023-11-09T21:07:55.186497Z",
   "response": "{\n\"morning\": {\n\"color\": \"blue\"\n},\n\"noon\": {\n\"color\": \"blue-gray\"\n},\n\"afternoon\": {\n\"color\": \"warm gray\"\n},\n\"evening\": {\n\"color\": \"orange\"\n}\n}\n",
   "done": true,
-  "context": [1, 2, 3], 
+  "context": [1, 2, 3],
   "total_duration": 4648158584,
   "load_duration": 4071084,
   "prompt_eval_count": 36,
@@ -235,6 +234,7 @@ curl http://localhost:11434/api/generate -d '{
 #### Request (Raw Mode)
 
 In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
+
 ##### Request
 
 ```shell
@@ -306,8 +306,7 @@ curl http://localhost:11434/api/generate -d '{
     "embedding_only": false,
     "rope_frequency_base": 1.1,
     "rope_frequency_scale": 0.8,
-    "num_thread": 8,
-    "cache": true
+    "num_thread": 8
   }
 }'
 ```
@@ -320,7 +319,7 @@ curl http://localhost:11434/api/generate -d '{
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
-  "context": [1, 2, 3], 
+  "context": [1, 2, 3],
   "total_duration": 4935886791,
   "load_duration": 534986708,
   "prompt_eval_count": 26,
@@ -348,10 +347,10 @@ A single JSON object is returned:
 
 ```json
 {
-  "model":"llama2",
-  "created_at":"2023-12-18T19:52:07.071755Z",
-  "response":"",
-  "done":true
+  "model": "llama2",
+  "created_at": "2023-12-18T19:52:07.071755Z",
+  "response": "",
+  "done": true
 }
 ```
 
@@ -411,7 +410,7 @@ A stream of JSON objects is returned:
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assisant",
-    "content": "The", 
+    "content": "The",
     "images": null
   },
   "done": false
@@ -425,12 +424,12 @@ Final response:
   "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
-  "total_duration":4883583458,
-  "load_duration":1334875,
-  "prompt_eval_count":26,
-  "prompt_eval_duration":342546000,
-  "eval_count":282,
-  "eval_duration":4535599000
+  "total_duration": 4883583458,
+  "load_duration": 1334875,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 342546000,
+  "eval_count": 282,
+  "eval_duration": 4535599000
 }
 ```
 
@@ -446,7 +445,7 @@ curl http://localhost:11434/api/chat -d '{
       "role": "user",
       "content": "why is the sky blue?"
     }
-  ], 
+  ],
   "stream": false
 }'
 ```
@@ -520,12 +519,12 @@ Final response:
   "model": "llama2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
-  "total_duration":8113331500,
-  "load_duration":6396458,
-  "prompt_eval_count":61,
-  "prompt_eval_duration":398801000,
-  "eval_count":468,
-  "eval_duration":7701267000
+  "total_duration": 8113331500,
+  "load_duration": 6396458,
+  "prompt_eval_count": 61,
+  "prompt_eval_duration": 398801000,
+  "eval_count": 468,
+  "eval_duration": 7701267000
 }
 ```
 
@@ -560,12 +559,12 @@ curl http://localhost:11434/api/chat -d '{
     "images": null
   },
   "done": true,
-  "total_duration":1668506709,
-  "load_duration":1986209,
-  "prompt_eval_count":26,
-  "prompt_eval_duration":359682000,
-  "eval_count":83,
-  "eval_duration":1303285000
+  "total_duration": 1668506709,
+  "load_duration": 1986209,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 359682000,
+  "eval_count": 83,
+  "eval_duration": 1303285000
 }
 ```
 
@@ -575,7 +574,7 @@ curl http://localhost:11434/api/chat -d '{
 POST /api/create
 ```
 
-Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `modelfile` to the content of the Modelfile rather than just set `path`. This is a requirement for remote create. Remote model creation must also create any file blobs, fields such as `FROM` and `ADAPTER`, explicitly with the server using [Create a Blob](#create-a-blob) and the value to the path indicated in the response. 
+Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `modelfile` to the content of the Modelfile rather than just set `path`. This is a requirement for remote create. Remote model creation must also create any file blobs, fields such as `FROM` and `ADAPTER`, explicitly with the server using [Create a Blob](#create-a-blob) and the value to the path indicated in the response.
 
 ### Parameters
 
@@ -624,7 +623,6 @@ HEAD /api/blobs/:digest
 ```
 
 Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not Ollama.ai.
-
 
 #### Query Parameters
 
