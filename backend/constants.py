@@ -11,12 +11,11 @@ class ERROR_MESSAGES(str, Enum):
 
     DEFAULT = lambda err="": f"Something went wrong :/\n{err if err else ''}"
     ENV_VAR_NOT_FOUND = "Required environment variable not found. Terminating now."
-
+    CREATE_USER_ERROR = "Oops! Something went wrong while creating your account. Please try again later. If the issue persists, contact support for assistance."
     EMAIL_TAKEN = "Uh-oh! This email is already registered. Sign in with your existing account or choose another email to start anew."
     USERNAME_TAKEN = (
         "Uh-oh! This username is already registered. Please choose another username."
     )
-
     INVALID_TOKEN = (
         "Your session has expired or the token is invalid. Please sign in again."
     )
