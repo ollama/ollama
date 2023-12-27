@@ -123,6 +123,14 @@ class ChatTable:
             # .offset(skip)
         ]
 
+    def get_all_chats_by_user_id(self, user_id: str) -> List[ChatModel]:
+        return [
+            ChatModel(**model_to_dict(chat))
+            for chat in Chat.select()
+            .where(Chat.user_id == user_id)
+            .order_by(Chat.timestamp.desc())
+        ]
+
     def get_chat_by_id_and_user_id(self, id: str, user_id: str) -> Optional[ChatModel]:
         try:
             chat = Chat.get(Chat.id == id, Chat.user_id == user_id)

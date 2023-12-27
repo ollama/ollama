@@ -1,20 +1,23 @@
 <script lang="ts">
-	import Modal from '../common/Modal.svelte';
+	import toast from 'svelte-french-toast';
+	import fileSaver from 'file-saver';
+	const { saveAs } = fileSaver;
 
+	import { onMount } from 'svelte';
+	import { config, models, settings, user, chats } from '$lib/stores';
+	import { splitStream, getGravatarURL } from '$lib/utils';
+
+	import { getOllamaVersion } from '$lib/apis/ollama';
+	import { createNewChat, getAllChats, getChatList } from '$lib/apis/chats';
 	import {
 		WEB_UI_VERSION,
 		OLLAMA_API_BASE_URL,
 		WEBUI_API_BASE_URL,
 		WEBUI_BASE_URL
 	} from '$lib/constants';
-	import toast from 'svelte-french-toast';
-	import { onMount } from 'svelte';
-	import { config, models, settings, user, chats } from '$lib/stores';
-	import { splitStream, getGravatarURL } from '$lib/utils';
+
 	import Advanced from './Settings/Advanced.svelte';
-	import { stringify } from 'postcss';
-	import { getOllamaVersion } from '$lib/apis/ollama';
-	import { createNewChat, getChatList } from '$lib/apis/chats';
+	import Modal from '../common/Modal.svelte';
 
 	export let show = false;
 
@@ -91,7 +94,10 @@
 	};
 
 	const exportChats = async () => {
-		console.log('TODO: export all chats');
+		let blob = new Blob([JSON.stringify(await getAllChats(localStorage.token))], {
+			type: 'application/json'
+		});
+		saveAs(blob, `chat-export-${Date.now()}.json`);
 	};
 
 	$: if (importFiles) {

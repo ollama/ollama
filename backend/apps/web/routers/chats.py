@@ -44,6 +44,28 @@ async def get_user_chats(skip: int = 0, limit: int = 50, cred=Depends(bearer_sch
 
 
 ############################
+# GetAllChats
+############################
+
+
+@router.get("/all", response_model=List[ChatResponse])
+async def get_all_user_chats(cred=Depends(bearer_scheme)):
+    token = cred.credentials
+    user = Users.get_user_by_token(token)
+
+    if user:
+        return [
+            ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
+            for chat in Chats.get_all_chats_by_user_id(user.id)
+        ]
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.INVALID_TOKEN,
+        )
+
+
+############################
 # CreateNewChat
 ############################
 

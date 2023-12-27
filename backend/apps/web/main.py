@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.web.routers import auths, users, chats, utils
+from apps.web.routers import auths, users, chats, modelfiles, utils
 from config import WEBUI_VERSION, WEBUI_AUTH
 
 app = FastAPI()
@@ -19,8 +19,11 @@ app.add_middleware(
 
 app.include_router(auths.router, prefix="/auths", tags=["auths"])
 app.include_router(users.router, prefix="/users", tags=["users"])
-app.include_router(utils.router, prefix="/utils", tags=["utils"])
 app.include_router(chats.router, prefix="/chats", tags=["chats"])
+app.include_router(modelfiles.router, prefix="/modelfiles", tags=["modelfiles"])
+
+
+app.include_router(utils.router, prefix="/utils", tags=["utils"])
 
 
 @app.get("/")
