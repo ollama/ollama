@@ -102,8 +102,9 @@ export const copyToClipboard = (text) => {
 };
 
 export const checkVersion = (required, current) => {
+	// Returns true when current version is below required
 	return current === '0.0.0'
-		? true
+		? false
 		: current.localeCompare(required, undefined, {
 				numeric: true,
 				sensitivity: 'case',
