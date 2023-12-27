@@ -59,7 +59,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - 🔗 **External Ollama Server Connection**: Seamlessly link to an external Ollama server hosted on a different address by configuring the environment variable.
 
-- 🔐 **Role-Based Access Control (RBAC)**: Ensure secure access with restricted permissions; only authorized individuals can enter Ollama, and exclusive model creation/pulling rights are reserved for administrators.
+- 🔐 **Role-Based Access Control (RBAC)**: Ensure secure access with restricted permissions; only authorized individuals can access your Ollama, and exclusive model creation/pulling rights are reserved for administrators.
 
 - 🔒 **Backend Reverse Proxy Support**: Strengthen security by enabling direct communication between Ollama Web UI backend and Ollama, eliminating the need to expose Ollama over LAN.
 
