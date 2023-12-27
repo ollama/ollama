@@ -20,6 +20,9 @@
 	let ollamaVersion = '';
 	let loaded = false;
 
+	let DB = null;
+	let localDBChats = [];
+
 	const getModels = async () => {
 		let models = [];
 		models.push(
@@ -69,16 +72,13 @@
 		if ($user === undefined) {
 			await goto('/auth');
 		} else if (['user', 'admin'].includes($user.role)) {
-			const DB = await openDB('Chats', 1);
+			DB = await openDB('Chats', 1);
 
 			if (DB) {
-				let chats = await DB.getAllFromIndex('chats', 'timestamp');
-				chats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
+				const chats = await DB.getAllFromIndex('chats', 'timestamp');
+				localDBChats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
 
-				if (chats.length > 0) {
-					let blob = new Blob([JSON.stringify(chats)], { type: 'application/json' });
-					saveAs(blob, `chat-export-${Date.now()}.json`);
-				}
+				console.log('localdb', localDBChats);
 			}
 
 			console.log(DB);
@@ -103,9 +103,9 @@
 {#if loaded}
 	<div class="app relative">
 		{#if !['user', 'admin'].includes($user.role)}
-			<div class="absolute w-full h-full flex z-50">
+			<div class="fixed w-full h-full flex z-50">
 				<div
-					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-900/60 flex justify-center"
+					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-100/20 dark:bg-gray-900/50 flex justify-center"
 				>
 					<div class="m-auto pb-44 flex flex-col justify-center">
 						<div class="max-w-md">
@@ -121,7 +121,7 @@
 
 							<div class=" mt-6 mx-auto relative group w-fit">
 								<button
-									class="relative z-20 flex px-5 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition font-medium text-sm"
+									class="relative z-20 flex px-5 py-2 rounded-full bg-white hover:bg-gray-100 transition font-medium text-sm"
 									on:click={async () => {
 										location.href = '/';
 									}}
@@ -142,9 +142,9 @@
 				</div>
 			</div>
 		{:else if checkVersion(REQUIRED_OLLAMA_VERSION, ollamaVersion ?? '0')}
-			<div class="absolute w-full h-full flex z-50">
+			<div class="fixed w-full h-full flex z-50">
 				<div
-					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-900/60 flex justify-center"
+					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-100/20 dark:bg-gray-900/50 flex justify-center"
 				>
 					<div class="m-auto pb-44 flex flex-col justify-center">
 						<div class="max-w-md">
@@ -164,7 +164,7 @@
 
 							<div class=" mt-6 mx-auto relative group w-fit">
 								<button
-									class="relative z-20 flex px-5 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition font-medium text-sm"
+									class="relative z-20 flex px-5 py-2 rounded-full bg-white hover:bg-gray-100 transition font-medium text-sm"
 									on:click={async () => {
 										await setOllamaVersion();
 									}}
@@ -176,6 +176,55 @@
 									class="text-xs text-center w-full mt-2 text-gray-400 underline"
 									on:click={async () => {
 										await setOllamaVersion(REQUIRED_OLLAMA_VERSION);
+									}}>Close</button
+								>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		{:else if localDBChats.length > 0}
+			<div class="fixed w-full h-full flex z-50">
+				<div
+					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-100/20 dark:bg-gray-900/50 flex justify-center"
+				>
+					<div class="m-auto pb-44 flex flex-col justify-center">
+						<div class="max-w-md">
+							<div class="text-center dark:text-white text-2xl font-medium z-50">
+								Important Update<br /> Action Required for Chat Log Storage
+							</div>
+
+							<div class=" mt-4 text-center text-sm dark:text-gray-200 w-full">
+								Saving chat logs directly to your browser's storage is no longer supported. Please
+								take a moment to download and delete your chat logs by clicking the button below.
+								Don't worry, you can easily re-import your chat logs to the backend through <span
+									class="font-semibold text-white">Settings > Chats > Import Chats</span
+								>. This ensures that your valuable conversations are securely saved to your backend
+								database. Thank you!
+							</div>
+
+							<div class=" mt-6 mx-auto relative group w-fit">
+								<button
+									class="relative z-20 flex px-5 py-2 rounded-full bg-white hover:bg-gray-100 transition font-medium text-sm"
+									on:click={async () => {
+										let blob = new Blob([JSON.stringify(localDBChats)], {
+											type: 'application/json'
+										});
+										saveAs(blob, `chat-export-${Date.now()}.json`);
+
+										const tx = DB.transaction('chats', 'readwrite');
+										await Promise.all([tx.store.clear(), tx.done]);
+
+										localDBChats = [];
+									}}
+								>
+									Download & Delete
+								</button>
+
+								<button
+									class="text-xs text-center w-full mt-2 text-gray-400 underline"
+									on:click={async () => {
+										localDBChats = [];
 									}}>Close</button
 								>
 							</div>
