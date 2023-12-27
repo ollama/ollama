@@ -71,6 +71,11 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 
 ## How to Install 🚀
 
+🌟 **Important Note on User Roles:**
+
+- **Admin Creation:** The very first account to sign up on the Ollama Web UI will be granted **Administrator privileges**. This account will have comprehensive control over the platform, including user management and system settings.
+- **User Registrations:** All subsequent users signing up will initially have their accounts set to **Pending** status by default. These accounts will require approval from the Administrator to gain access to the platform functionalities.
+
 ### Installing Both Ollama and Ollama Web UI Using Docker Compose
 
 If you don't have Ollama installed yet, you can use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
