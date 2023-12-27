@@ -86,11 +86,9 @@ class AuthsTable:
             **{"id": id, "email": email, "password": password, "active": True}
         )
         result = Auth.create(**auth.model_dump())
-        print(result)
 
         user = Users.insert_new_user(id, name, email, role)
 
-        print(result, user)
         if result and user:
             return user
         else:
@@ -100,15 +98,9 @@ class AuthsTable:
         print("authenticate_user", email)
         try:
             auth = Auth.get(Auth.email == email, Auth.active == True)
-            print(auth.email)
-
             if auth:
-                print(password, str(auth.password))
-                print(verify_password(password, str(auth.password)))
                 if verify_password(password, auth.password):
                     user = Users.get_user_by_id(auth.id)
-
-                    print(user)
                     return user
                 else:
                     return None
