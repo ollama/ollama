@@ -14,10 +14,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -754,22 +752,8 @@ func initializeKeypair() error {
 	return nil
 }
 
-func startMacApp(ctx context.Context, client *api.Client) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	link, err := os.Readlink(exe)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(link, "Ollama.app") {
-		return fmt.Errorf("could not find ollama app")
-	}
-	path := strings.Split(link, "Ollama.app")
-	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
-		return err
-	}
+//nolint:unused
+func waitForServer(ctx context.Context, client *api.Client) error {
 	// wait for the server to start
 	timeout := time.After(5 * time.Second)
 	tick := time.Tick(500 * time.Millisecond)
@@ -783,6 +767,7 @@ func startMacApp(ctx context.Context, client *api.Client) error {
 			}
 		}
 	}
+
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
@@ -791,15 +776,11 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if err := client.Heartbeat(cmd.Context()); err != nil {
-		if !strings.Contains(err.Error(), "connection refused") {
+		if !strings.Contains(err.Error(), " refused") {
 			return err
 		}
-		if runtime.GOOS == "darwin" {
-			if err := startMacApp(cmd.Context(), client); err != nil {
-				return fmt.Errorf("could not connect to ollama app, is it running?")
-			}
-		} else {
-			return fmt.Errorf("could not connect to ollama server, run 'ollama serve' to start it")
+		if err := startApp(cmd.Context(), client); err != nil {
+			return fmt.Errorf("could not connect to ollama app, is it running?")
 		}
 	}
 	return nil
