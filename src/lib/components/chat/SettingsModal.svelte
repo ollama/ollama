@@ -1164,13 +1164,65 @@
 							</div>
 							<hr class=" dark:border-gray-700" />
 
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
+								<div class="flex w-full">
+									<div class="flex-1 mr-2">
+										<select
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											bind:value={deleteModelTag}
+											placeholder="Select a model"
+										>
+											{#if !deleteModelTag}
+												<option value="" disabled selected>Select a model</option>
+											{/if}
+											{#each $models.filter((m) => m.size != null) as model}
+												<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
+													>{model.name +
+														' (' +
+														(model.size / 1024 ** 3).toFixed(1) +
+														' GB)'}</option
+												>
+											{/each}
+										</select>
+									</div>
+									<button
+										class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
+										on:click={() => {
+											deleteModelHandler();
+										}}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5a.75.75 0 0 1 .786-.711Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</button>
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
 							<form
 								on:submit|preventDefault={() => {
 									uploadModelHandler();
 								}}
 							>
 								<div class=" mb-2 flex w-full justify-between">
-									<div class="  text-sm font-medium">Upload a GGUF model</div>
+									<div class="  text-sm font-medium">
+										Upload a GGUF model <a
+											class=" text-xs font-medium text-gray-500 underline"
+											href="https://github.com/jmorganca/ollama/blob/main/README.md#import-from-gguf"
+											target="_blank">(Experimental)</a
+										>
+									</div>
 
 									<button
 										class="p-1 px-3 text-xs flex rounded transition"
@@ -1327,51 +1379,6 @@
 									</div>
 								{/if}
 							</form>
-							<hr class=" dark:border-gray-700" />
-
-							<div>
-								<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
-								<div class="flex w-full">
-									<div class="flex-1 mr-2">
-										<select
-											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-											bind:value={deleteModelTag}
-											placeholder="Select a model"
-										>
-											{#if !deleteModelTag}
-												<option value="" disabled selected>Select a model</option>
-											{/if}
-											{#each $models.filter((m) => m.size != null) as model}
-												<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
-													>{model.name +
-														' (' +
-														(model.size / 1024 ** 3).toFixed(1) +
-														' GB)'}</option
-												>
-											{/each}
-										</select>
-									</div>
-									<button
-										class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
-										on:click={() => {
-											deleteModelHandler();
-										}}
-									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 16 16"
-											fill="currentColor"
-											class="w-4 h-4"
-										>
-											<path
-												fill-rule="evenodd"
-												d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5a.75.75 0 0 1 .786-.711Z"
-												clip-rule="evenodd"
-											/>
-										</svg>
-									</button>
-								</div>
-							</div>
 						</div>
 					</div>
 				{:else if selectedTab === 'external'}
