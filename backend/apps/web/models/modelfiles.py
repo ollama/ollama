@@ -74,11 +74,16 @@ class ModelfilesTable:
                     "timestamp": int(time.time()),
                 }
             )
-            result = Modelfile.create(**modelfile.model_dump())
-            if result:
-                return modelfile
-            else:
+
+            try:
+                result = Modelfile.create(**modelfile.model_dump())
+                if result:
+                    return modelfile
+                else:
+                    return None
+            except:
                 return None
+
         else:
             return None
 

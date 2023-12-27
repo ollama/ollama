@@ -56,12 +56,19 @@ async def create_new_modelfile(form_data: ModelfileForm, cred=Depends(bearer_sch
         # Admin Only
         if user.role == "admin":
             modelfile = Modelfiles.insert_new_modelfile(user.id, form_data)
-            return ModelfileResponse(
-                **{
-                    **modelfile.model_dump(),
-                    "modelfile": json.loads(modelfile.modelfile),
-                }
-            )
+
+            if modelfile:
+                return ModelfileResponse(
+                    **{
+                        **modelfile.model_dump(),
+                        "modelfile": json.loads(modelfile.modelfile),
+                    }
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=ERROR_MESSAGES.DEFAULT(),
+                )
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

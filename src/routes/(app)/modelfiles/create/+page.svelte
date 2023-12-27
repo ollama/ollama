@@ -95,12 +95,6 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 	};
 
 	const saveModelfile = async (modelfile) => {
-		// await modelfiles.set([
-		// 	...$modelfiles.filter((m) => m.tagName !== modelfile.tagName),
-		// 	modelfile
-		// ]);
-		// localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
-
 		await createNewModelfile(localStorage.token, modelfile);
 		await modelfiles.set(await getModelfiles(localStorage.token));
 	};

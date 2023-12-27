@@ -19,7 +19,7 @@ export const createNewModelfile = async (token: string, modelfile: object) => {
 			return res.json();
 		})
 		.catch((err) => {
-			error = err;
+			error = err.detail;
 			console.log(err);
 			return null;
 		});
