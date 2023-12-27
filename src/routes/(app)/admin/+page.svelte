@@ -6,62 +6,27 @@
 
 	import toast from 'svelte-french-toast';
 
+	import { updateUserRole, getUsers } from '$lib/apis/users';
+
 	let loaded = false;
 	let users = [];
 
-	const updateUserRole = async (id, role) => {
-		const res = await fetch(`${WEBUI_API_BASE_URL}/users/update/role`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${localStorage.token}`
-			},
-			body: JSON.stringify({
-				id: id,
-				role: role
-			})
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.catch((error) => {
-				console.log(error);
-				toast.error(error.detail);
-				return null;
-			});
+	const updateRoleHandler = async (id, role) => {
+		const res = await updateUserRole(localStorage.token, id, role).catch((error) => {
+			toast.error(error);
+			return null;
+		});
 
 		if (res) {
-			await getUsers();
+			users = await getUsers(localStorage.token);
 		}
 	};
 
-	const getUsers = async () => {
-		const res = await fetch(`${WEBUI_API_BASE_URL}/users/`, {
-			method: 'GET',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${localStorage.token}`
-			}
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.catch((error) => {
-				console.log(error);
-				toast.error(error.detail);
-				return null;
-			});
-
-		users = res ? res : [];
-	};
-
 	onMount(async () => {
-		if ($config === null || !$config.auth || ($config.auth && $user && $user.role !== 'admin')) {
+		if ($user?.role !== 'admin') {
 			await goto('/');
 		} else {
-			await getUsers();
+			users = await getUsers(localStorage.token);
 		}
 		loaded = true;
 	});
@@ -115,11 +80,11 @@
 												class="  dark:text-white underline"
 												on:click={() => {
 													if (user.role === 'user') {
-														updateUserRole(user.id, 'admin');
+														updateRoleHandler(user.id, 'admin');
 													} else if (user.role === 'pending') {
-														updateUserRole(user.id, 'user');
+														updateRoleHandler(user.id, 'user');
 													} else {
-														updateUserRole(user.id, 'pending');
+														updateRoleHandler(user.id, 'pending');
 													}
 												}}>{user.role}</button
 											>

@@ -8,6 +8,8 @@
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
 	import { splitStream } from '$lib/utils';
 	import { onMount, tick } from 'svelte';
+	import { createModel } from '$lib/apis/ollama';
+	import { createNewModelfile, getModelfileByTagName, getModelfiles } from '$lib/apis/modelfiles';
 
 	let loading = false;
 
@@ -93,11 +95,8 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 	};
 
 	const saveModelfile = async (modelfile) => {
-		await modelfiles.set([
-			...$modelfiles.filter((m) => m.tagName !== modelfile.tagName),
-			modelfile
-		]);
-		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
+		await createNewModelfile(localStorage.token, modelfile);
+		await modelfiles.set(await getModelfiles(localStorage.token));
 	};
 
 	const submitHandler = async () => {
@@ -112,7 +111,10 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 			return success;
 		}
 
-		if ($models.includes(tagName)) {
+		if (
+			$models.map((model) => model.name).includes(tagName) ||
+			(await getModelfileByTagName(localStorage.token, tagName).catch(() => false))
+		) {
 			toast.error(
 				`Uh-oh! It looks like you already have a model named '${tagName}'. Please choose a different name to complete your modelfile.`
 			);
@@ -128,18 +130,12 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 			Object.keys(categories).filter((category) => categories[category]).length > 0 &&
 			!$models.includes(tagName)
 		) {
-			const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/create`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'text/event-stream',
-					...($settings.authHeader && { Authorization: $settings.authHeader }),
-					...($user && { Authorization: `Bearer ${localStorage.token}` })
-				},
-				body: JSON.stringify({
-					name: tagName,
-					modelfile: content
-				})
-			});
+			const res = await createModel(
+				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+				localStorage.token,
+				tagName,
+				content
+			);
 
 			if (res) {
 				const reader = res.body

@@ -13,7 +13,7 @@ uuid
 
 requests
 aiohttp
-pymongo
+peewee
 bcrypt
 
 PyJWT

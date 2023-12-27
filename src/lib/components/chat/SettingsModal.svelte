@@ -1,18 +1,23 @@
 <script lang="ts">
-	import Modal from '../common/Modal.svelte';
+	import toast from 'svelte-french-toast';
+	import fileSaver from 'file-saver';
+	const { saveAs } = fileSaver;
 
+	import { onMount } from 'svelte';
+	import { config, models, settings, user, chats } from '$lib/stores';
+	import { splitStream, getGravatarURL } from '$lib/utils';
+
+	import { getOllamaVersion } from '$lib/apis/ollama';
+	import { createNewChat, getAllChats, getChatList } from '$lib/apis/chats';
 	import {
 		WEB_UI_VERSION,
 		OLLAMA_API_BASE_URL,
 		WEBUI_API_BASE_URL,
 		WEBUI_BASE_URL
 	} from '$lib/constants';
-	import toast from 'svelte-french-toast';
-	import { onMount } from 'svelte';
-	import { config, info, models, settings, user } from '$lib/stores';
-	import { splitStream, getGravatarURL } from '$lib/utils';
+
 	import Advanced from './Settings/Advanced.svelte';
-	import { stringify } from 'postcss';
+	import Modal from '../common/Modal.svelte';
 
 	export let show = false;
 
@@ -74,10 +79,47 @@
 	let OPENAI_API_KEY = '';
 	let OPENAI_API_BASE_URL = '';
 
+	// Chats
+
+	let importFiles;
+	let showDeleteHistoryConfirm = false;
+
+	const importChats = async (_chats) => {
+		for (const chat of _chats) {
+			console.log(chat);
+			await createNewChat(localStorage.token, chat);
+		}
+
+		await chats.set(await getChatList(localStorage.token));
+	};
+
+	const exportChats = async () => {
+		let blob = new Blob([JSON.stringify(await getAllChats(localStorage.token))], {
+			type: 'application/json'
+		});
+		saveAs(blob, `chat-export-${Date.now()}.json`);
+	};
+
+	$: if (importFiles) {
+		console.log(importFiles);
+
+		let reader = new FileReader();
+		reader.onload = (event) => {
+			let chats = JSON.parse(event.target.result);
+			console.log(chats);
+			importChats(chats);
+		};
+
+		reader.readAsText(importFiles[0]);
+	}
+
 	// Auth
 	let authEnabled = false;
 	let authType = 'Basic';
 	let authContent = '';
+
+	// About
+	let ollamaVersion = '';
 
 	const checkOllamaConnection = async () => {
 		if (API_BASE_URL === '') {
@@ -553,7 +595,7 @@
 		return models;
 	};
 
-	onMount(() => {
+	onMount(async () => {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(settings);
 
@@ -586,6 +628,13 @@
 			authType = settings.authHeader.split(' ')[0];
 			authContent = settings.authHeader.split(' ')[1];
 		}
+
+		ollamaVersion = await getOllamaVersion(
+			API_BASE_URL ?? OLLAMA_API_BASE_URL,
+			localStorage.token
+		).catch((error) => {
+			return '';
+		});
 	});
 </script>
 
@@ -739,6 +788,32 @@
 						</svg>
 					</div>
 					<div class=" self-center">Add-ons</div>
+				</button>
+
+				<button
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'chats'
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+					on:click={() => {
+						selectedTab = 'chats';
+					}}
+				>
+					<div class=" self-center mr-2">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M8 2C4.262 2 1 4.57 1 8c0 1.86.98 3.486 2.455 4.566a3.472 3.472 0 0 1-.469 1.26.75.75 0 0 0 .713 1.14 6.961 6.961 0 0 0 3.06-1.06c.403.062.818.094 1.241.094 3.738 0 7-2.57 7-6s-3.262-6-7-6ZM5 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm7-1a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM8 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</div>
+					<div class=" self-center">Chats</div>
 				</button>
 
 				{#if !$config || ($config && !$config.auth)}
@@ -1089,13 +1164,65 @@
 							</div>
 							<hr class=" dark:border-gray-700" />
 
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
+								<div class="flex w-full">
+									<div class="flex-1 mr-2">
+										<select
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											bind:value={deleteModelTag}
+											placeholder="Select a model"
+										>
+											{#if !deleteModelTag}
+												<option value="" disabled selected>Select a model</option>
+											{/if}
+											{#each $models.filter((m) => m.size != null) as model}
+												<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
+													>{model.name +
+														' (' +
+														(model.size / 1024 ** 3).toFixed(1) +
+														' GB)'}</option
+												>
+											{/each}
+										</select>
+									</div>
+									<button
+										class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
+										on:click={() => {
+											deleteModelHandler();
+										}}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5a.75.75 0 0 1 .786-.711Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</button>
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
 							<form
 								on:submit|preventDefault={() => {
 									uploadModelHandler();
 								}}
 							>
 								<div class=" mb-2 flex w-full justify-between">
-									<div class="  text-sm font-medium">Upload a GGUF model</div>
+									<div class="  text-sm font-medium">
+										Upload a GGUF model <a
+											class=" text-xs font-medium text-gray-500 underline"
+											href="https://github.com/jmorganca/ollama/blob/main/README.md#import-from-gguf"
+											target="_blank">(Experimental)</a
+										>
+									</div>
 
 									<button
 										class="p-1 px-3 text-xs flex rounded transition"
@@ -1252,51 +1379,6 @@
 									</div>
 								{/if}
 							</form>
-							<hr class=" dark:border-gray-700" />
-
-							<div>
-								<div class=" mb-2.5 text-sm font-medium">Delete a model</div>
-								<div class="flex w-full">
-									<div class="flex-1 mr-2">
-										<select
-											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-											bind:value={deleteModelTag}
-											placeholder="Select a model"
-										>
-											{#if !deleteModelTag}
-												<option value="" disabled selected>Select a model</option>
-											{/if}
-											{#each $models.filter((m) => m.size != null) as model}
-												<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
-													>{model.name +
-														' (' +
-														(model.size / 1024 ** 3).toFixed(1) +
-														' GB)'}</option
-												>
-											{/each}
-										</select>
-									</div>
-									<button
-										class="px-3 bg-red-700 hover:bg-red-800 text-gray-100 rounded transition"
-										on:click={() => {
-											deleteModelHandler();
-										}}
-									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 16 16"
-											fill="currentColor"
-											class="w-4 h-4"
-										>
-											<path
-												fill-rule="evenodd"
-												d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5a.75.75 0 0 1 .786-.711Z"
-												clip-rule="evenodd"
-											/>
-										</svg>
-									</button>
-								</div>
-							</div>
 						</div>
 					</div>
 				{:else if selectedTab === 'external'}
@@ -1472,6 +1554,150 @@
 							</button>
 						</div>
 					</form>
+				{:else if selectedTab === 'chats'}
+					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
+						<div class="flex flex-col">
+							<input
+								id="chat-import-input"
+								bind:files={importFiles}
+								type="file"
+								accept=".json"
+								hidden
+							/>
+							<button
+								class=" flex rounded-md py-2 px-3.5 w-full hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+								on:click={() => {
+									document.getElementById('chat-import-input').click();
+								}}
+							>
+								<div class=" self-center mr-3">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 16 16"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											fill-rule="evenodd"
+											d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
+											clip-rule="evenodd"
+										/>
+									</svg>
+								</div>
+								<div class=" self-center text-sm font-medium">Import Chats</div>
+							</button>
+							<button
+								class=" flex rounded-md py-2 px-3.5 w-full hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+								on:click={() => {
+									exportChats();
+								}}
+							>
+								<div class=" self-center mr-3">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 16 16"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											fill-rule="evenodd"
+											d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 3.5a.75.75 0 0 1 .75.75v2.69l.72-.72a.75.75 0 1 1 1.06 1.06l-2 2a.75.75 0 0 1-1.06 0l-2-2a.75.75 0 0 1 1.06-1.06l.72.72V6.25A.75.75 0 0 1 8 5.5Z"
+											clip-rule="evenodd"
+										/>
+									</svg>
+								</div>
+								<div class=" self-center text-sm font-medium">Export Chats</div>
+							</button>
+						</div>
+						<!-- {#if showDeleteHistoryConfirm}
+							<div
+								class="flex justify-between rounded-md items-center py-3 px-3.5 w-full transition"
+							>
+								<div class="flex items-center">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke-width="1.5"
+										stroke="currentColor"
+										class="w-5 h-5 mr-3"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+										/>
+									</svg>
+									<span>Are you sure?</span>
+								</div>
+
+								<div class="flex space-x-1.5 items-center">
+									<button
+										class="hover:text-white transition"
+										on:click={() => {
+											deleteChatHistory();
+											showDeleteHistoryConfirm = false;
+										}}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</button>
+									<button
+										class="hover:text-white transition"
+										on:click={() => {
+											showDeleteHistoryConfirm = false;
+										}}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+											/>
+										</svg>
+									</button>
+								</div>
+							</div>
+						{:else}
+							<button
+								class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
+								on:click={() => {
+									showDeleteHistoryConfirm = true;
+								}}
+							>
+								<div class="mr-3">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke-width="1.5"
+										stroke="currentColor"
+										class="w-5 h-5"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+										/>
+									</svg>
+								</div>
+								<span>Clear conversations</span>
+							</button>
+						{/if} -->
+					</div>
 				{:else if selectedTab === 'auth'}
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
@@ -1607,7 +1833,7 @@
 								<div class=" mb-2.5 text-sm font-medium">Ollama Version</div>
 								<div class="flex w-full">
 									<div class="flex-1 text-xs text-gray-700 dark:text-gray-200">
-										{$info?.ollama?.version ?? 'N/A'}
+										{ollamaVersion ?? 'N/A'}
 									</div>
 								</div>
 							</div>

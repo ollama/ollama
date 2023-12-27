@@ -6,32 +6,28 @@
 
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { user, db, chats, showSettings, chatId } from '$lib/stores';
+	import { user, chats, showSettings, chatId } from '$lib/stores';
 	import { onMount } from 'svelte';
+	import { deleteChatById, getChatList, updateChatById } from '$lib/apis/chats';
 
 	let show = false;
 	let navElement;
-	let importFileInputElement;
-	let importFiles;
 
 	let title: string = 'Ollama Web UI';
 	let search = '';
 
 	let chatDeleteId = null;
-
 	let chatTitleEditId = null;
 	let chatTitle = '';
 
 	let showDropdown = false;
-
-	let showDeleteHistoryConfirm = false;
 
 	onMount(async () => {
 		if (window.innerWidth > 1280) {
 			show = true;
 		}
 
-		await chats.set(await $db.getChats());
+		await chats.set(await getChatList(localStorage.token));
 	});
 
 	const loadChat = async (id) => {
@@ -39,49 +35,27 @@
 	};
 
 	const editChatTitle = async (id, _title) => {
-		await $db.updateChatById(id, {
+		title = _title;
+
+		await updateChatById(localStorage.token, id, {
 			title: _title
 		});
-		title = _title;
+		await chats.set(await getChatList(localStorage.token));
 	};
 
 	const deleteChat = async (id) => {
 		goto('/');
-		$db.deleteChatById(id);
+
+		await deleteChatById(localStorage.token, id);
+		await chats.set(await getChatList(localStorage.token));
 	};
-
-	const deleteChatHistory = async () => {
-		await $db.deleteAllChat();
-	};
-
-	const importChats = async (chatHistory) => {
-		await $db.addChats(chatHistory);
-	};
-
-	const exportChats = async () => {
-		let blob = new Blob([JSON.stringify(await $db.exportChats())], { type: 'application/json' });
-		saveAs(blob, `chat-export-${Date.now()}.json`);
-	};
-
-	$: if (importFiles) {
-		console.log(importFiles);
-
-		let reader = new FileReader();
-		reader.onload = (event) => {
-			let chats = JSON.parse(event.target.result);
-			console.log(chats);
-			importChats(chats);
-		};
-
-		reader.readAsText(importFiles[0]);
-	}
 </script>
 
 <div
 	bind:this={navElement}
 	class="h-screen {show
 		? ''
-		: '-translate-x-[260px]'}  w-[260px] fixed top-0 left-0 z-40 transition bg-[#0a0a0a] text-gray-200 shadow-2xl text-sm
+		: '-translate-x-[260px]'}  w-[260px] fixed top-0 left-0 z-40 transition bg-black text-gray-200 shadow-2xl text-sm
         "
 >
 	<div class="py-2.5 my-auto flex flex-col justify-between h-screen">
@@ -91,8 +65,11 @@
 				on:click={async () => {
 					goto('/');
 
-					await chatId.set(uuidv4());
-					// createNewChat();
+					const newChatButton = document.getElementById('new-chat-button');
+
+					if (newChatButton) {
+						newChatButton.click();
+					}
 				}}
 			>
 				<div class="flex self-center">
@@ -121,39 +98,41 @@
 			</button>
 		</div>
 
-		<div class="px-2.5 flex justify-center my-1">
-			<button
-				class="flex-grow flex space-x-3 rounded-md px-3 py-2 hover:bg-gray-900 transition"
-				on:click={async () => {
-					goto('/modelfiles');
-				}}
-			>
-				<div class="self-center">
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke-width="1.5"
-						stroke="currentColor"
-						class="w-4 h-4"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z"
-						/>
-					</svg>
-				</div>
+		{#if $user?.role === 'admin'}
+			<div class="px-2.5 flex justify-center my-1">
+				<button
+					class="flex-grow flex space-x-3 rounded-md px-3 py-2 hover:bg-gray-900 transition"
+					on:click={async () => {
+						goto('/modelfiles');
+					}}
+				>
+					<div class="self-center">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke-width="1.5"
+							stroke="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z"
+							/>
+						</svg>
+					</div>
 
-				<div class="flex self-center">
-					<div class=" self-center font-medium text-sm">Modelfiles</div>
-				</div>
-			</button>
-		</div>
+					<div class="flex self-center">
+						<div class=" self-center font-medium text-sm">Modelfiles</div>
+					</div>
+				</button>
+			</div>
+		{/if}
 
 		<div class="px-2.5 mt-1 mb-2 flex justify-center space-x-2">
 			<div class="flex w-full">
-				<div class="self-center pl-3 py-2 rounded-l bg-gray-900">
+				<div class="self-center pl-3 py-2 rounded-l bg-gray-950">
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						viewBox="0 0 20 20"
@@ -169,7 +148,7 @@
 				</div>
 
 				<input
-					class="w-full rounded-r py-1.5 pl-2.5 pr-4 text-sm text-gray-300 bg-gray-900 outline-none"
+					class="w-full rounded-r py-1.5 pl-2.5 pr-4 text-sm text-gray-300 bg-gray-950 outline-none"
 					placeholder="Search"
 					bind:value={search}
 				/>
@@ -394,148 +373,9 @@
 		</div>
 
 		<div class="px-2.5">
-			<hr class=" border-gray-800 mb-2 w-full" />
+			<hr class=" border-gray-900 mb-1 w-full" />
 
 			<div class="flex flex-col">
-				<div class="flex">
-					<input bind:this={importFileInputElement} bind:files={importFiles} type="file" hidden />
-					<button
-						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
-						on:click={() => {
-							importFileInputElement.click();
-							// importChats();
-						}}
-					>
-						<div class=" self-center mr-3">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="w-5 h-5"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
-								/>
-							</svg>
-						</div>
-						<div class=" self-center">Import</div>
-					</button>
-					<button
-						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
-						on:click={() => {
-							exportChats();
-						}}
-					>
-						<div class=" self-center mr-3">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="w-5 h-5"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m.75 12l3 3m0 0l3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
-								/>
-							</svg>
-						</div>
-						<div class=" self-center">Export</div>
-					</button>
-				</div>
-				{#if showDeleteHistoryConfirm}
-					<div class="flex justify-between rounded-md items-center py-3 px-3.5 w-full transition">
-						<div class="flex items-center">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="w-5 h-5 mr-3"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-								/>
-							</svg>
-							<span>Are you sure?</span>
-						</div>
-
-						<div class="flex space-x-1.5 items-center">
-							<button
-								class="hover:text-white transition"
-								on:click={() => {
-									deleteChatHistory();
-									showDeleteHistoryConfirm = false;
-								}}
-							>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									viewBox="0 0 20 20"
-									fill="currentColor"
-									class="w-4 h-4"
-								>
-									<path
-										fill-rule="evenodd"
-										d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
-										clip-rule="evenodd"
-									/>
-								</svg>
-							</button>
-							<button
-								class="hover:text-white transition"
-								on:click={() => {
-									showDeleteHistoryConfirm = false;
-								}}
-							>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									viewBox="0 0 20 20"
-									fill="currentColor"
-									class="w-4 h-4"
-								>
-									<path
-										d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
-									/>
-								</svg>
-							</button>
-						</div>
-					</div>
-				{:else}
-					<button
-						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
-						on:click={() => {
-							showDeleteHistoryConfirm = true;
-						}}
-					>
-						<div class="mr-3">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="w-5 h-5"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-								/>
-							</svg>
-						</div>
-						<span>Clear conversations</span>
-					</button>
-				{/if}
-
 				{#if $user !== undefined}
 					<button
 						class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"

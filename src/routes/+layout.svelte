@@ -2,56 +2,39 @@
 	import { onMount, tick } from 'svelte';
 	import { config, user } from '$lib/stores';
 	import { goto } from '$app/navigation';
-	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import toast, { Toaster } from 'svelte-french-toast';
+
+	import { getBackendConfig } from '$lib/apis';
+	import { getSessionUser } from '$lib/apis/auths';
 
 	import '../app.css';
 	import '../tailwind.css';
 	import 'tippy.js/dist/tippy.css';
+
 	let loaded = false;
 
 	onMount(async () => {
-		const resBackend = await fetch(`${WEBUI_API_BASE_URL}/`, {
-			method: 'GET',
-			headers: {
-				'Content-Type': 'application/json'
-			}
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.catch((error) => {
-				console.log(error);
-				return null;
-			});
+		// Check Backend Status
+		const backendConfig = await getBackendConfig();
 
-		console.log(resBackend);
-		await config.set(resBackend);
+		if (backendConfig) {
+			// Save Backend Status to Store
+			await config.set(backendConfig);
+			console.log(backendConfig);
 
-		if ($config) {
-			if ($config.auth) {
+			if ($config) {
 				if (localStorage.token) {
-					const res = await fetch(`${WEBUI_API_BASE_URL}/auths`, {
-						method: 'GET',
-						headers: {
-							'Content-Type': 'application/json',
-							Authorization: `Bearer ${localStorage.token}`
-						}
-					})
-						.then(async (res) => {
-							if (!res.ok) throw await res.json();
-							return res.json();
-						})
-						.catch((error) => {
-							console.log(error);
-							toast.error(error.detail);
-							return null;
-						});
+					// Get Session User Info
+					const sessionUser = await getSessionUser(localStorage.token).catch((error) => {
+						toast.error(error);
+						return null;
+					});
 
-					if (res) {
-						await user.set(res);
+					if (sessionUser) {
+						// Save Session User to Store
+						await user.set(sessionUser);
 					} else {
+						// Redirect Invalid Session User to /auth Page
 						localStorage.removeItem('token');
 						await goto('/auth');
 					}
@@ -59,6 +42,9 @@
 					await goto('/auth');
 				}
 			}
+		} else {
+			// Redirect to /error when Backend Not Detected
+			await goto(`/error`);
 		}
 
 		await tick();
@@ -69,8 +55,9 @@
 <svelte:head>
 	<title>Ollama</title>
 </svelte:head>
-<Toaster />
 
-{#if $config !== undefined && loaded}
+{#if loaded}
 	<slot />
 {/if}
+
+<Toaster />

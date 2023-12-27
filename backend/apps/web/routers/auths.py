@@ -104,8 +104,8 @@ async def signup(form_data: SignupForm):
                     "profile_image_url": user.profile_image_url,
                 }
             else:
-                raise HTTPException(500, detail=ERROR_MESSAGES.DEFAULT(err))
+                raise HTTPException(500, detail=ERROR_MESSAGES.CREATE_USER_ERROR)
         except Exception as err:
             raise HTTPException(500, detail=ERROR_MESSAGES.DEFAULT(err))
     else:
-        raise HTTPException(400, detail=ERROR_MESSAGES.DEFAULT())
+        raise HTTPException(400, detail=ERROR_MESSAGES.EMAIL_TAKEN)

@@ -1,18 +1,17 @@
 <script lang="ts">
-	import { v4 as uuidv4 } from 'uuid';
-
-	import { goto } from '$app/navigation';
+	import { getChatById } from '$lib/apis/chats';
 	import { chatId, db, modelfiles } from '$lib/stores';
 	import toast from 'svelte-french-toast';
 
+	export let initNewChat: Function;
 	export let title: string = 'Ollama Web UI';
 	export let shareEnabled: boolean = false;
 
 	const shareChat = async () => {
-		const chat = await $db.getChatById($chatId);
+		const chat = (await getChatById(localStorage.token, $chatId)).chat;
 		console.log('share', chat);
-		toast.success('Redirecting you to OllamaHub');
 
+		toast.success('Redirecting you to OllamaHub');
 		const url = 'https://ollamahub.com';
 		// const url = 'http://localhost:5173';
 
@@ -44,12 +43,9 @@
 		<div class="flex w-full max-w-full">
 			<div class="pr-2 self-center">
 				<button
+					id="new-chat-button"
 					class=" cursor-pointer p-1 flex dark:hover:bg-gray-700 rounded-lg transition"
-					on:click={async () => {
-						console.log('newChat');
-						goto('/');
-						await chatId.set(uuidv4());
-					}}
+					on:click={initNewChat}
 				>
 					<div class=" m-auto self-center">
 						<svg

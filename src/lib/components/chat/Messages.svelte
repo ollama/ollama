@@ -8,11 +8,13 @@
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
 	import 'katex/dist/katex.min.css';
 
-	import { chatId, config, db, modelfiles, settings, user } from '$lib/stores';
+	import { chats, config, db, modelfiles, settings, user } from '$lib/stores';
 	import { tick } from 'svelte';
 
 	import toast from 'svelte-french-toast';
+	import { getChatList, updateChatById } from '$lib/apis/chats';
 
+	export let chatId = '';
 	export let sendPrompt: Function;
 	export let regenerateResponse: Function;
 
@@ -27,14 +29,25 @@
 	$: if (messages && messages.length > 0 && (messages.at(-1).done ?? false)) {
 		(async () => {
 			await tick();
+
+			[...document.querySelectorAll('*')].forEach((node) => {
+				if (node._tippy) {
+					node._tippy.destroy();
+				}
+			});
+
+			console.log('rendering message');
+
 			renderLatex();
 			hljs.highlightAll();
 			createCopyCodeBlockButton();
 
 			for (const message of messages) {
 				if (message.info) {
+					console.log(message);
+
 					tippy(`#info-${message.id}`, {
-						content: `<span class="text-xs">token/s: ${
+						content: `<span class="text-xs" id="tooltip-${message.id}">token/s: ${
 							`${
 								Math.round(
 									((message.info.eval_count ?? 0) / (message.info.eval_duration / 1000000000)) * 100
@@ -81,7 +94,7 @@
 		blocks.forEach((block) => {
 			// only add button if browser supports Clipboard API
 
-			if (navigator.clipboard && block.childNodes.length < 2 && block.id !== 'user-message') {
+			if (block.childNodes.length < 2 && block.id !== 'user-message') {
 				let code = block.querySelector('code');
 				code.style.borderTopRightRadius = 0;
 				code.style.borderTopLeftRadius = 0;
@@ -119,10 +132,6 @@
 				topBarDiv.appendChild(button);
 
 				block.prepend(topBarDiv);
-
-				// button.addEventListener('click', async () => {
-				// 	await copyCode(block, button);
-				// });
 			}
 		});
 
@@ -130,7 +139,7 @@
 			let code = block.querySelector('code');
 			let text = code.innerText;
 
-			await navigator.clipboard.writeText(text);
+			await copyToClipboard(text);
 
 			// visual feedback that task is completed
 			button.innerText = 'Copied!';
@@ -239,7 +248,7 @@
 		history.currentId = userMessageId;
 
 		await tick();
-		await sendPrompt(userPrompt, userMessageId, $chatId);
+		await sendPrompt(userPrompt, userMessageId, chatId);
 	};
 
 	const confirmEditResponseMessage = async (messageId) => {
@@ -253,6 +262,7 @@
 	};
 
 	const rateMessage = async (messageIdx, rating) => {
+		// TODO: Move this function to parent
 		messages = messages.map((message, idx) => {
 			if (messageIdx === idx) {
 				message.rating = rating;
@@ -260,10 +270,12 @@
 			return message;
 		});
 
-		$db.updateChatById(chatId, {
+		await updateChatById(localStorage.token, chatId, {
 			messages: messages,
 			history: history
 		});
+
+		await chats.set(await getChatList(localStorage.token));
 	};
 
 	const showPreviousMessage = async (message) => {

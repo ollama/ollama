@@ -1,46 +1,41 @@
 <script lang="ts">
-	import { modelfiles, settings, user } from '$lib/stores';
-	import { onMount } from 'svelte';
 	import toast from 'svelte-french-toast';
+	import fileSaver from 'file-saver';
+	const { saveAs } = fileSaver;
 
+	import { onMount } from 'svelte';
+
+	import { modelfiles, settings, user } from '$lib/stores';
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
+	import { createModel, deleteModel } from '$lib/apis/ollama';
+	import {
+		createNewModelfile,
+		deleteModelfileByTagName,
+		getModelfiles
+	} from '$lib/apis/modelfiles';
+
+	let localModelfiles = [];
 
 	const deleteModelHandler = async (tagName) => {
 		let success = null;
-		const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/delete`, {
-			method: 'DELETE',
-			headers: {
-				'Content-Type': 'text/event-stream',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			},
-			body: JSON.stringify({
-				name: tagName
-			})
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.then((json) => {
-				console.log(json);
-				toast.success(`Deleted ${tagName}`);
-				success = true;
-				return json;
-			})
-			.catch((err) => {
-				console.log(err);
-				toast.error(err.error);
-				return null;
-			});
+
+		success = await deleteModel(
+			$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+			localStorage.token,
+			tagName
+		);
+
+		if (success) {
+			toast.success(`Deleted ${tagName}`);
+		}
 
 		return success;
 	};
 
-	const deleteModelfilebyTagName = async (tagName) => {
+	const deleteModelfile = async (tagName) => {
 		await deleteModelHandler(tagName);
-		await modelfiles.set($modelfiles.filter((modelfile) => modelfile.tagName != tagName));
-		localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
+		await deleteModelfileByTagName(localStorage.token, tagName);
+		await modelfiles.set(await getModelfiles(localStorage.token));
 	};
 
 	const shareModelfile = async (modelfile) => {
@@ -60,6 +55,21 @@
 			false
 		);
 	};
+
+	const saveModelfiles = async (modelfiles) => {
+		let blob = new Blob([JSON.stringify(modelfiles)], {
+			type: 'application/json'
+		});
+		saveAs(blob, `modelfiles-export-${Date.now()}.json`);
+	};
+
+	onMount(() => {
+		localModelfiles = JSON.parse(localStorage.getItem('modelfiles') ?? '[]');
+
+		if (localModelfiles) {
+			console.log(localModelfiles);
+		}
+	});
 </script>
 
 <div class="min-h-screen w-full flex justify-center dark:text-white">
@@ -167,7 +177,7 @@
 							class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
 							type="button"
 							on:click={() => {
-								deleteModelfilebyTagName(modelfile.tagName);
+								deleteModelfile(modelfile.tagName);
 							}}
 						>
 							<svg
@@ -188,6 +198,79 @@
 					</div>
 				</div>
 			{/each}
+
+			{#if localModelfiles.length > 0}
+				<hr class=" dark:border-gray-700 my-2.5" />
+
+				<div class=" flex justify-end space-x-4 w-full mb-3">
+					<div class=" self-center text-sm font-medium">
+						{localModelfiles.length} Local Modelfiles Detected
+					</div>
+
+					<div class="flex space-x-1">
+						<button
+							class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
+							on:click={async () => {
+								for (const modelfile of localModelfiles) {
+									await createNewModelfile(localStorage.token, modelfile).catch((error) => {
+										return null;
+									});
+								}
+
+								saveModelfiles(localModelfiles);
+								localStorage.removeItem('modelfiles');
+								localModelfiles = JSON.parse(localStorage.getItem('modelfiles') ?? '[]');
+								await modelfiles.set(await getModelfiles(localStorage.token));
+							}}
+						>
+							<div class=" self-center mr-2 font-medium">Sync All</div>
+
+							<div class=" self-center">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									viewBox="0 0 16 16"
+									fill="currentColor"
+									class="w-3.5 h-3.5"
+								>
+									<path
+										fill-rule="evenodd"
+										d="M13.836 2.477a.75.75 0 0 1 .75.75v3.182a.75.75 0 0 1-.75.75h-3.182a.75.75 0 0 1 0-1.5h1.37l-.84-.841a4.5 4.5 0 0 0-7.08.932.75.75 0 0 1-1.3-.75 6 6 0 0 1 9.44-1.242l.842.84V3.227a.75.75 0 0 1 .75-.75Zm-.911 7.5A.75.75 0 0 1 13.199 11a6 6 0 0 1-9.44 1.241l-.84-.84v1.371a.75.75 0 0 1-1.5 0V9.591a.75.75 0 0 1 .75-.75H5.35a.75.75 0 0 1 0 1.5H3.98l.841.841a4.5 4.5 0 0 0 7.08-.932.75.75 0 0 1 1.025-.273Z"
+										clip-rule="evenodd"
+									/>
+								</svg>
+							</div>
+						</button>
+
+						<button
+							class="self-center w-fit text-sm p-1.5 border dark:border-gray-600 rounded-xl flex"
+							on:click={async () => {
+								saveModelfiles(localModelfiles);
+
+								localStorage.removeItem('modelfiles');
+								localModelfiles = JSON.parse(localStorage.getItem('modelfiles') ?? '[]');
+								await modelfiles.set(await getModelfiles(localStorage.token));
+							}}
+						>
+							<div class=" self-center">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke-width="1.5"
+									stroke="currentColor"
+									class="w-4 h-4"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+									/>
+								</svg>
+							</div>
+						</button>
+					</div>
+				</div>
+			{/if}
 
 			<div class=" my-16">
 				<div class=" text-2xl font-semibold mb-6">Made by OllamaHub Community</div>

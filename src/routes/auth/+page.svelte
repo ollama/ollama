@@ -1,5 +1,6 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { userSignIn, userSignUp } from '$lib/apis/auths';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import { config, user } from '$lib/stores';
 	import { onMount } from 'svelte';
@@ -12,76 +13,51 @@
 	let email = '';
 	let password = '';
 
-	const signInHandler = async () => {
-		const res = await fetch(`${WEBUI_API_BASE_URL}/auths/signin`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({
-				email: email,
-				password: password
-			})
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.catch((error) => {
-				console.log(error);
-				toast.error(error.detail);
-				return null;
-			});
-
-		if (res) {
-			console.log(res);
+	const setSessionUser = async (sessionUser) => {
+		if (sessionUser) {
+			console.log(sessionUser);
 			toast.success(`You're now logged in.`);
-			localStorage.token = res.token;
-			await user.set(res);
+			localStorage.token = sessionUser.token;
+			await user.set(sessionUser);
 			goto('/');
 		}
 	};
 
-	const signUpHandler = async () => {
-		const res = await fetch(`${WEBUI_API_BASE_URL}/auths/signup`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({
-				name: name,
-				email: email,
-				password: password
-			})
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.catch((error) => {
-				console.log(error);
-				toast.error(error.detail);
-				return null;
-			});
+	const signInHandler = async () => {
+		const sessionUser = await userSignIn(email, password).catch((error) => {
+			toast.error(error);
+			return null;
+		});
 
-		if (res) {
-			console.log(res);
-			toast.success(`Account creation successful."`);
-			localStorage.token = res.token;
-			await user.set(res);
-			goto('/');
+		await setSessionUser(sessionUser);
+	};
+
+	const signUpHandler = async () => {
+		const sessionUser = await userSignUp(name, email, password).catch((error) => {
+			toast.error(error);
+			return null;
+		});
+
+		await setSessionUser(sessionUser);
+	};
+
+	const submitHandler = async () => {
+		if (mode === 'signin') {
+			await signInHandler();
+		} else {
+			await signUpHandler();
 		}
 	};
 
 	onMount(async () => {
-		if ($config === null || !$config.auth || ($config.auth && $user !== undefined)) {
+		if ($user !== undefined) {
 			await goto('/');
 		}
 		loaded = true;
 	});
 </script>
 
-{#if loaded && $config && $config.auth}
+{#if loaded}
 	<div class="fixed m-10 z-50">
 		<div class="flex space-x-2">
 			<div class=" self-center">
@@ -91,7 +67,7 @@
 	</div>
 
 	<div class=" bg-white min-h-screen w-full flex justify-center font-mona">
-		<div class="hidden lg:flex lg:flex-1 px-10 md:px-16 w-full bg-yellow-50 justify-center">
+		<!-- <div class="hidden lg:flex lg:flex-1 px-10 md:px-16 w-full bg-yellow-50 justify-center">
 			<div class=" my-auto pb-16 text-left">
 				<div>
 					<div class=" font-bold text-yellow-600 text-4xl">
@@ -103,66 +79,65 @@
 					</div>
 				</div>
 			</div>
-		</div>
+		</div> -->
 
-		<div class="w-full max-w-xl px-10 md:px-16 bg-white min-h-screen w-full flex flex-col">
+		<div class="w-full max-w-lg px-10 md:px-16 bg-white min-h-screen flex flex-col">
 			<div class=" my-auto pb-10 w-full">
 				<form
 					class=" flex flex-col justify-center"
 					on:submit|preventDefault={() => {
-						if (mode === 'signin') {
-							signInHandler();
-						} else {
-							signUpHandler();
-						}
+						submitHandler();
 					}}
 				>
-					<div class=" text-2xl md:text-3xl font-semibold">
+					<div class=" text-xl md:text-2xl font-bold">
 						{mode === 'signin' ? 'Sign in' : 'Sign up'} to Ollama Web UI
 					</div>
 
-					<hr class="my-8" />
-
-					<div class="flex flex-col space-y-4">
+					<div class="flex flex-col mt-4">
 						{#if mode === 'signup'}
 							<div>
-								<div class=" text-sm font-bold text-left mb-2">Name</div>
+								<div class=" text-sm font-semibold text-left mb-1">Name</div>
 								<input
 									bind:value={name}
 									type="text"
-									class=" border px-5 py-4 rounded-2xl w-full text-sm"
+									class=" border px-4 py-2.5 rounded-2xl w-full text-sm"
 									autocomplete="name"
+									placeholder="Enter Your Full Name"
 									required
 								/>
 							</div>
+
+							<hr class=" my-3" />
 						{/if}
 
-						<div>
-							<div class=" text-sm font-bold text-left mb-2">Email</div>
+						<div class="mb-2">
+							<div class=" text-sm font-semibold text-left mb-1">Email</div>
 							<input
 								bind:value={email}
 								type="email"
-								class=" border px-5 py-4 rounded-2xl w-full text-sm"
+								class=" border px-4 py-2.5 rounded-2xl w-full text-sm"
 								autocomplete="email"
+								placeholder="Enter Your Email"
 								required
 							/>
 						</div>
 
 						<div>
-							<div class=" text-sm font-bold text-left mb-2">Password</div>
+							<div class=" text-sm font-semibold text-left mb-1">Password</div>
 							<input
 								bind:value={password}
 								type="password"
-								class=" border px-5 py-4 rounded-2xl w-full text-sm"
+								class=" border px-4 py-2.5 rounded-2xl w-full text-sm"
+								placeholder="Enter Your Password"
 								autocomplete="current-password"
 								required
 							/>
 						</div>
 					</div>
 
-					<div class="mt-8">
+					<div class="mt-5">
 						<button
-							class=" bg-gray-900 hover:bg-gray-800 w-full rounded-full text-white font-semibold text-sm py-5 transition"
+							class=" bg-gray-900 hover:bg-gray-800 w-full rounded-full text-white font-semibold text-sm py-3 transition"
 							type="submit"
 						>
 							{mode === 'signin' ? 'Sign In' : 'Create Account'}

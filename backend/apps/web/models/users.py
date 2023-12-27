@@ -1,16 +1,29 @@
 from pydantic import BaseModel
+from peewee import *
+from playhouse.shortcuts import model_to_dict
 from typing import List, Union, Optional
-from pymongo import ReturnDocument
 import time
 
 from utils.utils import decode_token
 from utils.misc import get_gravatar_url
 
-from config import DB
+from apps.web.internal.db import DB
 
 ####################
 # User DB Schema
 ####################
+
+
+class User(Model):
+    id = CharField(unique=True)
+    name = CharField()
+    email = CharField()
+    role = CharField()
+    profile_image_url = CharField()
+    timestamp = DateField()
+
+    class Meta:
+        database = DB
 
 
 class UserModel(BaseModel):
@@ -19,7 +32,7 @@ class UserModel(BaseModel):
     email: str
     role: str = "pending"
     profile_image_url: str = "/user.png"
-    created_at: int  # timestamp in epoch
+    timestamp: int  # timestamp in epoch
 
 
 ####################
@@ -35,7 +48,7 @@ class UserRoleUpdateForm(BaseModel):
 class UsersTable:
     def __init__(self, db):
         self.db = db
-        self.table = db.users
+        self.db.create_tables([User])
 
     def insert_new_user(
         self, id: str, name: str, email: str, role: str = "pending"
@@ -47,22 +60,27 @@ class UsersTable:
                 "email": email,
                 "role": role,
                 "profile_image_url": get_gravatar_url(email),
-                "created_at": int(time.time()),
+                "timestamp": int(time.time()),
             }
         )
-        result = self.table.insert_one(user.model_dump())
-
+        result = User.create(**user.model_dump())
         if result:
             return user
         else:
             return None
 
-    def get_user_by_email(self, email: str) -> Optional[UserModel]:
-        user = self.table.find_one({"email": email}, {"_id": False})
+    def get_user_by_id(self, id: str) -> Optional[UserModel]:
+        try:
+            user = User.get(User.id == id)
+            return UserModel(**model_to_dict(user))
+        except:
+            return None
 
-        if user:
-            return UserModel(**user)
-        else:
+    def get_user_by_email(self, email: str) -> Optional[UserModel]:
+        try:
+            user = User.get(User.email == email)
+            return UserModel(**model_to_dict(user))
+        except:
             return None
 
     def get_user_by_token(self, token: str) -> Optional[UserModel]:
@@ -75,23 +93,22 @@ class UsersTable:
 
     def get_users(self, skip: int = 0, limit: int = 50) -> List[UserModel]:
         return [
-            UserModel(**user)
-            for user in list(
-                self.table.find({}, {"_id": False}).skip(skip).limit(limit)
-            )
+            UserModel(**model_to_dict(user))
+            for user in User.select().limit(limit).offset(skip)
         ]
 
     def get_num_users(self) -> Optional[int]:
-        return self.table.count_documents({})
-
-    def update_user_by_id(self, id: str, updated: dict) -> Optional[UserModel]:
-        user = self.table.find_one_and_update(
-            {"id": id}, {"$set": updated}, return_document=ReturnDocument.AFTER
-        )
-        return UserModel(**user)
+        return User.select().count()
 
     def update_user_role_by_id(self, id: str, role: str) -> Optional[UserModel]:
-        return self.update_user_by_id(id, {"role": role})
+        try:
+            query = User.update(role=role).where(User.id == id)
+            query.execute()
+
+            user = User.get(User.id == id)
+            return UserModel(**model_to_dict(user))
+        except:
+            return None
 
 
 Users = UsersTable(DB)

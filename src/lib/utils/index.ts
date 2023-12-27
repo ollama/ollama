@@ -66,9 +66,9 @@ export const getGravatarURL = (email) => {
 	return `https://www.gravatar.com/avatar/${hash}`;
 };
 
-const copyToClipboard = (text) => {
+export const copyToClipboard = (text) => {
 	if (!navigator.clipboard) {
-		var textArea = document.createElement('textarea');
+		const textArea = document.createElement('textarea');
 		textArea.value = text;
 
 		// Avoid scrolling to bottom
@@ -81,8 +81,8 @@ const copyToClipboard = (text) => {
 		textArea.select();
 
 		try {
-			var successful = document.execCommand('copy');
-			var msg = successful ? 'successful' : 'unsuccessful';
+			const successful = document.execCommand('copy');
+			const msg = successful ? 'successful' : 'unsuccessful';
 			console.log('Fallback: Copying text command was ' + msg);
 		} catch (err) {
 			console.error('Fallback: Oops, unable to copy', err);
@@ -99,4 +99,15 @@ const copyToClipboard = (text) => {
 			console.error('Async: Could not copy text: ', err);
 		}
 	);
+};
+
+export const checkVersion = (required, current) => {
+	// Returns true when current version is below required
+	return current === '0.0.0'
+		? false
+		: current.localeCompare(required, undefined, {
+				numeric: true,
+				sensitivity: 'case',
+				caseFirst: 'upper'
+		  }) < 0;
 };

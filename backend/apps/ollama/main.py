@@ -25,7 +25,7 @@ TARGET_SERVER_URL = OLLAMA_API_BASE_URL
 def proxy(path):
     # Combine the base URL of the target server with the requested path
     target_url = f"{TARGET_SERVER_URL}/{path}"
-    print(path)
+    print(target_url)
 
     # Get data from the original request
     data = request.get_data()
@@ -61,6 +61,11 @@ def proxy(path):
 
     r = None
 
+    headers.pop("Host", None)
+    headers.pop("Authorization", None)
+    headers.pop("Origin", None)
+    headers.pop("Referer", None)
+
     try:
         # Make a request to the target server
         r = requests.request(
@@ -86,8 +91,10 @@ def proxy(path):
 
         return response
     except Exception as e:
+        print(e)
         error_detail = "Ollama WebUI: Server Connection Error"
         if r != None:
+            print(r.text)
             res = r.json()
             if "error" in res:
                 error_detail = f"Ollama: {res['error']}"
