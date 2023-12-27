@@ -9,7 +9,7 @@
 	import { splitStream } from '$lib/utils';
 	import { onMount, tick } from 'svelte';
 	import { createModel } from '$lib/apis/ollama';
-	import { createNewModelfile, getModelfiles } from '$lib/apis/modelfiles';
+	import { createNewModelfile, getModelfileByTagName, getModelfiles } from '$lib/apis/modelfiles';
 
 	let loading = false;
 
@@ -117,7 +117,10 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 			return success;
 		}
 
-		if ($models.includes(tagName)) {
+		if (
+			$models.map((model) => model.name).includes(tagName) ||
+			(await getModelfileByTagName(localStorage.token, tagName).catch(() => false))
+		) {
 			toast.error(
 				`Uh-oh! It looks like you already have a model named '${tagName}'. Please choose a different name to complete your modelfile.`
 			);

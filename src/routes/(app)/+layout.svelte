@@ -97,8 +97,6 @@
 
 			console.log();
 			await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
-			// await models.set(await getModels());
-			// JSON.parse(localStorage.getItem('modelfiles') ?? '[]')
 			await modelfiles.set(await getModelfiles(localStorage.token));
 			console.log($modelfiles);
 

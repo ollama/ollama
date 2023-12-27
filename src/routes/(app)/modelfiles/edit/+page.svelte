@@ -85,17 +85,6 @@
 	});
 
 	const updateModelfile = async (modelfile) => {
-		// await modelfiles.set(
-		// 	$modelfiles.map((e) => {
-		// 		if (e.tagName === modelfile.tagName) {
-		// 			return modelfile;
-		// 		} else {
-		// 			return e;
-		// 		}
-		// 	})
-		// );
-		// localStorage.setItem('modelfiles', JSON.stringify($modelfiles));
-
 		await updateModelfileByTagName(localStorage.token, modelfile.tagName, modelfile);
 		await modelfiles.set(await getModelfiles(localStorage.token));
 	};
