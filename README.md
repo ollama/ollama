@@ -57,9 +57,9 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ⚙️ **Fine-Tuned Control with Advanced Parameters**: Gain a deeper level of control by adjusting parameters such as temperature and defining your system prompts to tailor the conversation to your specific preferences and needs.
 
-- 🔐 **Auth Header Support**: Effortlessly enhance security by adding Authorization headers to Ollama requests directly from the web UI settings, ensuring access to secured Ollama servers.
+- 🔗 **External Ollama Server Connection**: Seamlessly link to an external Ollama server hosted on a different address by configuring the environment variable.
 
-- 🔗 **External Ollama Server Connection**: Seamlessly link to an external Ollama server hosted on a different address by configuring the environment variable during the Docker build phase. Additionally, you can also set the external server connection URL from the web UI post-build.
+- 🔐 **Role-Based Access Control (RBAC)**: Ensure secure access with restricted permissions; only authorized individuals can enter Ollama, and exclusive model creation/pulling rights are reserved for administrators.
 
 - 🔒 **Backend Reverse Proxy Support**: Strengthen security by enabling direct communication between Ollama Web UI backend and Ollama, eliminating the need to expose Ollama over LAN.
 
@@ -82,13 +82,17 @@ docker compose up -d --build
 This command will install both Ollama and Ollama Web UI on your system.
 
 #### Enable GPU
+
 Use the additional Docker Compose file designed to enable GPU support by running the following command:
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 ```
 
 #### Expose Ollama API outside the container stack
+
 Deploy the service with an additional Docker Compose file designed for API exposure:
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.api.yml up -d --build
 ```
@@ -108,14 +112,14 @@ After installing Ollama, verify that Ollama is running by accessing the followin
 If Ollama is hosted on your local machine and accessible at [http://127.0.0.1:11434/](http://127.0.0.1:11434/), run the following command:
 
 ```bash
-docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 Alternatively, if you prefer to build the container yourself, use the following command:
 
 ```bash
 docker build -t ollama-webui .
-docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway --name ollama-webui --restart always ollama-webui
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend --name ollama-webui --restart always ollama-webui
 ```
 
 Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000) and accessible over LAN (or Network). Enjoy! 😄
@@ -125,14 +129,14 @@ Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localh
 Change `OLLAMA_API_BASE_URL` environment variable to match the external Ollama Server url:
 
 ```bash
-docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 Alternatively, if you prefer to build the container yourself, use the following command:
 
 ```bash
 docker build -t ollama-webui .
-docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api --name ollama-webui --restart always ollama-webui
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend --name ollama-webui --restart always ollama-webui
 ```
 
 ## How to Install Without Docker
@@ -257,7 +261,6 @@ See [TROUBLESHOOTING.md](/TROUBLESHOOTING.md) for information on how to troubles
 Here are some exciting tasks on our roadmap:
 
 - 📚 **RAG Integration**: Experience first-class retrieval augmented generation support, enabling chat with your documents.
-- 🔐 **Access Control**: Securely manage requests to Ollama by utilizing the backend as a reverse proxy gateway, ensuring only authenticated users can send specific requests.
 - 🧪 **Research-Centric Features**: Empower researchers in the fields of LLM and HCI with a comprehensive web UI for conducting user studies. Stay tuned for ongoing feature enhancements (e.g., surveys, analytics, and participant tracking) to facilitate their research.
 - 📈 **User Study Tools**: Providing specialized tools, like heat maps and behavior tracking modules, to empower researchers in capturing and analyzing user behavior patterns with precision and accuracy.
 - 📚 **Enhanced Documentation**: Elevate your setup and customization experience with improved, comprehensive documentation.
