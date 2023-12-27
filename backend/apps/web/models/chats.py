@@ -119,8 +119,8 @@ class ChatTable:
             for chat in Chat.select()
             .where(Chat.user_id == user_id)
             .order_by(Chat.timestamp.desc())
-            .limit(limit)
-            .offset(skip)
+            # .limit(limit)
+            # .offset(skip)
         ]
 
     def get_chat_by_id_and_user_id(self, id: str, user_id: str) -> Optional[ChatModel]:

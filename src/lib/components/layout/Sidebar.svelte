@@ -49,15 +49,6 @@
 		await deleteChatById(localStorage.token, id);
 		await chats.set(await getChatList(localStorage.token));
 	};
-
-	// const deleteChatHistory = async () => {
-	// 	await $db.deleteAllChat();
-
-	// const tx = this.db.transaction('chats', 'readwrite');
-	// 			await Promise.all([tx.store.clear(), tx.done]);
-
-	// 			await chats.set(await this.getChats());
-	// };
 </script>
 
 <div

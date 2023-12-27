@@ -1,6 +1,6 @@
 <script lang="ts">
 	import toast from 'svelte-french-toast';
-	import { openDB } from 'idb';
+	import { openDB, deleteDB } from 'idb';
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 
@@ -72,16 +72,26 @@
 		if ($user === undefined) {
 			await goto('/auth');
 		} else if (['user', 'admin'].includes($user.role)) {
-			DB = await openDB('Chats', 1);
+			try {
+				// Check if IndexedDB exists
+				DB = await openDB('Chats', 1);
 
-			if (DB) {
-				const chats = await DB.getAllFromIndex('chats', 'timestamp');
-				localDBChats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
+				if (DB) {
+					const chats = await DB.getAllFromIndex('chats', 'timestamp');
+					localDBChats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
 
-				console.log('localdb', localDBChats);
+					if (localDBChats.length === 0) {
+						await deleteDB('Chats');
+					}
+
+					console.log('localdb', localDBChats);
+				}
+
+				console.log(DB);
+			} catch (error) {
+				// IndexedDB Not Found
+				console.log('IDB Not Found');
 			}
-
-			console.log(DB);
 
 			console.log();
 			await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
@@ -214,6 +224,7 @@
 
 										const tx = DB.transaction('chats', 'readwrite');
 										await Promise.all([tx.store.clear(), tx.done]);
+										await deleteDB('Chats');
 
 										localDBChats = [];
 									}}
