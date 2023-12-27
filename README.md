@@ -277,7 +277,11 @@ A big shoutout to our amazing supporters who's helping to make this project poss
 
 ### Platinum Sponsors 🤍
 
-- [Prof. Lawrence Kim @ SFU](https://www.lhkim.com/)
+- We're looking for Sponsors!
+
+### Acknowledgments
+
+Special thanks to [Prof. Lawrence Kim @ SFU](https://www.lhkim.com/) and [Prof. Nick Vincent @ SFU](https://www.nickmvincent.com/) for their invaluable support and guidance in shaping this project into a research endeavor. Grateful for your mentorship throughout the journey! 🙌
 
 ## License 📜
 
