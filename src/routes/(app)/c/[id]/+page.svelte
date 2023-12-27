@@ -2,18 +2,21 @@
 	import { v4 as uuidv4 } from 'uuid';
 	import toast from 'svelte-french-toast';
 
-	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
-	import { convertMessagesToHistory, copyToClipboard, splitStream } from '$lib/utils';
 	import { goto } from '$app/navigation';
-	import { config, models, modelfiles, user, settings, db, chats, chatId } from '$lib/stores';
+	import { page } from '$app/stores';
+
+	import { models, modelfiles, user, settings, db, chats, chatId } from '$lib/stores';
+	import { OLLAMA_API_BASE_URL } from '$lib/constants';
+
+	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
+	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import ModelSelector from '$lib/components/chat/ModelSelector.svelte';
 	import Navbar from '$lib/components/layout/Navbar.svelte';
-	import { page } from '$app/stores';
-	import { createNewChat, getChatById, getChatList } from '$lib/apis/chats';
+	import { createNewChat, getChatById, getChatList, updateChatById } from '$lib/apis/chats';
 
 	let loaded = false;
 	let stopResponseFlag = false;

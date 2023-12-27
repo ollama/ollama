@@ -66,8 +66,6 @@ def proxy(path):
     headers.pop("Origin", None)
     headers.pop("Referer", None)
 
-    print(headers)
-
     try:
         # Make a request to the target server
         r = requests.request(

@@ -29,14 +29,25 @@
 	$: if (messages && messages.length > 0 && (messages.at(-1).done ?? false)) {
 		(async () => {
 			await tick();
+
+			[...document.querySelectorAll('*')].forEach((node) => {
+				if (node._tippy) {
+					node._tippy.destroy();
+				}
+			});
+
+			console.log('rendering message');
+
 			renderLatex();
 			hljs.highlightAll();
 			createCopyCodeBlockButton();
 
 			for (const message of messages) {
 				if (message.info) {
+					console.log(message);
+
 					tippy(`#info-${message.id}`, {
-						content: `<span class="text-xs">token/s: ${
+						content: `<span class="text-xs" id="tooltip-${message.id}">token/s: ${
 							`${
 								Math.round(
 									((message.info.eval_count ?? 0) / (message.info.eval_duration / 1000000000)) * 100

@@ -1,7 +1,11 @@
 <script lang="ts">
 	import toast from 'svelte-french-toast';
+	import { openDB } from 'idb';
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
+
+	import fileSaver from 'file-saver';
+	const { saveAs } = fileSaver;
 
 	import { getOllamaModels, getOllamaVersion } from '$lib/apis/ollama';
 	import { getOpenAIModels } from '$lib/apis/openai';
@@ -65,6 +69,21 @@
 		if ($user === undefined) {
 			await goto('/auth');
 		} else if (['user', 'admin'].includes($user.role)) {
+			const DB = await openDB('Chats', 1);
+
+			if (DB) {
+				let chats = await DB.getAllFromIndex('chats', 'timestamp');
+				chats = chats.map((item, idx) => chats[chats.length - 1 - idx]);
+
+				if (chats.length > 0) {
+					let blob = new Blob([JSON.stringify(chats)], { type: 'application/json' });
+					saveAs(blob, `chat-export-${Date.now()}.json`);
+				}
+			}
+
+			console.log(DB);
+
+			console.log();
 			await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
 			await models.set(await getModels());
 
