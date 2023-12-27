@@ -105,7 +105,7 @@
 		{#if !['user', 'admin'].includes($user.role)}
 			<div class="fixed w-full h-full flex z-50">
 				<div
-					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-100/20 dark:bg-gray-900/50 flex justify-center"
+					class="absolute rounded-xl w-full h-full backdrop-blur-md bg-white/20 dark:bg-gray-900/50 flex justify-center"
 				>
 					<div class="m-auto pb-44 flex flex-col justify-center">
 						<div class="max-w-md">
@@ -121,7 +121,7 @@
 
 							<div class=" mt-6 mx-auto relative group w-fit">
 								<button
-									class="relative z-20 flex px-5 py-2 rounded-full bg-white hover:bg-gray-100 transition font-medium text-sm"
+									class="relative z-20 flex px-5 py-2 rounded-full bg-white border border-gray-100 dark:border-none hover:bg-gray-100 transition font-medium text-sm"
 									on:click={async () => {
 										location.href = '/';
 									}}
@@ -144,7 +144,7 @@
 		{:else if checkVersion(REQUIRED_OLLAMA_VERSION, ollamaVersion ?? '0')}
 			<div class="fixed w-full h-full flex z-50">
 				<div
-					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-100/20 dark:bg-gray-900/50 flex justify-center"
+					class="absolute rounded-xl w-full h-full backdrop-blur-md bg-white/20 dark:bg-gray-900/50 flex justify-center"
 				>
 					<div class="m-auto pb-44 flex flex-col justify-center">
 						<div class="max-w-md">
@@ -164,7 +164,7 @@
 
 							<div class=" mt-6 mx-auto relative group w-fit">
 								<button
-									class="relative z-20 flex px-5 py-2 rounded-full bg-white hover:bg-gray-100 transition font-medium text-sm"
+									class="relative z-20 flex px-5 py-2 rounded-full bg-white border border-gray-100 dark:border-none hover:bg-gray-100 transition font-medium text-sm"
 									on:click={async () => {
 										await setOllamaVersion();
 									}}
@@ -186,7 +186,7 @@
 		{:else if localDBChats.length > 0}
 			<div class="fixed w-full h-full flex z-50">
 				<div
-					class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-100/20 dark:bg-gray-900/50 flex justify-center"
+					class="absolute rounded-xl w-full h-full backdrop-blur-md bg-white/20 dark:bg-gray-900/50 flex justify-center"
 				>
 					<div class="m-auto pb-44 flex flex-col justify-center">
 						<div class="max-w-md">
@@ -198,14 +198,14 @@
 								Saving chat logs directly to your browser's storage is no longer supported. Please
 								take a moment to download and delete your chat logs by clicking the button below.
 								Don't worry, you can easily re-import your chat logs to the backend through <span
-									class="font-semibold text-white">Settings > Chats > Import Chats</span
+									class="font-semibold dark:text-white">Settings > Chats > Import Chats</span
 								>. This ensures that your valuable conversations are securely saved to your backend
 								database. Thank you!
 							</div>
 
 							<div class=" mt-6 mx-auto relative group w-fit">
 								<button
-									class="relative z-20 flex px-5 py-2 rounded-full bg-white hover:bg-gray-100 transition font-medium text-sm"
+									class="relative z-20 flex px-5 py-2 rounded-full bg-white border border-gray-100 dark:border-none hover:bg-gray-100 transition font-medium text-sm"
 									on:click={async () => {
 										let blob = new Blob([JSON.stringify(localDBChats)], {
 											type: 'application/json'
