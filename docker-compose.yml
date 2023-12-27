@@ -19,7 +19,7 @@ services:
     image: ollama-webui:latest
     container_name: ollama-webui
     volumes:
-      - ollama-webui:/app/backend
+      - ollama-webui:/app/backend/data
     depends_on:
       - ollama
     ports:

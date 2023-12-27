@@ -1,4 +1,4 @@
 from peewee import *
 
-DB = SqliteDatabase("./ollama.db")
+DB = SqliteDatabase("./data/ollama.db")
 DB.connect()

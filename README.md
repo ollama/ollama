@@ -112,14 +112,14 @@ After installing Ollama, verify that Ollama is running by accessing the followin
 If Ollama is hosted on your local machine and accessible at [http://127.0.0.1:11434/](http://127.0.0.1:11434/), run the following command:
 
 ```bash
-docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend/data --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 Alternatively, if you prefer to build the container yourself, use the following command:
 
 ```bash
 docker build -t ollama-webui .
-docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend --name ollama-webui --restart always ollama-webui
+docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend/data --name ollama-webui --restart always ollama-webui
 ```
 
 Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000) and accessible over LAN (or Network). Enjoy! 😄
@@ -129,14 +129,14 @@ Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localh
 Change `OLLAMA_API_BASE_URL` environment variable to match the external Ollama Server url:
 
 ```bash
-docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend/data --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 Alternatively, if you prefer to build the container yourself, use the following command:
 
 ```bash
 docker build -t ollama-webui .
-docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend --name ollama-webui --restart always ollama-webui
+docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend/data --name ollama-webui --restart always ollama-webui
 ```
 
 ## How to Install Without Docker
