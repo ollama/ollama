@@ -18,6 +18,8 @@ services:
       dockerfile: Dockerfile
     image: ollama-webui:latest
     container_name: ollama-webui
+    volumes:
+      - ollama-webui:/app/backend
     depends_on:
       - ollama
     ports:
@@ -30,3 +32,4 @@ services:
 
 volumes:
   ollama: {}
+  ollama-webui: {}
