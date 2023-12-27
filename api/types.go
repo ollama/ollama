@@ -355,7 +355,6 @@ func DefaultOptions() Options {
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
 		Seed:             -1,
-		Cache:            true,
 
 		Runner: Runner{
 			// options set when the model is loaded
