@@ -10,10 +10,7 @@ error() { echo "ERROR $*"; exit 1; }
 available() { command -v "$1" >/dev/null; }
 
 # Validate script is running on Linux
-if [ "$(uname -s)" != "Linux" ]; then
-    echo 'This script is intended to run on Linux only.'
-    exit 1
-fi
+[ "$(uname -s)" = "Linux" ] || error 'This script is intended to run on Linux only.'
 
 # Make sure script is run as root
 # if user is running as root $SUDO will be set to empty string
@@ -82,5 +79,6 @@ if getent group ollama > /dev/null; then
     echo "Deleting the ollama group..."
     $SUDO groupdel ollama > /dev/null 2>&1
 fi
-# Inform user ollama is uninstall
+
+# Inform user ollama is uninstalled
 echo "Ollama has been successfully uninstalled from the system."
