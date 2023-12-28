@@ -6,6 +6,11 @@
 	export let disabled = false;
 
 	const saveDefaultModel = () => {
+		const hasEmptyModel = selectedModels.filter(it => it === '');
+		if(hasEmptyModel.length){
+			toast.error('Choose a model before saving...');
+			return;
+		}
 		settings.set({ ...$settings, models: selectedModels });
 		localStorage.setItem('settings', JSON.stringify($settings));
 		toast.success('Default model updated');
@@ -21,7 +26,7 @@
 				bind:value={selectedModel}
 				{disabled}
 			>
-				<option class=" text-gray-700" value="" selected>Select a model</option>
+				<option class=" text-gray-700" value="" selected disabled>Select a model</option>
 
 				{#each $models as model}
 					{#if model.name === 'hr'}
