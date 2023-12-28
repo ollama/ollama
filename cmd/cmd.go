@@ -250,7 +250,9 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListRemoteHandler(cmd *cobra.Command, args []string) error {
-	client := http.DefaultClient
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
 	url := "https://ollama.ai/library"
 
 	resp, err := client.Get(url)
@@ -268,20 +270,46 @@ func ListRemoteHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
 	var data [][]string
 	doc.Find("#repo ul li").Each(func(i int, s *goquery.Selection) {
-		name := s.Find("h2").Text()
-		id := strings.TrimPrefix(s.Find("a").AttrOr("href", ""), "/library/")
-		size := s.Find("svg").First().Next().Text()
-		modified := s.Find("span.flex.items-center").Last().Text()
+		nameSelection := s.Find("h2")
+		if nameSelection.Length() == 0 {
+			err = fmt.Errorf("error parsing HTML: expected element not found")
+			return
+		}
+		name := strings.TrimSpace(nameSelection.Text())
 
-		data = append(data, []string{name, id, size, modified})
+		idSelection := s.Find("a")
+		if idSelection.Length() == 0 {
+			err = fmt.Errorf("error parsing HTML: expected a element not found")
+			return
+		}
+		id := strings.TrimSpace(strings.TrimPrefix(idSelection.AttrOr("href", ""), "/library/"))
+
+		pullsSelection := s.Find("span.flex.items-center").First()
+		if pullsSelection.Length() == 0 {
+			err = fmt.Errorf("error parsing HTML: expected span element not found")
+			return
+		}
+		pulls := strings.TrimSpace(pullsSelection.Text())
+
+		modifiedSelection := s.Find("span.flex.items-center").Last()
+		if modifiedSelection.Length() == 0 {
+			err = fmt.Errorf("error parsing HTML: expected span element not found")
+			return
+		}
+		modified := strings.TrimSpace(modifiedSelection.Text())
+
+		data = append(data, []string{name, id, pulls, modified})
 	})
 
+	if err != nil {
+		return err
+	}
+
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetHeader([]string{"NAME", "ID", "PULLS", "MODIFIED"})
+	table.SetColumnAlignment([]int{tablewriter.ALIGN_LEFT, tablewriter.ALIGN_RIGHT, tablewriter.ALIGN_RIGHT, tablewriter.ALIGN_RIGHT})
 	table.AppendBulk(data)
 	table.Render()
 
