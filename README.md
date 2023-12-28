@@ -290,6 +290,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Package managers
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
+- [Webi](https://github.com/webinstall/webi-installers/tree/main/ollama)
 
 ### Libraries
 
