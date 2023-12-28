@@ -34,7 +34,7 @@ export const updateUserRole = async (token: string, id: string, role: string) =>
 export const getUsers = async (token: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/users`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/users/`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',

@@ -3,7 +3,7 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 export const getSessionUser = async (token: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/auths`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/auths/`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',

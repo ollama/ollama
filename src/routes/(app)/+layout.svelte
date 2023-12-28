@@ -18,12 +18,15 @@
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
 	import { checkVersion } from '$lib/utils';
+	import ShortcutsModal from '$lib/components/chat/ShortcutsModal.svelte';
 
 	let ollamaVersion = '';
 	let loaded = false;
 
 	let DB = null;
 	let localDBChats = [];
+
+	let showShortcuts = false;
 
 	const getModels = async () => {
 		let models = [];
@@ -106,6 +109,65 @@
 			});
 
 			await setOllamaVersion();
+
+			document.addEventListener('keydown', function (event) {
+				const isCtrlPressed = event.ctrlKey || event.metaKey; // metaKey is for Cmd key on Mac
+				// Check if the Shift key is pressed
+				const isShiftPressed = event.shiftKey;
+
+				// Check if Ctrl + Shift + O is pressed
+				if (isCtrlPressed && isShiftPressed && event.key.toLowerCase() === 'o') {
+					event.preventDefault();
+					console.log('newChat');
+					document.getElementById('sidebar-new-chat-button')?.click();
+				}
+
+				// Check if Shift + Esc is pressed
+				if (isShiftPressed && event.key === 'Escape') {
+					event.preventDefault();
+					console.log('focusInput');
+					document.getElementById('chat-textarea')?.focus();
+				}
+
+				// Check if Ctrl + Shift + ; is pressed
+				if (isCtrlPressed && isShiftPressed && event.key === ';') {
+					event.preventDefault();
+					console.log('copyLastCodeBlock');
+					const button = [...document.getElementsByClassName('copy-code-button')]?.at(-1);
+					button?.click();
+				}
+
+				// Check if Ctrl + Shift + C is pressed
+				if (isCtrlPressed && isShiftPressed && event.key.toLowerCase() === 'c') {
+					event.preventDefault();
+					console.log('copyLastResponse');
+					const button = [...document.getElementsByClassName('copy-response-button')]?.at(-1);
+					console.log(button);
+					button?.click();
+				}
+
+				// Check if Ctrl + Shift + S is pressed
+				if (isCtrlPressed && isShiftPressed && event.key.toLowerCase() === 's') {
+					event.preventDefault();
+					console.log('toggleSidebar');
+					document.getElementById('sidebar-toggle-button')?.click();
+				}
+
+				// Check if Ctrl + Shift + Backspace is pressed
+				if (isCtrlPressed && isShiftPressed && event.key === 'Backspace') {
+					event.preventDefault();
+					console.log('deleteChat');
+					document.getElementById('delete-chat-button')?.click();
+				}
+
+				// Check if Ctrl + / is pressed
+				if (isCtrlPressed && event.key === '/') {
+					event.preventDefault();
+					console.log('showShortcuts');
+					document.getElementById('show-shortcuts-button')?.click();
+				}
+			});
+
 			await tick();
 		}
 
@@ -114,6 +176,20 @@
 </script>
 
 {#if loaded}
+	<div class=" hidden lg:flex fixed bottom-0 right-0 px-3 py-3 z-10">
+		<button
+			id="show-shortcuts-button"
+			class="text-gray-600 dark:text-gray-300 bg-gray-300/20 w-6 h-6 flex items-center justify-center text-xs rounded-full"
+			on:click={() => {
+				showShortcuts = !showShortcuts;
+			}}
+		>
+			?
+		</button>
+	</div>
+
+	<ShortcutsModal bind:show={showShortcuts} />
+
 	<div class="app relative">
 		{#if !['user', 'admin'].includes($user.role)}
 			<div class="fixed w-full h-full flex z-50">

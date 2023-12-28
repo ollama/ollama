@@ -61,6 +61,7 @@
 	<div class="py-2.5 my-auto flex flex-col justify-between h-screen">
 		<div class="px-2.5 flex justify-center space-x-2">
 			<button
+				id="sidebar-new-chat-button"
 				class="flex-grow flex justify-between rounded-md px-3 py-1.5 mt-2 hover:bg-gray-900 transition"
 				on:click={async () => {
 					goto('/');
@@ -321,6 +322,13 @@
 							{:else}
 								<div class="flex self-center space-x-1.5">
 									<button
+										id="delete-chat-button"
+										class=" hidden"
+										on:click={() => {
+											deleteChat(chat.id);
+										}}
+									/>
+									<button
 										class=" self-center hover:text-white transition"
 										on:click={() => {
 											chatTitle = chat.title;
@@ -382,11 +390,6 @@
 						on:click={() => {
 							showDropdown = !showDropdown;
 						}}
-						on:focusout={() => {
-							setTimeout(() => {
-								showDropdown = false;
-							}, 150);
-						}}
 					>
 						<div class=" self-center mr-3">
 							<img
@@ -409,6 +412,7 @@
 										class="flex py-2.5 px-3.5 w-full hover:bg-gray-800 transition"
 										on:click={() => {
 											goto('/admin');
+											showDropdown = false;
 										}}
 									>
 										<div class=" self-center mr-3">
@@ -435,6 +439,7 @@
 									class="flex py-2.5 px-3.5 w-full hover:bg-gray-800 transition"
 									on:click={async () => {
 										await showSettings.set(true);
+										showDropdown = false;
 									}}
 								>
 									<div class=" self-center mr-3">
@@ -470,6 +475,7 @@
 									on:click={() => {
 										localStorage.removeItem('token');
 										location.href = '/auth';
+										showDropdown = false;
 									}}
 								>
 									<div class=" self-center mr-3">
@@ -535,6 +541,7 @@
 		class="fixed left-0 top-[50dvh] z-40 -translate-y-1/2 transition-transform translate-x-[255px] md:translate-x-[260px] rotate-0"
 	>
 		<button
+			id="sidebar-toggle-button"
 			class=" group"
 			on:click={() => {
 				show = !show;

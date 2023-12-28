@@ -7,7 +7,7 @@ If you're running ollama-webui and have chosen to install webui and ollama separ
 Here's an example of the command you should run:
 
 ```bash
-docker run -d --network=host -e OLLAMA_API_BASE_URL=http://127.0.0.1:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
+docker run -d --network=host -v ollama-webui:/app/backend/data -e OLLAMA_API_BASE_URL=http://127.0.0.1:11434/api --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
 ```
 
 ## Connection Errors
