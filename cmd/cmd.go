@@ -1231,7 +1231,7 @@ func completionHandler(cmd *cobra.Command, args []string) error {
 	case "fish":
 		err = cmd.Root().GenFishCompletion(os.Stdout, true)
 	default:
-		err = errors.New("unsupported shell")
+		err = errors.New("unsupported shell. Supported shells: zsh, fish, bash")
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
@@ -1312,11 +1312,12 @@ func NewCLI() *cobra.Command {
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 
 	createCmd := &cobra.Command{
-		Use:     "create MODEL",
-		Short:   "Create a model from a Modelfile",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    CreateHandler,
+		Use:               "create MODEL",
+		Short:             "Create a model from a Modelfile",
+		Args:              cobra.ExactArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              CreateHandler,
+		ValidArgsFunction: doNotAutocomplete,
 	}
 
 	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
@@ -1351,11 +1352,12 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
 
 	serveCmd := &cobra.Command{
-		Use:     "serve",
-		Aliases: []string{"start"},
-		Short:   "Start ollama",
-		Args:    cobra.ExactArgs(0),
-		RunE:    RunServer,
+		Use:               "serve",
+		Aliases:           []string{"start"},
+		Short:             "Start ollama",
+		Args:              cobra.ExactArgs(0),
+		RunE:              RunServer,
+		ValidArgsFunction: doNotAutocomplete,
 	}
 
 	pullCmd := &cobra.Command{
@@ -1381,11 +1383,12 @@ func NewCLI() *cobra.Command {
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 
 	listCmd := &cobra.Command{
-		Use:     "list",
-		Aliases: []string{"ls"},
-		Short:   "List models",
-		PreRunE: checkServerHeartbeat,
-		RunE:    ListHandler,
+		Use:               "list",
+		Aliases:           []string{"ls"},
+		Short:             "List models",
+		PreRunE:           checkServerHeartbeat,
+		RunE:              ListHandler,
+		ValidArgsFunction: doNotAutocomplete,
 	}
 
 	copyCmd := &cobra.Command{
@@ -1413,6 +1416,9 @@ func NewCLI() *cobra.Command {
 		Hidden:                true,
 		Args:                  cobra.ExactArgs(1),
 		RunE:                  completionHandler,
+		ValidArgsFunction: func(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return []string{"bash", "zsh", "fish"}, cobra.ShellCompDirectiveNoFileComp
+		},
 	}
 
 	rootCmd.AddCommand(
