@@ -382,11 +382,6 @@
 						on:click={() => {
 							showDropdown = !showDropdown;
 						}}
-						on:focusout={() => {
-							setTimeout(() => {
-								showDropdown = false;
-							}, 150);
-						}}
 					>
 						<div class=" self-center mr-3">
 							<img
@@ -409,6 +404,7 @@
 										class="flex py-2.5 px-3.5 w-full hover:bg-gray-800 transition"
 										on:click={() => {
 											goto('/admin');
+											showDropdown = false;
 										}}
 									>
 										<div class=" self-center mr-3">
@@ -470,6 +466,7 @@
 									on:click={() => {
 										localStorage.removeItem('token');
 										location.href = '/auth';
+										showDropdown = false;
 									}}
 								>
 									<div class=" self-center mr-3">
