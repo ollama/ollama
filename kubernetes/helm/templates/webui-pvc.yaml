@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: ollama-webui
+  name: ollama-webui-pvc
+  namespace: {{ .Values.namespace }}  
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: {{ .Values.webui.volumeSize }}
