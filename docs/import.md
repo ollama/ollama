@@ -43,7 +43,6 @@ Ollama supports a set of model architectures, with support for more coming soon:
 
 - Llama & Mistral
 - Falcon & RW
-- GPT-NeoX
 - BigCode
 
 To view a model's architecture, check the `config.json` file in its HuggingFace repo. You should see an entry under `architectures` (e.g. `LlamaForCausalLM`).
@@ -73,7 +72,7 @@ docker run --rm -v .:/model ollama/quantize -q q4_0 /model
 This will output two files into the directory:
 
 - `f16.bin`: the model converted to GGUF
-- `q4_0.bin` the model quantized to a 4-bit quantization (we will use this file to create the Ollama model)
+- `q4_0.bin` the model quantized to a 4-bit quantization (Ollama will use this file to create the Ollama model)
 
 ### Step 3: Write a `Modelfile`
 
@@ -182,9 +181,6 @@ Run the correct conversion script for your model architecture:
 python convert.py <path to model directory>
 
 # FalconForCausalLM
-python convert-falcon-hf-to-gguf.py <path to model directory>
-
-# GPTNeoXForCausalLM
 python convert-falcon-hf-to-gguf.py <path to model directory>
 
 # GPTBigCodeForCausalLM

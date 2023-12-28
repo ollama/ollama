@@ -63,7 +63,10 @@ status "Installing ollama to $BINDIR..."
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
 
-install_success() { status 'Install complete. Run "ollama" from the command line.'; }
+install_success() { 
+    status 'The Ollama API is now available at 0.0.0.0:11434.'
+    status 'Install complete. Run "ollama" from the command line.'
+}
 trap install_success EXIT
 
 # Everything from this point onwards is optional.
@@ -130,6 +133,7 @@ if check_gpu nvidia-smi; then
 fi
 
 if ! check_gpu lspci && ! check_gpu lshw; then
+    install_success
     warning "No NVIDIA GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
@@ -176,7 +180,10 @@ install_cuda_driver_apt() {
     case $1 in
         debian)
             status 'Enabling contrib sources...'
-            $SUDO sed 's/main/contrib/' < /etc/apt/sources.list | sudo tee /etc/apt/sources.list.d/contrib.list > /dev/null
+            $SUDO sed 's/main/contrib/' < /etc/apt/sources.list | $SUDO tee /etc/apt/sources.list.d/contrib.list > /dev/null
+            if [ -f "/etc/apt/sources.list.d/debian.sources" ]; then
+                $SUDO sed 's/main/contrib/' < /etc/apt/sources.list.d/debian.sources | $SUDO tee /etc/apt/sources.list.d/contrib.sources > /dev/null
+            fi
             ;;
     esac
 
@@ -210,7 +217,7 @@ fi
 
 if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
     case $OS_NAME in
-        centos|rhel) install_cuda_driver_yum 'rhel' $OS_VERSION ;;
+        centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
         rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
         fedora) install_cuda_driver_yum $OS_NAME $OS_VERSION ;;
         amzn) install_cuda_driver_yum 'fedora' '35' ;;
@@ -223,7 +230,8 @@ fi
 if ! lsmod | grep -q nvidia; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
-        centos|rhel|rocky|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
+        centos|rhel|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
         fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
         debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
         *) exit ;;
