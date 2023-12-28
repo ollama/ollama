@@ -119,6 +119,7 @@
 				langDiv.style.fontSize = '0.75rem';
 
 				let button = document.createElement('button');
+				button.className = 'copy-code-button';
 				button.textContent = 'Copy Code';
 				button.style.background = 'none';
 				button.style.fontSize = '0.75rem';
@@ -832,7 +833,7 @@
 														<button
 															class="{messageIdx + 1 === messages.length
 																? 'visible'
-																: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition"
+																: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition copy-response-button"
 															on:click={() => {
 																copyToClipboard(message.content);
 															}}
