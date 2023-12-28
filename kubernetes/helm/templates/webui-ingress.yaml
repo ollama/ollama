@@ -1,11 +1,13 @@
+{{- if .Values.webui.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: ollama-webui-ingress
   namespace: {{ .Values.namespace }}
-  #annotations:
-    # Use appropriate annotations for your Ingress controller, e.g., for NGINX:
-    # nginx.ingress.kubernetes.io/rewrite-target: /
+{{- if .Values.webui.ingress.annotations }}
+  annotations:
+{{ toYaml .Values.webui.ingress.annotations | trimSuffix "\n" | indent 4 }}
+{{- end }}
 spec:
   rules:
   - host: {{ .Values.webui.ingress.host }}
@@ -18,3 +20,4 @@ spec:
             name: ollama-webui-service
             port:
               number: {{ .Values.webui.servicePort }}
+{{- end }}
