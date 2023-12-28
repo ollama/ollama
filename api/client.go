@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -72,7 +73,7 @@ func ClientFromEnvironment() (*Client, error) {
 		},
 	}
 
-	mockRequest, err := http.NewRequest("HEAD", client.base.String(), nil)
+	mockRequest, err := http.NewRequest(http.MethodHead, client.base.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -95,11 +96,19 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	var reqBody io.Reader
 	var data []byte
 	var err error
-	if reqData != nil {
+
+	switch reqData := reqData.(type) {
+	case io.Reader:
+		// reqData is already an io.Reader
+		reqBody = reqData
+	case nil:
+		// noop
+	default:
 		data, err = json.Marshal(reqData)
 		if err != nil {
 			return err
 		}
+
 		reqBody = bytes.NewReader(data)
 	}
 
@@ -212,6 +221,19 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn Generate
 	})
 }
 
+type ChatResponseFunc func(ChatResponse) error
+
+func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/chat", req, func(bts []byte) error {
+		var resp ChatResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		return fn(resp)
+	})
+}
+
 type PullProgressFunc func(ProgressResponse) error
 
 func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
@@ -286,4 +308,31 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {
+	if err := c.do(ctx, http.MethodHead, fmt.Sprintf("/api/blobs/%s", digest), nil, nil); err != nil {
+		var statusError StatusError
+		if !errors.As(err, &statusError) || statusError.StatusCode != http.StatusNotFound {
+			return err
+		}
+
+		if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *Client) Version(ctx context.Context) (string, error) {
+	var version struct {
+		Version string `json:"version"`
+	}
+
+	if err := c.do(ctx, http.MethodGet, "/api/version", nil, &version); err != nil {
+		return "", err
+	}
+
+	return version.Version, nil
 }
