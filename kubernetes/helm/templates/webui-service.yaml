@@ -4,7 +4,7 @@ metadata:
   name: ollama-webui-service
   namespace: {{ .Values.namespace }}
 spec:
-  type: NodePort  # Use LoadBalancer if you're on a cloud that supports it
+  type: {{ .Values.webui.service.type }} # Default: NodePort  # Use LoadBalancer if you're on a cloud that supports it
   selector:
     app: ollama-webui
   ports:

@@ -10,6 +10,12 @@ ollama:
       memory: "2Gi"
       nvidia.com/gpu: "0"
   volumeSize: 1Gi
+  nodeSelector: {}
+  tolerations: []
+  service:
+    type: ClusterIP
+  gpu:
+    enabled: false
 
 webui:
   replicaCount: 1
@@ -25,3 +31,8 @@ webui:
     # Use appropriate annotations for your Ingress controller, e.g., for NGINX:
       # nginx.ingress.kubernetes.io/rewrite-target: /
     host: ollama.minikube.local
+  volumeSize: 1Gi
+  nodeSelector: {}
+  tolerations: []
+  service:
+    type: NodePort
