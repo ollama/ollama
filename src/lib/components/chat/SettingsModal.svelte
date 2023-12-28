@@ -614,6 +614,7 @@
 		options.top_p = settings.top_p ?? '';
 		options.num_ctx = settings.num_ctx ?? '';
 		options = { ...options, ...settings.options };
+		options.stop = (settings?.options?.stop ?? []).join(',');
 
 		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
@@ -1051,7 +1052,8 @@
 									saveSettings({
 										options: {
 											seed: (options.seed !== 0 ? options.seed : undefined) ?? undefined,
-											stop: options.stop !== '' ? options.stop : undefined,
+											stop:
+												options.stop !== '' ? options.stop.split(',').filter((e) => e) : undefined,
 											temperature: options.temperature !== '' ? options.temperature : undefined,
 											repeat_penalty:
 												options.repeat_penalty !== '' ? options.repeat_penalty : undefined,
