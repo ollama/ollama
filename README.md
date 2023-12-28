@@ -17,7 +17,7 @@ Get up and running with large language models locally.
 
 ### Windows
 
-Coming soon!
+Coming soon! For now, you can install Ollama on Windows via WSL2.
 
 ### Linux & WSL2
 
@@ -47,10 +47,12 @@ Here are some example open-source models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
+| Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
+| Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
+| Dolphin Phi        | 2.7B       | 1.6GB | `ollama run dolphin-phi`       |
+| Phi-2              | 2.7B       | 1.7GB | `ollama run phi`               |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
 | Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
-| Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
-| Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
 | Llama 2 13B        | 13B        | 7.3GB | `ollama run llama2:13b`        |
@@ -59,9 +61,9 @@ Here are some example open-source models that can be downloaded:
 | Vicuna             | 7B         | 3.8GB | `ollama run vicuna`            |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 
-> Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
+> Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
-## Customize your own model
+## Customize a model
 
 ### Import from GGUF
 
@@ -128,6 +130,10 @@ For more examples, see the [examples](examples) directory. For more information 
 
 `ollama create` is used to create a model from a Modelfile.
 
+```
+ollama create mymodel -f ./Modelfile
+```
+
 ### Pull a model
 
 ```
@@ -191,13 +197,19 @@ Install `cmake` and `go`:
 brew install cmake go
 ```
 
-Then generate dependencies and build:
-
+Then generate dependencies:
 ```
 go generate ./...
+```
+Then build the binary:
+```
 go build .
 ```
 
+More detailed instructions can be found in the [developer guide](https://github.com/jmorganca/ollama/blob/main/docs/development.md)
+
+
+### Running local builds
 Next, start the server:
 
 ```
@@ -284,6 +296,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
 - [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
+- [LangChainDart](https://github.com/davidmigloz/langchain_dart)
 
 ### Mobile
 

@@ -24,7 +24,6 @@ def chat(messages):
             # the response streams one token at a time, print that as we receive it
             print(content, end="", flush=True)
 
-
         if body.get("done", False):
             message["content"] = output
             return message
@@ -32,9 +31,11 @@ def chat(messages):
 
 def main():
     messages = []
-    
+
     while True:
         user_input = input("Enter a prompt: ")
+        if not user_input:
+            exit()
         print()
         messages.append({"role": "user", "content": user_input})
         message = chat(messages)

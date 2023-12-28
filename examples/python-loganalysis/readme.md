@@ -2,11 +2,33 @@
 
 ![loganalyzer 2023-11-10 08_53_29](https://github.com/jmorganca/ollama/assets/633681/ad30f1fc-321f-4953-8914-e30e24db9921)
 
-This example shows one possible way to create a log file analyzer. To use it, run:
+This example shows one possible way to create a log file analyzer. It uses the model **mattw/loganalyzer** which is based on **codebooga**, a 34b parameter model.
+
+To use it, run:
 
 `python loganalysis.py <logfile>`
 
 You can try this with the `logtest.logfile` file included in this directory.
+
+## Running the Example
+
+1. Ensure you have the `mattw/loganalyzer` model installed:
+
+   ```bash
+   ollama pull mattw/loganalyzer
+   ```
+
+2. Install the Python Requirements.
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Run the example:
+
+   ```bash
+   python loganalysis.py logtest.logfile
+   ```
 
 ## Review the code
 
@@ -45,4 +67,4 @@ for line in response.iter_lines():
 
 There is a lot more that can be done here. This is a simple way to detect errors, looking for the word error. Perhaps it would be interesting to find anomalous activity in the logs. It could be interesting to create embeddings for each line and compare them, looking for similar lines. Or look into applying Levenshtein Distance algorithms to find similar lines to help identify the anomalous lines.
 
-Also try different models and different prompts to analyze the data. You could consider adding retrieval augmented generation (RAG) to this to help understand newer log formats.
+Try different models and different prompts to analyze the data. You could consider adding retrieval augmented generation (RAG) to this to help understand newer log formats.

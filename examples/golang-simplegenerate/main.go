@@ -18,6 +18,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	defer resp.Body.Close()
+	
 	responseData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal(err)
