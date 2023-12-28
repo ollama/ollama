@@ -88,7 +88,9 @@ async def signup(form_data: SignupForm):
         try:
             role = "admin" if Users.get_num_users() == 0 else "pending"
             hashed = get_password_hash(form_data.password)
-            user = Auths.insert_new_auth(form_data.email, hashed, form_data.name, role)
+            user = Auths.insert_new_auth(
+                form_data.email.lower(), hashed, form_data.name, role
+            )
 
             if user:
                 token = create_token(data={"email": user.email})
