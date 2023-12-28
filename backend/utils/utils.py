@@ -55,13 +55,13 @@ def extract_token_from_auth_header(auth_header: str):
 
 def verify_token(request):
     try:
-        bearer = request.headers["authorization"]
-        if bearer:
-            token = bearer[len("Bearer ") :]
-            decoded = jwt.decode(
+        authorization = request.headers["authorization"]
+        if authorization:
+            _, token = authorization.split()
+            decoded_token = jwt.decode(
                 token, JWT_SECRET_KEY, options={"verify_signature": False}
             )
-            return decoded
+            return decoded_token
         else:
             return None
     except Exception as e:
