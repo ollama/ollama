@@ -69,7 +69,7 @@ async def update_password(form_data: UpdatePasswordForm, cred=Depends(bearer_sch
 
         if user:
             hashed = get_password_hash(form_data.new_password)
-            return Auths.update_user_password_by_id(user.id, form_data.password, hashed)
+            return Auths.update_user_password_by_id(user.id, hashed)
         else:
             raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_PASSWORD)
     else:

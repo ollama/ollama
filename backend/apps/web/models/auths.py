@@ -114,19 +114,11 @@ class AuthsTable:
         except:
             return None
 
-    def update_user_password_by_id(
-        self, id: str, password: str, new_password: str
-    ) -> bool:
+    def update_user_password_by_id(self, id: str, new_password: str) -> bool:
         try:
-            auth = Auth.get(Auth.id == id, Auth.active == True)
-            if auth:
-                if verify_password(password, auth.password):
-                    query = Auth.update(password=new_password).where(Auth.id == id)
-                    result = query.execute()
-                    print(result)
-                    return True
-                else:
-                    return False
+            query = Auth.update(password=new_password).where(Auth.id == id)
+            result = query.execute()
+            print(result)
             return True
         except:
             return False
