@@ -9,6 +9,8 @@ import time
 import uuid
 
 from apps.web.models.users import UserModel, UserRoleUpdateForm, Users
+from apps.web.models.auths import Auths
+
 
 from utils.utils import (
     get_password_hash,
@@ -76,7 +78,7 @@ async def update_user_role(form_data: UserRoleUpdateForm, cred=Depends(bearer_sc
 
 
 ############################
-# DeleteUser
+# DeleteUserById
 ############################
 
 
@@ -88,7 +90,7 @@ async def delete_user_by_id(user_id: str, cred=Depends(bearer_scheme)):
     if user:
         if user.role == "admin":
             if user.id != user_id:
-                result = Users.delete_user_by_id(user_id)
+                result = Auths.delete_auth_by_id(user_id)
 
                 if result:
                     return True

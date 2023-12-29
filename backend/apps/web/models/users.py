@@ -8,7 +8,7 @@ from utils.utils import decode_token
 from utils.misc import get_gravatar_url
 
 from apps.web.internal.db import DB
-from apps.web.models.chats import Chat
+from apps.web.models.chats import Chats
 
 
 ####################
@@ -115,7 +115,7 @@ class UsersTable:
     def delete_user_by_id(self, id: str) -> bool:
         try:
             # Delete User Chats
-            result = Chat.delete_chats_by_user_id(id)
+            result = Chats.delete_chats_by_user_id(id)
 
             if result:
                 # Delete User
