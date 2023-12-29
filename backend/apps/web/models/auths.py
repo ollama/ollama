@@ -118,8 +118,8 @@ class AuthsTable:
         try:
             query = Auth.update(password=new_password).where(Auth.id == id)
             result = query.execute()
-            print(result)
-            return True
+
+            return True if result == 1 else False
         except:
             return False
 
