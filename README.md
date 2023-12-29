@@ -71,10 +71,13 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 
 ## How to Install 🚀
 
-🌟 **Important Note on User Roles:**
+🌟 **Important Note on User Roles and Privacy:**
 
 - **Admin Creation:** The very first account to sign up on the Ollama Web UI will be granted **Administrator privileges**. This account will have comprehensive control over the platform, including user management and system settings.
+
 - **User Registrations:** All subsequent users signing up will initially have their accounts set to **Pending** status by default. These accounts will require approval from the Administrator to gain access to the platform functionalities.
+
+- **Privacy and Data Security:** We prioritize your privacy and data security above all. Please be reassured that all data entered into the Ollama Web UI is stored locally on your device. Our system is designed to be privacy-first, ensuring that no external requests are made, and your data does not leave your local environment. We are committed to maintaining the highest standards of data privacy and security, ensuring that your information remains confidential and under your control.
 
 ### Installing Both Ollama and Ollama Web UI Using Docker Compose
 
