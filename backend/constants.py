@@ -12,6 +12,7 @@ class ERROR_MESSAGES(str, Enum):
     DEFAULT = lambda err="": f"Something went wrong :/\n{err if err else ''}"
     ENV_VAR_NOT_FOUND = "Required environment variable not found. Terminating now."
     CREATE_USER_ERROR = "Oops! Something went wrong while creating your account. Please try again later. If the issue persists, contact support for assistance."
+    DELETE_USER_ERROR = "Oops! Something went wrong. We encountered an issue while trying to delete the user. Please give it another shot."
     EMAIL_TAKEN = "Uh-oh! This email is already registered. Sign in with your existing account or choose another email to start anew."
     USERNAME_TAKEN = (
         "Uh-oh! This username is already registered. Please choose another username."
@@ -27,4 +28,5 @@ class ERROR_MESSAGES(str, Enum):
     )
     NOT_FOUND = "We could not find what you're looking for :/"
     USER_NOT_FOUND = "We could not find what you're looking for :/"
+
     MALICIOUS = "Unusual activities detected, please try again in a few minutes."

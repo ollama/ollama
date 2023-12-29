@@ -73,3 +73,36 @@ async def update_user_role(form_data: UserRoleUpdateForm, cred=Depends(bearer_sc
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.INVALID_TOKEN,
         )
+
+
+############################
+# DeleteUser
+############################
+
+
+@router.delete("/{user_id}", response_model=bool)
+async def delete_user_by_id(user_id: str, cred=Depends(bearer_scheme)):
+    token = cred.credentials
+    user = Users.get_user_by_token(token)
+
+    if user:
+        if user.role == "admin":
+            result = Users.delete_user_by_id(user_id)
+
+            if result:
+                return True
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=ERROR_MESSAGES.DELETE_USER_ERROR,
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.INVALID_TOKEN,
+        )
