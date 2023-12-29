@@ -249,6 +249,17 @@
 								<br class=" hidden sm:flex" />(version
 								<span class=" dark:text-white font-medium">{REQUIRED_OLLAMA_VERSION} or higher</span
 								>) or check your connection.
+
+								<div class="mt-1 text-sm">
+									Trouble accessing Ollama?
+									<a
+										class=" text-black dark:text-white font-semibold underline"
+										href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
+										target="_blank"
+									>
+										Click here for help.
+									</a>
+								</div>
 							</div>
 
 							<div class=" mt-6 mx-auto relative group w-fit">

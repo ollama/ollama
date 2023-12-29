@@ -18,6 +18,7 @@
 
 	import Advanced from './Settings/Advanced.svelte';
 	import Modal from '../common/Modal.svelte';
+	import { updateUserPassword } from '$lib/apis/auths';
 
 	export let show = false;
 
@@ -117,6 +118,11 @@
 	let authEnabled = false;
 	let authType = 'Basic';
 	let authContent = '';
+
+	// Account
+	let currentPassword = '';
+	let newPassword = '';
+	let newPasswordConfirm = '';
 
 	// About
 	let ollamaVersion = '';
@@ -595,6 +601,31 @@
 		return models;
 	};
 
+	const updatePasswordHandler = async () => {
+		if (newPassword === newPasswordConfirm) {
+			const res = await updateUserPassword(localStorage.token, currentPassword, newPassword).catch(
+				(error) => {
+					toast.error(error);
+					return null;
+				}
+			);
+
+			if (res) {
+				toast.success('Successfully updated.');
+			}
+
+			currentPassword = '';
+			newPassword = '';
+			newPasswordConfirm = '';
+		} else {
+			toast.error(
+				`The passwords you entered don't quite match. Please double-check and try again.`
+			);
+			newPassword = '';
+			newPasswordConfirm = '';
+		}
+	};
+
 	onMount(async () => {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(settings);
@@ -847,6 +878,32 @@
 
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'account'
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+					on:click={() => {
+						selectedTab = 'account';
+					}}
+				>
+					<div class=" self-center mr-2">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M15 8A7 7 0 1 1 1 8a7 7 0 0 1 14 0Zm-5-2a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM8 9c-1.825 0-3.422.977-4.295 2.437A5.49 5.49 0 0 0 8 13.5a5.49 5.49 0 0 0 4.294-2.063A4.997 4.997 0 0 0 8 9Z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</div>
+					<div class=" self-center">Account</div>
+				</button>
+
+				<button
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'about'
 						? 'bg-gray-200 dark:bg-gray-700'
 						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
@@ -940,12 +997,12 @@
 
 						<hr class=" dark:border-gray-700" />
 						<div>
-							<div class=" mb-2.5 text-sm font-medium">Ollama Server URL</div>
+							<div class=" mb-2.5 text-sm font-medium">Ollama API URL</div>
 							<div class="flex w-full">
 								<div class="flex-1 mr-2">
 									<input
 										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter URL (e.g. http://localhost:11434/api)"
+										placeholder="Enter URL (e.g. http://localhost:8080/ollama/api)"
 										bind:value={API_BASE_URL}
 									/>
 								</div>
@@ -971,7 +1028,10 @@
 							</div>
 
 							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-								Trouble accessing Ollama? <a
+								The field above should be set to <span
+									class=" text-gray-500 dark:text-gray-300 font-medium">'/ollama/api'</span
+								>;
+								<a
 									class=" text-gray-500 dark:text-gray-300 font-medium"
 									href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
 									target="_blank"
@@ -1814,6 +1874,67 @@
 								type="submit"
 							>
 								Save
+							</button>
+						</div>
+					</form>
+				{:else if selectedTab === 'account'}
+					<form
+						class="flex flex-col h-full text-sm"
+						on:submit|preventDefault={() => {
+							updatePasswordHandler();
+						}}
+					>
+						<div class=" mb-2.5 font-medium">Change Password</div>
+
+						<div class=" space-y-1.5">
+							<div class="flex flex-col w-full">
+								<div class=" mb-1 text-xs text-gray-500">Current Password</div>
+
+								<div class="flex-1">
+									<input
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+										type="password"
+										bind:value={currentPassword}
+										autocomplete="current-password"
+										required
+									/>
+								</div>
+							</div>
+
+							<div class="flex flex-col w-full">
+								<div class=" mb-1 text-xs text-gray-500">New Password</div>
+
+								<div class="flex-1">
+									<input
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+										type="password"
+										bind:value={newPassword}
+										autocomplete="new-password"
+										required
+									/>
+								</div>
+							</div>
+
+							<div class="flex flex-col w-full">
+								<div class=" mb-1 text-xs text-gray-500">Confirm Password</div>
+
+								<div class="flex-1">
+									<input
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+										type="password"
+										bind:value={newPasswordConfirm}
+										autocomplete="off"
+										required
+									/>
+								</div>
+							</div>
+						</div>
+
+						<div class="mt-3 flex justify-end">
+							<button
+								class=" px-4 py-2 text-xs bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-800 text-gray-100 transition rounded-md font-medium"
+							>
+								Update password
 							</button>
 						</div>
 					</form>
