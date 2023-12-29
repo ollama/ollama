@@ -8,6 +8,8 @@ from utils.utils import decode_token
 from utils.misc import get_gravatar_url
 
 from apps.web.internal.db import DB
+from apps.web.models.chats import Chats
+
 
 ####################
 # User DB Schema
@@ -109,6 +111,22 @@ class UsersTable:
             return UserModel(**model_to_dict(user))
         except:
             return None
+
+    def delete_user_by_id(self, id: str) -> bool:
+        try:
+            # Delete User Chats
+            result = Chats.delete_chats_by_user_id(id)
+
+            if result:
+                # Delete User
+                query = User.delete().where(User.id == id)
+                query.execute()  # Remove the rows, return number of rows removed.
+
+                return True
+            else:
+                return False
+        except:
+            return False
 
 
 Users = UsersTable(DB)
