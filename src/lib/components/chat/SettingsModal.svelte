@@ -52,7 +52,8 @@
 		top_p: '',
 		stop: '',
 		tfs_z: '',
-		num_ctx: ''
+		num_ctx: '',
+		num_predict: ''
 	};
 
 	// Models
@@ -644,6 +645,7 @@
 		options.top_k = settings.top_k ?? '';
 		options.top_p = settings.top_p ?? '';
 		options.num_ctx = settings.num_ctx ?? '';
+		options.num_predict = settings.num_predict ?? '';
 		options = { ...options, ...settings.options };
 		options.stop = (settings?.options?.stop ?? []).join(',');
 
@@ -1122,7 +1124,8 @@
 											top_k: options.top_k !== '' ? options.top_k : undefined,
 											top_p: options.top_p !== '' ? options.top_p : undefined,
 											tfs_z: options.tfs_z !== '' ? options.tfs_z : undefined,
-											num_ctx: options.num_ctx !== '' ? options.num_ctx : undefined
+											num_ctx: options.num_ctx !== '' ? options.num_ctx : undefined,
+											num_predict: options.num_predict !== '' ? options.num_predict : undefined
 										}
 									});
 									show = false;
