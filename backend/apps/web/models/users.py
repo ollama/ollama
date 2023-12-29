@@ -115,14 +115,16 @@ class UsersTable:
     def delete_user_by_id(self, id: str) -> bool:
         try:
             # Delete User Chats
-            query = Chat.delete().where(Chat.user_id == id)
-            query.execute()  # Remove the rows, return number of rows removed.
+            result = Chat.delete_chats_by_user_id(id)
 
-            # Delete User
-            query = User.delete().where(User.id == id)
-            query.execute()  # Remove the rows, return number of rows removed.
+            if result:
+                # Delete User
+                query = User.delete().where(User.id == id)
+                query.execute()  # Remove the rows, return number of rows removed.
 
-            return True
+                return True
+            else:
+                return False
         except:
             return False
 
