@@ -109,5 +109,21 @@ class AuthsTable:
         except:
             return None
 
+    def delete_auth_by_id(self, id: str) -> Optional[UserModel]:
+        try:
+            # Delete User
+            result = Users.delete_user_by_id(id)
+
+            if result:
+                # Delete Auth
+                query = Auth.delete().where(Auth.id == id)
+                query.execute()  # Remove the rows, return number of rows removed.
+
+                return True
+            else:
+                return False
+        except:
+            return False
+
 
 Auths = AuthsTable(DB)
