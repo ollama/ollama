@@ -11,6 +11,7 @@ import uuid
 from apps.web.models.auths import (
     SigninForm,
     SignupForm,
+    UpdatePasswordForm,
     UserResponse,
     SigninResponse,
     Auths,
@@ -51,6 +52,24 @@ async def get_session_user(cred=Depends(bearer_scheme)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.INVALID_TOKEN,
         )
+
+
+############################
+# Update Password
+############################
+
+
+@router.post("/update/password", response_model=bool)
+async def update_password(form_data: UpdatePasswordForm, cred=Depends(bearer_scheme)):
+    token = cred.credentials
+    user = Users.get_user_by_token(token)
+
+    if user:
+        hashed = get_password_hash(form_data.new_password)
+        return Auths.update_user_password_by_id(user.id, form_data.password, hashed)
+
+    else:
+        raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
 
 
 ############################

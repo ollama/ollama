@@ -64,6 +64,11 @@ class SigninForm(BaseModel):
     password: str
 
 
+class UpdatePasswordForm(BaseModel):
+    password: str
+    new_password: str
+
+
 class SignupForm(BaseModel):
     name: str
     email: str
@@ -109,7 +114,24 @@ class AuthsTable:
         except:
             return None
 
-    def delete_auth_by_id(self, id: str) -> Optional[UserModel]:
+    def update_user_password_by_id(
+        self, id: str, password: str, new_password: str
+    ) -> bool:
+        try:
+            auth = Auth.get(Auth.id == id, Auth.active == True)
+            if auth:
+                if verify_password(password, auth.password):
+                    query = Auth.update(password=new_password).where(Auth.id == id)
+                    result = query.execute()
+                    print(result)
+                    return True
+                else:
+                    return False
+            return True
+        except:
+            return False
+
+    def delete_auth_by_id(self, id: str) -> bool:
         try:
             # Delete User
             result = Users.delete_user_by_id(id)
