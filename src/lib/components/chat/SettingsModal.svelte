@@ -18,6 +18,7 @@
 
 	import Advanced from './Settings/Advanced.svelte';
 	import Modal from '../common/Modal.svelte';
+	import { updateUserPassword } from '$lib/apis/auths';
 
 	export let show = false;
 
@@ -598,6 +599,31 @@
 		}
 
 		return models;
+	};
+
+	const updatePasswordHandler = async () => {
+		if (newPassword === newPasswordConfirm) {
+			const res = await updateUserPassword(localStorage.token, currentPassword, newPassword).catch(
+				(error) => {
+					toast.error(error);
+					return null;
+				}
+			);
+
+			if (res) {
+				toast.success('Successfully updated.');
+			}
+
+			currentPassword = '';
+			newPassword = '';
+			newPasswordConfirm = '';
+		} else {
+			toast.error(
+				`The passwords you entered don't quite match. Please double-check and try again.`
+			);
+			newPassword = '';
+			newPasswordConfirm = '';
+		}
 	};
 
 	onMount(async () => {
@@ -1852,7 +1878,7 @@
 					<form
 						class="flex flex-col h-full text-sm"
 						on:submit|preventDefault={() => {
-							console.log('change save');
+							updatePasswordHandler();
 						}}
 					>
 						<div class=" mb-2.5 font-medium">Change Password</div>

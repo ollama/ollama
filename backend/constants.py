@@ -21,6 +21,9 @@ class ERROR_MESSAGES(str, Enum):
         "Your session has expired or the token is invalid. Please sign in again."
     )
     INVALID_CRED = "The email or password provided is incorrect. Please check for typos and try logging in again."
+    INVALID_PASSWORD = (
+        "The password provided is incorrect. Please check for typos and try again."
+    )
     UNAUTHORIZED = "401 Unauthorized"
     ACCESS_PROHIBITED = "You do not have permission to access this resource. Please contact your administrator for assistance."
     ACTION_PROHIBITED = (
