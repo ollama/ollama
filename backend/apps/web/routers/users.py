@@ -87,14 +87,20 @@ async def delete_user_by_id(user_id: str, cred=Depends(bearer_scheme)):
 
     if user:
         if user.role == "admin":
-            result = Users.delete_user_by_id(user_id)
+            if user.id != user_id:
+                result = Users.delete_user_by_id(user_id)
 
-            if result:
-                return True
+                if result:
+                    return True
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=ERROR_MESSAGES.DELETE_USER_ERROR,
+                    )
             else:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=ERROR_MESSAGES.DELETE_USER_ERROR,
+                    detail=ERROR_MESSAGES.ACTION_PROHIBITED,
                 )
         else:
             raise HTTPException(
