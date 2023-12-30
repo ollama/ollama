@@ -107,3 +107,13 @@ async def update_chat_by_id(
 async def delete_chat_by_id(id: str, user=Depends(get_current_user)):
     result = Chats.delete_chat_by_id_and_user_id(id, user.id)
     return result
+
+############################
+# DeleteAllChats
+############################
+
+
+@router.delete("/", response_model=bool)
+async def delete_all_user_chats(user=Depends(get_current_user)):
+    result = Chats.delete_chats_by_user_id(user.id)
+    return result
