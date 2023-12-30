@@ -262,6 +262,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
 - [Amica](https://github.com/semperai/amica)
 - [chatd](https://github.com/BruceMacD/chatd)
+- [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
+
 
 ### Terminal
 
