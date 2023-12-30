@@ -10,7 +10,6 @@ std::thread ext_server_thread;
 
 void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
 #if SERVER_VERBOSE != 1
-  LOG_TEE("disabling verbose llm logging\n");
   log_disable();
 #endif
   assert(err != NULL && sparams != NULL);
