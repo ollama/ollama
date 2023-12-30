@@ -160,6 +160,13 @@
 					document.getElementById('delete-chat-button')?.click();
 				}
 
+				// Check if Ctrl + . is pressed
+				if (isCtrlPressed && event.key === '.') {
+					event.preventDefault();
+					console.log('openSettings');
+					document.getElementById('open-settings-button')?.click();
+				}
+
 				// Check if Ctrl + / is pressed
 				if (isCtrlPressed && event.key === '/') {
 					event.preventDefault();

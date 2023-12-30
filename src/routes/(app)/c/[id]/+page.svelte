@@ -31,6 +31,17 @@
 			? $modelfiles.filter((modelfile) => modelfile.tagName === selectedModels[0])[0]
 			: null;
 
+	let selectedModelfiles = {};
+	$: selectedModelfiles = selectedModels.reduce((a, tagName, i, arr) => {
+		const modelfile =
+			$modelfiles.filter((modelfile) => modelfile.tagName === tagName)?.at(0) ?? undefined;
+
+		return {
+			...a,
+			...(modelfile && { [tagName]: modelfile })
+		};
+	}, {});
+
 	let chat = null;
 
 	let title = '';
@@ -646,7 +657,7 @@
 				<Messages
 					chatId={$chatId}
 					{selectedModels}
-					{selectedModelfile}
+					{selectedModelfiles}
 					bind:history
 					bind:messages
 					bind:autoScroll
