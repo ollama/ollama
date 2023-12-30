@@ -159,3 +159,23 @@ async def delete_chat_by_id(id: str, cred=Depends(bearer_scheme)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.INVALID_TOKEN,
         )
+
+
+############################
+# DeleteAllChats
+############################
+
+
+@router.delete("/", response_model=bool)
+async def delete_all_user_chats(cred=Depends(bearer_scheme)):
+    token = cred.credentials
+    user = Users.get_user_by_token(token)
+
+    if user:
+        result = Chats.delete_chats_by_user_id(user.id)
+        return result
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.INVALID_TOKEN,
+        )
