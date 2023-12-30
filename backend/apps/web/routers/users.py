@@ -62,34 +62,25 @@ async def update_user_role(
 
 
 @router.delete("/{user_id}", response_model=bool)
-async def delete_user_by_id(user_id: str, cred=Depends(bearer_scheme)):
-    token = cred.credentials
-    user = Users.get_user_by_token(token)
+async def delete_user_by_id(user_id: str, user=Depends(get_current_user)):
+    if user.role == "admin":
+        if user.id != user_id:
+            result = Auths.delete_auth_by_id(user_id)
 
-    if user:
-        if user.role == "admin":
-            if user.id != user_id:
-                result = Auths.delete_auth_by_id(user_id)
-
-                if result:
-                    return True
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=ERROR_MESSAGES.DELETE_USER_ERROR,
-                    )
+            if result:
+                return True
             else:
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=ERROR_MESSAGES.ACTION_PROHIBITED,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=ERROR_MESSAGES.DELETE_USER_ERROR,
                 )
         else:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+                detail=ERROR_MESSAGES.ACTION_PROHIBITED,
             )
     else:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.INVALID_TOKEN,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )

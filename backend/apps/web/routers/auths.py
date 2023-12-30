@@ -23,6 +23,7 @@ from utils.utils import (
     get_password_hash,
     get_current_user,
     create_token,
+    verify_auth_token,
 )
 from utils.misc import get_gravatar_url
 from constants import ERROR_MESSAGES
@@ -35,7 +36,7 @@ router = APIRouter()
 ############################
 
 
-@router.get("/", response_model=UserResponse)
+@router.get("/", response_model=UserResponse, dependencies=[Depends(verify_auth_token)])
 async def get_session_user(user=Depends(get_current_user)):
     return {
         "id": user.id,
@@ -51,11 +52,12 @@ async def get_session_user(user=Depends(get_current_user)):
 ############################
 
 
-@router.post("/update/password", response_model=bool)
-async def update_password(form_data: UpdatePasswordForm, cred=Depends(bearer_scheme)):
-    token = cred.credentials
-    session_user = Users.get_user_by_token(token)
-
+@router.post(
+    "/update/password", response_model=bool, dependencies=[Depends(verify_auth_token)]
+)
+async def update_password(
+    form_data: UpdatePasswordForm, session_user=Depends(get_current_user)
+):
     if session_user:
         user = Auths.authenticate_user(session_user.email, form_data.password)
 
