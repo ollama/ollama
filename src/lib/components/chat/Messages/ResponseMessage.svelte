@@ -26,8 +26,6 @@
 	export let copyToClipboard: Function;
 	export let regenerateResponse: Function;
 
-	let selectedModelfile = '';
-
 	let edit = false;
 	let editedContent = '';
 
@@ -42,19 +40,14 @@
 		await tick();
 
 		if (tooltipInstance) {
-			console.log(tooltipInstance);
 			tooltipInstance[0].destroy();
 		}
-
-		console.log('rendering message');
 
 		renderLatex();
 		hljs.highlightAll();
 		createCopyCodeBlockButton();
 
 		if (message.info) {
-			console.log(message);
-
 			tooltipInstance = tippy(`#info-${message.id}`, {
 				content: `<span class="text-xs" id="tooltip-${message.id}">token/s: ${
 					`${
@@ -214,12 +207,12 @@
 </script>
 
 <div class=" flex w-full message-{message.id}">
-	<ProfileImage src={selectedModelfile?.imageUrl ?? '/favicon.png'} />
+	<ProfileImage src={modelfiles[message.model]?.imageUrl ?? '/favicon.png'} />
 
 	<div class="w-full overflow-hidden">
 		<Name>
-			{#if selectedModelfile}
-				{selectedModelfile.title}
+			{#if message.model in modelfiles}
+				{modelfiles[message.model]?.title}
 			{:else}
 				Ollama <span class=" text-gray-500 text-sm font-medium"
 					>{message.model ? ` ${message.model}` : ''}</span

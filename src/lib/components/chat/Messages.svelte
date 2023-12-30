@@ -96,7 +96,17 @@
 	};
 
 	const confirmEditResponseMessage = async (messageId, content) => {
+		history.messages[messageId].originalContent = history.messages[messageId].content;
 		history.messages[messageId].content = content;
+
+		await tick();
+
+		await updateChatById(localStorage.token, chatId, {
+			messages: messages,
+			history: history
+		});
+
+		await chats.set(await getChatList(localStorage.token));
 	};
 
 	const rateMessage = async (messageId, rating) => {
@@ -225,6 +235,7 @@
 				{:else}
 					<ResponseMessage
 						{message}
+						modelfiles={selectedModelfiles}
 						siblings={history.messages[message.parentId]?.childrenIds ?? []}
 						isLastMessage={messageIdx + 1 === messages.length}
 						{confirmEditResponseMessage}
