@@ -11,6 +11,7 @@ import uuid
 from apps.web.models.auths import (
     SigninForm,
     SignupForm,
+    UpdatePasswordForm,
     UserResponse,
     SigninResponse,
     Auths,
@@ -43,6 +44,28 @@ async def get_session_user(user=Depends(get_current_user)):
         "role": user.role,
         "profile_image_url": user.profile_image_url,
     }
+
+
+############################
+# Update Password
+############################
+
+
+@router.post("/update/password", response_model=bool)
+async def update_password(form_data: UpdatePasswordForm, cred=Depends(bearer_scheme)):
+    token = cred.credentials
+    session_user = Users.get_user_by_token(token)
+
+    if session_user:
+        user = Auths.authenticate_user(session_user.email, form_data.password)
+
+        if user:
+            hashed = get_password_hash(form_data.new_password)
+            return Auths.update_user_password_by_id(user.id, hashed)
+        else:
+            raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_PASSWORD)
+    else:
+        raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
 
 
 ############################
