@@ -999,12 +999,12 @@
 
 						<hr class=" dark:border-gray-700" />
 						<div>
-							<div class=" mb-2.5 text-sm font-medium">Ollama Server URL</div>
+							<div class=" mb-2.5 text-sm font-medium">Ollama API URL</div>
 							<div class="flex w-full">
 								<div class="flex-1 mr-2">
 									<input
 										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter URL (e.g. http://localhost:11434/api)"
+										placeholder="Enter URL (e.g. http://localhost:8080/ollama/api)"
 										bind:value={API_BASE_URL}
 									/>
 								</div>
@@ -1030,7 +1030,10 @@
 							</div>
 
 							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-								Trouble accessing Ollama? <a
+								The field above should be set to <span
+									class=" text-gray-500 dark:text-gray-300 font-medium">'/ollama/api'</span
+								>;
+								<a
 									class=" text-gray-500 dark:text-gray-300 font-medium"
 									href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
 									target="_blank"
