@@ -8,7 +8,7 @@
 	import { splitStream, getGravatarURL } from '$lib/utils';
 
 	import { getOllamaVersion } from '$lib/apis/ollama';
-	import { createNewChat, getAllChats, getChatList } from '$lib/apis/chats';
+	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
 	import {
 		WEB_UI_VERSION,
 		OLLAMA_API_BASE_URL,
@@ -18,6 +18,8 @@
 
 	import Advanced from './Settings/Advanced.svelte';
 	import Modal from '../common/Modal.svelte';
+	import { updateUserPassword } from '$lib/apis/auths';
+	import { goto } from '$app/navigation';
 
 	export let show = false;
 
@@ -82,7 +84,7 @@
 	// Chats
 
 	let importFiles;
-	let showDeleteHistoryConfirm = false;
+	let showDeleteConfirm = false;
 
 	const importChats = async (_chats) => {
 		for (const chat of _chats) {
@@ -113,10 +115,21 @@
 		reader.readAsText(importFiles[0]);
 	}
 
+	const deleteChats = async () => {
+		await goto('/');
+		await deleteAllChats(localStorage.token);
+		await chats.set(await getChatList(localStorage.token));
+	};
+
 	// Auth
 	let authEnabled = false;
 	let authType = 'Basic';
 	let authContent = '';
+
+	// Account
+	let currentPassword = '';
+	let newPassword = '';
+	let newPasswordConfirm = '';
 
 	// About
 	let ollamaVersion = '';
@@ -595,6 +608,31 @@
 		return models;
 	};
 
+	const updatePasswordHandler = async () => {
+		if (newPassword === newPasswordConfirm) {
+			const res = await updateUserPassword(localStorage.token, currentPassword, newPassword).catch(
+				(error) => {
+					toast.error(error);
+					return null;
+				}
+			);
+
+			if (res) {
+				toast.success('Successfully updated.');
+			}
+
+			currentPassword = '';
+			newPassword = '';
+			newPasswordConfirm = '';
+		} else {
+			toast.error(
+				`The passwords you entered don't quite match. Please double-check and try again.`
+			);
+			newPassword = '';
+			newPasswordConfirm = '';
+		}
+	};
+
 	onMount(async () => {
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(settings);
@@ -847,6 +885,32 @@
 
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+					'account'
+						? 'bg-gray-200 dark:bg-gray-700'
+						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+					on:click={() => {
+						selectedTab = 'account';
+					}}
+				>
+					<div class=" self-center mr-2">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M15 8A7 7 0 1 1 1 8a7 7 0 0 1 14 0Zm-5-2a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM8 9c-1.825 0-3.422.977-4.295 2.437A5.49 5.49 0 0 0 8 13.5a5.49 5.49 0 0 0 4.294-2.063A4.997 4.997 0 0 0 8 9Z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</div>
+					<div class=" self-center">Account</div>
+				</button>
+
+				<button
+					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'about'
 						? 'bg-gray-200 dark:bg-gray-700'
 						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
@@ -940,12 +1004,12 @@
 
 						<hr class=" dark:border-gray-700" />
 						<div>
-							<div class=" mb-2.5 text-sm font-medium">Ollama Server URL</div>
+							<div class=" mb-2.5 text-sm font-medium">Ollama API URL</div>
 							<div class="flex w-full">
 								<div class="flex-1 mr-2">
 									<input
 										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter URL (e.g. http://localhost:11434/api)"
+										placeholder="Enter URL (e.g. http://localhost:8080/ollama/api)"
 										bind:value={API_BASE_URL}
 									/>
 								</div>
@@ -971,7 +1035,10 @@
 							</div>
 
 							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-								Trouble accessing Ollama? <a
+								The field above should be set to <span
+									class=" text-gray-500 dark:text-gray-300 font-medium">'/ollama/api'</span
+								>;
+								<a
 									class=" text-gray-500 dark:text-gray-300 font-medium"
 									href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
 									target="_blank"
@@ -1558,147 +1625,154 @@
 					</form>
 				{:else if selectedTab === 'chats'}
 					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
-						<div class="flex flex-col">
-							<input
-								id="chat-import-input"
-								bind:files={importFiles}
-								type="file"
-								accept=".json"
-								hidden
-							/>
-							<button
-								class=" flex rounded-md py-2 px-3.5 w-full hover:bg-gray-200 dark:hover:bg-gray-800 transition"
-								on:click={() => {
-									document.getElementById('chat-import-input').click();
-								}}
-							>
-								<div class=" self-center mr-3">
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 16 16"
-										fill="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											fill-rule="evenodd"
-											d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
-											clip-rule="evenodd"
-										/>
-									</svg>
-								</div>
-								<div class=" self-center text-sm font-medium">Import Chats</div>
-							</button>
-							<button
-								class=" flex rounded-md py-2 px-3.5 w-full hover:bg-gray-200 dark:hover:bg-gray-800 transition"
-								on:click={() => {
-									exportChats();
-								}}
-							>
-								<div class=" self-center mr-3">
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 16 16"
-										fill="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											fill-rule="evenodd"
-											d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 3.5a.75.75 0 0 1 .75.75v2.69l.72-.72a.75.75 0 1 1 1.06 1.06l-2 2a.75.75 0 0 1-1.06 0l-2-2a.75.75 0 0 1 1.06-1.06l.72.72V6.25A.75.75 0 0 1 8 5.5Z"
-											clip-rule="evenodd"
-										/>
-									</svg>
-								</div>
-								<div class=" self-center text-sm font-medium">Export Chats</div>
-							</button>
-						</div>
-						<!-- {#if showDeleteHistoryConfirm}
-							<div
-								class="flex justify-between rounded-md items-center py-3 px-3.5 w-full transition"
-							>
-								<div class="flex items-center">
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke-width="1.5"
-										stroke="currentColor"
-										class="w-5 h-5 mr-3"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-										/>
-									</svg>
-									<span>Are you sure?</span>
-								</div>
-
-								<div class="flex space-x-1.5 items-center">
-									<button
-										class="hover:text-white transition"
-										on:click={() => {
-											deleteChatHistory();
-											showDeleteHistoryConfirm = false;
-										}}
-									>
+						<div class=" space-y-2">
+							<div class="flex flex-col">
+								<input
+									id="chat-import-input"
+									bind:files={importFiles}
+									type="file"
+									accept=".json"
+									hidden
+								/>
+								<button
+									class=" flex rounded-md py-2 px-3.5 w-full hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+									on:click={() => {
+										document.getElementById('chat-import-input').click();
+									}}
+								>
+									<div class=" self-center mr-3">
 										<svg
 											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 20 20"
+											viewBox="0 0 16 16"
 											fill="currentColor"
 											class="w-4 h-4"
 										>
 											<path
 												fill-rule="evenodd"
-												d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
+												d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
 												clip-rule="evenodd"
 											/>
 										</svg>
-									</button>
-									<button
-										class="hover:text-white transition"
-										on:click={() => {
-											showDeleteHistoryConfirm = false;
-										}}
-									>
+									</div>
+									<div class=" self-center text-sm font-medium">Import Chats</div>
+								</button>
+								<button
+									class=" flex rounded-md py-2 px-3.5 w-full hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+									on:click={() => {
+										exportChats();
+									}}
+								>
+									<div class=" self-center mr-3">
 										<svg
 											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 20 20"
+											viewBox="0 0 16 16"
 											fill="currentColor"
 											class="w-4 h-4"
 										>
 											<path
-												d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+												fill-rule="evenodd"
+												d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 3.5a.75.75 0 0 1 .75.75v2.69l.72-.72a.75.75 0 1 1 1.06 1.06l-2 2a.75.75 0 0 1-1.06 0l-2-2a.75.75 0 0 1 1.06-1.06l.72.72V6.25A.75.75 0 0 1 8 5.5Z"
+												clip-rule="evenodd"
 											/>
 										</svg>
-									</button>
-								</div>
+									</div>
+									<div class=" self-center text-sm font-medium">Export Chats</div>
+								</button>
 							</div>
-						{:else}
-							<button
-								class=" flex rounded-md py-3 px-3.5 w-full hover:bg-gray-900 transition"
-								on:click={() => {
-									showDeleteHistoryConfirm = true;
-								}}
-							>
-								<div class="mr-3">
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke-width="1.5"
-										stroke="currentColor"
-										class="w-5 h-5"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-										/>
-									</svg>
+
+							<hr class=" dark:border-gray-700" />
+
+							{#if showDeleteConfirm}
+								<div
+									class="flex justify-between rounded-md items-center py-2 px-3.5 w-full transition"
+								>
+									<div class="flex items-center space-x-3">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3Z"
+											/>
+											<path
+												fill-rule="evenodd"
+												d="M13 6H3v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6ZM5.72 7.47a.75.75 0 0 1 1.06 0L8 8.69l1.22-1.22a.75.75 0 1 1 1.06 1.06L9.06 9.75l1.22 1.22a.75.75 0 1 1-1.06 1.06L8 10.81l-1.22 1.22a.75.75 0 0 1-1.06-1.06l1.22-1.22-1.22-1.22a.75.75 0 0 1 0-1.06Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+										<span>Are you sure?</span>
+									</div>
+
+									<div class="flex space-x-1.5 items-center">
+										<button
+											class="hover:text-white transition"
+											on:click={() => {
+												deleteChats();
+												showDeleteConfirm = false;
+											}}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													fill-rule="evenodd"
+													d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
+													clip-rule="evenodd"
+												/>
+											</svg>
+										</button>
+										<button
+											class="hover:text-white transition"
+											on:click={() => {
+												showDeleteConfirm = false;
+											}}
+										>
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+												/>
+											</svg>
+										</button>
+									</div>
 								</div>
-								<span>Clear conversations</span>
-							</button>
-						{/if} -->
+							{:else}
+								<button
+									class=" flex rounded-md py-2 px-3.5 w-full hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+									on:click={() => {
+										showDeleteConfirm = true;
+									}}
+								>
+									<div class=" self-center mr-3">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3Z"
+											/>
+											<path
+												fill-rule="evenodd"
+												d="M13 6H3v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6ZM5.72 7.47a.75.75 0 0 1 1.06 0L8 8.69l1.22-1.22a.75.75 0 1 1 1.06 1.06L9.06 9.75l1.22 1.22a.75.75 0 1 1-1.06 1.06L8 10.81l-1.22 1.22a.75.75 0 0 1-1.06-1.06l1.22-1.22-1.22-1.22a.75.75 0 0 1 0-1.06Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</div>
+									<div class=" self-center text-sm font-medium">Delete All Chats</div>
+								</button>
+							{/if}
+						</div>
 					</div>
 				{:else if selectedTab === 'auth'}
 					<form
@@ -1814,6 +1888,67 @@
 								type="submit"
 							>
 								Save
+							</button>
+						</div>
+					</form>
+				{:else if selectedTab === 'account'}
+					<form
+						class="flex flex-col h-full text-sm"
+						on:submit|preventDefault={() => {
+							updatePasswordHandler();
+						}}
+					>
+						<div class=" mb-2.5 font-medium">Change Password</div>
+
+						<div class=" space-y-1.5">
+							<div class="flex flex-col w-full">
+								<div class=" mb-1 text-xs text-gray-500">Current Password</div>
+
+								<div class="flex-1">
+									<input
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+										type="password"
+										bind:value={currentPassword}
+										autocomplete="current-password"
+										required
+									/>
+								</div>
+							</div>
+
+							<div class="flex flex-col w-full">
+								<div class=" mb-1 text-xs text-gray-500">New Password</div>
+
+								<div class="flex-1">
+									<input
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+										type="password"
+										bind:value={newPassword}
+										autocomplete="new-password"
+										required
+									/>
+								</div>
+							</div>
+
+							<div class="flex flex-col w-full">
+								<div class=" mb-1 text-xs text-gray-500">Confirm Password</div>
+
+								<div class="flex-1">
+									<input
+										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+										type="password"
+										bind:value={newPasswordConfirm}
+										autocomplete="off"
+										required
+									/>
+								</div>
+							</div>
+						</div>
+
+						<div class="mt-3 flex justify-end">
+							<button
+								class=" px-4 py-2 text-xs bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-800 text-gray-100 transition rounded-md font-medium"
+							>
+								Update password
 							</button>
 						</div>
 					</form>

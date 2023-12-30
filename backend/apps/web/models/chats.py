@@ -153,5 +153,14 @@ class ChatTable:
         except:
             return False
 
+    def delete_chats_by_user_id(self, user_id: str) -> bool:
+        try:
+            query = Chat.delete().where(Chat.user_id == user_id)
+            query.execute()  # Remove the rows, return number of rows removed.
+
+            return True
+        except:
+            return False
+
 
 Chats = ChatTable(DB)

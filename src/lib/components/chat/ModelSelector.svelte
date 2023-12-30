@@ -6,8 +6,8 @@
 	export let disabled = false;
 
 	const saveDefaultModel = () => {
-		const hasEmptyModel = selectedModels.filter(it => it === '');
-		if(hasEmptyModel.length){
+		const hasEmptyModel = selectedModels.filter((it) => it === '');
+		if (hasEmptyModel.length) {
 			toast.error('Choose a model before saving...');
 			return;
 		}
@@ -88,8 +88,9 @@
 			{#if selectedModelIdx === 0}
 				<button
 					class=" self-center dark:hover:text-gray-300"
+					id="open-settings-button"
 					on:click={async () => {
-						await showSettings.set(true);
+						await showSettings.set(!$showSettings);
 					}}
 				>
 					<svg

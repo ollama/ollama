@@ -12,6 +12,7 @@ class ERROR_MESSAGES(str, Enum):
     DEFAULT = lambda err="": f"Something went wrong :/\n{err if err else ''}"
     ENV_VAR_NOT_FOUND = "Required environment variable not found. Terminating now."
     CREATE_USER_ERROR = "Oops! Something went wrong while creating your account. Please try again later. If the issue persists, contact support for assistance."
+    DELETE_USER_ERROR = "Oops! Something went wrong. We encountered an issue while trying to delete the user. Please give it another shot."
     EMAIL_TAKEN = "Uh-oh! This email is already registered. Sign in with your existing account or choose another email to start anew."
     USERNAME_TAKEN = (
         "Uh-oh! This username is already registered. Please choose another username."
@@ -20,6 +21,9 @@ class ERROR_MESSAGES(str, Enum):
         "Your session has expired or the token is invalid. Please sign in again."
     )
     INVALID_CRED = "The email or password provided is incorrect. Please check for typos and try logging in again."
+    INVALID_PASSWORD = (
+        "The password provided is incorrect. Please check for typos and try again."
+    )
     UNAUTHORIZED = "401 Unauthorized"
     ACCESS_PROHIBITED = "You do not have permission to access this resource. Please contact your administrator for assistance."
     ACTION_PROHIBITED = (
@@ -27,4 +31,5 @@ class ERROR_MESSAGES(str, Enum):
     )
     NOT_FOUND = "We could not find what you're looking for :/"
     USER_NOT_FOUND = "We could not find what you're looking for :/"
+
     MALICIOUS = "Unusual activities detected, please try again in a few minutes."
