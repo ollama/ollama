@@ -79,11 +79,16 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 
 - **Privacy and Data Security:** We prioritize your privacy and data security above all. Please be reassured that all data entered into the Ollama Web UI is stored locally on your device. Our system is designed to be privacy-first, ensuring that no external requests are made, and your data does not leave your local environment. We are committed to maintaining the highest standards of data privacy and security, ensuring that your information remains confidential and under your control.
 
-### Installing Both Ollama and Ollama Web UI Using Docker Compose
+### Installing Both Ollama and Ollama Web UI Using Provided run-compose.sh bash script
+Also available on Windows under any docker-enabled WSL2 linux distro (you have to enable it from Docker Desktop)
 
-If you don't have Ollama installed yet, you can use the provided bash script for a hassle-free installation. Simply run the following command:
+Simply run the following command:
+Grant execute permission to script
+```bash
+chmod +x run-compose.sh
+```
 
-For cpu-only container
+For CPU only container
 ```bash
 ./run-compose.sh
 ```
