@@ -652,7 +652,6 @@
 		options.top_k = settings.top_k ?? '';
 		options.top_p = settings.top_p ?? '';
 		options.num_ctx = settings.num_ctx ?? '';
-		options.num_predict = settings.num_predict ?? '';
 		options = { ...options, ...settings.options };
 		options.stop = (settings?.options?.stop ?? []).join(',');
 
