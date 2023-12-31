@@ -12,7 +12,8 @@
 		top_k: '',
 		top_p: '',
 		tfs_z: '',
-		num_ctx: ''
+		num_ctx: '',
+		num_predict: ''
 	};
 </script>
 
@@ -500,6 +501,51 @@
 						type="number"
 						class=" bg-transparent text-center w-14"
 						min="1"
+						max="16000"
+						step="1"
+					/>
+				</div>
+			</div>
+		{/if}
+	</div>
+	<div class=" py-0.5 w-full justify-between">
+		<div class="flex w-full justify-between">
+			<div class=" self-center text-xs font-medium">Max Tokens</div>
+
+			<button
+				class="p-1 px-3 text-xs flex rounded transition"
+				type="button"
+				on:click={() => {
+					options.num_predict = options.num_predict === '' ? 128 : '';
+				}}
+			>
+				{#if options.num_predict === ''}
+					<span class="ml-2 self-center"> Default </span>
+				{:else}
+					<span class="ml-2 self-center"> Custom </span>
+				{/if}
+			</button>
+		</div>
+
+		{#if options.num_predict !== ''}
+			<div class="flex mt-0.5 space-x-2">
+				<div class=" flex-1">
+					<input
+						id="steps-range"
+						type="range"
+						min="-2"
+						max="16000"
+						step="1"
+						bind:value={options.num_predict}
+						class="w-full h-2 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+					/>
+				</div>
+				<div class="">
+					<input
+						bind:value={options.num_predict}
+						type="number"
+						class=" bg-transparent text-center w-14"
+						min="-2"
 						max="16000"
 						step="1"
 					/>

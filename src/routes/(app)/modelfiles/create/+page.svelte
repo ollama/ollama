@@ -51,7 +51,8 @@
 		top_k: '',
 		top_p: '',
 		tfs_z: '',
-		num_ctx: ''
+		num_ctx: '',
+		num_predict: ''
 	};
 
 	let modelfileCreator = null;
@@ -73,6 +74,7 @@ ${options.top_k !== '' ? `PARAMETER top_k ${options.top_k}` : ''}
 ${options.top_p !== '' ? `PARAMETER top_p ${options.top_p}` : ''}
 ${options.tfs_z !== '' ? `PARAMETER tfs_z ${options.tfs_z}` : ''}
 ${options.num_ctx !== '' ? `PARAMETER num_ctx ${options.num_ctx}` : ''}
+${options.num_predict !== '' ? `PARAMETER num_predict ${options.num_predict}` : ''}
 SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 	}
 
