@@ -4,6 +4,7 @@ metadata:
   name: ollama-service
   namespace: {{ .Values.namespace }}
 spec:
+  type: {{ .Values.ollama.service.type }}
   selector:
     app: ollama
   ports:

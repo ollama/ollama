@@ -15,14 +15,24 @@ spec:
     spec:
       containers:
       - name: ollama-webui
-        image: ghcr.io/ollama-webui/ollama-webui:main
+        image: {{ .Values.webui.image }}
         ports:
         - containerPort: 8080
-        resources:
-          limits:
-            cpu: "500m"
-            memory: "500Mi"
+        {{- if .Values.webui.resources }}
+        resources: {{- toYaml .Values.webui.resources | nindent 10 }}
+        {{- end }}
+        volumeMounts:
+        - name: webui-volume
+          mountPath: /app/backend/data
         env:
         - name: OLLAMA_API_BASE_URL
           value: "http://ollama-service.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.ollama.servicePort }}/api"
         tty: true
+      {{- with .Values.webui.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+      - name: webui-volume
+        persistentVolumeClaim:
+          claimName: ollama-webui-pvc
