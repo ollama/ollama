@@ -53,7 +53,8 @@
 		top_p: '',
 		stop: '',
 		tfs_z: '',
-		num_ctx: ''
+		num_ctx: '',
+		num_predict: ''
 	};
 
 	// Models
@@ -1132,7 +1133,8 @@
 											top_k: options.top_k !== '' ? options.top_k : undefined,
 											top_p: options.top_p !== '' ? options.top_p : undefined,
 											tfs_z: options.tfs_z !== '' ? options.tfs_z : undefined,
-											num_ctx: options.num_ctx !== '' ? options.num_ctx : undefined
+											num_ctx: options.num_ctx !== '' ? options.num_ctx : undefined,
+											num_predict: options.num_predict !== '' ? options.num_predict : undefined
 										}
 									});
 									show = false;

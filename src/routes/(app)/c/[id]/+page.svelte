@@ -406,10 +406,13 @@
 										  }
 										: { content: message.content })
 								})),
-							temperature: $settings.temperature ?? undefined,
-							top_p: $settings.top_p ?? undefined,
-							num_ctx: $settings.num_ctx ?? undefined,
-							frequency_penalty: $settings.repeat_penalty ?? undefined
+							seed: $settings.options.seed ?? undefined,
+							stop: $settings.options.stop ?? undefined,
+							temperature: $settings.options.temperature ?? undefined,
+							top_p: $settings.options.top_p ?? undefined,
+							num_ctx: $settings.options.num_ctx ?? undefined,
+							frequency_penalty: $settings.options.repeat_penalty ?? undefined,
+							max_tokens: $settings.options.num_predict ?? undefined,
 						})
 					}
 				).catch((err) => {
