@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   ollama:
+    # GPU support
     deploy:
       resources:
         reservations:
