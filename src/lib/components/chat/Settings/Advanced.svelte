@@ -516,7 +516,7 @@
 				class="p-1 px-3 text-xs flex rounded transition"
 				type="button"
 				on:click={() => {
-					options.num_predict = options.num_predict === '' ? 256 : '';
+					options.num_predict = options.num_predict === '' ? 128 : '';
 				}}
 			>
 				{#if options.num_predict === ''}
@@ -533,7 +533,7 @@
 					<input
 						id="steps-range"
 						type="range"
-						min="1"
+						min="-2"
 						max="16000"
 						step="1"
 						bind:value={options.num_predict}
@@ -545,7 +545,7 @@
 						bind:value={options.num_predict}
 						type="number"
 						class=" bg-transparent text-center w-14"
-						min="1"
+						min="-2"
 						max="16000"
 						step="1"
 					/>
