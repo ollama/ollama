@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ollama-webui-ingress
+  namespace: ollama-namespace
+  #annotations:
+    # Use appropriate annotations for your Ingress controller, e.g., for NGINX:
+    # nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: ollama.minikube.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ollama-webui-service
+            port:
+              number: 8080

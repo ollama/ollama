@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-webui-service
+  namespace: ollama-namespace
+spec:
+  type: NodePort  # Use LoadBalancer if you're on a cloud that supports it
+  selector:
+    app: ollama-webui
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      # If using NodePort, you can optionally specify the nodePort:
+      # nodePort: 30000

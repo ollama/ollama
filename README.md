@@ -27,7 +27,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ⚡ **Swift Responsiveness**: Enjoy fast and responsive performance.
 
-- 🚀 **Effortless Setup**: Install seamlessly using Docker for a hassle-free experience.
+- 🚀 **Effortless Setup**: Install seamlessly using Docker or Kubernetes (kubectl, kustomize or helm) for a hassle-free experience.
 
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
 
@@ -81,29 +81,49 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 
 ### Installing Both Ollama and Ollama Web UI Using Docker Compose
 
-If you don't have Ollama installed yet, you can use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
+If you don't have Ollama installed yet, you can use the provided bash script for a hassle-free installation. Simply run the following command:
 
+For cpu-only container
 ```bash
-docker compose up -d --build
+chmod +x run-compose.sh && ./run-compose.sh
 ```
 
-This command will install both Ollama and Ollama Web UI on your system.
-
-#### Enable GPU
-
-Use the additional Docker Compose file designed to enable GPU support by running the following command:
-
+For gpu-enabled container (to enable this you must have your gpu driver for docker, it mostly works with nvidia so this is the official install guide: [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html))
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+chmod +x run-compose.sh && ./run-compose.sh --enable-gpu[count=1]
 ```
 
-#### Expose Ollama API outside the container stack
-
-Deploy the service with an additional Docker Compose file designed for API exposure:
-
+Note that both the above commands will use the latest production docker image in repository, to be able to build the latest local version you'll need to append the `--build` parameter, for example:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.api.yml up -d --build
+./run-compose.sh --build --enable-gpu[count=1]
 ```
+
+### Installing Both Ollama and Ollama Web UI Using Kustomize
+For cpu-only pod
+```bash
+kubectl apply -f ./kubernetes/manifest/base
+```
+For gpu-enabled pod
+```bash
+kubectl apply -k ./kubernetes/manifest
+```
+
+### Installing Both Ollama and Ollama Web UI Using Helm
+Package Helm file first
+```bash
+helm package ./kubernetes/helm/
+```
+
+For cpu-only pod
+```bash
+helm install ollama-webui ./ollama-webui-*.tgz
+```
+For gpu-enabled pod
+```bash
+helm install ollama-webui ./ollama-webui-*.tgz --set ollama.resources.limits.nvidia.com/gpu="1"
+```
+
+Check the `kubernetes/helm/values.yaml` file to know which parameters are available for customization
 
 ### Installing Ollama Web UI Only
 
