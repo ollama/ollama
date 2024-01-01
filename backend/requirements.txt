@@ -18,3 +18,5 @@ bcrypt
 
 PyJWT
 pyjwt[crypto]
+
+black

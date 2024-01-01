@@ -3,8 +3,6 @@ from peewee import *
 from playhouse.shortcuts import model_to_dict
 from typing import List, Union, Optional
 import time
-
-from utils.utils import decode_token
 from utils.misc import get_gravatar_url
 
 from apps.web.internal.db import DB
@@ -83,14 +81,6 @@ class UsersTable:
             user = User.get(User.email == email)
             return UserModel(**model_to_dict(user))
         except:
-            return None
-
-    def get_user_by_token(self, token: str) -> Optional[UserModel]:
-        data = decode_token(token)
-
-        if data != None and "email" in data:
-            return self.get_user_by_email(data["email"])
-        else:
             return None
 
     def get_users(self, skip: int = 0, limit: int = 50) -> List[UserModel]:
