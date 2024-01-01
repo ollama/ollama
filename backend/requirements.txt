@@ -20,3 +20,5 @@ chromadb
 
 PyJWT
 pyjwt[crypto]
+
+black

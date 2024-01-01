@@ -1,4 +1,4 @@
-version: '3.6'
+version: '3.8'
 
 services:
   ollama:
@@ -7,7 +7,7 @@ services:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              count: 1
+            - driver: ${OLLAMA_GPU_DRIVER-nvidia}
+              count: ${OLLAMA_GPU_COUNT-1}
               capabilities:
                 - gpu
