@@ -62,7 +62,7 @@
 						<div class=" text-2xl font-semibold">Users ({users.length})</div>
 						<div>
 							<button
-								class="flex items-center space-x-1 border border-gray-200 px-3 py-1 rounded-lg"
+								class="flex items-center space-x-1 border border-gray-200 dark:border-gray-600 px-3 py-1 rounded-lg"
 								type="button"
 								on:click={() => {
 									toggleSignUpEnabled();
