@@ -16,7 +16,7 @@ html {
 
 code {
 	/* white-space-collapse: preserve !important; */
-	white-space: pre;
+	overflow-x: auto;
 	width: auto;
 }
 
