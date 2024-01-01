@@ -16,5 +16,7 @@ aiohttp
 peewee
 bcrypt
 
+chromadb
+
 PyJWT
 pyjwt[crypto]
