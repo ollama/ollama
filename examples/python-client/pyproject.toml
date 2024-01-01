@@ -1,0 +1,22 @@
+[project]
+name = "ollama_client"
+version = "0.0.1"
+authors = [
+  { name="Justin D. Harris", url="https://github.com/juharris" },
+]
+description = "A Python client for Ollama."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/jmorganca/ollama/tree/main/examples/python-client"
+Issues = "https://github.com/jmorganca/ollama/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
