@@ -19,11 +19,7 @@ from apps.web.models.auths import (
 from apps.web.models.users import Users
 
 
-from utils.utils import (
-    get_password_hash,
-    bearer_scheme,
-    create_token,
-)
+from utils.utils import get_password_hash, get_current_user, create_token
 from utils.misc import get_gravatar_url
 from constants import ERROR_MESSAGES
 
@@ -36,22 +32,14 @@ router = APIRouter()
 
 
 @router.get("/", response_model=UserResponse)
-async def get_session_user(cred=Depends(bearer_scheme)):
-    token = cred.credentials
-    user = Users.get_user_by_token(token)
-    if user:
-        return {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "role": user.role,
-            "profile_image_url": user.profile_image_url,
-        }
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.INVALID_TOKEN,
-        )
+async def get_session_user(user=Depends(get_current_user)):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role,
+        "profile_image_url": user.profile_image_url,
+    }
 
 
 ############################
@@ -60,10 +48,9 @@ async def get_session_user(cred=Depends(bearer_scheme)):
 
 
 @router.post("/update/password", response_model=bool)
-async def update_password(form_data: UpdatePasswordForm, cred=Depends(bearer_scheme)):
-    token = cred.credentials
-    session_user = Users.get_user_by_token(token)
-
+async def update_password(
+    form_data: UpdatePasswordForm, session_user=Depends(get_current_user)
+):
     if session_user:
         user = Auths.authenticate_user(session_user.email, form_data.password)
 
