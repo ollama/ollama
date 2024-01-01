@@ -15,6 +15,7 @@ from apps.web.models.auths import Auths
 from utils.utils import get_current_user
 from constants import ERROR_MESSAGES
 
+
 router = APIRouter()
 
 ############################
