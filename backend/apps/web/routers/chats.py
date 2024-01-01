@@ -108,6 +108,7 @@ async def delete_chat_by_id(id: str, user=Depends(get_current_user)):
     result = Chats.delete_chat_by_id_and_user_id(id, user.id)
     return result
 
+
 ############################
 # DeleteAllChats
 ############################

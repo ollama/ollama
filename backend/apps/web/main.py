@@ -3,7 +3,6 @@ from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
 from apps.web.routers import auths, users, chats, modelfiles, utils
 from config import WEBUI_VERSION, WEBUI_AUTH
-from utils.utils import verify_auth_token
 
 app = FastAPI()
 
@@ -19,24 +18,9 @@ app.add_middleware(
 
 app.include_router(auths.router, prefix="/auths", tags=["auths"])
 
-app.include_router(
-    users.router,
-    prefix="/users",
-    tags=["users"],
-    dependencies=[Depends(verify_auth_token)],
-)
-app.include_router(
-    chats.router,
-    prefix="/chats",
-    tags=["chats"],
-    dependencies=[Depends(verify_auth_token)],
-)
-app.include_router(
-    modelfiles.router,
-    prefix="/modelfiles",
-    tags=["modelfiles"],
-    dependencies=[Depends(verify_auth_token)],
-)
+app.include_router(users.router, prefix="/users", tags=["users"])
+app.include_router(chats.router, prefix="/chats", tags=["chats"])
+app.include_router(modelfiles.router, prefix="/modelfiles", tags=["modelfiles"])
 app.include_router(utils.router, prefix="/utils", tags=["utils"])
 
 

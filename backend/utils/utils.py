@@ -55,7 +55,7 @@ def extract_token_from_auth_header(auth_header: str):
     return auth_header[len("Bearer ") :]
 
 
-def verify_auth_token(auth_token: HTTPAuthorizationCredentials = Depends(HTTPBearer())):
+def get_current_user(auth_token: HTTPAuthorizationCredentials = Depends(HTTPBearer())):
     data = decode_token(auth_token.credentials)
     if data != None and "email" in data:
         user = Users.get_user_by_email(data["email"])
@@ -64,14 +64,9 @@ def verify_auth_token(auth_token: HTTPAuthorizationCredentials = Depends(HTTPBea
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=ERROR_MESSAGES.INVALID_TOKEN,
             )
-        return
+        return user
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.UNAUTHORIZED,
         )
-
-
-def get_current_user(auth_token: HTTPAuthorizationCredentials = Depends(HTTPBearer())):
-    data = decode_token(auth_token.credentials)
-    return Users.get_user_by_email(data["email"])

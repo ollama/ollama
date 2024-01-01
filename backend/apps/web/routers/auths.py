@@ -19,12 +19,7 @@ from apps.web.models.auths import (
 from apps.web.models.users import Users
 
 
-from utils.utils import (
-    get_password_hash,
-    get_current_user,
-    create_token,
-    verify_auth_token,
-)
+from utils.utils import get_password_hash, get_current_user, create_token
 from utils.misc import get_gravatar_url
 from constants import ERROR_MESSAGES
 
@@ -36,7 +31,7 @@ router = APIRouter()
 ############################
 
 
-@router.get("/", response_model=UserResponse, dependencies=[Depends(verify_auth_token)])
+@router.get("/", response_model=UserResponse)
 async def get_session_user(user=Depends(get_current_user)):
     return {
         "id": user.id,
@@ -52,9 +47,7 @@ async def get_session_user(user=Depends(get_current_user)):
 ############################
 
 
-@router.post(
-    "/update/password", response_model=bool, dependencies=[Depends(verify_auth_token)]
-)
+@router.post("/update/password", response_model=bool)
 async def update_password(
     form_data: UpdatePasswordForm, session_user=Depends(get_current_user)
 ):
