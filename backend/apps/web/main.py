@@ -8,6 +8,8 @@ app = FastAPI()
 
 origins = ["*"]
 
+app.state.ENABLE_SIGNUP = True
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
