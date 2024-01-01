@@ -39,6 +39,11 @@
 		edit = false;
 		editedContent = '';
 	};
+
+	$: if (message) {
+		edit = false;
+		editedContent = '';
+	}
 </script>
 
 <div class=" flex w-full">
