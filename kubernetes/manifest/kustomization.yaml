@@ -1,0 +1,12 @@
+resources:
+- base/ollama-namespace.yaml
+- base/ollama-service.yaml
+- base/ollama-statefulset.yaml
+- base/webui-deployment.yaml
+- base/webui-service.yaml
+- base/webui-ingress.yaml
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+patches:
+- path: patches/ollama-statefulset-gpu.yaml

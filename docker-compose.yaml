@@ -1,4 +1,4 @@
-version: '3.6'
+version: '3.8'
 
 services:
   ollama:
@@ -16,14 +16,14 @@ services:
       args:
         OLLAMA_API_BASE_URL: '/ollama/api'
       dockerfile: Dockerfile
-    image: ollama-webui:latest
+    image: ghcr.io/ollama-webui/ollama-webui:main
     container_name: ollama-webui
     volumes:
       - ollama-webui:/app/backend/data
     depends_on:
       - ollama
     ports:
-      - 3000:8080
+      - ${OLLAMA_WEBUI_PORT-3000}:8080
     environment:
       - "OLLAMA_API_BASE_URL=http://ollama:11434/api"
     extra_hosts:

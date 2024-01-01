@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-webui-deployment
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama-webui
+  template:
+    metadata:
+      labels:
+        app: ollama-webui
+    spec:
+      containers:
+      - name: ollama-webui
+        image: {{ .Values.webui.image }}
+        ports:
+        - containerPort: 8080
+        {{- if .Values.webui.resources }}
+        resources: {{- toYaml .Values.webui.resources | nindent 10 }}
+        {{- end }}
+        volumeMounts:
+        - name: webui-volume
+          mountPath: /app/backend/data
+        env:
+        - name: OLLAMA_API_BASE_URL
+          value: "http://ollama-service.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.ollama.servicePort }}/api"
+        tty: true
+      {{- with .Values.webui.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+      - name: webui-volume
+        persistentVolumeClaim:
+          claimName: ollama-webui-pvc

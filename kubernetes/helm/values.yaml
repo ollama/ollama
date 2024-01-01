@@ -1,0 +1,38 @@
+namespace: ollama-namespace
+
+ollama:
+  replicaCount: 1
+  image: ollama/ollama:latest
+  servicePort: 11434
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+      nvidia.com/gpu: "0"
+  volumeSize: 1Gi
+  nodeSelector: {}
+  tolerations: []
+  service:
+    type: ClusterIP
+  gpu:
+    enabled: false
+
+webui:
+  replicaCount: 1
+  image: ghcr.io/ollama-webui/ollama-webui:main
+  servicePort: 8080
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "500Mi"
+  ingress:
+    enabled: true
+    annotations:
+    # Use appropriate annotations for your Ingress controller, e.g., for NGINX:
+      # nginx.ingress.kubernetes.io/rewrite-target: /
+    host: ollama.minikube.local
+  volumeSize: 1Gi
+  nodeSelector: {}
+  tolerations: []
+  service:
+    type: NodePort

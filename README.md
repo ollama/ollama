@@ -27,7 +27,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ⚡ **Swift Responsiveness**: Enjoy fast and responsive performance.
 
-- 🚀 **Effortless Setup**: Install seamlessly using Docker for a hassle-free experience.
+- 🚀 **Effortless Setup**: Install seamlessly using Docker or Kubernetes (kubectl, kustomize or helm) for a hassle-free experience.
 
 - 💻 **Code Syntax Highlighting**: Enjoy enhanced code readability with our syntax highlighting feature.
 
@@ -79,32 +79,6 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 
 - **Privacy and Data Security:** We prioritize your privacy and data security above all. Please be reassured that all data entered into the Ollama Web UI is stored locally on your device. Our system is designed to be privacy-first, ensuring that no external requests are made, and your data does not leave your local environment. We are committed to maintaining the highest standards of data privacy and security, ensuring that your information remains confidential and under your control.
 
-### Installing Both Ollama and Ollama Web UI Using Docker Compose
-
-If you don't have Ollama installed yet, you can use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
-
-```bash
-docker compose up -d --build
-```
-
-This command will install both Ollama and Ollama Web UI on your system.
-
-#### Enable GPU
-
-Use the additional Docker Compose file designed to enable GPU support by running the following command:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
-```
-
-#### Expose Ollama API outside the container stack
-
-Deploy the service with an additional Docker Compose file designed for API exposure:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.api.yml up -d --build
-```
-
 ### Installing Ollama Web UI Only
 
 #### Prerequisites
@@ -148,6 +122,69 @@ Alternatively, if you prefer to build the container yourself, use the following 
 docker build -t ollama-webui .
 docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend/data --name ollama-webui --restart always ollama-webui
 ```
+
+### Installing Both Ollama and Ollama Web UI
+
+#### Using Docker Compose
+
+If you don't have Ollama installed yet, you can use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
+
+```bash
+docker compose up -d --build
+```
+
+This command will install both Ollama and Ollama Web UI on your system.
+
+##### Enable GPU
+
+Use the additional Docker Compose file designed to enable GPU support by running the following command:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d --build
+```
+
+##### Expose Ollama API outside the container stack
+
+Deploy the service with an additional Docker Compose file designed for API exposure:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
+```
+
+#### Using Provided `run-compose.sh` Script (Linux)
+
+Also available on Windows under any docker-enabled WSL2 linux distro (you have to enable it from Docker Desktop)
+
+Simply run the following command to grant execute permission to script:
+
+```bash
+chmod +x run-compose.sh
+```
+
+##### For CPU only container
+
+```bash
+./run-compose.sh
+```
+
+##### Enable GPU
+
+For GPU enabled container (to enable this you must have your gpu driver for docker, it mostly works with nvidia so this is the official install guide: [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html))
+Warning! A GPU-enabled installation has only been tested using linux and nvidia GPU, full functionalities are not guaranteed under Windows or Macos or using a different GPU
+
+```bash
+./run-compose.sh --enable-gpu
+```
+
+Note that both the above commands will use the latest production docker image in repository, to be able to build the latest local version you'll need to append the `--build` parameter, for example:
+
+```bash
+./run-compose.sh --enable-gpu --build
+```
+
+#### Using Alternative Methods (Kustomize or Helm)
+
+See [INSTALLATION.md](/INSTALLATION.md) for information on how to install and/or join our [Ollama Web UI Discord community](https://discord.gg/5rJgQTnV4s).
 
 ## How to Install Without Docker
 
