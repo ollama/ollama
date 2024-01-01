@@ -298,6 +298,24 @@
 									submitPrompt(prompt);
 								}
 							}}
+							on:keydown={(e) => {
+								if (prompt === '' && e.key == 'ArrowUp') {
+									e.preventDefault();
+
+									const userMessageElement = [
+										...document.getElementsByClassName('user-message')
+									]?.at(-1);
+
+									const editButton = [
+										...document.getElementsByClassName('edit-user-message-button')
+									]?.at(-1);
+
+									console.log(userMessageElement);
+
+									userMessageElement.scrollIntoView({ block: 'center' });
+									editButton?.click();
+								}
+							}}
 							rows="1"
 							on:input={(e) => {
 								e.target.style.height = '';
