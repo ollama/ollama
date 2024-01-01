@@ -24,6 +24,8 @@
 
 		editElement.style.height = '';
 		editElement.style.height = `${editElement.scrollHeight}px`;
+
+		editElement?.focus();
 	};
 
 	const editMessageConfirmHandler = async () => {
@@ -43,7 +45,9 @@
 	<ProfileImage src={user?.profile_image_url ?? '/user.png'} />
 
 	<div class="w-full overflow-hidden">
-		<Name>You</Name>
+		<div class="user-message">
+			<Name>You</Name>
+		</div>
 
 		<div
 			class="prose chat-{message.role} w-full max-w-full dark:prose-invert prose-headings:my-0 prose-p:my-0 prose-p:-mb-4 prose-pre:my-0 prose-table:my-0 prose-blockquote:my-0 prose-img:my-0 prose-ul:-my-4 prose-ol:-my-4 prose-li:-my-3 prose-ul:-mb-6 prose-ol:-mb-6 prose-li:-mb-4 whitespace-pre-line"
@@ -145,7 +149,7 @@
 						{/if}
 
 						<button
-							class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-800 transition"
+							class="invisible group-hover:visible p-1 rounded dark:hover:bg-gray-800 transition edit-user-message-button"
 							on:click={() => {
 								editMessageHandler();
 							}}
