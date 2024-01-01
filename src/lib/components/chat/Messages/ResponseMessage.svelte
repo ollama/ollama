@@ -33,8 +33,6 @@
 	let speaking = null;
 
 	$: if (message) {
-		edit = false;
-		editedContent = '';
 		renderStyling();
 	}
 

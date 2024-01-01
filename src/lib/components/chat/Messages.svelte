@@ -215,42 +215,44 @@
 {#if messages.length == 0}
 	<Placeholder models={selectedModels} modelfiles={selectedModelfiles} />
 {:else}
-	{#each messages as message, messageIdx}
-		<div class=" w-full">
-			<div class="flex justify-between px-5 mb-3 max-w-3xl mx-auto rounded-lg group">
-				{#if message.role === 'user'}
-					<UserMessage
-						user={$user}
-						{message}
-						siblings={message.parentId !== null
-							? history.messages[message.parentId]?.childrenIds ?? []
-							: Object.values(history.messages)
-									.filter((message) => message.parentId === null)
-									.map((message) => message.id) ?? []}
-						{confirmEditMessage}
-						{showPreviousMessage}
-						{showNextMessage}
-						{copyToClipboard}
-					/>
-				{:else}
-					<ResponseMessage
-						{message}
-						modelfiles={selectedModelfiles}
-						siblings={history.messages[message.parentId]?.childrenIds ?? []}
-						isLastMessage={messageIdx + 1 === messages.length}
-						{confirmEditResponseMessage}
-						{showPreviousMessage}
-						{showNextMessage}
-						{rateMessage}
-						{copyToClipboard}
-						{regenerateResponse}
-					/>
-				{/if}
+	{#key chatId}
+		{#each messages as message, messageIdx}
+			<div class=" w-full">
+				<div class="flex justify-between px-5 mb-3 max-w-3xl mx-auto rounded-lg group">
+					{#if message.role === 'user'}
+						<UserMessage
+							user={$user}
+							{message}
+							siblings={message.parentId !== null
+								? history.messages[message.parentId]?.childrenIds ?? []
+								: Object.values(history.messages)
+										.filter((message) => message.parentId === null)
+										.map((message) => message.id) ?? []}
+							{confirmEditMessage}
+							{showPreviousMessage}
+							{showNextMessage}
+							{copyToClipboard}
+						/>
+					{:else}
+						<ResponseMessage
+							{message}
+							modelfiles={selectedModelfiles}
+							siblings={history.messages[message.parentId]?.childrenIds ?? []}
+							isLastMessage={messageIdx + 1 === messages.length}
+							{confirmEditResponseMessage}
+							{showPreviousMessage}
+							{showNextMessage}
+							{rateMessage}
+							{copyToClipboard}
+							{regenerateResponse}
+						/>
+					{/if}
+				</div>
 			</div>
-		</div>
-	{/each}
+		{/each}
 
-	{#if bottomPadding}
-		<div class=" mb-10" />
-	{/if}
+		{#if bottomPadding}
+			<div class=" mb-10" />
+		{/if}
+	{/key}
 {/if}
