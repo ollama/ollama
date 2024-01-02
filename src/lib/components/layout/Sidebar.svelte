@@ -149,6 +149,7 @@
 				</div>
 
 				<input
+					id="chat-search-input"
 					class="w-full rounded-r py-1.5 pl-2.5 pr-4 text-sm text-gray-300 bg-gray-950 outline-none"
 					placeholder="Search"
 					bind:value={search}
