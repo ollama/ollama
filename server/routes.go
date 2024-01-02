@@ -25,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/gpu"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
@@ -81,20 +82,6 @@ func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sess
 		return nil, err
 	}
 
-	ctx := c.Request.Context()
-
-	// check if the loaded model is still running in a subprocess, in case something unexpected happened
-	if loaded.runner != nil {
-		if err := loaded.runner.Ping(ctx); err != nil {
-			log.Print("loaded llm process not responding, closing now")
-			// the subprocess is no longer running, so close it
-			loaded.runner.Close()
-			loaded.runner = nil
-			loaded.Model = nil
-			loaded.Options = nil
-		}
-	}
-
 	needLoad := loaded.runner == nil || // is there a model loaded?
 		loaded.ModelPath != model.ModelPath || // has the base model changed?
 		!reflect.DeepEqual(loaded.AdapterPaths, model.AdapterPaths) || // have the adapters changed?
@@ -114,7 +101,7 @@ func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sess
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
 			// check for model compatibility
-			if strings.Contains(err.Error(), "failed to load model") {
+			if errors.Is(llm.ErrUnsupportedFormat, err) || strings.Contains(err.Error(), "failed to load model") {
 				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, model.ShortName)
 			}
 
@@ -125,10 +112,6 @@ func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sess
 		loaded.runner = llmRunner
 		loaded.Options = &opts
 	}
-
-	// update options for the loaded llm
-	// TODO(mxyng): this isn't thread safe, but it should be fine for now
-	loaded.runner.SetOptions(opts)
 
 	loaded.expireAt = time.Now().Add(sessionDuration)
 
@@ -212,6 +195,7 @@ func GenerateHandler(c *gin.Context) {
 	checkpointLoaded := time.Now()
 
 	var prompt string
+	var promptVars PromptVars
 	switch {
 	case req.Raw:
 		prompt = req.Prompt
@@ -234,11 +218,12 @@ func GenerateHandler(c *gin.Context) {
 			prevCtx = strings.TrimPrefix(prevCtx, " ")
 			rebuild.WriteString(prevCtx)
 		}
-		p, err := model.Prompt(PromptVars{
+		promptVars = PromptVars{
 			System: req.System,
 			Prompt: req.Prompt,
 			First:  len(req.Context) == 0,
-		})
+		}
+		p, err := model.PreResponsePrompt(promptVars)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -281,7 +266,14 @@ func GenerateHandler(c *gin.Context) {
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
 				if !req.Raw {
-					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+generated.String())
+					// append the generated text to the history and template it if needed
+					promptVars.Response = generated.String()
+					result, err := model.PostResponseTemplate(promptVars)
+					if err != nil {
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
+					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+result)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
@@ -909,9 +901,12 @@ func Serve(ln net.Listener) error {
 		os.Exit(0)
 	}()
 
-	if runtime.GOOS == "linux" {
+	if err := llm.Init(s.WorkDir); err != nil {
+		return fmt.Errorf("unable to initialize llm library %w", err)
+	}
+	if runtime.GOOS == "linux" { // TODO - windows too
 		// check compatibility to log warnings
-		if _, err := llm.CheckVRAM(); err != nil {
+		if _, err := gpu.CheckVRAM(); err != nil {
 			log.Print(err.Error())
 		}
 	}
@@ -1013,7 +1008,7 @@ func ChatHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if len(req.Messages) == 0 {
-		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true})
+		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true, Message: api.Message{Role: "assistant"}})
 		return
 	}
 
@@ -1038,6 +1033,7 @@ func ChatHandler(c *gin.Context) {
 			resp := api.ChatResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
+				Message:   api.Message{Role: "assistant", Content: r.Content},
 				Done:      r.Done,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
@@ -1050,8 +1046,6 @@ func ChatHandler(c *gin.Context) {
 			if r.Done {
 				resp.TotalDuration = time.Since(checkpointStart)
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-			} else {
-				resp.Message = &api.Message{Role: "assistant", Content: r.Content}
 			}
 
 			ch <- resp
@@ -1075,10 +1069,7 @@ func ChatHandler(c *gin.Context) {
 		for resp := range ch {
 			switch r := resp.(type) {
 			case api.ChatResponse:
-				if r.Message != nil {
-					sb.WriteString(r.Message.Content)
-				}
-
+				sb.WriteString(r.Message.Content)
 				final = r
 			case gin.H:
 				if errorMsg, ok := r["error"].(string); ok {
@@ -1094,7 +1085,7 @@ func ChatHandler(c *gin.Context) {
 			}
 		}
 
-		final.Message = &api.Message{Role: "assistant", Content: sb.String()}
+		final.Message = api.Message{Role: "assistant", Content: sb.String()}
 		c.JSON(http.StatusOK, final)
 		return
 	}

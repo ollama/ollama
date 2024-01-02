@@ -1,15 +1,23 @@
 # LangChain Web Summarization
 
-This example summarizes a website
+This example summarizes the website, [https://ollama.ai/blog/run-llama2-uncensored-locally](https://ollama.ai/blog/run-llama2-uncensored-locally)
 
-## Setup
+## Running the Example
 
-```
-pip install -r requirements.txt
-```
+1. Ensure you have the `llama2` model installed:
 
-## Run
+   ```bash
+   ollama pull llama2
+   ```
 
-```
-python main.py
-```
+2. Install the Python Requirements.
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Run the example:
+
+   ```bash
+   python main.py
+   ```

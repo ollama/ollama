@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
 
 	"golang.org/x/exp/slices"
 
@@ -57,17 +58,35 @@ type PromptVars struct {
 	First    bool
 }
 
-func (m *Model) Prompt(p PromptVars) (string, error) {
-	var prompt strings.Builder
-	// Use the "missingkey=zero" option to handle missing variables without panicking
-	tmpl, err := template.New("").Option("missingkey=zero").Parse(m.Template)
+// extractParts extracts the parts of the template before and after the {{.Response}} node.
+func extractParts(tmplStr string) (pre string, post string, err error) {
+	tmpl, err := template.New("").Parse(tmplStr)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	if p.System == "" {
-		// use the default system message for this model if one is not specified
-		p.System = m.System
+	var foundResponse bool
+
+	for _, node := range tmpl.Tree.Root.Nodes {
+		if node.Type() == parse.NodeAction && node.String() == "{{.Response}}" {
+			foundResponse = true
+		}
+		if !foundResponse {
+			pre += node.String()
+		} else {
+			post += node.String()
+		}
+	}
+
+	return pre, post, nil
+}
+
+func Prompt(promptTemplate string, p PromptVars) (string, error) {
+	var prompt strings.Builder
+	// Use the "missingkey=zero" option to handle missing variables without panicking
+	tmpl, err := template.New("").Option("missingkey=zero").Parse(promptTemplate)
+	if err != nil {
+		return "", err
 	}
 
 	vars := map[string]any{
@@ -82,8 +101,46 @@ func (m *Model) Prompt(p PromptVars) (string, error) {
 		return "", err
 	}
 	prompt.WriteString(sb.String())
-	prompt.WriteString(p.Response)
+
+	if !strings.Contains(prompt.String(), p.Response) {
+		// if the response is not in the prompt template, append it to the end
+		prompt.WriteString(p.Response)
+	}
+
 	return prompt.String(), nil
+}
+
+// PreResponsePrompt returns the prompt before the response tag
+func (m *Model) PreResponsePrompt(p PromptVars) (string, error) {
+	if p.System == "" {
+		// use the default system prompt for this model if one is not specified
+		p.System = m.System
+	}
+	pre, _, err := extractParts(m.Template)
+	if err != nil {
+		return "", err
+	}
+
+	return Prompt(pre, p)
+}
+
+// PostResponseTemplate returns the template after the response tag
+func (m *Model) PostResponseTemplate(p PromptVars) (string, error) {
+	if p.System == "" {
+		// use the default system prompt for this model if one is not specified
+		p.System = m.System
+	}
+	_, post, err := extractParts(m.Template)
+	if err != nil {
+		return "", err
+	}
+
+	if post == "" {
+		// if there is no post-response template, return the provided response
+		return p.Response, nil
+	}
+
+	return Prompt(post, p)
 }
 
 func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) {
@@ -91,11 +148,12 @@ func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) 
 	var prompt strings.Builder
 	var currentImages []api.ImageData
 	currentVars := PromptVars{
-		First: true,
+		First:  true,
+		System: m.System,
 	}
 
 	writePrompt := func() error {
-		p, err := m.Prompt(currentVars)
+		p, err := Prompt(m.Template, currentVars)
 		if err != nil {
 			return err
 		}
@@ -133,9 +191,11 @@ func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) 
 
 	// Append the last set of vars if they are non-empty
 	if currentVars.Prompt != "" || currentVars.System != "" {
-		if err := writePrompt(); err != nil {
-			return "", nil, err
+		p, err := m.PreResponsePrompt(currentVars)
+		if err != nil {
+			return "", nil, fmt.Errorf("pre-response template: %w", err)
 		}
+		prompt.WriteString(p)
 	}
 
 	return prompt.String(), currentImages, nil
@@ -418,6 +478,31 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 					return err
 				}
 
+				// if the model is not in gguf format, pull the base model to try and get it in gguf format
+				if fromConfig.ModelFormat != "gguf" {
+					fn(api.ProgressResponse{Status: "updating base model"})
+					parent, err := GetModel(c.Args)
+					if err != nil {
+						return err
+					}
+					if err := PullModel(ctx, parent.OriginalModel, &RegistryOptions{}, fn); err != nil {
+						log.Printf("error pulling model: %v", err)
+					}
+					// Reset the file pointer to the beginning of the file
+					_, err = fromConfigFile.Seek(0, 0)
+					if err != nil {
+						return fmt.Errorf("update from config after pull: %w", err)
+					}
+					if err := json.NewDecoder(fromConfigFile).Decode(&fromConfig); err != nil {
+						return err
+					}
+				}
+
+				// if the model is still not in gguf format, error out
+				if fromConfig.ModelFormat != "gguf" {
+					return fmt.Errorf("%s is not in gguf format, this base model is not compatible with this version of ollama", c.Args)
+				}
+
 				config.SetModelFormat(fromConfig.ModelFormat)
 				config.SetModelFamily(append(fromConfig.ModelFamilies, fromConfig.ModelFamily)...)
 				config.SetModelType(fromConfig.ModelType)
@@ -456,15 +541,21 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			defer bin.Close()
 
 			var offset int64
+		CREATE:
 			for {
 				fn(api.ProgressResponse{Status: "creating model layer"})
 
 				bin.Seek(offset, io.SeekStart)
 				ggml, err := llm.DecodeGGML(bin)
-				if errors.Is(err, io.EOF) {
-					break
-				} else if err != nil {
-					return err
+				if err != nil {
+					switch {
+					case errors.Is(err, io.EOF):
+						break CREATE
+					case errors.Is(err, llm.ErrUnsupportedFormat):
+						return fmt.Errorf("model binary specified in FROM field is not a valid gguf format model, %w", err)
+					default:
+						return err
+					}
 				}
 
 				config.SetModelFormat(ggml.Name())

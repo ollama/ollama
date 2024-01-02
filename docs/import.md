@@ -72,7 +72,7 @@ docker run --rm -v .:/model ollama/quantize -q q4_0 /model
 This will output two files into the directory:
 
 - `f16.bin`: the model converted to GGUF
-- `q4_0.bin` the model quantized to a 4-bit quantization (we will use this file to create the Ollama model)
+- `q4_0.bin` the model quantized to a 4-bit quantization (Ollama will use this file to create the Ollama model)
 
 ### Step 3: Write a `Modelfile`
 
