@@ -132,7 +132,7 @@
 		{/if}
 
 		<div class="px-2.5 mt-1 mb-2 flex justify-center space-x-2">
-			<div class="flex w-full">
+			<div class="flex w-full" id="chat-search">
 				<div class="self-center pl-3 py-2 rounded-l bg-gray-950">
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
