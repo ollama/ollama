@@ -34,7 +34,7 @@
 
 	// General
 	let API_BASE_URL = OLLAMA_API_BASE_URL;
-	let themes = ['dark', 'light', 'rose-pine', 'rose-pine-dawn'];
+	let themes = ['dark', 'light', 'rose-pine dark', 'rose-pine-dawn light'];
 	let theme = 'dark';
 	let notificationEnabled = false;
 	let system = '';
@@ -994,22 +994,22 @@
 											themes
 												.filter((e) => e !== theme)
 												.forEach((e) => {
-													document.documentElement.classList.remove(e);
+													e.split(' ').forEach((e) => {
+														document.documentElement.classList.remove(e);
+													});
 												});
 
-											document.documentElement.classList.add(theme);
-
-											if (!['light', 'dark'].includes(theme)) {
-												document.documentElement.classList.add('dark');
-											}
+											theme.split(' ').forEach((e) => {
+												document.documentElement.classList.add(e);
+											});
 
 											console.log(theme);
 										}}
 									>
 										<option value="dark">Dark</option>
 										<option value="light">Light</option>
-										<option value="rose-pine">Rosé Pine</option>
-										<option value="rose-pine-dawn">Rosé Pine Dawn</option>
+										<option value="rose-pine dark">Rosé Pine</option>
+										<option value="rose-pine-dawn light">Rosé Pine Dawn</option>
 									</select>
 								</div>
 							</div>

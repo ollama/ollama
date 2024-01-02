@@ -15,8 +15,9 @@
 			} else if (localStorage.theme === 'dark') {
 				document.documentElement.classList.add('dark');
 			} else {
-				document.documentElement.classList.add('dark');
-				document.documentElement.classList.add(localStorage.theme);
+				localStorage.theme.split(' ').forEach((e) => {
+					document.documentElement.classList.add(e);
+				});
 			}
 		</script>
 
