@@ -80,11 +80,11 @@
 	color: #e0def4 !important;
 }
 
-#dropdownDots {
+.rose-pine-dawn #dropdownDots {
 	background-color: #dfdad9;
 }
 
-.flex.py-2\.5.px-3\.5.w-full.hover\:bg-gray-800.transition:hover {
+.rose-pine-dawn .flex.py-2\.5.px-3\.5.w-full.hover\:bg-gray-800.transition:hover {
 	background: #cecacd;
 }
 
