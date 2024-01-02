@@ -301,7 +301,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Mobile
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
-- [Maid](https://github.com/danemadsen/Maid)
+- [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 
 ### Extensions & Plugins
 
