@@ -2,7 +2,7 @@
 	import { settings } from '$lib/stores';
 	import toast from 'svelte-french-toast';
 	import Suggestions from './MessageInput/Suggestions.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import Prompts from './MessageInput/PromptCommands.svelte';
 	import { findWordIndices } from '$lib/utils';
 
@@ -308,7 +308,7 @@
 									submitPrompt(prompt);
 								}
 							}}
-							on:keydown={(e) => {
+							on:keydown={async (e) => {
 								if (prompt === '' && e.key == 'ArrowUp') {
 									e.preventDefault();
 
@@ -324,16 +324,6 @@
 
 									userMessageElement.scrollIntoView({ block: 'center' });
 									editButton?.click();
-								}
-
-								if (prompt.charAt(0) === '/' && e.key === 'Tab') {
-									e.preventDefault();
-
-									const commandOptionButton = [
-										...document.getElementsByClassName('selected-command-option-button')
-									]?.at(-1);
-
-									commandOptionButton?.click();
 								}
 
 								if (prompt.charAt(0) === '/' && e.key === 'ArrowUp') {
@@ -364,12 +354,31 @@
 									commandOptionButton?.click();
 								}
 
-								const words = findWordIndices(prompt);
-
-								if (words.length > 0 && e.key === 'Tab') {
-									const word = words.at(0);
+								if (prompt.charAt(0) === '/' && e.key === 'Tab') {
 									e.preventDefault();
-									e.target.setSelectionRange(word?.startIndex, word.endIndex + 1);
+
+									const commandOptionButton = [
+										...document.getElementsByClassName('selected-command-option-button')
+									]?.at(-1);
+
+									commandOptionButton?.click();
+								} else if (e.key === 'Tab') {
+									const words = findWordIndices(prompt);
+
+									if (words.length > 0) {
+										const word = words.at(0);
+										const fullPrompt = prompt;
+
+										prompt = prompt.substring(0, word?.endIndex + 1);
+										await tick();
+
+										e.target.scrollTop = e.target.scrollHeight;
+										prompt = fullPrompt;
+										await tick();
+
+										e.preventDefault();
+										e.target.setSelectionRange(word?.startIndex, word.endIndex + 1);
+									}
 								}
 							}}
 							rows="1"
