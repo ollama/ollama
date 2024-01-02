@@ -6,7 +6,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 
-	import { settings, db, user, config, modelfiles } from '$lib/stores';
+	import { settings, user, config, modelfiles } from '$lib/stores';
 
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 	import { splitStream } from '$lib/utils';

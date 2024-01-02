@@ -3,7 +3,7 @@
 	import { toast } from 'svelte-french-toast';
 	import { goto } from '$app/navigation';
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
-	import { settings, db, user, config, modelfiles, models } from '$lib/stores';
+	import { settings, user, config, modelfiles, models } from '$lib/stores';
 
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
 	import { splitStream } from '$lib/utils';

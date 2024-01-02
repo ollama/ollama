@@ -6,7 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
-	import { models, modelfiles, user, settings, db, chats, chatId } from '$lib/stores';
+	import { models, modelfiles, user, settings, chats, chatId } from '$lib/stores';
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
@@ -412,7 +412,7 @@
 							top_p: $settings.options.top_p ?? undefined,
 							num_ctx: $settings.options.num_ctx ?? undefined,
 							frequency_penalty: $settings.options.repeat_penalty ?? undefined,
-							max_tokens: $settings.options.num_predict ?? undefined,
+							max_tokens: $settings.options.num_predict ?? undefined
 						})
 					}
 				).catch((err) => {

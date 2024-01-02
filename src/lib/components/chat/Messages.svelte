@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { v4 as uuidv4 } from 'uuid';
 
-	import { chats, config, db, modelfiles, settings, user } from '$lib/stores';
+	import { chats, config, modelfiles, settings, user } from '$lib/stores';
 	import { tick } from 'svelte';
 
 	import toast from 'svelte-french-toast';
