@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { settings } from '$lib/stores';
 	import toast from 'svelte-french-toast';
-	import Suggestions from './MessageInput/Suggestions.svelte';
 	import { onMount, tick } from 'svelte';
-	import Prompts from './MessageInput/PromptCommands.svelte';
+	import { settings } from '$lib/stores';
 	import { findWordIndices } from '$lib/utils';
+
+	import Prompts from './MessageInput/PromptCommands.svelte';
+	import Suggestions from './MessageInput/Suggestions.svelte';
 
 	export let submitPrompt: Function;
 	export let stopResponse: Function;
