@@ -34,7 +34,7 @@
 
 	// General
 	let API_BASE_URL = OLLAMA_API_BASE_URL;
-	let themes = ['dark', 'light', 'rose'];
+	let themes = ['dark', 'light', 'rose-pine'];
 	let theme = 'dark';
 	let notificationEnabled = false;
 	let system = '';
@@ -955,8 +955,8 @@
 									
 								</button> -->
 
-								<div class="flex items-center">
-									<div>
+								<div class="flex items-center relative">
+									<div class=" absolute right-16">
 										{#if theme === 'dark'}
 											<svg
 												xmlns="http://www.w3.org/2000/svg"
@@ -985,10 +985,10 @@
 									</div>
 
 									<select
-										class="w-fit pr-8 rounded py-2 px-2 text-xs bg-transparent outline-none"
+										class="w-fit pr-8 rounded py-2 px-2 text-xs bg-transparent outline-none text-right"
 										bind:value={theme}
 										placeholder="Select a theme"
-										on:change={() => {
+										on:change={(e) => {
 											localStorage.theme = theme;
 
 											themes
@@ -999,7 +999,7 @@
 
 											document.documentElement.classList.add(theme);
 
-											if (theme === 'rose') {
+											if (theme === 'rose-pine') {
 												document.documentElement.classList.add('dark');
 											}
 
@@ -1008,7 +1008,7 @@
 									>
 										<option value="dark">Dark</option>
 										<option value="light">Light</option>
-										<option value="rose">Rose</option>
+										<option value="rose-pine">Rosé Pine</option>
 									</select>
 								</div>
 							</div>

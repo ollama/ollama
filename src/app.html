@@ -12,11 +12,11 @@
 				(!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)
 			) {
 				document.documentElement.classList.add('light');
-			} else if (localStorage.theme === 'rose') {
+			} else if (localStorage.theme === 'dark') {
 				document.documentElement.classList.add('dark');
-				document.documentElement.classList.add(localStorage.theme);
 			} else {
 				document.documentElement.classList.add('dark');
+				document.documentElement.classList.add(localStorage.theme);
 			}
 		</script>
 
