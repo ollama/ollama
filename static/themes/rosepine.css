@@ -81,38 +81,42 @@
 }
 
 .rose-pine #dropdownDots {
-    background-color: #403d52;
+	background-color: #403d52;
 }
 
 .rose-pine .flex.py-2\.5.px-3\.5.w-full.hover\:bg-gray-800.transition:hover {
-    background: #524f67;
+	background: #524f67;
 }
 
 .rose-pine .m-auto.rounded-xl.max-w-full.w-\[40rem\].mx-2.bg-gray-50.dark\:bg-gray-900.shadow-3xl {
-    background-color: #26233a;
+	background-color: #26233a;
 }
 
-.rose-pine .w-full.rounded.p-4.text-sm.dark\:text-gray-300.dark\:bg-gray-800.outline-none.resize-none {
-    background-color: #524f67;
+.rose-pine
+	.w-full.rounded.p-4.text-sm.dark\:text-gray-300.dark\:bg-gray-800.outline-none.resize-none {
+	background-color: #524f67;
 }
 
-.rose-pine .w-full.rounded.py-2.px-4.text-sm.dark\:text-gray-300.dark\:bg-gray-800.outline-none.svelte-1vx7r9s {
-    background-color: #524f67;
+.rose-pine
+	.w-full.rounded.py-2.px-4.text-sm.dark\:text-gray-300.dark\:bg-gray-800.outline-none.svelte-1vx7r9s {
+	background-color: #524f67;
 }
 
-.rose-pine .px-2\.5.py-2\.5.min-w-fit.rounded-lg.flex-1.md\:flex-none.flex.text-right.transition.bg-gray-200.dark\:bg-gray-700 {
-    background-color: #403d52;
+.rose-pine
+	.px-2\.5.py-2\.5.min-w-fit.rounded-lg.flex-1.md\:flex-none.flex.text-right.transition.bg-gray-200.dark\:bg-gray-700 {
+	background-color: #403d52;
 }
 
-.rose-pine .px-2\.5.py-2\.5.min-w-fit.rounded-lg.flex-1.md\:flex-none.flex.text-right.transition.hover\:bg-gray-300.dark\:hover\:bg-gray-800:hover {
-    background-color: #524f67;
+.rose-pine
+	.px-2\.5.py-2\.5.min-w-fit.rounded-lg.flex-1.md\:flex-none.flex.text-right.transition.hover\:bg-gray-300.dark\:hover\:bg-gray-800:hover {
+	background-color: #524f67;
 }
 
 .rose-pine .px-4.py-2.bg-emerald-600.hover\:bg-emerald-700.text-gray-100.transition.rounded {
-    background-color: #31748f;
+	background-color: #31748f;
 }
 
-#chat-search > * {
+.rose-pine #chat-search > * {
 	background-color: #403d52 !important;
 }
 
