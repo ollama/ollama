@@ -166,9 +166,10 @@ const maxRetries = 3
 const retryDelay = 1 * time.Second
 
 type PredictOpts struct {
-	Prompt string
-	Format string
-	Images []api.ImageData
+	Prompt  string
+	Format  string
+	Images  []api.ImageData
+	Options api.Options
 }
 
 type PredictResult struct {

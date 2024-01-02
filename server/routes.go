@@ -64,10 +64,10 @@ var loaded struct {
 var defaultSessionDuration = 5 * time.Minute
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
-func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sessionDuration time.Duration) (*Model, error) {
+func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sessionDuration time.Duration) (*Model, *api.Options, error) {
 	model, err := GetModel(modelName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	workDir := c.GetString("workDir")
@@ -75,11 +75,11 @@ func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sess
 	opts := api.DefaultOptions()
 	if err := opts.FromMap(model.Options); err != nil {
 		log.Printf("could not load model options: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := opts.FromMap(reqOpts); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	needLoad := loaded.runner == nil || // is there a model loaded?
@@ -105,7 +105,7 @@ func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sess
 				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, model.ShortName)
 			}
 
-			return nil, err
+			return nil, nil, err
 		}
 
 		loaded.Model = model
@@ -135,7 +135,7 @@ func load(c *gin.Context, modelName string, reqOpts map[string]interface{}, sess
 	}
 
 	loaded.expireTimer.Reset(sessionDuration)
-	return model, nil
+	return model, &opts, nil
 }
 
 func GenerateHandler(c *gin.Context) {
@@ -169,7 +169,7 @@ func GenerateHandler(c *gin.Context) {
 	}
 
 	sessionDuration := defaultSessionDuration
-	model, err := load(c, req.Model, req.Options, sessionDuration)
+	model, opts, err := load(c, req.Model, req.Options, sessionDuration)
 	if err != nil {
 		var pErr *fs.PathError
 		switch {
@@ -287,9 +287,10 @@ func GenerateHandler(c *gin.Context) {
 
 		// Start prediction
 		predictReq := llm.PredictOpts{
-			Prompt: prompt,
-			Format: req.Format,
-			Images: req.Images,
+			Prompt:  prompt,
+			Format:  req.Format,
+			Images:  req.Images,
+			Options: *opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
@@ -348,7 +349,7 @@ func EmbeddingHandler(c *gin.Context) {
 	}
 
 	sessionDuration := defaultSessionDuration
-	_, err = load(c, req.Model, req.Options, sessionDuration)
+	_, _, err = load(c, req.Model, req.Options, sessionDuration)
 	if err != nil {
 		var pErr *fs.PathError
 		switch {
@@ -992,7 +993,7 @@ func ChatHandler(c *gin.Context) {
 	}
 
 	sessionDuration := defaultSessionDuration
-	model, err := load(c, req.Model, req.Options, sessionDuration)
+	model, opts, err := load(c, req.Model, req.Options, sessionDuration)
 	if err != nil {
 		var pErr *fs.PathError
 		switch {
@@ -1053,9 +1054,10 @@ func ChatHandler(c *gin.Context) {
 
 		// Start prediction
 		predictReq := llm.PredictOpts{
-			Prompt: prompt,
-			Format: req.Format,
-			Images: images,
+			Prompt:  prompt,
+			Format:  req.Format,
+			Images:  images,
+			Options: *opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
