@@ -34,7 +34,7 @@
 
 	// General
 	let API_BASE_URL = OLLAMA_API_BASE_URL;
-	let themes = ['dark', 'light', 'rose-pine'];
+	let themes = ['dark', 'light', 'rose-pine', 'rose-pine-dawn'];
 	let theme = 'dark';
 	let notificationEnabled = false;
 	let system = '';
@@ -1009,6 +1009,7 @@
 										<option value="dark">Dark</option>
 										<option value="light">Light</option>
 										<option value="rose-pine">Rosé Pine</option>
+										<option value="rose-pine-dawn">Rosé Pine Dawn</option>
 									</select>
 								</div>
 							</div>

@@ -57,6 +57,7 @@
 	<title>Ollama</title>
 
 	<link rel="stylesheet" type="text/css" href="/themes/rosepine.css" />
+	<link rel="stylesheet" type="text/css" href="/themes/rosepine-dawn.css" />
 </svelte:head>
 
 {#if loaded}
