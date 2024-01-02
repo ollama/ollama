@@ -35,13 +35,13 @@
 }
 
 .rose-pine-dawn .text-white.bg-gray-100.dark\:text-gray-800.dark\:bg-gray-600.disabled.transition.rounded-lg.p-1.mr-0\.5.w-7.h-7.self-center {
-    background-color: #6e6a86;
-    transition: background 0.2s ease-out linear;
+    background-color: #cecacd;
+    transition: background-color 0.2s ease-out linear;
 }
 
 .rose-pine-dawn .bg-black.text-white.hover\:bg-gray-900.dark\:bg-white.dark\:text-black.dark\:hover\:bg-gray-100.transition.rounded-lg.p-1.mr-0\.5.w-7.h-7.self-center {
     background-color: #286983;
-    transition: background 0.2s ease-out linear;
+    transition: background-color 0.2s ease-out linear;
 }
 
 .rose-pine-dawn .bg-black.text-white.hover\:bg-gray-900.dark\:bg-white.dark\:text-black.dark\:hover\:bg-gray-100.transition.rounded-lg.p-1.mr-0\.5.w-7.h-7.self-center>* {
@@ -113,6 +113,10 @@
 
 .rose-pine-dawn .px-4.py-2.bg-emerald-600.hover\:bg-emerald-700.text-gray-100.transition.rounded {
     background-color: #56949f;
+}
+
+#chat-search > * {
+	background-color: #dfdad9 !important;
 }
 
 .rose-pine-dawn .svelte-1ee93ns {
