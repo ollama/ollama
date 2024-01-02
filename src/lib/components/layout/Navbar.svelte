@@ -4,7 +4,7 @@
 	const { saveAs } = fileSaver;
 
 	import { getChatById } from '$lib/apis/chats';
-	import { chatId, db, modelfiles } from '$lib/stores';
+	import { chatId, modelfiles } from '$lib/stores';
 
 	export let initNewChat: Function;
 	export let title: string = 'Ollama Web UI';
