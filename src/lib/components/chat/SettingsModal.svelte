@@ -999,7 +999,7 @@
 
 											document.documentElement.classList.add(theme);
 
-											if (theme === 'rose-pine') {
+											if (!['light', 'dark'].includes(theme)) {
 												document.documentElement.classList.add('dark');
 											}
 
