@@ -44,7 +44,7 @@
 
 		const url = 'https://ollamahub.com';
 
-		const tab = await window.open(`${url}/create`, '_blank');
+		const tab = await window.open(`${url}/modelfiles/create`, '_blank');
 		window.addEventListener(
 			'message',
 			(event) => {
