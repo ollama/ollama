@@ -9,7 +9,7 @@ app = FastAPI()
 origins = ["*"]
 
 app.state.ENABLE_SIGNUP = True
-app.state.DEFAULT_MODELS = "llava:13b"
+app.state.DEFAULT_MODELS = None
 
 app.add_middleware(
     CORSMiddleware,
