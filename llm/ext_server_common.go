@@ -153,10 +153,6 @@ func newExtServer(server extServer, model string, adapters, projectors []string,
 	return server, nil
 }
 
-func (llm *llamaExtServer) Predict(ctx context.Context, pred PredictOpts, fn func(PredictResult)) error {
-	return predict(ctx, llm, pred, fn)
-}
-
 func predict(ctx context.Context, llm extServer, predict PredictOpts, fn func(PredictResult)) error {
 	resp := newExtServerResp(128)
 	defer freeExtServerResp(resp)

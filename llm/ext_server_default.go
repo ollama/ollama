@@ -59,6 +59,10 @@ func newDefaultExtServer(model string, adapters, projectors []string, numLayers 
 	return newExtServer(server, model, adapters, projectors, numLayers, opts)
 }
 
+func (llm *llamaExtServer) Predict(ctx context.Context, pred PredictOpts, fn func(PredictResult)) error {
+	return predict(ctx, llm, pred, fn)
+}
+
 func (llm *llamaExtServer) Encode(ctx context.Context, prompt string) ([]int, error) {
 	return encode(llm, ctx, prompt)
 }
