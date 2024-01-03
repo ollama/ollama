@@ -1,12 +1,13 @@
 <script lang="ts">
-	import { models, showSettings, settings } from '$lib/stores';
+	import { setDefaultModels } from '$lib/apis/configs';
+	import { models, showSettings, settings, user } from '$lib/stores';
 	import { onMount, tick } from 'svelte';
 	import toast from 'svelte-french-toast';
 
 	export let selectedModels = [''];
 	export let disabled = false;
 
-	const saveDefaultModel = () => {
+	const saveDefaultModel = async () => {
 		const hasEmptyModel = selectedModels.filter((it) => it === '');
 		if (hasEmptyModel.length) {
 			toast.error('Choose a model before saving...');
@@ -14,6 +15,11 @@
 		}
 		settings.set({ ...$settings, models: selectedModels });
 		localStorage.setItem('settings', JSON.stringify($settings));
+
+		if ($user.role === 'admin') {
+			console.log('admin');
+			await setDefaultModels(localStorage.token, selectedModels.join(','));
+		}
 		toast.success('Default model updated');
 	};
 
