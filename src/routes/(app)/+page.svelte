@@ -597,7 +597,7 @@
 			const title = await generateTitle(
 				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
 				localStorage.token,
-				selectedModels[0],
+				$settings?.titleAutoGenerateModel ?? selectedModels[0],
 				userPrompt
 			);
 
