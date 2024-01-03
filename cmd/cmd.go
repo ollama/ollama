@@ -662,10 +662,11 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set         Set session variables")
-		fmt.Fprintln(os.Stderr, "  /show        Show model information")
-		fmt.Fprintln(os.Stderr, "  /bye         Exit")
-		fmt.Fprintln(os.Stderr, "  /?, /help    Help for a command")
+		fmt.Fprintln(os.Stderr, "  /set          Set session variables")
+		fmt.Fprintln(os.Stderr, "  /show         Show model information")
+		fmt.Fprintln(os.Stderr, "  /bye          Exit")
+		fmt.Fprintln(os.Stderr, "  /?, /help     Help for a command")
+		fmt.Fprintln(os.Stderr, "  /? shortcuts  Help for keyboard shortcuts")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 		fmt.Fprintln(os.Stderr, "")
@@ -684,6 +685,21 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
 		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
 		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	usageShortcuts := func() {
+		fmt.Fprintln(os.Stderr, "Available keyboard shortcuts:")
+		fmt.Fprintln(os.Stderr, "  Ctrl + a            Move to the beginning of the line (Home)")
+		fmt.Fprintln(os.Stderr, "  Ctrl + e            Move to the end of the line (End)")
+		fmt.Fprintln(os.Stderr, "   Alt + b            Move back (left) one word")
+		fmt.Fprintln(os.Stderr, "   Alt + f            Move forward (right) one word")
+		fmt.Fprintln(os.Stderr, "  Ctrl + k            Delete the sentence after the cursor")
+		fmt.Fprintln(os.Stderr, "  Ctrl + u            Delete the sentence before the cursor")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "  Ctrl + l            Clear the screen")
+		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
+		fmt.Fprintln(os.Stderr, "  Ctrl + d            Exit ollama (/bye)")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -737,7 +753,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			return nil
 		case errors.Is(err, readline.ErrInterrupt):
 			if line == "" {
-				fmt.Println("\nUse Ctrl-D or /bye to exit.")
+				fmt.Println("\nUse Ctrl + d or /bye to exit.")
 			}
 
 			scanner.Prompt.UseAlt = false
@@ -940,6 +956,8 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					usageSet()
 				case "show", "/show":
 					usageShow()
+				case "shortcut", "shortcuts":
+					usageShortcuts()
 				}
 			} else {
 				usage()
