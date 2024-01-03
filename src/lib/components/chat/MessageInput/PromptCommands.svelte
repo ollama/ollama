@@ -50,11 +50,11 @@
 	<div class="md:px-2 mb-3 text-left w-full">
 		<div class="flex w-full rounded-lg border border-gray-100 dark:border-gray-700">
 			<div class=" bg-gray-100 dark:bg-gray-700 w-10 rounded-l-lg text-center">
-				<div class=" text-lg font-medium mt-2">/</div>
+				<div class=" text-lg font-semibold mt-2">/</div>
 			</div>
 
 			<div class="max-h-60 flex flex-col w-full rounded-r-lg">
-				<div class=" overflow-y-auto bg-white p-2 rounded-t-lg space-y-0.5">
+				<div class=" overflow-y-auto bg-white p-2 rounded-tr-lg space-y-0.5">
 					{#each filteredPromptCommands as command, commandIdx}
 						<button
 							class=" px-3 py-1.5 rounded-lg w-full text-left {commandIdx === selectedCommandIdx
@@ -81,7 +81,7 @@
 				</div>
 
 				<div
-					class=" px-2 py-0.5 text-xs text-gray-600 bg-white rounded-b-lg flex items-center space-x-1"
+					class=" px-2 pb-1 text-xs text-gray-600 bg-white rounded-br-lg flex items-center space-x-1"
 				>
 					<div>
 						<svg
@@ -101,8 +101,8 @@
 					</div>
 
 					<div class="line-clamp-1">
-						Tip: Update multiple prompt variables by pressing the tab key in the chat input
-						consecutively after each replacement.
+						Tip: Update multiple variable slots consecutively by pressing the tab key in the chat
+						input after each replacement.
 					</div>
 				</div>
 			</div>
