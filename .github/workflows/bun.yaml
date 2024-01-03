@@ -1,0 +1,27 @@
+name: Bun CI
+on:
+  push:
+    branches: ['main']
+  pull_request:
+jobs:
+  build:
+    name: 'Format & Build' # Format, Lint, & Build
+    env:
+      PUBLIC_API_BASE_URL: ''
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version:
+          - latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v1
+      - run: bun --version
+      - run: bun install --frozen-lockfile
+      # - run: bun run lint
+      # - run: bun run lint:backend
+      # - run: bun run lint:types
+      - run: bun run format
+      - run: bun run format:backend
+      - run: bun run build
