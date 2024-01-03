@@ -219,9 +219,9 @@ and mentions the following keywords
 					<div class=" flex space-x-4 cursor-pointer w-full mb-3">
 						<div class=" flex flex-1 space-x-4 cursor-pointer w-full">
 							<a href={`/prompts/edit?command=${encodeURIComponent(prompt.command)}`}>
-								<div class=" flex-1 self-center">
+								<div class=" flex-1 self-center pl-5">
 									<div class=" font-bold">{prompt.command}</div>
-									<div class=" text-sm overflow-hidden text-ellipsis line-clamp-1">
+									<div class=" text-xs overflow-hidden text-ellipsis line-clamp-1">
 										{prompt.title}
 									</div>
 								</div>
@@ -370,7 +370,7 @@ and mentions the following keywords
 
 				<a
 					class=" flex space-x-4 cursor-pointer w-full mb-3"
-					href="https://ollamahub.com/"
+					href="https://ollamahub.com/?type=prompts"
 					target="_blank"
 				>
 					<div class=" self-center w-10">
