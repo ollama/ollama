@@ -16,6 +16,28 @@
 set -ex
 set -o pipefail
 
+# See https://llvm.org/docs/AMDGPUUsage.html#processors for reference
+amdGPUs() {
+    GPU_LIST=(
+        "gfx803"
+        "gfx900"
+        "gfx906:xnack-"
+        "gfx908:xnack-"
+        "gfx90a:xnack+"
+        "gfx90a:xnack-"
+        "gfx1010"
+        "gfx1012"
+        "gfx1030"
+        "gfx1100"
+        "gfx1101"
+        "gfx1102"
+    )
+    (
+        IFS=$';'
+        echo "'${GPU_LIST[*]}'"
+    )
+}
+
 echo "Starting linux generate script"
 if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ]; then
     export CUDACXX=/usr/local/cuda/bin/nvcc
@@ -72,7 +94,7 @@ fi
 if [ -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
     init_vars
-    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS='gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102' -DGPU_TARGETS='gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'"
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
     BUILD_DIR="gguf/build/linux/rocm"
     build
     install
