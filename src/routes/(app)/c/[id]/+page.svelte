@@ -409,13 +409,13 @@
 										  }
 										: { content: message.content })
 								})),
-							seed: $settings.options.seed ?? undefined,
-							stop: $settings.options.stop ?? undefined,
-							temperature: $settings.options.temperature ?? undefined,
-							top_p: $settings.options.top_p ?? undefined,
-							num_ctx: $settings.options.num_ctx ?? undefined,
-							frequency_penalty: $settings.options.repeat_penalty ?? undefined,
-							max_tokens: $settings.options.num_predict ?? undefined
+							seed: $settings?.options?.seed ?? undefined,
+							stop: $settings?.options?.stop ?? undefined,
+							temperature: $settings?.options?.temperature ?? undefined,
+							top_p: $settings?.options?.top_p ?? undefined,
+							num_ctx: $settings?.options?.num_ctx ?? undefined,
+							frequency_penalty: $settings?.options?.repeat_penalty ?? undefined,
+							max_tokens: $settings?.options?.num_predict ?? undefined
 						})
 					}
 				).catch((err) => {
