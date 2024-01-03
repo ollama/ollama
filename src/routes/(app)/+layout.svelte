@@ -9,10 +9,11 @@
 
 	import { getOllamaModels, getOllamaVersion } from '$lib/apis/ollama';
 	import { getModelfiles } from '$lib/apis/modelfiles';
+	import { getPrompts } from '$lib/apis/prompts';
 
 	import { getOpenAIModels } from '$lib/apis/openai';
 
-	import { user, showSettings, settings, models, modelfiles } from '$lib/stores';
+	import { user, showSettings, settings, models, modelfiles, prompts } from '$lib/stores';
 	import { OLLAMA_API_BASE_URL, REQUIRED_OLLAMA_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
@@ -101,6 +102,9 @@
 			console.log();
 			await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
 			await modelfiles.set(await getModelfiles(localStorage.token));
+
+			await prompts.set(await getPrompts(localStorage.token));
+
 			console.log($modelfiles);
 
 			modelfiles.subscribe(async () => {
