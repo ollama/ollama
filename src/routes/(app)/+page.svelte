@@ -109,10 +109,14 @@
 		await Promise.all(
 			selectedModels.map(async (model) => {
 				console.log(model);
-				if ($models.filter((m) => m.name === model)[0].external) {
+				const modelTag = $models.filter((m) => m.name === model).at(0);
+
+				if (modelTag?.external) {
 					await sendPromptOpenAI(model, prompt, parentId, _chatId);
-				} else {
+				} else if (modelTag) {
 					await sendPromptOllama(model, prompt, parentId, _chatId);
+				} else {
+					toast.error(`Model ${model} not found`);
 				}
 			})
 		);

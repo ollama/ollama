@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { models, showSettings, settings } from '$lib/stores';
+	import { onMount, tick } from 'svelte';
 	import toast from 'svelte-french-toast';
 
 	export let selectedModels = [''];
@@ -15,6 +16,12 @@
 		localStorage.setItem('settings', JSON.stringify($settings));
 		toast.success('Default model updated');
 	};
+
+	$: if (selectedModels.length > 0 && $models.length > 0) {
+		selectedModels = selectedModels.map((model) =>
+			$models.map((m) => m.name).includes(model) ? model : ''
+		);
+	}
 </script>
 
 <div class="flex flex-col my-2">
