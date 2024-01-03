@@ -18,10 +18,11 @@ jobs:
       - name: Use Bun
         uses: oven-sh/setup-bun@v1
       - run: bun --version
-      - run: bun install --frozen-lockfile
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
       # - run: bun run lint
-      # - run: bun run lint:backend
       # - run: bun run lint:types
-      - run: bun run format
-      - run: bun run format:backend
-      - run: bun run build
+      - name: Format frontend
+        run: bun run format
+      - name: Build frontend
+        run: bun run build
