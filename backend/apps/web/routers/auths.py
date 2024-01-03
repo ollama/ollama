@@ -8,7 +8,6 @@ from pydantic import BaseModel
 import time
 import uuid
 
-
 from apps.web.models.auths import (
     SigninForm,
     SignupForm,
@@ -19,11 +18,9 @@ from apps.web.models.auths import (
 )
 from apps.web.models.users import Users
 
-
 from utils.utils import get_password_hash, get_current_user, create_token
 from utils.misc import get_gravatar_url, validate_email_format
 from constants import ERROR_MESSAGES
-
 
 router = APIRouter()
 
@@ -49,9 +46,8 @@ async def get_session_user(user=Depends(get_current_user)):
 
 
 @router.post("/update/password", response_model=bool)
-async def update_password(
-    form_data: UpdatePasswordForm, session_user=Depends(get_current_user)
-):
+async def update_password(form_data: UpdatePasswordForm,
+                          session_user=Depends(get_current_user)):
     if session_user:
         user = Auths.authenticate_user(session_user.email, form_data.password)
 
@@ -101,9 +97,8 @@ async def signup(request: Request, form_data: SignupForm):
                 try:
                     role = "admin" if Users.get_num_users() == 0 else "pending"
                     hashed = get_password_hash(form_data.password)
-                    user = Auths.insert_new_auth(
-                        form_data.email.lower(), hashed, form_data.name, role
-                    )
+                    user = Auths.insert_new_auth(form_data.email.lower(),
+                                                 hashed, form_data.name, role)
 
                     if user:
                         token = create_token(data={"email": user.email})
@@ -120,14 +115,15 @@ async def signup(request: Request, form_data: SignupForm):
                         }
                     else:
                         raise HTTPException(
-                            500, detail=ERROR_MESSAGES.CREATE_USER_ERROR
-                        )
+                            500, detail=ERROR_MESSAGES.CREATE_USER_ERROR)
                 except Exception as err:
-                    raise HTTPException(500, detail=ERROR_MESSAGES.DEFAULT(err))
+                    raise HTTPException(500,
+                                        detail=ERROR_MESSAGES.DEFAULT(err))
             else:
                 raise HTTPException(400, detail=ERROR_MESSAGES.EMAIL_TAKEN)
         else:
-            raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_EMAIL_FORMAT)
+            raise HTTPException(400,
+                                detail=ERROR_MESSAGES.INVALID_EMAIL_FORMAT)
     else:
         raise HTTPException(400, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 

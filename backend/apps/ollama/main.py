@@ -1,10 +1,8 @@
 from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
 
-
 import requests
 import json
-
 
 from apps.web.models.users import Users
 from constants import ERROR_MESSAGES
@@ -20,7 +18,9 @@ CORS(
 TARGET_SERVER_URL = OLLAMA_API_BASE_URL
 
 
-@app.route("/", defaults={"path": ""}, methods=["GET", "POST", "PUT", "DELETE"])
+@app.route("/",
+           defaults={"path": ""},
+           methods=["GET", "POST", "PUT", "DELETE"])
 @app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE"])
 def proxy(path):
     # Combine the base URL of the target server with the requested path
@@ -49,13 +49,17 @@ def proxy(path):
                             pass
                         else:
                             return (
-                                jsonify({"detail": ERROR_MESSAGES.ACCESS_PROHIBITED}),
+                                jsonify({
+                                    "detail":
+                                    ERROR_MESSAGES.ACCESS_PROHIBITED
+                                }),
                                 401,
                             )
                     else:
                         pass
                 else:
-                    return jsonify({"detail": ERROR_MESSAGES.ACCESS_PROHIBITED}), 401
+                    return jsonify(
+                        {"detail": ERROR_MESSAGES.ACCESS_PROHIBITED}), 401
             else:
                 return jsonify({"detail": ERROR_MESSAGES.UNAUTHORIZED}), 401
         else:
@@ -105,12 +109,10 @@ def proxy(path):
             print(res)
 
         return (
-            jsonify(
-                {
-                    "detail": error_detail,
-                    "message": str(e),
-                }
-            ),
+            jsonify({
+                "detail": error_detail,
+                "message": str(e),
+            }),
             400,
         )
 

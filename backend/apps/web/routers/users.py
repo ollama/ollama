@@ -11,10 +11,8 @@ import uuid
 from apps.web.models.users import UserModel, UserRoleUpdateForm, Users
 from apps.web.models.auths import Auths
 
-
 from utils.utils import get_current_user
 from constants import ERROR_MESSAGES
-
 
 router = APIRouter()
 
@@ -24,7 +22,9 @@ router = APIRouter()
 
 
 @router.get("/", response_model=List[UserModel])
-async def get_users(skip: int = 0, limit: int = 50, user=Depends(get_current_user)):
+async def get_users(skip: int = 0,
+                    limit: int = 50,
+                    user=Depends(get_current_user)):
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -39,9 +39,8 @@ async def get_users(skip: int = 0, limit: int = 50, user=Depends(get_current_use
 
 
 @router.post("/update/role", response_model=Optional[UserModel])
-async def update_user_role(
-    form_data: UserRoleUpdateForm, user=Depends(get_current_user)
-):
+async def update_user_role(form_data: UserRoleUpdateForm,
+                           user=Depends(get_current_user)):
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

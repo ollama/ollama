@@ -19,9 +19,8 @@ ENV = os.environ.get("ENV", "dev")
 # OLLAMA_API_BASE_URL
 ####################################
 
-OLLAMA_API_BASE_URL = os.environ.get(
-    "OLLAMA_API_BASE_URL", "http://localhost:11434/api"
-)
+OLLAMA_API_BASE_URL = os.environ.get("OLLAMA_API_BASE_URL",
+                                     "http://localhost:11434/api")
 
 if ENV == "prod":
     if OLLAMA_API_BASE_URL == "/ollama/api":

@@ -4,7 +4,6 @@ import time
 import uuid
 from peewee import *
 
-
 from apps.web.models.users import UserModel, Users
 from utils.utils import (
     verify_password,
@@ -76,20 +75,26 @@ class SignupForm(BaseModel):
 
 
 class AuthsTable:
+
     def __init__(self, db):
         self.db = db
         self.db.create_tables([Auth])
 
-    def insert_new_auth(
-        self, email: str, password: str, name: str, role: str = "pending"
-    ) -> Optional[UserModel]:
+    def insert_new_auth(self,
+                        email: str,
+                        password: str,
+                        name: str,
+                        role: str = "pending") -> Optional[UserModel]:
         print("insert_new_auth")
 
         id = str(uuid.uuid4())
 
-        auth = AuthModel(
-            **{"id": id, "email": email, "password": password, "active": True}
-        )
+        auth = AuthModel(**{
+            "id": id,
+            "email": email,
+            "password": password,
+            "active": True
+        })
         result = Auth.create(**auth.model_dump())
 
         user = Users.insert_new_user(id, name, email, role)
@@ -99,7 +104,8 @@ class AuthsTable:
         else:
             return None
 
-    def authenticate_user(self, email: str, password: str) -> Optional[UserModel]:
+    def authenticate_user(self, email: str,
+                          password: str) -> Optional[UserModel]:
         print("authenticate_user", email)
         try:
             auth = Auth.get(Auth.email == email, Auth.active == True)
@@ -131,7 +137,8 @@ class AuthsTable:
             if result:
                 # Delete Auth
                 query = Auth.delete().where(Auth.id == id)
-                query.execute()  # Remove the rows, return number of rows removed.
+                query.execute(
+                )  # Remove the rows, return number of rows removed.
 
                 return True
             else:

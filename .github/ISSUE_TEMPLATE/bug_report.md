@@ -4,7 +4,6 @@ about: Create a report to help us improve
 title: ''
 labels: ''
 assignees: ''
-
 ---
 
 # Bug Report
@@ -31,6 +30,7 @@ assignees: ''
 ## Reproduction Details
 
 **Confirmation:**
+
 - [ ] I have read and followed all the instructions provided in the README.md.
 - [ ] I have reviewed the troubleshooting.md document.
 - [ ] I have included the browser console logs.
