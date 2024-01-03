@@ -9,156 +9,27 @@
 
 	let query = '';
 
-	let defaultPrompts = [
-		{
-			command: '/article',
-			title: 'Article Generator',
-			content: `Write an article about [topic]
+	const sharePrompt = async (prompt) => {
+		toast.success('Redirecting you to OllamaHub');
 
-include relevant statistics (add the links of the sources you use) and consider diverse perspectives. Write it in a [X_tone] and mention the source links in the end.`
-		},
-		{
-			command: '/backlink',
+		const url = 'https://ollamahub.com';
 
-			title: 'Backlink Outreach Email',
-			content: `Write a link-exchange outreach email on behalf of [your name] from [your_company] to ask for a backlink from their [website_url] to [your website url].`
-		},
-		{
-			command: '/faq',
-
-			title: 'FAQ Generator',
-			content: `Create a list of [10] frequently asked questions about [keyword] and provide answers for each one of them considering the SERP and rich result guidelines.`
-		},
-		{
-			command: '/headline',
-
-			title: 'Headline Generator',
-			content: `Generate 10 attention-grabbing headlines for an article about [your topic]`
-		},
-		{
-			command: '/product',
-
-			title: 'Product Description',
-			content: `Craft an irresistible product description that highlights the benefits of [your product]`
-		},
-		{
-			command: '/seo',
-
-			title: 'SEO Content Brief',
-			content: `Create a SEO content brief for [keyword].`
-		},
-		{
-			command: '/seo-ideas',
-
-			title: 'SEO Keyword Ideas',
-			content: `Generate a list of 20 keyword ideas on [topic].
-
-Cluster this list of keywords according to funnel stages whether they are top of the funnel, middle of the funnel or bottom of the funnel keywords.`
-		},
-		{
-			command: '/summary',
-
-			title: 'Short Summary',
-			content: `Write a summary in 50 words that summarizes [topic or keyword].`
-		},
-		{
-			command: '/email-subject',
-
-			title: 'Email Subject Line',
-			content: `Develop [5] subject lines for a cold email offering your [product or service] to a potential client.`
-		},
-		{
-			command: '/facebook-ads',
-
-			title: 'Facebook Ads',
-			content: `Create 3 variations of effective ad copy to promote [product] for [audience].
-
-Make sure they are [persuasive/playful/emotional] and mention these benefits:
-
-[Benefit 1]
-
-[Benefit 2]
-
-[Benefit 3]
-
-Finish with a call to action saying [CTA].
-
-Add 3 emojis to it.`
-		},
-		{
-			command: '/google-ads',
-
-			title: 'Google Ads',
-			content: `Create 10 google ads (a headline and a description) for [product description] targeting the keyword [keyword].
-
-The headline of the ad needs to be under 30 characters. The description needs to be under 90 characters. Format the output as a table.`
-		},
-		{
-			command: '/insta-caption',
-
-			title: 'Instagram Caption',
-			content: `Write 5 variations of Instagram captions for [product].
-
-Use friendly, human-like language that appeals to [target audience].
-
-Emphasize the unique qualities of [product],
-
-use ample emojis, and don't sound too promotional.`
-		},
-		{
-			command: '/linkedin-post',
-
-			title: 'LinkedIn Post',
-			content: `Create a narrative Linkedin post using immersive writing about [topic].
-
-Details:
-
-[give details in bullet point format]
-
-Use a mix of short and long sentences. Make it punchy and dramatic.`
-		},
-		{
-			command: '/youtube-desc',
-
-			title: 'YouTube Video',
-			content: `Write a 100-word YouTube video description that compels [audience]
-
-to watch a video on [topic]
-
-and mentions the following keywords
-
-[keyword 1]
-
-[keyword 2]
-
-[keyword 3].`
-		},
-		{
-			command: '/seo-meta',
-
-			title: 'SEO Meta',
-			content: `Suggest a meta description for the content above, make it user-friendly and with a call to action, include the keyword [keyword].`
-		},
-		{
-			command: '/eli5',
-
-			title: 'ELI5',
-			content: `You are an expert teacher with the ability to explain complex topics in simpler terms. Explain the concept of [topic] in simple terms, so that my [grade level/subject] class can understand [this concept/specific example]?`
-		},
-		{
-			command: '/emoji-translate',
-
-			title: 'Emoji Translation',
-			content: `You are an emoji expert. Using only emojis, translate the following text to emojis. [insert numbered sentences].`
-		}
-	];
+		const tab = await window.open(`${url}/prompts/create`, '_blank');
+		window.addEventListener(
+			'message',
+			(event) => {
+				if (event.origin !== url) return;
+				if (event.data === 'loaded') {
+					tab.postMessage(JSON.stringify(prompt), '*');
+				}
+			},
+			false
+		);
+	};
 
 	const deletePrompt = async (command) => {
 		await deletePromptByCommand(localStorage.token, command);
 		await prompts.set(await getPrompts(localStorage.token));
-	};
-	const loadDefaultPrompts = () => {
-		prompts.set(defaultPrompts);
 	};
 </script>
 
@@ -249,28 +120,28 @@ and mentions the following keywords
 								</svg>
 							</a>
 
-							<!-- <button
-							class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
-							type="button"
-							on:click={() => {
-								shareModelfile(modelfile);
-							}}
-						>
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke-width="1.5"
-								stroke="currentColor"
-								class="w-4 h-4"
+							<button
+								class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
+								type="button"
+								on:click={() => {
+									sharePrompt(prompt);
+								}}
 							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"
-								/>
-							</svg>
-						</button> -->
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke-width="1.5"
+									stroke="currentColor"
+									class="w-4 h-4"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"
+									/>
+								</svg>
+							</button>
 
 							<button
 								class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
