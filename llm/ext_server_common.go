@@ -154,7 +154,7 @@ func newExtServer(server extServer, model string, adapters, projectors []string,
 }
 
 func (llm *llamaExtServer) Predict(ctx context.Context, pred PredictOpts, fn func(PredictResult)) error {
-	return predict(llm, ctx, pred, fn)
+	return predict(ctx, llm, pred, fn)
 }
 
 func predict(ctx context.Context, llm extServer, predict PredictOpts, fn func(PredictResult)) error {
