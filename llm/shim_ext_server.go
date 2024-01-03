@@ -92,7 +92,7 @@ func newDynamicShimExtServer(library, model string, adapters, projectors []strin
 }
 
 func (llm *shimExtServer) Predict(ctx context.Context, pred PredictOpts, fn func(PredictResult)) error {
-	return predict(llm, llm.options, ctx, pred, fn)
+	return predict(ctx, llm, pred, fn)
 }
 
 func (llm *shimExtServer) Encode(ctx context.Context, prompt string) ([]int, error) {
