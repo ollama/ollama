@@ -486,15 +486,12 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 						return err
 					}
 
-					switch {
-					case parent.OriginalModel != "":
-						if err := PullModel(ctx, parent.OriginalModel, &RegistryOptions{}, fn); err != nil {
-							log.Printf("error pulling parent model: %v", err)
-						}
-					default:
-						if err := PullModel(ctx, parent.ShortName, &RegistryOptions{}, fn); err != nil {
-							log.Printf("error pulling model: %v", err)
-						}
+					originalModel := parent.OriginalModel
+					if originalModel == "" {
+						originalModel = parent.ShortName
+					}
+					if err := PullModel(ctx, originalModel, &RegistryOptions{}, fn); err != nil {
+						log.Printf("error pulling parent model: %v", err)
 					}
 
 					// Reset the file pointer to the beginning of the file
