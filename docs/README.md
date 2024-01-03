@@ -1,6 +1,6 @@
 # Documentation
 
-To get started, see the project's **[quicktart](../README.md#quickstart)**.
+To get started, see the project's **[quickstart](../README.md#quickstart)**.
 
 Ollama is a tool for running AI models on your hardware. Many users will choose to use the Command Line Interface (CLI) to work with Ollama. Learn more about all the commands in the CLI in the **[Main Readme](../README.md)**.
 
