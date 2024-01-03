@@ -12,7 +12,7 @@ from apps.web.internal.db import DB
 import json
 
 ####################
-# User DB Schema
+# Modelfile DB Schema
 ####################
 
 
