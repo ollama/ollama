@@ -148,6 +148,7 @@ The quantization options are as follow (from highest highest to lowest levels of
 - `q5_K_M`
 - `q6_K`
 - `q8_0`
+- `f16`
 
 ## Manually converting & quantizing models
 
