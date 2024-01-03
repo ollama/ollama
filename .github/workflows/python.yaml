@@ -5,7 +5,7 @@ on:
   pull_request:
 jobs:
   build:
-    name: 'Format & Build' # Format, Lint, & Build
+    name: 'Format, Lint, & Build Backend'
     env:
       PUBLIC_API_BASE_URL: ''
     runs-on: ubuntu-latest
