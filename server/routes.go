@@ -123,6 +123,19 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 	return nil
 }
 
+func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
+	opts := api.DefaultOptions()
+	if err := opts.FromMap(model.Options); err != nil {
+		return api.Options{}, err
+	}
+
+	if err := opts.FromMap(requestOpts); err != nil {
+		return api.Options{}, err
+	}
+
+	return opts, nil
+}
+
 func GenerateHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -164,13 +177,8 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	opts := api.DefaultOptions()
-	if err := opts.FromMap(model.Options); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := opts.FromMap(req.Options); err != nil {
+	opts, err := modelOptions(model, req.Options)
+	if err != nil {
 		if errors.Is(err, api.ErrInvalidOpts) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -178,6 +186,7 @@ func GenerateHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
 	sessionDuration := defaultSessionDuration
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -360,13 +369,8 @@ func EmbeddingHandler(c *gin.Context) {
 		return
 	}
 
-	opts := api.DefaultOptions()
-	if err := opts.FromMap(model.Options); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := opts.FromMap(req.Options); err != nil {
+	opts, err := modelOptions(model, req.Options)
+	if err != nil {
 		if errors.Is(err, api.ErrInvalidOpts) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -1020,13 +1024,8 @@ func ChatHandler(c *gin.Context) {
 		return
 	}
 
-	opts := api.DefaultOptions()
-	if err := opts.FromMap(model.Options); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := opts.FromMap(req.Options); err != nil {
+	opts, err := modelOptions(model, req.Options)
+	if err != nil {
 		if errors.Is(err, api.ErrInvalidOpts) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
