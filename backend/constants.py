@@ -17,6 +17,7 @@ class ERROR_MESSAGES(str, Enum):
     USERNAME_TAKEN = (
         "Uh-oh! This username is already registered. Please choose another username."
     )
+    COMMAND_TAKEN = "Uh-oh! This command is already registered. Please choose another command string."
     INVALID_TOKEN = (
         "Your session has expired or the token is invalid. Please sign in again."
     )
@@ -32,5 +33,4 @@ class ERROR_MESSAGES(str, Enum):
     )
     NOT_FOUND = "We could not find what you're looking for :/"
     USER_NOT_FOUND = "We could not find what you're looking for :/"
-
     MALICIOUS = "Unusual activities detected, please try again in a few minutes."
