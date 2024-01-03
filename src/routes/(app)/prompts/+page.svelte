@@ -5,8 +5,10 @@
 
 	import { onMount } from 'svelte';
 	import { prompts } from '$lib/stores';
-	import { deletePromptByCommand, getPrompts } from '$lib/apis/prompts';
+	import { createNewPrompt, deletePromptByCommand, getPrompts } from '$lib/apis/prompts';
+	import { error } from '@sveltejs/kit';
 
+	let importFiles = '';
 	let query = '';
 
 	const sharePrompt = async (prompt) => {
@@ -174,10 +176,43 @@
 
 			<div class=" flex justify-between w-full mb-3">
 				<div class="flex space-x-2">
-					<!-- <button
+					<input
+						id="prompts-import-input"
+						bind:files={importFiles}
+						type="file"
+						accept=".json"
+						hidden
+						on:change={() => {
+							console.log(importFiles);
+
+							const reader = new FileReader();
+							reader.onload = async (event) => {
+								const savedPrompts = JSON.parse(event.target.result);
+								console.log(savedPrompts);
+
+								for (const prompt of savedPrompts) {
+									await createNewPrompt(
+										localStorage.token,
+										prompt.command.charAt(0) === '/' ? prompt.command.slice(1) : prompt.command,
+										prompt.title,
+										prompt.content
+									).catch((error) => {
+										toast.error(error);
+										return null;
+									});
+								}
+
+								await prompts.set(await getPrompts(localStorage.token));
+							};
+
+							reader.readAsText(importFiles[0]);
+						}}
+					/>
+
+					<button
 						class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
 						on:click={async () => {
-							// document.getElementById('modelfiles-import-input')?.click();
+							document.getElementById('prompts-import-input')?.click();
 						}}
 					>
 						<div class=" self-center mr-2 font-medium">Import Prompts</div>
@@ -196,7 +231,7 @@
 								/>
 							</svg>
 						</div>
-					</button> -->
+					</button>
 
 					<button
 						class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
