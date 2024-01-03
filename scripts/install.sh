@@ -33,6 +33,14 @@ case "$ARCH" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
+KERN=$(uname -r)
+case "$KERN" in
+    *icrosoft*WSL2 | *icrosoft*wsl2) ;;
+    *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
+    *) ;;
+esac
+
+
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
