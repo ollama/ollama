@@ -74,17 +74,20 @@
 
 	let deleteModelTag = '';
 
+	// External
+
+	let OPENAI_API_KEY = '';
+	let OPENAI_API_BASE_URL = '';
+
 	// Addons
 	let titleAutoGenerate = true;
 	let speechAutoSend = false;
 	let responseAutoCopy = false;
 
 	let gravatarEmail = '';
-	let OPENAI_API_KEY = '';
-	let OPENAI_API_BASE_URL = '';
+	let titleAutoGenerateModel = '';
 
 	// Chats
-
 	let importFiles;
 	let showDeleteConfirm = false;
 
@@ -656,13 +659,14 @@
 		options = { ...options, ...settings.options };
 		options.stop = (settings?.options?.stop ?? []).join(',');
 
+		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
+		OPENAI_API_BASE_URL = settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+
 		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
 		responseAutoCopy = settings.responseAutoCopy ?? false;
-
+		titleAutoGenerateModel = settings.titleAutoGenerateModel ?? '';
 		gravatarEmail = settings.gravatarEmail ?? '';
-		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
-		OPENAI_API_BASE_URL = settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
 
 		authEnabled = settings.authHeader !== undefined ? true : false;
 		if (authEnabled) {
@@ -1548,10 +1552,6 @@
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
 						on:submit|preventDefault={() => {
-							saveSettings({
-								gravatarEmail: gravatarEmail !== '' ? gravatarEmail : undefined,
-								gravatarUrl: gravatarEmail !== '' ? getGravatarURL(gravatarEmail) : undefined
-							});
 							show = false;
 						}}
 					>
@@ -1561,7 +1561,7 @@
 
 								<div>
 									<div class=" py-0.5 flex w-full justify-between">
-										<div class=" self-center text-xs font-medium">Title Auto Generation</div>
+										<div class=" self-center text-xs font-medium">Title Auto-Generation</div>
 
 										<button
 											class="p-1 px-3 text-xs flex rounded transition"
@@ -1623,6 +1623,54 @@
 							</div>
 
 							<hr class=" dark:border-gray-700" />
+
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Set Title Auto-Generation Model</div>
+								<div class="flex w-full">
+									<div class="flex-1 mr-2">
+										<select
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											bind:value={titleAutoGenerateModel}
+											placeholder="Select a model"
+										>
+											<option value="" selected>Default</option>
+											{#each $models.filter((m) => m.size != null) as model}
+												<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
+													>{model.name +
+														' (' +
+														(model.size / 1024 ** 3).toFixed(1) +
+														' GB)'}</option
+												>
+											{/each}
+										</select>
+									</div>
+									<button
+										class="px-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-800 dark:text-gray-100 rounded transition"
+										on:click={() => {
+											saveSettings({
+												titleAutoGenerateModel:
+													titleAutoGenerateModel !== '' ? titleAutoGenerateModel : undefined
+											});
+										}}
+										type="button"
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-3.5 h-3.5"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M13.836 2.477a.75.75 0 0 1 .75.75v3.182a.75.75 0 0 1-.75.75h-3.182a.75.75 0 0 1 0-1.5h1.37l-.84-.841a4.5 4.5 0 0 0-7.08.932.75.75 0 0 1-1.3-.75 6 6 0 0 1 9.44-1.242l.842.84V3.227a.75.75 0 0 1 .75-.75Zm-.911 7.5A.75.75 0 0 1 13.199 11a6 6 0 0 1-9.44 1.241l-.84-.84v1.371a.75.75 0 0 1-1.5 0V9.591a.75.75 0 0 1 .75-.75H5.35a.75.75 0 0 1 0 1.5H3.98l.841.841a4.5 4.5 0 0 0 7.08-.932.75.75 0 0 1 1.025-.273Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</button>
+								</div>
+							</div>
+
+							<!-- <hr class=" dark:border-gray-700" />
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									Gravatar Email <span class=" text-gray-400 text-sm">(optional)</span>
@@ -1645,7 +1693,7 @@
 										target="_blank">Gravatar.</a
 									>
 								</div>
-							</div>
+							</div> -->
 						</div>
 
 						<div class="flex justify-end pt-3 text-sm font-medium">
