@@ -11,8 +11,8 @@
 		"lint": "bun eslint",
 		"lint:types": "bun check",
 		"lint:backend": "pylint backend/",
-		"eslint": "bunx eslint . --fix",
-		"format": "bunx prettier --plugin-search-dir --write '**/*.{js,ts,svelte,css,md,html,json}'",
+		"eslint": "eslint . --fix",
+		"format": "bun prettier --plugin-search-dir --write '**/*.{js,ts,svelte,css,md,html,json}'",
 		"format:backend": "yapf --recursive backend -p -i"
 	},
 	"devDependencies": {
