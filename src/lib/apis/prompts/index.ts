@@ -16,7 +16,7 @@ export const createNewPrompt = async (
 			authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			command: command,
+			command: `/${command}`,
 			title: title,
 			content: content
 		})
@@ -57,7 +57,7 @@ export const getPrompts = async (token: string = '') => {
 			return json;
 		})
 		.catch((err) => {
-			error = err;
+			error = err.detail;
 			console.log(err);
 			return null;
 		});
@@ -88,7 +88,7 @@ export const getPromptByCommand = async (token: string, command: string) => {
 			return json;
 		})
 		.catch((err) => {
-			error = err;
+			error = err.detail;
 
 			console.log(err);
 			return null;
@@ -117,7 +117,7 @@ export const updatePromptByCommand = async (
 			authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			command: command,
+			command: `/${command}`,
 			title: title,
 			content: content
 		})
@@ -130,7 +130,7 @@ export const updatePromptByCommand = async (
 			return json;
 		})
 		.catch((err) => {
-			error = err;
+			error = err.detail;
 
 			console.log(err);
 			return null;
@@ -145,6 +145,8 @@ export const updatePromptByCommand = async (
 
 export const deletePromptByCommand = async (token: string, command: string) => {
 	let error = null;
+
+	command = command.charAt(0) === '/' ? command.slice(1) : command;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/${command}/delete`, {
 		method: 'DELETE',
@@ -162,7 +164,7 @@ export const deletePromptByCommand = async (token: string, command: string) => {
 			return json;
 		})
 		.catch((err) => {
-			error = err;
+			error = err.detail;
 
 			console.log(err);
 			return null;

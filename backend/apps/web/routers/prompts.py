@@ -37,14 +37,21 @@ async def create_new_prompt(form_data: PromptForm, user=Depends(get_current_user
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    prompt = Prompts.insert_new_prompt(user.id, form_data)
+    prompt = Prompts.get_prompt_by_command(form_data.command)
+    if prompt == None:
+        prompt = Prompts.insert_new_prompt(user.id, form_data)
 
-    if prompt:
-        return prompt
+        if prompt:
+            return prompt
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=ERROR_MESSAGES.DEFAULT(),
+            )
     else:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.DEFAULT(),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.COMMAND_TAKEN,
         )
 
 
@@ -55,7 +62,7 @@ async def create_new_prompt(form_data: PromptForm, user=Depends(get_current_user
 
 @router.get("/{command}", response_model=Optional[PromptModel])
 async def get_prompt_by_command(command: str, user=Depends(get_current_user)):
-    prompt = Prompts.get_prompt_by_command(command)
+    prompt = Prompts.get_prompt_by_command(f"/{command}")
 
     if prompt:
         return prompt
@@ -81,7 +88,7 @@ async def update_prompt_by_command(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    prompt = Prompts.update_prompt_by_command(command, form_data)
+    prompt = Prompts.update_prompt_by_command(f"/{command}", form_data)
     if prompt:
         return prompt
     else:
@@ -104,5 +111,5 @@ async def delete_prompt_by_command(command: str, user=Depends(get_current_user))
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    result = Prompts.delete_prompt_by_command(command)
+    result = Prompts.delete_prompt_by_command(f"/{command}")
     return result

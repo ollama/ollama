@@ -5,6 +5,7 @@
 
 	import { onMount } from 'svelte';
 	import { prompts } from '$lib/stores';
+	import { deletePromptByCommand, getPrompts } from '$lib/apis/prompts';
 
 	let query = '';
 
@@ -152,6 +153,10 @@ and mentions the following keywords
 		}
 	];
 
+	const deletePrompt = async (command) => {
+		await deletePromptByCommand(localStorage.token, command);
+		await prompts.set(await getPrompts(localStorage.token));
+	};
 	const loadDefaultPrompts = () => {
 		prompts.set(defaultPrompts);
 	};
@@ -213,12 +218,14 @@ and mentions the following keywords
 					<hr class=" dark:border-gray-700 my-2.5" />
 					<div class=" flex space-x-4 cursor-pointer w-full mb-3">
 						<div class=" flex flex-1 space-x-4 cursor-pointer w-full">
-							<div class=" flex-1 self-center">
-								<div class=" font-bold">{prompt.command}</div>
-								<div class=" text-sm overflow-hidden text-ellipsis line-clamp-1">
-									{prompt.title}
+							<a href={`/prompts/edit?command=${encodeURIComponent(prompt.command)}`}>
+								<div class=" flex-1 self-center">
+									<div class=" font-bold">{prompt.command}</div>
+									<div class=" text-sm overflow-hidden text-ellipsis line-clamp-1">
+										{prompt.title}
+									</div>
 								</div>
-							</div>
+							</a>
 						</div>
 						<div class="flex flex-row space-x-1 self-center">
 							<a
@@ -269,7 +276,7 @@ and mentions the following keywords
 								class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
 								type="button"
 								on:click={() => {
-									// deleteModelfile(modelfile.tagName);
+									deletePrompt(prompt.command);
 								}}
 							>
 								<svg

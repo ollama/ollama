@@ -1,12 +1,16 @@
 <script>
-	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
-	import { onMount, tick } from 'svelte';
 	import toast from 'svelte-french-toast';
+
+	import { goto } from '$app/navigation';
+	import { prompts } from '$lib/stores';
+	import { onMount, tick } from 'svelte';
+
+	import { createNewPrompt, getPrompts } from '$lib/apis/prompts';
 
 	let loading = false;
 
 	// ///////////
-	// Modelfile
+	// Prompt
 	// ///////////
 
 	let title = '';
@@ -16,13 +20,26 @@
 	$: command = title !== '' ? `${title.replace(/\s+/g, '-').toLowerCase()}` : '';
 
 	const submitHandler = async () => {
-		console.log(validateCommandString(command));
+		loading = true;
+
 		if (validateCommandString(command)) {
-			console.log('valid');
-			console.log('submit');
+			const prompt = await createNewPrompt(localStorage.token, command, title, content).catch(
+				(error) => {
+					toast.error(error);
+
+					return null;
+				}
+			);
+
+			if (prompt) {
+				await prompts.set(await getPrompts(localStorage.token));
+				await goto('/prompts');
+			}
 		} else {
 			toast.error('Only alphanumeric characters and hyphens are allowed in the command string.');
 		}
+
+		loading = false;
 	};
 
 	const validateCommandString = (inputString) => {
@@ -41,33 +58,12 @@
 				)
 			)
 				return;
-			const modelfile = JSON.parse(event.data);
-			console.log(modelfile);
+			const prompt = JSON.parse(event.data);
+			console.log(prompt);
 
-			imageUrl = modelfile.imageUrl;
-			title = modelfile.title;
-			await tick();
-			tagName = `${modelfile.user.username === 'hub' ? '' : `hub/`}${modelfile.user.username}/${
-				modelfile.tagName
-			}`;
-			desc = modelfile.desc;
-			content = modelfile.content;
-			suggestions =
-				modelfile.suggestionPrompts.length != 0
-					? modelfile.suggestionPrompts
-					: [
-							{
-								content: ''
-							}
-					  ];
-
-			modelfileCreator = {
-				username: modelfile.user.username,
-				name: modelfile.user.name
-			};
-			for (const category of modelfile.categories) {
-				categories[category.toLowerCase()] = true;
-			}
+			title = prompt.title;
+			content = prompt.content;
+			command = prompt.command;
 		});
 
 		if (window.opener ?? false) {
@@ -155,12 +151,10 @@
 
 				<div class="my-2">
 					<div class="flex w-full justify-between">
-						<div class=" self-center text-sm font-semibold">Prompt</div>
+						<div class=" self-center text-sm font-semibold">Prompt Content*</div>
 					</div>
 
 					<div class="mt-2">
-						<div class=" text-xs font-semibold mb-2">Content*</div>
-
 						<div>
 							<textarea
 								class="px-3 py-1.5 text-sm w-full bg-transparent border dark:border-gray-600 outline-none rounded-lg"
@@ -174,7 +168,10 @@
 						<div class="text-xs text-gray-400 dark:text-gray-500">
 							Format your variables using square brackets like this: <span
 								class=" text-gray-600 dark:text-gray-300 font-medium">[variable]</span
-							> . Remember to enclose them with '[' and ']'.
+							>
+							. Make sure to enclose them with
+							<span class=" text-gray-600 dark:text-gray-300 font-medium">'['</span>
+							and <span class=" text-gray-600 dark:text-gray-300 font-medium">']'</span> .
 						</div>
 					</div>
 				</div>

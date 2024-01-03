@@ -53,8 +53,8 @@
 				<div class=" text-lg font-medium mt-2">/</div>
 			</div>
 
-			<div class="max-h-60 flex flex-col w-full">
-				<div class=" overflow-y-auto bg-white p-2 rounded-r-lg space-y-0.5">
+			<div class="max-h-60 flex flex-col w-full rounded-r-lg">
+				<div class=" overflow-y-auto bg-white p-2 rounded-t-lg space-y-0.5">
 					{#each filteredPromptCommands as command, commandIdx}
 						<button
 							class=" px-3 py-1.5 rounded-lg w-full text-left {commandIdx === selectedCommandIdx
@@ -80,7 +80,9 @@
 					{/each}
 				</div>
 
-				<div class=" px-2 py-0.5 text-xs text-gray-600 flex items-center space-x-1">
+				<div
+					class=" px-2 py-0.5 text-xs text-gray-600 bg-white rounded-b-lg flex items-center space-x-1"
+				>
 					<div>
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
