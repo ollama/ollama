@@ -62,6 +62,7 @@
 			console.log(prompt);
 
 			title = prompt.title;
+			await tick();
 			content = prompt.content;
 			command = prompt.command;
 		});
