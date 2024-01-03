@@ -258,8 +258,6 @@
 					<button
 						class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
 						on:click={async () => {
-							// document.getElementById('modelfiles-import-input')?.click();
-
 							saveModelfiles($modelfiles);
 						}}
 					>
