@@ -9,7 +9,7 @@ import (
 
 func TestBasicGetGPUInfo(t *testing.T) {
 	info := GetGPUInfo()
-	assert.Contains(t, "CUDA ROCM CPU METAL", info.Driver)
+	assert.Contains(t, "cuda rocm cpu default", info.Library)
 
 	switch runtime.GOOS {
 	case "darwin":

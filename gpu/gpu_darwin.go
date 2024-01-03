@@ -20,7 +20,6 @@ func GetGPUInfo() GpuInfo {
 	// TODO - Metal vs. x86 macs...
 
 	return GpuInfo{
-		Driver:      "METAL",
 		Library:     "default",
 		TotalMemory: 0,
 		FreeMemory:  0,

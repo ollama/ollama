@@ -6,11 +6,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -205,42 +202,4 @@ type EmbeddingRequest struct {
 
 type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
-}
-
-func extractDynamicLibs(workDir, glob string) ([]string, error) {
-	files, err := fs.Glob(libEmbed, glob)
-	if err != nil || len(files) == 0 {
-		return nil, payloadMissing
-	}
-	libs := make([]string, len(files))
-
-	for i, file := range files {
-		srcFile, err := libEmbed.Open(file)
-		if err != nil {
-			return nil, fmt.Errorf("read payload %s: %v", file, err)
-		}
-		defer srcFile.Close()
-		if err := os.MkdirAll(workDir, 0o755); err != nil {
-			return nil, fmt.Errorf("create payload temp dir %s: %v", workDir, err)
-		}
-
-		destFile := filepath.Join(workDir, filepath.Base(file))
-		libs[i] = destFile
-
-		_, err = os.Stat(destFile)
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-			if err != nil {
-				return nil, fmt.Errorf("write payload %s: %v", file, err)
-			}
-			defer destFile.Close()
-			if _, err := io.Copy(destFile, srcFile); err != nil {
-				return nil, fmt.Errorf("copy payload %s: %v", file, err)
-			}
-		case err != nil:
-			return nil, fmt.Errorf("stat payload %s: %v", file, err)
-		}
-	}
-	return libs, nil
 }

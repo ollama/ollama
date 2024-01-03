@@ -25,18 +25,30 @@ git_module_setup() {
 }
 
 apply_patches() {
-    if [ -n "${OLLAMA_SKIP_PATCHING}" ]; then
-        echo "Skipping submodule patching"
-        return
+    # Wire up our CMakefile
+    if ! grep ollama gguf/examples/server/CMakeLists.txt; then
+        echo 'include (../../../CMakeLists.txt) # ollama' >>gguf/examples/server/CMakeLists.txt
     fi
-    # Workaround git apply not handling creation well for iteration
-    rm -f gguf/examples/server/server.h
-    for patch in ${PATCHES}; do
-        git -C gguf apply ../patches/${patch}
-    done
+    # Avoid duplicate main symbols when we link into the cgo binary
+    sed -e 's/int main(/int __main(/g' <./gguf/examples/server/server.cpp >./gguf/examples/server/server.cpp.tmp &&
+        mv ./gguf/examples/server/server.cpp.tmp ./gguf/examples/server/server.cpp
 }
 
 build() {
     cmake -S ${LLAMACPP_DIR} -B ${BUILD_DIR} ${CMAKE_DEFS}
     cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8
+}
+
+install() {
+    rm -rf ${BUILD_DIR}/lib
+    mkdir -p ${BUILD_DIR}/lib
+    cp ${BUILD_DIR}/examples/server/libext_server.a ${BUILD_DIR}/lib
+    cp ${BUILD_DIR}/common/libcommon.a ${BUILD_DIR}/lib
+    cp ${BUILD_DIR}/libllama.a ${BUILD_DIR}/lib
+    cp ${BUILD_DIR}/libggml_static.a ${BUILD_DIR}/lib
+}
+
+# Keep the local tree clean after we're done with the build
+cleanup() {
+    (cd gguf/examples/server/ && git checkout CMakeLists.txt server.cpp)
 }

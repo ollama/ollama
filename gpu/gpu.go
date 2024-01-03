@@ -13,6 +13,7 @@ import "C"
 import (
 	"fmt"
 	"log"
+	"runtime"
 	"sync"
 	"unsafe"
 
@@ -65,15 +66,14 @@ func GetGPUInfo() GpuInfo {
 	}
 
 	var memInfo C.mem_info_t
-	resp := GpuInfo{"", "", 0, 0}
+	resp := GpuInfo{"", 0, 0}
 	if gpuHandles.cuda != nil {
 		C.cuda_check_vram(*gpuHandles.cuda, &memInfo)
 		if memInfo.err != nil {
 			log.Printf("error looking up CUDA GPU memory: %s", C.GoString(memInfo.err))
 			C.free(unsafe.Pointer(memInfo.err))
 		} else {
-			resp.Driver = "CUDA"
-			resp.Library = "cuda_server"
+			resp.Library = "cuda"
 		}
 	} else if gpuHandles.rocm != nil {
 		C.rocm_check_vram(*gpuHandles.rocm, &memInfo)
@@ -81,15 +81,17 @@ func GetGPUInfo() GpuInfo {
 			log.Printf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err))
 			C.free(unsafe.Pointer(memInfo.err))
 		} else {
-			resp.Driver = "ROCM"
-			resp.Library = "rocm_server"
+			resp.Library = "rocm"
 		}
 	}
-	if resp.Driver == "" {
+	if resp.Library == "" {
 		C.cpu_check_ram(&memInfo)
-		resp.Driver = "CPU"
 		// In the future we may offer multiple CPU variants to tune CPU features
-		resp.Library = "default"
+		if runtime.GOOS == "windows" {
+			resp.Library = "cpu"
+		} else {
+			resp.Library = "default"
+		}
 	}
 	if memInfo.err != nil {
 		log.Printf("error looking up CPU memory: %s", C.GoString(memInfo.err))
@@ -103,7 +105,7 @@ func GetGPUInfo() GpuInfo {
 
 func CheckVRAM() (int64, error) {
 	gpuInfo := GetGPUInfo()
-	if gpuInfo.FreeMemory > 0 && gpuInfo.Driver != "CPU" {
+	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
 		return int64(gpuInfo.FreeMemory), nil
 	}
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation
@@ -114,7 +116,7 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 		return opts.NumGPU
 	}
 	info := GetGPUInfo()
-	if info.Driver == "CPU" {
+	if info.Library == "cpu" || info.Library == "default" {
 		return 0
 	}
 
@@ -128,7 +130,7 @@ func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
 	// 75% of the absolute max number of layers we can fit in available VRAM, off-loading too many layers to the GPU can cause OOM errors
 	layers := int(info.FreeMemory/bytesPerLayer) * 3 / 4
 
-	log.Printf("%d MB VRAM available, loading up to %d %s GPU layers out of %d", info.FreeMemory/(1024*1024), layers, info.Driver, numLayer)
+	log.Printf("%d MB VRAM available, loading up to %d %s GPU layers out of %d", info.FreeMemory/(1024*1024), layers, info.Library, numLayer)
 
 	return layers
 }

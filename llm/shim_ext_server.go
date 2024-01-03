@@ -11,9 +11,9 @@ package llm
 import "C"
 import (
 	"context"
-	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -24,11 +24,6 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 )
-
-//go:embed llama.cpp/gguf/build/lib/*
-var libEmbed embed.FS
-
-var RocmShimMissing = fmt.Errorf("ROCm shim library not included in this build of ollama. Radeon GPUs are not supported")
 
 type shimExtServer struct {
 	s       C.struct_dynamic_llama_server
@@ -78,6 +73,7 @@ func (llm *shimExtServer) llama_server_release_json_resp(json_resp **C.char) {
 func newDynamicShimExtServer(library, model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
 	shimMutex.Lock()
 	defer shimMutex.Unlock()
+	updatePath(filepath.Dir(library))
 	libPath := C.CString(library)
 	defer C.free(unsafe.Pointer(libPath))
 	resp := newExtServerResp(128)
@@ -116,7 +112,7 @@ func (llm *shimExtServer) Close() {
 }
 
 func nativeInit(workdir string) error {
-	libs, err := extractDynamicLibs(workdir, "llama.cpp/gguf/build/lib/*server*")
+	libs, err := extractDynamicLibs(workdir, "llama.cpp/gguf/build/*/*/lib/*")
 	if err != nil {
 		if err == payloadMissing {
 			log.Printf("%s", payloadMissing)
@@ -125,28 +121,71 @@ func nativeInit(workdir string) error {
 		return err
 	}
 	for _, lib := range libs {
-		libName := strings.Split(strings.TrimPrefix(filepath.Base(lib), "lib"), ".")[0]
-		AvailableShims[libName] = lib
+		// The last dir component is the variant name
+		variant := filepath.Base(filepath.Dir(lib))
+		AvailableShims[variant] = lib
 	}
 
-	// Only check ROCm access if we have the dynamic lib loaded
-	if _, rocmPresent := AvailableShims["rocm_server"]; rocmPresent {
-		// Verify we have permissions - either running as root, or we have group access to the driver
-		fd, err := os.OpenFile("/dev/kfd", os.O_RDWR, 0666)
-		if err != nil {
-			if errors.Is(err, fs.ErrPermission) {
-				log.Fatalf("Radeon card detected, but permissions not set up properly.  Either run ollama as root, or add you user account to the render group.")
-				return err
-			} else if errors.Is(err, fs.ErrNotExist) {
-				// expected behavior without a radeon card
-				return nil
-			}
-
-			return fmt.Errorf("failed to check permission on /dev/kfd: %w", err)
-		}
-		fd.Close()
-
+	if err := verifyDriverAccess(); err != nil {
+		return err
 	}
+
+	// Report which dynamic libraries we have loaded to assist troubleshooting
+	variants := make([]string, len(AvailableShims))
+	i := 0
+	for variant := range AvailableShims {
+		variants[i] = variant
+		i++
+	}
+	log.Printf("Dynamic LLM variants %v", variants)
 
 	return nil
+}
+
+func extractDynamicLibs(workDir, glob string) ([]string, error) {
+	files, err := fs.Glob(libEmbed, glob)
+	if err != nil || len(files) == 0 {
+		return nil, payloadMissing
+	}
+	libs := make([]string, len(files))
+
+	for i, file := range files {
+		pathComps := strings.Split(file, "/")
+		if len(pathComps) != 7 {
+			log.Printf("unexpected payload components: %v", pathComps)
+			continue
+		}
+		// llama.cpp/gguf/build/$OS/$VARIANT/lib/$LIBRARY
+		// Include the variant in the path to avoid conflicts between multiple server libs
+		targetDir := filepath.Join(workDir, pathComps[4])
+		srcFile, err := libEmbed.Open(file)
+		if err != nil {
+			return nil, fmt.Errorf("read payload %s: %v", file, err)
+		}
+		defer srcFile.Close()
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create payload temp dir %s: %v", workDir, err)
+		}
+
+		destFile := filepath.Join(targetDir, filepath.Base(file))
+		if strings.Contains(destFile, "server") {
+			libs[i] = destFile
+		}
+
+		_, err = os.Stat(destFile)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+			if err != nil {
+				return nil, fmt.Errorf("write payload %s: %v", file, err)
+			}
+			defer destFile.Close()
+			if _, err := io.Copy(destFile, srcFile); err != nil {
+				return nil, fmt.Errorf("copy payload %s: %v", file, err)
+			}
+		case err != nil:
+			return nil, fmt.Errorf("stat payload %s: %v", file, err)
+		}
+	}
+	return libs, nil
 }

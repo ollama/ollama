@@ -1,6 +1,6 @@
 #include <stdlib.h>
 
-#include "server.h"
+#include "ext_server.h"
 
 #ifdef __cplusplus
 extern "C" {
