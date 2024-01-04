@@ -18,6 +18,11 @@ git_module_setup() {
         echo "Skipping submodule initialization"
         return
     fi
+    # Make sure the tree is clean after the directory moves
+    if [ -d "${LLAMACPP_DIR}/gguf" ]; then
+        echo "Cleaning up old submodule"
+        rm -rf ${LLAMACPP_DIR}
+    fi
     git submodule init
     git submodule update --force ${LLAMACPP_DIR}
 
