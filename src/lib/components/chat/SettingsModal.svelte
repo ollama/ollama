@@ -471,45 +471,12 @@
 	};
 
 	const deleteModelHandler = async () => {
-		const res = await deleteModel(localStorage.token, deleteModelTag);
+		const res = await deleteModel(localStorage.token, deleteModelTag).catch((error) => {
+			toast.error(error);
+		});
 
 		if (res) {
-			const reader = res.body
-				.pipeThrough(new TextDecoderStream())
-				.pipeThrough(splitStream('\n'))
-				.getReader();
-
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
-
-				try {
-					let lines = value.split('\n');
-
-					for (const line of lines) {
-						if (line !== '' && line !== 'null') {
-							console.log(line);
-							let data = JSON.parse(line);
-							console.log(data);
-
-							if (data.error) {
-								throw data.error;
-							}
-							if (data.detail) {
-								throw data.detail;
-							}
-
-							if (data.status) {
-							}
-						} else {
-							toast.success(`Deleted ${deleteModelTag}`);
-						}
-					}
-				} catch (error) {
-					console.log(error);
-					toast.error(error);
-				}
-			}
+			toast.success(`Deleted ${deleteModelTag}`);
 		}
 
 		deleteModelTag = '';
@@ -1004,7 +971,7 @@
 									<div class="flex-1 mr-2">
 										<input
 											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-											placeholder="Enter URL (e.g. http://localhost:8080/ollama/api)"
+											placeholder="Enter URL (e.g. http://localhost:11434/api)"
 											bind:value={API_BASE_URL}
 										/>
 									</div>
@@ -1030,11 +997,9 @@
 								</div>
 
 								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-									The field above should be set to <span
-										class=" text-gray-500 dark:text-gray-300 font-medium">'/ollama/api'</span
-									>;
+									Trouble accessing Ollama?
 									<a
-										class=" text-gray-500 dark:text-gray-300 font-medium"
+										class=" text-gray-300 font-medium"
 										href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
 										target="_blank"
 									>
