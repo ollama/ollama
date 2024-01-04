@@ -41,16 +41,6 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	}
 
 	if runtime.GOOS == "darwin" {
-		switch ggml.FileType() {
-		case "F32", "Q5_0", "Q5_1", "Q8_0":
-			if ggml.Name() != "gguf" && opts.NumGPU != 0 {
-				// GGML Q8_0 do not support Metal API and will
-				// cause the runner to segmentation fault so disable GPU
-				log.Printf("WARNING: GPU disabled for F32, Q5_0, Q5_1, and Q8_0")
-				opts.NumGPU = 0
-			}
-		}
-
 		var requiredMemory int64
 		var f16Multiplier int64 = 2
 
