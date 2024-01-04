@@ -2,7 +2,7 @@
 
 set(TARGET ext_server)
 option(LLAMA_SERVER_VERBOSE "Build verbose logging option for Server" ON)
-add_library(${TARGET} STATIC ../../../ext_server.cpp)
+add_library(${TARGET} STATIC ../../../ext_server/ext_server.cpp)
 target_include_directories(${TARGET} PRIVATE ../../common)
 target_include_directories(${TARGET} PRIVATE ../..)
 target_include_directories(${TARGET} PRIVATE ../../..)

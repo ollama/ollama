@@ -34,6 +34,8 @@ type shimExtServer struct {
 var shimMutex sync.Mutex
 var llm *shimExtServer
 
+const pathComponentCount = 6
+
 func (llm *shimExtServer) llama_server_init(sparams *C.ext_server_params_t, err *C.ext_server_resp_t) {
 	C.dynamic_shim_llama_server_init(llm.s, sparams, err)
 }
@@ -112,7 +114,7 @@ func (llm *shimExtServer) Close() {
 }
 
 func nativeInit(workdir string) error {
-	libs, err := extractDynamicLibs(workdir, "llama.cpp/gguf/build/*/*/lib/*")
+	libs, err := extractDynamicLibs(workdir, "llama.cpp/build/*/*/lib/*")
 	if err != nil {
 		if err == payloadMissing {
 			log.Printf("%s", payloadMissing)
@@ -151,13 +153,13 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 
 	for _, file := range files {
 		pathComps := strings.Split(file, "/")
-		if len(pathComps) != 7 {
+		if len(pathComps) != pathComponentCount {
 			log.Printf("unexpected payload components: %v", pathComps)
 			continue
 		}
-		// llama.cpp/gguf/build/$OS/$VARIANT/lib/$LIBRARY
+		// llama.cpp/build/$OS/$VARIANT/lib/$LIBRARY
 		// Include the variant in the path to avoid conflicts between multiple server libs
-		targetDir := filepath.Join(workDir, pathComps[4])
+		targetDir := filepath.Join(workDir, pathComps[pathComponentCount-3])
 		srcFile, err := libEmbed.Open(file)
 		if err != nil {
 			return nil, fmt.Errorf("read payload %s: %v", file, err)

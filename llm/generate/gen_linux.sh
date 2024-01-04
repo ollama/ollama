@@ -1,6 +1,6 @@
 #!/bin/bash
 # This script is intended to run inside the go generate
-# working directory must be llm/llama.cpp
+# working directory must be llm/generate/
 
 # First we build our default built-in library which will be linked into the CGO
 # binary as a normal dependency. This default build is CPU based.
@@ -52,7 +52,7 @@ apply_patches
 # CPU first for the default library
 #
 CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
-BUILD_DIR="gguf/build/linux/cpu"
+BUILD_DIR="${LLAMACPP_DIR}/build/linux/cpu"
 
 build
 install
@@ -64,7 +64,7 @@ if [ -d /usr/local/cuda/lib64/ ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
     CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
-    BUILD_DIR="gguf/build/linux/cuda"
+    BUILD_DIR="${LLAMACPP_DIR}/build/linux/cuda"
     CUDA_LIB_DIR=/usr/local/cuda/lib64
     build
     install
@@ -98,7 +98,7 @@ if [ -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
     init_vars
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
-    BUILD_DIR="gguf/build/linux/rocm"
+    BUILD_DIR="${LLAMACPP_DIR}/build/linux/rocm"
     build
     install
     gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
