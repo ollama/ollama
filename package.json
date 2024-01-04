@@ -8,11 +8,11 @@
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"lint": "bun eslint",
-		"lint:types": "bun check",
+		"lint": "npm run lint:frontend ; npm run lint:types ; npm run lint:backend",
+		"lint:frontend": "eslint . --fix",
+		"lint:types": "npm run check",
 		"lint:backend": "pylint backend/",
-		"eslint": "eslint . --fix",
-		"format": "bun prettier --plugin-search-dir --write '**/*.{js,ts,svelte,css,md,html,json}'",
+		"format": "prettier --plugin-search-dir --write '**/*.{js,ts,svelte,css,md,html,json}'",
 		"format:backend": "yapf --recursive backend -p -i"
 	},
 	"devDependencies": {
