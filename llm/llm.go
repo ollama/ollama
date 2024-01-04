@@ -51,6 +51,8 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 			requiredMemory = 16 * format.GigaByte
 		case "30B", "34B", "40B":
 			requiredMemory = 32 * format.GigaByte
+		case "47B":
+			requiredMemory = 48 * format.GigaByte
 		case "65B", "70B":
 			requiredMemory = 64 * format.GigaByte
 		case "180B":
