@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-//go:embed llama.cpp/gguf/build/*/*/lib/*.so
+//go:embed llama.cpp/build/*/*/lib/*.so
 var libEmbed embed.FS
 
 func updatePath(dir string) {

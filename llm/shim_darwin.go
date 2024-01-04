@@ -13,7 +13,7 @@ import (
 	"github.com/jmorganca/ollama/api"
 )
 
-//go:embed llama.cpp/gguf/ggml-metal.metal
+//go:embed llama.cpp/ggml-metal.metal
 var libEmbed embed.FS
 
 func newDynamicShimExtServer(library, model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
@@ -22,7 +22,7 @@ func newDynamicShimExtServer(library, model string, adapters, projectors []strin
 }
 
 func nativeInit(workdir string) error {
-	err := extractPayloadFiles(workdir, "llama.cpp/gguf/ggml-metal.metal")
+	err := extractPayloadFiles(workdir, "llama.cpp/ggml-metal.metal")
 	if err != nil {
 		if err == payloadMissing {
 			// TODO perhaps consider this a hard failure on arm macs?

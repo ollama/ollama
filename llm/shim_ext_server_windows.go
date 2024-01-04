@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-//go:embed llama.cpp/gguf/build/windows/*/lib/*.dll
+//go:embed llama.cpp/build/windows/*/lib/*.dll
 var libEmbed embed.FS
 
 func updatePath(dir string) {

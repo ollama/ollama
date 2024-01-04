@@ -1,7 +1,7 @@
 # common logic accross linux and darwin
 
 init_vars() {
-    LLAMACPP_DIR=gguf
+    LLAMACPP_DIR=../llama.cpp
     PATCHES="0001-Expose-callable-API-for-server.patch"
     CMAKE_DEFS=""
     CMAKE_TARGETS="--target ggml --target ggml_static --target llama --target build_info --target common --target ext_server --target llava_static"
@@ -19,18 +19,18 @@ git_module_setup() {
         return
     fi
     git submodule init
-    git submodule update --force gguf
+    git submodule update --force ${LLAMACPP_DIR}
 
 }
 
 apply_patches() {
     # Wire up our CMakefile
-    if ! grep ollama gguf/examples/server/CMakeLists.txt; then
-        echo 'include (../../../CMakeLists.txt) # ollama' >>gguf/examples/server/CMakeLists.txt
+    if ! grep ollama ${LLAMACPP_DIR}/examples/server/CMakeLists.txt; then
+        echo 'include (../../../ext_server/CMakeLists.txt) # ollama' >>${LLAMACPP_DIR}/examples/server/CMakeLists.txt
     fi
     # Avoid duplicate main symbols when we link into the cgo binary
-    sed -e 's/int main(/int __main(/g' <./gguf/examples/server/server.cpp >./gguf/examples/server/server.cpp.tmp &&
-        mv ./gguf/examples/server/server.cpp.tmp ./gguf/examples/server/server.cpp
+    sed -e 's/int main(/int __main(/g' <${LLAMACPP_DIR}/examples/server/server.cpp >${LLAMACPP_DIR}/examples/server/server.cpp.tmp &&
+        mv ${LLAMACPP_DIR}/examples/server/server.cpp.tmp ${LLAMACPP_DIR}/examples/server/server.cpp
 }
 
 build() {
@@ -49,5 +49,5 @@ install() {
 
 # Keep the local tree clean after we're done with the build
 cleanup() {
-    (cd gguf/examples/server/ && git checkout CMakeLists.txt server.cpp)
+    (cd ${LLAMACPP_DIR}/examples/server/ && git checkout CMakeLists.txt server.cpp)
 }

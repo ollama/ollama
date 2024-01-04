@@ -1,7 +1,7 @@
 package llm
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/llama.cpp -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common -I${SRCDIR}/llama.cpp/gguf/examples/server
+#cgo CFLAGS: -I${SRCDIR}/ext_server -I${SRCDIR}/llama.cpp -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp/examples/server
 #cgo CFLAGS: -DNDEBUG -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo CFLAGS: -Wmissing-noreturn -Wall -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
 #cgo CPPFLAGS: -Ofast -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
@@ -10,17 +10,17 @@ package llm
 #cgo darwin CPPFLAGS: -DGGML_USE_METAL -DGGML_METAL_NDEBUG
 #cgo darwin LDFLAGS: -lc++ -framework Accelerate
 #cgo darwin LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
-#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/darwin/metal/lib/libcommon.a
-#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/darwin/metal/lib/libext_server.a
-#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/darwin/metal/lib/libllama.a
-#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/darwin/metal/lib/libggml_static.a
+#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libcommon.a
+#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libext_server.a
+#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libllama.a
+#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libggml_static.a
 #cgo linux CFLAGS: -D_GNU_SOURCE
 #cgo linux windows CFLAGS: -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_MMV_Y=1 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_USE_CUBLAS
 #cgo linux LDFLAGS: -L/usr/local/cuda/targets/x86_64-linux/lib -L/usr/local/cuda/lib64 -L/usr/local/cuda/targets/x86_64-linux/lib/stubs
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/linux/cpu/lib/libext_server.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/linux/cpu/lib/libcommon.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/linux/cpu/lib/libllama.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/linux/cpu/lib/libggml_static.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libext_server.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libcommon.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libllama.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libggml_static.a
 #cgo linux LDFLAGS: -lrt -ldl -lstdc++ -lm
 #cgo linux windows LDFLAGS: -lpthread
 
