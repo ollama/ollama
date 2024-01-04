@@ -67,7 +67,9 @@ export const getOllamaModels = async (
 		throw error;
 	}
 
-	return res?.models ?? [];
+	return (res?.models ?? []).sort((a, b) => {
+		return a.name.localeCompare(b.name);
+	});
 };
 
 export const generateTitle = async (

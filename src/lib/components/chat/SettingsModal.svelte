@@ -7,7 +7,7 @@
 	import { config, models, settings, user, chats } from '$lib/stores';
 	import { splitStream, getGravatarURL } from '$lib/utils';
 
-	import { getOllamaVersion } from '$lib/apis/ollama';
+	import { getOllamaVersion, getOllamaModels } from '$lib/apis/ollama';
 	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
 	import {
 		WEB_UI_VERSION,
@@ -545,30 +545,15 @@
 
 	const getModels = async (url = '', type = 'all') => {
 		let models = [];
-		const res = await fetch(`${url ? url : $settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/tags`, {
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			}
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.catch((error) => {
-				console.log(error);
-				if ('detail' in error) {
-					toast.error(error.detail);
-				} else {
-					toast.error('Server connection failed');
-				}
-				return null;
-			});
-		console.log(res);
-		models.push(...(res?.models ?? []));
+		models.push(
+			...(await getOllamaModels(
+				url ? url : $settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
+				localStorage.token
+			).catch((error) => {
+				toast.error(error);
+				return [];
+			}))
+		);
 
 		// If OpenAI API Key exists
 		if (type === 'all' && $settings.OPENAI_API_KEY) {
