@@ -7,19 +7,23 @@
 	import { config, models, settings, user, chats } from '$lib/stores';
 	import { splitStream, getGravatarURL } from '$lib/utils';
 
-	import { getOllamaVersion, getOllamaModels } from '$lib/apis/ollama';
-	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
 	import {
-		WEB_UI_VERSION,
-		OLLAMA_API_BASE_URL,
-		WEBUI_API_BASE_URL,
-		WEBUI_BASE_URL
-	} from '$lib/constants';
+		getOllamaVersion,
+		getOllamaModels,
+		getOllamaAPIUrl,
+		updateOllamaAPIUrl,
+		pullModel,
+		createModel,
+		deleteModel
+	} from '$lib/apis/ollama';
+	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
+	import { WEB_UI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import Advanced from './Settings/Advanced.svelte';
 	import Modal from '../common/Modal.svelte';
 	import { updateUserPassword } from '$lib/apis/auths';
 	import { goto } from '$app/navigation';
+	import Page from '../../../routes/(app)/+page.svelte';
 
 	export let show = false;
 
@@ -33,7 +37,7 @@
 	let selectedTab = 'general';
 
 	// General
-	let API_BASE_URL = OLLAMA_API_BASE_URL;
+	let API_BASE_URL = '';
 	let themes = ['dark', 'light', 'rose-pine dark', 'rose-pine-dawn light'];
 	let theme = 'dark';
 	let notificationEnabled = false;
@@ -139,19 +143,13 @@
 	// About
 	let ollamaVersion = '';
 
-	const checkOllamaConnection = async () => {
-		if (API_BASE_URL === '') {
-			API_BASE_URL = OLLAMA_API_BASE_URL;
-		}
-		const _models = await getModels(API_BASE_URL, 'ollama');
+	const updateOllamaAPIUrlHandler = async () => {
+		API_BASE_URL = await updateOllamaAPIUrl(localStorage.token, API_BASE_URL);
+		const _models = await getModels('ollama');
 
 		if (_models.length > 0) {
 			toast.success('Server connection verified');
 			await models.set(_models);
-
-			saveSettings({
-				API_BASE_URL: API_BASE_URL
-			});
 		}
 	};
 
@@ -229,67 +227,60 @@
 
 	const pullModelHandler = async () => {
 		modelTransferring = true;
-		const res = await fetch(`${API_BASE_URL}/pull`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'text/event-stream',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			},
-			body: JSON.stringify({
-				name: modelTag
-			})
-		});
 
-		const reader = res.body
-			.pipeThrough(new TextDecoderStream())
-			.pipeThrough(splitStream('\n'))
-			.getReader();
+		const res = await pullModel(localStorage.token, modelTag);
 
-		while (true) {
-			const { value, done } = await reader.read();
-			if (done) break;
+		if (res) {
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
 
-			try {
-				let lines = value.split('\n');
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
 
-				for (const line of lines) {
-					if (line !== '') {
-						console.log(line);
-						let data = JSON.parse(line);
-						console.log(data);
+				try {
+					let lines = value.split('\n');
 
-						if (data.error) {
-							throw data.error;
-						}
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							let data = JSON.parse(line);
+							console.log(data);
 
-						if (data.detail) {
-							throw data.detail;
-						}
-						if (data.status) {
-							if (!data.digest) {
-								toast.success(data.status);
+							if (data.error) {
+								throw data.error;
+							}
 
-								if (data.status === 'success') {
-									const notification = new Notification(`Ollama`, {
-										body: `Model '${modelTag}' has been successfully downloaded.`,
-										icon: '/favicon.png'
-									});
-								}
-							} else {
-								digest = data.digest;
-								if (data.completed) {
-									pullProgress = Math.round((data.completed / data.total) * 1000) / 10;
+							if (data.detail) {
+								throw data.detail;
+							}
+							if (data.status) {
+								if (!data.digest) {
+									toast.success(data.status);
+
+									if (data.status === 'success') {
+										const notification = new Notification(`Ollama`, {
+											body: `Model '${modelTag}' has been successfully downloaded.`,
+											icon: '/favicon.png'
+										});
+									}
 								} else {
-									pullProgress = 100;
+									digest = data.digest;
+									if (data.completed) {
+										pullProgress = Math.round((data.completed / data.total) * 1000) / 10;
+									} else {
+										pullProgress = 100;
+									}
 								}
 							}
 						}
 					}
+				} catch (error) {
+					console.log(error);
+					toast.error(error);
 				}
-			} catch (error) {
-				console.log(error);
-				toast.error(error);
 			}
 		}
 
@@ -410,21 +401,11 @@
 		}
 
 		if (uploaded) {
-			const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/create`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'text/event-stream',
-					...($settings.authHeader && { Authorization: $settings.authHeader }),
-					...($user && { Authorization: `Bearer ${localStorage.token}` })
-				},
-				body: JSON.stringify({
-					name: `${name}:latest`,
-					modelfile: `FROM @${modelFileDigest}\n${modelFileContent}`
-				})
-			}).catch((err) => {
-				console.log(err);
-				return null;
-			});
+			const res = await createModel(
+				localStorage.token,
+				`${name}:latest`,
+				`FROM @${modelFileDigest}\n${modelFileContent}`
+			);
 
 			if (res && res.ok) {
 				const reader = res.body
@@ -490,66 +471,22 @@
 	};
 
 	const deleteModelHandler = async () => {
-		const res = await fetch(`${API_BASE_URL}/delete`, {
-			method: 'DELETE',
-			headers: {
-				'Content-Type': 'text/event-stream',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			},
-			body: JSON.stringify({
-				name: deleteModelTag
-			})
+		const res = await deleteModel(localStorage.token, deleteModelTag).catch((error) => {
+			toast.error(error);
 		});
 
-		const reader = res.body
-			.pipeThrough(new TextDecoderStream())
-			.pipeThrough(splitStream('\n'))
-			.getReader();
-
-		while (true) {
-			const { value, done } = await reader.read();
-			if (done) break;
-
-			try {
-				let lines = value.split('\n');
-
-				for (const line of lines) {
-					if (line !== '' && line !== 'null') {
-						console.log(line);
-						let data = JSON.parse(line);
-						console.log(data);
-
-						if (data.error) {
-							throw data.error;
-						}
-						if (data.detail) {
-							throw data.detail;
-						}
-
-						if (data.status) {
-						}
-					} else {
-						toast.success(`Deleted ${deleteModelTag}`);
-					}
-				}
-			} catch (error) {
-				console.log(error);
-				toast.error(error);
-			}
+		if (res) {
+			toast.success(`Deleted ${deleteModelTag}`);
 		}
 
 		deleteModelTag = '';
 		models.set(await getModels());
 	};
 
-	const getModels = async (url = '', type = 'all') => {
+	const getModels = async (type = 'all') => {
 		let models = [];
 		models.push(
-			...(await getOllamaModels(
-				url ? url : $settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-				localStorage.token
-			).catch((error) => {
+			...(await getOllamaModels(localStorage.token).catch((error) => {
 				toast.error(error);
 				return [];
 			}))
@@ -557,10 +494,10 @@
 
 		// If OpenAI API Key exists
 		if (type === 'all' && $settings.OPENAI_API_KEY) {
-			const API_BASE_URL = $settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+			const OPENAI_API_BASE_URL = $settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
 
 			// Validate OPENAI_API_KEY
-			const openaiModelRes = await fetch(`${API_BASE_URL}/models`, {
+			const openaiModelRes = await fetch(`${OPENAI_API_BASE_URL}/models`, {
 				method: 'GET',
 				headers: {
 					'Content-Type': 'application/json',
@@ -588,7 +525,7 @@
 							...openAIModels
 								.map((model) => ({ name: model.id, external: true }))
 								.filter((model) =>
-									API_BASE_URL.includes('openai') ? model.name.includes('gpt') : true
+									OPENAI_API_BASE_URL.includes('openai') ? model.name.includes('gpt') : true
 								)
 					  ]
 					: [])
@@ -624,15 +561,18 @@
 	};
 
 	onMount(async () => {
+		console.log('settings', $user.role === 'admin');
+		if ($user.role === 'admin') {
+			API_BASE_URL = await getOllamaAPIUrl(localStorage.token);
+		}
+
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(settings);
 
 		theme = localStorage.theme ?? 'dark';
 		notificationEnabled = settings.notificationEnabled ?? false;
 
-		API_BASE_URL = settings.API_BASE_URL ?? OLLAMA_API_BASE_URL;
 		system = settings.system ?? '';
-
 		requestFormat = settings.requestFormat ?? '';
 
 		options.seed = settings.seed ?? 0;
@@ -659,10 +599,7 @@
 			authContent = settings.authHeader.split(' ')[1];
 		}
 
-		ollamaVersion = await getOllamaVersion(
-			API_BASE_URL ?? OLLAMA_API_BASE_URL,
-			localStorage.token
-		).catch((error) => {
+		ollamaVersion = await getOllamaVersion(localStorage.token).catch((error) => {
 			return '';
 		});
 	});
@@ -1026,51 +963,51 @@
 							</div>
 						</div>
 
-						<hr class=" dark:border-gray-700" />
-						<div>
-							<div class=" mb-2.5 text-sm font-medium">Ollama API URL</div>
-							<div class="flex w-full">
-								<div class="flex-1 mr-2">
-									<input
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter URL (e.g. http://localhost:8080/ollama/api)"
-										bind:value={API_BASE_URL}
-									/>
-								</div>
-								<button
-									class="px-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-700 rounded transition"
-									on:click={() => {
-										checkOllamaConnection();
-									}}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											fill-rule="evenodd"
-											d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-											clip-rule="evenodd"
+						{#if $user.role === 'admin'}
+							<hr class=" dark:border-gray-700" />
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Ollama API URL</div>
+								<div class="flex w-full">
+									<div class="flex-1 mr-2">
+										<input
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											placeholder="Enter URL (e.g. http://localhost:11434/api)"
+											bind:value={API_BASE_URL}
 										/>
-									</svg>
-								</button>
-							</div>
+									</div>
+									<button
+										class="px-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-700 rounded transition"
+										on:click={() => {
+											updateOllamaAPIUrlHandler();
+										}}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</button>
+								</div>
 
-							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-								The field above should be set to <span
-									class=" text-gray-500 dark:text-gray-300 font-medium">'/ollama/api'</span
-								>;
-								<a
-									class=" text-gray-500 dark:text-gray-300 font-medium"
-									href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
-									target="_blank"
-								>
-									Click here for help.
-								</a>
+								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+									Trouble accessing Ollama?
+									<a
+										class=" text-gray-300 font-medium"
+										href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
+										target="_blank"
+									>
+										Click here for help.
+									</a>
+								</div>
 							</div>
-						</div>
+						{/if}
 
 						<hr class=" dark:border-gray-700" />
 
@@ -1088,7 +1025,6 @@
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
 								on:click={() => {
 									saveSettings({
-										API_BASE_URL: API_BASE_URL === '' ? OLLAMA_API_BASE_URL : API_BASE_URL,
 										system: system !== '' ? system : undefined
 									});
 									show = false;

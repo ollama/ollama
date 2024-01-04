@@ -6,7 +6,6 @@
 	import { onMount } from 'svelte';
 
 	import { modelfiles, settings, user } from '$lib/stores';
-	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 	import { createModel, deleteModel } from '$lib/apis/ollama';
 	import {
 		createNewModelfile,
@@ -20,11 +19,7 @@
 	const deleteModelHandler = async (tagName) => {
 		let success = null;
 
-		success = await deleteModel(
-			$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-			localStorage.token,
-			tagName
-		);
+		success = await deleteModel(localStorage.token, tagName);
 
 		if (success) {
 			toast.success(`Deleted ${tagName}`);

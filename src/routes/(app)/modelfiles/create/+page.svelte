@@ -2,7 +2,6 @@
 	import { v4 as uuidv4 } from 'uuid';
 	import { toast } from 'svelte-french-toast';
 	import { goto } from '$app/navigation';
-	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 	import { settings, user, config, modelfiles, models } from '$lib/stores';
 
 	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
@@ -132,12 +131,7 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 			Object.keys(categories).filter((category) => categories[category]).length > 0 &&
 			!$models.includes(tagName)
 		) {
-			const res = await createModel(
-				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-				localStorage.token,
-				tagName,
-				content
-			);
+			const res = await createModel(localStorage.token, tagName, content);
 
 			if (res) {
 				const reader = res.body
