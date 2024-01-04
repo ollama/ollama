@@ -112,3 +112,11 @@ This can impact both installing Ollama, as well as downloading models.
 Open `Control Panel > Networking and Internet > View network status and tasks` and click on `Change adapter settings` on the left panel. Find the `vEthernel (WSL)` adapter, right click and select `Properties`.
 Click on `Configure` and open the `Advanced` tab. Search through each of the properties until you find `Large Send Offload Version 2 (IPv4)` and `Large Send Offload Version 2 (IPv6)`. *Disable* both of these
 properties.
+
+## What does the q in the model tag mean? What is quantization?
+
+Whenever you pull a model without a tag, Ollama will actually pull the q4_0 quantization of the model. Looking at the tags page for any model, you can see several quantization options available. Quantization is a method of compression that allows the model to fit in less space and thus use less RAM and VRAM on your machine. At a high level, a model is made of an enormous collection of nodes that determine how to generate text. These nodes are connected at different levels with weights. The training process adjusts these weights to be able to output the right text every time. Most models start with weights that are 32bit floating-point numbers. Those weights add up to be the parameters. So a model with 7 billion parameters has 7 billion 32bit floating-point numbers, plus a description of all the nodes and more. That adds up to needing at least 28 Gigabytes of memory to load. Quantization turns those 32bit floats into much smaller integers. The number next to the q indicates the bit size of the weights. So a q4 model converted those 32bit floats into 4bit integers. Obviously, there is some loss of information in this process, but it turns out in most cases it isn't really noticeable. In fact, even the 2bit quantization can be very useful.
+
+## What is context, can I increase it, and why doesn't every model support a huge context?
+
+Context refers to the size of the input your can send to a model and get sensible output back. Many models have a context size of 2048 tokens. It's sometimes possible to give it more, but the answers start to degrade. Newer models have been able to increase that context size using different methods. This increase in context size results in a corresponding increase in memory required, sometimes by orders of magnitude. 
