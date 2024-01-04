@@ -29,5 +29,8 @@ export const getOpenAIModels = async (
 
 	return models
 		.map((model) => ({ name: model.id, external: true }))
-		.filter((model) => (base_url.includes('openai') ? model.name.includes('gpt') : true));
+		.filter((model) => (base_url.includes('openai') ? model.name.includes('gpt') : true))
+		.sort((a, b) => {
+			return a.name.localeCompare(b.name);
+		});
 };

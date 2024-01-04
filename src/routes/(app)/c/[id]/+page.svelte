@@ -7,7 +7,6 @@
 	import { page } from '$app/stores';
 
 	import { models, modelfiles, user, settings, chats, chatId } from '$lib/stores';
-	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
 	import { copyToClipboard, splitStream } from '$lib/utils';
@@ -180,36 +179,32 @@
 		// Scroll down
 		window.scrollTo({ top: document.body.scrollHeight });
 
-		const res = await generateChatCompletion(
-			$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-			localStorage.token,
-			{
-				model: model,
-				messages: [
-					$settings.system
-						? {
-								role: 'system',
-								content: $settings.system
-						  }
-						: undefined,
-					...messages
-				]
-					.filter((message) => message)
-					.map((message) => ({
-						role: message.role,
-						content: message.content,
-						...(message.files && {
-							images: message.files
-								.filter((file) => file.type === 'image')
-								.map((file) => file.url.slice(file.url.indexOf(',') + 1))
-						})
-					})),
-				options: {
-					...($settings.options ?? {})
-				},
-				format: $settings.requestFormat ?? undefined
-			}
-		);
+		const res = await generateChatCompletion(localStorage.token, {
+			model: model,
+			messages: [
+				$settings.system
+					? {
+							role: 'system',
+							content: $settings.system
+					  }
+					: undefined,
+				...messages
+			]
+				.filter((message) => message)
+				.map((message) => ({
+					role: message.role,
+					content: message.content,
+					...(message.files && {
+						images: message.files
+							.filter((file) => file.type === 'image')
+							.map((file) => file.url.slice(file.url.indexOf(',') + 1))
+					})
+				})),
+			options: {
+				...($settings.options ?? {})
+			},
+			format: $settings.requestFormat ?? undefined
+		});
 
 		if (res && res.ok) {
 			const reader = res.body
@@ -611,12 +606,7 @@
 
 	const generateChatTitle = async (_chatId, userPrompt) => {
 		if ($settings.titleAutoGenerate ?? true) {
-			const title = await generateTitle(
-				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-				localStorage.token,
-				selectedModels[0],
-				userPrompt
-			);
+			const title = await generateTitle(localStorage.token, selectedModels[0], userPrompt);
 
 			if (title) {
 				await setChatTitle(_chatId, title);

@@ -35,6 +35,8 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - 📜 **Prompt Preset Support**: Instantly access preset prompts using the '/' command in the chat input. Load predefined conversation starters effortlessly and expedite your interactions. Effortlessly import prompts through [OllamaHub](https://ollamahub.com/) integration.
 
+- 👍👎 **RLHF Annotation**: Empower your messages by rating them with thumbs up and thumbs down, facilitating the creation of datasets for Reinforcement Learning from Human Feedback (RLHF). Utilize your messages to train or fine-tune models, all while ensuring the confidentiality of locally saved data.
+
 - 📥🗑️ **Download/Delete Models**: Easily download or remove models directly from the web UI.
 
 - ⬆️ **GGUF File Model Creation**: Effortlessly create Ollama models by uploading GGUF files directly from the web UI. Streamlined process with options to upload from your machine or download GGUF files from Hugging Face.
