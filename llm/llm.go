@@ -63,9 +63,9 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		systemMemory := int64(memory.TotalMemory())
 
 		if ggml.FileType() == "F16" && requiredMemory*f16Multiplier > systemMemory {
-			return nil, fmt.Errorf("F16 model requires at least %s of total memory", format.HumanBytes(requiredMemory))
+			return nil, fmt.Errorf("F16 model requires at least %s of memory", format.HumanBytes(requiredMemory))
 		} else if requiredMemory > systemMemory {
-			return nil, fmt.Errorf("model requires at least %s of total memory", format.HumanBytes(requiredMemory))
+			return nil, fmt.Errorf("model requires at least %s of memory", format.HumanBytes(requiredMemory))
 		}
 	}
 
