@@ -42,7 +42,7 @@ echo "Starting linux generate script"
 if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ]; then
     export CUDACXX=/usr/local/cuda/bin/nvcc
 fi
-COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_ACCELERATE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
+COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
 source $(dirname $0)/gen_common.sh
 init_vars
 git_module_setup
