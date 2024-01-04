@@ -50,4 +50,6 @@ app.mount("/api/v1", webui_app)
 # app.mount("/ollama/api", WSGIMiddleware(ollama_app))
 app.mount("/ollama/api", ollama_app)
 
-app.mount("/", SPAStaticFiles(directory="../build", html=True), name="spa-static-files")
+app.mount("/",
+          SPAStaticFiles(directory="../build", html=True),
+          name="spa-static-files")

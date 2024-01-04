@@ -30,7 +30,8 @@ async def get_ollama_api_url(user=Depends(get_current_user)):
     if user and user.role == "admin":
         return {"OLLAMA_API_BASE_URL": app.state.OLLAMA_API_BASE_URL}
     else:
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 class UrlUpdateForm(BaseModel):
@@ -38,14 +39,14 @@ class UrlUpdateForm(BaseModel):
 
 
 @app.post("/url/update")
-async def update_ollama_api_url(
-    form_data: UrlUpdateForm, user=Depends(get_current_user)
-):
+async def update_ollama_api_url(form_data: UrlUpdateForm,
+                                user=Depends(get_current_user)):
     if user and user.role == "admin":
         app.state.OLLAMA_API_BASE_URL = form_data.url
         return {"OLLAMA_API_BASE_URL": app.state.OLLAMA_API_BASE_URL}
     else:
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
@@ -58,11 +59,11 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
     if user.role in ["user", "admin"]:
         if path in ["pull", "delete", "push", "copy", "create"]:
             if user.role != "admin":
-                raise HTTPException(
-                    status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED
-                )
+                raise HTTPException(status_code=401,
+                                    detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
     else:
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
     headers.pop("Host", None)
     headers.pop("Authorization", None)
