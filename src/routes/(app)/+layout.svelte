@@ -14,7 +14,7 @@
 	import { getOpenAIModels } from '$lib/apis/openai';
 
 	import { user, showSettings, settings, models, modelfiles, prompts } from '$lib/stores';
-	import { OLLAMA_API_BASE_URL, REQUIRED_OLLAMA_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
+	import { REQUIRED_OLLAMA_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -32,10 +32,7 @@
 	const getModels = async () => {
 		let models = [];
 		models.push(
-			...(await getOllamaModels(
-				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-				localStorage.token
-			).catch((error) => {
+			...(await getOllamaModels(localStorage.token).catch((error) => {
 				toast.error(error);
 				return [];
 			}))
@@ -58,10 +55,7 @@
 
 	const setOllamaVersion = async (version: string = '') => {
 		if (version === '') {
-			version = await getOllamaVersion(
-				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-				localStorage.token
-			).catch((error) => {
+			version = await getOllamaVersion(localStorage.token).catch((error) => {
 				return '';
 			});
 		}
