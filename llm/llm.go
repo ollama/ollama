@@ -87,7 +87,8 @@ func newLlmServer(library, model string, adapters, projectors []string, numLayer
 		if err == nil {
 			return srv, nil
 		}
-		log.Printf("Failed to load dynamic library - falling back to CPU mode %s", err)
+		log.Printf("Failed to load dynamic library %s - falling back to CPU mode %s", library, err)
+		// TODO - update some state to indicate we were unable to load the GPU library for future "info" ux
 	}
 
 	return newDefaultExtServer(model, adapters, projectors, numLayers, opts)
