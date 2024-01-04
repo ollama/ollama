@@ -35,6 +35,9 @@ BUILD_DIR="gguf/build/linux/cpu"
 build
 install
 
+# Placeholder to keep go embed happy until we start building dynamic CPU lib variants
+touch ${BUILD_DIR}/lib/dummy.so
+
 if [ -d /usr/local/cuda/lib64/ ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars

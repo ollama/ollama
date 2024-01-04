@@ -147,9 +147,9 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 	if err != nil || len(files) == 0 {
 		return nil, payloadMissing
 	}
-	libs := make([]string, len(files))
+	libs := []string{}
 
-	for i, file := range files {
+	for _, file := range files {
 		pathComps := strings.Split(file, "/")
 		if len(pathComps) != 7 {
 			log.Printf("unexpected payload components: %v", pathComps)
@@ -169,7 +169,7 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 
 		destFile := filepath.Join(targetDir, filepath.Base(file))
 		if strings.Contains(destFile, "server") {
-			libs[i] = destFile
+			libs = append(libs, destFile)
 		}
 
 		_, err = os.Stat(destFile)
