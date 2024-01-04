@@ -100,7 +100,7 @@
 		</div>
 
 		{#if $user?.role === 'admin'}
-			<div class="px-2.5 flex justify-center my-1">
+			<div class="px-2.5 flex justify-center mt-1">
 				<button
 					class="flex-grow flex space-x-3 rounded-md px-3 py-2 hover:bg-gray-900 transition"
 					on:click={async () => {
@@ -129,10 +129,38 @@
 					</div>
 				</button>
 			</div>
+
+			<div class="px-2.5 flex justify-center mb-1">
+				<button
+					class="flex-grow flex space-x-3 rounded-md px-3 py-2 hover:bg-gray-900 transition"
+					on:click={async () => {
+						goto('/prompts');
+					}}
+				>
+					<div class="self-center">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M11.013 2.513a1.75 1.75 0 0 1 2.475 2.474L6.226 12.25a2.751 2.751 0 0 1-.892.596l-2.047.848a.75.75 0 0 1-.98-.98l.848-2.047a2.75 2.75 0 0 1 .596-.892l7.262-7.261Z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</div>
+
+					<div class="flex self-center">
+						<div class=" self-center font-medium text-sm">Prompts</div>
+					</div>
+				</button>
+			</div>
 		{/if}
 
 		<div class="px-2.5 mt-1 mb-2 flex justify-center space-x-2">
-			<div class="flex w-full">
+			<div class="flex w-full" id="chat-search">
 				<div class="self-center pl-3 py-2 rounded-l bg-gray-950">
 					<svg
 						xmlns="http://www.w3.org/2000/svg"

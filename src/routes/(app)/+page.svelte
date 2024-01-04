@@ -6,7 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
-	import { models, modelfiles, user, settings, chats, chatId } from '$lib/stores';
+	import { models, modelfiles, user, settings, chats, chatId, config } from '$lib/stores';
 	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
@@ -90,9 +90,18 @@
 			messages: {},
 			currentId: null
 		};
-		selectedModels = $page.url.searchParams.get('models')
-			? $page.url.searchParams.get('models')?.split(',')
-			: $settings.models ?? [''];
+
+		console.log($config);
+
+		if ($page.url.searchParams.get('models')) {
+			selectedModels = $page.url.searchParams.get('models')?.split(',');
+		} else if ($settings?.models) {
+			selectedModels = $settings?.models;
+		} else if ($config?.default_models) {
+			selectedModels = $config?.default_models.split(',');
+		} else {
+			selectedModels = [''];
+		}
 
 		let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		settings.set({
@@ -109,10 +118,14 @@
 		await Promise.all(
 			selectedModels.map(async (model) => {
 				console.log(model);
-				if ($models.filter((m) => m.name === model)[0].external) {
+				const modelTag = $models.filter((m) => m.name === model).at(0);
+
+				if (modelTag?.external) {
 					await sendPromptOpenAI(model, prompt, parentId, _chatId);
-				} else {
+				} else if (modelTag) {
 					await sendPromptOllama(model, prompt, parentId, _chatId);
+				} else {
+					toast.error(`Model ${model} not found`);
 				}
 			})
 		);
@@ -379,13 +392,13 @@
 										  }
 										: { content: message.content })
 								})),
-							seed: $settings.options.seed ?? undefined,
-							stop: $settings.options.stop ?? undefined,
-							temperature: $settings.options.temperature ?? undefined,
-							top_p: $settings.options.top_p ?? undefined,
-							num_ctx: $settings.options.num_ctx ?? undefined,
-							frequency_penalty: $settings.options.repeat_penalty ?? undefined,
-							max_tokens: $settings.options.num_predict ?? undefined
+							seed: $settings?.options?.seed ?? undefined,
+							stop: $settings?.options?.stop ?? undefined,
+							temperature: $settings?.options?.temperature ?? undefined,
+							top_p: $settings?.options?.top_p ?? undefined,
+							num_ctx: $settings?.options?.num_ctx ?? undefined,
+							frequency_penalty: $settings?.options?.repeat_penalty ?? undefined,
+							max_tokens: $settings?.options?.num_predict ?? undefined
 						})
 					}
 				).catch((err) => {
@@ -584,7 +597,7 @@
 			const title = await generateTitle(
 				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
 				localStorage.token,
-				selectedModels[0],
+				$settings?.titleAutoGenerateModel ?? selectedModels[0],
 				userPrompt
 			);
 

@@ -17,10 +17,12 @@ class ERROR_MESSAGES(str, Enum):
     USERNAME_TAKEN = (
         "Uh-oh! This username is already registered. Please choose another username."
     )
+    COMMAND_TAKEN = "Uh-oh! This command is already registered. Please choose another command string."
     INVALID_TOKEN = (
         "Your session has expired or the token is invalid. Please sign in again."
     )
     INVALID_CRED = "The email or password provided is incorrect. Please check for typos and try logging in again."
+    INVALID_EMAIL_FORMAT = "The email format you entered is invalid. Please double-check and make sure you're using a valid email address (e.g., yourname@example.com)."
     INVALID_PASSWORD = (
         "The password provided is incorrect. Please check for typos and try again."
     )
@@ -31,5 +33,4 @@ class ERROR_MESSAGES(str, Enum):
     )
     NOT_FOUND = "We could not find what you're looking for :/"
     USER_NOT_FOUND = "We could not find what you're looking for :/"
-
     MALICIOUS = "Unusual activities detected, please try again in a few minutes."

@@ -1,4 +1,5 @@
 import hashlib
+import re
 
 
 def get_gravatar_url(email):
@@ -21,3 +22,9 @@ def calculate_sha256(file):
     for chunk in iter(lambda: file.read(8192), b""):
         sha256.update(chunk)
     return sha256.hexdigest()
+
+
+def validate_email_format(email: str) -> bool:
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        return False
+    return True

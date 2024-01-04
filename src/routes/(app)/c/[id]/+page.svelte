@@ -136,17 +136,20 @@
 		await Promise.all(
 			selectedModels.map(async (model) => {
 				console.log(model);
-				if ($models.filter((m) => m.name === model)[0].external) {
+				const modelTag = $models.filter((m) => m.name === model).at(0);
+
+				if (modelTag?.external) {
 					await sendPromptOpenAI(model, prompt, parentId, _chatId);
-				} else {
+				} else if (modelTag) {
 					await sendPromptOllama(model, prompt, parentId, _chatId);
+				} else {
+					toast.error(`Model ${model} not found`);
 				}
 			})
 		);
 
 		await chats.set(await getChatList(localStorage.token));
 	};
-
 	const sendPromptOllama = async (model, userPrompt, parentId, _chatId) => {
 		// Create response message
 		let responseMessageId = uuidv4();
@@ -406,13 +409,13 @@
 										  }
 										: { content: message.content })
 								})),
-							seed: $settings.options.seed ?? undefined,
-							stop: $settings.options.stop ?? undefined,
-							temperature: $settings.options.temperature ?? undefined,
-							top_p: $settings.options.top_p ?? undefined,
-							num_ctx: $settings.options.num_ctx ?? undefined,
-							frequency_penalty: $settings.options.repeat_penalty ?? undefined,
-							max_tokens: $settings.options.num_predict ?? undefined
+							seed: $settings?.options?.seed ?? undefined,
+							stop: $settings?.options?.stop ?? undefined,
+							temperature: $settings?.options?.temperature ?? undefined,
+							top_p: $settings?.options?.top_p ?? undefined,
+							num_ctx: $settings?.options?.num_ctx ?? undefined,
+							frequency_penalty: $settings?.options?.repeat_penalty ?? undefined,
+							max_tokens: $settings?.options?.num_predict ?? undefined
 						})
 					}
 				).catch((err) => {

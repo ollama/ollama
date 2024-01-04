@@ -111,3 +111,19 @@ export const checkVersion = (required, current) => {
 				caseFirst: 'upper'
 		  }) < 0;
 };
+
+export const findWordIndices = (text) => {
+	const regex = /\[([^\]]+)\]/g;
+	let matches = [];
+	let match;
+
+	while ((match = regex.exec(text)) !== null) {
+		matches.push({
+			word: match[1],
+			startIndex: match.index,
+			endIndex: regex.lastIndex - 1
+		});
+	}
+
+	return matches;
+};
