@@ -9,10 +9,6 @@ jobs:
     env:
       PUBLIC_API_BASE_URL: ''
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version:
-          - latest
     steps:
       - uses: actions/checkout@v4
       - name: Use Bun
