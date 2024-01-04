@@ -4,7 +4,7 @@
 
 The Ollama WebUI system is designed to streamline interactions between the client (your browser) and the Ollama API. At the heart of this design is a backend reverse proxy, enhancing security and resolving CORS issues.
 
-- **How it Works**: When you make a request (like `/ollama/api/tags`) from the Ollama WebUI, it doesn’t go directly to the Ollama API. Instead, it first reaches the Ollama WebUI backend. The backend then forwards this request to the Ollama API via the route you define in the `OLLAMA_API_BASE_URL` environment variable. For instance, a request to `/ollama/api/tags` in the WebUI is equivalent to `OLLAMA_API_BASE_URL/tags` in the backend.
+- **How it Works**: The Ollama WebUI is designed to interact with the Ollama API through a specific route. When a request is made from the WebUI to Ollama, it is not directly sent to the Ollama API. Initially, the request is sent to the Ollama WebUI backend via `/ollama/api` route. From there, the backend is responsible for forwarding the request to the Ollama API. This forwarding is accomplished by using the route specified in the `OLLAMA_API_BASE_URL` environment variable. Therefore, a request made to `/ollama/api` in the WebUI is effectively the same as making a request to `OLLAMA_API_BASE_URL` in the backend. For instance, a request to `/ollama/api/tags` in the WebUI is equivalent to `OLLAMA_API_BASE_URL/tags` in the backend.
 
 - **Security Benefits**: This design prevents direct exposure of the Ollama API to the frontend, safeguarding against potential CORS (Cross-Origin Resource Sharing) issues and unauthorized access. Requiring authentication to access the Ollama API further enhances this security layer.
 
@@ -27,6 +27,6 @@ docker run -d --network=host -v ollama-webui:/app/backend/data -e OLLAMA_API_BAS
 1. **Verify Ollama URL Format**:
    - When running the Web UI container, ensure the `OLLAMA_API_BASE_URL` is correctly set, including the `/api` suffix. (e.g., `http://192.168.1.1:11434/api` for different host setups).
    - In the Ollama WebUI, navigate to "Settings" > "General".
-   - Confirm that the Ollama Server URL is correctly set to `/ollama/api`, including the `/api` suffix.
+   - Confirm that the Ollama Server URL is correctly set to `[OLLAMA URL]/api` (e.g., `http://localhost:11434/api`), including the `/api` suffix.
 
 By following these enhanced troubleshooting steps, connection issues should be effectively resolved. For further assistance or queries, feel free to reach out to us on our community Discord.
