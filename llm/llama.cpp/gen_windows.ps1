@@ -49,6 +49,9 @@ function install {
     md "${script:buildDir}/lib" -ea 0 > $null
     cp "${script:buildDir}/bin/${script:config}/ext_server_shared.dll" "${script:buildDir}/lib"
     cp "${script:buildDir}/bin/${script:config}/llama.dll" "${script:buildDir}/lib"
+
+    # Display the dll dependencies in the build log
+    dumpbin /dependents "${script:buildDir}/bin/${script:config}/ext_server_shared.dll" | select-string ".dll"
 }
 
 function cleanup {
