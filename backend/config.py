@@ -26,11 +26,22 @@ if ENV == "prod":
     if OLLAMA_API_BASE_URL == "/ollama/api":
         OLLAMA_API_BASE_URL = "http://host.docker.internal:11434/api"
 
+
+####################################
+# OPENAI_API
+####################################
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_API_BASE_URL = os.environ.get("OPENAI_API_BASE_URL", "")
+
+if OPENAI_API_BASE_URL == "":
+    OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+
 ####################################
 # WEBUI_VERSION
 ####################################
 
-WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.42")
+WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.50")
 
 ####################################
 # WEBUI_AUTH (Required for security)
