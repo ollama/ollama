@@ -144,7 +144,7 @@ export const generateTitle = async (token: string = '', model: string, prompt: s
 		},
 		body: JSON.stringify({
 			model: model,
-			prompt: `Generate a brief 3-5 word title for this question, excluding the term 'title.' Then, please reply with only the title: ${prompt}`,
+			prompt: `Create a concise, 3-5 word phrase as a header for the following query, strictly adhering to the 3-5 word limit and avoiding the use of the word 'title': ${prompt}`,
 			stream: false
 		})
 	})
