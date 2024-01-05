@@ -20,7 +20,7 @@ const char *cuda_lib_paths[] = {
 };
 #endif
 
-#define LOOKUP_SIZE 5
+#define CUDA_LOOKUP_SIZE 5
 
 void cuda_init(cuda_init_resp_t *resp) {
   nvmlReturn_t ret;
@@ -32,7 +32,7 @@ void cuda_init(cuda_init_resp_t *resp) {
   struct lookup {
     char *s;
     void **p;
-  } l[LOOKUP_SIZE] = {
+  } l[CUDA_LOOKUP_SIZE] = {
       {"nvmlInit_v2", (void *)&resp->ch.initFn},
       {"nvmlShutdown", (void *)&resp->ch.shutdownFn},
       {"nvmlDeviceGetHandleByIndex", (void *)&resp->ch.getHandle},
@@ -55,7 +55,7 @@ void cuda_init(cuda_init_resp_t *resp) {
     return;
   }
 
-  for (i = 0; i < LOOKUP_SIZE; i++) {  // TODO - fix this to use a null terminated list
+  for (i = 0; i < CUDA_LOOKUP_SIZE; i++) {  // TODO - fix this to use a null terminated list
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
     if (!l[i].p) {
       UNLOAD_LIBRARY(resp->ch.handle);
