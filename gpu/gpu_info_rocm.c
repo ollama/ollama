@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+#define ROCM_LOOKUP_SIZE 5
+
 void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
   rsmi_status_t ret;
   resp->err = NULL;
@@ -13,11 +15,12 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
   struct lookup {
     char *s;
     void **p;
-  } l[4] = {
+  } l[ROCM_LOOKUP_SIZE] = {
       {"rsmi_init", (void *)&resp->rh.initFn},
       {"rsmi_shut_down", (void *)&resp->rh.shutdownFn},
       {"rsmi_dev_memory_total_get", (void *)&resp->rh.totalMemFn},
       {"rsmi_dev_memory_usage_get", (void *)&resp->rh.usageMemFn},
+      {"rsmi_version_get", (void *)&resp->rh.versionGetFn},
       // { "rsmi_dev_id_get", (void*)&resp->rh.getHandle },
   };
 
@@ -32,7 +35,7 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
     return;
   }
 
-  for (i = 0; i < 4; i++) {
+  for (i = 0; i < ROCM_LOOKUP_SIZE; i++) {
     *l[i].p = LOAD_SYMBOL(resp->rh.handle, l[i].s);
     if (!l[i].p) {
       UNLOAD_LIBRARY(resp->rh.handle);
@@ -101,6 +104,27 @@ void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
   resp->total = totalMem;
   resp->free = totalMem - usedMem;
   return;
+}
+
+void rocm_get_version(rocm_handle_t h, rocm_version_resp_t *resp) {
+  const int buflen = 256;
+  char buf[buflen + 1];
+  if (h.handle == NULL) {
+    resp->str = strdup("nvml handle not initialized");
+    resp->status = 1;
+    return;
+  }
+  rsmi_version_t ver;
+  rsmi_status_t ret;
+  ret = h.versionGetFn(&ver);
+  if (ret != RSMI_STATUS_SUCCESS) {
+    snprintf(buf, buflen, "unexpected response on version lookup %d", ret);
+    resp->status = 1;
+  } else {
+    snprintf(buf, buflen, "%d", ver.major);
+    resp->status = 0;
+  }
+  resp->str = strdup(buf);
 }
 
 #endif  // __APPLE__
