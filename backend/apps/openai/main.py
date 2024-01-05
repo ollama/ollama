@@ -82,6 +82,7 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
 
     headers = {}
     headers["Authorization"] = f"Bearer {app.state.OPENAI_API_KEY}"
+    headers["Content-Type"] = "application/json"
 
     try:
         r = requests.request(

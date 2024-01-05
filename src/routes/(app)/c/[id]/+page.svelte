@@ -9,6 +9,8 @@
 	import { models, modelfiles, user, settings, chats, chatId } from '$lib/stores';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
+	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
+
 	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
@@ -362,60 +364,47 @@
 
 				window.scrollTo({ top: document.body.scrollHeight });
 
-				const res = await fetch(
-					`${$settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1'}/chat/completions`,
-					{
-						method: 'POST',
-						headers: {
-							Authorization: `Bearer ${$settings.OPENAI_API_KEY}`,
-							'Content-Type': 'application/json'
-						},
-						body: JSON.stringify({
-							model: model,
-							stream: true,
-							messages: [
-								$settings.system
-									? {
-											role: 'system',
-											content: $settings.system
-									  }
-									: undefined,
-								...messages
-							]
-								.filter((message) => message)
-								.map((message) => ({
-									role: message.role,
-									...(message.files
-										? {
-												content: [
-													{
-														type: 'text',
-														text: message.content
-													},
-													...message.files
-														.filter((file) => file.type === 'image')
-														.map((file) => ({
-															type: 'image_url',
-															image_url: {
-																url: file.url
-															}
-														}))
-												]
-										  }
-										: { content: message.content })
-								})),
-							seed: $settings?.options?.seed ?? undefined,
-							stop: $settings?.options?.stop ?? undefined,
-							temperature: $settings?.options?.temperature ?? undefined,
-							top_p: $settings?.options?.top_p ?? undefined,
-							num_ctx: $settings?.options?.num_ctx ?? undefined,
-							frequency_penalty: $settings?.options?.repeat_penalty ?? undefined,
-							max_tokens: $settings?.options?.num_predict ?? undefined
-						})
-					}
-				).catch((err) => {
-					console.log(err);
-					return null;
+				const res = await generateOpenAIChatCompletion(localStorage.token, {
+					model: model,
+					stream: true,
+					messages: [
+						$settings.system
+							? {
+									role: 'system',
+									content: $settings.system
+							  }
+							: undefined,
+						...messages
+					]
+						.filter((message) => message)
+						.map((message) => ({
+							role: message.role,
+							...(message.files
+								? {
+										content: [
+											{
+												type: 'text',
+												text: message.content
+											},
+											...message.files
+												.filter((file) => file.type === 'image')
+												.map((file) => ({
+													type: 'image_url',
+													image_url: {
+														url: file.url
+													}
+												}))
+										]
+								  }
+								: { content: message.content })
+						})),
+					seed: $settings?.options?.seed ?? undefined,
+					stop: $settings?.options?.stop ?? undefined,
+					temperature: $settings?.options?.temperature ?? undefined,
+					top_p: $settings?.options?.top_p ?? undefined,
+					num_ctx: $settings?.options?.num_ctx ?? undefined,
+					frequency_penalty: $settings?.options?.repeat_penalty ?? undefined,
+					max_tokens: $settings?.options?.num_predict ?? undefined
 				});
 
 				if (res && res.ok) {

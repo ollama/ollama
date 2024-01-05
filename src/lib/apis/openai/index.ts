@@ -206,3 +206,26 @@ export const getOpenAIModelsDirect = async (
 			return a.name.localeCompare(b.name);
 		});
 };
+
+export const generateOpenAIChatCompletion = async (token: string = '', body: object) => {
+	let error = null;
+
+	const res = await fetch(`${OPENAI_API_BASE_URL}/chat/completions`, {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${token}`,
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify(body)
+	}).catch((err) => {
+		console.log(err);
+		error = err;
+		return null;
+	});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
