@@ -21,6 +21,7 @@ typedef struct cuda_handle {
   nvmlReturn_t (*shutdownFn)(void);
   nvmlReturn_t (*getHandle)(unsigned int, nvmlDevice_t *);
   nvmlReturn_t (*getMemInfo)(nvmlDevice_t, nvmlMemory_t *);
+  nvmlReturn_t (*getCount)(unsigned int *);
 } cuda_handle_t;
 
 typedef struct cuda_init_resp {

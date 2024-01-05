@@ -30,11 +30,12 @@ void cuda_init(cuda_init_resp_t *resp) {
   struct lookup {
     char *s;
     void **p;
-  } l[4] = {
+  } l[5] = {
       {"nvmlInit_v2", (void *)&resp->ch.initFn},
       {"nvmlShutdown", (void *)&resp->ch.shutdownFn},
       {"nvmlDeviceGetHandleByIndex", (void *)&resp->ch.getHandle},
       {"nvmlDeviceGetMemoryInfo", (void *)&resp->ch.getMemInfo},
+      {"nvmlDeviceGetCount_v2", (void *)&resp->ch.getCount},
   };
 
   for (i = 0; cuda_lib_paths[i] != NULL && resp->ch.handle == NULL; i++) {
@@ -52,7 +53,7 @@ void cuda_init(cuda_init_resp_t *resp) {
     return;
   }
 
-  for (i = 0; i < 4; i++) {  // TODO - fix this to use a null terminated list
+  for (i = 0; i < 5; i++) {  // TODO - fix this to use a null terminated list
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
     if (!l[i].p) {
       UNLOAD_LIBRARY(resp->ch.handle);
@@ -89,22 +90,34 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
     return;
   }
 
-  // TODO - handle multiple GPUs
-  ret = (*h.getHandle)(0, &device);
+  unsigned int devices;
+  ret = (*h.getCount)(&devices);
   if (ret != NVML_SUCCESS) {
-    snprintf(buf, buflen, "unable to get device handle: %d", ret);
+    snprintf(buf, buflen, "unable to get device count: %d", ret);
     resp->err = strdup(buf);
     return;
   }
 
-  ret = (*h.getMemInfo)(device, &memInfo);
-  if (ret != NVML_SUCCESS) {
-    snprintf(buf, buflen, "device memory info lookup failure: %d", ret);
-    resp->err = strdup(buf);
-    return;
+  resp->total = 0;
+  resp->free = 0;
+
+  for (i = 0; i < devices; i++) {
+    ret = (*h.getHandle)(i, &device);
+    if (ret != NVML_SUCCESS) {
+      snprintf(buf, buflen, "unable to get device handle: %d", ret);
+      resp->err = strdup(buf);
+      return;
+    }
+
+    ret = (*h.getMemInfo)(device, &memInfo);
+    if (ret != NVML_SUCCESS) {
+      snprintf(buf, buflen, "device memory info lookup failure: %d", ret);
+      resp->err = strdup(buf);
+      return;
+    }
+
+    resp->total += memInfo.total;
+    resp->free += memInfo.free;
   }
-  resp->total = memInfo.total;
-  resp->free = memInfo.free;
-  return;
 }
 #endif  // __APPLE__
