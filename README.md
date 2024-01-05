@@ -217,9 +217,13 @@ cd ollama-webui/
 # Copying required .env file
 cp -RPp example.env .env
 
-# Building Frontend
-bun install
-bun run build
+# Building Frontend Using Node
+npm i
+npm run build
+
+# or Building Frontend Using Bun
+# bun install
+# bun run build
 
 # Serving Frontend with the Backend
 cd ./backend
