@@ -33,5 +33,31 @@ TEMPLATE template1
 	}
 
 	assert.Equal(t, expectedCommands, commands)
+}
+
+func Test_Parser_NoFromLine(t *testing.T) {
+
+	input := `
+PARAMETER param1 value1
+PARAMETER param2 value2
+`
+
+	reader := strings.NewReader(input)
+
+	_, err := Parse(reader)
+	assert.ErrorContains(t, err, "no FROM line")
+}
+
+func Test_Parser_MissingValue(t *testing.T) {
+
+	input := `
+FROM foo
+PARAMETER param1
+`
+
+	reader := strings.NewReader(input)
+
+	_, err := Parse(reader)
+	assert.ErrorContains(t, err, "missing value for [param1]")
 
 }
