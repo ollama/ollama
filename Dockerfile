@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./ 
 
 COPY . .
-RUN bun install
+RUN bun install --frozen-lockfile
 RUN bun run build
 
 FROM python:3.11-slim-buster as base
