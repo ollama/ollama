@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1
 
-FROM oven/bun:latest as build
+FROM node:alpine as build
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./ 
+RUN npm ci
 
 COPY . .
-RUN bun install
-RUN bun run build
+RUN npm run build
 
 FROM python:3.11-slim-buster as base
 
