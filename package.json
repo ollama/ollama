@@ -18,7 +18,7 @@
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^2.0.0",
 		"@sveltejs/adapter-static": "^2.0.3",
-		"@sveltejs/kit": "^1.20.4",
+		"@sveltejs/kit": "^1.30.0",
 		"@tailwindcss/typography": "^0.5.10",
 		"@types/bun": "latest",
 		"@typescript-eslint/eslint-plugin": "^6.17.0",
