@@ -158,7 +158,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 	case err != nil:
 		return err
-	case err == nil:
+	default:
 		// the model was found, check if it is in the correct format
 		if model.Details.Format != "" && model.Details.Format != "gguf" {
 			// pull and retry to see if the model has been updated
