@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM imbios/bun-node:alpine as build
+FROM oven/bun:alpine as build
 
 WORKDIR /app
 
