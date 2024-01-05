@@ -68,6 +68,7 @@ async def update_ollama_api_url(
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy(path: str, request: Request, user=Depends(get_current_user)):
     target_url = f"{app.state.OLLAMA_API_BASE_URL}/{path}"
+    print(target_url)
 
     body = await request.body()
     headers = dict(request.headers)
@@ -93,6 +94,7 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
             request.method, target_url, data=body, headers=headers
         )
 
+        print(response)
         if not response.ok:
             data = await response.json()
             print(data)
@@ -100,6 +102,7 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
 
         async def generate():
             async for line in response.content:
+                print(line)
                 yield line
             await session.close()
 
@@ -118,7 +121,6 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
                 error_detail = f"Ollama: {e}"
 
         await session.close()
-
         raise HTTPException(
             status_code=response.status if response else 500,
             detail=error_detail,
