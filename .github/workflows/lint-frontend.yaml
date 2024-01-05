@@ -18,3 +18,4 @@ jobs:
         run: bun install --frozen-lockfile
       - run: bun run lint:frontend
       - run: bun run lint:types
+        if: success() || failure()
