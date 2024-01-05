@@ -106,14 +106,14 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
   for (i = 0; i < devices; i++) {
     ret = (*h.getHandle)(i, &device);
     if (ret != NVML_SUCCESS) {
-      snprintf(buf, buflen, "unable to get device handle: %d", ret);
+      snprintf(buf, buflen, "unable to get device handle %d: %d", i, ret);
       resp->err = strdup(buf);
       return;
     }
 
     ret = (*h.getMemInfo)(device, &memInfo);
     if (ret != NVML_SUCCESS) {
-      snprintf(buf, buflen, "device memory info lookup failure: %d", ret);
+      snprintf(buf, buflen, "device memory info lookup failure %d: %d", i, ret);
       resp->err = strdup(buf);
       return;
     }
