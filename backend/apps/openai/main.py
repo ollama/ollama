@@ -37,16 +37,19 @@ async def get_openai_url(user=Depends(get_current_user)):
     if user and user.role == "admin":
         return {"OPENAI_API_BASE_URL": app.state.OPENAI_API_BASE_URL}
     else:
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.post("/url/update")
-async def update_openai_url(form_data: UrlUpdateForm, user=Depends(get_current_user)):
+async def update_openai_url(form_data: UrlUpdateForm,
+                            user=Depends(get_current_user)):
     if user and user.role == "admin":
         app.state.OPENAI_API_BASE_URL = form_data.url
         return {"OPENAI_API_BASE_URL": app.state.OPENAI_API_BASE_URL}
     else:
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.get("/key")
@@ -54,16 +57,19 @@ async def get_openai_key(user=Depends(get_current_user)):
     if user and user.role == "admin":
         return {"OPENAI_API_KEY": app.state.OPENAI_API_KEY}
     else:
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.post("/key/update")
-async def update_openai_key(form_data: KeyUpdateForm, user=Depends(get_current_user)):
+async def update_openai_key(form_data: KeyUpdateForm,
+                            user=Depends(get_current_user)):
     if user and user.role == "admin":
         app.state.OPENAI_API_KEY = form_data.key
         return {"OPENAI_API_KEY": app.state.OPENAI_API_KEY}
     else:
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
@@ -72,9 +78,11 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
     print(target_url, app.state.OPENAI_API_KEY)
 
     if user.role not in ["user", "admin"]:
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
     if app.state.OPENAI_API_KEY == "":
-        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.API_KEY_NOT_FOUND)
+        raise HTTPException(status_code=401,
+                            detail=ERROR_MESSAGES.API_KEY_NOT_FOUND)
 
     body = await request.body()
     # headers = dict(request.headers)
@@ -117,8 +125,8 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
 
             if "openai" in app.state.OPENAI_API_BASE_URL and path == "models":
                 response_data["data"] = list(
-                    filter(lambda model: "gpt" in model["id"], response_data["data"])
-                )
+                    filter(lambda model: "gpt" in model["id"],
+                           response_data["data"]))
 
             return response_data
     except Exception as e:

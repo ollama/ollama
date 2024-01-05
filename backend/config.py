@@ -26,7 +26,6 @@ if ENV == "prod":
     if OLLAMA_API_BASE_URL == "/ollama/api":
         OLLAMA_API_BASE_URL = "http://host.docker.internal:11434/api"
 
-
 ####################################
 # OPENAI_API
 ####################################
