@@ -98,16 +98,17 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
             print(data)
             response.raise_for_status()
 
-        async def gen():
+        async def generate():
             async for line in response.content:
                 yield line
             await session.close()
 
-        return StreamingResponse(gen(), response.status)
+        return StreamingResponse(generate(), response.status)
 
     except Exception as e:
         print(e)
         error_detail = "Ollama WebUI: Server Connection Error"
+
         if response is not None:
             try:
                 res = await response.json()
@@ -117,11 +118,8 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
                 error_detail = f"Ollama: {e}"
 
         await session.close()
+
         raise HTTPException(
             status_code=response.status if response else 500,
             detail=error_detail,
         )
-
-        # print(e)
-        # error_detail = "Ollama WebUI: Server Connection Error"
-        # return {"error": error_detail, "message": str(e)}
