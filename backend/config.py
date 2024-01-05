@@ -33,7 +33,10 @@ if ENV == "prod":
 ####################################
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_API_BASE_URL = os.environ.get("OPENAI_API_BASE_URL", "https://api.openai.com/v1")
+OPENAI_API_BASE_URL = os.environ.get("OPENAI_API_BASE_URL", "")
+
+if OPENAI_API_BASE_URL == "":
+    OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
 ####################################
 # WEBUI_VERSION

@@ -37,19 +37,17 @@
 				return [];
 			}))
 		);
-		// If OpenAI API Key exists
-		if ($settings.OPENAI_API_KEY) {
-			const openAIModels = await getOpenAIModels(
-				$settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1',
-				$settings.OPENAI_API_KEY
-			).catch((error) => {
-				console.log(error);
-				toast.error(error);
-				return null;
-			});
 
-			models.push(...(openAIModels ? [{ name: 'hr' }, ...openAIModels] : []));
-		}
+		// $settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1',
+		// 		$settings.OPENAI_API_KEY
+
+		const openAIModels = await getOpenAIModels(localStorage.token).catch((error) => {
+			console.log(error);
+			return null;
+		});
+
+		models.push(...(openAIModels ? [{ name: 'hr' }, ...openAIModels] : []));
+
 		return models;
 	};
 

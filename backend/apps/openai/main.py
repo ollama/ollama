@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 
 import requests
 import json
@@ -69,18 +69,18 @@ async def update_openai_key(form_data: KeyUpdateForm, user=Depends(get_current_u
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy(path: str, request: Request, user=Depends(get_current_user)):
     target_url = f"{app.state.OPENAI_API_BASE_URL}/{path}"
-
-    body = await request.body()
-    headers = dict(request.headers)
+    print(target_url, app.state.OPENAI_API_KEY)
 
     if user.role not in ["user", "admin"]:
         raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+    if app.state.OPENAI_API_KEY == "":
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.API_KEY_NOT_FOUND)
 
-    headers.pop("Host", None)
-    headers.pop("Authorization", None)
-    headers.pop("Origin", None)
-    headers.pop("Referer", None)
+    body = await request.body()
+    # headers = dict(request.headers)
+    # print(headers)
 
+    headers = {}
     headers["Authorization"] = f"Bearer {app.state.OPENAI_API_KEY}"
 
     try:
@@ -94,11 +94,32 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
 
         r.raise_for_status()
 
-        return StreamingResponse(
-            r.iter_content(chunk_size=8192),
-            status_code=r.status_code,
-            headers=dict(r.headers),
-        )
+        # Check if response is SSE
+        if "text/event-stream" in r.headers.get("Content-Type", ""):
+            return StreamingResponse(
+                r.iter_content(chunk_size=8192),
+                status_code=r.status_code,
+                headers=dict(r.headers),
+            )
+        else:
+            # For non-SSE, read the response and return it
+            # response_data = (
+            #     r.json()
+            #     if r.headers.get("Content-Type", "")
+            #     == "application/json"
+            #     else r.text
+            # )
+
+            response_data = r.json()
+
+            print(type(response_data))
+
+            if "openai" in app.state.OPENAI_API_BASE_URL and path == "models":
+                response_data["data"] = list(
+                    filter(lambda model: "gpt" in model["id"], response_data["data"])
+                )
+
+            return response_data
     except Exception as e:
         print(e)
         error_detail = "Ollama WebUI: Server Connection Error"

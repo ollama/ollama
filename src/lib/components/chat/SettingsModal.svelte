@@ -24,6 +24,13 @@
 	import { updateUserPassword } from '$lib/apis/auths';
 	import { goto } from '$app/navigation';
 	import Page from '../../../routes/(app)/+page.svelte';
+	import {
+		getOpenAIKey,
+		getOpenAIModels,
+		getOpenAIUrl,
+		updateOpenAIKey,
+		updateOpenAIUrl
+	} from '$lib/apis/openai';
 
 	export let show = false;
 
@@ -151,6 +158,13 @@
 			toast.success('Server connection verified');
 			await models.set(_models);
 		}
+	};
+
+	const updateOpenAIHandler = async () => {
+		OPENAI_API_BASE_URL = await updateOpenAIUrl(localStorage.token, OPENAI_API_BASE_URL);
+		OPENAI_API_KEY = await updateOpenAIKey(localStorage.token, OPENAI_API_KEY);
+
+		await models.set(await getModels());
 	};
 
 	const toggleTheme = async () => {
@@ -484,7 +498,7 @@
 	};
 
 	const getModels = async (type = 'all') => {
-		let models = [];
+		const models = [];
 		models.push(
 			...(await getOllamaModels(localStorage.token).catch((error) => {
 				toast.error(error);
@@ -493,43 +507,13 @@
 		);
 
 		// If OpenAI API Key exists
-		if (type === 'all' && $settings.OPENAI_API_KEY) {
-			const OPENAI_API_BASE_URL = $settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+		if (type === 'all' && OPENAI_API_KEY) {
+			const openAIModels = await getOpenAIModels(localStorage.token).catch((error) => {
+				console.log(error);
+				return null;
+			});
 
-			// Validate OPENAI_API_KEY
-			const openaiModelRes = await fetch(`${OPENAI_API_BASE_URL}/models`, {
-				method: 'GET',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${$settings.OPENAI_API_KEY}`
-				}
-			})
-				.then(async (res) => {
-					if (!res.ok) throw await res.json();
-					return res.json();
-				})
-				.catch((error) => {
-					console.log(error);
-					toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
-					return null;
-				});
-
-			const openAIModels = Array.isArray(openaiModelRes)
-				? openaiModelRes
-				: openaiModelRes?.data ?? null;
-
-			models.push(
-				...(openAIModels
-					? [
-							{ name: 'hr' },
-							...openAIModels
-								.map((model) => ({ name: model.id, external: true }))
-								.filter((model) =>
-									OPENAI_API_BASE_URL.includes('openai') ? model.name.includes('gpt') : true
-								)
-					  ]
-					: [])
-			);
+			models.push(...(openAIModels ? [{ name: 'hr' }, ...openAIModels] : []));
 		}
 
 		return models;
@@ -564,6 +548,8 @@
 		console.log('settings', $user.role === 'admin');
 		if ($user.role === 'admin') {
 			API_BASE_URL = await getOllamaAPIUrl(localStorage.token);
+			OPENAI_API_BASE_URL = await getOpenAIUrl(localStorage.token);
+			OPENAI_API_KEY = await getOpenAIKey(localStorage.token);
 		}
 
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
@@ -583,9 +569,6 @@
 		options.num_ctx = settings.num_ctx ?? '';
 		options = { ...options, ...settings.options };
 		options.stop = (settings?.options?.stop ?? []).join(',');
-
-		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
-		OPENAI_API_BASE_URL = settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
 
 		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
@@ -1415,10 +1398,12 @@
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
 						on:submit|preventDefault={() => {
-							saveSettings({
-								OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined,
-								OPENAI_API_BASE_URL: OPENAI_API_BASE_URL !== '' ? OPENAI_API_BASE_URL : undefined
-							});
+							updateOpenAIHandler();
+
+							// saveSettings({
+							// 	OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined,
+							// 	OPENAI_API_BASE_URL: OPENAI_API_BASE_URL !== '' ? OPENAI_API_BASE_URL : undefined
+							// });
 							show = false;
 						}}
 					>
