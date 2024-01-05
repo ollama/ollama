@@ -149,7 +149,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	// check if the model exists on the server
-	_, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+	_, err = client.Show(cmd.Context(), &api.ShowRequest{Model: name})
 	var statusError api.StatusError
 	switch {
 	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
@@ -322,7 +322,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("one of '--license', '--modelfile', '--parameters', '--system', or '--template' must be specified")
 	}
 
-	req := api.ShowRequest{Name: args[0]}
+	req := api.ShowRequest{Model: args[0]}
 	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return err

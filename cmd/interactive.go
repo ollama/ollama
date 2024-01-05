@@ -34,7 +34,7 @@ func modelIsMultiModal(cmd *cobra.Command, name string) bool {
 		return false
 	}
 
-	req := api.ShowRequest{Name: name}
+	req := api.ShowRequest{Model: name}
 	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return false
@@ -101,6 +101,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 
 	usageShow := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /show info         Show details for this model")
 		fmt.Fprintln(os.Stderr, "  /show license      Show model license")
 		fmt.Fprintln(os.Stderr, "  /show modelfile    Show Modelfile for this model")
 		fmt.Fprintln(os.Stderr, "  /show parameters   Show parameters for this model")
@@ -291,13 +292,29 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					fmt.Println("error: couldn't connect to ollama server")
 					return err
 				}
-				resp, err := client.Show(cmd.Context(), &api.ShowRequest{Name: opts.Model})
+				req := &api.ShowRequest{
+					Model:    opts.Model,
+					System:   opts.System,
+					Template: opts.Template,
+					Options:  opts.Options,
+				}
+				resp, err := client.Show(cmd.Context(), req)
 				if err != nil {
 					fmt.Println("error: couldn't get model")
 					return err
 				}
 
 				switch args[1] {
+				case "info":
+					fmt.Println("Model details:")
+					if len(resp.Details.Families) > 0 {
+						fmt.Printf("Family              %s\n", strings.Join(resp.Details.Families, ", "))
+					} else if resp.Details.Family != "" {
+						fmt.Printf("Family              %s\n", resp.Details.Family)
+					}
+					fmt.Printf("Parameter Size      %s\n", resp.Details.ParameterSize)
+					fmt.Printf("Quantization Level  %s\n", resp.Details.QuantizationLevel)
+					fmt.Println("")
 				case "license":
 					if resp.License == "" {
 						fmt.Print("No license was specified for this model.\n\n")
