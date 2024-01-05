@@ -15,7 +15,7 @@ jobs:
         uses: oven-sh/setup-bun@v1
       - run: bun --version
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
       - name: Format frontend
         run: bun run format
       - name: Build frontend
