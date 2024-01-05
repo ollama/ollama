@@ -34,7 +34,7 @@ func modelIsMultiModal(cmd *cobra.Command, name string) bool {
 		return false
 	}
 
-	req := api.ShowRequest{Model: name}
+	req := api.ShowRequest{Name: name}
 	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return false
@@ -293,7 +293,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					return err
 				}
 				req := &api.ShowRequest{
-					Model:    opts.Model,
+					Name:     opts.Model,
 					System:   opts.System,
 					Template: opts.Template,
 					Options:  opts.Options,
