@@ -158,18 +158,19 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 	case err != nil:
 		return err
-	}
-
-	if model.Details.Format != "gguf" {
-		// pull and retry to see if the model has been updated
-		parts := strings.Split(name, string(os.PathSeparator))
-		if len(parts) == 1 {
-			// this is a library model, log some info
-			fmt.Fprintln(os.Stderr, "This model is no longer compatible with Ollama. Pulling a new version...")
-		}
-		if err := PullHandler(cmd, []string{name}); err != nil {
-			fmt.Printf("Error: %s\n", err)
-			return fmt.Errorf("unsupported model, please update this model to gguf format") // relay the original error
+	default:
+		// the model was found, check if it is in the correct format
+		if model.Details.Format != "" && model.Details.Format != "gguf" {
+			// pull and retry to see if the model has been updated
+			parts := strings.Split(name, string(os.PathSeparator))
+			if len(parts) == 1 {
+				// this is a library model, log some info
+				fmt.Fprintln(os.Stderr, "This model is no longer compatible with Ollama. Pulling a new version...")
+			}
+			if err := PullHandler(cmd, []string{name}); err != nil {
+				fmt.Printf("Error: %s\n", err)
+				return fmt.Errorf("unsupported model, please update this model to gguf format") // relay the original error
+			}
 		}
 	}
 
