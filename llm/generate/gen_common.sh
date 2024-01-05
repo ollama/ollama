@@ -2,7 +2,6 @@
 
 init_vars() {
     LLAMACPP_DIR=../llama.cpp
-    PATCHES="0001-Expose-callable-API-for-server.patch"
     CMAKE_DEFS=""
     CMAKE_TARGETS="--target ggml --target ggml_static --target llama --target build_info --target common --target ext_server --target llava_static"
     if echo "${CGO_CFLAGS}" | grep -- '-g' >/dev/null; then
