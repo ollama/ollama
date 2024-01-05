@@ -23,16 +23,16 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def verify_password(plain_password, hashed_password):
-    return (
-        pwd_context.verify(plain_password, hashed_password) if hashed_password else None
-    )
+    return (pwd_context.verify(plain_password, hashed_password)
+            if hashed_password else None)
 
 
 def get_password_hash(password):
     return pwd_context.hash(password)
 
 
-def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> str:
+def create_token(data: dict,
+                 expires_delta: Union[timedelta, None] = None) -> str:
     payload = data.copy()
 
     if expires_delta:
@@ -45,17 +45,20 @@ def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> st
 
 def decode_token(token: str) -> Optional[dict]:
     try:
-        decoded = jwt.decode(token, JWT_SECRET_KEY, options={"verify_signature": False})
+        decoded = jwt.decode(token,
+                             JWT_SECRET_KEY,
+                             options={"verify_signature": False})
         return decoded
     except Exception as e:
         return None
 
 
 def extract_token_from_auth_header(auth_header: str):
-    return auth_header[len("Bearer ") :]
+    return auth_header[len("Bearer "):]
 
 
-def get_current_user(auth_token: HTTPAuthorizationCredentials = Depends(HTTPBearer())):
+def get_current_user(auth_token: HTTPAuthorizationCredentials = Depends(
+    HTTPBearer())):
     data = decode_token(auth_token.credentials)
     if data != None and "email" in data:
         user = Users.get_user_by_email(data["email"])

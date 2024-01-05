@@ -58,13 +58,14 @@ class ModelfileResponse(BaseModel):
 
 
 class ModelfilesTable:
+
     def __init__(self, db):
         self.db = db
         self.db.create_tables([Modelfile])
 
     def insert_new_modelfile(
-        self, user_id: str, form_data: ModelfileForm
-    ) -> Optional[ModelfileModel]:
+            self, user_id: str,
+            form_data: ModelfileForm) -> Optional[ModelfileModel]:
         if "tagName" in form_data.modelfile:
             modelfile = ModelfileModel(
                 **{
@@ -72,8 +73,7 @@ class ModelfilesTable:
                     "tag_name": form_data.modelfile["tagName"],
                     "modelfile": json.dumps(form_data.modelfile),
                     "timestamp": int(time.time()),
-                }
-            )
+                })
 
             try:
                 result = Modelfile.create(**modelfile.model_dump())
@@ -87,28 +87,29 @@ class ModelfilesTable:
         else:
             return None
 
-    def get_modelfile_by_tag_name(self, tag_name: str) -> Optional[ModelfileModel]:
+    def get_modelfile_by_tag_name(self,
+                                  tag_name: str) -> Optional[ModelfileModel]:
         try:
             modelfile = Modelfile.get(Modelfile.tag_name == tag_name)
             return ModelfileModel(**model_to_dict(modelfile))
         except:
             return None
 
-    def get_modelfiles(self, skip: int = 0, limit: int = 50) -> List[ModelfileResponse]:
+    def get_modelfiles(self,
+                       skip: int = 0,
+                       limit: int = 50) -> List[ModelfileResponse]:
         return [
             ModelfileResponse(
                 **{
                     **model_to_dict(modelfile),
-                    "modelfile": json.loads(modelfile.modelfile),
-                }
-            )
-            for modelfile in Modelfile.select()
+                    "modelfile":
+                    json.loads(modelfile.modelfile),
+                }) for modelfile in Modelfile.select()
             # .limit(limit).offset(skip)
         ]
 
     def update_modelfile_by_tag_name(
-        self, tag_name: str, modelfile: dict
-    ) -> Optional[ModelfileModel]:
+            self, tag_name: str, modelfile: dict) -> Optional[ModelfileModel]:
         try:
             query = Modelfile.update(
                 modelfile=json.dumps(modelfile),

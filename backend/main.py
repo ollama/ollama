@@ -14,6 +14,7 @@ import time
 
 
 class SPAStaticFiles(StaticFiles):
+
     async def get_response(self, path: str, scope):
         try:
             return await super().get_response(path, scope)
@@ -51,4 +52,6 @@ app.mount("/api/v1", webui_app)
 app.mount("/ollama/api", ollama_app)
 app.mount("/openai/api", openai_app)
 
-app.mount("/", SPAStaticFiles(directory="../build", html=True), name="spa-static-files")
+app.mount("/",
+          SPAStaticFiles(directory="../build", html=True),
+          name="spa-static-files")

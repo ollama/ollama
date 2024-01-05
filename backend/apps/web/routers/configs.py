@@ -10,7 +10,6 @@ import uuid
 
 from apps.web.models.users import Users
 
-
 from utils.utils import get_password_hash, get_current_user, create_token
 from utils.misc import get_gravatar_url, validate_email_format
 from constants import ERROR_MESSAGES
@@ -28,9 +27,9 @@ class SetDefaultModelsForm(BaseModel):
 
 
 @router.post("/default/models", response_model=str)
-async def set_global_default_models(
-    request: Request, form_data: SetDefaultModelsForm, user=Depends(get_current_user)
-):
+async def set_global_default_models(request: Request,
+                                    form_data: SetDefaultModelsForm,
+                                    user=Depends(get_current_user)):
     if user.role == "admin":
         request.app.state.DEFAULT_MODELS = form_data.models
         return request.app.state.DEFAULT_MODELS

@@ -47,13 +47,13 @@ class PromptForm(BaseModel):
 
 
 class PromptsTable:
+
     def __init__(self, db):
         self.db = db
         self.db.create_tables([Prompt])
 
-    def insert_new_prompt(
-        self, user_id: str, form_data: PromptForm
-    ) -> Optional[PromptModel]:
+    def insert_new_prompt(self, user_id: str,
+                          form_data: PromptForm) -> Optional[PromptModel]:
         prompt = PromptModel(
             **{
                 "user_id": user_id,
@@ -61,8 +61,7 @@ class PromptsTable:
                 "title": form_data.title,
                 "content": form_data.content,
                 "timestamp": int(time.time()),
-            }
-        )
+            })
 
         try:
             result = Prompt.create(**prompt.model_dump())
@@ -82,14 +81,13 @@ class PromptsTable:
 
     def get_prompts(self) -> List[PromptModel]:
         return [
-            PromptModel(**model_to_dict(prompt))
-            for prompt in Prompt.select()
+            PromptModel(**model_to_dict(prompt)) for prompt in Prompt.select()
             # .limit(limit).offset(skip)
         ]
 
     def update_prompt_by_command(
-        self, command: str, form_data: PromptForm
-    ) -> Optional[PromptModel]:
+            self, command: str,
+            form_data: PromptForm) -> Optional[PromptModel]:
         try:
             query = Prompt.update(
                 title=form_data.title,

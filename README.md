@@ -198,9 +198,15 @@ While we strongly recommend using our convenient Docker container installation f
 
 The Ollama Web UI consists of two primary components: the frontend and the backend (which serves as a reverse proxy, handling static frontend files, and additional features). Both need to be running concurrently for the development environment.
 
-**Warning: Backend Dependency for Proper Functionality**
+> [!IMPORTANT]
+> The backend is required for proper functionality
 
-### TL;DR 🚀
+### Requirements 📦
+
+- 🐰 [Bun](https://bun.sh) >= 1.0.21 or 🐢 [Node.js](https://nodejs.org/en) >= 20.10
+- 🐍 [Python](https://python.org) >= 3.11
+
+### Build and Install 🛠️
 
 Run the following commands to install:
 
@@ -211,9 +217,13 @@ cd ollama-webui/
 # Copying required .env file
 cp -RPp example.env .env
 
-# Building Frontend
+# Building Frontend Using Node
 npm i
 npm run build
+
+# or Building Frontend Using Bun
+# bun install
+# bun run build
 
 # Serving Frontend with the Backend
 cd ./backend
