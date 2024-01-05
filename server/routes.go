@@ -610,12 +610,18 @@ func ShowModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	switch {
+	case req.Model == "" && req.Name == "":
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
+	case req.Model != "" && req.Name != "":
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "both model and name are set"})
+		return
+	case req.Model == "" && req.Name != "":
+		req.Model = req.Name
 	}
 
-	resp, err := GetModelInfo(req.Name)
+	resp, err := GetModelInfo(req)
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Name)})
@@ -628,8 +634,8 @@ func ShowModelHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-func GetModelInfo(name string) (*api.ShowResponse, error) {
-	model, err := GetModel(name)
+func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
+	model, err := GetModel(req.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -642,19 +648,20 @@ func GetModelInfo(name string) (*api.ShowResponse, error) {
 		QuantizationLevel: model.Config.FileType,
 	}
 
+	if req.System != "" {
+		model.System = req.System
+	}
+
+	if req.Template != "" {
+		model.Template = req.Template
+	}
+
 	resp := &api.ShowResponse{
 		License:  strings.Join(model.License, "\n"),
 		System:   model.System,
 		Template: model.Template,
 		Details:  modelDetails,
 	}
-
-	mf, err := ShowModelfile(model)
-	if err != nil {
-		return nil, err
-	}
-
-	resp.Modelfile = mf
 
 	var params []string
 	cs := 30
@@ -684,6 +691,19 @@ func GetModelInfo(name string) (*api.ShowResponse, error) {
 		}
 	}
 	resp.Parameters = strings.Join(params, "\n")
+
+	for k, v := range req.Options {
+		if _, ok := req.Options[k]; ok {
+			model.Options[k] = v
+		}
+	}
+
+	mf, err := ShowModelfile(model)
+	if err != nil {
+		return nil, err
+	}
+
+	resp.Modelfile = mf
 
 	return resp, nil
 }
