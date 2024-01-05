@@ -5,7 +5,7 @@ on:
   pull_request:
 jobs:
   build:
-    name: 'Format Backend' # Format & Lint
+    name: 'Format Backend'
     env:
       PUBLIC_API_BASE_URL: ''
     runs-on: ubuntu-latest
@@ -23,8 +23,5 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install yapf
-         # pip install pylint
-    # - name: Lint backend
-    #   run: bun run lint:backend
       - name: Format backend
         run: bun run format:backend

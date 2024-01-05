@@ -5,7 +5,7 @@ on:
   pull_request:
 jobs:
   build:
-    name: 'Format & Build Frontend' # Format, Lint, & Build
+    name: 'Format & Build Frontend'
     env:
       PUBLIC_API_BASE_URL: ''
     runs-on: ubuntu-latest
@@ -16,8 +16,6 @@ jobs:
       - run: bun --version
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
-      # - run: bun run lint
-      # - run: bun run lint:types
       - name: Format frontend
         run: bun run format
       - name: Build frontend

@@ -1,0 +1,27 @@
+name: Python CI
+on:
+  push:
+    branches: ['main']
+  pull_request:
+jobs:
+  build:
+    name: 'Lint Backend'
+    env:
+      PUBLIC_API_BASE_URL: ''
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version:
+          - latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Python
+        uses: actions/setup-python@v4
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v1
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pylint
+      - name: Lint backend
+        run: bun run lint:backend
