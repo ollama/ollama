@@ -1,74 +1,101 @@
-# Ubuntu 20.04 amd64 dependencies
-FROM --platform=linux/amd64 ubuntu:20.04 AS base-amd64
-ARG CUDA_VERSION=11.3.1-1
-ARG CMAKE_VERSION=3.22.1
-# ROCm only supports amd64
-ARG ROCM_VERSION=6.0
-ARG CLBLAST_VER=1.6.1
-
-# Note: https://rocm.docs.amd.com/en/latest/release/user_kernel_space_compat_matrix.html
-RUN apt-get update && \
-    apt-get install -y wget gnupg && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin && \
-    mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600 && \
-    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub && \
-    echo "deb [by-hash=no] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /" > /etc/apt/sources.list.d/cuda.list && \
-    wget "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.sh" -O /tmp/cmake-installer.sh && \
-    chmod +x /tmp/cmake-installer.sh && /tmp/cmake-installer.sh --skip-license --prefix=/usr && \
-    mkdir --parents --mode=0755 /etc/apt/keyrings && \
-    wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | gpg --dearmor > /etc/apt/keyrings/rocm.gpg && \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} focal main" > /etc/apt/sources.list.d/rocm.list && \
-    echo "Package: *" > /etc/apt/preferences.d/rocm-pin-600 && \
-    echo "Pin: release o=repo.radeon.com" >> /etc/apt/preferences.d/rocm-pin-600 && \
-    echo "Pin-Priority: 600" >> /etc/apt/preferences.d/rocm-pin-600 && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install cuda=${CUDA_VERSION} rocm-hip-libraries rocm-device-libs rocm-libs rocm-ocl-icd rocm-hip-sdk rocm-hip-libraries rocm-cmake rocm-clang-ocl rocm-dev
-
-# CLBlast
-RUN wget -qO- https://github.com/CNugteren/CLBlast/archive/refs/tags/${CLBLAST_VER}.tar.gz | tar zxv -C /tmp/ && \
-    cd /tmp/CLBlast-${CLBLAST_VER} && mkdir build && cd build && cmake .. && make && make install
-
-ENV ROCM_PATH=/opt/rocm
-
-# Ubuntu 22.04 arm64 dependencies
-FROM --platform=linux/arm64 ubuntu:20.04 AS base-arm64
-ARG CUDA_VERSION=11.3.1-1
-ARG CMAKE_VERSION=3.27.6
-RUN apt-get update && \
-    apt-get install -y wget gnupg && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/sbsa/cuda-ubuntu2004.pin && \
-    mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600 && \
-    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/sbsa//3bf863cc.pub && \
-    echo "deb [by-hash=no] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/sbsa/ /" > /etc/apt/sources.list.d/cuda.list && \
-    wget "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-aarch64.sh" -O /tmp/cmake-installer.sh && \
-    chmod +x /tmp/cmake-installer.sh && /tmp/cmake-installer.sh --skip-license --prefix=/usr && \
-    apt-get update && \
-    apt-cache madison cuda && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install cuda=${CUDA_VERSION} 
-
-FROM base-${TARGETARCH}
-ARG TARGETARCH
-ARG GOFLAGS="'-ldflags -w -s'"
-ARG CGO_CFLAGS
 ARG GOLANG_VERSION=1.21.3
+ARG CMAKE_VERSION=3.22.1
+ARG CUDA_VERSION=11.3.1
+ARG ROCM_VERSION=5.7.1
 
-# Common toolchain
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-10 g++-10 cpp-10 git ocl-icd-opencl-dev && \
-    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 --slave /usr/bin/g++ g++ /usr/bin/g++-10 --slave /usr/bin/gcov gcov /usr/bin/gcov-10
+FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION-devel-centos7 AS cuda-build-amd64
 
-# install go
-ADD https://dl.google.com/go/go${GOLANG_VERSION}.linux-$TARGETARCH.tar.gz /tmp/go${GOLANG_VERSION}.tar.gz
-RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go${GOLANG_VERSION}.tar.gz
+ARG CMAKE_VERSION
 
-# build the final binary
+RUN yum install -y https://repo.ius.io/ius-release-el7.rpm centos-release-scl \
+    && yum update -y \
+    && yum install -y devtoolset-10-gcc devtoolset-10-gcc-c++ git236
+ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+
+ADD https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-x86_64.tar.gz /tmp/cmake-$CMAKE_VERSION.tar.gz
+RUN tar -zx -C /usr --strip-components 1 </tmp/cmake-$CMAKE_VERSION.tar.gz
+
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
 
-ENV GOOS=linux
-ENV GOARCH=$TARGETARCH
-ENV GOFLAGS=$GOFLAGS
-ENV CGO_CFLAGS=${CGO_CFLAGS}
+WORKDIR llm/generate
+RUN sh gen_linux.sh
 
-RUN /usr/local/go/bin/go generate ./... && \
-    /usr/local/go/bin/go build .
+FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION-devel-rockylinux8 AS cuda-build-arm64
+
+ARG CMAKE_VERSION
+
+RUN dnf install -y git cmake
+
+WORKDIR /go/src/github.com/jmorganca/ollama
+COPY . .
+
+WORKDIR llm/generate
+RUN sh gen_linux.sh
+
+FROM --platform=linux/amd64 rocm/dev-centos-7:$ROCM_VERSION-complete AS rocm-build-amd64
+
+ARG CMAKE_VERSION
+
+RUN yum install -y https://repo.ius.io/ius-release-el7.rpm centos-release-scl \
+    && yum update -y \
+    && yum remove -y git \
+    && yum install -y devtoolset-10-gcc devtoolset-10-gcc-c++ git236
+ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+ENV LIBRARY_PATH /opt/amdgpu/lib64
+
+ADD https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-x86_64.tar.gz /tmp/cmake-$CMAKE_VERSION.tar.gz
+RUN tar -zx -C /usr --strip-components 1 </tmp/cmake-$CMAKE_VERSION.tar.gz
+
+WORKDIR /go/src/github.com/jmorganca/ollama
+COPY . .
+
+WORKDIR llm/generate
+RUN sh gen_linux.sh
+
+FROM --platform=linux/amd64 centos:7 AS build-amd64
+ENV CGO_ENABLED 1
+
+ARG GOLANG_VERSION
+ARG GOFLAGS
+ARG CGO_FLAGS
+
+RUN yum install -y centos-release-scl \
+    && yum update -y \
+    && yum install -y devtoolset-10-gcc devtoolset-10-gcc-c++
+ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+
+ADD https://dl.google.com/go/go$GOLANG_VERSION.linux-amd64.tar.gz /tmp/go-$GOLANG_VERSION.tar.gz
+RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go-$GOLANG_VERSION.tar.gz
+ENV PATH /usr/local/go/bin:$PATH
+
+WORKDIR /go/src/github.com/jmorganca/ollama
+COPY . .
+COPY --from=cuda-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/cpu/lib llm/llama.cpp/build/linux/cpu/lib
+COPY --from=cuda-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/cuda/lib llm/llama.cpp/build/linux/cuda/lib
+COPY --from=rocm-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/rocm/lib llm/llama.cpp/build/linux/rocm/lib
+RUN go build .
+
+FROM --platform=linux/arm64 centos:7 AS build-arm64
+ENV CGO_ENABLED 1
+
+ARG GOLANG_VERSION
+ARG GOFLAGS
+ARG CGO_FLAGS
+
+RUN yum install -y centos-release-scl \
+    && yum update -y \
+    && yum install -y devtoolset-10-gcc devtoolset-10-gcc-c++
+ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+
+ADD https://dl.google.com/go/go$GOLANG_VERSION.linux-arm64.tar.gz /tmp/go-$GOLANG_VERSION.tar.gz
+RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go-$GOLANG_VERSION.tar.gz
+ENV PATH /usr/local/go/bin:$PATH
+
+WORKDIR /go/src/github.com/jmorganca/ollama
+COPY . .
+COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/cpu/lib llm/llama.cpp/build/linux/cpu/lib
+COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/cuda/lib llm/llama.cpp/build/linux/cuda/lib
+RUN go build .
+
+FROM build-$TARGETARCH
