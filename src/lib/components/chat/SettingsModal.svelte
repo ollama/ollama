@@ -692,31 +692,31 @@
 						</div>
 						<div class=" self-center">Models</div>
 					</button>
-				{/if}
 
-				<button
-					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
-					'external'
-						? 'bg-gray-200 dark:bg-gray-700'
-						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
-					on:click={() => {
-						selectedTab = 'external';
-					}}
-				>
-					<div class=" self-center mr-2">
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								d="M1 9.5A3.5 3.5 0 0 0 4.5 13H12a3 3 0 0 0 .917-5.857 2.503 2.503 0 0 0-3.198-3.019 3.5 3.5 0 0 0-6.628 2.171A3.5 3.5 0 0 0 1 9.5Z"
-							/>
-						</svg>
-					</div>
-					<div class=" self-center">External</div>
-				</button>
+					<button
+						class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+						'external'
+							? 'bg-gray-200 dark:bg-gray-700'
+							: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+						on:click={() => {
+							selectedTab = 'external';
+						}}
+					>
+						<div class=" self-center mr-2">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 16 16"
+								fill="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									d="M1 9.5A3.5 3.5 0 0 0 4.5 13H12a3 3 0 0 0 .917-5.857 2.503 2.503 0 0 0-3.198-3.019 3.5 3.5 0 0 0-6.628 2.171A3.5 3.5 0 0 0 1 9.5Z"
+								/>
+							</svg>
+						</div>
+						<div class=" self-center">External</div>
+					</button>
+				{/if}
 
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
