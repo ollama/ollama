@@ -4,7 +4,6 @@ $ErrorActionPreference = "Stop"
 
 function init_vars {
     $script:llamacppDir = "../llama.cpp"
-    $script:patches = @("0001-Expose-callable-API-for-server.patch")
     $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off", "-DLLAMA_F16C=off", "-DLLAMA_FMA=off", "-DLLAMA_AVX512=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX=on", "-A","x64")
     $script:cmakeTargets = @("ggml", "ggml_static", "llama", "build_info", "common", "ext_server_shared", "llava_static")
     if ($env:CGO_CFLAGS -contains "-g") {
