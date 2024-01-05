@@ -227,7 +227,7 @@ npm run build
 
 # Serving Frontend with the Backend
 cd ./backend
-pip install -r requirements.txt
+pip install -r requirements.txt -U
 sh start.sh
 ```
 
