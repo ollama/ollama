@@ -149,15 +149,28 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	// check if the model exists on the server
-	_, err = client.Show(cmd.Context(), &api.ShowRequest{Model: name})
+	model, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name})
 	var statusError api.StatusError
 	switch {
 	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
-		if err := PullHandler(cmd, args); err != nil {
+		if err := PullHandler(cmd, []string{name}); err != nil {
 			return err
 		}
 	case err != nil:
 		return err
+	}
+
+	if model.Details.Format != "gguf" {
+		// pull and retry to see if the model has been updated
+		parts := strings.Split(name, string(os.PathSeparator))
+		if len(parts) == 1 {
+			// this is a library model, log some info
+			fmt.Fprintln(os.Stderr, "This model is no longer compatible with Ollama. Pulling a new version...")
+		}
+		if err := PullHandler(cmd, []string{name}); err != nil {
+			fmt.Printf("Error: %s\n", err)
+			return fmt.Errorf("unsupported model, please update this model to gguf format") // relay the original error
+		}
 	}
 
 	return RunGenerate(cmd, args)
@@ -569,31 +582,12 @@ func generate(cmd *cobra.Command, opts generateOptions) error {
 	}
 
 	if err := client.Generate(ctx, &request, fn); err != nil {
-		switch {
-		case errors.Is(err, context.Canceled):
+		if errors.Is(err, context.Canceled) {
 			return nil
-		case strings.Contains(err.Error(), "unsupported model format"):
-			// pull and retry to see if the model has been updated
-			parts := strings.Split(opts.Model, string(os.PathSeparator))
-			if len(parts) == 1 {
-				// this is a library model, log some info
-				fmt.Fprintln(os.Stderr, "This model is no longer compatible with Ollama. Pulling a new version...")
-			}
-			if err := PullHandler(cmd, []string{opts.Model}); err != nil {
-				fmt.Printf("Error: %s\n", err)
-				return fmt.Errorf("unsupported model, please update this model to gguf format") // relay the original error
-			}
-			// retry
-			if err := client.Generate(ctx, &request, fn); err != nil {
-				if errors.Is(err, context.Canceled) {
-					return nil
-				}
-				return err
-			}
-		default:
-			return err
 		}
+		return err
 	}
+
 	if opts.Prompt != "" {
 		fmt.Println()
 		fmt.Println()
