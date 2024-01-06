@@ -1163,7 +1163,7 @@
 										<div class=" mb-2 text-xs">Pull Progress</div>
 										<div class="w-full rounded-full dark:bg-gray-800">
 											<div
-												class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+												class="dark:bg-gray-600 bg-gray-500 text-xs font-medium text-gray-100 text-center p-0.5 leading-none rounded-full"
 												style="width: {Math.max(15, pullProgress ?? 0)}%"
 											>
 												{pullProgress ?? 0}%
