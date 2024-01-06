@@ -75,26 +75,20 @@ class SignupForm(BaseModel):
 
 
 class AuthsTable:
-
     def __init__(self, db):
         self.db = db
         self.db.create_tables([Auth])
 
-    def insert_new_auth(self,
-                        email: str,
-                        password: str,
-                        name: str,
-                        role: str = "pending") -> Optional[UserModel]:
+    def insert_new_auth(
+        self, email: str, password: str, name: str, role: str = "pending"
+    ) -> Optional[UserModel]:
         print("insert_new_auth")
 
         id = str(uuid.uuid4())
 
-        auth = AuthModel(**{
-            "id": id,
-            "email": email,
-            "password": password,
-            "active": True
-        })
+        auth = AuthModel(
+            **{"id": id, "email": email, "password": password, "active": True}
+        )
         result = Auth.create(**auth.model_dump())
 
         user = Users.insert_new_user(id, name, email, role)
@@ -104,8 +98,7 @@ class AuthsTable:
         else:
             return None
 
-    def authenticate_user(self, email: str,
-                          password: str) -> Optional[UserModel]:
+    def authenticate_user(self, email: str, password: str) -> Optional[UserModel]:
         print("authenticate_user", email)
         try:
             auth = Auth.get(Auth.email == email, Auth.active == True)
@@ -129,6 +122,15 @@ class AuthsTable:
         except:
             return False
 
+    def update_email_by_id(self, id: str, email: str) -> bool:
+        try:
+            query = Auth.update(email=email).where(Auth.id == id)
+            result = query.execute()
+
+            return True if result == 1 else False
+        except:
+            return False
+
     def delete_auth_by_id(self, id: str) -> bool:
         try:
             # Delete User
@@ -137,8 +139,7 @@ class AuthsTable:
             if result:
                 # Delete Auth
                 query = Auth.delete().where(Auth.id == id)
-                query.execute(
-                )  # Remove the rows, return number of rows removed.
+                query.execute()  # Remove the rows, return number of rows removed.
 
                 return True
             else:
