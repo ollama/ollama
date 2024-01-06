@@ -294,9 +294,9 @@
 										pullProgress: downloadProgress,
 										digest: data.digest
 									};
+								} else {
+									toast.success(data.status);
 								}
-							} else {
-								toast.success(data.status);
 							}
 						}
 					}
