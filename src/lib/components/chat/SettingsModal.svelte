@@ -277,12 +277,13 @@
 								}
 							} else {
 								digest = data.digest;
+								let downloadProgress = 0;
 								if (data.completed) {
-									pullProgress = Math.round((data.completed / data.total) * 1000) / 10;
+									downloadProgress = Math.round((data.completed / data.total) * 1000) / 10;
 								} else {
-									pullProgress = 100;
+									downloadProgress = 100;
 								}
-								modelDownloadStatus[opts.modelName] = {pullProgress};
+								modelDownloadStatus[opts.modelName] = {pullProgress: downloadProgress, digest: data.digest};
 							}
 						}
 					}
@@ -1277,22 +1278,22 @@
 									>
 								</div>
 
-								<!-- {#if pullProgress !== null}
-									<div class="mt-2">
+								<!-- {#if pullProgress !== null} -->
+									<!-- <div class="mt-2">
 										<div class=" mb-2 text-xs">Pull Progress</div>
-										<div class="w-full rounded-full dark:bg-gray-800">
+										<div class="w-full rounded-full dark:bg-gray-800 bg-gray-300">
 											<div
-												class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
-												style="width: {Math.max(15, pullProgress ?? 0)}%"
+												class="dark:bg-gray-600 bg-green-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+												style="width: {Math.max(15, 20 ?? 0)}%"
 											>
-												{pullProgress ?? 0}%
+												{20 ?? 0}%
 											</div>
 										</div>
 										<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
 											{digest}
 										</div>
-									</div>
-								{/if} -->
+									</div> -->
+								<!-- {/if} -->
 							</div>
 							{#if Object.keys(modelDownloadStatus).length > 0}
 							<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
@@ -1308,12 +1309,17 @@
 									{#each Object.entries(modelDownloadStatus) as [modelName, payload]}
 									<tr class="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
 										<td class="px-6 py-4">{modelName}</td>
-										<td class="px-6 py-4"><div
-											class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+										<td class="px-6 py-4">
+											<div
+											class="dark:bg-gray-600 bg-green-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
 											style="width: {Math.max(15, payload.pullProgress ?? 0)}%"
 										>
 											{ payload.pullProgress ?? 0}%
-										</div></td>
+										</div>
+										<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
+											{payload.digest}
+										</div>
+									</td>
 									</tr>
 									{/each}
 									</tbody>
