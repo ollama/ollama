@@ -1174,18 +1174,21 @@
 								</div>
 
 								{#if Object.keys(modelDownloadStatus).length > 0}
-									{#each Object.entries(modelDownloadStatus) as [modelName, payload]}
+									{#each Object.keys(modelDownloadStatus) as model}
 										<div class="flex flex-col">
-											<div class="font-medium mb-1">{modelName}</div>
+											<div class="font-medium mb-1">{modelDownloadStatus[model].modelName}</div>
 											<div class="">
 												<div
 													class="dark:bg-gray-600 bg-gray-500 text-xs font-medium text-gray-100 text-center p-0.5 leading-none rounded-full"
-													style="width: {Math.max(15, payload.pullProgress ?? 0)}%"
+													style="width: {Math.max(
+														15,
+														modelDownloadStatus[model].pullProgress ?? 0
+													)}%"
 												>
-													{payload.pullProgress ?? 0}%
+													{modelDownloadStatus[model].pullProgress ?? 0}%
 												</div>
 												<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
-													{payload.digest}
+													{modelDownloadStatus[model].digest}
 												</div>
 											</div>
 										</div>
