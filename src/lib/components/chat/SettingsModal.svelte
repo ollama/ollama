@@ -337,6 +337,12 @@
 					toast.error(data.error);
 				} else {
 					toast.success(`Model ${modelName} was successfully downloaded`);
+
+					const notification = new Notification(`Ollama`, {
+						body: `Model '${modelName}' has been successfully downloaded.`,
+						icon: '/favicon.png'
+					});
+
 					models.set(await getModels());
 				}
 			}
