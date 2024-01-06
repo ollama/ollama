@@ -73,8 +73,8 @@ async def update_user_by_id(
     user = Users.get_user_by_id(user_id)
 
     if user:
-        if form_data.email != user.email:
-            email_user = Users.get_user_by_email(form_data.email)
+        if form_data.email.lower() != user.email:
+            email_user = Users.get_user_by_email(form_data.email.lower())
             if email_user:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -86,12 +86,12 @@ async def update_user_by_id(
             print(hashed)
             Auths.update_user_password_by_id(user_id, hashed)
 
-        Auths.update_email_by_id(user_id, form_data.email)
+        Auths.update_email_by_id(user_id, form_data.email.lower())
         updated_user = Users.update_user_by_id(
             user_id,
             {
                 "name": form_data.name,
-                "email": form_data.email,
+                "email": form_data.email.lower(),
                 "profile_image_url": form_data.profile_image_url,
             },
         )
