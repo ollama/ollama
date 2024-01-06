@@ -295,11 +295,16 @@
 										digest: data.digest
 									};
 								}
+							} else {
+								toast.success(data.status);
 							}
 						}
 					}
 				} catch (error) {
 					console.log(error);
+					if (typeof error !== 'string') {
+						error = error.message;
+					}
 					opts.callback({ success: false, error, modelName: opts.modelName });
 				}
 			}
@@ -330,11 +335,10 @@
 
 				if (!data.success) {
 					toast.error(data.error);
-					return;
+				} else {
+					toast.success(`Model ${modelName} was successfully downloaded`);
+					models.set(await getModels());
 				}
-
-				toast.success(`Model ${modelName} was successfully downloaded`);
-				models.set(await getModels());
 			}
 		);
 
@@ -1155,32 +1159,34 @@
 									</button>
 								</div>
 
-								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+								<div class="mt-2 mb-1 text-xs text-gray-400 dark:text-gray-500">
 									To access the available model names for downloading, <a
 										class=" text-gray-500 dark:text-gray-300 font-medium"
 										href="https://ollama.ai/library"
 										target="_blank">click here.</a
 									>
 								</div>
-							</div>
-							{#if Object.keys(modelDownloadStatus).length > 0}
-								{#each Object.entries(modelDownloadStatus) as [modelName, payload]}
-									<div class="flex flex-col">
-										<div class="font-medium mb-0.5">{modelName}</div>
-										<div class="">
-											<div
-												class="dark:bg-gray-600 bg-gray-500 text-xs font-medium text-gray-100 text-center p-0.5 leading-none rounded-full"
-												style="width: {Math.max(15, payload.pullProgress ?? 0)}%"
-											>
-												{payload.pullProgress ?? 0}%
-											</div>
-											<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
-												{payload.digest}
+
+								{#if Object.keys(modelDownloadStatus).length > 0}
+									{#each Object.entries(modelDownloadStatus) as [modelName, payload]}
+										<div class="flex flex-col">
+											<div class="font-medium mb-1">{modelName}</div>
+											<div class="">
+												<div
+													class="dark:bg-gray-600 bg-gray-500 text-xs font-medium text-gray-100 text-center p-0.5 leading-none rounded-full"
+													style="width: {Math.max(15, payload.pullProgress ?? 0)}%"
+												>
+													{payload.pullProgress ?? 0}%
+												</div>
+												<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
+													{payload.digest}
+												</div>
 											</div>
 										</div>
-									</div>
-								{/each}
-							{/if}
+									{/each}
+								{/if}
+							</div>
+
 							<hr class=" dark:border-gray-700" />
 
 							<div>
