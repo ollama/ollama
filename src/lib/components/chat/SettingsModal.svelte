@@ -1,12 +1,11 @@
 <script lang="ts">
 	import toast from 'svelte-french-toast';
+	import queue from 'async/queue';
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { config, models, settings, user, chats } from '$lib/stores';
-	import { splitStream, getGravatarURL } from '$lib/utils';
-	import queue from 'async/queue';
 
 	import {
 		getOllamaVersion,
@@ -17,14 +16,16 @@
 		createModel,
 		deleteModel
 	} from '$lib/apis/ollama';
+	import { updateUserPassword } from '$lib/apis/auths';
 	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
 	import { WEB_UI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
+	import { config, models, settings, user, chats } from '$lib/stores';
+	import { splitStream, getGravatarURL } from '$lib/utils';
+
 	import Advanced from './Settings/Advanced.svelte';
 	import Modal from '../common/Modal.svelte';
-	import { updateUserPassword } from '$lib/apis/auths';
-	import { goto } from '$app/navigation';
-	import Page from '../../../routes/(app)/+page.svelte';
+
 	import {
 		getOpenAIKey,
 		getOpenAIModels,
@@ -50,13 +51,6 @@
 	let theme = 'dark';
 	let notificationEnabled = false;
 	let system = '';
-	const MAX_PARALLEL_DOWNLOADS = 3;
-	const modelDownloadQueue = queue(
-		(task: { modelName: string }, cb) =>
-			pullModelHandlerProcessor({ modelName: task.modelName, callback: cb }),
-		MAX_PARALLEL_DOWNLOADS
-	);
-	let modelDownloadStatus: Record<string, any> = {};
 
 	// Advanced
 	let requestFormat = '';
@@ -78,8 +72,15 @@
 	};
 
 	// Models
-	let modelTransferring = false;
+	const MAX_PARALLEL_DOWNLOADS = 3;
+	const modelDownloadQueue = queue(
+		(task: { modelName: string }, cb) =>
+			pullModelHandlerProcessor({ modelName: task.modelName, callback: cb }),
+		MAX_PARALLEL_DOWNLOADS
+	);
+	let modelDownloadStatus: Record<string, any> = {};
 
+	let modelTransferring = false;
 	let modelTag = '';
 	let digest = '';
 	let pullProgress = null;
@@ -94,7 +95,6 @@
 	let deleteModelTag = '';
 
 	// External
-
 	let OPENAI_API_KEY = '';
 	let OPENAI_API_BASE_URL = '';
 
@@ -110,6 +110,32 @@
 	let saveChatHistory = true;
 	let importFiles;
 	let showDeleteConfirm = false;
+
+	// Auth
+	let authEnabled = false;
+	let authType = 'Basic';
+	let authContent = '';
+
+	// Account
+	let currentPassword = '';
+	let newPassword = '';
+	let newPasswordConfirm = '';
+
+	// About
+	let ollamaVersion = '';
+
+	$: if (importFiles) {
+		console.log(importFiles);
+
+		let reader = new FileReader();
+		reader.onload = (event) => {
+			let chats = JSON.parse(event.target.result);
+			console.log(chats);
+			importChats(chats);
+		};
+
+		reader.readAsText(importFiles[0]);
+	}
 
 	const importChats = async (_chats) => {
 		for (const chat of _chats) {
@@ -127,37 +153,11 @@
 		saveAs(blob, `chat-export-${Date.now()}.json`);
 	};
 
-	$: if (importFiles) {
-		console.log(importFiles);
-
-		let reader = new FileReader();
-		reader.onload = (event) => {
-			let chats = JSON.parse(event.target.result);
-			console.log(chats);
-			importChats(chats);
-		};
-
-		reader.readAsText(importFiles[0]);
-	}
-
 	const deleteChats = async () => {
 		await goto('/');
 		await deleteAllChats(localStorage.token);
 		await chats.set(await getChatList(localStorage.token));
 	};
-
-	// Auth
-	let authEnabled = false;
-	let authType = 'Basic';
-	let authContent = '';
-
-	// Account
-	let currentPassword = '';
-	let newPassword = '';
-	let newPasswordConfirm = '';
-
-	// About
-	let ollamaVersion = '';
 
 	const updateOllamaAPIUrlHandler = async () => {
 		API_BASE_URL = await updateOllamaAPIUrl(localStorage.token, API_BASE_URL);
