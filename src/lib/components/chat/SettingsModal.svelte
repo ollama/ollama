@@ -51,7 +51,11 @@
 	let notificationEnabled = false;
 	let system = '';
 	const MAX_PARALLEL_DOWNLOADS = 3;
-	const modelDownloadQueue = queue((task:{modelName: string}, cb) => pullModelHandlerProcessor({modelName: task.modelName, callback: cb}), MAX_PARALLEL_DOWNLOADS);
+	const modelDownloadQueue = queue(
+		(task: { modelName: string }, cb) =>
+			pullModelHandlerProcessor({ modelName: task.modelName, callback: cb }),
+		MAX_PARALLEL_DOWNLOADS
+	);
 	let modelDownloadStatus: Record<string, any> = {};
 
 	// Advanced
@@ -250,11 +254,13 @@
 		saveSettings({ saveChatHistory: saveChatHistory });
 	};
 
-	const pullModelHandlerProcessor = async (opts:{modelName:string, callback: Function}) => {
+	const pullModelHandlerProcessor = async (opts: { modelName: string; callback: Function }) => {
+		const res = await pullModel(localStorage.token, opts.modelName).catch((error) => {
+			opts.callback({ success: false, error, modelName: opts.modelName });
+			return null;
+		});
 
-		try {
-			const res = await pullModel(localStorage.token, opts.modelName);
-	
+		if (res) {
 			const reader = res.body
 				.pipeThrough(new TextDecoderStream())
 				.pipeThrough(splitStream('\n'))
@@ -270,102 +276,70 @@
 					for (const line of lines) {
 						if (line !== '') {
 							let data = JSON.parse(line);
-						if (data.error) {
-							throw data.error;
-						}
-						if (data.detail) {
-							throw data.detail;
-						}
-						if (data.status) {
-							if (data.digest) {
-								let downloadProgress = 0;
-								if (data.completed) {
-									downloadProgress = Math.round((data.completed / data.total) * 1000) / 10;
-								} else {
-									downloadProgress = 100;
-								}
-								modelDownloadStatus[opts.modelName] = {pullProgress: downloadProgress, digest: data.digest};
+							if (data.error) {
+								throw data.error;
 							}
-						}
+							if (data.detail) {
+								throw data.detail;
+							}
+							if (data.status) {
+								if (data.digest) {
+									let downloadProgress = 0;
+									if (data.completed) {
+										downloadProgress = Math.round((data.completed / data.total) * 1000) / 10;
+									} else {
+										downloadProgress = 100;
+									}
+									modelDownloadStatus[opts.modelName] = {
+										pullProgress: downloadProgress,
+										digest: data.digest
+									};
+								}
+							}
 						}
 					}
 				} catch (error) {
-					console.log('Failed to read from data stream', error);
-					throw error;
+					console.log(error);
+					opts.callback({ success: false, error, modelName: opts.modelName });
 				}
 			}
-			opts.callback({success: true, modelName: opts.modelName});
-		} catch (error) {
-			console.error(error);
-			opts.callback({success:false, error, modelName: opts.modelName});
+			opts.callback({ success: true, modelName: opts.modelName });
 		}
+	};
 
-		
-		};
-
-	const pullModelHandler = async() => {
-		if(modelDownloadStatus[modelTag]){
-			toast.error("Model already in queue for downloading.");
+	const pullModelHandler = async () => {
+		if (modelDownloadStatus[modelTag]) {
+			toast.error('Model already in queue for downloading.');
 			return;
 		}
-		if(Object.keys(modelDownloadStatus).length === 3){
+		if (Object.keys(modelDownloadStatus).length === 3) {
 			toast.error('Maximum of 3 models can be downloading simultaneously. Please try again later');
 			return;
 		}
+
 		modelTransferring = true;
 
-		modelDownloadQueue.push({modelName: modelTag},async (data:{modelName: string; success: boolean; error?: Error}) => {
-			const {modelName} = data;
-			// Remove the downloaded model
-			delete modelDownloadStatus[modelName];
+		modelDownloadQueue.push(
+			{ modelName: modelTag },
+			async (data: { modelName: string; success: boolean; error?: Error }) => {
+				const { modelName } = data;
+				// Remove the downloaded model
+				delete modelDownloadStatus[modelName];
 
-			if(!data.success){
-				toast.error(`There was some issue in downloading the model ${modelName}`);
-				return;
+				console.log(data);
+
+				if (!data.success) {
+					toast.error(data.error);
+					return;
+				}
+
+				toast.success(`Model ${modelName} was successfully downloaded`);
+				models.set(await getModels());
 			}
-		
-			toast.success(`Model ${modelName} was successfully downloaded`);
-			models.set(await getModels());
-		});
+		);
 
 		modelTag = '';
-		modelTransferring = false;	
-	}
-
-
-	const calculateSHA256 = async (file) => {
-		console.log(file);
-		// Create a FileReader to read the file asynchronously
-		const reader = new FileReader();
-
-		// Define a promise to handle the file reading
-		const readFile = new Promise((resolve, reject) => {
-			reader.onload = () => resolve(reader.result);
-			reader.onerror = reject;
-		});
-
-		// Read the file as an ArrayBuffer
-		reader.readAsArrayBuffer(file);
-
-		try {
-			// Wait for the FileReader to finish reading the file
-			const buffer = await readFile;
-
-			// Convert the ArrayBuffer to a Uint8Array
-			const uint8Array = new Uint8Array(buffer);
-
-			// Calculate the SHA-256 hash using Web Crypto API
-			const hashBuffer = await crypto.subtle.digest('SHA-256', uint8Array);
-
-			// Convert the hash to a hexadecimal string
-			const hashArray = Array.from(new Uint8Array(hashBuffer));
-			const hashHex = hashArray.map((byte) => byte.toString(16).padStart(2, '0')).join('');
-
-			return `sha256:${hashHex}`;
-		} catch (error) {
-			console.error('Error calculating SHA-256 hash:', error);
-			throw error;
-		}
+		modelTransferring = false;
 	};
 
 	const uploadModelHandler = async () => {
@@ -1190,35 +1164,23 @@
 								</div>
 							</div>
 							{#if Object.keys(modelDownloadStatus).length > 0}
-							<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
-								<thead
-									class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400"
-								>
-									<tr>
-										<th scope="col" class="px-6 py-3"> Model Name </th>
-										<th scope="col" class="px-6 py-3"> Download progress </th>
-									</tr>
-								</thead>
-								<tbody>
-									{#each Object.entries(modelDownloadStatus) as [modelName, payload]}
-									<tr class="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-										<td class="px-6 py-4">{modelName}</td>
-										<td class="px-6 py-4">
+								{#each Object.entries(modelDownloadStatus) as [modelName, payload]}
+									<div class="flex flex-col">
+										<div class="font-medium mb-0.5">{modelName}</div>
+										<div class="">
 											<div
-											class="dark:bg-gray-600 bg-green-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
-											style="width: {Math.max(15, payload.pullProgress ?? 0)}%"
-										>
-											{ payload.pullProgress ?? 0}%
+												class="dark:bg-gray-600 bg-gray-500 text-xs font-medium text-gray-100 text-center p-0.5 leading-none rounded-full"
+												style="width: {Math.max(15, payload.pullProgress ?? 0)}%"
+											>
+												{payload.pullProgress ?? 0}%
+											</div>
+											<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
+												{payload.digest}
+											</div>
 										</div>
-										<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
-											{payload.digest}
-										</div>
-									</td>
-									</tr>
-									{/each}
-									</tbody>
-									</table>
-									{/if}
+									</div>
+								{/each}
+							{/if}
 							<hr class=" dark:border-gray-700" />
 
 							<div>

@@ -249,7 +249,8 @@ export const deleteModel = async (token: string, tagName: string) => {
 };
 
 export const pullModel = async (token: string, tagName: string) => {
-try {
+	let error = null;
+
 	const res = await fetch(`${OLLAMA_API_BASE_URL}/pull`, {
 		method: 'POST',
 		headers: {
@@ -259,9 +260,31 @@ try {
 		body: JSON.stringify({
 			name: tagName
 		})
-	})
+	}).catch((err) => {
+		console.log(err);
+		error = err;
+
+		if ('detail' in err) {
+			error = err.detail;
+		}
+
+		return null;
+	});
+	if (error) {
+		throw error;
+	}
 	return res;
-} catch (error) {
-	throw error;
-}
 };
+
+// export const pullModel = async (token: string, tagName: string) => {
+// 	return await fetch(`${OLLAMA_API_BASE_URL}/pull`, {
+// 		method: 'POST',
+// 		headers: {
+// 			'Content-Type': 'text/event-stream',
+// 			Authorization: `Bearer ${token}`
+// 		},
+// 		body: JSON.stringify({
+// 			name: tagName
+// 		})
+// 	});
+// };
