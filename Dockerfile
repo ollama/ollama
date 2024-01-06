@@ -12,10 +12,9 @@ RUN npm run build
 
 FROM python:3.11-slim-buster as base
 
-ARG OLLAMA_API_BASE_URL='/ollama/api'
-
 ENV ENV=prod
-ENV OLLAMA_API_BASE_URL $OLLAMA_API_BASE_URL
+
+ENV OLLAMA_API_BASE_URL "/ollama/api"
 
 ENV OPENAI_API_BASE_URL ""
 ENV OPENAI_API_KEY ""

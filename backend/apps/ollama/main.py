@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 
 import requests
 import json
@@ -10,8 +11,6 @@ from apps.web.models.users import Users
 from constants import ERROR_MESSAGES
 from utils.utils import decode_token, get_current_user
 from config import OLLAMA_API_BASE_URL, WEBUI_AUTH
-
-import aiohttp
 
 app = FastAPI()
 app.add_middleware(
@@ -50,25 +49,9 @@ async def update_ollama_api_url(
         raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
-# async def fetch_sse(method, target_url, body, headers):
-#     async with aiohttp.ClientSession() as session:
-#         try:
-#             async with session.request(
-#                 method, target_url, data=body, headers=headers
-#             ) as response:
-#                 print(response.status)
-#                 async for line in response.content:
-#                     yield line
-#         except Exception as e:
-#             print(e)
-#             error_detail = "Ollama WebUI: Server Connection Error"
-#             yield json.dumps({"error": error_detail, "message": str(e)}).encode()
-
-
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy(path: str, request: Request, user=Depends(get_current_user)):
     target_url = f"{app.state.OLLAMA_API_BASE_URL}/{path}"
-    print(target_url)
 
     body = await request.body()
     headers = dict(request.headers)
@@ -87,41 +70,42 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
     headers.pop("Origin", None)
     headers.pop("Referer", None)
 
-    session = aiohttp.ClientSession()
-    response = None
+    r = None
+
+    def get_request():
+        nonlocal r
+        try:
+            r = requests.request(
+                method=request.method,
+                url=target_url,
+                data=body,
+                headers=headers,
+                stream=True,
+            )
+
+            r.raise_for_status()
+
+            return StreamingResponse(
+                r.iter_content(chunk_size=8192),
+                status_code=r.status_code,
+                headers=dict(r.headers),
+            )
+        except Exception as e:
+            raise e
+
     try:
-        response = await session.request(
-            request.method, target_url, data=body, headers=headers
-        )
-
-        print(response)
-        if not response.ok:
-            data = await response.json()
-            print(data)
-            response.raise_for_status()
-
-        async def generate():
-            async for line in response.content:
-                print(line)
-                yield line
-            await session.close()
-
-        return StreamingResponse(generate(), response.status)
-
+        return await run_in_threadpool(get_request)
     except Exception as e:
-        print(e)
         error_detail = "Ollama WebUI: Server Connection Error"
-
-        if response is not None:
+        if r is not None:
             try:
-                res = await response.json()
+                res = r.json()
                 if "error" in res:
                     error_detail = f"Ollama: {res['error']}"
             except:
                 error_detail = f"Ollama: {e}"
 
-        await session.close()
         raise HTTPException(
-            status_code=response.status if response else 500,
+            status_code=r.status_code if r else 500,
             detail=error_detail,
         )
