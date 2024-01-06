@@ -9,6 +9,7 @@ const char *cuda_lib_paths[] = {
     "libnvidia-ml.so",
     "/usr/local/cuda/lib64/libnvidia-ml.so",
     "/usr/lib/x86_64-linux-gnu/nvidia/current/libnvidia-ml.so",
+    "/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1",
     "/usr/lib/wsl/lib/libnvidia-ml.so.1",  // TODO Maybe glob?
     NULL,
 };
