@@ -280,11 +280,13 @@
 			}
 
 			if ($chatId == _chatId) {
-				chat = await updateChatById(localStorage.token, _chatId, {
-					messages: messages,
-					history: history
-				});
-				await chats.set(await getChatList(localStorage.token));
+				if ($settings.saveChatHistory ?? true) {
+					chat = await updateChatById(localStorage.token, _chatId, {
+						messages: messages,
+						history: history
+					});
+					await chats.set(await getChatList(localStorage.token));
+				}
 			}
 		} else {
 			if (res !== null) {
@@ -444,11 +446,13 @@
 			}
 
 			if ($chatId == _chatId) {
-				chat = await updateChatById(localStorage.token, _chatId, {
-					messages: messages,
-					history: history
-				});
-				await chats.set(await getChatList(localStorage.token));
+				if ($settings.saveChatHistory ?? true) {
+					chat = await updateChatById(localStorage.token, _chatId, {
+						messages: messages,
+						history: history
+					});
+					await chats.set(await getChatList(localStorage.token));
+				}
 			}
 		} else {
 			if (res !== null) {
@@ -527,20 +531,24 @@
 
 			// Create new chat if only one message in messages
 			if (messages.length == 1) {
-				chat = await createNewChat(localStorage.token, {
-					id: $chatId,
-					title: 'New Chat',
-					models: selectedModels,
-					system: $settings.system ?? undefined,
-					options: {
-						...($settings.options ?? {})
-					},
-					messages: messages,
-					history: history,
-					timestamp: Date.now()
-				});
-				await chats.set(await getChatList(localStorage.token));
-				await chatId.set(chat.id);
+				if ($settings.saveChatHistory ?? true) {
+					chat = await createNewChat(localStorage.token, {
+						id: $chatId,
+						title: 'New Chat',
+						models: selectedModels,
+						system: $settings.system ?? undefined,
+						options: {
+							...($settings.options ?? {})
+						},
+						messages: messages,
+						history: history,
+						timestamp: Date.now()
+					});
+					await chats.set(await getChatList(localStorage.token));
+					await chatId.set(chat.id);
+				} else {
+					await chatId.set('local');
+				}
 				await tick();
 			}
 
@@ -592,8 +600,10 @@
 			title = _title;
 		}
 
-		chat = await updateChatById(localStorage.token, _chatId, { title: _title });
-		await chats.set(await getChatList(localStorage.token));
+		if ($settings.saveChatHistory ?? true) {
+			chat = await updateChatById(localStorage.token, _chatId, { title: _title });
+			await chats.set(await getChatList(localStorage.token));
+		}
 	};
 </script>
 
