@@ -314,11 +314,11 @@
 
 	const pullModelHandler = async () => {
 		if (modelDownloadStatus[modelTag]) {
-			toast.error('Model already in queue for downloading.');
+			toast.error(`Model '${modelTag}' is already in queue for downloading.`);
 			return;
 		}
 		if (Object.keys(modelDownloadStatus).length === 3) {
-			toast.error('Maximum of 3 models can be downloading simultaneously. Please try again later');
+			toast.error('Maximum of 3 models can be downloaded simultaneously. Please try again later.');
 			return;
 		}
 
@@ -336,7 +336,7 @@
 				if (!data.success) {
 					toast.error(data.error);
 				} else {
-					toast.success(`Model ${modelName} was successfully downloaded`);
+					toast.success(`Model '${modelName}' has been successfully downloaded.`);
 
 					const notification = new Notification(`Ollama`, {
 						body: `Model '${modelName}' has been successfully downloaded.`,
