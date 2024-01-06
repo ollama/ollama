@@ -249,8 +249,7 @@ export const deleteModel = async (token: string, tagName: string) => {
 };
 
 export const pullModel = async (token: string, tagName: string) => {
-	let error = null;
-
+try {
 	const res = await fetch(`${OLLAMA_API_BASE_URL}/pull`, {
 		method: 'POST',
 		headers: {
@@ -260,14 +259,9 @@ export const pullModel = async (token: string, tagName: string) => {
 		body: JSON.stringify({
 			name: tagName
 		})
-	}).catch((err) => {
-		error = err;
-		return null;
-	});
-
-	if (error) {
-		throw error;
-	}
-
+	})
 	return res;
+} catch (error) {
+	throw error;
+}
 };
