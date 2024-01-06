@@ -8,11 +8,15 @@
 
 	import { updateUserRole, getUsers, deleteUserById } from '$lib/apis/users';
 	import { getSignUpEnabledStatus, toggleSignUpEnabledStatus } from '$lib/apis/auths';
+	import EditUserModal from '$lib/components/admin/EditUserModal.svelte';
 
 	let loaded = false;
 	let users = [];
 
+	let selectedUser = null;
+
 	let signUpEnabled = true;
+	let showEditUserModal = false;
 
 	const updateRoleHandler = async (id, role) => {
 		const res = await updateUserRole(localStorage.token, id, role).catch((error) => {
@@ -22,6 +26,17 @@
 
 		if (res) {
 			users = await getUsers(localStorage.token);
+		}
+	};
+
+	const editUserPasswordHandler = async (id, password) => {
+		const res = await deleteUserById(localStorage.token, id).catch((error) => {
+			toast.error(error);
+			return null;
+		});
+		if (res) {
+			users = await getUsers(localStorage.token);
+			toast.success('Successfully updated');
 		}
 	};
 
@@ -50,6 +65,17 @@
 		loaded = true;
 	});
 </script>
+
+{#key selectedUser}
+	<EditUserModal
+		bind:show={showEditUserModal}
+		{selectedUser}
+		sessionUser={$user}
+		on:save={async () => {
+			users = await getUsers(localStorage.token);
+		}}
+	/>
+{/key}
 
 <div
 	class=" bg-white dark:bg-gray-800 dark:text-gray-100 min-h-screen w-full flex justify-center font-mona"
@@ -154,7 +180,28 @@
 												}}>{user.role}</button
 											>
 										</td>
-										<td class="px-6 py-4 text-center flex justify-center">
+										<td class="px-6 py-4 space-x-1 text-center flex justify-center">
+											<button
+												class="self-center w-fit text-sm p-1.5 border dark:border-gray-600 rounded-xl flex"
+												on:click={async () => {
+													showEditUserModal = !showEditUserModal;
+													selectedUser = user;
+												}}
+											>
+												<svg
+													xmlns="http://www.w3.org/2000/svg"
+													viewBox="0 0 16 16"
+													fill="currentColor"
+													class="w-4 h-4"
+												>
+													<path
+														fill-rule="evenodd"
+														d="M11.013 2.513a1.75 1.75 0 0 1 2.475 2.474L6.226 12.25a2.751 2.751 0 0 1-.892.596l-2.047.848a.75.75 0 0 1-.98-.98l.848-2.047a2.75 2.75 0 0 1 .596-.892l7.262-7.261Z"
+														clip-rule="evenodd"
+													/>
+												</svg>
+											</button>
+
 											<button
 												class="self-center w-fit text-sm p-1.5 border dark:border-gray-600 rounded-xl flex"
 												on:click={async () => {

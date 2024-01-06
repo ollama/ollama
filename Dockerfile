@@ -2,12 +2,6 @@
 
 FROM node:alpine as build
 
-ARG OLLAMA_API_BASE_URL='/ollama/api'
-RUN echo $OLLAMA_API_BASE_URL
-
-ENV PUBLIC_API_BASE_URL $OLLAMA_API_BASE_URL
-RUN echo $PUBLIC_API_BASE_URL
-
 WORKDIR /app
 
 COPY package.json package-lock.json ./ 
@@ -18,10 +12,13 @@ RUN npm run build
 
 FROM python:3.11-slim-buster as base
 
-ARG OLLAMA_API_BASE_URL='/ollama/api'
-
 ENV ENV=prod
-ENV OLLAMA_API_BASE_URL $OLLAMA_API_BASE_URL
+
+ENV OLLAMA_API_BASE_URL "/ollama/api"
+
+ENV OPENAI_API_BASE_URL ""
+ENV OPENAI_API_KEY ""
+
 ENV WEBUI_JWT_SECRET_KEY "SECRET_KEY"
 
 WORKDIR /app

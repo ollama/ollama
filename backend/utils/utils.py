@@ -8,8 +8,11 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 import requests
 import jwt
-
+import logging
 import config
+
+logging.getLogger("passlib").setLevel(logging.ERROR)
+
 
 JWT_SECRET_KEY = config.WEBUI_JWT_SECRET_KEY
 ALGORITHM = "HS256"

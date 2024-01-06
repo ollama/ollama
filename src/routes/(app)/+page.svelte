@@ -6,8 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
-	import { models, modelfiles, user, settings, chats, chatId } from '$lib/stores';
-	import { OLLAMA_API_BASE_URL } from '$lib/constants';
+	import { models, modelfiles, user, settings, chats, chatId, config } from '$lib/stores';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
 	import { copyToClipboard, splitStream } from '$lib/utils';
@@ -17,6 +16,7 @@
 	import ModelSelector from '$lib/components/chat/ModelSelector.svelte';
 	import Navbar from '$lib/components/layout/Navbar.svelte';
 	import { createNewChat, getChatList, updateChatById } from '$lib/apis/chats';
+	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 
 	let stopResponseFlag = false;
 	let autoScroll = true;
@@ -90,9 +90,18 @@
 			messages: {},
 			currentId: null
 		};
-		selectedModels = $page.url.searchParams.get('models')
-			? $page.url.searchParams.get('models')?.split(',')
-			: $settings.models ?? [''];
+
+		console.log($config);
+
+		if ($page.url.searchParams.get('models')) {
+			selectedModels = $page.url.searchParams.get('models')?.split(',');
+		} else if ($settings?.models) {
+			selectedModels = $settings?.models;
+		} else if ($config?.default_models) {
+			selectedModels = $config?.default_models.split(',');
+		} else {
+			selectedModels = [''];
+		}
 
 		let _settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		settings.set({
@@ -109,10 +118,14 @@
 		await Promise.all(
 			selectedModels.map(async (model) => {
 				console.log(model);
-				if ($models.filter((m) => m.name === model)[0].external) {
+				const modelTag = $models.filter((m) => m.name === model).at(0);
+
+				if (modelTag?.external) {
 					await sendPromptOpenAI(model, prompt, parentId, _chatId);
-				} else {
+				} else if (modelTag) {
 					await sendPromptOllama(model, prompt, parentId, _chatId);
+				} else {
+					toast.error(`Model ${model} not found`);
 				}
 			})
 		);
@@ -150,36 +163,32 @@
 		// Scroll down
 		window.scrollTo({ top: document.body.scrollHeight });
 
-		const res = await generateChatCompletion(
-			$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-			localStorage.token,
-			{
-				model: model,
-				messages: [
-					$settings.system
-						? {
-								role: 'system',
-								content: $settings.system
-						  }
-						: undefined,
-					...messages
-				]
-					.filter((message) => message)
-					.map((message) => ({
-						role: message.role,
-						content: message.content,
-						...(message.files && {
-							images: message.files
-								.filter((file) => file.type === 'image')
-								.map((file) => file.url.slice(file.url.indexOf(',') + 1))
-						})
-					})),
-				options: {
-					...($settings.options ?? {})
-				},
-				format: $settings.requestFormat ?? undefined
-			}
-		);
+		const res = await generateChatCompletion(localStorage.token, {
+			model: model,
+			messages: [
+				$settings.system
+					? {
+							role: 'system',
+							content: $settings.system
+					  }
+					: undefined,
+				...messages
+			]
+				.filter((message) => message)
+				.map((message) => ({
+					role: message.role,
+					content: message.content,
+					...(message.files && {
+						images: message.files
+							.filter((file) => file.type === 'image')
+							.map((file) => file.url.slice(file.url.indexOf(',') + 1))
+					})
+				})),
+			options: {
+				...($settings.options ?? {})
+			},
+			format: $settings.requestFormat ?? undefined
+		});
 
 		if (res && res.ok) {
 			const reader = res.body
@@ -271,11 +280,13 @@
 			}
 
 			if ($chatId == _chatId) {
-				chat = await updateChatById(localStorage.token, _chatId, {
-					messages: messages,
-					history: history
-				});
-				await chats.set(await getChatList(localStorage.token));
+				if ($settings.saveChatHistory ?? true) {
+					chat = await updateChatById(localStorage.token, _chatId, {
+						messages: messages,
+						history: history
+					});
+					await chats.set(await getChatList(localStorage.token));
+				}
 			}
 		} else {
 			if (res !== null) {
@@ -313,188 +324,173 @@
 	};
 
 	const sendPromptOpenAI = async (model, userPrompt, parentId, _chatId) => {
-		if ($settings.OPENAI_API_KEY) {
-			if (models) {
-				let responseMessageId = uuidv4();
+		let responseMessageId = uuidv4();
 
-				let responseMessage = {
-					parentId: parentId,
-					id: responseMessageId,
-					childrenIds: [],
-					role: 'assistant',
-					content: '',
-					model: model
-				};
+		let responseMessage = {
+			parentId: parentId,
+			id: responseMessageId,
+			childrenIds: [],
+			role: 'assistant',
+			content: '',
+			model: model
+		};
 
-				history.messages[responseMessageId] = responseMessage;
-				history.currentId = responseMessageId;
-				if (parentId !== null) {
-					history.messages[parentId].childrenIds = [
-						...history.messages[parentId].childrenIds,
-						responseMessageId
-					];
-				}
+		history.messages[responseMessageId] = responseMessage;
+		history.currentId = responseMessageId;
+		if (parentId !== null) {
+			history.messages[parentId].childrenIds = [
+				...history.messages[parentId].childrenIds,
+				responseMessageId
+			];
+		}
 
-				window.scrollTo({ top: document.body.scrollHeight });
+		window.scrollTo({ top: document.body.scrollHeight });
 
-				const res = await fetch(
-					`${$settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1'}/chat/completions`,
-					{
-						method: 'POST',
-						headers: {
-							Authorization: `Bearer ${$settings.OPENAI_API_KEY}`,
-							'Content-Type': 'application/json'
-						},
-						body: JSON.stringify({
-							model: model,
-							stream: true,
-							messages: [
-								$settings.system
-									? {
-											role: 'system',
-											content: $settings.system
-									  }
-									: undefined,
-								...messages
-							]
-								.filter((message) => message)
-								.map((message) => ({
-									role: message.role,
-									...(message.files
-										? {
-												content: [
-													{
-														type: 'text',
-														text: message.content
-													},
-													...message.files
-														.filter((file) => file.type === 'image')
-														.map((file) => ({
-															type: 'image_url',
-															image_url: {
-																url: file.url
-															}
-														}))
-												]
-										  }
-										: { content: message.content })
-								})),
-							seed: $settings.options.seed ?? undefined,
-							stop: $settings.options.stop ?? undefined,
-							temperature: $settings.options.temperature ?? undefined,
-							top_p: $settings.options.top_p ?? undefined,
-							num_ctx: $settings.options.num_ctx ?? undefined,
-							frequency_penalty: $settings.options.repeat_penalty ?? undefined,
-							max_tokens: $settings.options.num_predict ?? undefined
-						})
-					}
-				).catch((err) => {
-					console.log(err);
-					return null;
-				});
+		const res = await generateOpenAIChatCompletion(localStorage.token, {
+			model: model,
+			stream: true,
+			messages: [
+				$settings.system
+					? {
+							role: 'system',
+							content: $settings.system
+					  }
+					: undefined,
+				...messages
+			]
+				.filter((message) => message)
+				.map((message) => ({
+					role: message.role,
+					...(message.files
+						? {
+								content: [
+									{
+										type: 'text',
+										text: message.content
+									},
+									...message.files
+										.filter((file) => file.type === 'image')
+										.map((file) => ({
+											type: 'image_url',
+											image_url: {
+												url: file.url
+											}
+										}))
+								]
+						  }
+						: { content: message.content })
+				})),
+			seed: $settings?.options?.seed ?? undefined,
+			stop: $settings?.options?.stop ?? undefined,
+			temperature: $settings?.options?.temperature ?? undefined,
+			top_p: $settings?.options?.top_p ?? undefined,
+			num_ctx: $settings?.options?.num_ctx ?? undefined,
+			frequency_penalty: $settings?.options?.repeat_penalty ?? undefined,
+			max_tokens: $settings?.options?.num_predict ?? undefined
+		});
 
-				if (res && res.ok) {
-					const reader = res.body
-						.pipeThrough(new TextDecoderStream())
-						.pipeThrough(splitStream('\n'))
-						.getReader();
+		if (res && res.ok) {
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
 
-					while (true) {
-						const { value, done } = await reader.read();
-						if (done || stopResponseFlag || _chatId !== $chatId) {
-							responseMessage.done = true;
-							messages = messages;
-							break;
-						}
-
-						try {
-							let lines = value.split('\n');
-
-							for (const line of lines) {
-								if (line !== '') {
-									console.log(line);
-									if (line === 'data: [DONE]') {
-										responseMessage.done = true;
-										messages = messages;
-									} else {
-										let data = JSON.parse(line.replace(/^data: /, ''));
-										console.log(data);
-
-										if (responseMessage.content == '' && data.choices[0].delta.content == '\n') {
-											continue;
-										} else {
-											responseMessage.content += data.choices[0].delta.content ?? '';
-											messages = messages;
-										}
-									}
-								}
-							}
-						} catch (error) {
-							console.log(error);
-						}
-
-						if ($settings.notificationEnabled && !document.hasFocus()) {
-							const notification = new Notification(`OpenAI ${model}`, {
-								body: responseMessage.content,
-								icon: '/favicon.png'
-							});
-						}
-
-						if ($settings.responseAutoCopy) {
-							copyToClipboard(responseMessage.content);
-						}
-
-						if (autoScroll) {
-							window.scrollTo({ top: document.body.scrollHeight });
-						}
-					}
-
-					if ($chatId == _chatId) {
-						chat = await updateChatById(localStorage.token, _chatId, {
-							messages: messages,
-							history: history
-						});
-						await chats.set(await getChatList(localStorage.token));
-					}
-				} else {
-					if (res !== null) {
-						const error = await res.json();
-						console.log(error);
-						if ('detail' in error) {
-							toast.error(error.detail);
-							responseMessage.content = error.detail;
-						} else {
-							if ('message' in error.error) {
-								toast.error(error.error.message);
-								responseMessage.content = error.error.message;
-							} else {
-								toast.error(error.error);
-								responseMessage.content = error.error;
-							}
-						}
-					} else {
-						toast.error(`Uh-oh! There was an issue connecting to ${model}.`);
-						responseMessage.content = `Uh-oh! There was an issue connecting to ${model}.`;
-					}
-
-					responseMessage.error = true;
-					responseMessage.content = `Uh-oh! There was an issue connecting to ${model}.`;
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done || stopResponseFlag || _chatId !== $chatId) {
 					responseMessage.done = true;
 					messages = messages;
+					break;
 				}
 
-				stopResponseFlag = false;
-				await tick();
+				try {
+					let lines = value.split('\n');
+
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							if (line === 'data: [DONE]') {
+								responseMessage.done = true;
+								messages = messages;
+							} else {
+								let data = JSON.parse(line.replace(/^data: /, ''));
+								console.log(data);
+
+								if (responseMessage.content == '' && data.choices[0].delta.content == '\n') {
+									continue;
+								} else {
+									responseMessage.content += data.choices[0].delta.content ?? '';
+									messages = messages;
+								}
+							}
+						}
+					}
+				} catch (error) {
+					console.log(error);
+				}
+
+				if ($settings.notificationEnabled && !document.hasFocus()) {
+					const notification = new Notification(`OpenAI ${model}`, {
+						body: responseMessage.content,
+						icon: '/favicon.png'
+					});
+				}
+
+				if ($settings.responseAutoCopy) {
+					copyToClipboard(responseMessage.content);
+				}
 
 				if (autoScroll) {
 					window.scrollTo({ top: document.body.scrollHeight });
 				}
+			}
 
-				if (messages.length == 2) {
-					window.history.replaceState(history.state, '', `/c/${_chatId}`);
-					await setChatTitle(_chatId, userPrompt);
+			if ($chatId == _chatId) {
+				if ($settings.saveChatHistory ?? true) {
+					chat = await updateChatById(localStorage.token, _chatId, {
+						messages: messages,
+						history: history
+					});
+					await chats.set(await getChatList(localStorage.token));
 				}
 			}
+		} else {
+			if (res !== null) {
+				const error = await res.json();
+				console.log(error);
+				if ('detail' in error) {
+					toast.error(error.detail);
+					responseMessage.content = error.detail;
+				} else {
+					if ('message' in error.error) {
+						toast.error(error.error.message);
+						responseMessage.content = error.error.message;
+					} else {
+						toast.error(error.error);
+						responseMessage.content = error.error;
+					}
+				}
+			} else {
+				toast.error(`Uh-oh! There was an issue connecting to ${model}.`);
+				responseMessage.content = `Uh-oh! There was an issue connecting to ${model}.`;
+			}
+
+			responseMessage.error = true;
+			responseMessage.content = `Uh-oh! There was an issue connecting to ${model}.`;
+			responseMessage.done = true;
+			messages = messages;
+		}
+
+		stopResponseFlag = false;
+		await tick();
+
+		if (autoScroll) {
+			window.scrollTo({ top: document.body.scrollHeight });
+		}
+
+		if (messages.length == 2) {
+			window.history.replaceState(history.state, '', `/c/${_chatId}`);
+			await setChatTitle(_chatId, userPrompt);
 		}
 	};
 
@@ -535,20 +531,24 @@
 
 			// Create new chat if only one message in messages
 			if (messages.length == 1) {
-				chat = await createNewChat(localStorage.token, {
-					id: $chatId,
-					title: 'New Chat',
-					models: selectedModels,
-					system: $settings.system ?? undefined,
-					options: {
-						...($settings.options ?? {})
-					},
-					messages: messages,
-					history: history,
-					timestamp: Date.now()
-				});
-				await chats.set(await getChatList(localStorage.token));
-				await chatId.set(chat.id);
+				if ($settings.saveChatHistory ?? true) {
+					chat = await createNewChat(localStorage.token, {
+						id: $chatId,
+						title: 'New Chat',
+						models: selectedModels,
+						system: $settings.system ?? undefined,
+						options: {
+							...($settings.options ?? {})
+						},
+						messages: messages,
+						history: history,
+						timestamp: Date.now()
+					});
+					await chats.set(await getChatList(localStorage.token));
+					await chatId.set(chat.id);
+				} else {
+					await chatId.set('local');
+				}
 				await tick();
 			}
 
@@ -582,9 +582,8 @@
 	const generateChatTitle = async (_chatId, userPrompt) => {
 		if ($settings.titleAutoGenerate ?? true) {
 			const title = await generateTitle(
-				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
 				localStorage.token,
-				selectedModels[0],
+				$settings?.titleAutoGenerateModel ?? selectedModels[0],
 				userPrompt
 			);
 
@@ -601,8 +600,10 @@
 			title = _title;
 		}
 
-		chat = await updateChatById(localStorage.token, _chatId, { title: _title });
-		await chats.set(await getChatList(localStorage.token));
+		if ($settings.saveChatHistory ?? true) {
+			chat = await updateChatById(localStorage.token, _chatId, { title: _title });
+			await chats.set(await getChatList(localStorage.token));
+		}
 	};
 </script>
 

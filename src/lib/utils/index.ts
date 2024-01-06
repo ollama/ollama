@@ -21,7 +21,7 @@ export const splitStream = (splitOn) => {
 };
 
 export const convertMessagesToHistory = (messages) => {
-	let history = {
+	const history = {
 		messages: {},
 		currentId: null
 	};
@@ -114,7 +114,7 @@ export const checkVersion = (required, current) => {
 
 export const findWordIndices = (text) => {
 	const regex = /\[([^\]]+)\]/g;
-	let matches = [];
+	const matches = [];
 	let match;
 
 	while ((match = regex.exec(text)) !== null) {

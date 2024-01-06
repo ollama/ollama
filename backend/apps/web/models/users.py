@@ -8,7 +8,6 @@ from utils.misc import get_gravatar_url
 from apps.web.internal.db import DB
 from apps.web.models.chats import Chats
 
-
 ####################
 # User DB Schema
 ####################
@@ -43,6 +42,13 @@ class UserModel(BaseModel):
 class UserRoleUpdateForm(BaseModel):
     id: str
     role: str
+
+
+class UserUpdateForm(BaseModel):
+    name: str
+    email: str
+    profile_image_url: str
+    password: Optional[str] = None
 
 
 class UsersTable:
@@ -95,6 +101,16 @@ class UsersTable:
     def update_user_role_by_id(self, id: str, role: str) -> Optional[UserModel]:
         try:
             query = User.update(role=role).where(User.id == id)
+            query.execute()
+
+            user = User.get(User.id == id)
+            return UserModel(**model_to_dict(user))
+        except:
+            return None
+
+    def update_user_by_id(self, id: str, updated: dict) -> Optional[UserModel]:
+        try:
+            query = User.update(**updated).where(User.id == id)
             query.execute()
 
             user = User.get(User.id == id)

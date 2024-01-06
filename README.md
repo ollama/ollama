@@ -33,6 +33,10 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ✒️🔢 **Full Markdown and LaTeX Support**: Elevate your LLM experience with comprehensive Markdown and LaTeX capabilities for enriched interaction.
 
+- 📜 **Prompt Preset Support**: Instantly access preset prompts using the '/' command in the chat input. Load predefined conversation starters effortlessly and expedite your interactions. Effortlessly import prompts through [OllamaHub](https://ollamahub.com/) integration.
+
+- 👍👎 **RLHF Annotation**: Empower your messages by rating them with thumbs up and thumbs down, facilitating the creation of datasets for Reinforcement Learning from Human Feedback (RLHF). Utilize your messages to train or fine-tune models, all while ensuring the confidentiality of locally saved data.
+
 - 📥🗑️ **Download/Delete Models**: Easily download or remove models directly from the web UI.
 
 - ⬆️ **GGUF File Model Creation**: Effortlessly create Ollama models by uploading GGUF files directly from the web UI. Streamlined process with options to upload from your machine or download GGUF files from Hugging Face.
@@ -194,9 +198,15 @@ While we strongly recommend using our convenient Docker container installation f
 
 The Ollama Web UI consists of two primary components: the frontend and the backend (which serves as a reverse proxy, handling static frontend files, and additional features). Both need to be running concurrently for the development environment.
 
-**Warning: Backend Dependency for Proper Functionality**
+> [!IMPORTANT]
+> The backend is required for proper functionality
 
-### TL;DR 🚀
+### Requirements 📦
+
+- 🐰 [Bun](https://bun.sh) >= 1.0.21 or 🐢 [Node.js](https://nodejs.org/en) >= 20.10
+- 🐍 [Python](https://python.org) >= 3.11
+
+### Build and Install 🛠️
 
 Run the following commands to install:
 
@@ -207,13 +217,17 @@ cd ollama-webui/
 # Copying required .env file
 cp -RPp example.env .env
 
-# Building Frontend
+# Building Frontend Using Node
 npm i
 npm run build
 
+# or Building Frontend Using Bun
+# bun install
+# bun run build
+
 # Serving Frontend with the Backend
 cd ./backend
-pip install -r requirements.txt
+pip install -r requirements.txt -U
 sh start.sh
 ```
 
