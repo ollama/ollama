@@ -1176,7 +1176,7 @@
 								{#if Object.keys(modelDownloadStatus).length > 0}
 									{#each Object.keys(modelDownloadStatus) as model}
 										<div class="flex flex-col">
-											<div class="font-medium mb-1">{modelDownloadStatus[model].modelName}</div>
+											<div class="font-medium mb-1">{model}</div>
 											<div class="">
 												<div
 													class="dark:bg-gray-600 bg-gray-500 text-xs font-medium text-gray-100 text-center p-0.5 leading-none rounded-full"
