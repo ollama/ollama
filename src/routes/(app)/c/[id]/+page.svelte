@@ -609,6 +609,12 @@
 		chat = await updateChatById(localStorage.token, _chatId, { title: _title });
 		await chats.set(await getChatList(localStorage.token));
 	};
+
+	onMount(async () => {
+		if (!($settings.saveChatHistory ?? true)) {
+			await goto('/');
+		}
+	});
 </script>
 
 <svelte:window

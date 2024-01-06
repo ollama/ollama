@@ -238,6 +238,11 @@
 
 	const toggleSaveChatHistory = async () => {
 		saveChatHistory = !saveChatHistory;
+		console.log(saveChatHistory);
+
+		if (saveChatHistory === false) {
+			await goto('/');
+		}
 		saveSettings({ saveChatHistory: saveChatHistory });
 	};
 
