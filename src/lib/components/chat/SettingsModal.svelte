@@ -50,7 +50,8 @@
 	let theme = 'dark';
 	let notificationEnabled = false;
 	let system = '';
-	const modelDownloadQueue = queue((task:{modelName: string}, cb) => pullModelHandlerProcessor({modelName: task.modelName, callback: cb}), 3);
+	const MAX_PARALLEL_DOWNLOADS = 3;
+	const modelDownloadQueue = queue((task:{modelName: string}, cb) => pullModelHandlerProcessor({modelName: task.modelName, callback: cb}), MAX_PARALLEL_DOWNLOADS);
 	let modelDownloadStatus: Record<string, any> = {};
 
 	// Advanced
@@ -1187,23 +1188,6 @@
 										target="_blank">click here.</a
 									>
 								</div>
-
-								<!-- {#if pullProgress !== null} -->
-									<!-- <div class="mt-2">
-										<div class=" mb-2 text-xs">Pull Progress</div>
-										<div class="w-full rounded-full dark:bg-gray-800 bg-gray-300">
-											<div
-												class="dark:bg-gray-600 bg-green-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
-												style="width: {Math.max(15, 20 ?? 0)}%"
-											>
-												{20 ?? 0}%
-											</div>
-										</div>
-										<div class="mt-1 text-xs dark:text-gray-500" style="font-size: 0.5rem;">
-											{digest}
-										</div>
-									</div> -->
-								<!-- {/if} -->
 							</div>
 							{#if Object.keys(modelDownloadStatus).length > 0}
 							<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
