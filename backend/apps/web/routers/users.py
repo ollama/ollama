@@ -32,6 +32,30 @@ async def get_users(skip: int = 0, limit: int = 50, user=Depends(get_current_use
 
 
 ############################
+# UpdateUserRole
+############################
+
+
+@router.post("/update/role", response_model=Optional[UserModel])
+async def update_user_role(
+    form_data: UserRoleUpdateForm, user=Depends(get_current_user)
+):
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    if user.id != form_data.id:
+        return Users.update_user_role_by_id(form_data.id, form_data.role)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACTION_PROHIBITED,
+        )
+
+
+############################
 # UpdateUserById
 ############################
 
