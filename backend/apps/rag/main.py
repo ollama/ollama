@@ -190,7 +190,7 @@ def reset_vector_db(user=Depends(get_current_user)):
 
 
 @app.get("/reset")
-def reset(user=Depends(get_current_user)):
+def reset(user=Depends(get_current_user)) -> bool:
     if user.role == "admin":
         folder = f"{UPLOAD_DIR}"
         for filename in os.listdir(folder):
@@ -208,7 +208,7 @@ def reset(user=Depends(get_current_user)):
         except Exception as e:
             print(e)
 
-        return {"status": True}
+        return True
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
