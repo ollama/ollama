@@ -64,9 +64,7 @@ def store_data_in_vector_db(data, collection_name) -> bool:
     metadatas = [doc.metadata for doc in docs]
 
     try:
-        collection = CHROMA_CLIENT.create_collection(
-            name=collection_name, embedding_function=EMBEDDING_FUNC
-        )
+        collection = CHROMA_CLIENT.create_collection(name=collection_name)
 
         collection.add(
             documents=texts, metadatas=metadatas, ids=[str(uuid.uuid1()) for _ in texts]
