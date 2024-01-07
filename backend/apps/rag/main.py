@@ -1,9 +1,18 @@
-from fastapi import FastAPI, Request, Depends, HTTPException, status, UploadFile, File
+from fastapi import (
+    FastAPI,
+    Request,
+    Depends,
+    HTTPException,
+    status,
+    UploadFile,
+    File,
+    Form,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 from chromadb.utils import embedding_functions
 
-from langchain.document_loaders import WebBaseLoader, TextLoader
+from langchain.document_loaders import WebBaseLoader, TextLoader, PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
@@ -34,9 +43,12 @@ app.add_middleware(
 )
 
 
-class StoreWebForm(BaseModel):
-    url: str
+class CollectionNameForm(BaseModel):
     collection_name: Optional[str] = "test"
+
+
+class StoreWebForm(CollectionNameForm):
+    url: str
 
 
 def store_data_in_vector_db(data, collection_name):
@@ -89,20 +101,34 @@ def store_web(form_data: StoreWebForm):
 
 
 @app.post("/doc")
-def store_doc(file: UploadFile = File(...)):
+def store_doc(collection_name: str = Form(...), file: UploadFile = File(...)):
     # "https://www.gutenberg.org/files/1727/1727-h/1727-h.htm"
 
+    file.filename = f"{uuid.uuid4()}-{file.filename}"
+    print(dir(file))
+    print(file.content_type)
+
+    if file.content_type not in ["application/pdf", "text/plain"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
+        )
+
     try:
-        print(file)
-        file.filename = f"{uuid.uuid4()}-{file.filename}"
+        filename = file.filename
+        file_path = f"./data/{filename}"
         contents = file.file.read()
-        with open(f"./data/{file.filename}", "wb") as f:
+        with open(file_path, "wb") as f:
             f.write(contents)
             f.close()
 
-        # loader = WebBaseLoader(form_data.url)
-        # data = loader.load()
-        # store_data_in_vector_db(data, form_data.collection_name)
+        if file.content_type == "application/pdf":
+            loader = PyPDFLoader(file_path)
+        elif file.content_type == "text/plain":
+            loader = TextLoader(file_path)
+
+        data = loader.load()
+        store_data_in_vector_db(data, collection_name)
         return {"status": True}
     except Exception as e:
         print(e)
