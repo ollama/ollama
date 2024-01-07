@@ -11,7 +11,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 import os, shutil
 
-from chromadb.utils import embedding_functions
+# from chromadb.utils import embedding_functions
 
 from langchain_community.document_loaders import WebBaseLoader, TextLoader, PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -29,9 +29,9 @@ from utils.utils import get_current_user
 from config import UPLOAD_DIR, EMBED_MODEL, CHROMA_CLIENT, CHUNK_SIZE, CHUNK_OVERLAP
 from constants import ERROR_MESSAGES
 
-EMBEDDING_FUNC = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name=EMBED_MODEL
-)
+# EMBEDDING_FUNC = embedding_functions.SentenceTransformerEmbeddingFunction(
+#     model_name=EMBED_MODEL
+# )
 
 app = FastAPI()
 
