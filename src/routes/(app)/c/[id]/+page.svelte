@@ -10,7 +10,7 @@
 	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
-	import { createNewChat, getChatList, updateChatById } from '$lib/apis/chats';
+	import { createNewChat, getChatById, getChatList, updateChatById } from '$lib/apis/chats';
 	import { queryVectorDB } from '$lib/apis/rag';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 
