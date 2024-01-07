@@ -116,8 +116,10 @@
 					];
 				};
 
-				if (e.dataTransfer?.files && e.dataTransfer?.files.length > 0) {
-					const file = e.dataTransfer?.files[0];
+				const inputFiles = e.dataTransfer?.files;
+
+				if (inputFiles && inputFiles.length > 0) {
+					const file = inputFiles[0];
 					if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 						reader.readAsDataURL(file);
 					} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
@@ -221,7 +223,7 @@
 					bind:files={inputFiles}
 					type="file"
 					hidden
-					on:change={() => {
+					on:change={async () => {
 						let reader = new FileReader();
 						reader.onload = (event) => {
 							files = [
@@ -235,15 +237,32 @@
 							filesInputElement.value = '';
 						};
 
-						if (
-							inputFiles &&
-							inputFiles.length > 0 &&
-							['image/gif', 'image/jpeg', 'image/png'].includes(inputFiles[0]['type'])
-						) {
-							reader.readAsDataURL(inputFiles[0]);
+						if (inputFiles && inputFiles.length > 0) {
+							const file = inputFiles[0];
+							if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
+								reader.readAsDataURL(file);
+							} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
+								console.log(file);
+								const hash = await calculateSHA256(file);
+								// const res = uploadDocToVectorDB(localStorage.token,hash,file);
+
+								if (true) {
+									files = [
+										...files,
+										{
+											type: 'doc',
+											name: file.name,
+											collection_name: hash
+										}
+									];
+									filesInputElement.value = '';
+								}
+							} else {
+								toast.error(`Unsupported File Type '${file['type']}'.`);
+								inputFiles = null;
+							}
 						} else {
-							toast.error(`Unsupported File Type '${inputFiles[0]['type']}'.`);
-							inputFiles = null;
+							toast.error(`File not found.`);
 						}
 					}}
 				/>
