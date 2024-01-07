@@ -13,7 +13,7 @@ import os, shutil
 
 from chromadb.utils import embedding_functions
 
-from langchain.document_loaders import WebBaseLoader, TextLoader, PyPDFLoader
+from langchain_community.document_loaders import WebBaseLoader, TextLoader, PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
