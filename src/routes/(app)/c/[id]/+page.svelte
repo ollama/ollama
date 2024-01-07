@@ -21,8 +21,10 @@
 	import { RAGTemplate } from '$lib/utils/rag';
 
 	let loaded = false;
+
 	let stopResponseFlag = false;
 	let autoScroll = true;
+	let processing = '';
 
 	// let chatId = $page.params.id;
 	let selectedModels = [''];
@@ -210,6 +212,7 @@
 
 		console.log(docs);
 		if (docs.length > 0) {
+			processing = 'Reading';
 			const query = history.messages[parentId].content;
 
 			let relevantContexts = await Promise.all(
@@ -233,6 +236,7 @@
 			history.messages[parentId].raContent = RAGTemplate(contextString, query);
 			history.messages[parentId].contexts = relevantContexts;
 			await tick();
+			processing = '';
 		}
 
 		await Promise.all(
@@ -685,6 +689,7 @@
 					chatId={$chatId}
 					{selectedModels}
 					{selectedModelfiles}
+					{processing}
 					bind:history
 					bind:messages
 					bind:autoScroll
