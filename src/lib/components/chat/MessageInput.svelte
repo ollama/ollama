@@ -107,6 +107,7 @@
 
 		if (res) {
 			doc.upload_status = true;
+			doc.collection_name = res.collection_name;
 			files = files;
 		}
 	};
