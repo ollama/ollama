@@ -85,12 +85,19 @@ async def get_status():
 
 @app.get("/query/{collection_name}")
 def query_collection(collection_name: str, query: str, k: Optional[int] = 4):
-    collection = CHROMA_CLIENT.get_collection(
-        name=collection_name,
-    )
-    result = collection.query(query_texts=[query], n_results=k)
+    try:
+        collection = CHROMA_CLIENT.get_collection(
+            name=collection_name,
+        )
+        result = collection.query(query_texts=[query], n_results=k)
 
-    return result
+        return result
+    except Exception as e:
+        print(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT(e),
+        )
 
 
 @app.post("/web")
