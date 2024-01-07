@@ -2,10 +2,11 @@
 	import toast from 'svelte-french-toast';
 	import { onMount, tick } from 'svelte';
 	import { settings } from '$lib/stores';
-	import { findWordIndices } from '$lib/utils';
+	import { calculateSHA256, findWordIndices } from '$lib/utils';
 
 	import Prompts from './MessageInput/PromptCommands.svelte';
 	import Suggestions from './MessageInput/Suggestions.svelte';
+	import { uploadDocToVectorDB } from '$lib/apis/rag';
 
 	export let submitPrompt: Function;
 	export let stopResponse: Function;
@@ -98,7 +99,7 @@
 			dragged = true;
 		});
 
-		dropZone.addEventListener('drop', (e) => {
+		dropZone.addEventListener('drop', async (e) => {
 			e.preventDefault();
 			console.log(e);
 
@@ -115,14 +116,30 @@
 					];
 				};
 
-				if (
-					e.dataTransfer?.files &&
-					e.dataTransfer?.files.length > 0 &&
-					['image/gif', 'image/jpeg', 'image/png'].includes(e.dataTransfer?.files[0]['type'])
-				) {
-					reader.readAsDataURL(e.dataTransfer?.files[0]);
+				if (e.dataTransfer?.files && e.dataTransfer?.files.length > 0) {
+					const file = e.dataTransfer?.files[0];
+					if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
+						reader.readAsDataURL(file);
+					} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
+						console.log(file);
+						const hash = await calculateSHA256(file);
+						// const res = uploadDocToVectorDB(localStorage.token, hash,file);
+
+						if (true) {
+							files = [
+								...files,
+								{
+									type: 'doc',
+									name: file.name,
+									collection_name: hash
+								}
+							];
+						}
+					} else {
+						toast.error(`Unsupported File Type '${file['type']}'.`);
+					}
 				} else {
-					toast.error(`Unsupported File Type '${e.dataTransfer?.files[0]['type']}'.`);
+					toast.error(`File not found.`);
 				}
 			}
 
@@ -145,11 +162,11 @@
 		<div class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-800/40 flex justify-center">
 			<div class="m-auto pt-64 flex flex-col justify-center">
 				<div class="max-w-md">
-					<div class="  text-center text-6xl mb-3">🏞️</div>
-					<div class="text-center dark:text-white text-2xl font-semibold z-50">Add Images</div>
+					<div class="  text-center text-6xl mb-3">🗂️</div>
+					<div class="text-center dark:text-white text-2xl font-semibold z-50">Add Files</div>
 
 					<div class=" mt-2 text-center text-sm dark:text-gray-200 w-full">
-						Drop any images here to add to the conversation
+						Drop any files/images here to add to the conversation
 					</div>
 				</div>
 			</div>
@@ -237,10 +254,42 @@
 					}}
 				>
 					{#if files.length > 0}
-						<div class="ml-2 mt-2 mb-1 flex space-x-2">
+						<div class="mx-2 mt-2 mb-1 flex flex-wrap gap-2">
 							{#each files as file, fileIdx}
 								<div class=" relative group">
-									<img src={file.url} alt="input" class=" h-16 w-16 rounded-xl object-cover" />
+									{#if file.type === 'image'}
+										<img src={file.url} alt="input" class=" h-16 w-16 rounded-xl object-cover" />
+									{:else if file.type === 'doc'}
+										<div
+											class="h-16 w-[15rem] flex items-center space-x-3 px-2 bg-gray-600 rounded-xl"
+										>
+											<div class="p-2.5 bg-red-400 rounded-lg">
+												<svg
+													xmlns="http://www.w3.org/2000/svg"
+													viewBox="0 0 24 24"
+													fill="currentColor"
+													class="w-6 h-6"
+												>
+													<path
+														fill-rule="evenodd"
+														d="M5.625 1.5c-1.036 0-1.875.84-1.875 1.875v17.25c0 1.035.84 1.875 1.875 1.875h12.75c1.035 0 1.875-.84 1.875-1.875V12.75A3.75 3.75 0 0 0 16.5 9h-1.875a1.875 1.875 0 0 1-1.875-1.875V5.25A3.75 3.75 0 0 0 9 1.5H5.625ZM7.5 15a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 15Zm.75 2.25a.75.75 0 0 0 0 1.5H12a.75.75 0 0 0 0-1.5H8.25Z"
+														clip-rule="evenodd"
+													/>
+													<path
+														d="M12.971 1.816A5.23 5.23 0 0 1 14.25 5.25v1.875c0 .207.168.375.375.375H16.5a5.23 5.23 0 0 1 3.434 1.279 9.768 9.768 0 0 0-6.963-6.963Z"
+													/>
+												</svg>
+											</div>
+
+											<div class="flex flex-col justify-center -space-y-0.5">
+												<div class=" text-gray-100 text-sm line-clamp-1">
+													{file.name}
+												</div>
+
+												<div class=" text-gray-500 text-sm">Document</div>
+											</div>
+										</div>
+									{/if}
 
 									<div class=" absolute -top-1 -right-1">
 										<button

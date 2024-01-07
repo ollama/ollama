@@ -91,7 +91,7 @@ def store_web(form_data: StoreWebForm):
         loader = WebBaseLoader(form_data.url)
         data = loader.load()
         store_data_in_vector_db(data, form_data.collection_name)
-        return {"status": True}
+        return {"status": True, "collection_name": form_data.collection_name}
     except Exception as e:
         print(e)
         raise HTTPException(
@@ -129,7 +129,7 @@ def store_doc(collection_name: str = Form(...), file: UploadFile = File(...)):
 
         data = loader.load()
         store_data_in_vector_db(data, collection_name)
-        return {"status": True}
+        return {"status": True, "collection_name": collection_name}
     except Exception as e:
         print(e)
         raise HTTPException(

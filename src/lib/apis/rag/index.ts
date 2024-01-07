@@ -11,7 +11,6 @@ export const uploadDocToVectorDB = async (token: string, collection_name: string
 		method: 'POST',
 		headers: {
 			Accept: 'application/json',
-			'Content-Type': 'application/json',
 			authorization: `Bearer ${token}`
 		},
 		body: data
@@ -85,7 +84,6 @@ export const queryVectorDB = async (
 			method: 'GET',
 			headers: {
 				Accept: 'application/json',
-				'Content-Type': 'application/json',
 				authorization: `Bearer ${token}`
 			}
 		}
@@ -96,7 +94,6 @@ export const queryVectorDB = async (
 		})
 		.catch((err) => {
 			error = err.detail;
-			console.log(err);
 			return null;
 		});
 
