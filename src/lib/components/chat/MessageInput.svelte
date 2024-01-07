@@ -122,9 +122,8 @@
 					const file = inputFiles[0];
 					if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 						reader.readAsDataURL(file);
-					} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
+					} else if (['application/pdf', 'text/plain', 'text/csv'].includes(file['type'])) {
 						console.log(file);
-						// const hash = (await calculateSHA256(file)).substring(0, 63);
 						const res = await uploadDocToVectorDB(localStorage.token, '', file);
 
 						if (res) {
@@ -241,9 +240,8 @@
 							const file = inputFiles[0];
 							if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 								reader.readAsDataURL(file);
-							} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
+							} else if (['application/pdf', 'text/plain', 'text/csv'].includes(file['type'])) {
 								console.log(file);
-								// const hash = (await calculateSHA256(file)).substring(0, 63);
 								const res = await uploadDocToVectorDB(localStorage.token, '', file);
 
 								if (res) {

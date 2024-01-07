@@ -13,7 +13,12 @@ import os, shutil
 
 # from chromadb.utils import embedding_functions
 
-from langchain_community.document_loaders import WebBaseLoader, TextLoader, PyPDFLoader
+from langchain_community.document_loaders import (
+    WebBaseLoader,
+    TextLoader,
+    PyPDFLoader,
+    CSVLoader,
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
@@ -129,7 +134,7 @@ def store_doc(
 ):
     # "https://www.gutenberg.org/files/1727/1727-h/1727-h.htm"
 
-    if file.content_type not in ["application/pdf", "text/plain"]:
+    if file.content_type not in ["application/pdf", "text/plain", "text/csv"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
@@ -152,6 +157,8 @@ def store_doc(
             loader = PyPDFLoader(file_path)
         elif file.content_type == "text/plain":
             loader = TextLoader(file_path)
+        elif file.content_type == "text/csv":
+            loader = CSVLoader(file_path)
 
         data = loader.load()
         result = store_data_in_vector_db(data, collection_name)
