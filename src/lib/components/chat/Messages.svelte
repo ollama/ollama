@@ -236,7 +236,7 @@
 							{copyToClipboard}
 						/>
 
-						{#if processing !== ''}
+						{#if messages.length - 1 === messageIdx && processing !== ''}
 							<div class="flex my-2.5 ml-12 items-center w-fit space-x-2.5">
 								<div class=" dark:text-blue-100">
 									<svg
