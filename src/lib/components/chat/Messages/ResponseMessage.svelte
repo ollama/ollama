@@ -285,7 +285,7 @@
 									</div>
 								</div>
 							{:else}
-								{@html marked(message.content.replace('\\\\', '\\\\\\'))}
+								{@html marked(message.content.replaceAll('\\', '\\\\'))}
 							{/if}
 
 							{#if message.done}
