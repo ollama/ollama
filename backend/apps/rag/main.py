@@ -24,7 +24,7 @@ from typing import Optional
 
 import uuid
 
-
+from utils.misc import calculate_sha256
 from utils.utils import get_current_user
 from config import UPLOAD_DIR, EMBED_MODEL, CHROMA_CLIENT, CHUNK_SIZE, CHUNK_OVERLAP
 from constants import ERROR_MESSAGES
@@ -123,12 +123,11 @@ def store_web(form_data: StoreWebForm, user=Depends(get_current_user)):
 
 @app.post("/doc")
 def store_doc(
-    collection_name: str = Form(...),
+    collection_name: Optional[str] = Form(None),
     file: UploadFile = File(...),
     user=Depends(get_current_user),
 ):
     # "https://www.gutenberg.org/files/1727/1727-h/1727-h.htm"
-    file.filename = f"{collection_name}-{file.filename}"
 
     if file.content_type not in ["application/pdf", "text/plain"]:
         raise HTTPException(
@@ -143,6 +142,11 @@ def store_doc(
         with open(file_path, "wb") as f:
             f.write(contents)
             f.close()
+
+        f = open(file_path, "rb")
+        if collection_name == None:
+            collection_name = calculate_sha256(f)[:63]
+        f.close()
 
         if file.content_type == "application/pdf":
             loader = PyPDFLoader(file_path)
