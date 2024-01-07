@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build darwin
 
 package llm
 
@@ -13,6 +13,8 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 )
+
+// TODO - explore shifting Darwin to a dynamic loading pattern for consistency with Linux and Windows
 
 type llamaExtServer struct {
 	api.Options

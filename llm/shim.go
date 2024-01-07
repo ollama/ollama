@@ -15,14 +15,20 @@ import (
 	"github.com/jmorganca/ollama/gpu"
 )
 
-// Shims names may contain an optional variant separated by '_'
+// Libraries names may contain an optional variant separated by '_'
 // For example, "rocm_v6" and "rocm_v5" or "cpu" and "cpu_avx2"
+// Any library without a variant is the lowest common denominator
 var availableShims = map[string]string{}
 
 const pathComponentCount = 6
 
 // getShims returns an ordered list of shims to try, starting with the best
 func getShims(gpuInfo gpu.GpuInfo) []string {
+	// Short circuit if we know we're using the default built-in (darwin only)
+	if gpuInfo.Library == "default" {
+		return []string{"default"}
+	}
+
 	exactMatch := ""
 	shims := []string{}
 	altShims := []string{}
@@ -30,30 +36,18 @@ func getShims(gpuInfo gpu.GpuInfo) []string {
 	if gpuInfo.Variant != "" {
 		requested += "_" + gpuInfo.Variant
 	}
-	// First try to find an exact match
+	// Try to find an exact match
 	for cmp := range availableShims {
 		if requested == cmp {
 			exactMatch = cmp
-			shims = append(shims, availableShims[cmp])
+			shims = []string{availableShims[cmp]}
 			break
 		}
 	}
-	// Then load alternates and sort the list for consistent load ordering
-	for cmp := range availableShims {
-		if gpuInfo.Library == strings.Split(cmp, "_")[0] && cmp != exactMatch {
-			altShims = append(altShims, cmp)
-		}
-	}
-	slices.Sort(altShims)
-	for _, altShim := range altShims {
-		shims = append(shims, availableShims[altShim])
-	}
-
-	// Load up the CPU alternates if not primary requested
+	// Then for GPUs load alternates and sort the list for consistent load ordering
 	if gpuInfo.Library != "cpu" {
-		altShims = []string{}
 		for cmp := range availableShims {
-			if strings.Split(cmp, "_")[0] == "cpu" {
+			if gpuInfo.Library == strings.Split(cmp, "_")[0] && cmp != exactMatch {
 				altShims = append(altShims, cmp)
 			}
 		}
@@ -62,8 +56,30 @@ func getShims(gpuInfo gpu.GpuInfo) []string {
 			shims = append(shims, availableShims[altShim])
 		}
 	}
-	// default is always last as the lowest common denominator
-	shims = append(shims, "default")
+
+	// Load up the best CPU variant if not primary requested
+	if gpuInfo.Library != "cpu" {
+		variant := gpu.GetCPUVariant()
+		// If no variant, then we fall back to default
+		// If we have a variant, try that if we find an exact match
+		// Attempting to run the wrong CPU instructions will panic the
+		// process
+		if variant != "" {
+			for cmp := range availableShims {
+				if cmp == "cpu_"+variant {
+					shims = append(shims, availableShims[cmp])
+					break
+				}
+			}
+		} else {
+			shims = append(shims, availableShims["cpu"])
+		}
+	}
+
+	// Finaly, if we didn't find any matches, LCD CPU FTW
+	if len(shims) == 0 {
+		shims = []string{availableShims["cpu"]}
+	}
 	return shims
 }
 
@@ -116,7 +132,8 @@ func nativeInit(workdir string) error {
 		variants[i] = variant
 		i++
 	}
-	log.Printf("Dynamic LLM variants %v", variants)
+	log.Printf("Dynamic LLM libraries %v", variants)
+	log.Printf("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	return nil
 }

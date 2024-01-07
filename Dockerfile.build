@@ -49,6 +49,7 @@ RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 FROM --platform=linux/amd64 centos:7 AS cpu-build-amd64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
+ARG OLLAMA_CUSTOM_CPU_DEFS
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
@@ -59,6 +60,7 @@ RUN sh gen_linux.sh
 FROM --platform=linux/arm64 centos:7 AS cpu-build-arm64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
+ARG OLLAMA_CUSTOM_CPU_DEFS
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH

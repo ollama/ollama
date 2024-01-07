@@ -49,3 +49,8 @@ func getCPUMem() (memInfo, error) {
 func nativeInit() error {
 	return nil
 }
+
+func GetCPUVariant() string {
+	// We don't yet have CPU based builds for Darwin...
+	return ""
+}

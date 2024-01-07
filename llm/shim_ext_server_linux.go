@@ -11,13 +11,13 @@ import (
 var libEmbed embed.FS
 
 func updatePath(dir string) {
-	pathComponents := strings.Split(os.Getenv("PATH"), ":")
+	pathComponents := strings.Split(os.Getenv("LD_LIBRARY_PATH"), ":")
 	for _, comp := range pathComponents {
 		if comp == dir {
 			return
 		}
 	}
-	newPath := strings.Join(append(pathComponents, dir), ":")
-	log.Printf("Updating PATH to %s", newPath)
-	os.Setenv("PATH", newPath)
+	newPath := strings.Join(append([]string{dir}, pathComponents...), ":")
+	log.Printf("Updating LD_LIBRARY_PATH to %s", newPath)
+	os.Setenv("LD_LIBRARY_PATH", newPath)
 }

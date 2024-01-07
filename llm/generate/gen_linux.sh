@@ -49,17 +49,68 @@ git_module_setup
 apply_patches
 
 if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
-    #
-    # CPU first for the default library
-    #
-    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
-    BUILD_DIR="${LLAMACPP_DIR}/build/linux/cpu"
+    # Users building from source can tune the exact flags we pass to cmake for configuring
+    # llama.cpp, and we'll build only 1 CPU variant in that case as the default.
+    if [ -n "${OLLAMA_CUSTOM_CPU_DEFS}" ]; then
+        echo "OLLAMA_CUSTOM_CPU_DEFS=\"${OLLAMA_CUSTOM_CPU_DEFS}\""
+        CMAKE_DEFS="${OLLAMA_CUSTOM_CPU_DEFS} -DCMAKE_POSITION_INDEPENDENT_CODE=on ${CMAKE_DEFS}"
+        BUILD_DIR="${LLAMACPP_DIR}/build/linux/cpu"
+        echo "Building custom CPU"
+        build
+        install
+        link_server_lib
+    else
+        # Darwin Rosetta x86 emulation does NOT support AVX, AVX2, AVX512
+        # -DLLAMA_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
+        # -DLLAMA_F16C -- 2012 Intel Ivy Bridge & AMD 2011 Bulldozer (No significant improvement over just AVX)
+        # -DLLAMA_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
+        # -DLLAMA_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
+        # Note: the following seem to yield slower results than AVX2 - ymmv
+        # -DLLAMA_AVX512 -- 2017 Intel Skylake and High End DeskTop (HEDT)
+        # -DLLAMA_AVX512_VBMI -- 2018 Intel Cannon Lake
+        # -DLLAMA_AVX512_VNNI -- 2021 Intel Alder Lake
 
-    build
-    install
+        COMMON_CPU_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off"
+        #
+        # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
+        #
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+        BUILD_DIR="${LLAMACPP_DIR}/build/linux/cpu"
+        echo "Building LCD CPU"
+        build
+        install
+        link_server_lib
 
-    # Placeholder to keep go embed happy until we start building dynamic CPU lib variants
-    touch ${BUILD_DIR}/lib/dummy.so
+        #
+        # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
+        # Approximately 400% faster than LCD on same CPU
+        #
+        init_vars
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+        BUILD_DIR="${LLAMACPP_DIR}/build/linux/cpu_avx"
+        echo "Building AVX CPU"
+        build
+        install
+        link_server_lib
+
+        #
+        # ~2013 CPU Dynamic library
+        # Approximately 10% faster than AVX on same CPU
+        #
+        init_vars
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
+        BUILD_DIR="${LLAMACPP_DIR}/build/linux/cpu_avx2"
+        echo "Building AVX2 CPU"
+        build
+        install
+        link_server_lib
+        gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
+            -Wl,--whole-archive \
+            ${BUILD_DIR}/lib/libext_server.a \
+            -Wl,--no-whole-archive \
+            ${BUILD_DIR}/lib/libcommon.a \
+            ${BUILD_DIR}/lib/libllama.a
+    fi
 else
     echo "Skipping CPU generation step as requested"
 fi

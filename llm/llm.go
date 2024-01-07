@@ -139,7 +139,22 @@ func Init(workdir string) error {
 }
 
 func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (extServer, error) {
-	for _, shim := range getShims(gpuInfo) {
+	shims := getShims(gpuInfo)
+
+	// Check to see if the user has requested a specific library instead of auto-detecting
+	demandLib := os.Getenv("OLLAMA_LLM_LIBRARY")
+	if demandLib != "" {
+		libPath := availableShims[demandLib]
+		if libPath == "" {
+			log.Printf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib)
+		} else {
+			log.Printf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib)
+			shims = []string{libPath}
+		}
+	}
+
+	for _, shim := range shims {
+		// TODO - only applies on Darwin (switch to fully dynamic there too...)
 		if shim == "default" {
 			break
 		}

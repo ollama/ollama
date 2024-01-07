@@ -15,12 +15,6 @@ package llm
 #cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libllama.a
 #cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libggml_static.a
 #cgo linux CFLAGS: -D_GNU_SOURCE
-#cgo linux windows CFLAGS: -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_MMV_Y=1 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_USE_CUBLAS
-#cgo linux LDFLAGS: -L/usr/local/cuda/targets/x86_64-linux/lib -L/usr/local/cuda/lib64 -L/usr/local/cuda/targets/x86_64-linux/lib/stubs
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libext_server.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libcommon.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libllama.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libggml_static.a
 #cgo linux LDFLAGS: -lrt -ldl -lstdc++ -lm
 #cgo linux windows LDFLAGS: -lpthread
 
@@ -43,6 +37,8 @@ import (
 	"github.com/jmorganca/ollama/api"
 )
 
+// TODO switch Linux to always be dynamic
+// If that works out, then look at the impact of doing the same for Mac
 type extServer interface {
 	LLM
 	llama_server_init(sparams *C.ext_server_params_t, err *C.ext_server_resp_t)
