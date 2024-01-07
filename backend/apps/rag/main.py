@@ -72,7 +72,6 @@ def store_data_in_vector_db(data, collection_name) -> bool:
         return True
     except Exception as e:
         print(e)
-        print(e.__class__.__name__)
         if e.__class__.__name__ == "UniqueConstraintError":
             return True
 
@@ -113,10 +112,7 @@ def store_web(form_data: StoreWebForm):
 @app.post("/doc")
 def store_doc(collection_name: str = Form(...), file: UploadFile = File(...)):
     # "https://www.gutenberg.org/files/1727/1727-h/1727-h.htm"
-
-    file.filename = f"{uuid.uuid4()}-{file.filename}"
-    print(dir(file))
-    print(file.content_type)
+    file.filename = f"{collection_name}-{file.filename}"
 
     if file.content_type not in ["application/pdf", "text/plain"]:
         raise HTTPException(
