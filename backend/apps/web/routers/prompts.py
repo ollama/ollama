@@ -29,8 +29,7 @@ async def get_prompts(user=Depends(get_current_user)):
 
 
 @router.post("/create", response_model=Optional[PromptModel])
-async def create_new_prompt(form_data: PromptForm,
-                            user=Depends(get_current_user)):
+async def create_new_prompt(form_data: PromptForm, user=Depends(get_current_user)):
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -60,7 +59,7 @@ async def create_new_prompt(form_data: PromptForm,
 ############################
 
 
-@router.get("/{command}", response_model=Optional[PromptModel])
+@router.get("/command/{command}", response_model=Optional[PromptModel])
 async def get_prompt_by_command(command: str, user=Depends(get_current_user)):
     prompt = Prompts.get_prompt_by_command(f"/{command}")
 
@@ -78,10 +77,10 @@ async def get_prompt_by_command(command: str, user=Depends(get_current_user)):
 ############################
 
 
-@router.post("/{command}/update", response_model=Optional[PromptModel])
-async def update_prompt_by_command(command: str,
-                                   form_data: PromptForm,
-                                   user=Depends(get_current_user)):
+@router.post("/command/{command}/update", response_model=Optional[PromptModel])
+async def update_prompt_by_command(
+    command: str, form_data: PromptForm, user=Depends(get_current_user)
+):
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -103,9 +102,8 @@ async def update_prompt_by_command(command: str,
 ############################
 
 
-@router.delete("/{command}/delete", response_model=bool)
-async def delete_prompt_by_command(command: str,
-                                   user=Depends(get_current_user)):
+@router.delete("/command/{command}/delete", response_model=bool)
+async def delete_prompt_by_command(command: str, user=Depends(get_current_user)):
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

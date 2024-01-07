@@ -72,7 +72,7 @@ export const getPrompts = async (token: string = '') => {
 export const getPromptByCommand = async (token: string, command: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/${command}`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/command/${command}`, {
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -109,7 +109,7 @@ export const updatePromptByCommand = async (
 ) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/${command}/update`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/command/${command}/update`, {
 		method: 'POST',
 		headers: {
 			Accept: 'application/json',
@@ -148,7 +148,7 @@ export const deletePromptByCommand = async (token: string, command: string) => {
 
 	command = command.charAt(0) === '/' ? command.slice(1) : command;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/${command}/delete`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/command/${command}/delete`, {
 		method: 'DELETE',
 		headers: {
 			Accept: 'application/json',
