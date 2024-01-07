@@ -16,7 +16,10 @@ aiohttp
 peewee
 bcrypt
 
+
+langchain
 chromadb
+sentence_transformers
 
 PyJWT
 pyjwt[crypto]
