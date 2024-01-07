@@ -18,6 +18,7 @@ bcrypt
 
 
 langchain
+langchain-community
 chromadb
 sentence_transformers
 pypdf
