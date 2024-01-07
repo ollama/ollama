@@ -6,18 +6,19 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
-	import { models, modelfiles, user, settings, chats, chatId } from '$lib/stores';
+	import { models, modelfiles, user, settings, chats, chatId, config } from '$lib/stores';
+	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
+	import { createNewChat, getChatList, updateChatById } from '$lib/apis/chats';
+	import { queryVectorDB } from '$lib/apis/rag';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
-
-	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import ModelSelector from '$lib/components/chat/ModelSelector.svelte';
 	import Navbar from '$lib/components/layout/Navbar.svelte';
-	import { createNewChat, getChatById, getChatList, updateChatById } from '$lib/apis/chats';
+	import { RAGTemplate } from '$lib/utils/rag';
 
 	let loaded = false;
 	let stopResponseFlag = false;
