@@ -143,7 +143,14 @@
 					const file = inputFiles[0];
 					if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 						reader.readAsDataURL(file);
-					} else if (['application/pdf', 'text/plain', 'text/csv'].includes(file['type'])) {
+					} else if (
+						[
+							'application/pdf',
+							'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+							'text/plain',
+							'text/csv'
+						].includes(file['type'])
+					) {
 						uploadDoc(file);
 					} else {
 						toast.error(`Unsupported File Type '${file['type']}'.`);
@@ -249,7 +256,14 @@
 							const file = inputFiles[0];
 							if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 								reader.readAsDataURL(file);
-							} else if (['application/pdf', 'text/plain', 'text/csv'].includes(file['type'])) {
+							} else if (
+								[
+									'application/pdf',
+									'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+									'text/plain',
+									'text/csv'
+								].includes(file['type'])
+							) {
 								uploadDoc(file);
 								filesInputElement.value = '';
 							} else {

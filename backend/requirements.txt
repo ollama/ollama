@@ -16,12 +16,12 @@ aiohttp
 peewee
 bcrypt
 
-
 langchain
 langchain-community
 chromadb
 sentence_transformers
 pypdf
+docx2txt
 
 PyJWT
 pyjwt[crypto]
