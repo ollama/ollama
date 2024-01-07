@@ -3,7 +3,17 @@
 	import { fade, blur } from 'svelte/transition';
 
 	export let show = true;
+	export let size = 'md';
+
 	let mounted = false;
+
+	const sizeToWidth = (size) => {
+		if (size === 'sm') {
+			return 'w-[30rem]';
+		} else {
+			return 'w-[40rem]';
+		}
+	};
 
 	onMount(() => {
 		mounted = true;
@@ -28,7 +38,9 @@
 		}}
 	>
 		<div
-			class="m-auto rounded-xl max-w-full w-[40rem] mx-2 bg-gray-50 dark:bg-gray-900 shadow-3xl"
+			class="m-auto rounded-xl max-w-full {sizeToWidth(
+				size
+			)} mx-2 bg-gray-50 dark:bg-gray-900 shadow-3xl"
 			transition:fade={{ delay: 100, duration: 200 }}
 			on:click={(e) => {
 				e.stopPropagation();

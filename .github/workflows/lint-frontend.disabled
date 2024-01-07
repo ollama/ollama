@@ -1,0 +1,21 @@
+name: Bun CI
+on:
+  push:
+    branches: ['main']
+  pull_request:
+jobs:
+  build:
+    name: 'Lint Frontend'
+    env:
+      PUBLIC_API_BASE_URL: ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v1
+      - run: bun --version
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - run: bun run lint:frontend
+      - run: bun run lint:types
+        if: success() || failure()
