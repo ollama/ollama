@@ -31,6 +31,7 @@
 		updateOpenAIKey,
 		updateOpenAIUrl
 	} from '$lib/apis/openai';
+	import { resetVectorDB } from '$lib/apis/rag';
 
 	export let show = false;
 
@@ -1827,6 +1828,40 @@
 										</svg>
 									</div>
 									<div class=" self-center text-sm font-medium">Delete All Chats</div>
+								</button>
+							{/if}
+
+							{#if $user?.role === 'admin'}
+								<hr class=" dark:border-gray-700" />
+
+								<button
+									class=" flex rounded-md py-2 px-3.5 w-full hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+									on:click={() => {
+										const res = resetVectorDB(localStorage.token).catch((error) => {
+											toast.error(error);
+											return null;
+										});
+
+										if (res) {
+											toast.success('Success');
+										}
+									}}
+								>
+									<div class=" self-center mr-3">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M3.5 2A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 12.5 4H9.621a1.5 1.5 0 0 1-1.06-.44L7.439 2.44A1.5 1.5 0 0 0 6.38 2H3.5Zm6.75 7.75a.75.75 0 0 0 0-1.5h-4.5a.75.75 0 0 0 0 1.5h4.5Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</div>
+									<div class=" self-center text-sm font-medium">Reset Vector Storage</div>
 								</button>
 							{/if}
 						</div>

@@ -91,6 +91,26 @@
 		}
 	};
 
+	const uploadDoc = async (file) => {
+		console.log(file);
+
+		const doc = {
+			type: 'doc',
+			name: file.name,
+			collection_name: '',
+			upload_status: false,
+			error: ''
+		};
+
+		files = [...files, doc];
+		const res = await uploadDocToVectorDB(localStorage.token, '', file);
+
+		if (res) {
+			doc.upload_status = true;
+			files = files;
+		}
+	};
+
 	onMount(() => {
 		const dropZone = document.querySelector('body');
 
@@ -122,21 +142,8 @@
 					const file = inputFiles[0];
 					if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 						reader.readAsDataURL(file);
-					} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
-						console.log(file);
-						const hash = (await calculateSHA256(file)).substring(0, 63);
-						const res = await uploadDocToVectorDB(localStorage.token, hash, file);
-
-						if (res) {
-							files = [
-								...files,
-								{
-									type: 'doc',
-									name: file.name,
-									collection_name: res.collection_name
-								}
-							];
-						}
+					} else if (['application/pdf', 'text/plain', 'text/csv'].includes(file['type'])) {
+						uploadDoc(file);
 					} else {
 						toast.error(`Unsupported File Type '${file['type']}'.`);
 					}
@@ -241,22 +248,9 @@
 							const file = inputFiles[0];
 							if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 								reader.readAsDataURL(file);
-							} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
-								console.log(file);
-								const hash = (await calculateSHA256(file)).substring(0, 63);
-								const res = await uploadDocToVectorDB(localStorage.token, hash, file);
-
-								if (res) {
-									files = [
-										...files,
-										{
-											type: 'doc',
-											name: file.name,
-											collection_name: res.collection_name
-										}
-									];
-									filesInputElement.value = '';
-								}
+							} else if (['application/pdf', 'text/plain', 'text/csv'].includes(file['type'])) {
+								uploadDoc(file);
+								filesInputElement.value = '';
 							} else {
 								toast.error(`Unsupported File Type '${file['type']}'.`);
 								inputFiles = null;
@@ -283,21 +277,65 @@
 											class="h-16 w-[15rem] flex items-center space-x-3 px-2.5 dark:bg-gray-600 rounded-xl border border-gray-200 dark:border-none"
 										>
 											<div class="p-2.5 bg-red-400 text-white rounded-lg">
-												<svg
-													xmlns="http://www.w3.org/2000/svg"
-													viewBox="0 0 24 24"
-													fill="currentColor"
-													class="w-6 h-6"
-												>
-													<path
-														fill-rule="evenodd"
-														d="M5.625 1.5c-1.036 0-1.875.84-1.875 1.875v17.25c0 1.035.84 1.875 1.875 1.875h12.75c1.035 0 1.875-.84 1.875-1.875V12.75A3.75 3.75 0 0 0 16.5 9h-1.875a1.875 1.875 0 0 1-1.875-1.875V5.25A3.75 3.75 0 0 0 9 1.5H5.625ZM7.5 15a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 15Zm.75 2.25a.75.75 0 0 0 0 1.5H12a.75.75 0 0 0 0-1.5H8.25Z"
-														clip-rule="evenodd"
-													/>
-													<path
-														d="M12.971 1.816A5.23 5.23 0 0 1 14.25 5.25v1.875c0 .207.168.375.375.375H16.5a5.23 5.23 0 0 1 3.434 1.279 9.768 9.768 0 0 0-6.963-6.963Z"
-													/>
-												</svg>
+												{#if file.upload_status}
+													<svg
+														xmlns="http://www.w3.org/2000/svg"
+														viewBox="0 0 24 24"
+														fill="currentColor"
+														class="w-6 h-6"
+													>
+														<path
+															fill-rule="evenodd"
+															d="M5.625 1.5c-1.036 0-1.875.84-1.875 1.875v17.25c0 1.035.84 1.875 1.875 1.875h12.75c1.035 0 1.875-.84 1.875-1.875V12.75A3.75 3.75 0 0 0 16.5 9h-1.875a1.875 1.875 0 0 1-1.875-1.875V5.25A3.75 3.75 0 0 0 9 1.5H5.625ZM7.5 15a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 15Zm.75 2.25a.75.75 0 0 0 0 1.5H12a.75.75 0 0 0 0-1.5H8.25Z"
+															clip-rule="evenodd"
+														/>
+														<path
+															d="M12.971 1.816A5.23 5.23 0 0 1 14.25 5.25v1.875c0 .207.168.375.375.375H16.5a5.23 5.23 0 0 1 3.434 1.279 9.768 9.768 0 0 0-6.963-6.963Z"
+														/>
+													</svg>
+												{:else}
+													<svg
+														class=" w-6 h-6 translate-y-[0.5px]"
+														fill="currentColor"
+														viewBox="0 0 24 24"
+														xmlns="http://www.w3.org/2000/svg"
+														><style>
+															.spinner_qM83 {
+																animation: spinner_8HQG 1.05s infinite;
+															}
+															.spinner_oXPr {
+																animation-delay: 0.1s;
+															}
+															.spinner_ZTLf {
+																animation-delay: 0.2s;
+															}
+															@keyframes spinner_8HQG {
+																0%,
+																57.14% {
+																	animation-timing-function: cubic-bezier(0.33, 0.66, 0.66, 1);
+																	transform: translate(0);
+																}
+																28.57% {
+																	animation-timing-function: cubic-bezier(0.33, 0, 0.66, 0.33);
+																	transform: translateY(-6px);
+																}
+																100% {
+																	transform: translate(0);
+																}
+															}
+														</style><circle class="spinner_qM83" cx="4" cy="12" r="2.5" /><circle
+															class="spinner_qM83 spinner_oXPr"
+															cx="12"
+															cy="12"
+															r="2.5"
+														/><circle
+															class="spinner_qM83 spinner_ZTLf"
+															cx="20"
+															cy="12"
+															r="2.5"
+														/></svg
+													>
+												{/if}
 											</div>
 
 											<div class="flex flex-col justify-center -space-y-0.5">

@@ -11,9 +11,14 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 import os, shutil
 
-from chromadb.utils import embedding_functions
+# from chromadb.utils import embedding_functions
 
-from langchain_community.document_loaders import WebBaseLoader, TextLoader, PyPDFLoader
+from langchain_community.document_loaders import (
+    WebBaseLoader,
+    TextLoader,
+    PyPDFLoader,
+    CSVLoader,
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
@@ -23,15 +28,16 @@ from pydantic import BaseModel
 from typing import Optional
 
 import uuid
+import time
 
-
+from utils.misc import calculate_sha256
 from utils.utils import get_current_user
 from config import UPLOAD_DIR, EMBED_MODEL, CHROMA_CLIENT, CHUNK_SIZE, CHUNK_OVERLAP
 from constants import ERROR_MESSAGES
 
-EMBEDDING_FUNC = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name=EMBED_MODEL
-)
+# EMBEDDING_FUNC = embedding_functions.SentenceTransformerEmbeddingFunction(
+#     model_name=EMBED_MODEL
+# )
 
 app = FastAPI()
 
@@ -64,9 +70,7 @@ def store_data_in_vector_db(data, collection_name) -> bool:
     metadatas = [doc.metadata for doc in docs]
 
     try:
-        collection = CHROMA_CLIENT.create_collection(
-            name=collection_name, embedding_function=EMBEDDING_FUNC
-        )
+        collection = CHROMA_CLIENT.create_collection(name=collection_name)
 
         collection.add(
             documents=texts, metadatas=metadatas, ids=[str(uuid.uuid1()) for _ in texts]
@@ -125,14 +129,13 @@ def store_web(form_data: StoreWebForm, user=Depends(get_current_user)):
 
 @app.post("/doc")
 def store_doc(
-    collection_name: str = Form(...),
+    collection_name: Optional[str] = Form(None),
     file: UploadFile = File(...),
     user=Depends(get_current_user),
 ):
     # "https://www.gutenberg.org/files/1727/1727-h/1727-h.htm"
-    file.filename = f"{collection_name}-{file.filename}"
 
-    if file.content_type not in ["application/pdf", "text/plain"]:
+    if file.content_type not in ["application/pdf", "text/plain", "text/csv"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
@@ -146,10 +149,17 @@ def store_doc(
             f.write(contents)
             f.close()
 
+        f = open(file_path, "rb")
+        if collection_name == None:
+            collection_name = calculate_sha256(f)[:63]
+        f.close()
+
         if file.content_type == "application/pdf":
             loader = PyPDFLoader(file_path)
         elif file.content_type == "text/plain":
             loader = TextLoader(file_path)
+        elif file.content_type == "text/csv":
+            loader = CSVLoader(file_path)
 
         data = loader.load()
         result = store_data_in_vector_db(data, collection_name)
@@ -181,7 +191,7 @@ def reset_vector_db(user=Depends(get_current_user)):
 
 
 @app.get("/reset")
-def reset(user=Depends(get_current_user)):
+def reset(user=Depends(get_current_user)) -> bool:
     if user.role == "admin":
         folder = f"{UPLOAD_DIR}"
         for filename in os.listdir(folder):
@@ -199,7 +209,7 @@ def reset(user=Depends(get_current_user)):
         except Exception as e:
             print(e)
 
-        return {"status": True}
+        return True
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
