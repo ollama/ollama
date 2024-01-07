@@ -186,8 +186,11 @@
 		const _chatId = JSON.parse(JSON.stringify($chatId));
 
 		// TODO: update below to include all ancestral files
-		const docs = history.messages[parentId].files.filter((item) => item.type === 'file');
 
+		console.log(history.messages[parentId]);
+		const docs = history.messages[parentId]?.files?.filter((item) => item.type === 'doc') ?? [];
+
+		console.log(docs);
 		if (docs.length > 0) {
 			const query = history.messages[parentId].content;
 
@@ -206,6 +209,8 @@
 			const contextString = relevantContexts.reduce((a, context, i, arr) => {
 				return `${a}${context.documents.join(' ')}\n`;
 			}, '');
+
+			console.log(contextString);
 
 			history.messages[parentId].raContent = RAGTemplate(contextString, query);
 			history.messages[parentId].contexts = relevantContexts;

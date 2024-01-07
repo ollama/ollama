@@ -9,6 +9,7 @@ from fastapi import (
     Form,
 )
 from fastapi.middleware.cors import CORSMiddleware
+import os, shutil
 
 from chromadb.utils import embedding_functions
 
@@ -23,7 +24,7 @@ from typing import Optional
 
 import uuid
 
-from config import EMBED_MODEL, CHROMA_CLIENT, CHUNK_SIZE, CHUNK_OVERLAP
+from config import UPLOAD_DIR, EMBED_MODEL, CHROMA_CLIENT, CHUNK_SIZE, CHUNK_OVERLAP
 from constants import ERROR_MESSAGES
 
 EMBEDDING_FUNC = embedding_functions.SentenceTransformerEmbeddingFunction(
@@ -51,7 +52,7 @@ class StoreWebForm(CollectionNameForm):
     url: str
 
 
-def store_data_in_vector_db(data, collection_name):
+def store_data_in_vector_db(data, collection_name) -> bool:
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
     )
@@ -60,13 +61,22 @@ def store_data_in_vector_db(data, collection_name):
     texts = [doc.page_content for doc in docs]
     metadatas = [doc.metadata for doc in docs]
 
-    collection = CHROMA_CLIENT.create_collection(
-        name=collection_name, embedding_function=EMBEDDING_FUNC
-    )
+    try:
+        collection = CHROMA_CLIENT.create_collection(
+            name=collection_name, embedding_function=EMBEDDING_FUNC
+        )
 
-    collection.add(
-        documents=texts, metadatas=metadatas, ids=[str(uuid.uuid1()) for _ in texts]
-    )
+        collection.add(
+            documents=texts, metadatas=metadatas, ids=[str(uuid.uuid1()) for _ in texts]
+        )
+        return True
+    except Exception as e:
+        print(e)
+        print(e.__class__.__name__)
+        if e.__class__.__name__ == "UniqueConstraintError":
+            return True
+
+        return False
 
 
 @app.get("/")
@@ -116,7 +126,7 @@ def store_doc(collection_name: str = Form(...), file: UploadFile = File(...)):
 
     try:
         filename = file.filename
-        file_path = f"./data/{filename}"
+        file_path = f"{UPLOAD_DIR}/{filename}"
         contents = file.file.read()
         with open(file_path, "wb") as f:
             f.write(contents)
@@ -128,8 +138,15 @@ def store_doc(collection_name: str = Form(...), file: UploadFile = File(...)):
             loader = TextLoader(file_path)
 
         data = loader.load()
-        store_data_in_vector_db(data, collection_name)
-        return {"status": True, "collection_name": collection_name}
+        result = store_data_in_vector_db(data, collection_name)
+
+        if result:
+            return {"status": True, "collection_name": collection_name}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=ERROR_MESSAGES.DEFAULT(),
+            )
     except Exception as e:
         print(e)
         raise HTTPException(
@@ -138,6 +155,27 @@ def store_doc(collection_name: str = Form(...), file: UploadFile = File(...)):
         )
 
 
+@app.get("/reset/db")
 def reset_vector_db():
     CHROMA_CLIENT.reset()
+
+
+@app.get("/reset")
+def reset():
+    folder = f"{UPLOAD_DIR}"
+    for filename in os.listdir(folder):
+        file_path = os.path.join(folder, filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print("Failed to delete %s. Reason: %s" % (file_path, e))
+
+    try:
+        CHROMA_CLIENT.reset()
+    except Exception as e:
+        print(e)
+
     return {"status": True}

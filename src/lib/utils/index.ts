@@ -129,7 +129,6 @@ export const findWordIndices = (text) => {
 };
 
 export const calculateSHA256 = async (file) => {
-	console.log(file);
 	// Create a FileReader to read the file asynchronously
 	const reader = new FileReader();
 
@@ -156,7 +155,7 @@ export const calculateSHA256 = async (file) => {
 		const hashArray = Array.from(new Uint8Array(hashBuffer));
 		const hashHex = hashArray.map((byte) => byte.toString(16).padStart(2, '0')).join('');
 
-		return `sha256:${hashHex}`;
+		return `${hashHex}`;
 	} catch (error) {
 		console.error('Error calculating SHA-256 hash:', error);
 		throw error;

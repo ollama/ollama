@@ -124,16 +124,16 @@
 						reader.readAsDataURL(file);
 					} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
 						console.log(file);
-						const hash = await calculateSHA256(file);
-						// const res = uploadDocToVectorDB(localStorage.token, hash,file);
+						const hash = (await calculateSHA256(file)).substring(0, 63);
+						const res = await uploadDocToVectorDB(localStorage.token, hash, file);
 
-						if (true) {
+						if (res) {
 							files = [
 								...files,
 								{
 									type: 'doc',
 									name: file.name,
-									collection_name: hash
+									collection_name: res.collection_name
 								}
 							];
 						}
@@ -243,16 +243,16 @@
 								reader.readAsDataURL(file);
 							} else if (['application/pdf', 'text/plain'].includes(file['type'])) {
 								console.log(file);
-								const hash = await calculateSHA256(file);
-								// const res = uploadDocToVectorDB(localStorage.token,hash,file);
+								const hash = (await calculateSHA256(file)).substring(0, 63);
+								const res = await uploadDocToVectorDB(localStorage.token, hash, file);
 
-								if (true) {
+								if (res) {
 									files = [
 										...files,
 										{
 											type: 'doc',
 											name: file.name,
-											collection_name: hash
+											collection_name: res.collection_name
 										}
 									];
 									filesInputElement.value = '';
@@ -280,7 +280,7 @@
 										<img src={file.url} alt="input" class=" h-16 w-16 rounded-xl object-cover" />
 									{:else if file.type === 'doc'}
 										<div
-											class="h-16 w-[15rem] flex items-center space-x-3 px-2 bg-gray-600 rounded-xl"
+											class="h-16 w-[15rem] flex items-center space-x-3 px-2.5 bg-gray-600 rounded-xl"
 										>
 											<div class="p-2.5 bg-red-400 rounded-lg">
 												<svg
