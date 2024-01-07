@@ -1,3 +1,5 @@
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi import HTTPException
@@ -12,8 +14,7 @@ from apps.openai.main import app as openai_app
 from apps.web.main import app as webui_app
 from apps.rag.main import app as rag_app
 
-
-import time
+from config import ENV
 
 
 class SPAStaticFiles(StaticFiles):
@@ -27,7 +28,7 @@ class SPAStaticFiles(StaticFiles):
                 raise ex
 
 
-app = FastAPI()
+app = FastAPI(docs_url="/docs" if ENV == "dev" else None, redoc_url=None)
 
 origins = ["*"]
 
