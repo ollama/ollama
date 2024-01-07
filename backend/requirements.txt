@@ -16,6 +16,13 @@ aiohttp
 peewee
 bcrypt
 
+
+langchain
+langchain-community
+chromadb
+sentence_transformers
+pypdf
+
 PyJWT
 pyjwt[crypto]
 

@@ -6,22 +6,25 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
-	import { models, modelfiles, user, settings, chats, chatId } from '$lib/stores';
+	import { models, modelfiles, user, settings, chats, chatId, config } from '$lib/stores';
+	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
+	import { createNewChat, getChatById, getChatList, updateChatById } from '$lib/apis/chats';
+	import { queryVectorDB } from '$lib/apis/rag';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
-
-	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import ModelSelector from '$lib/components/chat/ModelSelector.svelte';
 	import Navbar from '$lib/components/layout/Navbar.svelte';
-	import { createNewChat, getChatById, getChatList, updateChatById } from '$lib/apis/chats';
+	import { RAGTemplate } from '$lib/utils/rag';
 
 	let loaded = false;
+
 	let stopResponseFlag = false;
 	let autoScroll = true;
+	let processing = '';
 
 	// let chatId = $page.params.id;
 	let selectedModels = [''];
@@ -132,8 +135,110 @@
 	// Ollama functions
 	//////////////////////////
 
+	const submitPrompt = async (userPrompt) => {
+		console.log('submitPrompt', $chatId);
+
+		if (selectedModels.includes('')) {
+			toast.error('Model not selected');
+		} else if (messages.length != 0 && messages.at(-1).done != true) {
+			// Response not done
+			console.log('wait');
+		} else {
+			// Reset chat message textarea height
+			document.getElementById('chat-textarea').style.height = '';
+
+			// Create user message
+			let userMessageId = uuidv4();
+			let userMessage = {
+				id: userMessageId,
+				parentId: messages.length !== 0 ? messages.at(-1).id : null,
+				childrenIds: [],
+				role: 'user',
+				content: userPrompt,
+				files: files.length > 0 ? files : undefined
+			};
+
+			// Add message to history and Set currentId to messageId
+			history.messages[userMessageId] = userMessage;
+			history.currentId = userMessageId;
+
+			// Append messageId to childrenIds of parent message
+			if (messages.length !== 0) {
+				history.messages[messages.at(-1).id].childrenIds.push(userMessageId);
+			}
+
+			// Wait until history/message have been updated
+			await tick();
+
+			// Create new chat if only one message in messages
+			if (messages.length == 1) {
+				if ($settings.saveChatHistory ?? true) {
+					chat = await createNewChat(localStorage.token, {
+						id: $chatId,
+						title: 'New Chat',
+						models: selectedModels,
+						system: $settings.system ?? undefined,
+						options: {
+							...($settings.options ?? {})
+						},
+						messages: messages,
+						history: history,
+						timestamp: Date.now()
+					});
+					await chats.set(await getChatList(localStorage.token));
+					await chatId.set(chat.id);
+				} else {
+					await chatId.set('local');
+				}
+				await tick();
+			}
+
+			// Reset chat input textarea
+			prompt = '';
+			files = [];
+
+			// Send prompt
+			await sendPrompt(userPrompt, userMessageId);
+		}
+	};
+
 	const sendPrompt = async (prompt, parentId) => {
 		const _chatId = JSON.parse(JSON.stringify($chatId));
+
+		const docs = messages
+			.filter((message) => message?.files ?? null)
+			.map((message) => message.files.filter((item) => item.type === 'doc'))
+			.flat(1);
+
+		console.log(docs);
+		if (docs.length > 0) {
+			processing = 'Reading';
+			const query = history.messages[parentId].content;
+
+			let relevantContexts = await Promise.all(
+				docs.map(async (doc) => {
+					return await queryVectorDB(localStorage.token, doc.collection_name, query, 4).catch(
+						(error) => {
+							console.log(error);
+							return null;
+						}
+					);
+				})
+			);
+			relevantContexts = relevantContexts.filter((context) => context);
+
+			const contextString = relevantContexts.reduce((a, context, i, arr) => {
+				return `${a}${context.documents.join(' ')}\n`;
+			}, '');
+
+			console.log(contextString);
+
+			history.messages[parentId].raContent = RAGTemplate(contextString, query);
+			history.messages[parentId].contexts = relevantContexts;
+			await tick();
+			processing = '';
+		}
+
 		await Promise.all(
 			selectedModels.map(async (model) => {
 				console.log(model);
@@ -151,6 +256,7 @@
 
 		await chats.set(await getChatList(localStorage.token));
 	};
+
 	const sendPromptOllama = async (model, userPrompt, parentId, _chatId) => {
 		// Create response message
 		let responseMessageId = uuidv4();
@@ -195,7 +301,7 @@
 				.filter((message) => message)
 				.map((message) => ({
 					role: message.role,
-					content: message.content,
+					content: message?.raContent ?? message.content,
 					...(message.files && {
 						images: message.files
 							.filter((file) => file.type === 'image')
@@ -298,11 +404,13 @@
 			}
 
 			if ($chatId == _chatId) {
-				chat = await updateChatById(localStorage.token, _chatId, {
-					messages: messages,
-					history: history
-				});
-				await chats.set(await getChatList(localStorage.token));
+				if ($settings.saveChatHistory ?? true) {
+					chat = await updateChatById(localStorage.token, _chatId, {
+						messages: messages,
+						history: history
+					});
+					await chats.set(await getChatList(localStorage.token));
+				}
 			}
 		} else {
 			if (res !== null) {
@@ -382,7 +490,7 @@
 								content: [
 									{
 										type: 'text',
-										text: message.content
+										text: message?.raContent ?? message.content
 									},
 									...message.files
 										.filter((file) => file.type === 'image')
@@ -394,7 +502,7 @@
 										}))
 								]
 						  }
-						: { content: message.content })
+						: { content: message?.raContent ?? message.content })
 				})),
 			seed: $settings?.options?.seed ?? undefined,
 			stop: $settings?.options?.stop ?? undefined,
@@ -462,11 +570,13 @@
 			}
 
 			if ($chatId == _chatId) {
-				chat = await updateChatById(localStorage.token, _chatId, {
-					messages: messages,
-					history: history
-				});
-				await chats.set(await getChatList(localStorage.token));
+				if ($settings.saveChatHistory ?? true) {
+					chat = await updateChatById(localStorage.token, _chatId, {
+						messages: messages,
+						history: history
+					});
+					await chats.set(await getChatList(localStorage.token));
+				}
 			}
 		} else {
 			if (res !== null) {
@@ -505,69 +615,6 @@
 		if (messages.length == 2) {
 			window.history.replaceState(history.state, '', `/c/${_chatId}`);
 			await setChatTitle(_chatId, userPrompt);
-		}
-	};
-
-	const submitPrompt = async (userPrompt) => {
-		console.log('submitPrompt', $chatId);
-
-		if (selectedModels.includes('')) {
-			toast.error('Model not selected');
-		} else if (messages.length != 0 && messages.at(-1).done != true) {
-			// Response not done
-			console.log('wait');
-		} else {
-			// Reset chat message textarea height
-			document.getElementById('chat-textarea').style.height = '';
-
-			// Create user message
-			let userMessageId = uuidv4();
-			let userMessage = {
-				id: userMessageId,
-				parentId: messages.length !== 0 ? messages.at(-1).id : null,
-				childrenIds: [],
-				role: 'user',
-				content: userPrompt,
-				files: files.length > 0 ? files : undefined
-			};
-
-			// Add message to history and Set currentId to messageId
-			history.messages[userMessageId] = userMessage;
-			history.currentId = userMessageId;
-
-			// Append messageId to childrenIds of parent message
-			if (messages.length !== 0) {
-				history.messages[messages.at(-1).id].childrenIds.push(userMessageId);
-			}
-
-			// Wait until history/message have been updated
-			await tick();
-
-			// Create new chat if only one message in messages
-			if (messages.length == 1) {
-				chat = await createNewChat(localStorage.token, {
-					id: $chatId,
-					title: 'New Chat',
-					models: selectedModels,
-					system: $settings.system ?? undefined,
-					options: {
-						...($settings.options ?? {})
-					},
-					messages: messages,
-					history: history,
-					timestamp: Date.now()
-				});
-				await chats.set(await getChatList(localStorage.token));
-				await chatId.set(chat.id);
-				await tick();
-			}
-
-			// Reset chat input textarea
-			prompt = '';
-			files = [];
-
-			// Send prompt
-			await sendPrompt(userPrompt, userMessageId);
 		}
 	};
 
@@ -642,6 +689,7 @@
 					chatId={$chatId}
 					{selectedModels}
 					{selectedModelfiles}
+					{processing}
 					bind:history
 					bind:messages
 					bind:autoScroll

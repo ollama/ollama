@@ -6,7 +6,6 @@ class MESSAGES(str, Enum):
 
 
 class ERROR_MESSAGES(str, Enum):
-
     def __str__(self) -> str:
         return super().__str__()
 
@@ -30,7 +29,12 @@ class ERROR_MESSAGES(str, Enum):
     UNAUTHORIZED = "401 Unauthorized"
     ACCESS_PROHIBITED = "You do not have permission to access this resource. Please contact your administrator for assistance."
     ACTION_PROHIBITED = (
-        "The requested action has been restricted as a security measure.")
+        "The requested action has been restricted as a security measure."
+    )
+
+    FILE_NOT_SENT = "FILE_NOT_SENT"
+    FILE_NOT_SUPPORTED = "Oops! It seems like the file format you're trying to upload is not supported. Please upload a file with a supported format (e.g., JPG, PNG, PDF, TXT) and try again."
+
     NOT_FOUND = "We could not find what you're looking for :/"
     USER_NOT_FOUND = "We could not find what you're looking for :/"
     API_KEY_NOT_FOUND = "Oops! It looks like there's a hiccup. The API key is missing. Please make sure to provide a valid API key to access this feature."

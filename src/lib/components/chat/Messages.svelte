@@ -10,11 +10,13 @@
 	import UserMessage from './Messages/UserMessage.svelte';
 	import ResponseMessage from './Messages/ResponseMessage.svelte';
 	import Placeholder from './Messages/Placeholder.svelte';
+	import Spinner from '../common/Spinner.svelte';
 
 	export let chatId = '';
 	export let sendPrompt: Function;
 	export let regenerateResponse: Function;
 
+	export let processing = '';
 	export let bottomPadding = false;
 	export let autoScroll;
 	export let selectedModels;
@@ -218,7 +220,7 @@
 	{#key chatId}
 		{#each messages as message, messageIdx}
 			<div class=" w-full">
-				<div class="flex justify-between px-5 mb-3 max-w-3xl mx-auto rounded-lg group">
+				<div class="flex flex-col justify-between px-5 mb-3 max-w-3xl mx-auto rounded-lg group">
 					{#if message.role === 'user'}
 						<UserMessage
 							user={$user}
@@ -233,6 +235,52 @@
 							{showNextMessage}
 							{copyToClipboard}
 						/>
+
+						{#if messages.length - 1 === messageIdx && processing !== ''}
+							<div class="flex my-2.5 ml-12 items-center w-fit space-x-2.5">
+								<div class=" dark:text-blue-100">
+									<svg
+										class=" w-4 h-4 translate-y-[0.5px]"
+										fill="currentColor"
+										viewBox="0 0 24 24"
+										xmlns="http://www.w3.org/2000/svg"
+										><style>
+											.spinner_qM83 {
+												animation: spinner_8HQG 1.05s infinite;
+											}
+											.spinner_oXPr {
+												animation-delay: 0.1s;
+											}
+											.spinner_ZTLf {
+												animation-delay: 0.2s;
+											}
+											@keyframes spinner_8HQG {
+												0%,
+												57.14% {
+													animation-timing-function: cubic-bezier(0.33, 0.66, 0.66, 1);
+													transform: translate(0);
+												}
+												28.57% {
+													animation-timing-function: cubic-bezier(0.33, 0, 0.66, 0.33);
+													transform: translateY(-6px);
+												}
+												100% {
+													transform: translate(0);
+												}
+											}
+										</style><circle class="spinner_qM83" cx="4" cy="12" r="2.5" /><circle
+											class="spinner_qM83 spinner_oXPr"
+											cx="12"
+											cy="12"
+											r="2.5"
+										/><circle class="spinner_qM83 spinner_ZTLf" cx="20" cy="12" r="2.5" /></svg
+									>
+								</div>
+								<div class=" text-sm font-medium">
+									{processing}
+								</div>
+							</div>
+						{/if}
 					{:else}
 						<ResponseMessage
 							{message}

@@ -10,7 +10,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM python:3.11-slim-buster as base
+FROM python:3.11-bookworm as base
 
 ENV ENV=prod
 
@@ -28,6 +28,7 @@ WORKDIR /app/backend
 
 COPY ./backend/requirements.txt ./requirements.txt
 RUN pip3 install -r requirements.txt
+RUN python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY ./backend .
 
