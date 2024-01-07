@@ -60,9 +60,9 @@
 								<img src={file.url} alt="input" class=" max-h-96 rounded-lg" draggable="false" />
 							{:else if file.type === 'doc'}
 								<div
-									class="h-16 w-[15rem] flex items-center space-x-3 px-2.5 bg-gray-600 rounded-xl"
+									class="h-16 w-[15rem] flex items-center space-x-3 px-2.5 dark:bg-gray-600 rounded-xl border border-gray-200 dark:border-none"
 								>
-									<div class="p-2.5 bg-red-400 rounded-lg">
+									<div class="p-2.5 bg-red-400 text-white rounded-lg">
 										<svg
 											xmlns="http://www.w3.org/2000/svg"
 											viewBox="0 0 24 24"
@@ -81,7 +81,7 @@
 									</div>
 
 									<div class="flex flex-col justify-center -space-y-0.5">
-										<div class=" text-gray-100 text-sm line-clamp-1">
+										<div class=" dark:text-gray-100 text-sm font-medium line-clamp-1">
 											{file.name}
 										</div>
 
