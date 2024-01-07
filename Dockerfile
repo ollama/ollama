@@ -10,7 +10,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM python:3.11-slim-buster as base
+FROM python:3.11-bookworm as base
 
 ENV ENV=prod
 
