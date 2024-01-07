@@ -185,10 +185,10 @@
 	const sendPrompt = async (prompt, parentId) => {
 		const _chatId = JSON.parse(JSON.stringify($chatId));
 
-		// TODO: update below to include all ancestral files
-
-		console.log(history.messages[parentId]);
-		const docs = history.messages[parentId]?.files?.filter((item) => item.type === 'doc') ?? [];
+		const docs = messages
+			.filter((message) => message?.files ?? null)
+			.map((message) => message.files.filter((item) => item.type === 'doc'))
+			.flat(1);
 
 		console.log(docs);
 		if (docs.length > 0) {
