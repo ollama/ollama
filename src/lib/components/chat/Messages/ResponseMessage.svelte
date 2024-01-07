@@ -88,6 +88,7 @@
 				let code = block.querySelector('code');
 				code.style.borderTopRightRadius = 0;
 				code.style.borderTopLeftRadius = 0;
+				code.style.whiteSpace = 'pre';
 
 				let topBarDiv = document.createElement('div');
 				topBarDiv.style.backgroundColor = '#202123';
@@ -284,7 +285,7 @@
 									</div>
 								</div>
 							{:else}
-								{@html marked(message.content.replace('\\\\', '\\\\\\'))}
+								{@html marked(message.content.replaceAll('\\', '\\\\'))}
 							{/if}
 
 							{#if message.done}

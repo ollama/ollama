@@ -6,6 +6,7 @@ class MESSAGES(str, Enum):
 
 
 class ERROR_MESSAGES(str, Enum):
+
     def __str__(self) -> str:
         return super().__str__()
 
@@ -17,19 +18,20 @@ class ERROR_MESSAGES(str, Enum):
     USERNAME_TAKEN = (
         "Uh-oh! This username is already registered. Please choose another username."
     )
+    COMMAND_TAKEN = "Uh-oh! This command is already registered. Please choose another command string."
     INVALID_TOKEN = (
         "Your session has expired or the token is invalid. Please sign in again."
     )
     INVALID_CRED = "The email or password provided is incorrect. Please check for typos and try logging in again."
+    INVALID_EMAIL_FORMAT = "The email format you entered is invalid. Please double-check and make sure you're using a valid email address (e.g., yourname@example.com)."
     INVALID_PASSWORD = (
         "The password provided is incorrect. Please check for typos and try again."
     )
     UNAUTHORIZED = "401 Unauthorized"
     ACCESS_PROHIBITED = "You do not have permission to access this resource. Please contact your administrator for assistance."
     ACTION_PROHIBITED = (
-        "The requested action has been restricted as a security measure."
-    )
+        "The requested action has been restricted as a security measure.")
     NOT_FOUND = "We could not find what you're looking for :/"
     USER_NOT_FOUND = "We could not find what you're looking for :/"
-
+    API_KEY_NOT_FOUND = "Oops! It looks like there's a hiccup. The API key is missing. Please make sure to provide a valid API key to access this feature."
     MALICIOUS = "Unusual activities detected, please try again in a few minutes."

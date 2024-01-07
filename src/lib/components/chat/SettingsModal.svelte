@@ -7,19 +7,30 @@
 	import { config, models, settings, user, chats } from '$lib/stores';
 	import { splitStream, getGravatarURL } from '$lib/utils';
 
-	import { getOllamaVersion } from '$lib/apis/ollama';
-	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
 	import {
-		WEB_UI_VERSION,
-		OLLAMA_API_BASE_URL,
-		WEBUI_API_BASE_URL,
-		WEBUI_BASE_URL
-	} from '$lib/constants';
+		getOllamaVersion,
+		getOllamaModels,
+		getOllamaAPIUrl,
+		updateOllamaAPIUrl,
+		pullModel,
+		createModel,
+		deleteModel
+	} from '$lib/apis/ollama';
+	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
+	import { WEB_UI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import Advanced from './Settings/Advanced.svelte';
 	import Modal from '../common/Modal.svelte';
 	import { updateUserPassword } from '$lib/apis/auths';
 	import { goto } from '$app/navigation';
+	import Page from '../../../routes/(app)/+page.svelte';
+	import {
+		getOpenAIKey,
+		getOpenAIModels,
+		getOpenAIUrl,
+		updateOpenAIKey,
+		updateOpenAIUrl
+	} from '$lib/apis/openai';
 
 	export let show = false;
 
@@ -33,7 +44,8 @@
 	let selectedTab = 'general';
 
 	// General
-	let API_BASE_URL = OLLAMA_API_BASE_URL;
+	let API_BASE_URL = '';
+	let themes = ['dark', 'light', 'rose-pine dark', 'rose-pine-dawn light'];
 	let theme = 'dark';
 	let notificationEnabled = false;
 	let system = '';
@@ -53,7 +65,8 @@
 		top_p: '',
 		stop: '',
 		tfs_z: '',
-		num_ctx: ''
+		num_ctx: '',
+		num_predict: ''
 	};
 
 	// Models
@@ -72,17 +85,21 @@
 
 	let deleteModelTag = '';
 
+	// External
+
+	let OPENAI_API_KEY = '';
+	let OPENAI_API_BASE_URL = '';
+
 	// Addons
 	let titleAutoGenerate = true;
 	let speechAutoSend = false;
 	let responseAutoCopy = false;
 
 	let gravatarEmail = '';
-	let OPENAI_API_KEY = '';
-	let OPENAI_API_BASE_URL = '';
+	let titleAutoGenerateModel = '';
 
 	// Chats
-
+	let saveChatHistory = true;
 	let importFiles;
 	let showDeleteConfirm = false;
 
@@ -134,20 +151,21 @@
 	// About
 	let ollamaVersion = '';
 
-	const checkOllamaConnection = async () => {
-		if (API_BASE_URL === '') {
-			API_BASE_URL = OLLAMA_API_BASE_URL;
-		}
-		const _models = await getModels(API_BASE_URL, 'ollama');
+	const updateOllamaAPIUrlHandler = async () => {
+		API_BASE_URL = await updateOllamaAPIUrl(localStorage.token, API_BASE_URL);
+		const _models = await getModels('ollama');
 
 		if (_models.length > 0) {
 			toast.success('Server connection verified');
 			await models.set(_models);
-
-			saveSettings({
-				API_BASE_URL: API_BASE_URL
-			});
 		}
+	};
+
+	const updateOpenAIHandler = async () => {
+		OPENAI_API_BASE_URL = await updateOpenAIUrl(localStorage.token, OPENAI_API_BASE_URL);
+		OPENAI_API_KEY = await updateOpenAIKey(localStorage.token, OPENAI_API_KEY);
+
+		await models.set(await getModels());
 	};
 
 	const toggleTheme = async () => {
@@ -218,73 +236,72 @@
 		}
 	};
 
-	const toggleAuthHeader = async () => {
-		authEnabled = !authEnabled;
+	const toggleSaveChatHistory = async () => {
+		saveChatHistory = !saveChatHistory;
+		console.log(saveChatHistory);
+
+		if (saveChatHistory === false) {
+			await goto('/');
+		}
+		saveSettings({ saveChatHistory: saveChatHistory });
 	};
 
 	const pullModelHandler = async () => {
 		modelTransferring = true;
-		const res = await fetch(`${API_BASE_URL}/pull`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'text/event-stream',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			},
-			body: JSON.stringify({
-				name: modelTag
-			})
-		});
 
-		const reader = res.body
-			.pipeThrough(new TextDecoderStream())
-			.pipeThrough(splitStream('\n'))
-			.getReader();
+		const res = await pullModel(localStorage.token, modelTag);
 
-		while (true) {
-			const { value, done } = await reader.read();
-			if (done) break;
+		if (res) {
+			const reader = res.body
+				.pipeThrough(new TextDecoderStream())
+				.pipeThrough(splitStream('\n'))
+				.getReader();
 
-			try {
-				let lines = value.split('\n');
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
 
-				for (const line of lines) {
-					if (line !== '') {
-						console.log(line);
-						let data = JSON.parse(line);
-						console.log(data);
+				try {
+					let lines = value.split('\n');
 
-						if (data.error) {
-							throw data.error;
-						}
+					for (const line of lines) {
+						if (line !== '') {
+							console.log(line);
+							let data = JSON.parse(line);
+							console.log(data);
 
-						if (data.detail) {
-							throw data.detail;
-						}
-						if (data.status) {
-							if (!data.digest) {
-								toast.success(data.status);
+							if (data.error) {
+								throw data.error;
+							}
 
-								if (data.status === 'success') {
-									const notification = new Notification(`Ollama`, {
-										body: `Model '${modelTag}' has been successfully downloaded.`,
-										icon: '/favicon.png'
-									});
-								}
-							} else {
-								digest = data.digest;
-								if (data.completed) {
-									pullProgress = Math.round((data.completed / data.total) * 1000) / 10;
+							if (data.detail) {
+								throw data.detail;
+							}
+							if (data.status) {
+								if (!data.digest) {
+									toast.success(data.status);
+
+									if (data.status === 'success') {
+										const notification = new Notification(`Ollama`, {
+											body: `Model '${modelTag}' has been successfully downloaded.`,
+											icon: '/favicon.png'
+										});
+									}
 								} else {
-									pullProgress = 100;
+									digest = data.digest;
+									if (data.completed) {
+										pullProgress = Math.round((data.completed / data.total) * 1000) / 10;
+									} else {
+										pullProgress = 100;
+									}
 								}
 							}
 						}
 					}
+				} catch (error) {
+					console.log(error);
+					toast.error(error);
 				}
-			} catch (error) {
-				console.log(error);
-				toast.error(error);
 			}
 		}
 
@@ -405,21 +422,11 @@
 		}
 
 		if (uploaded) {
-			const res = await fetch(`${$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/create`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'text/event-stream',
-					...($settings.authHeader && { Authorization: $settings.authHeader }),
-					...($user && { Authorization: `Bearer ${localStorage.token}` })
-				},
-				body: JSON.stringify({
-					name: `${name}:latest`,
-					modelfile: `FROM @${modelFileDigest}\n${modelFileContent}`
-				})
-			}).catch((err) => {
-				console.log(err);
-				return null;
-			});
+			const res = await createModel(
+				localStorage.token,
+				`${name}:latest`,
+				`FROM @${modelFileDigest}\n${modelFileContent}`
+			);
 
 			if (res && res.ok) {
 				const reader = res.body
@@ -485,124 +492,35 @@
 	};
 
 	const deleteModelHandler = async () => {
-		const res = await fetch(`${API_BASE_URL}/delete`, {
-			method: 'DELETE',
-			headers: {
-				'Content-Type': 'text/event-stream',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			},
-			body: JSON.stringify({
-				name: deleteModelTag
-			})
+		const res = await deleteModel(localStorage.token, deleteModelTag).catch((error) => {
+			toast.error(error);
 		});
 
-		const reader = res.body
-			.pipeThrough(new TextDecoderStream())
-			.pipeThrough(splitStream('\n'))
-			.getReader();
-
-		while (true) {
-			const { value, done } = await reader.read();
-			if (done) break;
-
-			try {
-				let lines = value.split('\n');
-
-				for (const line of lines) {
-					if (line !== '' && line !== 'null') {
-						console.log(line);
-						let data = JSON.parse(line);
-						console.log(data);
-
-						if (data.error) {
-							throw data.error;
-						}
-						if (data.detail) {
-							throw data.detail;
-						}
-
-						if (data.status) {
-						}
-					} else {
-						toast.success(`Deleted ${deleteModelTag}`);
-					}
-				}
-			} catch (error) {
-				console.log(error);
-				toast.error(error);
-			}
+		if (res) {
+			toast.success(`Deleted ${deleteModelTag}`);
 		}
 
 		deleteModelTag = '';
 		models.set(await getModels());
 	};
 
-	const getModels = async (url = '', type = 'all') => {
-		let models = [];
-		const res = await fetch(`${url ? url : $settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL}/tags`, {
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				...($settings.authHeader && { Authorization: $settings.authHeader }),
-				...($user && { Authorization: `Bearer ${localStorage.token}` })
-			}
-		})
-			.then(async (res) => {
-				if (!res.ok) throw await res.json();
-				return res.json();
-			})
-			.catch((error) => {
-				console.log(error);
-				if ('detail' in error) {
-					toast.error(error.detail);
-				} else {
-					toast.error('Server connection failed');
-				}
-				return null;
-			});
-		console.log(res);
-		models.push(...(res?.models ?? []));
+	const getModels = async (type = 'all') => {
+		const models = [];
+		models.push(
+			...(await getOllamaModels(localStorage.token).catch((error) => {
+				toast.error(error);
+				return [];
+			}))
+		);
 
 		// If OpenAI API Key exists
-		if (type === 'all' && $settings.OPENAI_API_KEY) {
-			const API_BASE_URL = $settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+		if (type === 'all' && OPENAI_API_KEY) {
+			const openAIModels = await getOpenAIModels(localStorage.token).catch((error) => {
+				console.log(error);
+				return null;
+			});
 
-			// Validate OPENAI_API_KEY
-			const openaiModelRes = await fetch(`${API_BASE_URL}/models`, {
-				method: 'GET',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${$settings.OPENAI_API_KEY}`
-				}
-			})
-				.then(async (res) => {
-					if (!res.ok) throw await res.json();
-					return res.json();
-				})
-				.catch((error) => {
-					console.log(error);
-					toast.error(`OpenAI: ${error?.error?.message ?? 'Network Problem'}`);
-					return null;
-				});
-
-			const openAIModels = Array.isArray(openaiModelRes)
-				? openaiModelRes
-				: openaiModelRes?.data ?? null;
-
-			models.push(
-				...(openAIModels
-					? [
-							{ name: 'hr' },
-							...openAIModels
-								.map((model) => ({ name: model.id, external: true }))
-								.filter((model) =>
-									API_BASE_URL.includes('openai') ? model.name.includes('gpt') : true
-								)
-					  ]
-					: [])
-			);
+			models.push(...(openAIModels ? [{ name: 'hr' }, ...openAIModels] : []));
 		}
 
 		return models;
@@ -634,15 +552,20 @@
 	};
 
 	onMount(async () => {
+		console.log('settings', $user.role === 'admin');
+		if ($user.role === 'admin') {
+			API_BASE_URL = await getOllamaAPIUrl(localStorage.token);
+			OPENAI_API_BASE_URL = await getOpenAIUrl(localStorage.token);
+			OPENAI_API_KEY = await getOpenAIKey(localStorage.token);
+		}
+
 		let settings = JSON.parse(localStorage.getItem('settings') ?? '{}');
 		console.log(settings);
 
 		theme = localStorage.theme ?? 'dark';
 		notificationEnabled = settings.notificationEnabled ?? false;
 
-		API_BASE_URL = settings.API_BASE_URL ?? OLLAMA_API_BASE_URL;
 		system = settings.system ?? '';
-
 		requestFormat = settings.requestFormat ?? '';
 
 		options.seed = settings.seed ?? 0;
@@ -657,10 +580,10 @@
 		titleAutoGenerate = settings.titleAutoGenerate ?? true;
 		speechAutoSend = settings.speechAutoSend ?? false;
 		responseAutoCopy = settings.responseAutoCopy ?? false;
-
+		titleAutoGenerateModel = settings.titleAutoGenerateModel ?? '';
 		gravatarEmail = settings.gravatarEmail ?? '';
-		OPENAI_API_KEY = settings.OPENAI_API_KEY ?? '';
-		OPENAI_API_BASE_URL = settings.OPENAI_API_BASE_URL ?? 'https://api.openai.com/v1';
+
+		saveChatHistory = settings.saveChatHistory ?? true;
 
 		authEnabled = settings.authHeader !== undefined ? true : false;
 		if (authEnabled) {
@@ -668,10 +591,7 @@
 			authContent = settings.authHeader.split(' ')[1];
 		}
 
-		ollamaVersion = await getOllamaVersion(
-			API_BASE_URL ?? OLLAMA_API_BASE_URL,
-			localStorage.token
-		).catch((error) => {
+		ollamaVersion = await getOllamaVersion(localStorage.token).catch((error) => {
 			return '';
 		});
 	});
@@ -755,55 +675,57 @@
 					<div class=" self-center">Advanced</div>
 				</button>
 
-				<button
-					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
-					'models'
-						? 'bg-gray-200 dark:bg-gray-700'
-						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
-					on:click={() => {
-						selectedTab = 'models';
-					}}
-				>
-					<div class=" self-center mr-2">
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 20 20"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								fill-rule="evenodd"
-								d="M10 1c3.866 0 7 1.79 7 4s-3.134 4-7 4-7-1.79-7-4 3.134-4 7-4zm5.694 8.13c.464-.264.91-.583 1.306-.952V10c0 2.21-3.134 4-7 4s-7-1.79-7-4V8.178c.396.37.842.688 1.306.953C5.838 10.006 7.854 10.5 10 10.5s4.162-.494 5.694-1.37zM3 13.179V15c0 2.21 3.134 4 7 4s7-1.79 7-4v-1.822c-.396.37-.842.688-1.306.953-1.532.875-3.548 1.369-5.694 1.369s-4.162-.494-5.694-1.37A7.009 7.009 0 013 13.179z"
-								clip-rule="evenodd"
-							/>
-						</svg>
-					</div>
-					<div class=" self-center">Models</div>
-				</button>
+				{#if $user?.role === 'admin'}
+					<button
+						class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+						'models'
+							? 'bg-gray-200 dark:bg-gray-700'
+							: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+						on:click={() => {
+							selectedTab = 'models';
+						}}
+					>
+						<div class=" self-center mr-2">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 20 20"
+								fill="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M10 1c3.866 0 7 1.79 7 4s-3.134 4-7 4-7-1.79-7-4 3.134-4 7-4zm5.694 8.13c.464-.264.91-.583 1.306-.952V10c0 2.21-3.134 4-7 4s-7-1.79-7-4V8.178c.396.37.842.688 1.306.953C5.838 10.006 7.854 10.5 10 10.5s4.162-.494 5.694-1.37zM3 13.179V15c0 2.21 3.134 4 7 4s7-1.79 7-4v-1.822c-.396.37-.842.688-1.306.953-1.532.875-3.548 1.369-5.694 1.369s-4.162-.494-5.694-1.37A7.009 7.009 0 013 13.179z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</div>
+						<div class=" self-center">Models</div>
+					</button>
 
-				<button
-					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
-					'external'
-						? 'bg-gray-200 dark:bg-gray-700'
-						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
-					on:click={() => {
-						selectedTab = 'external';
-					}}
-				>
-					<div class=" self-center mr-2">
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								d="M1 9.5A3.5 3.5 0 0 0 4.5 13H12a3 3 0 0 0 .917-5.857 2.503 2.503 0 0 0-3.198-3.019 3.5 3.5 0 0 0-6.628 2.171A3.5 3.5 0 0 0 1 9.5Z"
-							/>
-						</svg>
-					</div>
-					<div class=" self-center">External</div>
-				</button>
+					<button
+						class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
+						'external'
+							? 'bg-gray-200 dark:bg-gray-700'
+							: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
+						on:click={() => {
+							selectedTab = 'external';
+						}}
+					>
+						<div class=" self-center mr-2">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 16 16"
+								fill="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									d="M1 9.5A3.5 3.5 0 0 0 4.5 13H12a3 3 0 0 0 .917-5.857 2.503 2.503 0 0 0-3.198-3.019 3.5 3.5 0 0 0-6.628 2.171A3.5 3.5 0 0 0 1 9.5Z"
+								/>
+							</svg>
+						</div>
+						<div class=" self-center">External</div>
+					</button>
+				{/if}
 
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
@@ -944,41 +866,72 @@
 							<div class=" py-0.5 flex w-full justify-between">
 								<div class=" self-center text-xs font-medium">Theme</div>
 
-								<button
+								<!-- <button
 									class="p-1 px-3 text-xs flex rounded transition"
 									on:click={() => {
 										toggleTheme();
 									}}
 								>
-									{#if theme === 'dark'}
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 20 20"
-											fill="currentColor"
-											class="w-4 h-4"
-										>
-											<path
-												fill-rule="evenodd"
-												d="M7.455 2.004a.75.75 0 01.26.77 7 7 0 009.958 7.967.75.75 0 011.067.853A8.5 8.5 0 116.647 1.921a.75.75 0 01.808.083z"
-												clip-rule="evenodd"
-											/>
-										</svg>
+									
+								</button> -->
 
-										<span class="ml-2 self-center"> Dark </span>
-									{:else}
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											viewBox="0 0 20 20"
-											fill="currentColor"
-											class="w-4 h-4 self-center"
-										>
-											<path
-												d="M10 2a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 2zM10 15a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 15zM10 7a3 3 0 100 6 3 3 0 000-6zM15.657 5.404a.75.75 0 10-1.06-1.06l-1.061 1.06a.75.75 0 001.06 1.06l1.06-1.06zM6.464 14.596a.75.75 0 10-1.06-1.06l-1.06 1.06a.75.75 0 001.06 1.06l1.06-1.06zM18 10a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 0118 10zM5 10a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 015 10zM14.596 15.657a.75.75 0 001.06-1.06l-1.06-1.061a.75.75 0 10-1.06 1.06l1.06 1.06zM5.404 6.464a.75.75 0 001.06-1.06l-1.06-1.06a.75.75 0 10-1.061 1.06l1.06 1.06z"
-											/>
-										</svg>
-										<span class="ml-2 self-center"> Light </span>
-									{/if}
-								</button>
+								<div class="flex items-center relative">
+									<div class=" absolute right-16">
+										{#if theme === 'dark'}
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													fill-rule="evenodd"
+													d="M7.455 2.004a.75.75 0 01.26.77 7 7 0 009.958 7.967.75.75 0 011.067.853A8.5 8.5 0 116.647 1.921a.75.75 0 01.808.083z"
+													clip-rule="evenodd"
+												/>
+											</svg>
+										{:else if theme === 'light'}
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												class="w-4 h-4 self-center"
+											>
+												<path
+													d="M10 2a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 2zM10 15a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 15zM10 7a3 3 0 100 6 3 3 0 000-6zM15.657 5.404a.75.75 0 10-1.06-1.06l-1.061 1.06a.75.75 0 001.06 1.06l1.06-1.06zM6.464 14.596a.75.75 0 10-1.06-1.06l-1.06 1.06a.75.75 0 001.06 1.06l1.06-1.06zM18 10a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 0118 10zM5 10a.75.75 0 01-.75.75h-1.5a.75.75 0 010-1.5h1.5A.75.75 0 015 10zM14.596 15.657a.75.75 0 001.06-1.06l-1.06-1.061a.75.75 0 10-1.06 1.06l1.06 1.06zM5.404 6.464a.75.75 0 001.06-1.06l-1.06-1.06a.75.75 0 10-1.061 1.06l1.06 1.06z"
+												/>
+											</svg>
+										{/if}
+									</div>
+
+									<select
+										class="w-fit pr-8 rounded py-2 px-2 text-xs bg-transparent outline-none text-right"
+										bind:value={theme}
+										placeholder="Select a theme"
+										on:change={(e) => {
+											localStorage.theme = theme;
+
+											themes
+												.filter((e) => e !== theme)
+												.forEach((e) => {
+													e.split(' ').forEach((e) => {
+														document.documentElement.classList.remove(e);
+													});
+												});
+
+											theme.split(' ').forEach((e) => {
+												document.documentElement.classList.add(e);
+											});
+
+											console.log(theme);
+										}}
+									>
+										<option value="dark">Dark</option>
+										<option value="light">Light</option>
+										<option value="rose-pine dark">Rosé Pine</option>
+										<option value="rose-pine-dawn light">Rosé Pine Dawn</option>
+									</select>
+								</div>
 							</div>
 
 							<div>
@@ -1002,51 +955,51 @@
 							</div>
 						</div>
 
-						<hr class=" dark:border-gray-700" />
-						<div>
-							<div class=" mb-2.5 text-sm font-medium">Ollama API URL</div>
-							<div class="flex w-full">
-								<div class="flex-1 mr-2">
-									<input
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										placeholder="Enter URL (e.g. http://localhost:8080/ollama/api)"
-										bind:value={API_BASE_URL}
-									/>
-								</div>
-								<button
-									class="px-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-700 rounded transition"
-									on:click={() => {
-										checkOllamaConnection();
-									}}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											fill-rule="evenodd"
-											d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-											clip-rule="evenodd"
+						{#if $user.role === 'admin'}
+							<hr class=" dark:border-gray-700" />
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Ollama API URL</div>
+								<div class="flex w-full">
+									<div class="flex-1 mr-2">
+										<input
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											placeholder="Enter URL (e.g. http://localhost:11434/api)"
+											bind:value={API_BASE_URL}
 										/>
-									</svg>
-								</button>
-							</div>
+									</div>
+									<button
+										class="px-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-700 rounded transition"
+										on:click={() => {
+											updateOllamaAPIUrlHandler();
+										}}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											class="w-4 h-4"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</button>
+								</div>
 
-							<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-								The field above should be set to <span
-									class=" text-gray-500 dark:text-gray-300 font-medium">'/ollama/api'</span
-								>;
-								<a
-									class=" text-gray-500 dark:text-gray-300 font-medium"
-									href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
-									target="_blank"
-								>
-									Click here for help.
-								</a>
+								<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+									Trouble accessing Ollama?
+									<a
+										class=" text-gray-300 font-medium"
+										href="https://github.com/ollama-webui/ollama-webui#troubleshooting"
+										target="_blank"
+									>
+										Click here for help.
+									</a>
+								</div>
 							</div>
-						</div>
+						{/if}
 
 						<hr class=" dark:border-gray-700" />
 
@@ -1064,7 +1017,6 @@
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
 								on:click={() => {
 									saveSettings({
-										API_BASE_URL: API_BASE_URL === '' ? OLLAMA_API_BASE_URL : API_BASE_URL,
 										system: system !== '' ? system : undefined
 									});
 									show = false;
@@ -1132,7 +1084,8 @@
 											top_k: options.top_k !== '' ? options.top_k : undefined,
 											top_p: options.top_p !== '' ? options.top_p : undefined,
 											tfs_z: options.tfs_z !== '' ? options.tfs_z : undefined,
-											num_ctx: options.num_ctx !== '' ? options.num_ctx : undefined
+											num_ctx: options.num_ctx !== '' ? options.num_ctx : undefined,
+											num_predict: options.num_predict !== '' ? options.num_predict : undefined
 										}
 									});
 									show = false;
@@ -1219,7 +1172,7 @@
 										<div class=" mb-2 text-xs">Pull Progress</div>
 										<div class="w-full rounded-full dark:bg-gray-800">
 											<div
-												class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+												class="dark:bg-gray-600 bg-gray-500 text-xs font-medium text-gray-100 text-center p-0.5 leading-none rounded-full"
 												style="width: {Math.max(15, pullProgress ?? 0)}%"
 											>
 												{pullProgress ?? 0}%
@@ -1454,10 +1407,12 @@
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
 						on:submit|preventDefault={() => {
-							saveSettings({
-								OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined,
-								OPENAI_API_BASE_URL: OPENAI_API_BASE_URL !== '' ? OPENAI_API_BASE_URL : undefined
-							});
+							updateOpenAIHandler();
+
+							// saveSettings({
+							// 	OPENAI_API_KEY: OPENAI_API_KEY !== '' ? OPENAI_API_KEY : undefined,
+							// 	OPENAI_API_BASE_URL: OPENAI_API_BASE_URL !== '' ? OPENAI_API_BASE_URL : undefined
+							// });
 							show = false;
 						}}
 					>
@@ -1514,10 +1469,6 @@
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
 						on:submit|preventDefault={() => {
-							saveSettings({
-								gravatarEmail: gravatarEmail !== '' ? gravatarEmail : undefined,
-								gravatarUrl: gravatarEmail !== '' ? getGravatarURL(gravatarEmail) : undefined
-							});
 							show = false;
 						}}
 					>
@@ -1527,7 +1478,7 @@
 
 								<div>
 									<div class=" py-0.5 flex w-full justify-between">
-										<div class=" self-center text-xs font-medium">Title Auto Generation</div>
+										<div class=" self-center text-xs font-medium">Title Auto-Generation</div>
 
 										<button
 											class="p-1 px-3 text-xs flex rounded transition"
@@ -1589,6 +1540,54 @@
 							</div>
 
 							<hr class=" dark:border-gray-700" />
+
+							<div>
+								<div class=" mb-2.5 text-sm font-medium">Set Title Auto-Generation Model</div>
+								<div class="flex w-full">
+									<div class="flex-1 mr-2">
+										<select
+											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+											bind:value={titleAutoGenerateModel}
+											placeholder="Select a model"
+										>
+											<option value="" selected>Default</option>
+											{#each $models.filter((m) => m.size != null) as model}
+												<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
+													>{model.name +
+														' (' +
+														(model.size / 1024 ** 3).toFixed(1) +
+														' GB)'}</option
+												>
+											{/each}
+										</select>
+									</div>
+									<button
+										class="px-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-800 dark:text-gray-100 rounded transition"
+										on:click={() => {
+											saveSettings({
+												titleAutoGenerateModel:
+													titleAutoGenerateModel !== '' ? titleAutoGenerateModel : undefined
+											});
+										}}
+										type="button"
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											class="w-3.5 h-3.5"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M13.836 2.477a.75.75 0 0 1 .75.75v3.182a.75.75 0 0 1-.75.75h-3.182a.75.75 0 0 1 0-1.5h1.37l-.84-.841a4.5 4.5 0 0 0-7.08.932.75.75 0 0 1-1.3-.75 6 6 0 0 1 9.44-1.242l.842.84V3.227a.75.75 0 0 1 .75-.75Zm-.911 7.5A.75.75 0 0 1 13.199 11a6 6 0 0 1-9.44 1.241l-.84-.84v1.371a.75.75 0 0 1-1.5 0V9.591a.75.75 0 0 1 .75-.75H5.35a.75.75 0 0 1 0 1.5H3.98l.841.841a4.5 4.5 0 0 0 7.08-.932.75.75 0 0 1 1.025-.273Z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									</button>
+								</div>
+							</div>
+
+							<!-- <hr class=" dark:border-gray-700" />
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									Gravatar Email <span class=" text-gray-400 text-sm">(optional)</span>
@@ -1611,7 +1610,7 @@
 										target="_blank">Gravatar.</a
 									>
 								</div>
-							</div>
+							</div> -->
 						</div>
 
 						<div class="flex justify-end pt-3 text-sm font-medium">
@@ -1626,6 +1625,64 @@
 				{:else if selectedTab === 'chats'}
 					<div class="flex flex-col h-full justify-between space-y-3 text-sm">
 						<div class=" space-y-2">
+							<div
+								class="flex flex-col justify-between rounded-md items-center py-2 px-3.5 w-full transition"
+							>
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-sm font-medium">Chat History</div>
+
+									<button
+										class="p-1 px-3 text-xs flex rounded transition"
+										type="button"
+										on:click={() => {
+											toggleSaveChatHistory();
+										}}
+									>
+										{#if saveChatHistory === true}
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 16 16"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+												<path
+													fill-rule="evenodd"
+													d="M1.38 8.28a.87.87 0 0 1 0-.566 7.003 7.003 0 0 1 13.238.006.87.87 0 0 1 0 .566A7.003 7.003 0 0 1 1.379 8.28ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+													clip-rule="evenodd"
+												/>
+											</svg>
+
+											<span class="ml-2 self-center"> On </span>
+										{:else}
+											<svg
+												xmlns="http://www.w3.org/2000/svg"
+												viewBox="0 0 16 16"
+												fill="currentColor"
+												class="w-4 h-4"
+											>
+												<path
+													fill-rule="evenodd"
+													d="M3.28 2.22a.75.75 0 0 0-1.06 1.06l10.5 10.5a.75.75 0 1 0 1.06-1.06l-1.322-1.323a7.012 7.012 0 0 0 2.16-3.11.87.87 0 0 0 0-.567A7.003 7.003 0 0 0 4.82 3.76l-1.54-1.54Zm3.196 3.195 1.135 1.136A1.502 1.502 0 0 1 9.45 8.389l1.136 1.135a3 3 0 0 0-4.109-4.109Z"
+													clip-rule="evenodd"
+												/>
+												<path
+													d="m7.812 10.994 1.816 1.816A7.003 7.003 0 0 1 1.38 8.28a.87.87 0 0 1 0-.566 6.985 6.985 0 0 1 1.113-2.039l2.513 2.513a3 3 0 0 0 2.806 2.806Z"
+												/>
+											</svg>
+
+											<span class="ml-2 self-center">Off</span>
+										{/if}
+									</button>
+								</div>
+
+								<div class="text-xs text-left w-full font-medium mt-0.5">
+									This setting does not sync across browsers or devices.
+								</div>
+							</div>
+
+							<hr class=" dark:border-gray-700" />
+
 							<div class="flex flex-col">
 								<input
 									id="chat-import-input"

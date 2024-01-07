@@ -1,8 +1,11 @@
 <script lang="ts">
-	import { settings } from '$lib/stores';
 	import toast from 'svelte-french-toast';
+	import { onMount, tick } from 'svelte';
+	import { settings } from '$lib/stores';
+	import { findWordIndices } from '$lib/utils';
+
+	import Prompts from './MessageInput/PromptCommands.svelte';
 	import Suggestions from './MessageInput/Suggestions.svelte';
-	import { onMount } from 'svelte';
 
 	export let submitPrompt: Function;
 	export let stopResponse: Function;
@@ -11,6 +14,8 @@
 	export let autoScroll = true;
 
 	let filesInputElement;
+	let promptsElement;
+
 	let inputFiles;
 	let dragged = false;
 
@@ -154,36 +159,42 @@
 
 <div class="fixed bottom-0 w-full">
 	<div class="px-2.5 pt-2.5 -mb-0.5 mx-auto inset-x-0 bg-transparent flex justify-center">
-		{#if messages.length == 0 && suggestionPrompts.length !== 0}
-			<div class="max-w-3xl w-full">
-				<Suggestions {suggestionPrompts} {submitPrompt} />
+		<div class="flex flex-col max-w-3xl w-full">
+			<div>
+				{#if autoScroll === false && messages.length > 0}
+					<div class=" flex justify-center mb-4">
+						<button
+							class=" bg-white border border-gray-100 dark:border-none dark:bg-white/20 p-1.5 rounded-full"
+							on:click={() => {
+								autoScroll = true;
+								window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+							}}
+						>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 20 20"
+								fill="currentColor"
+								class="w-5 h-5"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M10 3a.75.75 0 01.75.75v10.638l3.96-4.158a.75.75 0 111.08 1.04l-5.25 5.5a.75.75 0 01-1.08 0l-5.25-5.5a.75.75 0 111.08-1.04l3.96 4.158V3.75A.75.75 0 0110 3z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</button>
+					</div>
+				{/if}
 			</div>
-		{/if}
 
-		{#if autoScroll === false && messages.length > 0}
-			<div class=" flex justify-center mb-4">
-				<button
-					class=" bg-white border border-gray-100 dark:border-none dark:bg-white/20 p-1.5 rounded-full"
-					on:click={() => {
-						autoScroll = true;
-						window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-					}}
-				>
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						viewBox="0 0 20 20"
-						fill="currentColor"
-						class="w-5 h-5"
-					>
-						<path
-							fill-rule="evenodd"
-							d="M10 3a.75.75 0 01.75.75v10.638l3.96-4.158a.75.75 0 111.08 1.04l-5.25 5.5a.75.75 0 01-1.08 0l-5.25-5.5a.75.75 0 111.08-1.04l3.96 4.158V3.75A.75.75 0 0110 3z"
-							clip-rule="evenodd"
-						/>
-					</svg>
-				</button>
+			<div class="w-full">
+				{#if prompt.charAt(0) === '/'}
+					<Prompts bind:this={promptsElement} bind:prompt />
+				{:else if messages.length == 0 && suggestionPrompts.length !== 0}
+					<Suggestions {suggestionPrompts} {submitPrompt} />
+				{/if}
 			</div>
-		{/if}
+		</div>
 	</div>
 	<div class="bg-white dark:bg-gray-800">
 		<div class="max-w-3xl px-2.5 -mb-0.5 mx-auto inset-x-0">
@@ -287,7 +298,7 @@
 							id="chat-textarea"
 							class=" dark:bg-gray-800 dark:text-gray-100 outline-none w-full py-3 px-2 {fileUploadEnabled
 								? ''
-								: ' pl-4'} rounded-xl resize-none"
+								: ' pl-4'} rounded-xl resize-none h-[48px]"
 							placeholder={speechRecognitionListening ? 'Listening...' : 'Send a message'}
 							bind:value={prompt}
 							on:keypress={(e) => {
@@ -296,6 +307,79 @@
 								}
 								if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
 									submitPrompt(prompt);
+								}
+							}}
+							on:keydown={async (e) => {
+								if (prompt === '' && e.key == 'ArrowUp') {
+									e.preventDefault();
+
+									const userMessageElement = [
+										...document.getElementsByClassName('user-message')
+									]?.at(-1);
+
+									const editButton = [
+										...document.getElementsByClassName('edit-user-message-button')
+									]?.at(-1);
+
+									console.log(userMessageElement);
+
+									userMessageElement.scrollIntoView({ block: 'center' });
+									editButton?.click();
+								}
+
+								if (prompt.charAt(0) === '/' && e.key === 'ArrowUp') {
+									promptsElement.selectUp();
+
+									const commandOptionButton = [
+										...document.getElementsByClassName('selected-command-option-button')
+									]?.at(-1);
+									commandOptionButton.scrollIntoView({ block: 'center' });
+								}
+
+								if (prompt.charAt(0) === '/' && e.key === 'ArrowDown') {
+									promptsElement.selectDown();
+
+									const commandOptionButton = [
+										...document.getElementsByClassName('selected-command-option-button')
+									]?.at(-1);
+									commandOptionButton.scrollIntoView({ block: 'center' });
+								}
+
+								if (prompt.charAt(0) === '/' && e.key === 'Enter') {
+									e.preventDefault();
+
+									const commandOptionButton = [
+										...document.getElementsByClassName('selected-command-option-button')
+									]?.at(-1);
+
+									commandOptionButton?.click();
+								}
+
+								if (prompt.charAt(0) === '/' && e.key === 'Tab') {
+									e.preventDefault();
+
+									const commandOptionButton = [
+										...document.getElementsByClassName('selected-command-option-button')
+									]?.at(-1);
+
+									commandOptionButton?.click();
+								} else if (e.key === 'Tab') {
+									const words = findWordIndices(prompt);
+
+									if (words.length > 0) {
+										const word = words.at(0);
+										const fullPrompt = prompt;
+
+										prompt = prompt.substring(0, word?.endIndex + 1);
+										await tick();
+
+										e.target.scrollTop = e.target.scrollHeight;
+										prompt = fullPrompt;
+										await tick();
+
+										e.preventDefault();
+										e.target.setSelectionRange(word?.startIndex, word.endIndex + 1);
+									}
 								}
 							}}
 							rows="1"

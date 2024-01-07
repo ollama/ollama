@@ -6,7 +6,6 @@
 	import { onMount } from 'svelte';
 
 	import { modelfiles, settings, user } from '$lib/stores';
-	import { OLLAMA_API_BASE_URL } from '$lib/constants';
 	import { createModel, deleteModel } from '$lib/apis/ollama';
 	import {
 		createNewModelfile,
@@ -20,11 +19,7 @@
 	const deleteModelHandler = async (tagName) => {
 		let success = null;
 
-		success = await deleteModel(
-			$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-			localStorage.token,
-			tagName
-		);
+		success = await deleteModel(localStorage.token, tagName);
 
 		if (success) {
 			toast.success(`Deleted ${tagName}`);
@@ -44,7 +39,7 @@
 
 		const url = 'https://ollamahub.com';
 
-		const tab = await window.open(`${url}/create`, '_blank');
+		const tab = await window.open(`${url}/modelfiles/create`, '_blank');
 		window.addEventListener(
 			'message',
 			(event) => {
@@ -249,6 +244,30 @@
 								<path
 									fill-rule="evenodd"
 									d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</div>
+					</button>
+
+					<button
+						class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
+						on:click={async () => {
+							saveModelfiles($modelfiles);
+						}}
+					>
+						<div class=" self-center mr-2 font-medium">Export Modelfiles</div>
+
+						<div class=" self-center">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 16 16"
+								fill="currentColor"
+								class="w-3.5 h-3.5"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 3.5a.75.75 0 0 1 .75.75v2.69l.72-.72a.75.75 0 1 1 1.06 1.06l-2 2a.75.75 0 0 1-1.06 0l-2-2a.75.75 0 0 1 1.06-1.06l.72.72V6.25A.75.75 0 0 1 8 5.5Z"
 									clip-rule="evenodd"
 								/>
 							</svg>

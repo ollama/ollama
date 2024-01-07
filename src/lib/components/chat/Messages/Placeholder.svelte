@@ -27,7 +27,7 @@
 					>
 						{#if model in modelfiles}
 							<img
-								src={modelfiles[model]?.imageUrl}
+								src={modelfiles[model]?.imageUrl ?? '/ollama-dark.png'}
 								alt="modelfile"
 								class=" w-20 mb-2 rounded-full {models.length > 1
 									? ' border-[5px] border-white dark:border-gray-800'

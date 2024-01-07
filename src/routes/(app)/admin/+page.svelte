@@ -7,9 +7,16 @@
 	import toast from 'svelte-french-toast';
 
 	import { updateUserRole, getUsers, deleteUserById } from '$lib/apis/users';
+	import { getSignUpEnabledStatus, toggleSignUpEnabledStatus } from '$lib/apis/auths';
+	import EditUserModal from '$lib/components/admin/EditUserModal.svelte';
 
 	let loaded = false;
 	let users = [];
+
+	let selectedUser = null;
+
+	let signUpEnabled = true;
+	let showEditUserModal = false;
 
 	const updateRoleHandler = async (id, role) => {
 		const res = await updateUserRole(localStorage.token, id, role).catch((error) => {
@@ -19,6 +26,17 @@
 
 		if (res) {
 			users = await getUsers(localStorage.token);
+		}
+	};
+
+	const editUserPasswordHandler = async (id, password) => {
+		const res = await deleteUserById(localStorage.token, id).catch((error) => {
+			toast.error(error);
+			return null;
+		});
+		if (res) {
+			users = await getUsers(localStorage.token);
+			toast.success('Successfully updated');
 		}
 	};
 
@@ -32,15 +50,32 @@
 		}
 	};
 
+	const toggleSignUpEnabled = async () => {
+		signUpEnabled = await toggleSignUpEnabledStatus(localStorage.token);
+	};
+
 	onMount(async () => {
 		if ($user?.role !== 'admin') {
 			await goto('/');
 		} else {
 			users = await getUsers(localStorage.token);
+
+			signUpEnabled = await getSignUpEnabledStatus(localStorage.token);
 		}
 		loaded = true;
 	});
 </script>
+
+{#key selectedUser}
+	<EditUserModal
+		bind:show={showEditUserModal}
+		{selectedUser}
+		sessionUser={$user}
+		on:save={async () => {
+			users = await getUsers(localStorage.token);
+		}}
+	/>
+{/key}
 
 <div
 	class=" bg-white dark:bg-gray-800 dark:text-gray-100 min-h-screen w-full flex justify-center font-mona"
@@ -49,7 +84,52 @@
 		<div class="w-full max-w-3xl px-10 md:px-16 min-h-screen flex flex-col">
 			<div class="py-10 w-full">
 				<div class=" flex flex-col justify-center">
-					<div class=" text-2xl font-semibold">Users ({users.length})</div>
+					<div class=" flex justify-between items-center">
+						<div class=" text-2xl font-semibold">Users ({users.length})</div>
+						<div>
+							<button
+								class="flex items-center space-x-1 border border-gray-200 dark:border-gray-600 px-3 py-1 rounded-lg"
+								type="button"
+								on:click={() => {
+									toggleSignUpEnabled();
+								}}
+							>
+								{#if signUpEnabled}
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 16 16"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											d="M11.5 1A3.5 3.5 0 0 0 8 4.5V7H2.5A1.5 1.5 0 0 0 1 8.5v5A1.5 1.5 0 0 0 2.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 9.5 7V4.5a2 2 0 1 1 4 0v1.75a.75.75 0 0 0 1.5 0V4.5A3.5 3.5 0 0 0 11.5 1Z"
+										/>
+									</svg>
+
+									<div class=" text-xs">
+										New Sign Up <span class=" font-semibold">Enabled</span>
+									</div>
+								{:else}
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 16 16"
+										fill="currentColor"
+										class="w-4 h-4"
+									>
+										<path
+											fill-rule="evenodd"
+											d="M8 1a3.5 3.5 0 0 0-3.5 3.5V7A1.5 1.5 0 0 0 3 8.5v5A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 11.5 7V4.5A3.5 3.5 0 0 0 8 1Zm2 6V4.5a2 2 0 1 0-4 0V7h4Z"
+											clip-rule="evenodd"
+										/>
+									</svg>
+
+									<div class=" text-xs">
+										New Sign Up <span class=" font-semibold">Disabled</span>
+									</div>
+								{/if}
+							</button>
+						</div>
+					</div>
 					<div class=" text-gray-500 text-xs font-medium mt-1">
 						Click on the user role cell in the table to change a user's role.
 					</div>
@@ -100,7 +180,28 @@
 												}}>{user.role}</button
 											>
 										</td>
-										<td class="px-6 py-4 text-center flex justify-center">
+										<td class="px-6 py-4 space-x-1 text-center flex justify-center">
+											<button
+												class="self-center w-fit text-sm p-1.5 border dark:border-gray-600 rounded-xl flex"
+												on:click={async () => {
+													showEditUserModal = !showEditUserModal;
+													selectedUser = user;
+												}}
+											>
+												<svg
+													xmlns="http://www.w3.org/2000/svg"
+													viewBox="0 0 16 16"
+													fill="currentColor"
+													class="w-4 h-4"
+												>
+													<path
+														fill-rule="evenodd"
+														d="M11.013 2.513a1.75 1.75 0 0 1 2.475 2.474L6.226 12.25a2.751 2.751 0 0 1-.892.596l-2.047.848a.75.75 0 0 1-.98-.98l.848-2.047a2.75 2.75 0 0 1 .596-.892l7.262-7.261Z"
+														clip-rule="evenodd"
+													/>
+												</svg>
+											</button>
+
 											<button
 												class="self-center w-fit text-sm p-1.5 border dark:border-gray-600 rounded-xl flex"
 												on:click={async () => {

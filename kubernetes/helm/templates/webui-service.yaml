@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-webui-service
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.webui.service.type }} # Default: NodePort  # Use LoadBalancer if you're on a cloud that supports it
+  selector:
+    app: ollama-webui
+  ports:
+    - protocol: TCP
+      port: {{ .Values.webui.servicePort }}
+      targetPort: {{ .Values.webui.servicePort }}
+      # If using NodePort, you can optionally specify the nodePort:
+      # nodePort: 30000

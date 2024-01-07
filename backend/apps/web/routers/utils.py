@@ -9,11 +9,9 @@ import os
 import aiohttp
 import json
 
-
 from utils.misc import calculate_sha256
 
 from config import OLLAMA_API_BASE_URL
-
 
 router = APIRouter()
 
@@ -42,7 +40,10 @@ def parse_huggingface_url(hf_url):
         return None
 
 
-async def download_file_stream(url, file_path, file_name, chunk_size=1024 * 1024):
+async def download_file_stream(url,
+                               file_path,
+                               file_name,
+                               chunk_size=1024 * 1024):
     done = False
 
     if os.path.exists(file_path):
@@ -56,7 +57,8 @@ async def download_file_stream(url, file_path, file_name, chunk_size=1024 * 1024
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url, headers=headers) as response:
-            total_size = int(response.headers.get("content-length", 0)) + current_size
+            total_size = int(response.headers.get("content-length",
+                                                  0)) + current_size
 
             with open(file_path, "ab+") as file:
                 async for data in response.content.iter_chunked(chunk_size):
@@ -89,9 +91,7 @@ async def download_file_stream(url, file_path, file_name, chunk_size=1024 * 1024
 
 
 @router.get("/download")
-async def download(
-    url: str,
-):
+async def download(url: str, ):
     # url = "https://huggingface.co/TheBloke/stablelm-zephyr-3b-GGUF/resolve/main/stablelm-zephyr-3b.Q2_K.gguf"
     file_name = parse_huggingface_url(url)
 
@@ -161,4 +161,5 @@ async def upload(file: UploadFile = File(...)):
             res = {"error": str(e)}
             yield f"data: {json.dumps(res)}\n\n"
 
-    return StreamingResponse(file_write_stream(), media_type="text/event-stream")
+    return StreamingResponse(file_write_stream(),
+                             media_type="text/event-stream")

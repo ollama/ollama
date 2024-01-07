@@ -1,0 +1,22 @@
+name: Bun CI
+on:
+  push:
+    branches: ['main']
+  pull_request:
+jobs:
+  build:
+    name: 'Format & Build Frontend'
+    env:
+      PUBLIC_API_BASE_URL: ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v1
+      - run: bun --version
+      - name: Install frontend dependencies
+        run: bun install
+      - name: Format frontend
+        run: bun run format
+      - name: Build frontend
+        run: bun run build

@@ -1,16 +1,10 @@
-import { dev, browser } from '$app/environment';
-import { PUBLIC_API_BASE_URL } from '$env/static/public';
-
-export const OLLAMA_API_BASE_URL = dev
-	? `http://${location.hostname}:8080/ollama/api`
-	: PUBLIC_API_BASE_URL === ''
-	? browser
-		? `http://${location.hostname}:11434/api`
-		: `http://localhost:11434/api`
-	: PUBLIC_API_BASE_URL;
+import { dev } from '$app/environment';
 
 export const WEBUI_BASE_URL = dev ? `http://${location.hostname}:8080` : ``;
+
 export const WEBUI_API_BASE_URL = `${WEBUI_BASE_URL}/api/v1`;
+export const OLLAMA_API_BASE_URL = `${WEBUI_BASE_URL}/ollama/api`;
+export const OPENAI_API_BASE_URL = `${WEBUI_BASE_URL}/openai/api`;
 
 export const WEB_UI_VERSION = 'v1.0.0-alpha-static';
 

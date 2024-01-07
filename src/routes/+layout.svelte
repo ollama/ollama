@@ -1,6 +1,6 @@
 <script>
 	import { onMount, tick } from 'svelte';
-	import { config, user } from '$lib/stores';
+	import { config, user, theme } from '$lib/stores';
 	import { goto } from '$app/navigation';
 	import toast, { Toaster } from 'svelte-french-toast';
 
@@ -14,6 +14,7 @@
 	let loaded = false;
 
 	onMount(async () => {
+		theme.set(localStorage.theme);
 		// Check Backend Status
 		const backendConfig = await getBackendConfig();
 
@@ -54,6 +55,9 @@
 
 <svelte:head>
 	<title>Ollama</title>
+
+	<link rel="stylesheet" type="text/css" href="/themes/rosepine.css" />
+	<link rel="stylesheet" type="text/css" href="/themes/rosepine-dawn.css" />
 </svelte:head>
 
 {#if loaded}

@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ollama
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: "ollama"
+  replicas: {{ .Values.ollama.replicaCount }}
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+      - name: ollama
+        image: {{ .Values.ollama.image }}
+        ports:
+        - containerPort: {{ .Values.ollama.servicePort }}
+        env:
+        {{- if .Values.ollama.gpu.enabled }}
+          - name: PATH
+            value: /usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          - name: LD_LIBRARY_PATH
+            value: /usr/local/nvidia/lib:/usr/local/nvidia/lib64
+          - name: NVIDIA_DRIVER_CAPABILITIES
+            value: compute,utility
+        {{- end}}
+        {{- if .Values.ollama.resources }}
+        resources: {{- toYaml .Values.ollama.resources | nindent 10 }}
+        {{- end }}
+        volumeMounts:
+        - name: ollama-volume
+          mountPath: /root/.ollama
+        tty: true
+      {{- with .Values.ollama.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      tolerations:
+        {{- if .Values.ollama.gpu.enabled }}
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        {{- end }}
+  volumeClaimTemplates:
+  - metadata:
+      name: ollama-volume
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: {{ .Values.ollama.volumeSize }}

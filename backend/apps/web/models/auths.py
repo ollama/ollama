@@ -4,7 +4,6 @@ import time
 import uuid
 from peewee import *
 
-
 from apps.web.models.users import UserModel, Users
 from utils.utils import (
     verify_password,
@@ -117,6 +116,15 @@ class AuthsTable:
     def update_user_password_by_id(self, id: str, new_password: str) -> bool:
         try:
             query = Auth.update(password=new_password).where(Auth.id == id)
+            result = query.execute()
+
+            return True if result == 1 else False
+        except:
+            return False
+
+    def update_email_by_id(self, id: str, email: str) -> bool:
+        try:
+            query = Auth.update(email=email).where(Auth.id == id)
             result = query.execute()
 
             return True if result == 1 else False

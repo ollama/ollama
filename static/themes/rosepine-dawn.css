@@ -1,0 +1,140 @@
+.rose-pine-dawn * {
+	color: #575279 !important;
+	stroke: #d7827e !important;
+}
+
+.rose-pine-dawn .app > * {
+	background-color: #faf4ed !important;
+}
+
+.rose-pine-dawn #nav {
+	background-color: #fffaf3;
+}
+
+.rose-pine-dawn .py-2\.5.my-auto.flex.flex-col.justify-between.h-screen {
+	background: #f2e9e1;
+}
+
+.rose-pine-dawn .bg-white.dark\:bg-gray-800 {
+	background: #f2e9e1;
+}
+
+.rose-pine-dawn .w-4.h-4 {
+	fill: #ebbcba;
+}
+
+.rose-pine-dawn #chat-textarea {
+	background: #cecacd;
+	margin: 0.3rem;
+	padding: 0.5rem;
+}
+
+.rose-pine-dawn .bg-gradient-to-t.from-white.dark\:from-gray-800.from-40\%.pb-2 {
+	background: #f2e9e1 !important;
+	padding-top: 0.6rem;
+}
+
+.rose-pine-dawn
+	.text-white.bg-gray-100.dark\:text-gray-800.dark\:bg-gray-600.disabled.transition.rounded-lg.p-1.mr-0\.5.w-7.h-7.self-center {
+	background-color: #cecacd;
+	transition: background-color 0.2s ease-out linear;
+}
+
+.rose-pine-dawn
+	.bg-black.text-white.hover\:bg-gray-900.dark\:bg-white.dark\:text-black.dark\:hover\:bg-gray-100.transition.rounded-lg.p-1.mr-0\.5.w-7.h-7.self-center {
+	background-color: #286983;
+	transition: background-color 0.2s ease-out linear;
+}
+
+.rose-pine-dawn
+	.bg-black.text-white.hover\:bg-gray-900.dark\:bg-white.dark\:text-black.dark\:hover\:bg-gray-100.transition.rounded-lg.p-1.mr-0\.5.w-7.h-7.self-center
+	> * {
+	fill: #56949f !important;
+	transition: fill 0.2s ease-out linear;
+}
+
+.rose-pine-dawn
+	.w-full.flex.justify-between.rounded-md.px-3.py-2.hover\:bg-gray-900.bg-gray-900.transition.whitespace-nowrap.text-ellipsis {
+	background-color: #56526e;
+	font-weight: bold;
+}
+
+.rose-pine-dawn .hover\:bg-gray-900:hover {
+	--tw-bg-opacity: 1;
+	background-color: rgb(152 147 165 / var(--tw-bg-opacity));
+}
+
+.rose-pine-dawn .text-xs.text-gray-700.uppercase.bg-gray-50.dark\:bg-gray-700.dark\:text-gray-400 {
+	background-color: #403d52;
+}
+
+.rose-pine-dawn .scrollbar-hidden.relative.overflow-x-auto.whitespace-nowrap.svelte-3g4avz {
+	border-radius: 16px 16px 0 0;
+}
+
+.rose-pine-dawn .base.enter.svelte-ug60r4 {
+	background-color: #286983;
+}
+
+.rose-pine-dawn .message.svelte-1nauejd {
+	color: #e0def4 !important;
+}
+
+.rose-pine-dawn #dropdownDots {
+	background-color: #dfdad9;
+}
+
+.rose-pine-dawn .flex.py-2\.5.px-3\.5.w-full.hover\:bg-gray-800.transition:hover {
+	background: #cecacd;
+}
+
+.rose-pine-dawn #dropdownDots {
+	background-color: #dfdad9;
+}
+
+.rose-pine-dawn .flex.py-2\.5.px-3\.5.w-full.hover\:bg-gray-800.transition:hover {
+	background: #cecacd;
+}
+
+.rose-pine-dawn
+	.m-auto.rounded-xl.max-w-full.w-\[40rem\].mx-2.bg-gray-50.dark\:bg-gray-900.shadow-3xl {
+	background-color: #f2e9e1;
+}
+
+.rose-pine-dawn
+	.w-full.rounded.p-4.text-sm.dark\:text-gray-300.dark\:bg-gray-800.outline-none.resize-none {
+	background-color: #cecacd;
+}
+
+.rose-pine-dawn
+	.w-full.rounded.py-2.px-4.text-sm.dark\:text-gray-300.dark\:bg-gray-800.outline-none.svelte-1vx7r9s {
+	background-color: #cecacd;
+}
+
+.rose-pine-dawn
+	.px-2\.5.py-2\.5.min-w-fit.rounded-lg.flex-1.md\:flex-none.flex.text-right.transition.bg-gray-200.dark\:bg-gray-700 {
+	background-color: #dfdad9;
+}
+
+.rose-pine-dawn
+	.px-2\.5.py-2\.5.min-w-fit.rounded-lg.flex-1.md\:flex-none.flex.text-right.transition.hover\:bg-gray-300.dark\:hover\:bg-gray-800:hover {
+	background-color: #cecacd;
+}
+
+.rose-pine-dawn .px-4.py-2.bg-emerald-600.hover\:bg-emerald-700.text-gray-100.transition.rounded {
+	background-color: #56949f;
+}
+
+.rose-pine-dawn #chat-search > * {
+	background-color: #dfdad9 !important;
+}
+
+.rose-pine-dawn .svelte-1ee93ns {
+	--primary: #b4637a !important;
+	--secondary: #fffaf3 !important;
+}
+
+.rose-pine-dawn .svelte-11kvm4p {
+	--primary: #56949f !important;
+	--secondary: #fffaf3 !important;
+}

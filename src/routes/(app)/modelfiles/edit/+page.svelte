@@ -6,9 +6,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 
-	import { settings, db, user, config, modelfiles } from '$lib/stores';
-
-	import { OLLAMA_API_BASE_URL } from '$lib/constants';
+	import { settings, user, config, modelfiles } from '$lib/stores';
 	import { splitStream } from '$lib/utils';
 
 	import { createModel } from '$lib/apis/ollama';
@@ -104,12 +102,7 @@
 			content !== '' &&
 			Object.keys(categories).filter((category) => categories[category]).length > 0
 		) {
-			const res = await createModel(
-				$settings?.API_BASE_URL ?? OLLAMA_API_BASE_URL,
-				localStorage.token,
-				tagName,
-				content
-			);
+			const res = await createModel(localStorage.token, tagName, content);
 
 			if (res) {
 				const reader = res.body

@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ollama
+  namespace: ollama-namespace
+spec:
+  selector:
+    matchLabels:
+      app: ollama
+  serviceName: "ollama"
+  template:
+    spec:
+      containers:
+      - name: ollama
+        resources:
+          limits:
+            nvidia.com/gpu: "1"

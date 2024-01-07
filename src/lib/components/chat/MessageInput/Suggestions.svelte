@@ -7,7 +7,7 @@
 	{#each suggestionPrompts as prompt, promptIdx}
 		<div class="{promptIdx > 1 ? 'hidden sm:inline-flex' : ''} basis-full sm:basis-1/2 p-[5px]">
 			<button
-				class=" flex-1 flex justify-between w-full px-4 py-2.5 bg-white hover:bg-gray-50 dark:bg-gray-800 dark:hover:bg-gray-700 outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg transition group"
+				class=" flex-1 flex justify-between w-full h-full px-4 py-2.5 bg-white hover:bg-gray-50 dark:bg-gray-800 dark:hover:bg-gray-700 outline outline-1 outline-gray-200 dark:outline-gray-600 rounded-lg transition group"
 				on:click={() => {
 					submitPrompt(prompt.content);
 				}}
@@ -17,7 +17,9 @@
 						<div class="text-sm font-medium dark:text-gray-300">{prompt.title[0]}</div>
 						<div class="text-sm text-gray-500">{prompt.title[1]}</div>
 					{:else}
-						<div class=" self-center text-sm font-medium dark:text-gray-300">{prompt.content}</div>
+						<div class=" self-center text-sm font-medium dark:text-gray-300 line-clamp-2">
+							{prompt.content}
+						</div>
 					{/if}
 				</div>
 
