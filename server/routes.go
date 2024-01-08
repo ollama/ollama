@@ -260,10 +260,11 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			resp := api.GenerateResponse{
-				Model:     req.Model,
-				CreatedAt: time.Now().UTC(),
-				Done:      r.Done,
-				Response:  r.Content,
+				Model:                   req.Model,
+				CreatedAt:               time.Now().UTC(),
+				Done:                    r.Done,
+				CompletionProbabilities: r.CompletionProbabilities,
+				Response:                r.Content,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
@@ -1088,10 +1089,11 @@ func ChatHandler(c *gin.Context) {
 			loaded.expireTimer.Reset(sessionDuration)
 
 			resp := api.ChatResponse{
-				Model:     req.Model,
-				CreatedAt: time.Now().UTC(),
-				Message:   api.Message{Role: "assistant", Content: r.Content},
-				Done:      r.Done,
+				Model:                   req.Model,
+				CreatedAt:               time.Now().UTC(),
+				Message:                 api.Message{Role: "assistant", Content: r.Content},
+				CompletionProbabilities: r.CompletionProbabilities,
+				Done:                    r.Done,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
