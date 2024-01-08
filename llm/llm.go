@@ -7,10 +7,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/pbnjay/memory"
-
 	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/gpu"
 )
 
@@ -40,32 +37,89 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		return nil, err
 	}
 
-	if runtime.GOOS == "darwin" {
-		var requiredMemory int64
-		var f16Multiplier int64 = 2
+	if opts.NumCtx < 4 {
+		opts.NumCtx = 4
+	}
 
-		switch ggml.ModelType() {
-		case "3B", "7B":
-			requiredMemory = 8 * format.GigaByte
-		case "13B":
-			requiredMemory = 16 * format.GigaByte
-		case "30B", "34B", "40B":
-			requiredMemory = 32 * format.GigaByte
-		case "47B":
-			requiredMemory = 48 * format.GigaByte
-		case "65B", "70B":
-			requiredMemory = 64 * format.GigaByte
-		case "180B":
-			requiredMemory = 128 * format.GigaByte
-			f16Multiplier = 4
-		}
+	fmt.Println("size", ggml.Size)
+	fmt.Println("filetype", ggml.FileType())
+	fmt.Println("architecture", ggml.ModelFamily())
+	fmt.Println("type", ggml.ModelType())
+	fmt.Println("name", ggml.Name())
+	fmt.Println("embd", ggml.NumEmbed())
+	fmt.Println("head", ggml.NumHead())
+	fmt.Println("head_kv", ggml.NumHeadKv())
+	fmt.Println("gqa", ggml.NumGQA())
 
-		systemMemory := int64(memory.TotalMemory())
+	available, _ := gpu.CheckVRAM()
 
-		if ggml.FileType() == "F16" && requiredMemory*f16Multiplier > systemMemory {
-			return nil, fmt.Errorf("F16 model requires at least %s of memory", format.HumanBytes(requiredMemory))
-		} else if requiredMemory > systemMemory {
-			return nil, fmt.Errorf("model requires at least %s of memory", format.HumanBytes(requiredMemory))
+	// For now assume filesize = model size
+	// TODO: use actual model size
+	requiredModel := ggml.Size
+
+	// fp16 k,v matrices require = n_ctx * n_layer * n_embd / n_head * n_head_kv * 2 bytes each * 2 key and value
+	requiredKv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.NumLayers()) * int64(ggml.NumEmbed()) * int64(ggml.NumHeadKv()) / int64(ggml.NumHead())
+
+	// this amount is the overhead + tensors in memory
+	// TODO: get this from the llama.cpp's graph calcluations instead of
+	// guessing it's ~1/7th of the kv cache times gqa
+	requiredAlloc := int64(ggml.NumGQA()) * requiredKv / 7
+
+	requiredTotal := requiredModel + requiredKv + requiredAlloc
+
+	log.Println("system memory bytes:", available)
+	log.Println("required model bytes:", requiredModel)
+	log.Println("required kv bytes:", requiredKv)
+	log.Println("required alloc bytes:", requiredAlloc)
+	log.Println("required total bytes:", requiredTotal)
+
+	info := gpu.GetGPUInfo()
+	library := info.Library
+
+	if opts.NumGPU == -1 {
+		// default to offloading all layers
+		opts.NumGPU = int(ggml.NumLayers()) + 1
+	}
+
+	// decide how many layers to put on the GPU
+	if opts.NumGPU > 0 {
+		switch runtime.GOOS {
+		case "darwin":
+			if requiredTotal > available {
+				log.Println("not enough vram available, falling back to CPU only")
+				opts.NumGPU = 0
+			}
+		default:
+			if library == "cpu" || library == "default" {
+				opts.NumGPU = 0
+				break
+			}
+
+			// no offloading required
+			if requiredTotal <= available {
+				break
+			}
+
+			// This handles two cases:
+			// 1. overhead + tensors are always loaded into scratch memory even with num_gpu 0
+			// 2. it seems llama.cpp always tries to allocate the entire kv cache (even if later split into layers) into vram or crashes
+			if requiredAlloc > available || requiredKv > available {
+				log.Printf("not enough vram available, falling back to CPU only")
+				library = "cpu"
+				opts.NumGPU = 0
+				break
+			}
+
+			available -= requiredAlloc
+
+			// fill remaining vram with layers
+			log.Println("splitting", available, "of available memory bytes into layers")
+			bytesPerLayer := int64((requiredModel + requiredKv) / int64(ggml.NumLayers()))
+			log.Println("bytes per layer:", bytesPerLayer)
+			layers := available / bytesPerLayer
+			if layers < int64(opts.NumGPU) {
+				opts.NumGPU = int(layers)
+			}
 		}
 	}
 
@@ -73,7 +127,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	opts.RopeFrequencyBase = 0.0
 	opts.RopeFrequencyScale = 0.0
 	gpuInfo := gpu.GetGPUInfo()
-	return newLlmServer(gpuInfo.Library, model, adapters, projectors, ggml.NumLayers(), opts)
+	return newLlmServer(gpuInfo.Library, model, adapters, projectors, opts)
 }
 
 // Give any native cgo implementations an opportunity to initialize
@@ -81,9 +135,9 @@ func Init(workdir string) error {
 	return nativeInit(workdir)
 }
 
-func newLlmServer(library, model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
+func newLlmServer(library, model string, adapters, projectors []string, opts api.Options) (extServer, error) {
 	if _, libPresent := AvailableShims[library]; libPresent && library != "default" {
-		srv, err := newDynamicShimExtServer(AvailableShims[library], model, adapters, projectors, numLayers, opts)
+		srv, err := newDynamicShimExtServer(AvailableShims[library], model, adapters, projectors, opts)
 		if err == nil {
 			return srv, nil
 		}
@@ -91,6 +145,5 @@ func newLlmServer(library, model string, adapters, projectors []string, numLayer
 		// TODO - update some state to indicate we were unable to load the GPU library for future "info" ux
 	}
 
-	return newDefaultExtServer(model, adapters, projectors, numLayers, opts)
-
+	return newDefaultExtServer(model, adapters, projectors, opts)
 }
