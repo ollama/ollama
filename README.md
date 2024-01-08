@@ -245,6 +245,7 @@ See [TROUBLESHOOTING.md](/TROUBLESHOOTING.md) for information on how to troubles
 
 Here are some exciting tasks on our roadmap:
 
+- 💬 **Group Conversations**: Witness the dynamic synergy of multiple Language Models engaging in collaborative discussions. In this unique feature, you can orchestrate interactions between various models, opening up avenues for diverse and intriguing dialogues. Experience the power of collective intelligence within your chat environment.
 - 🌐 **Web Browsing Capability**: Experience the convenience of seamlessly integrating web content directly into your chat. Easily browse and share information without leaving the conversation.
 - 🔄 **Function Calling**: Empower your interactions by running code directly within the chat. Execute functions and commands effortlessly, enhancing the functionality of your conversations.
 - ⚙️ **Custom Python Backend Actions**: Empower your Ollama Web UI by creating or downloading custom Python backend actions. Unleash the full potential of your web interface with tailored actions that suit your specific needs, enhancing functionality and versatility.
