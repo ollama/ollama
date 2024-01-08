@@ -119,12 +119,16 @@
 	onMount(() => {
 		const dropZone = document.querySelector('body');
 
-		dropZone?.addEventListener('dragover', (e) => {
+		const onDragOver = (e) => {
 			e.preventDefault();
 			dragged = true;
-		});
+		};
 
-		dropZone.addEventListener('drop', async (e) => {
+		const onDragLeave = () => {
+			dragged = false;
+		};
+
+		const onDrop = async (e) => {
 			e.preventDefault();
 			console.log(e);
 
@@ -158,11 +162,17 @@
 			}
 
 			dragged = false;
-		});
+		};
 
-		dropZone?.addEventListener('dragleave', () => {
-			dragged = false;
-		});
+		dropZone?.addEventListener('dragover', onDragOver);
+		dropZone?.addEventListener('drop', onDrop);
+		dropZone?.addEventListener('dragleave', onDragLeave);
+
+		return () => {
+			dropZone?.removeEventListener('dragover', onDragOver);
+			dropZone?.removeEventListener('drop', onDrop);
+			dropZone?.removeEventListener('dragleave', onDragLeave);
+		};
 	});
 </script>
 
