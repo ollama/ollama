@@ -1,6 +1,6 @@
 [project]
-name = "ollama_client"
-version = "0.0.1"
+name = "ollama-client"
+version = "0.1.0"
 authors = [
   { name="Justin D. Harris", url="https://github.com/juharris" },
 ]
@@ -16,6 +16,22 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/jmorganca/ollama/tree/main/examples/python-client"
 Issues = "https://github.com/jmorganca/ollama/issues"
+
+[tool.poetry]
+name = "ollama-client"
+version = "0.1.0"
+description = "A Python client for Ollama."
+authors = ["Justin D. Harris <https://github.com/juharris"]
+readme = "README.md"
+packages = [{include = "src/ollama_client"}]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+aiohttp = "^3.9.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.4"
+pytest-asyncio = "^0.23.3"
 
 [build-system]
 requires = ["hatchling"]

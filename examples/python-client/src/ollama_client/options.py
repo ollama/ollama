@@ -1,0 +1,2 @@
+class OllamaCompletionOptions:
+    pass
