@@ -57,7 +57,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	// TODO: use actual model size
 	requiredModel := ggml.Size
 
-	// fp16 k,v matrices each require = n_ctx * n_layer * n_embd / n_head * n_head_kv * 2 bytes each
+	// fp16 k,v matrices each require = n_ctx * n_layer * n_embd / n_head * n_head_kv * 2 bytes each * 2 key and value
 	requiredKv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.NumLayers()) * int64(ggml.NumEmbed()) * int64(ggml.NumHeadKv()) / int64(ggml.NumHead())
 
 	// this amount is the overhead + tensors in memory
