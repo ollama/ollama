@@ -12,6 +12,7 @@ import (
 // CheckVRAM returns the free VRAM in bytes on Linux machines with NVIDIA GPUs
 func CheckVRAM() (int64, error) {
 	if runtime.GOARCH == "amd64" {
+		// gpu not supported, this may not be metal
 		return 0, nil
 	}
 
