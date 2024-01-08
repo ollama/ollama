@@ -119,7 +119,11 @@ def store_web(form_data: StoreWebForm, user=Depends(get_current_user)):
         loader = WebBaseLoader(form_data.url)
         data = loader.load()
         store_data_in_vector_db(data, form_data.collection_name)
-        return {"status": True, "collection_name": form_data.collection_name}
+        return {
+            "status": True,
+            "collection_name": form_data.collection_name,
+            "filename": form_data.url,
+        }
     except Exception as e:
         print(e)
         raise HTTPException(
@@ -176,7 +180,11 @@ def store_doc(
         result = store_data_in_vector_db(data, collection_name)
 
         if result:
-            return {"status": True, "collection_name": collection_name}
+            return {
+                "status": True,
+                "collection_name": collection_name,
+                "filename": filename,
+            }
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -13,13 +13,22 @@
 
 	import { getOpenAIModels } from '$lib/apis/openai';
 
-	import { user, showSettings, settings, models, modelfiles, prompts } from '$lib/stores';
+	import {
+		user,
+		showSettings,
+		settings,
+		models,
+		modelfiles,
+		prompts,
+		documents
+	} from '$lib/stores';
 	import { REQUIRED_OLLAMA_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
 	import { checkVersion } from '$lib/utils';
 	import ShortcutsModal from '$lib/components/chat/ShortcutsModal.svelte';
+	import { getDocs } from '$lib/apis/documents';
 
 	let ollamaVersion = '';
 	let loaded = false;
@@ -93,11 +102,10 @@
 
 			console.log();
 			await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
+
 			await modelfiles.set(await getModelfiles(localStorage.token));
-
 			await prompts.set(await getPrompts(localStorage.token));
-
-			console.log($modelfiles);
+			await documents.set(await getDocs(localStorage.token));
 
 			modelfiles.subscribe(async () => {
 				// should fetch models

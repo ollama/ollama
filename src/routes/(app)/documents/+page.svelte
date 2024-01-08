@@ -6,10 +6,13 @@
 	import { onMount } from 'svelte';
 	import { documents } from '$lib/stores';
 	import { createNewDoc, deleteDocByName, getDocs } from '$lib/apis/documents';
-	import AddFilesPlaceholder from '$lib/components/AddFilesPlaceholder.svelte';
+
 	import { SUPPORTED_FILE_TYPE } from '$lib/constants';
+	import { uploadDocToVectorDB } from '$lib/apis/rag';
 
 	let importFiles = '';
+
+	let inputFiles = '';
 	let query = '';
 
 	let dragged = false;
@@ -19,40 +22,51 @@
 		await documents.set(await getDocs(localStorage.token));
 	};
 
-	onMount(() => {
-		// const dropZone = document.querySelector('body');
-		const dropZone = document.getElementById('dropzone');
+	const uploadDoc = async (file) => {
+		const res = await uploadDocToVectorDB(localStorage.token, '', file);
 
-		dropZone?.addEventListener('dragover', (e) => {
-			e.preventDefault();
-			dragged = true;
-		});
+		if (res) {
+			await createNewDoc(
+				localStorage.token,
+				res.collection_name,
+				res.filename,
+				res.filename,
+				res.filename
+			);
+			await documents.set(await getDocs(localStorage.token));
+		}
+	};
 
-		dropZone?.addEventListener('drop', async (e) => {
-			e.preventDefault();
-			console.log(e);
+	const onDragOver = (e) => {
+		e.preventDefault();
+		dragged = true;
+	};
 
-			if (e.dataTransfer?.files) {
-				const inputFiles = e.dataTransfer?.files;
+	const onDragLeave = () => {
+		dragged = false;
+	};
 
-				if (inputFiles && inputFiles.length > 0) {
-					const file = inputFiles[0];
-					if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
-						console.log(file);
-						// uploadDoc(file);
-					} else {
-						toast.error(`Unsupported File Type '${file['type']}'.`);
-					}
+	const onDrop = async (e) => {
+		e.preventDefault();
+		console.log(e);
+
+		if (e.dataTransfer?.files) {
+			const inputFiles = e.dataTransfer?.files;
+
+			if (inputFiles && inputFiles.length > 0) {
+				const file = inputFiles[0];
+				if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
+					uploadDoc(file);
 				} else {
-					toast.error(`File not found.`);
+					toast.error(`Unsupported File Type '${file['type']}'.`);
 				}
+			} else {
+				toast.error(`File not found.`);
 			}
-		});
+		}
 
-		dropZone?.addEventListener('dragleave', () => {
-			dragged = false;
-		});
-	});
+		dragged = false;
+	};
 </script>
 
 <div class="min-h-screen w-full flex justify-center dark:text-white">
@@ -86,9 +100,11 @@
 				</div>
 
 				<div>
-					<a
+					<button
 						class=" px-2 py-2 rounded-xl border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 transition font-medium text-sm flex items-center space-x-1"
-						href="/prompts/create"
+						on:click={() => {
+							document.getElementById('upload-doc-input')?.click();
+						}}
 					>
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
@@ -100,107 +116,133 @@
 								d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"
 							/>
 						</svg>
-					</a>
+					</button>
 				</div>
 			</div>
 
-			<div
-				class="z-50 touch-none pointer-events-none"
-				id="dropzone"
-				role="region"
-				aria-label="Drag and Drop Container"
-			>
-				{#if $documents.length === 0 || dragged}
-					<div class="my-3 py-16 rounded-lg border-2 border-dashed dark:border-gray-600">
-						<AddFilesPlaceholder />
+			<input
+				id="upload-doc-input"
+				bind:files={inputFiles}
+				type="file"
+				hidden
+				on:change={async (e) => {
+					if (inputFiles && inputFiles.length > 0) {
+						const file = inputFiles[0];
+						if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
+							uploadDoc(file);
+						} else {
+							toast.error(`Unsupported File Type '${file['type']}'.`);
+						}
+
+						inputFiles = null;
+						e.target.value = '';
+					} else {
+						toast.error(`File not found.`);
+					}
+				}}
+			/>
+
+			<div>
+				<div
+					class="my-3 py-16 rounded-lg border-2 border-dashed dark:border-gray-600 {dragged &&
+						' dark:bg-gray-700'} "
+					role="region"
+					on:drop={onDrop}
+					on:dragover={onDragOver}
+					on:dragleave={onDragLeave}
+				>
+					<div class="  pointer-events-none">
+						<div class="text-center dark:text-white text-2xl font-semibold z-50">Add Files</div>
+
+						<div class=" mt-2 text-center text-sm dark:text-gray-200 w-full">
+							Drop any files here to add to the conversation
+						</div>
 					</div>
-				{:else}
-					{#each $documents.filter((p) => query === '' || p.name.includes(query)) as doc}
-						<hr class=" dark:border-gray-700 my-2.5" />
-						<div class=" flex space-x-4 cursor-pointer w-full mb-3">
-							<div class=" flex flex-1 space-x-4 cursor-pointer w-full">
-								<a href={`/prompts/edit?command=${encodeURIComponent(doc.name)}`}>
-									<div class=" flex-1 self-center pl-5">
-										<div class=" font-bold line-clamp-1">#{doc.name} ({doc.filename})</div>
-										<div class=" text-xs overflow-hidden text-ellipsis line-clamp-1">
-											{doc.title}
-										</div>
-									</div>
-								</a>
+				</div>
+			</div>
+
+			{#each $documents.filter((p) => query === '' || p.name.includes(query)) as doc}
+				<hr class=" dark:border-gray-700 my-2.5" />
+				<div class=" flex space-x-4 cursor-pointer w-full mb-3">
+					<div class=" flex flex-1 space-x-4 cursor-pointer w-full">
+						<a href={`#`}>
+							<div class=" flex-1 self-center pl-5">
+								<div class=" font-bold line-clamp-1">#{doc.name} ({doc.filename})</div>
+								<div class=" text-xs overflow-hidden text-ellipsis line-clamp-1">
+									{doc.title}
+								</div>
 							</div>
-							<div class="flex flex-row space-x-1 self-center">
-								<a
-									class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
-									type="button"
-									href={`/prompts/edit?command=${encodeURIComponent(doc.name)}`}
-								>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke-width="1.5"
-										stroke="currentColor"
-										class="w-4 h-4"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125"
-										/>
-									</svg>
-								</a>
-
-								<!-- <button
-								class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
-								type="button"
-								on:click={() => {
-									sharePrompt(prompt);
-								}}
+						</a>
+					</div>
+					<div class="flex flex-row space-x-1 self-center">
+						<a
+							class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
+							type="button"
+							href={`/prompts/edit?command=${encodeURIComponent(doc.name)}`}
+						>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
+								class="w-4 h-4"
 							>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke-width="1.5"
-									stroke="currentColor"
-									class="w-4 h-4"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"
-									/>
-								</svg>
-							</button> -->
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125"
+								/>
+							</svg>
+						</a>
 
-								<button
+						<!-- <button
 									class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
 									type="button"
 									on:click={() => {
-										deleteDoc(doc.name);
+										console.log('download file');
 									}}
 								>
 									<svg
 										xmlns="http://www.w3.org/2000/svg"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke-width="1.5"
-										stroke="currentColor"
+										viewBox="0 0 16 16"
+										fill="currentColor"
 										class="w-4 h-4"
 									>
 										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+											d="M8.75 2.75a.75.75 0 0 0-1.5 0v5.69L5.03 6.22a.75.75 0 0 0-1.06 1.06l3.5 3.5a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0-1.06-1.06L8.75 8.44V2.75Z"
+										/>
+										<path
+											d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
 										/>
 									</svg>
-								</button>
-							</div>
-						</div>
-					{/each}
-				{/if}
-			</div>
+								</button> -->
 
+						<button
+							class="self-center w-fit text-sm px-2 py-2 border dark:border-gray-600 rounded-xl"
+							type="button"
+							on:click={() => {
+								deleteDoc(doc.name);
+							}}
+						>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="1.5"
+								stroke="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+								/>
+							</svg>
+						</button>
+					</div>
+				</div>
+			{/each}
 			{#if $documents.length != 0}
 				<hr class=" dark:border-gray-700 my-2.5" />
 
