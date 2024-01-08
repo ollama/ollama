@@ -131,7 +131,14 @@ func getCPUMem() (memInfo, error) {
 func CheckVRAM() (int64, error) {
 	gpuInfo := GetGPUInfo()
 	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
-		return int64(gpuInfo.FreeMemory), nil
+		// allocate 384MiB for llama.cpp overhead (outside of model)
+		overhead := 384 * 1024 * 1024
+		if gpuInfo.FreeMemory <= overhead {
+			return 0, nil
+		}
+
+		return int64(gpuInfo.FreeMemory - overhead), nil
 	}
+
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation
 }
