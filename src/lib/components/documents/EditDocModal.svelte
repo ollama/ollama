@@ -61,7 +61,7 @@
 		</div>
 		<hr class=" dark:border-gray-800" />
 
-		<div class="flex flex-col md:flex-row w-full p-5 md:space-x-4 dark:text-gray-200">
+		<div class="flex flex-col md:flex-row w-full px-5 py-4 md:space-x-4 dark:text-gray-200">
 			<div class=" flex flex-col w-full sm:flex-row sm:justify-center sm:space-x-6">
 				<form
 					class="flex flex-col w-full"
@@ -75,12 +75,12 @@
 
 							<div class="flex flex-1">
 								<div
-									class="bg-gray-200 dark:bg-gray-600 font-bold px-3 py-1 border border-r-0 dark:border-gray-600 rounded-l-lg"
+									class="bg-gray-200 dark:bg-gray-600 font-bold px-3 py-1 border border-r-0 dark:border-gray-600 rounded-l-lg flex items-center"
 								>
 									#
 								</div>
 								<input
-									class="w-full rounded-r-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-500 outline-none"
+									class="w-full rounded-r-lg py-2.5 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-500 outline-none"
 									type="text"
 									bind:value={doc.name}
 									autocomplete="off"
@@ -104,7 +104,7 @@
 
 							<div class="flex-1">
 								<input
-									class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+									class="w-full rounded-lg py-2.5 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
 									type="text"
 									bind:value={doc.title}
 									autocomplete="off"
@@ -114,7 +114,7 @@
 						</div>
 					</div>
 
-					<div class="flex justify-end pt-3 text-sm font-medium">
+					<div class="flex justify-end pt-5 text-sm font-medium">
 						<button
 							class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
 							type="submit"
