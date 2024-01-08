@@ -33,7 +33,7 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ✒️🔢 **Full Markdown and LaTeX Support**: Elevate your LLM experience with comprehensive Markdown and LaTeX capabilities for enriched interaction.
 
-- 📚 **RAG Integration (Alpha)**: Immerse yourself in cutting-edge Retrieval Augmented Generation support, revolutionizing your chat experience by seamlessly incorporating document interactions. In its alpha phase, expect occasional issues as we actively refine and enhance this feature to ensure optimal performance and reliability.
+- 📚 **Local RAG Integration (Alpha)**: Immerse yourself in cutting-edge Retrieval Augmented Generation support, revolutionizing your chat experience by seamlessly incorporating document interactions. In its alpha phase, expect occasional issues as we actively refine and enhance this feature to ensure optimal performance and reliability.
 
 - 📜 **Prompt Preset Support**: Instantly access preset prompts using the '/' command in the chat input. Load predefined conversation starters effortlessly and expedite your interactions. Effortlessly import prompts through [OllamaHub](https://ollamahub.com/) integration.
 
