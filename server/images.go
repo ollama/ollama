@@ -478,32 +478,6 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 					return err
 				}
 
-				// if the model is not in gguf format, pull the base model to try and get it in gguf format
-				if fromConfig.ModelFormat != "gguf" {
-					fn(api.ProgressResponse{Status: "updating base model"})
-					parent, err := GetModel(c.Args)
-					if err != nil {
-						return err
-					}
-
-					originalModel := parent.OriginalModel
-					if originalModel == "" {
-						originalModel = parent.ShortName
-					}
-					if err := PullModel(ctx, originalModel, &RegistryOptions{}, fn); err != nil {
-						log.Printf("error pulling parent model: %v", err)
-					}
-
-					// Reset the file pointer to the beginning of the file
-					_, err = fromConfigFile.Seek(0, 0)
-					if err != nil {
-						return fmt.Errorf("update from config after pull: %w", err)
-					}
-					if err := json.NewDecoder(fromConfigFile).Decode(&fromConfig); err != nil {
-						return err
-					}
-				}
-
 				// if the model is still not in gguf format, error out
 				if fromConfig.ModelFormat != "gguf" {
 					return fmt.Errorf("%s is not in gguf format, this base model is not compatible with this version of ollama", c.Args)
