@@ -77,6 +77,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	library := info.Library
 
 	if opts.NumGPU == -1 {
+		// default to offloading all layers
 		opts.NumGPU = int(ggml.NumLayers()) + 1
 	}
 
