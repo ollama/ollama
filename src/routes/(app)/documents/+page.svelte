@@ -29,7 +29,10 @@
 	};
 
 	const uploadDoc = async (file) => {
-		const res = await uploadDocToVectorDB(localStorage.token, '', file);
+		const res = await uploadDocToVectorDB(localStorage.token, '', file).catch((error) => {
+			toast.error(error);
+			return null;
+		});
 
 		if (res) {
 			await createNewDoc(
@@ -38,7 +41,10 @@
 				res.filename,
 				transformFileName(res.filename),
 				res.filename
-			);
+			).catch((error) => {
+				toast.error(error);
+				return null;
+			});
 			await documents.set(await getDocs(localStorage.token));
 		}
 	};

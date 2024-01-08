@@ -49,13 +49,13 @@ async def create_new_doc(form_data: DocumentForm, user=Depends(get_current_user)
             return doc
         else:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=ERROR_MESSAGES.DEFAULT(),
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ERROR_MESSAGES.FILE_EXISTS,
             )
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ERROR_MESSAGES.COMMAND_TAKEN,
+            detail=ERROR_MESSAGES.NAME_TAG_TAKEN,
         )
 
 
