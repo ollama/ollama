@@ -128,6 +128,37 @@ export const findWordIndices = (text) => {
 	return matches;
 };
 
+export const removeFirstHashWord = (inputString) => {
+	// Split the string into an array of words
+	const words = inputString.split(' ');
+
+	// Find the index of the first word that starts with #
+	const index = words.findIndex((word) => word.startsWith('#'));
+
+	// Remove the first word with #
+	if (index !== -1) {
+		words.splice(index, 1);
+	}
+
+	// Join the remaining words back into a string
+	const resultString = words.join(' ');
+
+	return resultString;
+};
+
+export const transformFileName = (fileName) => {
+	// Convert to lowercase
+	const lowerCaseFileName = fileName.toLowerCase();
+
+	// Remove special characters using regular expression
+	const sanitizedFileName = lowerCaseFileName.replace(/[^\w\s]/g, '');
+
+	// Replace spaces with dashes
+	const finalFileName = sanitizedFileName.replace(/\s+/g, '-');
+
+	return finalFileName;
+};
+
 export const calculateSHA256 = async (file) => {
 	// Create a FileReader to read the file asynchronously
 	const reader = new FileReader();

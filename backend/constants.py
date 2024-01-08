@@ -18,6 +18,9 @@ class ERROR_MESSAGES(str, Enum):
         "Uh-oh! This username is already registered. Please choose another username."
     )
     COMMAND_TAKEN = "Uh-oh! This command is already registered. Please choose another command string."
+    FILE_EXISTS = "Uh-oh! This file is already registered. Please choose another file."
+
+    NAME_TAG_TAKEN = "Uh-oh! This name tag is already registered. Please choose another name tag string."
     INVALID_TOKEN = (
         "Your session has expired or the token is invalid. Please sign in again."
     )

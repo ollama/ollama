@@ -68,7 +68,7 @@
 		<div class="px-2.5 flex justify-center space-x-2">
 			<button
 				id="sidebar-new-chat-button"
-				class="flex-grow flex justify-between rounded-md px-3 py-1.5 mt-2 hover:bg-gray-900 transition"
+				class="flex-grow flex justify-between rounded-md px-3 py-2 mt-1 hover:bg-gray-900 transition"
 				on:click={async () => {
 					goto('/');
 
@@ -106,7 +106,7 @@
 		</div>
 
 		{#if $user?.role === 'admin'}
-			<div class="px-2.5 flex justify-center mt-1">
+			<div class="px-2.5 flex justify-center mt-0.5">
 				<button
 					class="flex-grow flex space-x-3 rounded-md px-3 py-2 hover:bg-gray-900 transition"
 					on:click={async () => {
@@ -125,7 +125,7 @@
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
-								d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z"
+								d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v2.25A2.25 2.25 0 0 0 6 10.5Zm0 9.75h2.25A2.25 2.25 0 0 0 10.5 18v-2.25a2.25 2.25 0 0 0-2.25-2.25H6a2.25 2.25 0 0 0-2.25 2.25V18A2.25 2.25 0 0 0 6 20.25Zm9.75-9.75H18a2.25 2.25 0 0 0 2.25-2.25V6A2.25 2.25 0 0 0 18 3.75h-2.25A2.25 2.25 0 0 0 13.5 6v2.25a2.25 2.25 0 0 0 2.25 2.25Z"
 							/>
 						</svg>
 					</div>
@@ -136,7 +136,7 @@
 				</button>
 			</div>
 
-			<div class="px-2.5 flex justify-center mb-1">
+			<div class="px-2.5 flex justify-center">
 				<button
 					class="flex-grow flex space-x-3 rounded-md px-3 py-2 hover:bg-gray-900 transition"
 					on:click={async () => {
@@ -146,20 +146,52 @@
 					<div class="self-center">
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							fill="currentColor"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke-width="1.5"
+							stroke="currentColor"
 							class="w-4 h-4"
 						>
 							<path
-								fill-rule="evenodd"
-								d="M11.013 2.513a1.75 1.75 0 0 1 2.475 2.474L6.226 12.25a2.751 2.751 0 0 1-.892.596l-2.047.848a.75.75 0 0 1-.98-.98l.848-2.047a2.75 2.75 0 0 1 .596-.892l7.262-7.261Z"
-								clip-rule="evenodd"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125"
 							/>
 						</svg>
 					</div>
 
 					<div class="flex self-center">
 						<div class=" self-center font-medium text-sm">Prompts</div>
+					</div>
+				</button>
+			</div>
+
+			<div class="px-2.5 flex justify-center mb-1">
+				<button
+					class="flex-grow flex space-x-3 rounded-md px-3 py-2 hover:bg-gray-900 transition"
+					on:click={async () => {
+						goto('/documents');
+					}}
+				>
+					<div class="self-center">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke-width="1.5"
+							stroke="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75"
+							/>
+						</svg>
+					</div>
+
+					<div class="flex self-center">
+						<div class=" self-center font-medium text-sm">Documents</div>
 					</div>
 				</button>
 			</div>
