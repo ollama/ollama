@@ -58,7 +58,7 @@ if OPENAI_API_BASE_URL == "":
 # WEBUI_VERSION
 ####################################
 
-WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.50")
+WEBUI_VERSION = os.environ.get("WEBUI_VERSION", "v1.0.0-alpha.61")
 
 ####################################
 # WEBUI_AUTH (Required for security)
