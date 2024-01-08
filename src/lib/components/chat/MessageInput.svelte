@@ -7,6 +7,9 @@
 	import Prompts from './MessageInput/PromptCommands.svelte';
 	import Suggestions from './MessageInput/Suggestions.svelte';
 	import { uploadDocToVectorDB } from '$lib/apis/rag';
+	import AddFilesPlaceholder from '../AddFilesPlaceholder.svelte';
+	import { SUPPORTED_FILE_TYPE } from '$lib/constants';
+	import Documents from './MessageInput/Documents.svelte';
 
 	export let submitPrompt: Function;
 	export let stopResponse: Function;
@@ -16,6 +19,7 @@
 
 	let filesInputElement;
 	let promptsElement;
+	let documentsElement;
 
 	let inputFiles;
 	let dragged = false;
@@ -143,14 +147,7 @@
 					const file = inputFiles[0];
 					if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 						reader.readAsDataURL(file);
-					} else if (
-						[
-							'application/pdf',
-							'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-							'text/plain',
-							'text/csv'
-						].includes(file['type'])
-					) {
+					} else if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
 						uploadDoc(file);
 					} else {
 						toast.error(`Unsupported File Type '${file['type']}'.`);
@@ -179,12 +176,7 @@
 		<div class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-800/40 flex justify-center">
 			<div class="m-auto pt-64 flex flex-col justify-center">
 				<div class="max-w-md">
-					<div class="  text-center text-6xl mb-3">🗂️</div>
-					<div class="text-center dark:text-white text-2xl font-semibold z-50">Add Files</div>
-
-					<div class=" mt-2 text-center text-sm dark:text-gray-200 w-full">
-						Drop any files/images here to add to the conversation
-					</div>
+					<AddFilesPlaceholder />
 				</div>
 			</div>
 		</div>
@@ -224,6 +216,22 @@
 			<div class="w-full">
 				{#if prompt.charAt(0) === '/'}
 					<Prompts bind:this={promptsElement} bind:prompt />
+				{:else if prompt.charAt(0) === '#'}
+					<Documents
+						bind:this={documentsElement}
+						bind:prompt
+						on:select={(e) => {
+							console.log(e);
+							files = [
+								...files,
+								{
+									type: 'doc',
+									...e.detail,
+									upload_status: true
+								}
+							];
+						}}
+					/>
 				{:else if messages.length == 0 && suggestionPrompts.length !== 0}
 					<Suggestions {suggestionPrompts} {submitPrompt} />
 				{/if}
@@ -256,14 +264,7 @@
 							const file = inputFiles[0];
 							if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 								reader.readAsDataURL(file);
-							} else if (
-								[
-									'application/pdf',
-									'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-									'text/plain',
-									'text/csv'
-								].includes(file['type'])
-							) {
+							} else if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
 								uploadDoc(file);
 								filesInputElement.value = '';
 							} else {
@@ -448,8 +449,10 @@
 									editButton?.click();
 								}
 
-								if (prompt.charAt(0) === '/' && e.key === 'ArrowUp') {
-									promptsElement.selectUp();
+								if (['/', '#'].includes(prompt.charAt(0)) && e.key === 'ArrowUp') {
+									e.preventDefault();
+
+									(promptsElement || documentsElement).selectUp();
 
 									const commandOptionButton = [
 										...document.getElementsByClassName('selected-command-option-button')
@@ -457,8 +460,10 @@
 									commandOptionButton.scrollIntoView({ block: 'center' });
 								}
 
-								if (prompt.charAt(0) === '/' && e.key === 'ArrowDown') {
-									promptsElement.selectDown();
+								if (['/', '#'].includes(prompt.charAt(0)) && e.key === 'ArrowDown') {
+									e.preventDefault();
+
+									(promptsElement || documentsElement).selectDown();
 
 									const commandOptionButton = [
 										...document.getElementsByClassName('selected-command-option-button')
@@ -466,7 +471,7 @@
 									commandOptionButton.scrollIntoView({ block: 'center' });
 								}
 
-								if (prompt.charAt(0) === '/' && e.key === 'Enter') {
+								if (['/', '#'].includes(prompt.charAt(0)) && e.key === 'Enter') {
 									e.preventDefault();
 
 									const commandOptionButton = [
@@ -476,7 +481,7 @@
 									commandOptionButton?.click();
 								}
 
-								if (prompt.charAt(0) === '/' && e.key === 'Tab') {
+								if (['/', '#'].includes(prompt.charAt(0)) && e.key === 'Tab') {
 									e.preventDefault();
 
 									const commandOptionButton = [
