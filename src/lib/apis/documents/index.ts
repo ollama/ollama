@@ -111,7 +111,7 @@ type DocUpdateForm = {
 export const updateDocByName = async (token: string, name: string, form: DocUpdateForm) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/prompts/name/${name}/update`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/documents/name/${name}/update`, {
 		method: 'POST',
 		headers: {
 			Accept: 'application/json',

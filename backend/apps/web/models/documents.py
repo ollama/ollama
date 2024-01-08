@@ -105,9 +105,10 @@ class DocumentsTable:
             ).where(Document.name == name)
             query.execute()
 
-            doc = Document.get(Document.name == name)
+            doc = Document.get(Document.name == form_data.name)
             return DocumentModel(**model_to_dict(doc))
-        except:
+        except Exception as e:
+            print(e)
             return None
 
     def delete_doc_by_name(self, name: str) -> bool:

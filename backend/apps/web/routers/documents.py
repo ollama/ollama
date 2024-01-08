@@ -97,8 +97,8 @@ async def update_doc_by_name(
         return doc
     else:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.NAME_TAG_TAKEN,
         )
 
 
