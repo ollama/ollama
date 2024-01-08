@@ -28,6 +28,8 @@ ENV WEBUI_JWT_SECRET_KEY "SECRET_KEY"
 WORKDIR /app
 
 # copy embedding weight from build
+
+RUN mkdir -p /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2
 COPY --from=build /app/onnx.tar.gz /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2
 
 RUN cd /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2 &&\
