@@ -28,6 +28,14 @@ WORKDIR /app/backend
 
 COPY ./backend/requirements.txt ./requirements.txt
 RUN pip3 install -r requirements.txt
+
+RUN MODEL_DIR="/root/.cache/chroma/onnx_models/all-MiniLM-L6-v2" &&\
+    ARCHIVE_NAME="onnx.tar.gz" &&\
+    mkdir -p $MODEL_DIR &&\
+    cd $MODEL_DIR &&\
+    wget -O $ARCHIVE_NAME "https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/$ARCHIVE_NAME" &&\
+    tar -xzf $ARCHIVE_NAME
+
 # RUN python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY ./backend .
