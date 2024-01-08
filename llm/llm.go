@@ -69,11 +69,14 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 	requiredTotal := requiredModel + requiredKv + requiredAlloc
 
-	fmt.Println("system memory ", available)
-	fmt.Println("required model", requiredModel)
-	fmt.Println("required kv", requiredKv)
-	fmt.Println("required alloc", requiredAlloc)
-	fmt.Println("required total", requiredTotal)
+	log.Println("system memory bytes:", available)
+	log.Println("required model bytes:", requiredModel)
+	log.Println("required kv bytes:", requiredKv)
+	log.Println("required alloc bytes:", requiredAlloc)
+	log.Println("required total bytes:", requiredTotal)
+
+	info := gpu.GetGPUInfo()
+	library := info.Library
 
 	if opts.NumGPU == -1 {
 		opts.NumGPU = int(ggml.NumLayers()) + 1
@@ -84,25 +87,26 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		switch runtime.GOOS {
 		case "darwin":
 			if requiredTotal > available {
-				fmt.Println("not enough vram available, falling back to CPU only")
+				log.Println("not enough vram available, falling back to CPU only")
 				opts.NumGPU = 0
 			}
 		default:
-			info := gpu.GetGPUInfo()
-			if info.Library == "cpu" || info.Library == "default" {
+			if library == "cpu" || library == "default" {
 				opts.NumGPU = 0
 				break
 			}
 
+			// no offloading required
 			if requiredTotal <= available {
 				break
 			}
 
-			// overhead + tensors are always loaded into
-			// scratch memory and so don't offload if there isn't even
-			// enough room for that
-			if requiredAlloc > available {
-				fmt.Println("not enough vram available, falling back to CPU only")
+			// This handles two cases:
+			// 1. overhead + tensors are always loaded into scratch memory even with num_gpu 0
+			// 2. it seems llama.cpp always tries to allocate the entire kv cache (even if later split into layers) into vram or crashes
+			if requiredAlloc > available || requiredKv > available {
+				log.Printf("not enough vram available, falling back to CPU only")
+				library = "cpu"
 				opts.NumGPU = 0
 				break
 			}
@@ -110,10 +114,13 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 			available -= requiredAlloc
 
 			// fill remaining vram with layers
-			fmt.Println("splitting", available, "into layers")
+			log.Println("splitting", available, "of available memory bytes into layers")
 			bytesPerLayer := int64((requiredModel + requiredKv) / int64(ggml.NumLayers()))
-			fmt.Println("bytes per layer:", bytesPerLayer)
-			layers := available/bytesPerLayer + 1
+			log.Println("bytes per layer:", bytesPerLayer)
+
+			// leave some room for overhead
+			// available = (available * 9) / 10
+			layers := available / bytesPerLayer
 			if layers < int64(opts.NumGPU) {
 				opts.NumGPU = int(layers)
 			}
