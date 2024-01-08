@@ -64,23 +64,26 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	// TODO: get this from the llama.cpp's graph calcluations instead of
 	// guessing it's ~1/8th of the kv cache times gqa
 	// this is slightly (~25%) higher than what it is in reality
+	// TODO: this needs to account for batch size != 512
 	requiredAlloc := int64(ggml.NumGQA()) * requiredKv / 8
+
+	requiredTotal := requiredModel + requiredKv + requiredAlloc
 
 	fmt.Println("system memory ", available)
 	fmt.Println("required model", requiredModel)
 	fmt.Println("required kv", requiredKv)
 	fmt.Println("required alloc", requiredAlloc)
-	fmt.Println("required total", requiredModel+requiredKv+requiredAlloc)
+	fmt.Println("required total", requiredTotal)
 
 	if opts.NumGPU == -1 {
-		opts.NumGPU = int(ggml.NumLayers())
+		opts.NumGPU = int(ggml.NumLayers()) + 1
 	}
 
 	// decide how many layers to put on the GPU
 	if opts.NumGPU > 0 {
 		switch runtime.GOOS {
 		case "darwin":
-			if requiredModel+requiredKv+requiredAlloc > available {
+			if requiredTotal > available {
 				fmt.Println("not enough vram available, falling back to CPU only")
 				opts.NumGPU = 0
 			}
@@ -91,18 +94,27 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 				break
 			}
 
-			// model and kv cache get loaded into vram
-			vram := requiredModel + requiredKv
-
-			var layers int64
-			if vram > available {
-				// TODO: calculate actual bytes per layer vs this estimation
-				bytesPerLayer := int64(vram / int64(ggml.NumLayers()))
-				layers = vram / bytesPerLayer
+			if requiredTotal <= available {
+				break
 			}
 
+			// overhead + tensors are always loaded into
+			// scratch memory and so don't offload if there isn't even
+			// enough room for that
+			if requiredAlloc > available {
+				fmt.Println("not enough vram available, falling back to CPU only")
+				opts.NumGPU = 0
+				break
+			}
+
+			available -= requiredAlloc
+
+			// fill remaining vram with layers
+			fmt.Println("splitting", available, "into layers")
+			bytesPerLayer := int64((requiredModel + requiredKv) / int64(ggml.NumLayers()))
+			fmt.Println("bytes per layer:", bytesPerLayer)
+			layers := available/bytesPerLayer + 1
 			if layers < int64(opts.NumGPU) {
-				fmt.Println("only loading", layers, "layers")
 				opts.NumGPU = int(layers)
 			}
 		}
