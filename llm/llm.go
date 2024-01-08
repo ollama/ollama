@@ -116,9 +116,6 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 			log.Println("splitting", available, "of available memory bytes into layers")
 			bytesPerLayer := int64((requiredModel + requiredKv) / int64(ggml.NumLayers()))
 			log.Println("bytes per layer:", bytesPerLayer)
-
-			// leave some room for overhead
-			// available = (available * 9) / 10
 			layers := available / bytesPerLayer
 			if layers < int64(opts.NumGPU) {
 				opts.NumGPU = int(layers)
