@@ -40,6 +40,8 @@ COPY --from=build /app/build /app/build
 WORKDIR /app/backend
 
 COPY ./backend/requirements.txt ./requirements.txt
+
+RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 RUN pip3 install -r requirements.txt
 
 # RUN python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('all-MiniLM-L6-v2')"
