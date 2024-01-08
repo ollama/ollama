@@ -63,10 +63,16 @@ type Message struct {
 }
 
 type ChatResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Message   Message   `json:"message"`
-
+	Model                   string    `json:"model"`
+	CreatedAt               time.Time `json:"created_at"`
+	Message                 Message   `json:"message"`
+	CompletionProbabilities []struct {
+		Content string `json:"content"`
+		Probs   []struct {
+			Prob   float64 `json:"prob"`
+			TokStr string  `json:"tok_str"`
+		} `json:"probs"`
+	} `json:"completion_probabilities,omitempty"`
 	Done bool `json:"done"`
 
 	Metrics
@@ -89,6 +95,7 @@ type Options struct {
 	NumKeep          int      `json:"num_keep,omitempty"`
 	Seed             int      `json:"seed,omitempty"`
 	NumPredict       int      `json:"num_predict,omitempty"`
+	NProbs           int      `json:"n_probs,omitempty"`
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	TFSZ             float32  `json:"tfs_z,omitempty"`
@@ -210,9 +217,16 @@ type TokenResponse struct {
 }
 
 type GenerateResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response"`
+	Model                   string    `json:"model"`
+	CreatedAt               time.Time `json:"created_at"`
+	Response                string    `json:"response"`
+	CompletionProbabilities []struct {
+		Content string `json:"content"`
+		Probs   []struct {
+			Prob   float64 `json:"prob"`
+			TokStr string  `json:"tok_str"`
+		} `json:"probs"`
+	} `json:"completion_probabilities,omitempty"`
 
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`
@@ -347,6 +361,7 @@ func DefaultOptions() Options {
 		NumPredict:       -1,
 		NumKeep:          0,
 		Temperature:      0.8,
+		NProbs:           0,
 		TopK:             40,
 		TopP:             0.9,
 		TFSZ:             1.0,

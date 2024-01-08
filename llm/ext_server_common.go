@@ -169,6 +169,7 @@ func predict(ctx context.Context, llm extServer, predict PredictOpts, fn func(Pr
 		"stream":            true,
 		"n_predict":         predict.Options.NumPredict,
 		"n_keep":            predict.Options.NumKeep,
+		"n_probs":           predict.Options.NProbs,
 		"temperature":       predict.Options.Temperature,
 		"top_k":             predict.Options.TopK,
 		"top_p":             predict.Options.TopP,
@@ -252,7 +253,8 @@ func predict(ctx context.Context, llm extServer, predict PredictOpts, fn func(Pr
 
 				if p.Content != "" {
 					fn(PredictResult{
-						Content: p.Content,
+						Content:                 p.Content,
+						CompletionProbabilities: p.CompletionProbabilities,
 					})
 				}
 

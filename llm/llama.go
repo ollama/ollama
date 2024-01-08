@@ -148,10 +148,17 @@ func (w *StatusWriter) Write(b []byte) (int, error) {
 }
 
 type prediction struct {
-	Content string `json:"content"`
-	Model   string `json:"model"`
-	Prompt  string `json:"prompt"`
-	Stop    bool   `json:"stop"`
+	Content                 string `json:"content"`
+	Model                   string `json:"model"`
+	Prompt                  string `json:"prompt"`
+	Stop                    bool   `json:"stop"`
+	CompletionProbabilities []struct {
+		Content string `json:"content"`
+		Probs   []struct {
+			Prob   float64 `json:"prob"`
+			TokStr string  `json:"tok_str"`
+		} `json:"probs"`
+	} `json:"completion_probabilities,omitempty"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -173,7 +180,14 @@ type PredictOpts struct {
 }
 
 type PredictResult struct {
-	Content            string
+	Content                 string
+	CompletionProbabilities []struct {
+		Content string `json:"content"`
+		Probs   []struct {
+			Prob   float64 `json:"prob"`
+			TokStr string  `json:"tok_str"`
+		} `json:"probs"`
+	} `json:"completion_probabilities,omitempty"`
 	Done               bool
 	PromptEvalCount    int
 	PromptEvalDuration time.Duration
