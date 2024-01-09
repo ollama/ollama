@@ -42,6 +42,7 @@ func getCPUMem() (memInfo, error) {
 	return memInfo{
 		TotalMemory: 0,
 		FreeMemory:  0,
+		DeviceCount: 0,
 	}, nil
 }
 

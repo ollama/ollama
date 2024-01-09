@@ -110,6 +110,8 @@ func GetGPUInfo() GpuInfo {
 		C.free(unsafe.Pointer(memInfo.err))
 		return resp
 	}
+
+	resp.DeviceCount = uint32(memInfo.count)
 	resp.FreeMemory = uint64(memInfo.free)
 	resp.TotalMemory = uint64(memInfo.total)
 	return resp
@@ -132,7 +134,7 @@ func CheckVRAM() (int64, error) {
 	gpuInfo := GetGPUInfo()
 	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
 		// leave 10% or 384Mi of VRAM free for unaccounted for overhead
-		overhead := gpuInfo.FreeMemory / 10
+		overhead := gpuInfo.FreeMemory * uint64(gpuInfo.DeviceCount) / 10
 		if overhead < 384*1024*1024 {
 			overhead = 384 * 1024 * 1024
 		}

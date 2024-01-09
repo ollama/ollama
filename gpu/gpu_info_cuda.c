@@ -94,8 +94,7 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
     return;
   }
 
-  unsigned int devices;
-  ret = (*h.getCount)(&devices);
+  ret = (*h.getCount)(&resp->count);
   if (ret != NVML_SUCCESS) {
     snprintf(buf, buflen, "unable to get device count: %d", ret);
     resp->err = strdup(buf);
@@ -104,8 +103,7 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
 
   resp->total = 0;
   resp->free = 0;
-
-  for (i = 0; i < devices; i++) {
+  for (i = 0; i < resp->count; i++) {
     ret = (*h.getHandle)(i, &device);
     if (ret != NVML_SUCCESS) {
       snprintf(buf, buflen, "unable to get device handle %d: %d", i, ret);
