@@ -39,8 +39,13 @@ amdGPUs() {
 }
 
 echo "Starting linux generate script"
-if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ]; then
-    export CUDACXX=/usr/local/cuda/bin/nvcc
+if [ -z "${CUDACXX}" ]; then
+    if [ -x /usr/local/cuda/bin/nvcc ]; then
+        export CUDACXX=/usr/local/cuda/bin/nvcc
+    else
+        # Try the default location in case it exists
+        export CUDACXX=$(command -v nvcc)
+    fi
 fi
 COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
 source $(dirname $0)/gen_common.sh
@@ -60,12 +65,16 @@ install
 # Placeholder to keep go embed happy until we start building dynamic CPU lib variants
 touch ${BUILD_DIR}/lib/dummy.so
 
-if [ -d /usr/local/cuda/lib64/ ]; then
+if [ -z "${CUDA_LIB_DIR}" ]; then
+    # Try the default location in case it exists
+    CUDA_LIB_DIR=/usr/local/cuda/lib64
+fi
+
+if [ -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
     CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/cuda"
-    CUDA_LIB_DIR=/usr/local/cuda/lib64
     build
     install
     gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
