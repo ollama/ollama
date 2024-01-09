@@ -149,9 +149,13 @@
 
 				if (inputFiles && inputFiles.length > 0) {
 					const file = inputFiles[0];
+					console.log(file, file.name.split('.').at(-1));
 					if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 						reader.readAsDataURL(file);
-					} else if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
+					} else if (
+						SUPPORTED_FILE_TYPE.includes(file['type']) ||
+						['md'].includes(file.name.split('.').at(-1))
+					) {
 						uploadDoc(file);
 					} else {
 						toast.error(`Unsupported File Type '${file['type']}'.`);

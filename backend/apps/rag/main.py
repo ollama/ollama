@@ -19,6 +19,8 @@ from langchain_community.document_loaders import (
     PyPDFLoader,
     CSVLoader,
     Docx2txtLoader,
+    UnstructuredWordDocumentLoader,
+    UnstructuredMarkdownLoader,
 )
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -140,12 +142,22 @@ def store_doc(
 ):
     # "https://www.gutenberg.org/files/1727/1727-h/1727-h.htm"
 
+    print(file.content_type)
     if file.content_type not in [
         "application/pdf",
         "text/plain",
         "text/csv",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/octet-stream",
     ]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
+        )
+
+    if file.content_type == "application/octet-stream" and file.filename.split(".")[
+        -1
+    ] not in ["md"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
@@ -175,6 +187,9 @@ def store_doc(
             loader = TextLoader(file_path)
         elif file.content_type == "text/csv":
             loader = CSVLoader(file_path)
+        elif file.content_type == "application/octet-stream":
+            if file.filename.split(".")[-1] == "md":
+                loader = UnstructuredMarkdownLoader(file_path)
 
         data = loader.load()
         result = store_data_in_vector_db(data, collection_name)
