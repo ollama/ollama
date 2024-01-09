@@ -299,9 +299,9 @@
 				...messages
 			]
 				.filter((message) => message)
-				.map((message) => ({
+				.map((message, idx, arr) => ({
 					role: message.role,
-					content: message?.raContent ?? message.content,
+					content: arr.length - 2 !== idx ? message.content : message?.raContent ?? message.content,
 					...(message.files && {
 						images: message.files
 							.filter((file) => file.type === 'image')
@@ -483,14 +483,17 @@
 				...messages
 			]
 				.filter((message) => message)
-				.map((message) => ({
+				.map((message, idx, arr) => ({
 					role: message.role,
 					...(message.files
 						? {
 								content: [
 									{
 										type: 'text',
-										text: message?.raContent ?? message.content
+										text:
+											arr.length - 1 !== idx
+												? message.content
+												: message?.raContent ?? message.content
 									},
 									...message.files
 										.filter((file) => file.type === 'image')
@@ -502,7 +505,10 @@
 										}))
 								]
 						  }
-						: { content: message?.raContent ?? message.content })
+						: {
+								content:
+									arr.length - 1 !== idx ? message.content : message?.raContent ?? message.content
+						  })
 				})),
 			seed: $settings?.options?.seed ?? undefined,
 			stop: $settings?.options?.stop ?? undefined,
