@@ -62,8 +62,8 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 	// this amount is the overhead + tensors in memory
 	// TODO: get this from the llama.cpp's graph calcluations instead of
-	// guessing it's ~1/7th of the kv cache times gqa
-	requiredAlloc := int64(ggml.NumGQA()) * requiredKv / 7
+	// estimating it's 1/6 * kv_cache_size * num_gqa
+	requiredAlloc := int64(ggml.NumGQA()) * requiredKv / 6
 
 	requiredTotal := requiredModel + requiredKv + requiredAlloc
 
