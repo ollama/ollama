@@ -508,7 +508,7 @@
 											type="button"
 											class="{isLastMessage
 												? 'visible'
-												: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition"
+												: 'invisible group-hover:visible'} p-1 rounded dark:hover:bg-gray-800 transition regenerate-response-button"
 											on:click={regenerateResponse}
 										>
 											<svg
