@@ -363,7 +363,6 @@
 			fileResponse = await fetch(`${WEBUI_API_BASE_URL}/utils/upload`, {
 				method: 'POST',
 				headers: {
-					...($settings.authHeader && { Authorization: $settings.authHeader }),
 					...($user && { Authorization: `Bearer ${localStorage.token}` })
 				},
 				body: formData
@@ -375,7 +374,6 @@
 			fileResponse = await fetch(`${WEBUI_API_BASE_URL}/utils/download?url=${modelFileUrl}`, {
 				method: 'GET',
 				headers: {
-					...($settings.authHeader && { Authorization: $settings.authHeader }),
 					...($user && { Authorization: `Bearer ${localStorage.token}` })
 				}
 			}).catch((error) => {
@@ -1388,9 +1386,10 @@
 								{#if uploadProgress !== null}
 									<div class="mt-2">
 										<div class=" mb-2 text-xs">Upload Progress</div>
+
 										<div class="w-full rounded-full dark:bg-gray-800">
 											<div
-												class="dark:bg-gray-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+												class="dark:bg-gray-600 bg-gray-500 text-xs font-medium text-gray-100 text-center p-0.5 leading-none rounded-full"
 												style="width: {Math.max(15, uploadProgress ?? 0)}%"
 											>
 												{uploadProgress ?? 0}%
