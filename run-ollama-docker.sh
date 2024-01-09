@@ -1,3 +1,5 @@
+#!/bin/bash
+
 docker rm -f ollama || true
 docker pull ollama/ollama
 # CPU Only

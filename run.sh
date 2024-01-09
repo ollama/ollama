@@ -1,3 +1,5 @@
+#!/bin/bash
+
 docker build -t ollama-webui .
 docker stop ollama-webui || true
 docker rm ollama-webui || true
