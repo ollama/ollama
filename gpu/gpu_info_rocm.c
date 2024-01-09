@@ -110,6 +110,8 @@ void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
     return;
   }
 
+  // TODO: set this to the actual number of devices
+  resp->count = 1;
   resp->total = totalMem;
   resp->free = totalMem - usedMem;
   return;
