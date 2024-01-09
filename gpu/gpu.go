@@ -26,8 +26,8 @@ type handles struct {
 var gpuMutex sync.Mutex
 var gpuHandles *handles = nil
 
-// TODO verify this is the correct min version
-const CudaComputeMajorMin = 5
+// With our current CUDA compile flags, 5.2 and older will not work properly
+const CudaComputeMajorMin = 6
 
 // Note: gpuMutex must already be held
 func initGPUHandles() {
