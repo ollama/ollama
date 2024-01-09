@@ -320,4 +320,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
 - [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
-- [Cliobot](https://github.com/herval/cliiobot) (Telegram bot with Ollama support)
+- [Cliobot](https://github.com/herval/cliobot) (Telegram bot with Ollama support)
