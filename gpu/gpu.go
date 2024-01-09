@@ -133,7 +133,7 @@ func CheckVRAM() (int64, error) {
 	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
 		// leave 15% or 400MiB of VRAM free for overhead
 		overhead := gpuInfo.FreeMemory * 3 / 20
-		minOverhead := int64(400 * 1024 * 1024)
+		minOverhead := uint64(400 * 1024 * 1024)
 		if overhead < minOverhead {
 			overhead = minOverhead
 		}
