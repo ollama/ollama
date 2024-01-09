@@ -85,112 +85,131 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 
 - **Privacy and Data Security:** We prioritize your privacy and data security above all. Please be reassured that all data entered into the Ollama Web UI is stored locally on your device. Our system is designed to be privacy-first, ensuring that no external requests are made, and your data does not leave your local environment. We are committed to maintaining the highest standards of data privacy and security, ensuring that your information remains confidential and under your control.
 
-### Installing Ollama Web UI Only
+### Steps to Install Ollama Web UI
 
-#### Prerequisites
+#### Before You Begin
 
-Make sure you have the latest version of Ollama installed before proceeding with the installation. You can find the latest version of Ollama at [https://ollama.ai/](https://ollama.ai/).
+1. **Installing Docker:**
 
-##### Checking Ollama
+   - **For Windows and Mac Users:**
+     - Download Docker Desktop from [Docker's official website](https://www.docker.com/products/docker-desktop).
+     - Follow the installation instructions provided on the website. After installation, open Docker Desktop to ensure it's running properly.
 
-After installing Ollama, verify that Ollama is running by accessing the following link in your web browser: [http://127.0.0.1:11434/](http://127.0.0.1:11434/). Note that the port number may differ based on your system configuration.
+   - **For Ubuntu and Other Linux Users:**
+     - Open your terminal.
+     - Update your package index:
+       ```bash
+       sudo apt-get update
+       ```
+     - Install Docker using the following command:
+       ```bash
+       sudo apt-get install docker-ce docker-ce-cli containerd.io
+       ```
+     - Verify the Docker installation with:
+       ```bash
+       sudo docker run hello-world
+       ```
+       This command downloads a test image and runs it in a container, which prints an informational message.
 
-#### Using Docker 🐳
+2. **Ensure You Have the Latest Version of Ollama:**
+   - Download the latest version from [https://ollama.ai/](https://ollama.ai/).
 
-**Important:** When using Docker to install Ollama Web UI, make sure to include the `-v ollama-webui:/app/backend/data` in your Docker command. This step is crucial as it ensures your database is properly mounted and prevents any loss of data.
+3. **Verify Ollama Installation:**
+   - After installing Ollama, check if it's working by visiting [http://127.0.0.1:11434/](http://127.0.0.1:11434/) in your web browser. Remember, the port number might be different for you.
 
-If Ollama is hosted on your local machine and accessible at [http://127.0.0.1:11434/](http://127.0.0.1:11434/), run the following command:
+#### Installing with Docker 🐳
 
-```bash
-docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend/data --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
-```
+- **Important:** When using Docker to install Ollama Web UI, make sure to include the `-v ollama-webui:/app/backend/data` in your Docker command. This step is crucial as it ensures your database is properly mounted and prevents any loss of data.
 
-Alternatively, if you prefer to build the container yourself, use the following command:
+- **If Ollama is on your computer**, use this command:
 
-```bash
-docker build -t ollama-webui .
-docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend/data --name ollama-webui --restart always ollama-webui
-```
+  ```bash
+  docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway \
+  -v ollama-webui:/app/backend/data --name ollama-webui --restart always \
+  ghcr.io/ollama-webui/ollama-webui:main
+  ```
 
-Your Ollama Web UI should now be hosted at [http://localhost:3000](http://localhost:3000) and accessible over LAN (or Network). Enjoy! 😄
+- **To build the container yourself**, follow these steps:
 
-#### Accessing External Ollama on a Different Server
+  ```bash
+  docker build -t ollama-webui .
+  docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway \
+  -v ollama-webui:/app/backend/data --name ollama-webui --restart always \
+  ollama-webui
+  ```
 
-Change `OLLAMA_API_BASE_URL` environment variable to match the external Ollama Server url:
+- After installation, you can access Ollama Web UI at [http://localhost:3000](http://localhost:3000).
 
-```bash
-docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend/data --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
-```
+#### Using Ollama on a Different Server
 
-Alternatively, if you prefer to build the container yourself, use the following command:
+- To connect to Ollama on another server, change the `OLLAMA_API_BASE_URL` to the server's URL:
 
-```bash
-docker build -t ollama-webui .
-docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend/data --name ollama-webui --restart always ollama-webui
-```
+  ```bash
+  docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api \
+  -v ollama-webui:/app/backend/data --name ollama-webui --restart always \
+  ghcr.io/ollama-webui/ollama-webui:main
+  ```
 
-### Installing Both Ollama and Ollama Web UI
+  Or for a self-built container:
+
+  ```bash
+  docker build -t ollama-webui .
+  docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api \
+  -v ollama-webui:/app/backend/data --name ollama-webui --restart always \
+  ollama-webui
+  ```
+
+### Installing Ollama and Ollama Web UI Together
 
 #### Using Docker Compose
 
-If you don't have Ollama installed yet, you can use the provided Docker Compose file for a hassle-free installation. Simply run the following command:
+- If you don't have Ollama yet, use Docker Compose for easy installation. Run this command:
 
-```bash
-docker compose up -d --build
-```
+  ```bash
+  docker compose up -d --build
+  ```
 
-This command will install both Ollama and Ollama Web UI on your system.
+- **For GPU Support:** Use an additional Docker Compose file:
 
-##### Enable GPU
+  ```bash
+  docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d --build
+  ```
 
-Use the additional Docker Compose file designed to enable GPU support by running the following command:
+- **To Expose Ollama API:** Use another Docker Compose file:
 
-```bash
-docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d --build
-```
+  ```bash
+  docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
+  ```
 
-##### Expose Ollama API outside the container stack
+#### Using `run-compose.sh` Script (Linux or Docker-Enabled WSL2 on Windows)
 
-Deploy the service with an additional Docker Compose file designed for API exposure:
+- Give execute permission to the script:
 
-```bash
-docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
-```
+  ```bash
+  chmod +x run-compose.sh
+  ```
 
-#### Using Provided `run-compose.sh` Script (Linux)
+- For CPU-only container:
 
-Also available on Windows under any docker-enabled WSL2 linux distro (you have to enable it from Docker Desktop)
+  ```bash
+  ./run-compose.sh
+  ```
 
-Simply run the following command to grant execute permission to script:
+- For GPU support (read the note about GPU compatibility):
 
-```bash
-chmod +x run-compose.sh
-```
+  ```bash
+  ./run-compose.sh --enable-gpu
+  ```
 
-##### For CPU only container
+- To build the latest local version, add `--build`:
 
-```bash
-./run-compose.sh
-```
+  ```bash
+  ./run-compose.sh --enable-gpu --build
+  ```
 
-##### Enable GPU
+### Alternative Installation Methods
 
-For GPU enabled container (to enable this you must have your gpu driver for docker, it mostly works with nvidia so this is the official install guide: [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html))
-Warning! A GPU-enabled installation has only been tested using linux and nvidia GPU, full functionalities are not guaranteed under Windows or Macos or using a different GPU
-
-```bash
-./run-compose.sh --enable-gpu
-```
-
-Note that both the above commands will use the latest production docker image in repository, to be able to build the latest local version you'll need to append the `--build` parameter, for example:
-
-```bash
-./run-compose.sh --enable-gpu --build
-```
-
-#### Using Alternative Methods (Kustomize or Helm)
-
-See [INSTALLATION.md](/INSTALLATION.md) for information on how to install and/or join our [Ollama Web UI Discord community](https://discord.gg/5rJgQTnV4s).
+For other ways to install, like using Kustomize or Helm, check out [INSTALLATION.md](/INSTALLATION.md). Join our [Ollama Web UI Discord community](https://discord.gg/5rJgQTnV4s) for more help and information.
 
 ## How to Install Without Docker
 
