@@ -61,7 +61,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	requiredKv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.NumLayers()) * int64(ggml.NumEmbed()) * int64(ggml.NumHeadKv()) / int64(ggml.NumHead())
 
 	// this amount is the overhead + tensors in memory
-	// TODO: get this from the llama.cpp's graph calcluations instead of
+	// TODO: get this from the llama.cpp's graph calculations instead of
 	// estimating it's 1/6 * kv_cache_size * num_gqa
 	requiredAlloc := int64(ggml.NumGQA()) * requiredKv / 6
 
