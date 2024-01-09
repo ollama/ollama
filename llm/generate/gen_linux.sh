@@ -39,8 +39,13 @@ amdGPUs() {
 }
 
 echo "Starting linux generate script"
-if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ]; then
-    export CUDACXX=/usr/local/cuda/bin/nvcc
+if [ -z "${CUDACXX}" ]; then
+    if [ -x /usr/local/cuda/bin/nvcc ]; then
+        export CUDACXX=/usr/local/cuda/bin/nvcc
+    else
+        # Try the default location in case it exists
+        export CUDACXX=$(command -v nvcc)
+    fi
 fi
 COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
 source $(dirname $0)/gen_common.sh
@@ -109,16 +114,20 @@ else
     echo "Skipping CPU generation step as requested"
 fi
 
-if [ -d /usr/local/cuda/lib64/ ]; then
+if [ -z "${CUDA_LIB_DIR}" ]; then
+    # Try the default location in case it exists
+    CUDA_LIB_DIR=/usr/local/cuda/lib64
+fi
+
+if [ -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
-    CUDA_MAJOR=$(ls /usr/local/cuda/lib64/libcudart.so.* | head -1 | cut -f3 -d. || true)
+    CUDA_MAJOR=$(ls "${CUDA_LIB_DIR}"/libcudart.so.* | head -1 | cut -f3 -d. || true)
     if [ -n "${CUDA_MAJOR}" ]; then
         CUDA_VARIANT=_v${CUDA_MAJOR}
     fi
     CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/cuda${CUDA_VARIANT}"
-    CUDA_LIB_DIR=/usr/local/cuda/lib64
     build
     install
     gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
