@@ -131,8 +131,12 @@ func getCPUMem() (memInfo, error) {
 func CheckVRAM() (int64, error) {
 	gpuInfo := GetGPUInfo()
 	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
-		// leave 20% of VRAM free for unaccounted for overhead
-		return int64(gpuInfo.FreeMemory * 4 / 5), nil
+		// leave 10% or 384Mi of VRAM free for unaccounted for overhead
+		overhead := gpuInfo.FreeMemory / 10
+		if overhead < 384*1024*1024 {
+			overhead = 384 * 1024 * 1024
+		}
+		return int64(gpuInfo.FreeMemory - overhead), nil
 	}
 
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation
