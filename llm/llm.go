@@ -100,10 +100,8 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 				break
 			}
 
-			// This handles two cases:
-			// 1. overhead + tensors are always loaded into scratch memory even with num_gpu 0
-			// 2. it seems llama.cpp always tries to allocate the entire kv cache (even if later split into layers) into vram or crashes
-			if requiredAlloc > available || requiredKv > available {
+			// requiredAlloc is always loaded for the CUDA runner, so don't load it if it won't fit
+			if requiredAlloc > available {
 				log.Printf("not enough vram available, falling back to CPU only")
 				library = "cpu"
 				opts.NumGPU = 0
@@ -127,8 +125,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	opts.NumGQA = 0
 	opts.RopeFrequencyBase = 0.0
 	opts.RopeFrequencyScale = 0.0
-	gpuInfo := gpu.GetGPUInfo()
-	return newLlmServer(gpuInfo.Library, model, adapters, projectors, opts)
+	return newLlmServer(library, model, adapters, projectors, opts)
 }
 
 // Give any native cgo implementations an opportunity to initialize
