@@ -167,6 +167,45 @@ export const generateTitle = async (token: string = '', model: string, prompt: s
 	return res?.response ?? 'New Chat';
 };
 
+export const generatePrompt = async (token: string = '', model: string, conversation: string) => {
+	let error = null;
+
+	if (conversation === '') {
+		conversation = '[You need to start the conversation]';
+	}
+
+	const res = await fetch(`${OLLAMA_API_BASE_URL}/generate`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'text/event-stream',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			model: model,
+			prompt: `Based on the following conversation, you are playing the role of 'USER.' Your task is to provide a thoughtful and appropriate response to the last message in the conversation, taking into account the context and tone of the discussion.
+
+			Conversation:
+			${conversation}
+
+			As USER, how would you respond to the latest message? If no previous conversation is provided, start a new conversation with a common, friendly greeting or a relevant question. If there is an existing conversation, continue it by providing a thoughtful, relevant, and engaging response.
+			Response:
+			`
+		})
+	}).catch((err) => {
+		console.log(err);
+		if ('detail' in err) {
+			error = err.detail;
+		}
+		return null;
+	});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
 export const generateChatCompletion = async (token: string = '', body: object) => {
 	let error = null;
 

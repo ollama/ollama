@@ -135,7 +135,8 @@
 	// Ollama functions
 	//////////////////////////
 
-	const submitPrompt = async (userPrompt) => {
+	const submitPrompt = async (userPrompt, user) => {
+		console.log(userPrompt, user);
 		console.log('submitPrompt', $chatId);
 
 		if (selectedModels.includes('')) {
@@ -143,6 +144,14 @@
 		} else if (messages.length != 0 && messages.at(-1).done != true) {
 			// Response not done
 			console.log('wait');
+		} else if (
+			files.length > 0 &&
+			files.filter((file) => file.upload_status === false).length > 0
+		) {
+			// Upload not done
+			toast.error(
+				`Oops! Hold tight! Your files are still in the processing oven. We're cooking them up to perfection. Please be patient and we'll let you know once they're ready.`
+			);
 		} else {
 			// Reset chat message textarea height
 			document.getElementById('chat-textarea').style.height = '';

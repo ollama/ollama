@@ -116,7 +116,7 @@
 	// Ollama functions
 	//////////////////////////
 
-	const submitPrompt = async (userPrompt) => {
+	const submitPrompt = async (userPrompt, _user = null) => {
 		console.log('submitPrompt', $chatId);
 
 		if (selectedModels.includes('')) {
@@ -143,6 +143,7 @@
 				parentId: messages.length !== 0 ? messages.at(-1).id : null,
 				childrenIds: [],
 				role: 'user',
+				user: _user ?? undefined,
 				content: userPrompt,
 				files: files.length > 0 ? files : undefined
 			};
