@@ -128,18 +128,14 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 - **If Ollama is on your computer**, use this command:
 
   ```bash
-  docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway \
-  -v ollama-webui:/app/backend/data --name ollama-webui --restart always \
-  ghcr.io/ollama-webui/ollama-webui:main
+  docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend/data --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
   ```
 
 - **To build the container yourself**, follow these steps:
 
   ```bash
   docker build -t ollama-webui .
-  docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway \
-  -v ollama-webui:/app/backend/data --name ollama-webui --restart always \
-  ollama-webui
+  docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v ollama-webui:/app/backend/data --name ollama-webui --restart always ollama-webui
   ```
 
 - After installation, you can access Ollama Web UI at [http://localhost:3000](http://localhost:3000).
@@ -149,18 +145,14 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 - To connect to Ollama on another server, change the `OLLAMA_API_BASE_URL` to the server's URL:
 
   ```bash
-  docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api \
-  -v ollama-webui:/app/backend/data --name ollama-webui --restart always \
-  ghcr.io/ollama-webui/ollama-webui:main
+  docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend/data --name ollama-webui --restart always ghcr.io/ollama-webui/ollama-webui:main
   ```
 
   Or for a self-built container:
 
   ```bash
   docker build -t ollama-webui .
-  docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api \
-  -v ollama-webui:/app/backend/data --name ollama-webui --restart always \
-  ollama-webui
+  docker run -d -p 3000:8080 -e OLLAMA_API_BASE_URL=https://example.com/api -v ollama-webui:/app/backend/data --name ollama-webui --restart always ollama-webui
   ```
 
 ### Installing Ollama and Ollama Web UI Together
