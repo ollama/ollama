@@ -1,32 +1,31 @@
 package llm
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common -I${SRCDIR}/llama.cpp/gguf/examples/server
+#cgo CFLAGS: -I${SRCDIR}/ext_server -I${SRCDIR}/llama.cpp -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp/examples/server
 #cgo CFLAGS: -DNDEBUG -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-#cgo CFLAGS: -Wmissing-noreturn -Wall -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
-#cgo CPPFLAGS: -Ofast -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
+#cgo CFLAGS: -Wmissing-noreturn -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
+#cgo CPPFLAGS: -Ofast -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
 #cgo darwin CFLAGS: -D_DARWIN_C_SOURCE
 #cgo darwin CPPFLAGS:  -DGGML_USE_ACCELERATE
 #cgo darwin CPPFLAGS: -DGGML_USE_METAL -DGGML_METAL_NDEBUG
 #cgo darwin LDFLAGS: -lc++ -framework Accelerate
 #cgo darwin LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
-#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/metal/common/libcommon.a
-#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/metal/examples/server/libext_server.a
-#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/metal/libllama.a
-#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/metal/libggml_static.a
+#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libcommon.a
+#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libext_server.a
+#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libllama.a
+#cgo darwin LDFLAGS: ${SRCDIR}/llama.cpp/build/darwin/metal/lib/libggml_static.a
 #cgo linux CFLAGS: -D_GNU_SOURCE
 #cgo linux windows CFLAGS: -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_MMV_Y=1 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_USE_CUBLAS
 #cgo linux LDFLAGS: -L/usr/local/cuda/targets/x86_64-linux/lib -L/usr/local/cuda/lib64 -L/usr/local/cuda/targets/x86_64-linux/lib/stubs
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/examples/server/libext_server.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/common/libcommon.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libllama.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libggml_static.a
-#cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
-#cgo windows LDFLAGS: -L${SRCDIR}/llama.cpp/gguf/build/wincpu/dist/lib
-#cgo windows LDFLAGS: -lcpu_server -lpthread
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libext_server.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libcommon.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libllama.a
+#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/build/linux/cpu/lib/libggml_static.a
+#cgo linux LDFLAGS: -lrt -ldl -lstdc++ -lm
+#cgo linux windows LDFLAGS: -lpthread
 
 #include <stdlib.h>
-#include "server.h"
+#include "ext_server.h"
 
 */
 import "C"
@@ -36,15 +35,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/gpu"
 )
+
+type extServer interface {
+	LLM
+	llama_server_init(sparams *C.ext_server_params_t, err *C.ext_server_resp_t)
+	llama_server_start()
+	llama_server_stop()
+	llama_server_completion(json_req *C.char, resp *C.ext_server_resp_t)
+	llama_server_completion_next_result(task_id C.int, resp *C.ext_server_task_result_t)
+	llama_server_completion_cancel(task_id C.int, err *C.ext_server_resp_t)
+	llama_server_release_task_result(result *C.ext_server_task_result_t)
+	llama_server_tokenize(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t)
+	llama_server_detokenize(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t)
+	llama_server_embedding(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t)
+	llama_server_release_json_resp(json_resp **C.char)
+}
+
+// Note: current implementation does not support concurrent instantiations
+var mutex sync.Mutex
 
 func newExtServerResp(len C.size_t) C.ext_server_resp_t {
 	var resp C.ext_server_resp_t
@@ -65,88 +80,20 @@ func extServerResponseToErr(resp C.ext_server_resp_t) error {
 	return fmt.Errorf(C.GoString(resp.msg))
 }
 
-type extServer interface {
-	LLM
-	llama_server_init(sparams *C.ext_server_params_t, err *C.ext_server_resp_t)
-	llama_server_start()
-	llama_server_stop()
-	llama_server_completion(json_req *C.char, resp *C.ext_server_resp_t)
-	llama_server_completion_next_result(task_id C.int, resp *C.ext_server_task_result_t)
-	llama_server_completion_cancel(task_id C.int, err *C.ext_server_resp_t)
-	llama_server_release_task_result(result *C.ext_server_task_result_t)
-	llama_server_tokenize(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t)
-	llama_server_detokenize(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t)
-	llama_server_embedding(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t)
-	llama_server_release_json_resp(json_resp **C.char)
-}
-
-type llamaExtServer struct {
-	api.Options
-}
-
-// Note: current implementation does not support concurrent instantiations
-var mutex sync.Mutex
-
-func (llm *llamaExtServer) llama_server_init(sparams *C.ext_server_params_t, err *C.ext_server_resp_t) {
-	C.llama_server_init(sparams, err)
-}
-func (llm *llamaExtServer) llama_server_start() {
-	C.llama_server_start()
-}
-func (llm *llamaExtServer) llama_server_stop() {
-	C.llama_server_stop()
-}
-
-func (llm *llamaExtServer) llama_server_completion(json_req *C.char, resp *C.ext_server_resp_t) {
-	C.llama_server_completion(json_req, resp)
-}
-func (llm *llamaExtServer) llama_server_completion_next_result(task_id C.int, resp *C.ext_server_task_result_t) {
-	C.llama_server_completion_next_result(task_id, resp)
-}
-func (llm *llamaExtServer) llama_server_completion_cancel(task_id C.int, err *C.ext_server_resp_t) {
-	C.llama_server_completion_cancel(task_id, err)
-}
-func (llm *llamaExtServer) llama_server_release_task_result(result *C.ext_server_task_result_t) {
-	C.llama_server_release_task_result(result)
-}
-
-func (llm *llamaExtServer) llama_server_tokenize(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t) {
-	C.llama_server_tokenize(json_req, json_resp, err)
-}
-func (llm *llamaExtServer) llama_server_detokenize(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t) {
-	C.llama_server_detokenize(json_req, json_resp, err)
-}
-func (llm *llamaExtServer) llama_server_embedding(json_req *C.char, json_resp **C.char, err *C.ext_server_resp_t) {
-	C.llama_server_embedding(json_req, json_resp, err)
-}
-func (llm *llamaExtServer) llama_server_release_json_resp(json_resp **C.char) {
-	C.llama_server_release_json_resp(json_resp)
-}
-
-func newDefaultExtServer(model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
-	server := &llamaExtServer{opts}
-	return newExtServer(server, model, adapters, projectors, numLayers, opts)
-}
-
-func newExtServer(server extServer, model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
+func newExtServer(server extServer, model string, adapters, projectors []string, opts api.Options) (extServer, error) {
 	if !mutex.TryLock() {
 		log.Printf("concurrent llm servers not yet supported, waiting for prior server to complete")
 		mutex.Lock()
 	}
-	fileInfo, err := os.Stat(model)
-	if err != nil {
-		return nil, err
-	}
+
 	var sparams C.ext_server_params_t
 	sparams.model = C.CString(model)
 	defer C.free(unsafe.Pointer(sparams.model))
 
-	numGPU := gpu.NumGPU(numLayers, fileInfo.Size(), opts)
-
 	sparams.embedding = true
 	sparams.n_ctx = C.uint(opts.NumCtx)
 	sparams.n_batch = C.uint(opts.NumBatch)
-	sparams.n_gpu_layers = C.int(numGPU)
+	sparams.n_gpu_layers = C.int(opts.NumGPU)
 	sparams.main_gpu = C.int(opts.MainGPU)
 	sparams.n_parallel = 1 // TODO - wire up concurrency
 
@@ -199,11 +146,7 @@ func newExtServer(server extServer, model string, adapters, projectors []string,
 	return server, nil
 }
 
-func (llm *llamaExtServer) Predict(ctx context.Context, pred PredictOpts, fn func(PredictResult)) error {
-	return predict(llm, llm.Options, ctx, pred, fn)
-}
-
-func predict(llm extServer, opts api.Options, ctx context.Context, predict PredictOpts, fn func(PredictResult)) error {
+func predict(ctx context.Context, llm extServer, predict PredictOpts, fn func(PredictResult)) error {
 	resp := newExtServerResp(128)
 	defer freeExtServerResp(resp)
 	var imageData []ImageData
@@ -217,23 +160,23 @@ func predict(llm extServer, opts api.Options, ctx context.Context, predict Predi
 	request := map[string]any{
 		"prompt":            predict.Prompt,
 		"stream":            true,
-		"n_predict":         opts.NumPredict,
-		"n_keep":            opts.NumKeep,
-		"temperature":       opts.Temperature,
-		"top_k":             opts.TopK,
-		"top_p":             opts.TopP,
-		"tfs_z":             opts.TFSZ,
-		"typical_p":         opts.TypicalP,
-		"repeat_last_n":     opts.RepeatLastN,
-		"repeat_penalty":    opts.RepeatPenalty,
-		"presence_penalty":  opts.PresencePenalty,
-		"frequency_penalty": opts.FrequencyPenalty,
-		"mirostat":          opts.Mirostat,
-		"mirostat_tau":      opts.MirostatTau,
-		"mirostat_eta":      opts.MirostatEta,
-		"penalize_nl":       opts.PenalizeNewline,
-		"seed":              opts.Seed,
-		"stop":              opts.Stop,
+		"n_predict":         predict.Options.NumPredict,
+		"n_keep":            predict.Options.NumKeep,
+		"temperature":       predict.Options.Temperature,
+		"top_k":             predict.Options.TopK,
+		"top_p":             predict.Options.TopP,
+		"tfs_z":             predict.Options.TFSZ,
+		"typical_p":         predict.Options.TypicalP,
+		"repeat_last_n":     predict.Options.RepeatLastN,
+		"repeat_penalty":    predict.Options.RepeatPenalty,
+		"presence_penalty":  predict.Options.PresencePenalty,
+		"frequency_penalty": predict.Options.FrequencyPenalty,
+		"mirostat":          predict.Options.Mirostat,
+		"mirostat_tau":      predict.Options.MirostatTau,
+		"mirostat_eta":      predict.Options.MirostatEta,
+		"penalize_nl":       predict.Options.PenalizeNewline,
+		"seed":              predict.Options.Seed,
+		"stop":              predict.Options.Stop,
 		"image_data":        imageData,
 		"cache_prompt":      true,
 	}
@@ -326,9 +269,6 @@ func predict(llm extServer, opts api.Options, ctx context.Context, predict Predi
 	// should never reach here ideally
 	return fmt.Errorf("max retries exceeded")
 }
-func (llm *llamaExtServer) Encode(ctx context.Context, prompt string) ([]int, error) {
-	return encode(llm, ctx, prompt)
-}
 
 func encode(llm extServer, ctx context.Context, prompt string) ([]int, error) {
 	data, err := json.Marshal(TokenizeRequest{Content: prompt})
@@ -352,10 +292,6 @@ func encode(llm extServer, ctx context.Context, prompt string) ([]int, error) {
 	}
 
 	return encoded.Tokens, err
-}
-
-func (llm *llamaExtServer) Decode(ctx context.Context, tokens []int) (string, error) {
-	return decode(llm, ctx, tokens)
 }
 
 func decode(llm extServer, ctx context.Context, tokens []int) (string, error) {
@@ -386,9 +322,6 @@ func decode(llm extServer, ctx context.Context, tokens []int) (string, error) {
 	return decoded.Content, err
 }
 
-func (llm *llamaExtServer) Embedding(ctx context.Context, input string) ([]float64, error) {
-	return embedding(llm, ctx, input)
-}
 func embedding(llm extServer, ctx context.Context, input string) ([]float64, error) {
 	data, err := json.Marshal(TokenizeRequest{Content: input})
 	if err != nil {
@@ -412,10 +345,6 @@ func embedding(llm extServer, ctx context.Context, input string) ([]float64, err
 	}
 
 	return embedding.Embedding, nil
-}
-
-func (llm *llamaExtServer) Close() {
-	close(llm)
 }
 
 func close(llm extServer) {

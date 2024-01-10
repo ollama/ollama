@@ -13,10 +13,9 @@ import "C"
 import (
 	"fmt"
 	"log"
+	"runtime"
 	"sync"
 	"unsafe"
-
-	"github.com/jmorganca/ollama/api"
 )
 
 type handles struct {
@@ -26,6 +25,9 @@ type handles struct {
 
 var gpuMutex sync.Mutex
 var gpuHandles *handles = nil
+
+// With our current CUDA compile flags, 5.2 and older will not work properly
+const CudaComputeMajorMin = 6
 
 // Note: gpuMutex must already be held
 func initGPUHandles() {
@@ -65,15 +67,25 @@ func GetGPUInfo() GpuInfo {
 	}
 
 	var memInfo C.mem_info_t
-	resp := GpuInfo{"", "", 0, 0}
+	resp := GpuInfo{}
 	if gpuHandles.cuda != nil {
 		C.cuda_check_vram(*gpuHandles.cuda, &memInfo)
 		if memInfo.err != nil {
 			log.Printf("error looking up CUDA GPU memory: %s", C.GoString(memInfo.err))
 			C.free(unsafe.Pointer(memInfo.err))
 		} else {
-			resp.Driver = "CUDA"
-			resp.Library = "cuda_server"
+			// Verify minimum compute capability
+			var cc C.cuda_compute_capability_t
+			C.cuda_compute_capability(*gpuHandles.cuda, &cc)
+			if cc.err != nil {
+				log.Printf("error looking up CUDA GPU compute capability: %s", C.GoString(cc.err))
+				C.free(unsafe.Pointer(cc.err))
+			} else if cc.major >= CudaComputeMajorMin {
+				log.Printf("CUDA Compute Capability detected: %d.%d", cc.major, cc.minor)
+				resp.Library = "cuda"
+			} else {
+				log.Printf("CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor)
+			}
 		}
 	} else if gpuHandles.rocm != nil {
 		C.rocm_check_vram(*gpuHandles.rocm, &memInfo)
@@ -81,54 +93,53 @@ func GetGPUInfo() GpuInfo {
 			log.Printf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err))
 			C.free(unsafe.Pointer(memInfo.err))
 		} else {
-			resp.Driver = "ROCM"
-			resp.Library = "rocm_server"
+			resp.Library = "rocm"
 		}
 	}
-	if resp.Driver == "" {
+	if resp.Library == "" {
 		C.cpu_check_ram(&memInfo)
-		resp.Driver = "CPU"
 		// In the future we may offer multiple CPU variants to tune CPU features
-		resp.Library = "default"
+		if runtime.GOOS == "windows" {
+			resp.Library = "cpu"
+		} else {
+			resp.Library = "default"
+		}
 	}
 	if memInfo.err != nil {
 		log.Printf("error looking up CPU memory: %s", C.GoString(memInfo.err))
 		C.free(unsafe.Pointer(memInfo.err))
 		return resp
 	}
+
+	resp.DeviceCount = uint32(memInfo.count)
 	resp.FreeMemory = uint64(memInfo.free)
 	resp.TotalMemory = uint64(memInfo.total)
 	return resp
 }
 
-func CheckVRAM() (int64, error) {
-	gpuInfo := GetGPUInfo()
-	if gpuInfo.FreeMemory > 0 && gpuInfo.Driver != "CPU" {
-		return int64(gpuInfo.FreeMemory), nil
+func getCPUMem() (memInfo, error) {
+	var ret memInfo
+	var info C.mem_info_t
+	C.cpu_check_ram(&info)
+	if info.err != nil {
+		defer C.free(unsafe.Pointer(info.err))
+		return ret, fmt.Errorf(C.GoString(info.err))
 	}
-	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation
+	ret.FreeMemory = uint64(info.free)
+	ret.TotalMemory = uint64(info.total)
+	return ret, nil
 }
 
-func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {
-	if opts.NumGPU != -1 {
-		return opts.NumGPU
+func CheckVRAM() (int64, error) {
+	gpuInfo := GetGPUInfo()
+	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
+		// leave 10% or 384Mi of VRAM free for unaccounted for overhead
+		overhead := gpuInfo.FreeMemory * uint64(gpuInfo.DeviceCount) / 10
+		if overhead < 384*1024*1024 {
+			overhead = 384 * 1024 * 1024
+		}
+		return int64(gpuInfo.FreeMemory - overhead), nil
 	}
-	info := GetGPUInfo()
-	if info.Driver == "CPU" {
-		return 0
-	}
 
-	/*
-		Calculate bytes per layer, this will roughly be the size of the model file divided by the number of layers.
-		We can store the model weights and the kv cache in vram,
-		to enable kv chache vram storage add two additional layers to the number of layers retrieved from the model file.
-	*/
-	bytesPerLayer := uint64(fileSizeBytes / numLayer)
-
-	// 75% of the absolute max number of layers we can fit in available VRAM, off-loading too many layers to the GPU can cause OOM errors
-	layers := int(info.FreeMemory/bytesPerLayer) * 3 / 4
-
-	log.Printf("%d MB VRAM available, loading up to %d %s GPU layers out of %d", info.FreeMemory/(1024*1024), layers, info.Driver, numLayer)
-
-	return layers
+	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation
 }

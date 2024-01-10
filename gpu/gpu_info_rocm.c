@@ -40,9 +40,11 @@ void rocm_init(rocm_init_resp_t *resp) {
     resp->rh.handle = LOAD_LIBRARY(rocm_lib_paths[i], RTLD_LAZY);
   }
   if (!resp->rh.handle) {
+    char *msg = LOAD_ERR();
     snprintf(buf, buflen,
              "Unable to load %s library to query for Radeon GPUs: %s\n",
-             rocm_lib_paths[0], LOAD_ERR());
+             rocm_lib_paths[0], msg);
+    free(msg);
     resp->err = strdup(buf);
     return;
   }
@@ -51,8 +53,10 @@ void rocm_init(rocm_init_resp_t *resp) {
     *l[i].p = LOAD_SYMBOL(resp->rh.handle, l[i].s);
     if (!l[i].p) {
       UNLOAD_LIBRARY(resp->rh.handle);
+      char *msg = LOAD_ERR();
       snprintf(buf, buflen, "symbol lookup for %s failed: %s", l[i].s,
-               LOAD_ERR());
+               msg);
+      free(msg);
       resp->err = strdup(buf);
       return;
     }
@@ -106,6 +110,8 @@ void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
     return;
   }
 
+  // TODO: set this to the actual number of devices
+  resp->count = 1;
   resp->total = totalMem;
   resp->free = totalMem - usedMem;
   return;

@@ -33,6 +33,14 @@ case "$ARCH" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
+KERN=$(uname -r)
+case "$KERN" in
+    *icrosoft*WSL2 | *icrosoft*wsl2) ;;
+    *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
+    *) ;;
+esac
+
+
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
@@ -75,6 +83,10 @@ configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
         $SUDO useradd -r -s /bin/false -m -d /usr/share/ollama ollama
+    fi
+    if getent group render >/dev/null 2>&1; then
+        status "Adding ollama user to render group..."
+        $SUDO usermod -a -G render ollama
     fi
 
     status "Adding current user to ollama group..."

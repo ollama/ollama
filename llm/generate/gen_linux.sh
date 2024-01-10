@@ -1,6 +1,6 @@
 #!/bin/bash
 # This script is intended to run inside the go generate
-# working directory must be llm/llama.cpp
+# working directory must be llm/generate/
 
 # First we build our default built-in library which will be linked into the CGO
 # binary as a normal dependency. This default build is CPU based.
@@ -16,39 +16,63 @@
 set -ex
 set -o pipefail
 
+# See https://llvm.org/docs/AMDGPUUsage.html#processors for reference
+amdGPUs() {
+    GPU_LIST=(
+        "gfx803"
+        "gfx900"
+        "gfx906:xnack-"
+        "gfx908:xnack-"
+        "gfx90a:xnack+"
+        "gfx90a:xnack-"
+        "gfx1010"
+        "gfx1012"
+        "gfx1030"
+        "gfx1100"
+        "gfx1101"
+        "gfx1102"
+    )
+    (
+        IFS=$';'
+        echo "'${GPU_LIST[*]}'"
+    )
+}
+
 echo "Starting linux generate script"
 if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ]; then
     export CUDACXX=/usr/local/cuda/bin/nvcc
 fi
-COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_ACCELERATE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
-OLLAMA_DYN_LIB_DIR="gguf/build/lib"
+COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
 source $(dirname $0)/gen_common.sh
 init_vars
 git_module_setup
 apply_patches
 
-mkdir -p ${OLLAMA_DYN_LIB_DIR}
-touch ${OLLAMA_DYN_LIB_DIR}/.generated
-
 #
 # CPU first for the default library
 #
 CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
-BUILD_DIR="gguf/build/cpu"
+BUILD_DIR="${LLAMACPP_DIR}/build/linux/cpu"
+
 build
+install
+
+# Placeholder to keep go embed happy until we start building dynamic CPU lib variants
+touch ${BUILD_DIR}/lib/dummy.so
 
 if [ -d /usr/local/cuda/lib64/ ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
     CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
-    BUILD_DIR="gguf/build/cuda"
+    BUILD_DIR="${LLAMACPP_DIR}/build/linux/cuda"
     CUDA_LIB_DIR=/usr/local/cuda/lib64
     build
-    gcc -fPIC -g -shared -o ${OLLAMA_DYN_LIB_DIR}/libcuda_server.so \
+    install
+    gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
         -Wl,--whole-archive \
-        ${BUILD_DIR}/examples/server/libext_server.a \
-        ${BUILD_DIR}/common/libcommon.a \
-        ${BUILD_DIR}/libllama.a \
+        ${BUILD_DIR}/lib/libext_server.a \
+        ${BUILD_DIR}/lib/libcommon.a \
+        ${BUILD_DIR}/lib/libllama.a \
         -Wl,--no-whole-archive \
         ${CUDA_LIB_DIR}/libcudart_static.a \
         ${CUDA_LIB_DIR}/libcublas_static.a \
@@ -73,17 +97,20 @@ fi
 if [ -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
     init_vars
-    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS='gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102' -DGPU_TARGETS='gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'"
-    BUILD_DIR="gguf/build/rocm"
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
+    BUILD_DIR="${LLAMACPP_DIR}/build/linux/rocm"
     build
-    gcc -fPIC -g -shared -o ${OLLAMA_DYN_LIB_DIR}/librocm_server.so \
+    install
+    gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
         -Wl,--whole-archive \
-        ${BUILD_DIR}/examples/server/libext_server.a \
-        ${BUILD_DIR}/common/libcommon.a \
-        ${BUILD_DIR}/libllama.a \
+        ${BUILD_DIR}/lib/libext_server.a \
+        ${BUILD_DIR}/lib/libcommon.a \
+        ${BUILD_DIR}/lib/libllama.a \
         -Wl,--no-whole-archive \
         -lrt -lpthread -ldl -lstdc++ -lm \
         -L/opt/rocm/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ \
         -Wl,-rpath,/opt/rocm/lib,-rpath,/opt/amdgpu/lib/x86_64-linux-gnu/ \
         -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu
 fi
+
+cleanup

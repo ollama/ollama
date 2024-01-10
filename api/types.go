@@ -148,7 +148,12 @@ type DeleteRequest struct {
 }
 
 type ShowRequest struct {
-	Name string `json:"name"`
+	Name     string `json:"name"`
+	Model    string `json:"model"`
+	System   string `json:"system"`
+	Template string `json:"template"`
+
+	Options map[string]interface{} `json:"options"`
 }
 
 type ShowResponse struct {
