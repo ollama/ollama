@@ -33,9 +33,9 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 
 - ✒️🔢 **Full Markdown and LaTeX Support**: Elevate your LLM experience with comprehensive Markdown and LaTeX capabilities for enriched interaction.
 
-- 📚 **Local RAG Integration**: Dive into the future of chat interactions with the groundbreaking Retrieval Augmented Generation (RAG) support. This feature seamlessly integrates document interactions into your chat experience. You can load documents directly into the chat or add files to your document library, effortlessly accessing them using '#' command in the prompt. In its alpha phase, occasional issues may arise as we actively refine and enhance this feature to ensure optimal performance and reliability.
+- 📚 **Local RAG Integration**: Dive into the future of chat interactions with the groundbreaking Retrieval Augmented Generation (RAG) support. This feature seamlessly integrates document interactions into your chat experience. You can load documents directly into the chat or add files to your document library, effortlessly accessing them using **'#'** command in the prompt. In its alpha phase, occasional issues may arise as we actively refine and enhance this feature to ensure optimal performance and reliability.
 
-- 📜 **Prompt Preset Support**: Instantly access preset prompts using the '/' command in the chat input. Load predefined conversation starters effortlessly and expedite your interactions. Effortlessly import prompts through [OllamaHub](https://ollamahub.com/) integration.
+- 📜 **Prompt Preset Support**: Instantly access preset prompts using the **'/'** command in the chat input. Load predefined conversation starters effortlessly and expedite your interactions. Effortlessly import prompts through [OllamaHub](https://ollamahub.com/) integration.
 
 - 👍👎 **RLHF Annotation**: Empower your messages by rating them with thumbs up and thumbs down, facilitating the creation of datasets for Reinforcement Learning from Human Feedback (RLHF). Utilize your messages to train or fine-tune models, all while ensuring the confidentiality of locally saved data.
 
@@ -50,6 +50,8 @@ Also check our sibling project, [OllamaHub](https://ollamahub.com/), where you c
 - 🧩 **Modelfile Builder**: Easily create Ollama modelfiles via the web UI. Create and add characters/agents, customize chat elements, and import modelfiles effortlessly through [OllamaHub](https://ollamahub.com/) integration.
 
 - ⚙️ **Many Models Conversations**: Effortlessly engage with various models simultaneously, harnessing their unique strengths for optimal responses. Enhance your experience by leveraging a diverse set of models in parallel.
+
+- 💬 **Collaborative Chat**: Harness the collective intelligence of multiple models by seamlessly orchestrating group conversations. Use the **'@'** command to specify the model, enabling dynamic and diverse dialogues within your chat interface. Immerse yourself in the collective intelligence woven into your chat environment.
 
 - 🤝 **OpenAI API Integration**: Effortlessly integrate OpenAI-compatible API for versatile conversations alongside Ollama models. Customize the API Base URL to link with **LMStudio, Mistral, OpenRouter, and more**.
 
@@ -92,6 +94,7 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 1. **Installing Docker:**
 
    - **For Windows and Mac Users:**
+
      - Download Docker Desktop from [Docker's official website](https://www.docker.com/products/docker-desktop).
      - Follow the installation instructions provided on the website. After installation, open Docker Desktop to ensure it's running properly.
 
@@ -112,6 +115,7 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
        This command downloads a test image and runs it in a container, which prints an informational message.
 
 2. **Ensure You Have the Latest Version of Ollama:**
+
    - Download the latest version from [https://ollama.ai/](https://ollama.ai/).
 
 3. **Verify Ollama Installation:**
@@ -264,7 +268,6 @@ See [TROUBLESHOOTING.md](/TROUBLESHOOTING.md) for information on how to troubles
 
 Here are some exciting tasks on our roadmap:
 
-- 💬 **Group Conversations**: Witness the dynamic synergy of multiple Language Models engaging in collaborative discussions. In this unique feature, you can orchestrate interactions between various models, opening up avenues for diverse and intriguing dialogues. Experience the power of collective intelligence within your chat environment.
 - 🌐 **Web Browsing Capability**: Experience the convenience of seamlessly integrating web content directly into your chat. Easily browse and share information without leaving the conversation.
 - 🔄 **Function Calling**: Empower your interactions by running code directly within the chat. Execute functions and commands effortlessly, enhancing the functionality of your conversations.
 - ⚙️ **Custom Python Backend Actions**: Empower your Ollama Web UI by creating or downloading custom Python backend actions. Unleash the full potential of your web interface with tailored actions that suit your specific needs, enhancing functionality and versatility.
