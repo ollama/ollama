@@ -15,7 +15,12 @@
 	let filteredModels = [];
 
 	$: filteredModels = $models
-		.filter((p) => p.name !== 'hr' && p.name.includes(prompt.split(' ')?.at(0)?.substring(1) ?? ''))
+		.filter(
+			(p) =>
+				p.name !== 'hr' &&
+				!p.external &&
+				p.name.includes(prompt.split(' ')?.at(0)?.substring(1) ?? '')
+		)
 		.sort((a, b) => a.name.localeCompare(b.name));
 
 	$: if (prompt) {
