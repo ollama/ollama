@@ -36,7 +36,7 @@ typedef struct cuda_compute_capability {
   int minor;
 } cuda_compute_capability_t;
 
-void cuda_init(cuda_init_resp_t *resp);
+void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp);
 void cuda_check_vram(cuda_handle_t ch, mem_info_t *resp);
 void cuda_compute_capability(cuda_handle_t ch, cuda_compute_capability_t *cc);
 

@@ -4,22 +4,7 @@
 
 #include <string.h>
 
-#ifndef _WIN32
-const char *rocm_lib_paths[] = {
-    "librocm_smi64.so",
-    "/opt/rocm/lib/librocm_smi64.so",
-    NULL,
-};
-#else
-// TODO untested
-const char *rocm_lib_paths[] = {
-    "rocm_smi64.dll",
-    "/opt/rocm/lib/rocm_smi64.dll",
-    NULL,
-};
-#endif
-
-void rocm_init(rocm_init_resp_t *resp) {
+void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
   rsmi_status_t ret;
   resp->err = NULL;
   const int buflen = 256;
@@ -36,14 +21,12 @@ void rocm_init(rocm_init_resp_t *resp) {
       // { "rsmi_dev_id_get", (void*)&resp->rh.getHandle },
   };
 
-  for (i = 0; rocm_lib_paths[i] != NULL && resp->rh.handle == NULL; i++) {
-    resp->rh.handle = LOAD_LIBRARY(rocm_lib_paths[i], RTLD_LAZY);
-  }
+  resp->rh.handle = LOAD_LIBRARY(rocm_lib_path, RTLD_LAZY);
   if (!resp->rh.handle) {
     char *msg = LOAD_ERR();
     snprintf(buf, buflen,
              "Unable to load %s library to query for Radeon GPUs: %s\n",
-             rocm_lib_paths[0], msg);
+             rocm_lib_path, msg);
     free(msg);
     resp->err = strdup(buf);
     return;
@@ -53,6 +36,7 @@ void rocm_init(rocm_init_resp_t *resp) {
     *l[i].p = LOAD_SYMBOL(resp->rh.handle, l[i].s);
     if (!l[i].p) {
       UNLOAD_LIBRARY(resp->rh.handle);
+      resp->rh.handle = NULL;
       char *msg = LOAD_ERR();
       snprintf(buf, buflen, "symbol lookup for %s failed: %s", l[i].s,
                msg);
@@ -64,6 +48,8 @@ void rocm_init(rocm_init_resp_t *resp) {
 
   ret = (*resp->rh.initFn)(0);
   if (ret != RSMI_STATUS_SUCCESS) {
+    UNLOAD_LIBRARY(resp->rh.handle);
+    resp->rh.handle = NULL;
     snprintf(buf, buflen, "rocm vram init failure: %d", ret);
     resp->err = strdup(buf);
   }
@@ -83,7 +69,7 @@ void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
   int i;
 
   if (h.handle == NULL) {
-    resp->err = strdup("nvml handle sn't initialized");
+    resp->err = strdup("rocm handle not initialized");
     return;
   }
 

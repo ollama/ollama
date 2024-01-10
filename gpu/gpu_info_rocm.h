@@ -29,7 +29,7 @@ typedef struct rocm_init_resp {
   rocm_handle_t rh;
 } rocm_init_resp_t;
 
-void rocm_init(rocm_init_resp_t *resp);
+void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp);
 void rocm_check_vram(rocm_handle_t rh, mem_info_t *resp);
 
 #endif  // __GPU_INFO_ROCM_H__
