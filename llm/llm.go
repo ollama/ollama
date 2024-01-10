@@ -95,10 +95,11 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 				break
 			}
 
-			// the scratch buffer is always allocated on a single GPU, so make sure it will fit on one
+			// alloc buffer and kv cache is allocated as a fixed amount on the main gpu
 			// TODO: find the largest GPU and only reserve memory there
 			avgAvailable := available / int64(info.DeviceCount)
-			if requiredAlloc > avgAvailable {
+			fixed := requiredAlloc + requiredKv
+			if fixed > avgAvailable {
 				log.Printf("not enough vram available, falling back to CPU only")
 				library = "cpu"
 				opts.NumGPU = 0
@@ -109,10 +110,10 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 			// the scratch buffer space on all of them
 			// TODO: allocate less layers to the GPU with the scratch buffer
 			// and more to the others (based on their available memory)
-			available -= requiredAlloc * int64(info.DeviceCount)
+			available -= fixed * int64(info.DeviceCount)
 
 			// no offloading required
-			if requiredModel+requiredKv <= available {
+			if fixed <= available {
 				break
 			}
 
