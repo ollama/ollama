@@ -110,10 +110,10 @@ RUN go build .
 
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
-RUN apt-get update && apt-get install -y ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates curl
 COPY --from=build-amd64 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
 FROM --platform=linux/arm64 ubuntu:22.04 as runtime-arm64
-RUN apt-get update && apt-get install -y ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates curl
 COPY --from=build-arm64 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
 
 FROM runtime-$TARGETARCH
@@ -125,3 +125,4 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
+HEALTHCHECK --interval=5s CMD curl --fail http://localhost:11434 || exit 1
