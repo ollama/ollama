@@ -7,10 +7,17 @@
 #ifndef _WIN32
 const char *cuda_lib_paths[] = {
     "libnvidia-ml.so",
+    "/usr/lib/wsl/lib/libnvidia-ml.so",  // TODO Maybe glob?
+    "/usr/lib/wsl/lib/libnvidia-ml.so.1",
     "/usr/local/cuda/lib64/libnvidia-ml.so",
+    "/usr/lib/libnvidia-ml.so",
+    "/usr/lib/libnvidia-ml.so.1",
     "/usr/lib/x86_64-linux-gnu/nvidia/current/libnvidia-ml.so",
+    "/usr/lib/x86_64-linux-gnu/libnvidia-ml.so",
     "/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1",
-    "/usr/lib/wsl/lib/libnvidia-ml.so.1",  // TODO Maybe glob?
+    "/usr/lib/aarch64-linux-gnu/nvidia/current/libnvidia-ml.so",
+    "/usr/lib/aarch64-linux-gnu/libnvidia-ml.so",
+    "/usr/lib/aarch64-linux-gnu/libnvidia-ml.so.1",
     NULL,
 };
 #else
