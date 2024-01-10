@@ -3,7 +3,6 @@
 	import Name from './Name.svelte';
 	import ProfileImage from './ProfileImage.svelte';
 	import { modelfiles } from '$lib/stores';
-	import { stringify } from 'postcss';
 
 	export let user;
 	export let message;
