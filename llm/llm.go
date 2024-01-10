@@ -96,7 +96,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 			}
 
 			// the scratch buffer is always allocated on a single GPU, so make sure it will fit on one
-			// TODO: find the largest GPU and allocate the scratch buffer there
+			// TODO: find the largest GPU and only reserve memory there
 			avgAvailable := available / int64(info.DeviceCount)
 			if requiredAlloc > avgAvailable {
 				log.Printf("not enough vram available, falling back to CPU only")
