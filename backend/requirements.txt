@@ -22,6 +22,8 @@ chromadb
 sentence_transformers
 pypdf
 docx2txt
+unstructured
+markdown
 
 PyJWT
 pyjwt[crypto]
