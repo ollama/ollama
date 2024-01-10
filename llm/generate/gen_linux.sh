@@ -104,12 +104,6 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
         build
         install
         link_server_lib
-        gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
-            -Wl,--whole-archive \
-            ${BUILD_DIR}/lib/libext_server.a \
-            -Wl,--no-whole-archive \
-            ${BUILD_DIR}/lib/libcommon.a \
-            ${BUILD_DIR}/lib/libllama.a
     fi
 else
     echo "Skipping CPU generation step as requested"

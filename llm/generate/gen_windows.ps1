@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 
 function init_vars {
     $script:llamacppDir = "../llama.cpp"
-    $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off", "-DLLAMA_F16C=off", "-DLLAMA_FMA=off", "-DLLAMA_AVX512=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX=on", "-A","x64")
+    $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off",  "-A","x64")
     $script:cmakeTargets = @("ggml", "ggml_static", "llama", "build_info", "common", "ext_server_shared", "llava_static")
     if ($env:CGO_CFLAGS -contains "-g") {
         $script:cmakeDefs += @("-DCMAKE_VERBOSE_MAKEFILE=on", "-DLLAMA_SERVER_VERBOSE=on")
@@ -63,16 +63,36 @@ init_vars
 git_module_setup
 apply_patches
 
-# first build CPU based
-$script:buildDir="${script:llamacppDir}/build/windows/cpu"
+# -DLLAMA_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
+# -DLLAMA_F16C -- 2012 Intel Ivy Bridge & AMD 2011 Bulldozer (No significant improvement over just AVX)
+# -DLLAMA_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
+# -DLLAMA_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
+$script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on", "-DLLAMA_NATIVE=off")
+
+$script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+$script:buildDir="${script:llamacppDir}/build/windows/cpu"
+write-host "Building LCD CPU"
+build
+install
+
+$script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+$script:buildDir="${script:llamacppDir}/build/windows/cpu_avx"
+write-host "Building AVX CPU"
+build
+install
+
+$script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
+$script:buildDir="${script:llamacppDir}/build/windows/cpu_avx2"
+write-host "Building AVX2 CPU"
 build
 install
 
 # Then build cuda as a dynamically loaded library
+# TODO figure out how to detect cuda version
 init_vars
 $script:buildDir="${script:llamacppDir}/build/windows/cuda"
-$script:cmakeDefs += @("-DLLAMA_CUBLAS=ON")
+$script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on")
 build
 install
 

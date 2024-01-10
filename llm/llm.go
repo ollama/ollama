@@ -138,33 +138,30 @@ func Init(workdir string) error {
 	return nativeInit(workdir)
 }
 
-func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (extServer, error) {
-	shims := getShims(gpuInfo)
+func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+	dynLibs := getDynLibs(gpuInfo)
 
 	// Check to see if the user has requested a specific library instead of auto-detecting
 	demandLib := os.Getenv("OLLAMA_LLM_LIBRARY")
 	if demandLib != "" {
-		libPath := availableShims[demandLib]
+		libPath := availableDynLibs[demandLib]
 		if libPath == "" {
 			log.Printf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib)
 		} else {
 			log.Printf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib)
-			shims = []string{libPath}
+			dynLibs = []string{libPath}
 		}
 	}
 
-	for _, shim := range shims {
-		// TODO - only applies on Darwin (switch to fully dynamic there too...)
-		if shim == "default" {
-			break
-		}
-		srv, err := newDynamicShimExtServer(shim, model, adapters, projectors, opts)
+	err2 := fmt.Errorf("unable to locate suitable llm library")
+	for _, dynLib := range dynLibs {
+		srv, err := newDynExtServer(dynLib, model, adapters, projectors, opts)
 		if err == nil {
 			return srv, nil
 		}
-		log.Printf("Failed to load dynamic library %s  %s", shim, err)
+		log.Printf("Failed to load dynamic library %s  %s", dynLib, err)
+		err2 = err
 	}
 
-	return newDefaultExtServer(model, adapters, projectors, opts)
-
+	return nil, err2
 }

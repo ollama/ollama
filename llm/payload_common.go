@@ -18,42 +18,42 @@ import (
 // Libraries names may contain an optional variant separated by '_'
 // For example, "rocm_v6" and "rocm_v5" or "cpu" and "cpu_avx2"
 // Any library without a variant is the lowest common denominator
-var availableShims = map[string]string{}
+var availableDynLibs = map[string]string{}
 
 const pathComponentCount = 6
 
-// getShims returns an ordered list of shims to try, starting with the best
-func getShims(gpuInfo gpu.GpuInfo) []string {
+// getDynLibs returns an ordered list of LLM libraries to try, starting with the best
+func getDynLibs(gpuInfo gpu.GpuInfo) []string {
 	// Short circuit if we know we're using the default built-in (darwin only)
 	if gpuInfo.Library == "default" {
 		return []string{"default"}
 	}
 
 	exactMatch := ""
-	shims := []string{}
-	altShims := []string{}
+	dynLibs := []string{}
+	altDynLibs := []string{}
 	requested := gpuInfo.Library
 	if gpuInfo.Variant != "" {
 		requested += "_" + gpuInfo.Variant
 	}
 	// Try to find an exact match
-	for cmp := range availableShims {
+	for cmp := range availableDynLibs {
 		if requested == cmp {
 			exactMatch = cmp
-			shims = []string{availableShims[cmp]}
+			dynLibs = []string{availableDynLibs[cmp]}
 			break
 		}
 	}
 	// Then for GPUs load alternates and sort the list for consistent load ordering
 	if gpuInfo.Library != "cpu" {
-		for cmp := range availableShims {
+		for cmp := range availableDynLibs {
 			if gpuInfo.Library == strings.Split(cmp, "_")[0] && cmp != exactMatch {
-				altShims = append(altShims, cmp)
+				altDynLibs = append(altDynLibs, cmp)
 			}
 		}
-		slices.Sort(altShims)
-		for _, altShim := range altShims {
-			shims = append(shims, availableShims[altShim])
+		slices.Sort(altDynLibs)
+		for _, altDynLib := range altDynLibs {
+			dynLibs = append(dynLibs, availableDynLibs[altDynLib])
 		}
 	}
 
@@ -65,27 +65,27 @@ func getShims(gpuInfo gpu.GpuInfo) []string {
 		// Attempting to run the wrong CPU instructions will panic the
 		// process
 		if variant != "" {
-			for cmp := range availableShims {
+			for cmp := range availableDynLibs {
 				if cmp == "cpu_"+variant {
-					shims = append(shims, availableShims[cmp])
+					dynLibs = append(dynLibs, availableDynLibs[cmp])
 					break
 				}
 			}
 		} else {
-			shims = append(shims, availableShims["cpu"])
+			dynLibs = append(dynLibs, availableDynLibs["cpu"])
 		}
 	}
 
 	// Finaly, if we didn't find any matches, LCD CPU FTW
-	if len(shims) == 0 {
-		shims = []string{availableShims["cpu"]}
+	if len(dynLibs) == 0 {
+		dynLibs = []string{availableDynLibs["cpu"]}
 	}
-	return shims
+	return dynLibs
 }
 
-func rocmShimPresent() bool {
-	for shimName := range availableShims {
-		if strings.HasPrefix(shimName, "rocm") {
+func rocmDynLibPresent() bool {
+	for dynLibName := range availableDynLibs {
+		if strings.HasPrefix(dynLibName, "rocm") {
 			return true
 		}
 	}
@@ -104,7 +104,6 @@ func nativeInit(workdir string) error {
 			return err
 		}
 		os.Setenv("GGML_METAL_PATH_RESOURCES", workdir)
-		return nil
 	}
 
 	libs, err := extractDynamicLibs(workdir, "llama.cpp/build/*/*/lib/*")
@@ -118,7 +117,7 @@ func nativeInit(workdir string) error {
 	for _, lib := range libs {
 		// The last dir component is the variant name
 		variant := filepath.Base(filepath.Dir(lib))
-		availableShims[variant] = lib
+		availableDynLibs[variant] = lib
 	}
 
 	if err := verifyDriverAccess(); err != nil {
@@ -126,9 +125,9 @@ func nativeInit(workdir string) error {
 	}
 
 	// Report which dynamic libraries we have loaded to assist troubleshooting
-	variants := make([]string, len(availableShims))
+	variants := make([]string, len(availableDynLibs))
 	i := 0
-	for variant := range availableShims {
+	for variant := range availableDynLibs {
 		variants[i] = variant
 		i++
 	}
@@ -226,7 +225,7 @@ func verifyDriverAccess() error {
 		return nil
 	}
 	// Only check ROCm access if we have the dynamic lib loaded
-	if rocmShimPresent() {
+	if rocmDynLibPresent() {
 		// Verify we have permissions - either running as root, or we have group access to the driver
 		fd, err := os.OpenFile("/dev/kfd", os.O_RDWR, 0666)
 		if err != nil {
