@@ -10,6 +10,7 @@
 	import AddFilesPlaceholder from '../AddFilesPlaceholder.svelte';
 	import { SUPPORTED_FILE_TYPE } from '$lib/constants';
 	import Documents from './MessageInput/Documents.svelte';
+	import Models from './MessageInput/Models.svelte';
 
 	export let submitPrompt: Function;
 	export let stopResponse: Function;
@@ -18,11 +19,16 @@
 	export let autoScroll = true;
 
 	let filesInputElement;
+
 	let promptsElement;
 	let documentsElement;
+	let modelsElement;
 
 	let inputFiles;
 	let dragged = false;
+
+	let user = null;
+	let chatInputPlaceholder = '';
 
 	export let files = [];
 
@@ -34,6 +40,15 @@
 	export let messages = [];
 
 	let speechRecognition;
+
+	$: if (prompt) {
+		const chatInput = document.getElementById('chat-textarea');
+
+		if (chatInput) {
+			chatInput.style.height = '';
+			chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + 'px';
+		}
+	}
 
 	const speechRecognitionHandler = () => {
 		// Check if SpeechRecognition is supported
@@ -79,7 +94,7 @@
 					console.log('recognition ended');
 					speechRecognitionListening = false;
 					if (prompt !== '' && $settings?.speechAutoSend === true) {
-						submitPrompt(prompt);
+						submitPrompt(prompt, user);
 					}
 				};
 
@@ -246,6 +261,14 @@
 							];
 						}}
 					/>
+				{:else if prompt.charAt(0) === '@'}
+					<Models
+						bind:this={modelsElement}
+						bind:prompt
+						bind:user
+						bind:chatInputPlaceholder
+						{messages}
+					/>
 				{:else if messages.length == 0 && suggestionPrompts.length !== 0}
 					<Suggestions {suggestionPrompts} {submitPrompt} />
 				{/if}
@@ -293,7 +316,7 @@
 				<form
 					class=" flex flex-col relative w-full rounded-xl border dark:border-gray-600 bg-white dark:bg-gray-800 dark:text-gray-100"
 					on:submit|preventDefault={() => {
-						submitPrompt(prompt);
+						submitPrompt(prompt, user);
 					}}
 				>
 					{#if files.length > 0}
@@ -435,14 +458,18 @@
 							class=" dark:bg-gray-800 dark:text-gray-100 outline-none w-full py-3 px-2 {fileUploadEnabled
 								? ''
 								: ' pl-4'} rounded-xl resize-none h-[48px]"
-							placeholder={speechRecognitionListening ? 'Listening...' : 'Send a message'}
+							placeholder={chatInputPlaceholder !== ''
+								? chatInputPlaceholder
+								: speechRecognitionListening
+								? 'Listening...'
+								: 'Send a message'}
 							bind:value={prompt}
 							on:keypress={(e) => {
 								if (e.keyCode == 13 && !e.shiftKey) {
 									e.preventDefault();
 								}
 								if (prompt !== '' && e.keyCode == 13 && !e.shiftKey) {
-									submitPrompt(prompt);
+									submitPrompt(prompt, user);
 								}
 							}}
 							on:keydown={async (e) => {
@@ -477,10 +504,10 @@
 									editButton?.click();
 								}
 
-								if (['/', '#'].includes(prompt.charAt(0)) && e.key === 'ArrowUp') {
+								if (['/', '#', '@'].includes(prompt.charAt(0)) && e.key === 'ArrowUp') {
 									e.preventDefault();
 
-									(promptsElement || documentsElement).selectUp();
+									(promptsElement || documentsElement || modelsElement).selectUp();
 
 									const commandOptionButton = [
 										...document.getElementsByClassName('selected-command-option-button')
@@ -488,10 +515,10 @@
 									commandOptionButton.scrollIntoView({ block: 'center' });
 								}
 
-								if (['/', '#'].includes(prompt.charAt(0)) && e.key === 'ArrowDown') {
+								if (['/', '#', '@'].includes(prompt.charAt(0)) && e.key === 'ArrowDown') {
 									e.preventDefault();
 
-									(promptsElement || documentsElement).selectDown();
+									(promptsElement || documentsElement || modelsElement).selectDown();
 
 									const commandOptionButton = [
 										...document.getElementsByClassName('selected-command-option-button')
@@ -499,7 +526,7 @@
 									commandOptionButton.scrollIntoView({ block: 'center' });
 								}
 
-								if (['/', '#'].includes(prompt.charAt(0)) && e.key === 'Enter') {
+								if (['/', '#', '@'].includes(prompt.charAt(0)) && e.key === 'Enter') {
 									e.preventDefault();
 
 									const commandOptionButton = [
@@ -509,7 +536,7 @@
 									commandOptionButton?.click();
 								}
 
-								if (['/', '#'].includes(prompt.charAt(0)) && e.key === 'Tab') {
+								if (['/', '#', '@'].includes(prompt.charAt(0)) && e.key === 'Tab') {
 									e.preventDefault();
 
 									const commandOptionButton = [
@@ -540,6 +567,7 @@
 							on:input={(e) => {
 								e.target.style.height = '';
 								e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+								user = null;
 							}}
 							on:paste={(e) => {
 								const clipboardData = e.clipboardData || window.clipboardData;
