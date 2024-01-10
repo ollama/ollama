@@ -95,20 +95,26 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 				break
 			}
 
-			// no offloading required
-			if requiredTotal <= available {
-				break
-			}
-
-			// requiredAlloc is always loaded for the CUDA runner, so don't load it if it won't fit
-			if requiredAlloc > available {
+			// the scratch buffer is always allocated on a single GPU, so make sure it will fit on one
+			// TODO: find the largest GPU and allocate the scratch buffer there
+			avgAvailable := available / int64(info.DeviceCount)
+			if requiredAlloc > avgAvailable {
 				log.Printf("not enough vram available, falling back to CPU only")
 				library = "cpu"
 				opts.NumGPU = 0
 				break
 			}
 
-			available -= requiredAlloc
+			// we don't know which GPU will be used, so we have to allocate
+			// the scratch buffer space on all of them
+			// TODO: allocate less layers to the GPU with the scratch buffer
+			// and more to the others (based on their available memory)
+			available -= requiredAlloc * int64(info.DeviceCount)
+
+			// no offloading required
+			if requiredModel+requiredKv <= available {
+				break
+			}
 
 			// fill remaining vram with layers
 			log.Println("splitting", available, "of available memory bytes into layers")
