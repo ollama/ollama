@@ -6,3 +6,5 @@ uploads
 *.db
 _test
 Pipfile
+
+/data
