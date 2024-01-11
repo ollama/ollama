@@ -18,7 +18,7 @@ func TestBasicGetGPUInfo(t *testing.T) {
 	case "linux", "windows":
 		assert.Greater(t, info.TotalMemory, uint64(0))
 		assert.Greater(t, info.FreeMemory, uint64(0))
-		assert.Greater(t, info.DeviceCount, uint64(0))
+		assert.Greater(t, info.DeviceCount, uint32(0))
 	default:
 		return
 	}
