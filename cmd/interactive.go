@@ -420,16 +420,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				// reset the context if we find another image
 				if len(images) > 0 {
-					for _, img := range images {
-						newMessage.Images = append(newMessage.Images, img)
-					}
-
+					newMessage.Images = append(newMessage.Images, images...)
+					// reset the context for the new image
 					opts.Messages = []api.Message{}
 				} else {
 					if len(opts.Messages) > 1 {
-						for _, img := range opts.Messages[len(opts.Messages)-2].Images {
-							newMessage.Images = append(newMessage.Images, img)
-						}
+						newMessage.Images = append(newMessage.Images, opts.Messages[len(opts.Messages)-2].Images...)
 					}
 				}
 				if len(newMessage.Images) == 0 {
