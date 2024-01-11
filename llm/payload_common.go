@@ -3,13 +3,13 @@ package llm
 import (
 	"errors"
 	"fmt"
+	"golang.org/x/exp/slices"
 	"io"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 
 	"github.com/jmorganca/ollama/gpu"
