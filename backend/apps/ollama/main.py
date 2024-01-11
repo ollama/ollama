@@ -65,10 +65,10 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
     else:
         raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
-    headers.pop("Host", None)
-    headers.pop("Authorization", None)
-    headers.pop("Origin", None)
-    headers.pop("Referer", None)
+    headers.pop("host", None)
+    headers.pop("authorization", None)
+    headers.pop("origin", None)
+    headers.pop("referer", None)
 
     r = None
 
