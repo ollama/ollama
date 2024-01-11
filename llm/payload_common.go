@@ -28,6 +28,13 @@ func getDynLibs(gpuInfo gpu.GpuInfo) []string {
 	if gpuInfo.Library == "default" {
 		return []string{"default"}
 	}
+	// TODO - temporary until we have multiple CPU variations for Darwin
+	// Short circuit on darwin with metal only
+	if len(availableDynLibs) == 1 {
+		if _, onlyMetal := availableDynLibs["metal"]; onlyMetal {
+			return []string{availableDynLibs["metal"]}
+		}
+	}
 
 	exactMatch := ""
 	dynLibs := []string{}

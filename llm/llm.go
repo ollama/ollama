@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"runtime"
@@ -50,7 +51,6 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	graph := int64(ggml.NumGQA()) * kv / 6
 
 	info := gpu.GetGPUInfo()
-	library := info.Library
 	switch runtime.GOOS {
 	case "darwin":
 		if opts.NumGPU == 0 {
@@ -59,13 +59,15 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 		if size+kv+graph > vram {
 			log.Println("not enough vram available, falling back to CPU only")
+			info.Library = "cpu"
+			info.Variant = gpu.GetCPUVariant()
 			opts.NumGPU = 0
 			break
 		}
 
 		opts.NumGPU = 1
 	default:
-		if library == "cpu" || library == "default" {
+		if info.Library == "cpu" {
 			log.Println("GPU not available, falling back to CPU")
 			opts.NumGPU = 0
 			break
@@ -73,7 +75,8 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 		// don't use GPU at all if no layers are loaded
 		if opts.NumGPU == 0 {
-			library = "cpu"
+			info.Library = "cpu"
+			info.Variant = gpu.GetCPUVariant()
 			break
 		}
 
@@ -100,7 +103,8 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		min := graph + kv*layers/maxlayers
 		if layers <= 0 || min > avg {
 			log.Printf("not enough vram available, falling back to CPU only")
-			library = "cpu"
+			info.Library = "cpu"
+			info.Variant = gpu.GetCPUVariant()
 			opts.NumGPU = 0
 			break
 		}
@@ -110,8 +114,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 	opts.RopeFrequencyBase = 0.0
 	opts.RopeFrequencyScale = 0.0
-	gpuInfo := gpu.GetGPUInfo()
-	return newLlmServer(gpuInfo, model, adapters, projectors, opts)
+	return newLlmServer(info, model, adapters, projectors, opts)
 }
 
 // Give any native cgo implementations an opportunity to initialize

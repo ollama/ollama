@@ -34,7 +34,7 @@ func GetGPUInfo() GpuInfo {
 	mem, _ := getCPUMem()
 	if runtime.GOARCH == "amd64" {
 		return GpuInfo{
-			Library: "default",
+			Library: "cpu",
 			Variant: GetCPUVariant(),
 			memInfo: mem,
 		}
