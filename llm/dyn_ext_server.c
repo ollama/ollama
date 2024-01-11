@@ -1,4 +1,4 @@
-#include "dynamic_shim.h"
+#include "dyn_ext_server.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -33,7 +33,7 @@ inline char *LOAD_ERR() {
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
 #endif
 
-void dynamic_shim_init(const char *libPath, struct dynamic_llama_server *s,
+void dyn_init(const char *libPath, struct dynamic_llama_server *s,
                        ext_server_resp_t *err) {
   int i = 0;
   struct lookup {
@@ -58,7 +58,7 @@ void dynamic_shim_init(const char *libPath, struct dynamic_llama_server *s,
       {"", NULL},
   };
 
-  printf("Lazy loading %s library\n", libPath);
+  printf("loading %s library\n", libPath);
   s->handle = LOAD_LIBRARY(libPath, RTLD_NOW);
   if (!s->handle) {
     err->id = -1;
@@ -83,63 +83,63 @@ void dynamic_shim_init(const char *libPath, struct dynamic_llama_server *s,
   }
 }
 
-inline void dynamic_shim_llama_server_init(struct dynamic_llama_server s,
+inline void dyn_llama_server_init(struct dynamic_llama_server s,
                                            ext_server_params_t *sparams,
                                            ext_server_resp_t *err) {
   s.llama_server_init(sparams, err);
 }
 
-inline void dynamic_shim_llama_server_start(struct dynamic_llama_server s) {
+inline void dyn_llama_server_start(struct dynamic_llama_server s) {
   s.llama_server_start();
 }
 
-inline void dynamic_shim_llama_server_stop(struct dynamic_llama_server s) {
+inline void dyn_llama_server_stop(struct dynamic_llama_server s) {
   s.llama_server_stop();
 }
 
-inline void dynamic_shim_llama_server_completion(struct dynamic_llama_server s,
+inline void dyn_llama_server_completion(struct dynamic_llama_server s,
                                                  const char *json_req,
                                                  ext_server_resp_t *resp) {
   s.llama_server_completion(json_req, resp);
 }
 
-inline void dynamic_shim_llama_server_completion_next_result(
+inline void dyn_llama_server_completion_next_result(
     struct dynamic_llama_server s, const int task_id,
     ext_server_task_result_t *result) {
   s.llama_server_completion_next_result(task_id, result);
 }
 
-inline void dynamic_shim_llama_server_completion_cancel(
+inline void dyn_llama_server_completion_cancel(
     struct dynamic_llama_server s, const int task_id, ext_server_resp_t *err) {
   s.llama_server_completion_cancel(task_id, err);
 }
-inline void dynamic_shim_llama_server_release_task_result(
+inline void dyn_llama_server_release_task_result(
     struct dynamic_llama_server s, ext_server_task_result_t *result) {
   s.llama_server_release_task_result(result);
 }
 
-inline void dynamic_shim_llama_server_tokenize(struct dynamic_llama_server s,
+inline void dyn_llama_server_tokenize(struct dynamic_llama_server s,
                                                const char *json_req,
                                                char **json_resp,
                                                ext_server_resp_t *err) {
   s.llama_server_tokenize(json_req, json_resp, err);
 }
 
-inline void dynamic_shim_llama_server_detokenize(struct dynamic_llama_server s,
+inline void dyn_llama_server_detokenize(struct dynamic_llama_server s,
                                                  const char *json_req,
                                                  char **json_resp,
                                                  ext_server_resp_t *err) {
   s.llama_server_detokenize(json_req, json_resp, err);
 }
 
-inline void dynamic_shim_llama_server_embedding(struct dynamic_llama_server s,
+inline void dyn_llama_server_embedding(struct dynamic_llama_server s,
                                                 const char *json_req,
                                                 char **json_resp,
                                                 ext_server_resp_t *err) {
   s.llama_server_embedding(json_req, json_resp, err);
 }
 
-inline void dynamic_shim_llama_server_release_json_resp(
+inline void dyn_llama_server_release_json_resp(
     struct dynamic_llama_server s, char **json_resp) {
   s.llama_server_release_json_resp(json_resp);
 }

@@ -18,8 +18,6 @@ type LLM interface {
 	Close()
 }
 
-var AvailableShims = map[string]string{}
-
 func New(workDir, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
@@ -112,7 +110,8 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 	opts.RopeFrequencyBase = 0.0
 	opts.RopeFrequencyScale = 0.0
-	return newLlmServer(library, model, adapters, projectors, opts)
+	gpuInfo := gpu.GetGPUInfo()
+	return newLlmServer(gpuInfo, model, adapters, projectors, opts)
 }
 
 // Give any native cgo implementations an opportunity to initialize
@@ -120,15 +119,30 @@ func Init(workdir string) error {
 	return nativeInit(workdir)
 }
 
-func newLlmServer(library, model string, adapters, projectors []string, opts api.Options) (extServer, error) {
-	if _, libPresent := AvailableShims[library]; libPresent && library != "default" {
-		srv, err := newDynamicShimExtServer(AvailableShims[library], model, adapters, projectors, opts)
+func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+	dynLibs := getDynLibs(gpuInfo)
+
+	// Check to see if the user has requested a specific library instead of auto-detecting
+	demandLib := os.Getenv("OLLAMA_LLM_LIBRARY")
+	if demandLib != "" {
+		libPath := availableDynLibs[demandLib]
+		if libPath == "" {
+			log.Printf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib)
+		} else {
+			log.Printf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib)
+			dynLibs = []string{libPath}
+		}
+	}
+
+	err2 := fmt.Errorf("unable to locate suitable llm library")
+	for _, dynLib := range dynLibs {
+		srv, err := newDynExtServer(dynLib, model, adapters, projectors, opts)
 		if err == nil {
 			return srv, nil
 		}
-		log.Printf("Failed to load dynamic library %s - falling back to CPU mode %s", library, err)
-		// TODO - update some state to indicate we were unable to load the GPU library for future "info" ux
+		log.Printf("Failed to load dynamic library %s  %s", dynLib, err)
+		err2 = err
 	}
 
-	return newDefaultExtServer(model, adapters, projectors, opts)
+	return nil, err2
 }

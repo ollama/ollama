@@ -29,4 +29,16 @@ git_module_setup
 apply_patches
 build
 install
+gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
+    -Wl,-force_load ${BUILD_DIR}/lib/libext_server.a \
+    ${BUILD_DIR}/lib/libcommon.a \
+    ${BUILD_DIR}/lib/libllama.a \
+    ${BUILD_DIR}/lib/libggml_static.a \
+    -lpthread -ldl -lm -lc++ \
+    -framework Accelerate \
+    -framework Foundation \
+    -framework Metal \
+    -framework MetalKit \
+    -framework MetalPerformanceShaders
+
 cleanup
