@@ -111,6 +111,10 @@ void llama_server_stop() {
   // TODO - too verbose, remove once things are solid
   LOG_TEE("requesting llama server shutdown\n");
   ext_server_running = false;
+
+  // unblocks the update_slots() loop so it can clean up and exit
+  llama->request_cancel(0);
+
   ext_server_thread.join();
   delete llama;
   llama = NULL;

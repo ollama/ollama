@@ -76,6 +76,22 @@ go build .
 
 ROCm requires elevated privileges to access the GPU at runtime.  On most distros you can add your user account to the `render` group, or run as root.
 
+#### Advanced CPU Settings
+
+By default, running `go generate ./...` will compile a few different variations
+of the LLM library based on common CPU families and vector math capabilities,
+including a lowest-common-denominator which should run on almost any 64 bit CPU
+somewhat slowly.  At runtime, Ollama will auto-detect the optimal variation to
+load.  If you would like to build a CPU-based build customized for your
+processor, you can set `OLLAMA_CUSTOM_CPU_DEFS` to the llama.cpp flags you would
+like to use.  For example, to compile an optimized binary for an Intel i9-9880H,
+you might use:
+
+```
+OLLAMA_CUSTOM_CPU_DEFS="-DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_F16C=on -DLLAMA_FMA=on" go generate ./...
+go build .
+```
+
 #### Containerized Linux Build
 
 If you have Docker available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included.  The resulting binary is placed in `./dist`
