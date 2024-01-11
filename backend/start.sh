@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
-uvicorn main:app --host 0.0.0.0 --port 8080 --forwarded-allow-ips '*'
+SERVER_PORT="${SERVER_PORT:-8080}"
+uvicorn main:app --host 0.0.0.0 --port $SERVER_PORT --forwarded-allow-ips '*'
