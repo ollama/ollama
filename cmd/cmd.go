@@ -469,6 +469,49 @@ type runOptions struct {
 	Options  map[string]interface{}
 }
 
+type displayResponseState struct {
+	lineLength int
+	wordBuffer string
+}
+
+func displayResponse(content string, wordWrap bool, state *displayResponseState) {
+	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	if wordWrap && termWidth >= 10 {
+		for _, ch := range content {
+			if state.lineLength+1 > termWidth-5 {
+				if len(state.wordBuffer) > termWidth-10 {
+					fmt.Printf("%s%c", state.wordBuffer, ch)
+					state.wordBuffer = ""
+					state.lineLength = 0
+					continue
+				}
+
+				// backtrack the length of the last word and clear to the end of the line
+				fmt.Printf("\x1b[%dD\x1b[K\n", len(state.wordBuffer))
+				fmt.Printf("%s%c", state.wordBuffer, ch)
+				state.lineLength = len(state.wordBuffer) + 1
+			} else {
+				fmt.Print(string(ch))
+				state.lineLength += 1
+
+				switch ch {
+				case ' ':
+					state.wordBuffer = ""
+				case '\n':
+					state.lineLength = 0
+				default:
+					state.wordBuffer += string(ch)
+				}
+			}
+		}
+	} else {
+		fmt.Printf("%s%s", state.wordBuffer, content)
+		if len(state.wordBuffer) > 0 {
+			state.wordBuffer = ""
+		}
+	}
+}
+
 func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -481,11 +524,6 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	spinner := progress.NewSpinner("")
 	p.Add("", spinner)
 
-	termWidth, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		opts.WordWrap = false
-	}
-
 	cancelCtx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
@@ -497,8 +535,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		cancel()
 	}()
 
-	var currentLineLength int
-	var wordBuffer string
+	var state *displayResponseState = &displayResponseState{}
 	var latest api.ChatResponse
 	var fullResponse strings.Builder
 	var role string
@@ -512,42 +549,8 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		content := response.Message.Content
 		fullResponse.WriteString(content)
 
-		// check for terminal resize
-		termWidth, _, _ = term.GetSize(int(os.Stdout.Fd()))
-		if opts.WordWrap && termWidth >= 10 {
-			for _, ch := range content {
-				if currentLineLength+1 > termWidth-5 {
-					if len(wordBuffer) > termWidth-10 {
-						fmt.Printf("%s%c", wordBuffer, ch)
-						wordBuffer = ""
-						currentLineLength = 0
-						continue
-					}
+		displayResponse(content, opts.WordWrap, state)
 
-					// backtrack the length of the last word and clear to the end of the line
-					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
-					fmt.Printf("%s%c", wordBuffer, ch)
-					currentLineLength = len(wordBuffer) + 1
-				} else {
-					fmt.Print(string(ch))
-					currentLineLength += 1
-
-					switch ch {
-					case ' ':
-						wordBuffer = ""
-					case '\n':
-						currentLineLength = 0
-					default:
-						wordBuffer += string(ch)
-					}
-				}
-			}
-		} else {
-			fmt.Printf("%s%s", wordBuffer, content)
-			if len(wordBuffer) > 0 {
-				wordBuffer = ""
-			}
-		}
 		return nil
 	}
 
@@ -601,11 +604,6 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		generateContext = []int{}
 	}
 
-	termWidth, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		opts.WordWrap = false
-	}
-
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
@@ -617,49 +615,15 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		cancel()
 	}()
 
-	var currentLineLength int
-	var wordBuffer string
+	var state *displayResponseState = &displayResponseState{}
 
 	fn := func(response api.GenerateResponse) error {
 		p.StopAndClear()
 
 		latest = response
+		content := response.Response
 
-		termWidth, _, _ = term.GetSize(int(os.Stdout.Fd()))
-		if opts.WordWrap && termWidth >= 10 {
-			for _, ch := range response.Response {
-				if currentLineLength+1 > termWidth-5 {
-					if len(wordBuffer) > termWidth-10 {
-						fmt.Printf("%s%c", wordBuffer, ch)
-						wordBuffer = ""
-						currentLineLength = 0
-						continue
-					}
-
-					// backtrack the length of the last word and clear to the end of the line
-					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
-					fmt.Printf("%s%c", wordBuffer, ch)
-					currentLineLength = len(wordBuffer) + 1
-				} else {
-					fmt.Print(string(ch))
-					currentLineLength += 1
-
-					switch ch {
-					case ' ':
-						wordBuffer = ""
-					case '\n':
-						currentLineLength = 0
-					default:
-						wordBuffer += string(ch)
-					}
-				}
-			}
-		} else {
-			fmt.Printf("%s%s", wordBuffer, response.Response)
-			if len(wordBuffer) > 0 {
-				wordBuffer = ""
-			}
-		}
+		displayResponse(content, opts.WordWrap, state)
 
 		return nil
 	}
