@@ -299,13 +299,30 @@ export const pullModel = async (token: string, tagName: string) => {
 			name: tagName
 		})
 	}).catch((err) => {
+		console.log(err);
 		error = err;
+
+		if ('detail' in err) {
+			error = err.detail;
+		}
+
 		return null;
 	});
-
 	if (error) {
 		throw error;
 	}
-
 	return res;
 };
+
+// export const pullModel = async (token: string, tagName: string) => {
+// 	return await fetch(`${OLLAMA_API_BASE_URL}/pull`, {
+// 		method: 'POST',
+// 		headers: {
+// 			'Content-Type': 'text/event-stream',
+// 			Authorization: `Bearer ${token}`
+// 		},
+// 		body: JSON.stringify({
+// 			name: tagName
+// 		})
+// 	});
+// };
