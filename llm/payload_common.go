@@ -76,7 +76,7 @@ func getDynLibs(gpuInfo gpu.GpuInfo) []string {
 		}
 	}
 
-	// Finaly, if we didn't find any matches, LCD CPU FTW
+	// Finally, if we didn't find any matches, LCD CPU FTW
 	if len(dynLibs) == 0 {
 		dynLibs = []string{availableDynLibs["cpu"]}
 	}
