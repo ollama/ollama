@@ -1,6 +1,7 @@
 package server
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -238,7 +239,7 @@ func TestChat(t *testing.T) {
 		name     string
 		template string
 		msgs     []api.Message
-		want     string
+		want     []string
 		wantErr  string
 	}{
 		{
@@ -254,7 +255,7 @@ func TestChat(t *testing.T) {
 					Content: "What are the potion ingredients?",
 				},
 			},
-			want: "[INST] You are a Wizard. What are the potion ingredients? [/INST]",
+			want: []string{"[INST] You are a Wizard. What are the potion ingredients? [/INST]"},
 		},
 		{
 			name:     "First Message",
@@ -277,7 +278,10 @@ func TestChat(t *testing.T) {
 					Content: "Anything else?",
 				},
 			},
-			want: "[INST] Hello! You are a Wizard. What are the potion ingredients? [/INST]eye of newt[INST]   Anything else? [/INST]",
+			want: []string{
+				"[INST] Hello! You are a Wizard. What are the potion ingredients? [/INST]eye of newt",
+				"[INST]   Anything else? [/INST]",
+			},
 		},
 		{
 			name:     "Message History",
@@ -300,7 +304,10 @@ func TestChat(t *testing.T) {
 					Content: "Anything else?",
 				},
 			},
-			want: "[INST] You are a Wizard. What are the potion ingredients? [/INST]sugar[INST]  Anything else? [/INST]",
+			want: []string{
+				"[INST] You are a Wizard. What are the potion ingredients? [/INST]sugar",
+				"[INST]  Anything else? [/INST]",
+			},
 		},
 		{
 			name:     "Assistant Only",
@@ -311,7 +318,7 @@ func TestChat(t *testing.T) {
 					Content: "everything nice",
 				},
 			},
-			want: "[INST]   [/INST]everything nice",
+			want: []string{"[INST]   [/INST]everything nice"},
 		},
 		{
 			name: "Invalid Role",
@@ -330,7 +337,7 @@ func TestChat(t *testing.T) {
 			Template: tt.template,
 		}
 		t.Run(tt.name, func(t *testing.T) {
-			got, _, err := m.ChatPrompt(tt.msgs)
+			got, _, err := m.ChatPrompts(tt.msgs)
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Errorf("ChatPrompt() expected error, got nil")
@@ -339,7 +346,7 @@ func TestChat(t *testing.T) {
 					t.Errorf("ChatPrompt() error = %v, wantErr %v", err, tt.wantErr)
 				}
 			}
-			if got != tt.want {
+			if !slices.Equal(got, tt.want) {
 				t.Errorf("ChatPrompt() got = %v, want %v", got, tt.want)
 			}
 		})

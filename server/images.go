@@ -143,21 +143,23 @@ func (m *Model) PostResponseTemplate(p PromptVars) (string, error) {
 	return Prompt(post, p)
 }
 
-func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) {
+// ChatPrompts returns a list of formatted chat prompts from a list of messages
+func (m *Model) ChatPrompts(msgs []api.Message) ([]string, []api.ImageData, error) {
 	// build the prompt from the list of messages
-	var prompt strings.Builder
 	var currentImages []api.ImageData
 	currentVars := PromptVars{
 		First:  true,
 		System: m.System,
 	}
 
-	writePrompt := func() error {
+	prompts := []string{}
+
+	appendPrompt := func() error {
 		p, err := Prompt(m.Template, currentVars)
 		if err != nil {
 			return err
 		}
-		prompt.WriteString(p)
+		prompts = append(prompts, p)
 		currentVars = PromptVars{}
 		return nil
 	}
@@ -166,26 +168,26 @@ func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) 
 		switch strings.ToLower(msg.Role) {
 		case "system":
 			if currentVars.System != "" {
-				if err := writePrompt(); err != nil {
-					return "", nil, err
+				if err := appendPrompt(); err != nil {
+					return nil, nil, err
 				}
 			}
 			currentVars.System = msg.Content
 		case "user":
 			if currentVars.Prompt != "" {
-				if err := writePrompt(); err != nil {
-					return "", nil, err
+				if err := appendPrompt(); err != nil {
+					return nil, nil, err
 				}
 			}
 			currentVars.Prompt = msg.Content
 			currentImages = msg.Images
 		case "assistant":
 			currentVars.Response = msg.Content
-			if err := writePrompt(); err != nil {
-				return "", nil, err
+			if err := appendPrompt(); err != nil {
+				return nil, nil, err
 			}
 		default:
-			return "", nil, fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
+			return nil, nil, fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
 		}
 	}
 
@@ -193,12 +195,12 @@ func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) 
 	if currentVars.Prompt != "" || currentVars.System != "" {
 		p, err := m.PreResponsePrompt(currentVars)
 		if err != nil {
-			return "", nil, fmt.Errorf("pre-response template: %w", err)
+			return nil, nil, fmt.Errorf("pre-response template: %w", err)
 		}
-		prompt.WriteString(p)
+		prompts = append(prompts, p)
 	}
 
-	return prompt.String(), currentImages, nil
+	return prompts, currentImages, nil
 }
 
 type ManifestV2 struct {

@@ -1010,6 +1010,44 @@ func streamResponse(c *gin.Context, ch chan any) {
 	})
 }
 
+// contextLimitPrompt builds a prompt to send to a running model while trimming it to fit the template into the max context length
+func contextLimitPrompt(ctx context.Context, prompts []string, ctxLen int) (string, error) {
+	if len(prompts) == 0 {
+		return "", nil
+	}
+
+	prompt := ""
+	promptLen := 0
+
+	// always process the last prompt
+	lastPrompt := prompts[len(prompts)-1]
+	enc, err := loaded.runner.Encode(ctx, lastPrompt)
+	if err != nil {
+		return "", err
+	}
+	prompt = lastPrompt
+	promptLen = len(enc)
+
+	if len(prompts) == 1 {
+		return prompt, nil
+	}
+
+	// iterate over the rest of the prompts in reverse order until we reach the max context length
+	for i := len(prompts) - 2; i >= 0; i-- {
+		enc, err := loaded.runner.Encode(ctx, prompts[i])
+		if err != nil {
+			return "", err
+		}
+		if promptLen+len(enc) > loaded.NumCtx {
+			// the context window is full, stop adding to the chat history
+			break
+		}
+		prompt = prompts[i] + prompt
+		promptLen += len(enc)
+	}
+	return prompt, nil
+}
+
 func ChatHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -1071,9 +1109,15 @@ func ChatHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	prompt, images, err := model.ChatPrompt(req.Messages)
+	prompts, images, err := model.ChatPrompts(req.Messages)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	prompt, err := contextLimitPrompt(c.Request.Context(), prompts, loaded.NumCtx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
