@@ -250,6 +250,27 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func SyncHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	models, err := client.List(cmd.Context())
+	if err != nil {
+		return err
+	}
+	cmd.Flags().Bool("insecure", false, "Use an insecure registry")
+
+	for _, model := range (*models).Models {
+		fmt.Printf("Syncing model: %s\n", model.Name)
+		if err := PullHandler(cmd, []string{model.Name}); err != nil {
+			fmt.Printf("Failed to update model: %s, error: %v\n", model.Name, err)
+		}
+	}
+	return nil
+}
+
 func DeleteHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -837,6 +858,13 @@ func NewCLI() *cobra.Command {
 		RunE:    ListHandler,
 	}
 
+	syncCmd := &cobra.Command{
+		Use:     "sync",
+		Short:   "Sync latest models",
+		PreRunE: checkServerHeartbeat,
+		RunE:    SyncHandler,
+	}
+
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE TARGET",
 		Short:   "Copy a model",
@@ -861,6 +889,7 @@ func NewCLI() *cobra.Command {
 		pullCmd,
 		pushCmd,
 		listCmd,
+		syncCmd,
 		copyCmd,
 		deleteCmd,
 	)
