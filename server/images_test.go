@@ -1,9 +1,10 @@
 package server
 
 import (
-	"slices"
 	"strings"
 	"testing"
+
+	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
 )
