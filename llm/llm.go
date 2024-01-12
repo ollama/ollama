@@ -35,6 +35,11 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		return nil, err
 	}
 
+	if opts.NumCtx > int(ggml.NumCtx()) {
+		log.Printf("WARNING: requested context length is greater than model's max context length (%d > %d), using %d instead", opts.NumCtx, ggml.NumCtx(), ggml.NumCtx())
+		opts.NumCtx = int(ggml.NumCtx())
+	}
+
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
