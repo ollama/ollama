@@ -17,6 +17,7 @@ import (
 
 	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/version"
+	"github.com/spf13/cobra"
 )
 
 type Client struct {
@@ -40,8 +41,12 @@ func checkError(resp *http.Response, body []byte) error {
 	return apiError
 }
 
-func ClientFromEnvironment() (*Client, error) {
+func ClientFromEnvironment(cmd *cobra.Command) (*Client, error) {
 	defaultPort := "11434"
+
+	if cmd != nil && cmd.Flag("port") != nil {
+		defaultPort = cmd.Flag("port").Value.String()
+	}
 
 	scheme, hostport, ok := strings.Cut(os.Getenv("OLLAMA_HOST"), "://")
 	switch {

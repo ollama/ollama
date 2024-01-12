@@ -42,7 +42,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 }
 
 func DeleteHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -265,7 +265,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ShowHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -362,7 +362,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -513,7 +513,7 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 }
 
 func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -586,7 +586,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 }
 
 func generate(cmd *cobra.Command, opts runOptions) error {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -676,6 +676,10 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
 			host = ip.String()
 		}
+	}
+
+	if cmd.Flag("port") != nil {
+		port = cmd.Flag("port").Value.String()
 	}
 
 	if err := initializeKeypair(); err != nil {
@@ -771,7 +775,7 @@ func startMacApp(ctx context.Context, client *api.Client) error {
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return err
 	}
@@ -791,7 +795,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 }
 
 func versionHandler(cmd *cobra.Command, _ []string) {
-	client, err := api.ClientFromEnvironment()
+	client, err := api.ClientFromEnvironment(cmd)
 	if err != nil {
 		return
 	}
@@ -843,6 +847,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
+	createCmd.Flags().IntP("port", "p", 11434, "Specify the port the server is listening on")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -857,6 +862,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")
 	showCmd.Flags().Bool("template", false, "Show template of a model")
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
+	showCmd.Flags().IntP("port", "p", 11434, "Specify the port the server is listening on")
 
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",
@@ -870,6 +876,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().IntP("port", "p", 11434, "Specify the port the server is listening on")
 
 	serveCmd := &cobra.Command{
 		Use:     "serve",
@@ -878,6 +885,8 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
+
+	serveCmd.Flags().IntP("port", "p", 11434, "Specify the port number to listen on")
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
@@ -888,6 +897,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().IntP("port", "p", 11434, "Specify the port the server is listening on")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
@@ -898,6 +908,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pushCmd.Flags().IntP("port", "p", 11434, "Specify the port the server is listening on")
 
 	listCmd := &cobra.Command{
 		Use:     "list",
@@ -907,6 +918,8 @@ func NewCLI() *cobra.Command {
 		RunE:    ListHandler,
 	}
 
+	listCmd.Flags().IntP("port", "p", 11434, "Specify the port the server is listening on")
+
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE TARGET",
 		Short:   "Copy a model",
@@ -915,6 +928,8 @@ func NewCLI() *cobra.Command {
 		RunE:    CopyHandler,
 	}
 
+	copyCmd.Flags().IntP("port", "p", 11434, "Specify the port the server is listening on")
+
 	deleteCmd := &cobra.Command{
 		Use:     "rm MODEL [MODEL...]",
 		Short:   "Remove a model",
@@ -922,6 +937,8 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    DeleteHandler,
 	}
+
+	deleteCmd.Flags().IntP("port", "p", 11434, "Specify the port the server is listening on")
 
 	rootCmd.AddCommand(
 		serveCmd,
