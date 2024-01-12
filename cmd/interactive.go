@@ -241,10 +241,10 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					params := args[3:]
 					fp, err := api.FormatParams(map[string][]string{args[2]: params})
 					if err != nil {
-						fmt.Printf("Couldn't set parameter: %q\n\n", err)
+						fmt.Printf("Couldn't set parameter: %q\n", err)
 						continue
 					}
-					fmt.Printf("Set parameter '%s' to '%s'\n\n", args[2], strings.Join(params, ", "))
+					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
 					opts.Options[args[2]] = fp[args[2]]
 				case "system", "template":
 					if len(args) < 3 {
@@ -325,7 +325,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					fmt.Println("")
 				case "license":
 					if resp.License == "" {
-						fmt.Print("No license was specified for this model.\n\n")
+						fmt.Println("No license was specified for this model.")
 					} else {
 						fmt.Println(resp.License)
 					}
@@ -333,7 +333,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					fmt.Println(resp.Modelfile)
 				case "parameters":
 					if resp.Parameters == "" {
-						fmt.Print("No parameters were specified for this model.\n\n")
+						fmt.Println("No parameters were specified for this model.")
 					} else {
 						if len(opts.Options) > 0 {
 							fmt.Println("User defined parameters:")
@@ -352,7 +352,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					case resp.System != "":
 						fmt.Println(resp.System + "\n")
 					default:
-						fmt.Print("No system message was specified for this model.\n\n")
+						fmt.Println("No system message was specified for this model.")
 					}
 				case "template":
 					switch {
@@ -361,7 +361,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					case resp.Template != "":
 						fmt.Println(resp.Template)
 					default:
-						fmt.Print("No prompt template was specified for this model.\n\n")
+						fmt.Println("No prompt template was specified for this model.")
 					}
 				default:
 					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
