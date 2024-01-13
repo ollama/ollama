@@ -314,8 +314,9 @@
 	};
 
 	const pullModelHandler = async () => {
-		if (modelDownloadStatus[modelTag]) {
-			toast.error(`Model '${modelTag}' is already in queue for downloading.`);
+		const sanitizedModelTag = modelTag.trim();
+		if (modelDownloadStatus[sanitizedModelTag]) {
+			toast.error(`Model '${sanitizedModelTag}' is already in queue for downloading.`);
 			return;
 		}
 		if (Object.keys(modelDownloadStatus).length === 3) {
@@ -326,7 +327,7 @@
 		modelTransferring = true;
 
 		modelDownloadQueue.push(
-			{ modelName: modelTag },
+			{ modelName: sanitizedModelTag },
 			async (data: { modelName: string; success: boolean; error?: Error }) => {
 				const { modelName } = data;
 				// Remove the downloaded model
