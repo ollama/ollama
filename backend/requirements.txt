@@ -24,6 +24,7 @@ pypdf
 docx2txt
 unstructured
 markdown
+pypandoc
 
 PyJWT
 pyjwt[crypto]

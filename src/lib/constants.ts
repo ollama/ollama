@@ -12,6 +12,7 @@ export const WEB_UI_VERSION = 'v1.0.0-alpha-static';
 export const REQUIRED_OLLAMA_VERSION = '0.1.16';
 
 export const SUPPORTED_FILE_TYPE = [
+	'application/epub+zip',
 	'application/pdf',
 	'text/plain',
 	'text/csv',

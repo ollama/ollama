@@ -28,6 +28,11 @@ ENV WEBUI_JWT_SECRET_KEY "SECRET_KEY"
 
 WORKDIR /app
 
+# Install pandoc
+RUN apt-get update \
+    && apt-get install -y pandoc \
+    && rm -rf /var/lib/apt/lists/*
+
 # copy embedding weight from build
 RUN mkdir -p /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2
 COPY --from=build /app/onnx.tar.gz /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2
