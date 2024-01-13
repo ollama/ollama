@@ -75,7 +75,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	updatePath(filepath.Dir(library))
 	libPath := C.CString(library)
 	defer C.free(unsafe.Pointer(libPath))
-	resp := newExtServerResp(128)
+	resp := newExtServerResp(512)
 	defer freeExtServerResp(resp)
 	var srv C.struct_dynamic_llama_server
 	C.dyn_init(libPath, &srv, &resp)
