@@ -52,7 +52,7 @@ install() {
 }
 
 link_server_lib() {
-    gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
+    g++ -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
         -Wl,--whole-archive \
         ${BUILD_DIR}/lib/libext_server.a \
         -Wl,--no-whole-archive \
