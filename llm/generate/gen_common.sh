@@ -52,13 +52,13 @@ install() {
 }
 
 link_server_lib() {
-    g++ -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
+    gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
         -Wl,--whole-archive \
         ${BUILD_DIR}/lib/libext_server.a \
         -Wl,--no-whole-archive \
         ${BUILD_DIR}/lib/libcommon.a \
-        ${BUILD_DIR}/lib/libllama.a
-
+        ${BUILD_DIR}/lib/libllama.a \
+        -lstdc++
 }
 
 # Keep the local tree clean after we're done with the build
