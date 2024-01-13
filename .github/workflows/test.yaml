@@ -86,6 +86,9 @@ jobs:
           - os: windows-latest
             arch: arm64
     runs-on: ${{ matrix.os }}
+    env:
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@v4
         with:
