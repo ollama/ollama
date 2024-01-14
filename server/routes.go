@@ -1075,7 +1075,18 @@ func ChatHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if len(req.Messages) == 0 {
-		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true, Message: api.Message{Role: "assistant"}})
+		msgs := make([]api.Message, 0)
+		for _, msg := range model.Messages {
+			msgs = append(msgs, api.Message{Role: msg.Role, Content: msg.Content})
+		}
+		resp := api.ChatResponse{
+			CreatedAt:      time.Now().UTC(),
+			Model:          req.Model,
+			Done:           true,
+			Message:        api.Message{Role: "assistant"},
+			LoadedMessages: msgs,
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 

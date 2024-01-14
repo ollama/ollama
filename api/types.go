@@ -67,7 +67,8 @@ type ChatResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 	Message   Message   `json:"message"`
 
-	Done bool `json:"done"`
+	LoadedMessages []Message `json:"loaded_messages,omitempty"`
+	Done           bool      `json:"done"`
 
 	Metrics
 }

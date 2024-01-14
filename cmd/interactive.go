@@ -44,24 +44,47 @@ func modelIsMultiModal(cmd *cobra.Command, name string) bool {
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	multiModal := modelIsMultiModal(cmd, opts.Model)
+	opts.Messages = make([]api.Message, 0)
 
 	// load the model
-	loadOpts := runOptions{
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	req := &api.ChatRequest{
 		Model:    opts.Model,
-		Prompt:   "",
 		Messages: []api.Message{},
 	}
-	if _, err := chat(cmd, loadOpts); err != nil {
+	err = client.Chat(cmd.Context(), req, func(resp api.ChatResponse) error {
+		if len(resp.LoadedMessages) > 0 {
+			opts.Messages = append(opts.Messages, resp.LoadedMessages...)
+			for _, msg := range resp.LoadedMessages {
+				switch msg.Role {
+				case "user":
+					fmt.Printf(">>> %s\n", msg.Content)
+				case "assistant":
+					state := &displayResponseState{}
+					displayResponse(msg.Content, opts.WordWrap, state)
+					fmt.Println()
+					fmt.Println()
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set          Set session variables")
-		fmt.Fprintln(os.Stderr, "  /show         Show model information")
-		fmt.Fprintln(os.Stderr, "  /bye          Exit")
-		fmt.Fprintln(os.Stderr, "  /?, /help     Help for a command")
-		fmt.Fprintln(os.Stderr, "  /? shortcuts  Help for keyboard shortcuts")
+		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
+		fmt.Fprintln(os.Stderr, "  /show           Show model information")
+		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
+		fmt.Fprintln(os.Stderr, "  /bye            Exit")
+		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
+		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 		fmt.Fprintln(os.Stderr, "")
@@ -140,7 +163,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
-	opts.Messages = make([]api.Message, 0)
 
 	for {
 		line, err := scanner.Readline()
@@ -223,6 +245,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				fmt.Fprintf(&mf, "PARAMETER %s %v\n", k, v)
 			}
 			fmt.Fprintln(&mf)
+
+			for _, msg := range opts.Messages {
+				fmt.Fprintf(&mf, "MESSAGE %s %s\n", msg.Role, msg.Content)
+			}
 
 			client, err := api.ClientFromEnvironment()
 			if err != nil {

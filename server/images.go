@@ -50,6 +50,12 @@ type Model struct {
 	Digest         string
 	Size           int64
 	Options        map[string]interface{}
+	Messages       []Message
+}
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type PromptVars struct {
@@ -374,6 +380,16 @@ func GetModel(name string) (*Model, error) {
 			if err = json.NewDecoder(params).Decode(&model.Options); err != nil {
 				return nil, err
 			}
+		case "application/vnd.ollama.image.messages":
+			msgs, err := os.Open(filename)
+			if err != nil {
+				return nil, err
+			}
+			defer msgs.Close()
+
+			if err = json.NewDecoder(msgs).Decode(&model.Messages); err != nil {
+				return nil, err
+			}
 		case "application/vnd.ollama.image.license":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
@@ -428,6 +444,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	}
 
 	var layers Layers
+	messages := []string{}
 
 	params := make(map[string][]string)
 	fromParams := make(map[string]any)
@@ -607,9 +624,35 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 
 			layers.Replace(layer)
+		case "message":
+			messages = append(messages, c.Args)
 		default:
 			params[c.Name] = append(params[c.Name], c.Args)
 		}
+	}
+
+	if len(messages) > 0 {
+		fn(api.ProgressResponse{Status: "creating parameters layer"})
+
+		msgs := make([]api.Message, 0)
+
+		for _, m := range messages {
+			// todo: handle images
+			msg := strings.SplitN(m, ": ", 2)
+			msgs = append(msgs, api.Message{Role: msg[0], Content: msg[1]})
+		}
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(msgs); err != nil {
+			return err
+		}
+
+		layer, err := NewLayer(&b, "application/vnd.ollama.image.messages")
+		if err != nil {
+			return err
+		}
+
+		layers.Replace(layer)
 	}
 
 	if len(params) > 0 {
