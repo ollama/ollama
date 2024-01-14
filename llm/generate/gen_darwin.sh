@@ -18,7 +18,7 @@ case "${GOARCH}" in
     ;;
 "arm64")
     CMAKE_DEFS="-DCMAKE_SYSTEM_PROCESSOR=arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 -DLLAMA_METAL=on ${CMAKE_DEFS}"
-    ARHC="arm64"
+    ARCH="arm64"
     ;;
 *)
     echo "GOARCH must be set"
