@@ -42,16 +42,11 @@ func modelIsMultiModal(cmd *cobra.Command, name string) bool {
 	return slices.Contains(resp.Details.Families, "clip")
 }
 
-func generateInteractive(cmd *cobra.Command, opts runOptions) error {
-	multiModal := modelIsMultiModal(cmd, opts.Model)
-	opts.Messages = make([]api.Message, 0)
-
-	// load the model
+func loadModel(cmd *cobra.Command, opts runOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
-
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: []api.Message{},
@@ -77,10 +72,20 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		return err
 	}
 
+	return nil
+}
+
+func generateInteractive(cmd *cobra.Command, opts runOptions) error {
+	multiModal := modelIsMultiModal(cmd, opts.Model)
+	opts.Messages = make([]api.Message, 0)
+
+	err := loadModel(cmd, opts)
+
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
+		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
@@ -225,6 +230,19 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if err := ListHandler(cmd, args[1:]); err != nil {
 				return err
 			}
+		case strings.HasPrefix(line, "/load"):
+			args := strings.Fields(line)
+			if len(args) != 2 {
+				fmt.Println("Usages\n  /load <modelname>")
+				continue
+			}
+			opts.Model = args[1]
+			opts.Messages = []api.Message{}
+			fmt.Printf("Loading model '%s'\n", opts.Model)
+			if err := loadModel(cmd, opts); err != nil {
+				return err
+			}
+			continue
 		case strings.HasPrefix(line, "/save"):
 			args := strings.Fields(line)
 			if len(args) != 2 {
