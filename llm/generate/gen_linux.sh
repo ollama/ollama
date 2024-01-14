@@ -109,31 +109,33 @@ else
     echo "Skipping CPU generation step as requested"
 fi
 
-if [ -d /usr/local/cuda/lib64/ ]; then
-    echo "CUDA libraries detected - building dynamic CUDA library"
-    init_vars
-    CUDA_MAJOR=$(ls /usr/local/cuda/lib64/libcudart.so.* | head -1 | cut -f3 -d. || true)
-    if [ -n "${CUDA_MAJOR}" ]; then
-        CUDA_VARIANT=_v${CUDA_MAJOR}
+for cudalibpath in "/usr/local/cuda/lib64" "/opt/cuda/targets/x86_64-linux/lib"; do
+    if [ -d "$cudalibpath" ]; then
+        echo "CUDA libraries detected - building dynamic CUDA library"
+        init_vars
+        CUDA_MAJOR=$(find "$cudalibpath" -name 'libcudart.so.*' -print | head -1 | cut -f3 -d. || true)
+        if [ -n "${CUDA_MAJOR}" ]; then
+            CUDA_VARIANT="_v${CUDA_MAJOR}"
+        fi
+        CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
+        BUILD_DIR="${LLAMACPP_DIR}/build/linux/cuda${CUDA_VARIANT}"
+        CUDA_LIB_DIR="$cudalibpath"
+        build
+        install
+        gcc -fPIC -g -shared -o "${BUILD_DIR}/lib/libext_server.so" \
+            -Wl,--whole-archive \
+            "${BUILD_DIR}/lib/libext_server.a" \
+            "${BUILD_DIR}/lib/libcommon.a" \
+            "${BUILD_DIR}/lib/libllama.a" \
+            -Wl,--no-whole-archive \
+            "${CUDA_LIB_DIR}/libcudart_static.a" \
+            "${CUDA_LIB_DIR}/libcublas_static.a" \
+            "${CUDA_LIB_DIR}/libcublasLt_static.a" \
+            "${CUDA_LIB_DIR}/libcudadevrt.a" \
+            "${CUDA_LIB_DIR}/libculibos.a" \
+            -lrt -lpthread -ldl -lstdc++ -lm
     fi
-    CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
-    BUILD_DIR="${LLAMACPP_DIR}/build/linux/cuda${CUDA_VARIANT}"
-    CUDA_LIB_DIR=/usr/local/cuda/lib64
-    build
-    install
-    gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
-        -Wl,--whole-archive \
-        ${BUILD_DIR}/lib/libext_server.a \
-        ${BUILD_DIR}/lib/libcommon.a \
-        ${BUILD_DIR}/lib/libllama.a \
-        -Wl,--no-whole-archive \
-        ${CUDA_LIB_DIR}/libcudart_static.a \
-        ${CUDA_LIB_DIR}/libcublas_static.a \
-        ${CUDA_LIB_DIR}/libcublasLt_static.a \
-        ${CUDA_LIB_DIR}/libcudadevrt.a \
-        ${CUDA_LIB_DIR}/libculibos.a \
-        -lrt -lpthread -ldl -lstdc++ -lm
-fi
+done
 
 if [ -z "${ROCM_PATH}" ]; then
     # Try the default location in case it exists
