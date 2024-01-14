@@ -8,7 +8,14 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            arch: amd64
+          - os: macos-latest
+            arch: arm64
     runs-on: ${{ matrix.os }}
+    env:
+      GOARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
