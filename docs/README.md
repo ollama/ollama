@@ -1,6 +1,6 @@
 # Documentation
 
-To get started, see the project's **[quicktart](../README.md#quickstart)**.
+To get started, see the project's **[quickstart](../README.md#quickstart)**.
 
 Ollama is a tool for running AI models on your hardware. Many users will choose to use the Command Line Interface (CLI) to work with Ollama. Learn more about all the commands in the CLI in the **[Main Readme](../README.md)**.
 
@@ -12,7 +12,7 @@ Import models using source model weights found on Hugging Face and similar sites
 
 Installing on Linux in most cases is easy using the script on Ollama.ai. To get more detail about the install, including CUDA drivers, see the **[Linux Documentation](./linux.md)**.
 
-Many of our users like the flexibility of using our official Docker Image. Learn more about using Docker with Ollama using the **[Docker Documentation](./docker.md)**.
+Many of our users like the flexibility of using our official Docker Image. Learn more about using Docker with Ollama using the **[Docker Documentation](https://hub.docker.com/r/ollama/ollama)**.
 
 It is easy to install on Linux and Mac, but many users will choose to build Ollama on their own. To do this, refer to the **[Development Documentation](./development.md)**.
 
