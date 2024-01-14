@@ -100,6 +100,7 @@ Don't forget to explore our sibling project, [OllamaHub](https://ollamahub.com/)
 
    - **For Ubuntu and Other Linux Users:**
      - Open your terminal.
+     - Set up your Docker apt repository according to the [Docker documentation](https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository)
      - Update your package index:
        ```bash
        sudo apt-get update
