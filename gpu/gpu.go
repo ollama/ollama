@@ -63,6 +63,7 @@ func initGPUHandles() {
 
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
 
+	gpuHandles = &handles{nil, nil}
 	var cudaMgmtName string
 	var cudaMgmtPatterns []string
 	var rocmMgmtName string
@@ -87,7 +88,6 @@ func initGPUHandles() {
 	}
 
 	slog.Info("Detecting GPU type")
-	gpuHandles = &handles{nil, nil}
 	cudaLibPaths := FindGPULibs(cudaMgmtName, cudaMgmtPatterns)
 	if len(cudaLibPaths) > 0 {
 		cuda := LoadCUDAMgmt(cudaLibPaths)

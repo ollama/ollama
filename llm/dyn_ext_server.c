@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(__TERMUX__)
 #include <dlfcn.h>
 #define LOAD_LIBRARY(lib, flags) dlopen(lib, flags)
 #define LOAD_SYMBOL(handle, sym) dlsym(handle, sym)
