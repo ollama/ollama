@@ -47,9 +47,13 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
       params.model = sparams->model;
     }
 
-    for (ext_server_lora_adapter *la = sparams->lora_adapters; la != NULL;
-         la = la->next) {
-      params.lora_adapter.push_back(std::make_tuple(la->adapter, la->scale));
+    if (sparams->lora_adapters != NULL) {
+      for (ext_server_lora_adapter *la = sparams->lora_adapters; la != NULL;
+          la = la->next) {
+        params.lora_adapter.push_back(std::make_tuple(la->adapter, la->scale));
+      }
+
+      params.use_mmap = false;
     }
 
     if (sparams->mmproj != NULL) {
@@ -111,6 +115,10 @@ void llama_server_stop() {
   // TODO - too verbose, remove once things are solid
   LOG_TEE("requesting llama server shutdown\n");
   ext_server_running = false;
+
+  // unblocks the update_slots() loop so it can clean up and exit
+  llama->request_cancel(0);
+
   ext_server_thread.join();
   delete llama;
   llama = NULL;

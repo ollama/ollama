@@ -410,7 +410,7 @@ A stream of JSON objects is returned:
   "model": "llama2",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
-    "role": "assisant",
+    "role": "assistant",
     "content": "The",
     "images": null
   },
@@ -506,7 +506,7 @@ A stream of JSON objects is returned:
   "model": "llama2",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
-    "role": "assisant",
+    "role": "assistant",
     "content": "The"
   },
   "done": false

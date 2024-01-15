@@ -34,6 +34,7 @@ extern "C" {
 typedef struct mem_info {
   uint64_t total;
   uint64_t free;
+  unsigned int count;
   char *err;  // If non-nill, caller responsible for freeing
 } mem_info_t;
 

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -43,16 +42,16 @@ func modelIsMultiModal(cmd *cobra.Command, name string) bool {
 	return slices.Contains(resp.Details.Families, "clip")
 }
 
-func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
+func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	multiModal := modelIsMultiModal(cmd, opts.Model)
 
 	// load the model
-	loadOpts := generateOptions{
-		Model:  opts.Model,
-		Prompt: "",
-		Images: []ImageData{},
+	loadOpts := runOptions{
+		Model:    opts.Model,
+		Prompt:   "",
+		Messages: []api.Message{},
 	}
-	if err := generate(cmd, loadOpts); err != nil {
+	if _, err := chat(cmd, loadOpts); err != nil {
 		return err
 	}
 
@@ -139,8 +138,9 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 	fmt.Print(readline.StartBracketedPaste)
 	defer fmt.Printf(readline.EndBracketedPaste)
 
+	var sb strings.Builder
 	var multiline MultilineState
-	var prompt string
+	opts.Messages = make([]api.Message, 0)
 
 	for {
 		line, err := scanner.Readline()
@@ -154,7 +154,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 			}
 
 			scanner.Prompt.UseAlt = false
-			prompt = ""
+			sb.Reset()
 
 			continue
 		case err != nil:
@@ -162,38 +162,41 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 		}
 
 		switch {
-		case strings.HasPrefix(prompt, `"""`):
-			// if the prompt so far starts with """ then we're in multiline mode
-			// and we need to keep reading until we find a line that ends with """
-			cut, found := strings.CutSuffix(line, `"""`)
-			prompt += cut
-
-			if !found {
-				prompt += "\n"
+		case multiline != MultilineNone:
+			// check if there's a multiline terminating string
+			before, ok := strings.CutSuffix(line, `"""`)
+			sb.WriteString(before)
+			if !ok {
+				fmt.Fprintln(&sb)
 				continue
 			}
 
-			prompt = strings.TrimPrefix(prompt, `"""`)
-			scanner.Prompt.UseAlt = false
-
 			switch multiline {
 			case MultilineSystem:
-				opts.System = prompt
-				prompt = ""
+				opts.System = sb.String()
 				fmt.Println("Set system message.")
+				sb.Reset()
 			case MultilineTemplate:
-				opts.Template = prompt
-				prompt = ""
+				opts.Template = sb.String()
 				fmt.Println("Set prompt template.")
+				sb.Reset()
 			}
+
 			multiline = MultilineNone
-		case strings.HasPrefix(line, `"""`) && len(prompt) == 0:
-			scanner.Prompt.UseAlt = true
-			multiline = MultilinePrompt
-			prompt += line + "\n"
-			continue
+			scanner.Prompt.UseAlt = false
+		case strings.HasPrefix(line, `"""`):
+			line := strings.TrimPrefix(line, `"""`)
+			line, ok := strings.CutSuffix(line, `"""`)
+			sb.WriteString(line)
+			if !ok {
+				// no multiline terminating string; need more input
+				fmt.Fprintln(&sb)
+				multiline = MultilinePrompt
+				scanner.Prompt.UseAlt = true
+				break
+			}
 		case scanner.Pasting:
-			prompt += line + "\n"
+			fmt.Fprintln(&sb, line)
 			continue
 		case strings.HasPrefix(line, "/list"):
 			args := strings.Fields(line)
@@ -235,49 +238,54 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 						usageParameters()
 						continue
 					}
-					var params []string
-					for _, p := range args[3:] {
-						params = append(params, p)
-					}
+					params := args[3:]
 					fp, err := api.FormatParams(map[string][]string{args[2]: params})
 					if err != nil {
-						fmt.Printf("Couldn't set parameter: %q\n\n", err)
+						fmt.Printf("Couldn't set parameter: %q\n", err)
 						continue
 					}
-					fmt.Printf("Set parameter '%s' to '%s'\n\n", args[2], strings.Join(params, ", "))
+					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
 					opts.Options[args[2]] = fp[args[2]]
 				case "system", "template":
 					if len(args) < 3 {
 						usageSet()
 						continue
 					}
-					line := strings.Join(args[2:], " ")
-					line = strings.TrimPrefix(line, `"""`)
-					if strings.HasPrefix(args[2], `"""`) {
-						cut, found := strings.CutSuffix(line, `"""`)
-						prompt += cut
-						if found {
-							if args[1] == "system" {
-								opts.System = prompt
-								fmt.Println("Set system message.")
-							} else {
-								opts.Template = prompt
-								fmt.Println("Set prompt template.")
-							}
-							prompt = ""
-						} else {
-							prompt = `"""` + prompt + "\n"
-							if args[1] == "system" {
-								multiline = MultilineSystem
-							} else {
-								multiline = MultilineTemplate
-							}
-							scanner.Prompt.UseAlt = true
-						}
-					} else {
-						opts.System = line
-						fmt.Println("Set system message.")
+
+					if args[1] == "system" {
+						multiline = MultilineSystem
+					} else if args[1] == "template" {
+						multiline = MultilineTemplate
 					}
+
+					line := strings.Join(args[2:], " ")
+					line, ok := strings.CutPrefix(line, `"""`)
+					if !ok {
+						multiline = MultilineNone
+					} else {
+						// only cut suffix if the line is multiline
+						line, ok = strings.CutSuffix(line, `"""`)
+						if ok {
+							multiline = MultilineNone
+						}
+					}
+
+					sb.WriteString(line)
+					if multiline != MultilineNone {
+						scanner.Prompt.UseAlt = true
+						continue
+					}
+
+					if args[1] == "system" {
+						opts.System = sb.String()
+						fmt.Println("Set system message.")
+					} else if args[1] == "template" {
+						opts.Template = sb.String()
+						fmt.Println("Set prompt template.")
+					}
+
+					sb.Reset()
+					continue
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
@@ -317,7 +325,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					fmt.Println("")
 				case "license":
 					if resp.License == "" {
-						fmt.Print("No license was specified for this model.\n\n")
+						fmt.Println("No license was specified for this model.")
 					} else {
 						fmt.Println(resp.License)
 					}
@@ -325,7 +333,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					fmt.Println(resp.Modelfile)
 				case "parameters":
 					if resp.Parameters == "" {
-						fmt.Print("No parameters were specified for this model.\n\n")
+						fmt.Println("No parameters were specified for this model.")
 					} else {
 						if len(opts.Options) > 0 {
 							fmt.Println("User defined parameters:")
@@ -344,7 +352,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					case resp.System != "":
 						fmt.Println(resp.System + "\n")
 					default:
-						fmt.Print("No system message was specified for this model.\n\n")
+						fmt.Println("No system message was specified for this model.")
 					}
 				case "template":
 					switch {
@@ -353,7 +361,7 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 					case resp.Template != "":
 						fmt.Println(resp.Template)
 					default:
-						fmt.Print("No prompt template was specified for this model.\n\n")
+						fmt.Println("No prompt template was specified for this model.")
 					}
 				default:
 					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
@@ -390,44 +398,58 @@ func generateInteractive(cmd *cobra.Command, opts generateOptions) error {
 				}
 			}
 
-			if isFile {
-				prompt += line
-			} else {
+			if !isFile {
 				fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
 				continue
 			}
+
+			sb.WriteString(line)
 		default:
-			prompt += line
+			sb.WriteString(line)
 		}
 
-		if len(prompt) > 0 && multiline == MultilineNone {
-			opts.Prompt = prompt
+		if sb.Len() > 0 && multiline == MultilineNone {
+			newMessage := api.Message{Role: "user", Content: sb.String()}
+
 			if multiModal {
-				newPrompt, images, err := extractFileData(prompt)
+				msg, images, err := extractFileData(sb.String())
 				if err != nil {
 					return err
 				}
-				opts.Prompt = newPrompt
+				newMessage.Content = msg
 
 				// reset the context if we find another image
 				if len(images) > 0 {
-					opts.Images = images
-					ctx := cmd.Context()
-					ctx = context.WithValue(ctx, generateContextKey("context"), []int{})
-					cmd.SetContext(ctx)
+					newMessage.Images = append(newMessage.Images, images...)
+					// reset the context for the new image
+					opts.Messages = []api.Message{}
+				} else {
+					if len(opts.Messages) > 1 {
+						newMessage.Images = append(newMessage.Images, opts.Messages[len(opts.Messages)-2].Images...)
+					}
 				}
-				if len(opts.Images) == 0 {
+				if len(newMessage.Images) == 0 {
 					fmt.Println("This model requires you to add a jpeg, png, or svg image.")
 					fmt.Println()
-					prompt = ""
+					sb.Reset()
 					continue
 				}
 			}
-			if err := generate(cmd, opts); err != nil {
+
+			if opts.System != "" {
+				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
+			}
+			opts.Messages = append(opts.Messages, newMessage)
+
+			assistant, err := chat(cmd, opts)
+			if err != nil {
 				return err
 			}
+			if assistant != nil {
+				opts.Messages = append(opts.Messages, *assistant)
+			}
 
-			prompt = ""
+			sb.Reset()
 		}
 	}
 }
@@ -467,9 +489,9 @@ func extractFileNames(input string) []string {
 	return re.FindAllString(input, -1)
 }
 
-func extractFileData(input string) (string, []ImageData, error) {
+func extractFileData(input string) (string, []api.ImageData, error) {
 	filePaths := extractFileNames(input)
-	var imgs []ImageData
+	var imgs []api.ImageData
 
 	for _, fp := range filePaths {
 		nfp := normalizeFilePath(fp)
