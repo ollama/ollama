@@ -181,7 +181,6 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"seed":              predict.Options.Seed,
 		"stop":              predict.Options.Stop,
 		"image_data":        imageData,
-		"cache_prompt":      true,
 	}
 
 	if predict.Format == "json" {
