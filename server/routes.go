@@ -1012,33 +1012,17 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 // contextLimitPrompt builds a prompt to send to a running model while trimming it to fit the template into the max context length
 func contextLimitPrompt(ctx context.Context, prompts []string, ctxLen int) (string, error) {
-	if len(prompts) == 0 {
-		return "", nil
-	}
-
-	prompt := ""
 	promptLen := 0
-
-	// always process the last prompt
-	lastPrompt := prompts[len(prompts)-1]
-	enc, err := loaded.runner.Encode(ctx, lastPrompt)
-	if err != nil {
-		return "", err
-	}
-	prompt = lastPrompt
-	promptLen = len(enc)
-
-	if len(prompts) == 1 {
-		return prompt, nil
-	}
+	prompt := ""
 
 	// iterate over the rest of the prompts in reverse order until we reach the max context length
-	for i := len(prompts) - 2; i >= 0; i-- {
+	for i := len(prompts) - 1; i >= 0; i-- {
 		enc, err := loaded.runner.Encode(ctx, prompts[i])
 		if err != nil {
 			return "", err
 		}
-		if promptLen+len(enc) > loaded.NumCtx {
+		// if not most recent prompt and adding the prompt to the chat history would exceed the max context length
+		if i != len(prompts)-1 && promptLen+len(enc) > loaded.NumCtx {
 			// the context window is full, stop adding to the chat history
 			break
 		}
