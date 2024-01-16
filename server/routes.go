@@ -673,7 +673,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		case int:
 			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(val)))
 		case float64:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(val, 'f', 0, 64)))
+			if val == float64(int(val)) {
+				params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(int(val))))
+			} else {
+				params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(val, 'f', 2, 64)))
+			}
 		case bool:
 			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(val)))
 		case []interface{}:
@@ -684,7 +688,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				case int:
 					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(nval)))
 				case float64:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
+					if nval == float64(int(nval)) {
+						params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(int(nval))))
+					} else {
+						params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
+					}
 				case bool:
 					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(nval)))
 				}
