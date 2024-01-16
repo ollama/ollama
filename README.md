@@ -248,6 +248,10 @@ curl http://localhost:11434/api/chat -d '{
 
 See the [API documentation](./docs/api.md) for all endpoints.
 
+## Integrations
+
+- [ollama-python](https://github.com/jmorganca/ollama-python)
+
 ## Community Integrations
 
 ### Web & Desktop
