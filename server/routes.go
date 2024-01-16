@@ -691,7 +691,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 					if nval == float64(int(nval)) {
 						params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(int(nval))))
 					} else {
-						params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
+						params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 2, 64)))
 					}
 				case bool:
 					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(nval)))
