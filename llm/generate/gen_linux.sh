@@ -141,6 +141,7 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
         ${CUDA_LIB_DIR}/libcublasLt_static.a \
         ${CUDA_LIB_DIR}/libcudadevrt.a \
         ${CUDA_LIB_DIR}/libculibos.a \
+        -lcuda \
         -lrt -lpthread -ldl -lstdc++ -lm
 fi
 
