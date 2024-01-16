@@ -95,8 +95,6 @@
 		});
 
 		if (chat) {
-			console.log("Chat from getChatById1", chat) //Remove
-			console.log("Chat from getChatById2", chat.chat); // Remove
 			const chatContent = chat.chat;
 
 			if (chatContent) {
