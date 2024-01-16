@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
@@ -193,10 +194,11 @@ func Test_Routes(t *testing.T) {
 				for _, p := range paramsSplit {
 					params = append(params, strings.Join(strings.Fields(p), " "))
 				}
+				sort.Strings(params)
 				expectedParams := []string{
 					"seed 42",
-					"stop \"foo\"",
 					"stop \"bar\"",
+					"stop \"foo\"",
 					"top_p 0.9",
 				}
 				assert.Equal(t, expectedParams, params)
