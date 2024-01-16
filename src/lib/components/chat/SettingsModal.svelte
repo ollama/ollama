@@ -141,7 +141,7 @@
 	const importChats = async (_chats) => {
 		for (const chat of _chats) {
 			console.log(chat);
-			await createNewChat(localStorage.token, chat);
+			await createNewChat(localStorage.token, chat.chat);
 		}
 
 		await chats.set(await getChatList(localStorage.token));

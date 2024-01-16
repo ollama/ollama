@@ -7,7 +7,7 @@
 	import { page } from '$app/stores';
 
 	import { models, modelfiles, user, settings, chats, chatId, config } from '$lib/stores';
-	import { copyToClipboard, splitStream } from '$lib/utils';
+	import { copyToClipboard, splitStream, convertMessagesToHistory } from '$lib/utils';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
 	import { createNewChat, getChatById, getChatList, updateChatById } from '$lib/apis/chats';
@@ -95,6 +95,8 @@
 		});
 
 		if (chat) {
+			console.log("Chat from getChatById1", chat) //Remove
+			console.log("Chat from getChatById2", chat.chat); // Remove
 			const chatContent = chat.chat;
 
 			if (chatContent) {
@@ -103,7 +105,7 @@
 				selectedModels =
 					(chatContent?.models ?? undefined) !== undefined
 						? chatContent.models
-						: [chatContent.model ?? ''];
+						: [chatContent.models ?? ''];
 				history =
 					(chatContent?.history ?? undefined) !== undefined
 						? chatContent.history
