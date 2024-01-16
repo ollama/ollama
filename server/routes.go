@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -668,27 +667,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	cs := 30
 	for k, v := range model.Options {
 		switch val := v.(type) {
-		case string:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, val))
-		case int:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(val)))
-		case float64:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(val, 'f', 0, 64)))
-		case bool:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(val)))
 		case []interface{}:
 			for _, nv := range val {
-				switch nval := nv.(type) {
-				case string:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, nval))
-				case int:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(nval)))
-				case float64:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
-				case bool:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(nval)))
-				}
+				params = append(params, fmt.Sprintf("%-*s %#v", cs, k, nv))
 			}
+		default:
+			params = append(params, fmt.Sprintf("%-*s %#v", cs, k, v))
 		}
 	}
 	resp.Parameters = strings.Join(params, "\n")
