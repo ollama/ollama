@@ -204,6 +204,36 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, expectedParams, params)
 			},
 		},
+		{
+			Name:   "Pull Model Handler - 404",
+			Method: http.MethodPost,
+			Path:   "/api/pull",
+			Setup: func(t *testing.T, req *http.Request) {
+				var b bytes.Buffer
+				stream := false
+				err := json.NewEncoder(&b).Encode(api.PullRequest{Name: "not-a-model", Stream: &stream})
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(&b)
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, resp.StatusCode, 404)
+			},
+		},
+		{
+			Name:   "Push Model Handler - 404",
+			Method: http.MethodPost,
+			Path:   "/api/pull",
+			Setup: func(t *testing.T, req *http.Request) {
+				var b bytes.Buffer
+				stream := false
+				err := json.NewEncoder(&b).Encode(api.PushRequest{Name: "not-a-model", Stream: &stream})
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(&b)
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, resp.StatusCode, 404)
+			},
+		},
 	}
 
 	s, err := setupServer(t)

@@ -280,7 +280,7 @@ func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
 
 	bts, err := os.ReadFile(fp)
 	if err != nil {
-		return nil, "", fmt.Errorf("couldn't open file '%s'", fp)
+		return nil, "", fmt.Errorf("couldn't open file '%s': %w", fp, err)
 	}
 
 	shaSum := sha256.Sum256(bts)
@@ -971,7 +971,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
 			slog.Info(fmt.Sprintf("error uploading blob: %v", err))
 			if errors.Is(err, errUnauthorized) {
-				return fmt.Errorf("unable to push %s, make sure this namespace exists and you are authorized to push to it", ParseModelPath(name).GetNamespaceRepository())
+				return fmt.Errorf("%w: unable to push %s, make sure this namespace exists and you are authorized to push to it", err, ParseModelPath(name).GetNamespaceRepository())
 			}
 			return err
 		}
@@ -1031,7 +1031,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	manifest, err = pullModelManifest(ctx, mp, regOpts)
 	if err != nil {
-		return fmt.Errorf("pull model manifest: %s", err)
+		return fmt.Errorf("pull model manifest: %w", err)
 	}
 
 	var layers []*Layer
@@ -1169,7 +1169,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		case resp.StatusCode >= http.StatusBadRequest:
 			responseBody, err := io.ReadAll(resp.Body)
 			if err != nil {
-				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
+				return nil, fmt.Errorf("%d: %w", resp.StatusCode, err)
 			}
 			return nil, fmt.Errorf("%d: %s", resp.StatusCode, responseBody)
 		default:

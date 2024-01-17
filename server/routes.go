@@ -86,7 +86,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			// show a generalized compatibility error until there is a better way to
 			// check for model compatibility
 			if errors.Is(llm.ErrUnsupportedFormat, err) || strings.Contains(err.Error(), "failed to load model") {
-				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, model.ShortName)
+				err = fmt.Errorf("%w: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, model.ShortName)
 			}
 
 			return err
@@ -439,7 +439,7 @@ func PullModelHandler(c *gin.Context) {
 		defer cancel()
 
 		if err := PullModel(ctx, model, regOpts, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- err
 		}
 	}()
 
@@ -488,7 +488,7 @@ func PushModelHandler(c *gin.Context) {
 		defer cancel()
 
 		if err := PushModel(ctx, model, regOpts, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- err
 		}
 	}()
 
@@ -979,6 +979,17 @@ func waitForStream(c *gin.Context, ch chan interface{}) {
 				c.JSON(http.StatusOK, r)
 				return
 			}
+		case error:
+			status := http.StatusInternalServerError
+			switch {
+			case errors.Is(r, os.ErrNotExist):
+				status = http.StatusNotFound
+			case errors.Is(r, errUnauthorized):
+				status = http.StatusUnauthorized
+			}
+
+			c.JSON(status, gin.H{"error": r.Error()})
+			return
 		case gin.H:
 			if errorMsg, ok := r["error"].(string); ok {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
@@ -1001,6 +1012,10 @@ func streamResponse(c *gin.Context, ch chan any) {
 		val, ok := <-ch
 		if !ok {
 			return false
+		}
+
+		if err, ok := val.(error); ok {
+			val = gin.H{"error": err.Error()}
 		}
 
 		bts, err := json.Marshal(val)
