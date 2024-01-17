@@ -13,10 +13,14 @@ export const REQUIRED_OLLAMA_VERSION = '0.1.16';
 
 export const SUPPORTED_FILE_TYPE = [
 	'application/pdf',
-	'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-	'text/markdown',
 	'text/plain',
-	'text/csv'
+	'text/csv',
+	'text/xml',
+	'text/x-python',
+	'text/css',
+	'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	'application/octet-stream',
+	'application/x-javascript',
 ];
 
 // Source: https://kit.svelte.dev/docs/modules#$env-static-public
