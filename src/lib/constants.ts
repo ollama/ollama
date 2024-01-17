@@ -21,6 +21,7 @@ export const SUPPORTED_FILE_TYPE = [
 	'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 	'application/octet-stream',
 	'application/x-javascript',
+	'text/markdown',
 ];
 
 // Source: https://kit.svelte.dev/docs/modules#$env-static-public
