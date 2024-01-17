@@ -39,8 +39,13 @@ amdGPUs() {
 }
 
 echo "Starting linux generate script"
-if [ -z "${CUDACXX}" -a -x /usr/local/cuda/bin/nvcc ]; then
-    export CUDACXX=/usr/local/cuda/bin/nvcc
+if [ -z "${CUDACXX}" ]; then
+    if [ -x /usr/local/cuda/bin/nvcc ]; then
+        export CUDACXX=/usr/local/cuda/bin/nvcc
+    else
+        # Try the default location in case it exists
+        export CUDACXX=$(command -v nvcc)
+    fi
 fi
 COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
 source $(dirname $0)/gen_common.sh
@@ -109,33 +114,41 @@ else
     echo "Skipping CPU generation step as requested"
 fi
 
-for cudalibpath in "/usr/local/cuda/lib64" "/opt/cuda/targets/x86_64-linux/lib"; do
-    if [ -d "$cudalibpath" ]; then
-        echo "CUDA libraries detected - building dynamic CUDA library"
-        init_vars
-        CUDA_MAJOR=$(find "$cudalibpath" -name 'libcudart.so.*' -print | head -1 | cut -f3 -d. || true)
-        if [ -n "${CUDA_MAJOR}" ]; then
-            CUDA_VARIANT="_v${CUDA_MAJOR}"
-        fi
-        CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
-        BUILD_DIR="${LLAMACPP_DIR}/build/linux/cuda${CUDA_VARIANT}"
-        CUDA_LIB_DIR="$cudalibpath"
-        build
-        install
-        gcc -fPIC -g -shared -o "${BUILD_DIR}/lib/libext_server.so" \
-            -Wl,--whole-archive \
-            "${BUILD_DIR}/lib/libext_server.a" \
-            "${BUILD_DIR}/lib/libcommon.a" \
-            "${BUILD_DIR}/lib/libllama.a" \
-            -Wl,--no-whole-archive \
-            "${CUDA_LIB_DIR}/libcudart_static.a" \
-            "${CUDA_LIB_DIR}/libcublas_static.a" \
-            "${CUDA_LIB_DIR}/libcublasLt_static.a" \
-            "${CUDA_LIB_DIR}/libcudadevrt.a" \
-            "${CUDA_LIB_DIR}/libculibos.a" \
-            -lrt -lpthread -ldl -lstdc++ -lm
+# If needed, look for the default CUDA toolkit location
+if [ -z "${CUDA_LIB_DIR}" ] && [ -d /usr/local/cuda/lib64 ]; then
+    CUDA_LIB_DIR=/usr/local/cuda/lib64
+fi
+
+# If needed, look for CUDA on Arch Linux
+if [ -z "${CUDA_LIB_DIR}" ] && [ -d /opt/cuda/targets/x86_64-linux/lib ]; then
+    CUDA_LIB_DIR=/opt/cuda/targets/x86_64-linux/lib
+fi
+
+if [ -d "${CUDA_LIB_DIR}" ]; then
+    echo "CUDA libraries detected - building dynamic CUDA library"
+    init_vars
+    CUDA_MAJOR=$(ls "${CUDA_LIB_DIR}"/libcudart.so.* | head -1 | cut -f3 -d. || true)
+    if [ -n "${CUDA_MAJOR}" ]; then
+        CUDA_VARIANT=_v${CUDA_MAJOR}
     fi
-done
+    CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
+    BUILD_DIR="${LLAMACPP_DIR}/build/linux/cuda${CUDA_VARIANT}"
+    build
+    install
+    gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
+        -Wl,--whole-archive \
+        ${BUILD_DIR}/lib/libext_server.a \
+        ${BUILD_DIR}/lib/libcommon.a \
+        ${BUILD_DIR}/lib/libllama.a \
+        -Wl,--no-whole-archive \
+        ${CUDA_LIB_DIR}/libcudart_static.a \
+        ${CUDA_LIB_DIR}/libcublas_static.a \
+        ${CUDA_LIB_DIR}/libcublasLt_static.a \
+        ${CUDA_LIB_DIR}/libcudadevrt.a \
+        ${CUDA_LIB_DIR}/libculibos.a \
+        -lcuda \
+        -lrt -lpthread -ldl -lstdc++ -lm
+fi
 
 if [ -z "${ROCM_PATH}" ]; then
     # Try the default location in case it exists

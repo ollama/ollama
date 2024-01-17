@@ -14,9 +14,11 @@ BUILD_DIR="${LLAMACPP_DIR}/build/darwin/metal"
 case "${GOARCH}" in
 "amd64")
     CMAKE_DEFS="-DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DLLAMA_METAL=off -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+    ARCH="x86_64"
     ;;
 "arm64")
     CMAKE_DEFS="-DCMAKE_SYSTEM_PROCESSOR=arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 -DLLAMA_METAL=on ${CMAKE_DEFS}"
+    ARCH="arm64"
     ;;
 *)
     echo "GOARCH must be set"
@@ -30,6 +32,7 @@ apply_patches
 build
 install
 gcc -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.so \
+    -arch ${ARCH} \
     -Wl,-force_load ${BUILD_DIR}/lib/libext_server.a \
     ${BUILD_DIR}/lib/libcommon.a \
     ${BUILD_DIR}/lib/libllama.a \

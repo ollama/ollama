@@ -1132,49 +1132,46 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 var errUnauthorized = fmt.Errorf("unauthorized")
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
-	resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
-	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			log.Printf("request failed: %v", err)
-		}
-
-		return nil, err
-	}
-
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized:
-		// Handle authentication error with one retry
-		auth := resp.Header.Get("www-authenticate")
-		authRedir := ParseAuthRedirectString(auth)
-		token, err := getAuthToken(ctx, authRedir)
+	for i := 0; i < 2; i++ {
+		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("request failed: %v", err)
+			}
+
 			return nil, err
 		}
-		regOpts.Token = token
-		if body != nil {
-			_, err = body.Seek(0, io.SeekStart)
+
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized:
+			// Handle authentication error with one retry
+			auth := resp.Header.Get("www-authenticate")
+			authRedir := ParseAuthRedirectString(auth)
+			token, err := getAuthToken(ctx, authRedir)
 			if err != nil {
 				return nil, err
 			}
+			regOpts.Token = token
+			if body != nil {
+				_, err = body.Seek(0, io.SeekStart)
+				if err != nil {
+					return nil, err
+				}
+			}
+		case resp.StatusCode == http.StatusNotFound:
+			return nil, os.ErrNotExist
+		case resp.StatusCode >= http.StatusBadRequest:
+			responseBody, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
+			}
+			return nil, fmt.Errorf("%d: %s", resp.StatusCode, responseBody)
+		default:
+			return resp, nil
 		}
-
-		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, errUnauthorized
-		}
-
-		return resp, err
-	case resp.StatusCode == http.StatusNotFound:
-		return nil, os.ErrNotExist
-	case resp.StatusCode >= http.StatusBadRequest:
-		responseBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("%d: %s", resp.StatusCode, responseBody)
 	}
 
-	return resp, nil
+	return nil, errUnauthorized
 }
 
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
