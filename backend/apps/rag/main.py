@@ -149,16 +149,17 @@ def store_doc(
         "text/plain",
         "text/csv",
         "text/xml",
-        "text/html",
         "text/x-python",
+        "text/css",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/octet-stream",
+        "application/x-javascript",
     ]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
         )
-    text_xml=["text/html", "text/xml"]
+    text_xml=["text/xml"]
     octet_markdown=["md"]
     octet_plain=[
         "go", "py", "java", "sh", "bat", "ps1", "cmd", "js", 
@@ -206,6 +207,8 @@ def store_doc(
                 loader = UnstructuredMarkdownLoader(file_path)
             if file_ext in octet_plain:
                 loader = TextLoader(file_path)
+        elif file.content_type == "application/x-javascript":
+            loader = TextLoader(file_path)
 
         data = loader.load()
         result = store_data_in_vector_db(data, collection_name)
