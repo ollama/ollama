@@ -21,7 +21,7 @@
 	import { WEB_UI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import { config, models, settings, user, chats } from '$lib/stores';
-	import { splitStream, getGravatarURL, getImportOrigin, convertGptChats } from '$lib/utils';
+	import { splitStream, getGravatarURL, getImportOrigin, convertOpenAIChats } from '$lib/utils';
 
 	import Advanced from './Settings/Advanced.svelte';
 	import Modal from '../common/Modal.svelte';
@@ -132,11 +132,11 @@
 		reader.onload = (event) => {
 			let chats = JSON.parse(event.target.result);
 			console.log(chats);
-			if (getImportOrigin(chats) == 'gpt') {
+			if (getImportOrigin(chats) == 'openai') {
 				try {
-					chats = convertGptChats(chats);
+					chats = convertOpenAIChats(chats);
 				} catch (error) {
-					console.log("Unable to import chats:", error);
+					console.log('Unable to import chats:', error);
 				}
 			}
 			importChats(chats);
