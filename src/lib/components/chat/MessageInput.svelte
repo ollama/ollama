@@ -301,7 +301,10 @@
 							const file = inputFiles[0];
 							if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
 								reader.readAsDataURL(file);
-							} else if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
+							} else if (
+								SUPPORTED_FILE_TYPE.includes(file['type']) ||
+								['md'].includes(file.name.split('.').at(-1))
+							) {
 								uploadDoc(file);
 								filesInputElement.value = '';
 							} else {
@@ -461,8 +464,8 @@
 							placeholder={chatInputPlaceholder !== ''
 								? chatInputPlaceholder
 								: speechRecognitionListening
-								? 'Listening...'
-								: 'Send a message'}
+									? 'Listening...'
+									: 'Send a message'}
 							bind:value={prompt}
 							on:keypress={(e) => {
 								if (e.keyCode == 13 && !e.shiftKey) {

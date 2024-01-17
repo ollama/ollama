@@ -67,7 +67,10 @@
 
 			if (inputFiles && inputFiles.length > 0) {
 				const file = inputFiles[0];
-				if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
+				if (
+					SUPPORTED_FILE_TYPE.includes(file['type']) ||
+					['md'].includes(file.name.split('.').at(-1))
+				) {
 					uploadDoc(file);
 				} else {
 					toast.error(`Unsupported File Type '${file['type']}'.`);
@@ -144,7 +147,10 @@
 				on:change={async (e) => {
 					if (inputFiles && inputFiles.length > 0) {
 						const file = inputFiles[0];
-						if (SUPPORTED_FILE_TYPE.includes(file['type'])) {
+						if (
+							SUPPORTED_FILE_TYPE.includes(file['type']) ||
+							['md'].includes(file.name.split('.').at(-1))
+						) {
 							uploadDoc(file);
 						} else {
 							toast.error(`Unsupported File Type '${file['type']}'.`);
