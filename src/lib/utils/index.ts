@@ -192,3 +192,74 @@ export const calculateSHA256 = async (file) => {
 		throw error;
 	}
 };
+
+export const getImportOrigin = (_chats) => {
+	// Check what external service chat imports are from
+	if ('mapping' in _chats[0]) {
+		return 'openai';
+	}
+	return 'webui';
+};
+
+const convertOpenAIMessages = (convo) => {
+	// Parse OpenAI chat messages and create chat dictionary for creating new chats
+	const mapping = convo['mapping'];
+	const messages = [];
+	let currentId = '';
+
+	for (let message_id in mapping) {
+		const message = mapping[message_id];
+		currentId = message_id;
+		if (message['message'] == null || message['message']['content']['parts'][0] == '') {
+			// Skip chat messages with no content
+			continue;
+		} else {
+			const new_chat = {
+				id: message_id,
+				parentId: messages.length > 0 && message['parent'] in mapping ? message['parent'] : null,
+				childrenIds: message['children'] || [],
+				role: message['message']?.['author']?.['role'] !== 'user' ? 'assistant' : 'user',
+				content: message['message']?.['content']?.['parts']?.[0] || '',
+				model: 'gpt-3.5-turbo',
+				done: true,
+				context: null
+			};
+			messages.push(new_chat);
+		}
+	}
+
+	let history = {};
+	messages.forEach((obj) => (history[obj.id] = obj));
+
+	const chat = {
+		history: {
+			currentId: currentId,
+			messages: history // Need to convert this to not a list and instead a json object
+		},
+		models: ['gpt-3.5-turbo'],
+		messages: messages,
+		options: {},
+		timestamp: convo['create_time'],
+		title: convo['title'] ?? 'New Chat'
+	};
+	return chat;
+};
+
+export const convertOpenAIChats = (_chats) => {
+	// Create a list of dictionaries with each conversation from import
+	const chats = [];
+	for (let convo of _chats) {
+		const chat = convertOpenAIMessages(convo);
+
+		if (Object.keys(chat.history.messages).length > 0) {
+			chats.push({
+				id: convo['id'],
+				user_id: '',
+				title: convo['title'],
+				chat: chat,
+				timestamp: convo['timestamp']
+			});
+		}
+	}
+	return chats;
+};
