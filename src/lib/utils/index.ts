@@ -216,11 +216,11 @@ const convertOpenAIMessages = (convo) => {
 		} else {
 			const new_chat = {
 				id: message_id,
-				parentId: messages.length > 0 ? message['parent'] : null,
+				parentId: messages.length > 0 && message['parent'] in mapping ? message['parent'] : null,
 				childrenIds: message['children'] || [],
 				role: message['message']?.['author']?.['role'] !== 'user' ? 'assistant' : 'user',
 				content: message['message']?.['content']?.['parts']?.[0] || '',
-				model: '',
+				model: 'gpt-3.5-turbo',
 				done: true,
 				context: null
 			};
@@ -236,11 +236,11 @@ const convertOpenAIMessages = (convo) => {
 			currentId: currentId,
 			messages: history // Need to convert this to not a list and instead a json object
 		},
-		models: [''],
+		models: ['gpt-3.5-turbo'],
 		messages: messages,
 		options: {},
 		timestamp: convo['create_time'],
-		title: convo['title']
+		title: convo['title'] ?? 'New Chat'
 	};
 	return chat;
 };
@@ -249,14 +249,17 @@ export const convertOpenAIChats = (_chats) => {
 	// Create a list of dictionaries with each conversation from import
 	const chats = [];
 	for (let convo of _chats) {
-		const chat = {
-			id: convo['id'],
-			user_id: '',
-			title: convo['title'],
-			chat: convertOpenAIMessages(convo),
-			timestamp: convo['timestamp']
-		};
-		chats.push(chat);
+		const chat = convertOpenAIMessages(convo);
+
+		if (Object.keys(chat.history.messages).length > 0) {
+			chats.push({
+				id: convo['id'],
+				user_id: '',
+				title: convo['title'],
+				chat: chat,
+				timestamp: convo['timestamp']
+			});
+		}
 	}
 	return chats;
 };
