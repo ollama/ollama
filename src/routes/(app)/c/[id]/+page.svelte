@@ -200,7 +200,7 @@
 					await chatId.set('local');
 				}
 				await tick();
-			} else if (chat.chat["models"][0] == "") {
+			} else if (chat.chat["models"] != selectedModels) {
 				// If model is not saved in DB, then save selectedmodel when message is sent
 
 				chat = await updateChatById(localStorage.token, $chatId, {
