@@ -200,8 +200,15 @@
 					await chatId.set('local');
 				}
 				await tick();
-			}
+			} else if (chat.chat["models"] != selectedModels) {
+				// If model is not saved in DB, then save selectedmodel when message is sent
 
+				chat = await updateChatById(localStorage.token, $chatId, {
+						models: selectedModels
+					});
+				await chats.set(await getChatList(localStorage.token));
+			}
+			
 			// Reset chat input textarea
 			prompt = '';
 			files = [];
@@ -696,7 +703,7 @@
 	<div class="min-h-screen w-full flex justify-center">
 		<div class=" py-2.5 flex flex-col justify-between w-full">
 			<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-10">
-				<ModelSelector bind:selectedModels disabled={messages.length > 0} />
+				<ModelSelector bind:selectedModels disabled={messages.length > 0 && !selectedModels.includes('')} />
 			</div>
 
 			<div class=" h-full mt-10 mb-32 w-full flex flex-col">

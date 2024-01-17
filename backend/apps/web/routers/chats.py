@@ -17,7 +17,8 @@ from apps.web.models.chats import (
 )
 
 from utils.utils import (
-    bearer_scheme, )
+    bearer_scheme,
+)
 from constants import ERROR_MESSAGES
 
 router = APIRouter()
@@ -29,7 +30,8 @@ router = APIRouter()
 
 @router.get("/", response_model=List[ChatTitleIdResponse])
 async def get_user_chats(
-        user=Depends(get_current_user), skip: int = 0, limit: int = 50):
+    user=Depends(get_current_user), skip: int = 0, limit: int = 50
+):
     return Chats.get_chat_lists_by_user_id(user.id, skip, limit)
 
 
@@ -41,9 +43,8 @@ async def get_user_chats(
 @router.get("/all", response_model=List[ChatResponse])
 async def get_all_user_chats(user=Depends(get_current_user)):
     return [
-        ChatResponse(**{
-            **chat.model_dump(), "chat": json.loads(chat.chat)
-        }) for chat in Chats.get_all_chats_by_user_id(user.id)
+        ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
+        for chat in Chats.get_all_chats_by_user_id(user.id)
     ]
 
 
@@ -54,8 +55,14 @@ async def get_all_user_chats(user=Depends(get_current_user)):
 
 @router.post("/new", response_model=Optional[ChatResponse])
 async def create_new_chat(form_data: ChatForm, user=Depends(get_current_user)):
-    chat = Chats.insert_new_chat(user.id, form_data)
-    return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
+    try:
+        chat = Chats.insert_new_chat(user.id, form_data)
+        return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
+    except Exception as e:
+        print(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
+        )
 
 
 ############################
@@ -68,12 +75,11 @@ async def get_chat_by_id(id: str, user=Depends(get_current_user)):
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
 
     if chat:
-        return ChatResponse(**{
-            **chat.model_dump(), "chat": json.loads(chat.chat)
-        })
+        return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
     else:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail=ERROR_MESSAGES.NOT_FOUND)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+        )
 
 
 ############################
@@ -82,17 +88,15 @@ async def get_chat_by_id(id: str, user=Depends(get_current_user)):
 
 
 @router.post("/{id}", response_model=Optional[ChatResponse])
-async def update_chat_by_id(id: str,
-                            form_data: ChatForm,
-                            user=Depends(get_current_user)):
+async def update_chat_by_id(
+    id: str, form_data: ChatForm, user=Depends(get_current_user)
+):
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
     if chat:
         updated_chat = {**json.loads(chat.chat), **form_data.chat}
 
         chat = Chats.update_chat_by_id(id, updated_chat)
-        return ChatResponse(**{
-            **chat.model_dump(), "chat": json.loads(chat.chat)
-        })
+        return ChatResponse(**{**chat.model_dump(), "chat": json.loads(chat.chat)})
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
