@@ -145,7 +145,8 @@
 				role: 'user',
 				user: _user ?? undefined,
 				content: userPrompt,
-				files: files.length > 0 ? files : undefined
+				files: files.length > 0 ? files : undefined,
+				timestamp: Date.now()
 			};
 
 			// Add message to history and Set currentId to messageId
@@ -256,7 +257,8 @@
 			childrenIds: [],
 			role: 'assistant',
 			content: '',
-			model: model
+			model: model,
+			timestamp: Date.now()
 		};
 
 		// Add message to history and Set currentId to messageId
@@ -446,7 +448,8 @@
 			childrenIds: [],
 			role: 'assistant',
 			content: '',
-			model: model
+			model: model,
+			timestamp: Date.now()
 		};
 
 		history.messages[responseMessageId] = responseMessage;

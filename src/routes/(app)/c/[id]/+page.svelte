@@ -135,8 +135,7 @@
 	// Ollama functions
 	//////////////////////////
 
-	const submitPrompt = async (userPrompt, user) => {
-		console.log(userPrompt, user);
+	const submitPrompt = async (userPrompt, _user = null) => {
 		console.log('submitPrompt', $chatId);
 
 		if (selectedModels.includes('')) {
@@ -163,8 +162,10 @@
 				parentId: messages.length !== 0 ? messages.at(-1).id : null,
 				childrenIds: [],
 				role: 'user',
+				user: _user ?? undefined,
 				content: userPrompt,
-				files: files.length > 0 ? files : undefined
+				files: files.length > 0 ? files : undefined,
+				timestamp: Date.now()
 			};
 
 			// Add message to history and Set currentId to messageId
@@ -200,15 +201,7 @@
 					await chatId.set('local');
 				}
 				await tick();
-			} else if (chat.chat["models"] != selectedModels) {
-				// If model is not saved in DB, then save selectedmodel when message is sent
-
-				chat = await updateChatById(localStorage.token, $chatId, {
-						models: selectedModels
-					});
-				await chats.set(await getChatList(localStorage.token));
 			}
-			
 			// Reset chat input textarea
 			prompt = '';
 			files = [];
@@ -282,7 +275,8 @@
 			childrenIds: [],
 			role: 'assistant',
 			content: '',
-			model: model
+			model: model,
+			timestamp: Date.now()
 		};
 
 		// Add message to history and Set currentId to messageId
@@ -472,7 +466,8 @@
 			childrenIds: [],
 			role: 'assistant',
 			content: '',
-			model: model
+			model: model,
+			timestamp: Date.now()
 		};
 
 		history.messages[responseMessageId] = responseMessage;
@@ -703,7 +698,10 @@
 	<div class="min-h-screen w-full flex justify-center">
 		<div class=" py-2.5 flex flex-col justify-between w-full">
 			<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-10">
-				<ModelSelector bind:selectedModels disabled={messages.length > 0 && !selectedModels.includes('')} />
+				<ModelSelector
+					bind:selectedModels
+					disabled={messages.length > 0 && !selectedModels.includes('')}
+				/>
 			</div>
 
 			<div class=" h-full mt-10 mb-32 w-full flex flex-col">
