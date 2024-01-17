@@ -133,7 +133,11 @@
 			let chats = JSON.parse(event.target.result);
 			console.log(chats);
 			if (getImportOrigin(chats) == 'gpt') {
-				chats = convertGptChats(chats);
+				try {
+					chats = convertGptChats(chats);
+				} catch (error) {
+					console.log("Unable to import chats:", error);
+				}
 			}
 			importChats(chats);
 		};
