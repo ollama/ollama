@@ -39,6 +39,7 @@ var CudaLinuxGlobs = []string{
 	"/usr/lib/x86_64-linux-gnu/libnvidia-ml.so*",
 	"/usr/lib/wsl/lib/libnvidia-ml.so*",
 	"/opt/cuda/lib64/libnvidia-ml.so*",
+	"/opt/cuda/targets/x86_64-linux/lib/stubs/libnvidia-ml.so*",
 	"/usr/lib*/libnvidia-ml.so*",
 	"/usr/local/lib*/libnvidia-ml.so*",
 	"/usr/lib/aarch64-linux-gnu/nvidia/current/libnvidia-ml.so*",

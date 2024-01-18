@@ -108,9 +108,14 @@ else
     echo "Skipping CPU generation step as requested"
 fi
 
-if [ -z "${CUDA_LIB_DIR}" ]; then
-    # Try the default location in case it exists
+# If needed, look for the default CUDA toolkit location
+if [ -z "${CUDA_LIB_DIR}" ] && [ -d /usr/local/cuda/lib64 ]; then
     CUDA_LIB_DIR=/usr/local/cuda/lib64
+fi
+
+# If needed, look for CUDA on Arch Linux
+if [ -z "${CUDA_LIB_DIR}" ] && [ -d /opt/cuda/targets/x86_64-linux/lib ]; then
+    CUDA_LIB_DIR=/opt/cuda/targets/x86_64-linux/lib
 fi
 
 if [ -d "${CUDA_LIB_DIR}" ]; then
