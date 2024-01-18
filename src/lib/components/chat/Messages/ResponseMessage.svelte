@@ -1,4 +1,5 @@
 <script lang="ts">
+	import dayjs from 'dayjs';
 	import { marked } from 'marked';
 
 	import tippy from 'tippy.js';
@@ -218,6 +219,12 @@
 				Ollama <span class=" text-gray-500 text-sm font-medium"
 					>{message.model ? ` ${message.model}` : ''}</span
 				>
+			{/if}
+
+			{#if message.timestamp}
+				<span class=" invisible group-hover:visible text-gray-400 text-xs font-medium">
+					{dayjs(message.timestamp * 1000).format('DD/MM/YYYY HH:MM')}
+				</span>
 			{/if}
 		</Name>
 
