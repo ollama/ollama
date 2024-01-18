@@ -1010,28 +1010,6 @@ func streamResponse(c *gin.Context, ch chan any) {
 	})
 }
 
-// contextLimitPrompt builds a prompt to send to a running model while trimming it to fit the template into the max context length
-func contextLimitPrompt(ctx context.Context, prompts []string, ctxLen int) (string, error) {
-	promptLen := 0
-	prompt := ""
-
-	// iterate over the rest of the prompts in reverse order until we reach the max context length
-	for i := len(prompts) - 1; i >= 0; i-- {
-		enc, err := loaded.runner.Encode(ctx, prompts[i])
-		if err != nil {
-			return "", err
-		}
-		// if not most recent prompt and adding the prompt to the chat history would exceed the max context length
-		if i != len(prompts)-1 && promptLen+len(enc) > loaded.NumCtx {
-			// the context window is full, stop adding to the chat history
-			break
-		}
-		prompt = prompts[i] + prompt
-		promptLen += len(enc)
-	}
-	return prompt, nil
-}
-
 func ChatHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -1093,13 +1071,12 @@ func ChatHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	prompts, images, err := model.ChatPrompts(req.Messages)
+	chat, err := model.ChatPrompts(req.Messages)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	prompt, err := contextLimitPrompt(c.Request.Context(), prompts, loaded.NumCtx)
+	prompt, err := trimmedPrompt(c.Request.Context(), chat, model)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1140,7 +1117,7 @@ func ChatHandler(c *gin.Context) {
 		predictReq := llm.PredictOpts{
 			Prompt:  prompt,
 			Format:  req.Format,
-			Images:  images,
+			Images:  chat.CurrentImages,
 			Options: opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
@@ -1177,4 +1154,86 @@ func ChatHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func promptString(model *Model, vars PromptVars, isMostRecent bool) (string, error) {
+	if isMostRecent {
+		p, err := model.PreResponsePrompt(vars)
+		if err != nil {
+			return "", fmt.Errorf("pre-response template: %w", err)
+		}
+		return p, nil
+	}
+	p, err := Prompt(model.Template, vars)
+	if err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+func ctxLimitedPrompts(ctx context.Context, chat *ChatHistory, model *Model) ([]PromptVars, bool, error) {
+	systemSet := false
+	prompts := []PromptVars{}
+	currentEncodingLength := 0
+	for i := len(chat.Prompts) - 1; i >= 0; i-- {
+		p, err := promptString(model, chat.Prompts[i], i == len(chat.Prompts)-1)
+		if err != nil {
+			return nil, false, err
+		}
+		enc, err := loaded.runner.Encode(ctx, p)
+		if err != nil {
+			return nil, false, err
+		}
+
+		// if not most recent prompt and adding the prompt to the chat history would exceed the max context length
+		if i != len(chat.Prompts)-1 && currentEncodingLength+len(enc) > loaded.NumCtx {
+			// the context window is full, stop adding to the chat history
+			break
+		}
+		if chat.Prompts[i].System != "" {
+			systemSet = true
+		}
+
+		currentEncodingLength += len(enc)
+		prompts = append([]PromptVars{chat.Prompts[i]}, prompts...)
+	}
+	return prompts, systemSet, nil
+}
+
+// trimmedPrompt builds a prompt to send to a running model while trimming it to fit the template into the max context length, it preserves the most recent system message
+func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string, error) {
+	if len(chat.Prompts) == 0 {
+		return "", nil
+	}
+
+	for len(chat.Prompts) > 1 {
+		// remove any prompts that do not fit in the max context length
+		prompts, setSystem, err := ctxLimitedPrompts(ctx, chat, model)
+		if err != nil {
+			return "", err
+		}
+		chat.Prompts = prompts
+		chat.Prompts[0].First = true
+		if setSystem || chat.LastSystem == "" {
+			// if the system message was set or there is no system message, we are done
+			break
+		}
+		// if no system message was found, set the system message on the most recent prompt, which will always be present
+		chat.Prompts[0].System = chat.LastSystem
+		// since the system message has been set, the encoding length will change, so we need to re-evaluate context limited prompts to make sure they still fit
+	}
+
+	// build the final prompt
+	sb := strings.Builder{}
+	for i, prompt := range chat.Prompts {
+		p, err := promptString(model, prompt, i == len(chat.Prompts)-1)
+		if err != nil {
+			return "", err
+		}
+		if _, err := sb.WriteString(p); err != nil {
+			return "", err
+		}
+	}
+
+	return sb.String(), nil
 }

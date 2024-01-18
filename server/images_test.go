@@ -1,10 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"strings"
 	"testing"
-
-	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
 )
@@ -235,12 +234,29 @@ func TestModel_PreResponsePrompt_PostResponsePrompt(t *testing.T) {
 	}
 }
 
+func chatHistoryEqual(a, b ChatHistory) bool {
+	if len(a.Prompts) != len(b.Prompts) {
+		return false
+	}
+	for i, v := range a.Prompts {
+		if v != b.Prompts[i] {
+			return false
+		}
+	}
+	for i, v := range a.CurrentImages {
+		if !bytes.Equal(v, b.CurrentImages[i]) {
+			return false
+		}
+	}
+	return a.LastSystem == b.LastSystem
+}
+
 func TestChat(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
 		msgs     []api.Message
-		want     []string
+		want     ChatHistory
 		wantErr  string
 	}{
 		{
@@ -256,32 +272,15 @@ func TestChat(t *testing.T) {
 					Content: "What are the potion ingredients?",
 				},
 			},
-			want: []string{"[INST] You are a Wizard. What are the potion ingredients? [/INST]"},
-		},
-		{
-			name:     "First Message",
-			template: "[INST] {{if .First}}Hello!{{end}} {{ .System }} {{ .Prompt }} [/INST]",
-			msgs: []api.Message{
-				{
-					Role:    "system",
-					Content: "You are a Wizard.",
+			want: ChatHistory{
+				Prompts: []PromptVars{
+					{
+						System: "You are a Wizard.",
+						Prompt: "What are the potion ingredients?",
+						First:  true,
+					},
 				},
-				{
-					Role:    "user",
-					Content: "What are the potion ingredients?",
-				},
-				{
-					Role:    "assistant",
-					Content: "eye of newt",
-				},
-				{
-					Role:    "user",
-					Content: "Anything else?",
-				},
-			},
-			want: []string{
-				"[INST] Hello! You are a Wizard. What are the potion ingredients? [/INST]eye of newt",
-				"[INST]   Anything else? [/INST]",
+				LastSystem: "You are a Wizard.",
 			},
 		},
 		{
@@ -305,9 +304,19 @@ func TestChat(t *testing.T) {
 					Content: "Anything else?",
 				},
 			},
-			want: []string{
-				"[INST] You are a Wizard. What are the potion ingredients? [/INST]sugar",
-				"[INST]  Anything else? [/INST]",
+			want: ChatHistory{
+				Prompts: []PromptVars{
+					{
+						System:   "You are a Wizard.",
+						Prompt:   "What are the potion ingredients?",
+						Response: "sugar",
+						First:    true,
+					},
+					{
+						Prompt: "Anything else?",
+					},
+				},
+				LastSystem: "You are a Wizard.",
 			},
 		},
 		{
@@ -319,7 +328,14 @@ func TestChat(t *testing.T) {
 					Content: "everything nice",
 				},
 			},
-			want: []string{"[INST]   [/INST]everything nice"},
+			want: ChatHistory{
+				Prompts: []PromptVars{
+					{
+						Response: "everything nice",
+						First:    true,
+					},
+				},
+			},
 		},
 		{
 			name: "Invalid Role",
@@ -338,7 +354,7 @@ func TestChat(t *testing.T) {
 			Template: tt.template,
 		}
 		t.Run(tt.name, func(t *testing.T) {
-			got, _, err := m.ChatPrompts(tt.msgs)
+			got, err := m.ChatPrompts(tt.msgs)
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Errorf("ChatPrompt() expected error, got nil")
@@ -346,9 +362,10 @@ func TestChat(t *testing.T) {
 				if !strings.Contains(err.Error(), tt.wantErr) {
 					t.Errorf("ChatPrompt() error = %v, wantErr %v", err, tt.wantErr)
 				}
+				return
 			}
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("ChatPrompt() got = %v, want %v", got, tt.want)
+			if !chatHistoryEqual(*got, tt.want) {
+				t.Errorf("ChatPrompt() got = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
