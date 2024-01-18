@@ -3,7 +3,7 @@
 Install required tools:
 
 - cmake version 3.24 or higher
-- go version 1.20 or higher
+- go version 1.21 or higher
 - gcc version 11.4.0 or higher
 
 ```bash
@@ -104,7 +104,7 @@ Note: The windows build for Ollama is still under development.
 Install required tools:
 
 - MSVC toolchain - C/C++ and cmake as minimal requirements
-- go version 1.20 or higher
+- go version 1.21 or higher
 - MinGW (pick one variant) with GCC.
   - <https://www.mingw-w64.org/>
   - <https://www.msys2.org/>

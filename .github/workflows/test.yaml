@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.20'
+          go-version: '1.21'
           cache: true
       - if: ${{ startsWith(matrix.os, 'windows-') }}
         shell: pwsh
@@ -67,7 +67,7 @@ jobs:
           submodules: recursive
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.20'
+          go-version: '1.21'
           cache: false
       - uses: actions/download-artifact@v4
         with:
@@ -95,7 +95,7 @@ jobs:
           submodules: recursive
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.20'
+          go-version: '1.21'
           cache: true
       - run: go get
       - uses: actions/download-artifact@v4
