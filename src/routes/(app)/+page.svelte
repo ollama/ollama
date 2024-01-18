@@ -80,6 +80,11 @@
 	//////////////////////////
 
 	const initNewChat = async () => {
+		if (currentRequestId !== null) {
+			await cancelChatCompletion(localStorage.token, currentRequestId);
+			currentRequestId = null;
+		}
+
 		window.history.replaceState(history.state, '', `/`);
 
 		console.log('initNewChat');

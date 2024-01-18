@@ -705,7 +705,12 @@
 	<Navbar
 		{title}
 		shareEnabled={messages.length > 0}
-		initNewChat={() => {
+		initNewChat={async () => {
+			if (currentRequestId !== null) {
+				await cancelChatCompletion(localStorage.token, currentRequestId);
+				currentRequestId = null;
+			}
+
 			goto('/');
 		}}
 	/>
