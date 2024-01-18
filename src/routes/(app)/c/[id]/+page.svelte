@@ -6,11 +6,29 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
-	import { models, modelfiles, user, settings, chats, chatId, config } from '$lib/stores';
+	import {
+		models,
+		modelfiles,
+		user,
+		settings,
+		chats,
+		chatId,
+		config,
+		tags as _tags
+	} from '$lib/stores';
 	import { copyToClipboard, splitStream, convertMessagesToHistory } from '$lib/utils';
 
 	import { generateChatCompletion, generateTitle } from '$lib/apis/ollama';
-	import { createNewChat, getChatById, getChatList, updateChatById } from '$lib/apis/chats';
+	import {
+		addTagById,
+		createNewChat,
+		deleteTagById,
+		getAllChatTags,
+		getChatById,
+		getChatList,
+		getTagsById,
+		updateChatById
+	} from '$lib/apis/chats';
 	import { queryVectorDB } from '$lib/apis/rag';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 
@@ -49,6 +67,7 @@
 	}, {});
 
 	let chat = null;
+	let tags = [];
 
 	let title = '';
 	let prompt = '';
@@ -97,6 +116,7 @@
 		});
 
 		if (chat) {
+			tags = await getTags();
 			const chatContent = chat.chat;
 
 			if (chatContent) {
@@ -688,6 +708,34 @@
 		await chats.set(await getChatList(localStorage.token));
 	};
 
+	const getTags = async () => {
+		return await getTagsById(localStorage.token, $chatId).catch(async (error) => {
+			return [];
+		});
+	};
+
+	const addTag = async (tagName) => {
+		const res = await addTagById(localStorage.token, $chatId, tagName);
+		tags = await getTags();
+
+		chat = await updateChatById(localStorage.token, $chatId, {
+			tags: tags
+		});
+
+		_tags.set(await getAllChatTags(localStorage.token));
+	};
+
+	const deleteTag = async (tagName) => {
+		const res = await deleteTagById(localStorage.token, $chatId, tagName);
+		tags = await getTags();
+
+		chat = await updateChatById(localStorage.token, $chatId, {
+			tags: tags
+		});
+
+		_tags.set(await getAllChatTags(localStorage.token));
+	};
+
 	onMount(async () => {
 		if (!($settings.saveChatHistory ?? true)) {
 			await goto('/');
@@ -713,6 +761,9 @@
 
 			goto('/');
 		}}
+		{tags}
+		{addTag}
+		{deleteTag}
 	/>
 	<div class="min-h-screen w-full flex justify-center">
 		<div class=" py-2.5 flex flex-col justify-between w-full">

@@ -20,7 +20,8 @@
 		models,
 		modelfiles,
 		prompts,
-		documents
+		documents,
+		tags
 	} from '$lib/stores';
 	import { REQUIRED_OLLAMA_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
@@ -29,6 +30,7 @@
 	import { checkVersion } from '$lib/utils';
 	import ShortcutsModal from '$lib/components/chat/ShortcutsModal.svelte';
 	import { getDocs } from '$lib/apis/documents';
+	import { getAllChatTags } from '$lib/apis/chats';
 
 	let ollamaVersion = '';
 	let loaded = false;
@@ -106,6 +108,7 @@
 			await modelfiles.set(await getModelfiles(localStorage.token));
 			await prompts.set(await getPrompts(localStorage.token));
 			await documents.set(await getDocs(localStorage.token));
+			await tags.set(await getAllChatTags(localStorage.token));
 
 			modelfiles.subscribe(async () => {
 				// should fetch models
