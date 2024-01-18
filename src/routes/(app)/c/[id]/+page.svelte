@@ -26,6 +26,8 @@
 	let autoScroll = true;
 	let processing = '';
 
+	let currentRequestId = null;
+
 	// let chatId = $page.params.id;
 	let selectedModels = [''];
 	let selectedModelfile = null;
@@ -297,7 +299,7 @@
 		// Scroll down
 		window.scrollTo({ top: document.body.scrollHeight });
 
-		const res = await generateChatCompletion(localStorage.token, {
+		const [res, controller] = await generateChatCompletion(localStorage.token, {
 			model: model,
 			messages: [
 				$settings.system
@@ -335,6 +337,13 @@
 				if (done || stopResponseFlag || _chatId !== $chatId) {
 					responseMessage.done = true;
 					messages = messages;
+
+					if (stopResponseFlag) {
+						controller.abort('User: Stop Response');
+						await cancelChatCompletion(localStorage.token, currentRequestId);
+					}
+
+					currentRequestId = null;
 					break;
 				}
 
@@ -350,52 +359,57 @@
 								throw data;
 							}
 
-							if (data.done == false) {
-								if (responseMessage.content == '' && data.message.content == '\n') {
-									continue;
-								} else {
-									responseMessage.content += data.message.content;
-									messages = messages;
-								}
+							if ('id' in data) {
+								console.log(data);
+								currentRequestId = data.id;
 							} else {
-								responseMessage.done = true;
+								if (data.done == false) {
+									if (responseMessage.content == '' && data.message.content == '\n') {
+										continue;
+									} else {
+										responseMessage.content += data.message.content;
+										messages = messages;
+									}
+								} else {
+									responseMessage.done = true;
 
-								if (responseMessage.content == '') {
-									responseMessage.error = true;
-									responseMessage.content =
-										'Oops! No text generated from Ollama, Please try again.';
-								}
+									if (responseMessage.content == '') {
+										responseMessage.error = true;
+										responseMessage.content =
+											'Oops! No text generated from Ollama, Please try again.';
+									}
 
-								responseMessage.context = data.context ?? null;
-								responseMessage.info = {
-									total_duration: data.total_duration,
-									load_duration: data.load_duration,
-									sample_count: data.sample_count,
-									sample_duration: data.sample_duration,
-									prompt_eval_count: data.prompt_eval_count,
-									prompt_eval_duration: data.prompt_eval_duration,
-									eval_count: data.eval_count,
-									eval_duration: data.eval_duration
-								};
-								messages = messages;
+									responseMessage.context = data.context ?? null;
+									responseMessage.info = {
+										total_duration: data.total_duration,
+										load_duration: data.load_duration,
+										sample_count: data.sample_count,
+										sample_duration: data.sample_duration,
+										prompt_eval_count: data.prompt_eval_count,
+										prompt_eval_duration: data.prompt_eval_duration,
+										eval_count: data.eval_count,
+										eval_duration: data.eval_duration
+									};
+									messages = messages;
 
-								if ($settings.notificationEnabled && !document.hasFocus()) {
-									const notification = new Notification(
-										selectedModelfile
-											? `${
-													selectedModelfile.title.charAt(0).toUpperCase() +
-													selectedModelfile.title.slice(1)
-											  }`
-											: `Ollama - ${model}`,
-										{
-											body: responseMessage.content,
-											icon: selectedModelfile?.imageUrl ?? '/favicon.png'
-										}
-									);
-								}
+									if ($settings.notificationEnabled && !document.hasFocus()) {
+										const notification = new Notification(
+											selectedModelfile
+												? `${
+														selectedModelfile.title.charAt(0).toUpperCase() +
+														selectedModelfile.title.slice(1)
+												  }`
+												: `Ollama - ${model}`,
+											{
+												body: responseMessage.content,
+												icon: selectedModelfile?.imageUrl ?? '/favicon.png'
+											}
+										);
+									}
 
-								if ($settings.responseAutoCopy) {
-									copyToClipboard(responseMessage.content);
+									if ($settings.responseAutoCopy) {
+										copyToClipboard(responseMessage.content);
+									}
 								}
 							}
 						}
@@ -691,7 +705,12 @@
 	<Navbar
 		{title}
 		shareEnabled={messages.length > 0}
-		initNewChat={() => {
+		initNewChat={async () => {
+			if (currentRequestId !== null) {
+				await cancelChatCompletion(localStorage.token, currentRequestId);
+				currentRequestId = null;
+			}
+
 			goto('/');
 		}}
 	/>
