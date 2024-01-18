@@ -146,7 +146,7 @@
 				user: _user ?? undefined,
 				content: userPrompt,
 				files: files.length > 0 ? files : undefined,
-				timestamp: Date.now()
+				timestamp: Math.floor(Date.now() / 1000) // Unix epoch
 			};
 
 			// Add message to history and Set currentId to messageId
@@ -258,7 +258,7 @@
 			role: 'assistant',
 			content: '',
 			model: model,
-			timestamp: Date.now()
+			timestamp: Math.floor(Date.now() / 1000) // Unix epoch
 		};
 
 		// Add message to history and Set currentId to messageId
@@ -449,7 +449,7 @@
 			role: 'assistant',
 			content: '',
 			model: model,
-			timestamp: Date.now()
+			timestamp: Math.floor(Date.now() / 1000) // Unix epoch
 		};
 
 		history.messages[responseMessageId] = responseMessage;
