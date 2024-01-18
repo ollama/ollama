@@ -206,15 +206,38 @@ export const generatePrompt = async (token: string = '', model: string, conversa
 };
 
 export const generateChatCompletion = async (token: string = '', body: object) => {
+	let controller = new AbortController();
 	let error = null;
 
 	const res = await fetch(`${OLLAMA_API_BASE_URL}/chat`, {
+		signal: controller.signal,
 		method: 'POST',
 		headers: {
 			'Content-Type': 'text/event-stream',
 			Authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify(body)
+	}).catch((err) => {
+		error = err;
+		return null;
+	});
+
+	if (error) {
+		throw error;
+	}
+
+	return [res, controller];
+};
+
+export const cancelChatCompletion = async (token: string = '', requestId: string) => {
+	let error = null;
+
+	const res = await fetch(`${OLLAMA_API_BASE_URL}/cancel/${requestId}`, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'text/event-stream',
+			Authorization: `Bearer ${token}`
+		}
 	}).catch((err) => {
 		error = err;
 		return null;
