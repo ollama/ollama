@@ -1156,6 +1156,7 @@ func ChatHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+// promptString applies the model template to the prompt
 func promptString(model *Model, vars PromptVars, isMostRecent bool) (string, error) {
 	if isMostRecent {
 		p, err := model.PreResponsePrompt(vars)
@@ -1171,20 +1172,23 @@ func promptString(model *Model, vars PromptVars, isMostRecent bool) (string, err
 	return p, nil
 }
 
+// ctxLimitedPrompts returns the prompts that fit in the max context length and whether or not the system message was set
 func ctxLimitedPrompts(ctx context.Context, chat *ChatHistory, model *Model) ([]PromptVars, bool, error) {
 	systemSet := false
 	prompts := []PromptVars{}
 	currentEncodingLength := 0
+	// iterate through the prompts in reverse order (most recent to oldest)
 	for i := len(chat.Prompts) - 1; i >= 0; i-- {
+		// apply the template to the prompt
 		p, err := promptString(model, chat.Prompts[i], i == len(chat.Prompts)-1)
 		if err != nil {
 			return nil, false, err
 		}
+		// find the number of tokens in the encoded prompt
 		enc, err := loaded.runner.Encode(ctx, p)
 		if err != nil {
 			return nil, false, err
 		}
-
 		// if not most recent prompt and adding the prompt to the chat history would exceed the max context length
 		if i != len(chat.Prompts)-1 && currentEncodingLength+len(enc) > loaded.NumCtx {
 			// the context window is full, stop adding to the chat history
@@ -1193,8 +1197,8 @@ func ctxLimitedPrompts(ctx context.Context, chat *ChatHistory, model *Model) ([]
 		if chat.Prompts[i].System != "" {
 			systemSet = true
 		}
-
 		currentEncodingLength += len(enc)
+		// add the current prompt to the front of the prompts slice to preserve chronological order of oldest to most recent in the result
 		prompts = append([]PromptVars{chat.Prompts[i]}, prompts...)
 	}
 	return prompts, systemSet, nil
@@ -1205,7 +1209,6 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 	if len(chat.Prompts) == 0 {
 		return "", nil
 	}
-
 	for len(chat.Prompts) > 1 {
 		// remove any prompts that do not fit in the max context length
 		prompts, setSystem, err := ctxLimitedPrompts(ctx, chat, model)
@@ -1222,7 +1225,6 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 		chat.Prompts[0].System = chat.LastSystem
 		// since the system message has been set, the encoding length will change, so we need to re-evaluate context limited prompts to make sure they still fit
 	}
-
 	// build the final prompt
 	sb := strings.Builder{}
 	for i, prompt := range chat.Prompts {
@@ -1234,6 +1236,5 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 			return "", err
 		}
 	}
-
 	return sb.String(), nil
 }
