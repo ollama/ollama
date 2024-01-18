@@ -1,0 +1,17 @@
+---
+version: "3.8"
+
+services:
+  ollama:
+    build: .
+    container_name: ollama
+    image: ollama
+    restart: always
+    healthcheck:
+      test: "bash -c 'cat < /dev/null > /dev/tcp/localhost/11434'"
+      interval: 5s
+      retries: 3
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama:/root/.ollama
