@@ -10,7 +10,14 @@
 	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import { generateChatCompletion, cancelChatCompletion, generateTitle } from '$lib/apis/ollama';
-	import { createNewChat, getChatList, updateChatById } from '$lib/apis/chats';
+	import {
+		addTagById,
+		createNewChat,
+		deleteTagById,
+		getChatList,
+		getTagsById,
+		updateChatById
+	} from '$lib/apis/chats';
 	import { queryVectorDB } from '$lib/apis/rag';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 
@@ -47,6 +54,7 @@
 	}, {});
 
 	let chat = null;
+	let tags = [];
 
 	let title = '';
 	let prompt = '';
@@ -673,6 +681,22 @@
 		}
 	};
 
+	const getTags = async () => {
+		return await getTagsById(localStorage.token, $chatId).catch(async (error) => {
+			return [];
+		});
+	};
+
+	const addTag = async (tagName) => {
+		const res = await addTagById(localStorage.token, $chatId, tagName);
+		tags = await getTags();
+	};
+
+	const deleteTag = async (tagName) => {
+		const res = await deleteTagById(localStorage.token, $chatId, tagName);
+		tags = await getTags();
+	};
+
 	const setChatTitle = async (_chatId, _title) => {
 		if (_chatId === $chatId) {
 			title = _title;
@@ -691,7 +715,7 @@
 	}}
 />
 
-<Navbar {title} shareEnabled={messages.length > 0} {initNewChat} />
+<Navbar {title} shareEnabled={messages.length > 0} {initNewChat} {tags} {addTag} {deleteTag} />
 <div class="min-h-screen w-full flex justify-center">
 	<div class=" py-2.5 flex flex-col justify-between w-full">
 		<div class="max-w-2xl mx-auto w-full px-3 md:px-0 mt-10">
