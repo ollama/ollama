@@ -254,7 +254,7 @@ func GenerateHandler(c *gin.Context) {
 
 			// Build up the full response
 			if _, err := generated.WriteString(r.Content); err != nil {
-				ch <- gin.H{"error": err.Error()}
+				ch <- err
 				return
 			}
 
@@ -280,12 +280,12 @@ func GenerateHandler(c *gin.Context) {
 					promptVars.Response = generated.String()
 					result, err := model.PostResponseTemplate(promptVars)
 					if err != nil {
-						ch <- gin.H{"error": err.Error()}
+						ch <- err
 						return
 					}
 					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+result)
 					if err != nil {
-						ch <- gin.H{"error": err.Error()}
+						ch <- err
 						return
 					}
 					resp.Context = embd
@@ -303,7 +303,7 @@ func GenerateHandler(c *gin.Context) {
 			Options: opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- err
 		}
 	}()
 
@@ -561,7 +561,7 @@ func CreateModelHandler(c *gin.Context) {
 		defer cancel()
 
 		if err := CreateModel(ctx, model, filepath.Dir(req.Path), commands, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- err
 		}
 	}()
 
@@ -990,14 +990,6 @@ func waitForStream(c *gin.Context, ch chan interface{}) {
 
 			c.JSON(status, gin.H{"error": r.Error()})
 			return
-		case gin.H:
-			if errorMsg, ok := r["error"].(string); ok {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
-				return
-			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in progress response"})
-				return
-			}
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected progress response"})
 			return
@@ -1141,7 +1133,7 @@ func ChatHandler(c *gin.Context) {
 			Options: opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- err
 		}
 	}()
 
