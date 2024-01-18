@@ -26,6 +26,8 @@
 	let autoScroll = true;
 	let processing = '';
 
+	let currentRequestId = null;
+
 	// let chatId = $page.params.id;
 	let selectedModels = [''];
 	let selectedModelfile = null;
@@ -338,7 +340,10 @@
 
 					if (stopResponseFlag) {
 						controller.abort('User: Stop Response');
+						await cancelChatCompletion(localStorage.token, currentRequestId);
 					}
+
+					currentRequestId = null;
 					break;
 				}
 
@@ -356,6 +361,7 @@
 
 							if ('id' in data) {
 								console.log(data);
+								currentRequestId = data.id;
 							} else {
 								if (data.done == false) {
 									if (responseMessage.content == '' && data.message.content == '\n') {
