@@ -16,6 +16,14 @@ from apps.web.models.chats import (
     Chats,
 )
 
+
+from apps.web.models.tags import (
+    TagModel,
+    ChatIdTagForm,
+    ChatTagsResponse,
+    Tags,
+)
+
 from utils.utils import (
     bearer_scheme,
 )
@@ -113,6 +121,63 @@ async def update_chat_by_id(
 async def delete_chat_by_id(id: str, user=Depends(get_current_user)):
     result = Chats.delete_chat_by_id_and_user_id(id, user.id)
     return result
+
+
+############################
+# GetChatTagsById
+############################
+
+
+@router.get("/{id}/tags", response_model=List[TagModel])
+async def get_chat_tags_by_id(id: str, user=Depends(get_current_user)):
+    tags = Tags.get_tags_by_chat_id_and_user_id(id, user.id)
+
+    if tags:
+        return tags
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+        )
+
+
+############################
+# AddChatTagById
+############################
+
+
+@router.post("/{id}/tags", response_model=Optional[ChatTagsResponse])
+async def add_chat_tag_by_id(
+    id: str, form_data: ChatIdTagForm, user=Depends(get_current_user)
+):
+    tag = Tags.add_tag_to_chat(user.id, {"tag_name": form_data.tag_name, "chat_id": id})
+
+    if tag:
+        return tag
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+        )
+
+
+############################
+# DeleteChatTagById
+############################
+
+
+@router.delete("/{id}/tags", response_model=Optional[bool])
+async def add_chat_tag_by_id(
+    id: str, form_data: ChatIdTagForm, user=Depends(get_current_user)
+):
+    tag = Tags.delete_tag_by_tag_name_and_chat_id_and_user_id(
+        form_data.tag_name, id, user.id
+    )
+
+    if tag:
+        return tag
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+        )
 
 
 ############################
