@@ -5,10 +5,13 @@
 
 	import { getChatById } from '$lib/apis/chats';
 	import { chatId, modelfiles } from '$lib/stores';
+	import ShareChatModal from '../chat/ShareChatModal.svelte';
 
 	export let initNewChat: Function;
 	export let title: string = 'Ollama Web UI';
 	export let shareEnabled: boolean = false;
+
+	let showShareChatModal = false;
 
 	const shareChat = async () => {
 		const chat = (await getChatById(localStorage.token, $chatId)).chat;
@@ -53,16 +56,17 @@
 	};
 </script>
 
+<ShareChatModal bind:show={showShareChatModal} {downloadChat} {shareChat} />
 <nav
 	id="nav"
 	class=" fixed py-2.5 top-0 flex flex-row justify-center bg-white/95 dark:bg-gray-800/90 dark:text-gray-200 backdrop-blur-xl w-screen z-30"
 >
 	<div class=" flex max-w-3xl w-full mx-auto px-3">
-		<div class="flex w-full max-w-full">
-			<div class="pr-2 self-center">
+		<div class="flex items-center w-full max-w-full">
+			<div class="pr-2 self-start">
 				<button
 					id="new-chat-button"
-					class=" cursor-pointer p-1 flex dark:hover:bg-gray-700 rounded-lg transition"
+					class=" cursor-pointer p-1.5 flex dark:hover:bg-gray-700 rounded-lg transition"
 					on:click={initNewChat}
 				>
 					<div class=" m-auto self-center">
@@ -82,59 +86,59 @@
 					</div>
 				</button>
 			</div>
-			<div class=" flex-1 self-center font-medium text-ellipsis whitespace-nowrap overflow-hidden">
-				{title != '' ? title : 'Ollama Web UI'}
+			<div class=" flex-1 self-center font-medium line-clamp-1">
+				<div>
+					{title != '' ? title : 'Ollama Web UI'}
+				</div>
 			</div>
 
-			{#if shareEnabled}
-				<div class="pl-2 flex space-x-1.5">
-					<button
-						class=" cursor-pointer p-2 flex dark:hover:bg-gray-700 rounded-lg transition border dark:border-gray-600"
-						on:click={async () => {
-							downloadChat();
-						}}
+			<div class="pl-2 self-center flex items-center space-x-2">
+				<div class="flex flex-row">
+					<div
+						class=" cursor-pointer px-2 py-0.5 space-x-1 flex h-fit items-center dark:hover:bg-gray-700 rounded-full transition border dark:border-gray-600"
 					>
+						<div class=" text-[0.65rem] font-medium">Add Tags</div>
 						<div class=" m-auto self-center">
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								viewBox="0 0 16 16"
 								fill="currentColor"
-								class="w-4 h-4"
+								class="w-3 h-3"
 							>
 								<path
-									d="M8.75 2.75a.75.75 0 0 0-1.5 0v5.69L5.03 6.22a.75.75 0 0 0-1.06 1.06l3.5 3.5a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0-1.06-1.06L8.75 8.44V2.75Z"
-								/>
-								<path
-									d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
+									d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"
 								/>
 							</svg>
 						</div>
-					</button>
-
-					<button
-						class=" cursor-pointer p-2 flex dark:hover:bg-gray-700 rounded-lg transition border dark:border-gray-600"
-						on:click={async () => {
-							shareChat();
-						}}
-					>
-						<div class=" m-auto self-center">
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								viewBox="0 0 16 16"
-								fill="currentColor"
-								class="w-4 h-4"
-							>
-								<path
-									d="M7.25 10.25a.75.75 0 0 0 1.5 0V4.56l2.22 2.22a.75.75 0 1 0 1.06-1.06l-3.5-3.5a.75.75 0 0 0-1.06 0l-3.5 3.5a.75.75 0 0 0 1.06 1.06l2.22-2.22v5.69Z"
-								/>
-								<path
-									d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z"
-								/>
-							</svg>
-						</div>
-					</button>
+					</div>
 				</div>
-			{/if}
+
+				{#if shareEnabled}
+					<button
+						class=" cursor-pointer p-1.5 flex dark:hover:bg-gray-700 rounded-lg transition border dark:border-gray-600"
+						on:click={async () => {
+							showShareChatModal = !showShareChatModal;
+
+							// console.log(showShareChatModal);
+						}}
+					>
+						<div class=" m-auto self-center">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 24 24"
+								fill="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M15.75 4.5a3 3 0 1 1 .825 2.066l-8.421 4.679a3.002 3.002 0 0 1 0 1.51l8.421 4.679a3 3 0 1 1-.729 1.31l-8.421-4.678a3 3 0 1 1 0-4.132l8.421-4.679a3 3 0 0 1-.096-.755Z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</div>
+					</button>
+				{/if}
+			</div>
 		</div>
 	</div>
 </nav>
