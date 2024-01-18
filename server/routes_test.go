@@ -392,7 +392,8 @@ func Test_ChatPrompt(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
+	for _, testCase := range tests {
+		tt := testCase
 		m := &Model{
 			Template: tt.template,
 		}

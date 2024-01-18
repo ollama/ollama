@@ -238,6 +238,9 @@ func chatHistoryEqual(a, b ChatHistory) bool {
 	if len(a.Prompts) != len(b.Prompts) {
 		return false
 	}
+	if len(a.CurrentImages) != len(b.CurrentImages) {
+		return false
+	}
 	for i, v := range a.Prompts {
 		if v != b.Prompts[i] {
 			return false
