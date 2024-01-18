@@ -44,7 +44,14 @@ Now you can run `ollama`:
 
 *Your operating system distribution may already have packages for NVIDIA CUDA. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!*
 
-Install `cmake` and `golang` as well as [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) development and runtime packages.
+Install `cmake` and `golang` as well as [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads)
+development and runtime packages. 
+
+Typically the build scripts will auto-detect CUDA, however, if your Linux distro
+or installation approach uses unusual paths, you can specify the location by
+specifying an environment variable `CUDA_LIB_DIR` to the location of the shared
+libraries, and `CUDACXX` to the location of the nvcc compiler.
+
 Then generate dependencies:
 
 ```
@@ -62,10 +69,15 @@ go build .
 *Your operating system distribution may already have packages for AMD ROCm and CLBlast. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!*
 
 Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [ROCm](https://rocm.docs.amd.com/en/latest/deploy/linux/quick_start.html) developement packages first, as well as `cmake` and `golang`.
-Adjust the paths below (correct for Arch) as appropriate for your distributions install locations and generate dependencies:
+
+Typically the build scripts will auto-detect ROCm, however, if your Linux distro
+or installation approach uses unusual paths, you can specify the location by
+specifying an environment variable `ROCM_PATH` to the location of the ROCm
+install (typically `/opt/rocm`), and `CLBlast_DIR` to the location of the
+CLBlast install (typically `/usr/lib/cmake/CLBlast`).
 
 ```
-CLBlast_DIR=/usr/lib/cmake/CLBlast ROCM_PATH=/opt/rocm go generate ./...
+go generate ./...
 ```
 
 Then build the binary:
