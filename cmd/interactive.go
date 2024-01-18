@@ -13,6 +13,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/progress"
 	"github.com/jmorganca/ollama/readline"
 )
 
@@ -42,17 +43,25 @@ func modelIsMultiModal(cmd *cobra.Command, name string) bool {
 	return slices.Contains(resp.Details.Families, "clip")
 }
 
-func loadModel(cmd *cobra.Command, opts runOptions) error {
+func loadModel(cmd *cobra.Command, opts *runOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.StopAndClear()
+
+	spinner := progress.NewSpinner("")
+	p.Add("", spinner)
+
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: []api.Message{},
 	}
 	err = client.Chat(cmd.Context(), req, func(resp api.ChatResponse) error {
 		if len(resp.LoadedMessages) > 0 {
+			p.StopAndClear()
 			opts.Messages = append(opts.Messages, resp.LoadedMessages...)
 			for _, msg := range resp.LoadedMessages {
 				switch msg.Role {
@@ -79,7 +88,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	multiModal := modelIsMultiModal(cmd, opts.Model)
 	opts.Messages = make([]api.Message, 0)
 
-	err := loadModel(cmd, opts)
+	err := loadModel(cmd, &opts)
 
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
@@ -239,7 +248,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			if err := loadModel(cmd, opts); err != nil {
+			if err := loadModel(cmd, &opts); err != nil {
 				return err
 			}
 			continue
