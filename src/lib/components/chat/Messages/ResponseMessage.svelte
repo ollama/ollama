@@ -222,7 +222,7 @@
 			{/if}
 
 			{#if message.timestamp}
-				<span class=" invisible group-hover:visible text-gray-400 text-xs font-normal">
+				<span class=" invisible group-hover:visible text-gray-400 text-xs font-medium">
 					{dayjs(message.timestamp * 1000).format('DD/MM/YYYY HH:MM')}
 				</span>
 			{/if}
