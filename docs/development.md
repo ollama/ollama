@@ -1,9 +1,5 @@
 # Development
 
-- Install cmake or (optionally, required tools for GPUs)
-- run `go generate ./...`
-- run `go build .`
-
 Install required tools:
 
 - cmake version 3.24 or higher
@@ -17,7 +13,11 @@ brew install go cmake gcc
 Optionally enable debugging and more verbose logging:
 
 ```bash
+# At build time
 export CGO_CFLAGS="-g"
+
+# At runtime
+export OLLAMA_DEBUG=1
 ```
 
 Get the required libraries and build the native LLM code:

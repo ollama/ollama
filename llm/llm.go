@@ -3,7 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"runtime"
 
@@ -36,7 +36,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	}
 
 	if opts.NumCtx > int(ggml.NumCtx()) {
-		log.Printf("WARNING: requested context length is greater than model's max context length (%d > %d), using %d instead", opts.NumCtx, ggml.NumCtx(), ggml.NumCtx())
+		slog.Warn(fmt.Sprintf("requested context length is greater than model's max context length (%d > %d), using %d instead", opts.NumCtx, ggml.NumCtx(), ggml.NumCtx()))
 		opts.NumCtx = int(ggml.NumCtx())
 	}
 
@@ -63,7 +63,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		}
 
 		if size+kv+graph > vram {
-			log.Println("not enough vram available, falling back to CPU only")
+			slog.Info("not enough vram available, falling back to CPU only")
 			info.Library = "cpu"
 			info.Variant = gpu.GetCPUVariant()
 			opts.NumGPU = 0
@@ -73,7 +73,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		opts.NumGPU = 1
 	default:
 		if info.Library == "cpu" {
-			log.Println("GPU not available, falling back to CPU")
+			slog.Info("GPU not available, falling back to CPU")
 			opts.NumGPU = 0
 			break
 		}
@@ -107,7 +107,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		// 1 + 2 must fit on the main gpu
 		min := graph + kv*layers/maxlayers
 		if layers <= 0 || min > avg {
-			log.Printf("not enough vram available, falling back to CPU only")
+			slog.Info("not enough vram available, falling back to CPU only")
 			info.Library = "cpu"
 			info.Variant = gpu.GetCPUVariant()
 			opts.NumGPU = 0
@@ -135,9 +135,9 @@ func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []stri
 	if demandLib != "" {
 		libPath := availableDynLibs[demandLib]
 		if libPath == "" {
-			log.Printf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib)
+			slog.Info(fmt.Sprintf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib))
 		} else {
-			log.Printf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib)
+			slog.Info(fmt.Sprintf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib))
 			dynLibs = []string{libPath}
 		}
 	}
@@ -148,7 +148,7 @@ func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []stri
 		if err == nil {
 			return srv, nil
 		}
-		log.Printf("Failed to load dynamic library %s  %s", dynLib, err)
+		slog.Warn(fmt.Sprintf("Failed to load dynamic library %s  %s", dynLib, err))
 		err2 = err
 	}
 
