@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -120,7 +120,7 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *R
 		}
 	}
 
-	log.Printf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size))
+	slog.Info(fmt.Sprintf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
 	return nil
 }
 
@@ -159,7 +159,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 					return err
 				case err != nil:
 					sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-					log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+					slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
 					time.Sleep(sleep)
 					continue
 				default:

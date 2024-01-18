@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -107,7 +107,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 		offset += size
 	}
 
-	log.Printf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size))
+	slog.Info(fmt.Sprintf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
 
 	requestURL, err = url.Parse(location)
 	if err != nil {
@@ -156,7 +156,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 						return err
 					case err != nil:
 						sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-						log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+						slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
 						time.Sleep(sleep)
 						continue
 					}
@@ -200,7 +200,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 			break
 		} else if err != nil {
 			sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-			log.Printf("%s complete upload attempt %d failed: %v, retrying in %s", b.Digest[7:19], try, err, sleep)
+			slog.Info(fmt.Sprintf("%s complete upload attempt %d failed: %v, retrying in %s", b.Digest[7:19], try, err, sleep))
 			time.Sleep(sleep)
 			continue
 		}
@@ -265,7 +265,7 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 				return err
 			case err != nil:
 				sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-				log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+				slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
 				time.Sleep(sleep)
 				continue
 			}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -336,7 +337,7 @@ func GetModel(name string) (*Model, error) {
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
-			log.Print("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
+			slog.Info("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
 			model.AdapterPaths = append(model.AdapterPaths, filename)
 		case "application/vnd.ollama.image.projector":
@@ -427,7 +428,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	fromParams := make(map[string]any)
 
 	for _, c := range commands {
-		log.Printf("[%s] - %s", c.Name, c.Args)
+		slog.Info(fmt.Sprintf("[%s] - %s", c.Name, c.Args))
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
 		switch c.Name {
@@ -767,16 +768,16 @@ func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{},
 	for k := range deleteMap {
 		fp, err := GetBlobsPath(k)
 		if err != nil {
-			log.Printf("couldn't get file path for '%s': %v", k, err)
+			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
 			continue
 		}
 		if !dryRun {
 			if err := os.Remove(fp); err != nil {
-				log.Printf("couldn't remove file '%s': %v", fp, err)
+				slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
 				continue
 			}
 		} else {
-			log.Printf("wanted to remove: %s", fp)
+			slog.Info(fmt.Sprintf("wanted to remove: %s", fp))
 		}
 	}
 
@@ -792,7 +793,7 @@ func PruneLayers() error {
 
 	blobs, err := os.ReadDir(p)
 	if err != nil {
-		log.Printf("couldn't read dir '%s': %v", p, err)
+		slog.Info(fmt.Sprintf("couldn't read dir '%s': %v", p, err))
 		return err
 	}
 
@@ -806,14 +807,14 @@ func PruneLayers() error {
 		}
 	}
 
-	log.Printf("total blobs: %d", len(deleteMap))
+	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
 
 	err = deleteUnusedLayers(nil, deleteMap, false)
 	if err != nil {
 		return err
 	}
 
-	log.Printf("total unused blobs removed: %d", len(deleteMap))
+	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
 
 	return nil
 }
@@ -875,7 +876,7 @@ func DeleteModel(name string) error {
 	}
 	err = os.Remove(fp)
 	if err != nil {
-		log.Printf("couldn't remove manifest file '%s': %v", fp, err)
+		slog.Info(fmt.Sprintf("couldn't remove manifest file '%s': %v", fp, err))
 		return err
 	}
 
@@ -929,14 +930,14 @@ PARAMETER {{ $k }} {{ printf "%#v" $parameter }}
 
 	tmpl, err := template.New("").Parse(modelFile)
 	if err != nil {
-		log.Printf("error parsing template: %q", err)
+		slog.Info(fmt.Sprintf("error parsing template: %q", err))
 		return "", err
 	}
 
 	var buf bytes.Buffer
 
 	if err = tmpl.Execute(&buf, mt); err != nil {
-		log.Printf("error executing template: %q", err)
+		slog.Info(fmt.Sprintf("error executing template: %q", err))
 		return "", err
 	}
 
@@ -963,7 +964,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
-			log.Printf("error uploading blob: %v", err)
+			slog.Info(fmt.Sprintf("error uploading blob: %v", err))
 			if errors.Is(err, errUnauthorized) {
 				return fmt.Errorf("unable to push %s, make sure this namespace exists and you are authorized to push to it", ParseModelPath(name).GetNamespaceRepository())
 			}
@@ -1058,7 +1059,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 				}
 				if err := os.Remove(fp); err != nil {
 					// log this, but return the original error
-					log.Printf("couldn't remove file with digest mismatch '%s': %v", fp, err)
+					slog.Info(fmt.Sprintf("couldn't remove file with digest mismatch '%s': %v", fp, err))
 				}
 			}
 			return err
@@ -1082,7 +1083,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	err = os.WriteFile(fp, manifestJSON, 0o644)
 	if err != nil {
-		log.Printf("couldn't write to %s", fp)
+		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
 		return err
 	}
 
@@ -1136,7 +1137,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("request failed: %v", err)
+				slog.Info(fmt.Sprintf("request failed: %v", err))
 			}
 
 			return nil, err

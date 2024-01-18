@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -103,13 +103,13 @@ func rocmDynLibPresent() bool {
 }
 
 func nativeInit(workdir string) error {
-	log.Printf("Extracting dynamic libraries...")
+	slog.Info("Extracting dynamic libraries...")
 	if runtime.GOOS == "darwin" {
 		err := extractPayloadFiles(workdir, "llama.cpp/ggml-metal.metal")
 		if err != nil {
 			if err == payloadMissing {
 				// TODO perhaps consider this a hard failure on arm macs?
-				log.Printf("ggml-meta.metal payload missing")
+				slog.Info("ggml-meta.metal payload missing")
 				return nil
 			}
 			return err
@@ -120,7 +120,7 @@ func nativeInit(workdir string) error {
 	libs, err := extractDynamicLibs(workdir, "llama.cpp/build/*/*/*/lib/*")
 	if err != nil {
 		if err == payloadMissing {
-			log.Printf("%s", payloadMissing)
+			slog.Info(fmt.Sprintf("%s", payloadMissing))
 			return nil
 		}
 		return err
@@ -142,8 +142,8 @@ func nativeInit(workdir string) error {
 		variants[i] = variant
 		i++
 	}
-	log.Printf("Dynamic LLM libraries %v", variants)
-	log.Printf("Override detection logic by setting OLLAMA_LLM_LIBRARY")
+	slog.Info(fmt.Sprintf("Dynamic LLM libraries %v", variants))
+	slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	return nil
 }
@@ -163,7 +163,7 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 	for _, file := range files {
 		pathComps := strings.Split(file, "/")
 		if len(pathComps) != pathComponentCount {
-			log.Printf("unexpected payload components: %v", pathComps)
+			slog.Error(fmt.Sprintf("unexpected payload components: %v", pathComps))
 			continue
 		}
 

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -73,7 +73,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 
 	if needLoad {
 		if loaded.runner != nil {
-			log.Println("changing loaded model")
+			slog.Info("changing loaded model")
 			loaded.runner.Close()
 			loaded.runner = nil
 			loaded.Model = nil
@@ -391,7 +391,7 @@ func EmbeddingHandler(c *gin.Context) {
 
 	embedding, err := loaded.runner.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
-		log.Printf("embedding generation failed: %v", err)
+		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
 	}
@@ -732,7 +732,7 @@ func ListModelsHandler(c *gin.Context) {
 
 			resp, err := modelResponse(canonicalModelPath)
 			if err != nil {
-				log.Printf("skipping file: %s", canonicalModelPath)
+				slog.Info(fmt.Sprintf("skipping file: %s", canonicalModelPath))
 				// nolint: nilerr
 				return nil
 			}
@@ -892,6 +892,13 @@ func (s *Server) GenerateRoutes() http.Handler {
 }
 
 func Serve(ln net.Listener) error {
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		var programLevel = new(slog.LevelVar)
+		h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel, AddSource: true})
+		slog.SetDefault(slog.New(h))
+		programLevel.Set(slog.LevelDebug)
+		slog.Debug("Debug logging enabled")
+	}
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
@@ -914,7 +921,7 @@ func Serve(ln net.Listener) error {
 	}
 	r := s.GenerateRoutes()
 
-	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
+	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
 		Handler: r,
 	}
@@ -937,7 +944,7 @@ func Serve(ln net.Listener) error {
 	if runtime.GOOS == "linux" { // TODO - windows too
 		// check compatibility to log warnings
 		if _, err := gpu.CheckVRAM(); err != nil {
-			log.Print(err.Error())
+			slog.Info(err.Error())
 		}
 	}
 
@@ -979,14 +986,14 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 		bts, err := json.Marshal(val)
 		if err != nil {
-			log.Printf("streamResponse: json.Marshal failed with %s", err)
+			slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
 			return false
 		}
 
 		// Delineate chunks with new-line delimiter
 		bts = append(bts, '\n')
 		if _, err := w.Write(bts); err != nil {
-			log.Printf("streamResponse: w.Write failed with %s", err)
+			slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
 			return false
 		}
 

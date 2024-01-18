@@ -1,13 +1,9 @@
 # Development
 
-- Install cmake or (optionally, required tools for GPUs)
-- run `go generate ./...`
-- run `go build .`
-
 Install required tools:
 
 - cmake version 3.24 or higher
-- go version 1.20 or higher
+- go version 1.21 or higher
 - gcc version 11.4.0 or higher
 
 ```bash
@@ -17,7 +13,11 @@ brew install go cmake gcc
 Optionally enable debugging and more verbose logging:
 
 ```bash
+# At build time
 export CGO_CFLAGS="-g"
+
+# At runtime
+export OLLAMA_DEBUG=1
 ```
 
 Get the required libraries and build the native LLM code:
@@ -116,7 +116,7 @@ Note: The windows build for Ollama is still under development.
 Install required tools:
 
 - MSVC toolchain - C/C++ and cmake as minimal requirements
-- go version 1.20 or higher
+- go version 1.21 or higher
 - MinGW (pick one variant) with GCC.
   - <https://www.mingw-w64.org/>
   - <https://www.msys2.org/>
