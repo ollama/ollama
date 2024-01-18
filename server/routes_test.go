@@ -208,7 +208,7 @@ func Test_ChatPrompt(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		chat     ChatHistory
+		chat     *ChatHistory
 		numCtx   int
 		runner   MockLLM
 		want     string
@@ -217,7 +217,7 @@ func Test_ChatPrompt(t *testing.T) {
 		{
 			name:     "Single Message",
 			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: ChatHistory{
+			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
 						System: "You are a Wizard.",
@@ -236,7 +236,7 @@ func Test_ChatPrompt(t *testing.T) {
 		{
 			name:     "First Message",
 			template: "[INST] {{if .First}}Hello!{{end}} {{ .System }} {{ .Prompt }} [/INST]",
-			chat: ChatHistory{
+			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
 						System:   "You are a Wizard.",
@@ -259,7 +259,7 @@ func Test_ChatPrompt(t *testing.T) {
 		{
 			name:     "Message History",
 			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: ChatHistory{
+			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
 						System:   "You are a Wizard.",
@@ -282,7 +282,7 @@ func Test_ChatPrompt(t *testing.T) {
 		{
 			name:     "Assistant Only",
 			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: ChatHistory{
+			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
 						Response: "everything nice",
@@ -299,7 +299,7 @@ func Test_ChatPrompt(t *testing.T) {
 		{
 			name:     "Message History Truncated, No System",
 			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: ChatHistory{
+			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
 						Prompt:   "What are the potion ingredients?",
@@ -324,8 +324,7 @@ func Test_ChatPrompt(t *testing.T) {
 		{
 			name:     "System is Preserved when Truncated",
 			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-
-			chat: ChatHistory{
+			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
 						System:   "You are a wizard.",
@@ -349,7 +348,7 @@ func Test_ChatPrompt(t *testing.T) {
 			name:     "First is Preserved when Truncated",
 			template: "[INST] {{ if .First }}{{ .System }} {{ end }}{{ .Prompt }} [/INST]",
 
-			chat: ChatHistory{
+			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
 						System:   "You are a wizard.",
@@ -377,7 +376,7 @@ func Test_ChatPrompt(t *testing.T) {
 			name:     "Most recent message is returned when longer than ctxLen",
 			template: "[INST] {{ .Prompt }} [/INST]",
 
-			chat: ChatHistory{
+			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
 						Prompt: "What is the spell for invisibility?",
@@ -404,7 +403,7 @@ func Test_ChatPrompt(t *testing.T) {
 					NumCtx: tt.numCtx,
 				},
 			}
-			got, err := trimmedPrompt(context.Background(), &tt.chat, m)
+			got, err := trimmedPrompt(context.Background(), tt.chat, m)
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Errorf("ChatPrompt() expected error, got nil")
