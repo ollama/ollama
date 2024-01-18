@@ -166,7 +166,7 @@ def store_doc(
         "css", "cpp", "hpp","h", "c", "cs", "sql", "log", "ini",
         "pl" "pm", "r", "dart", "dockerfile", "env", "php", "hs",
         "hsc", "lua", "nginxconf", "conf", "m", "mm", "plsql", "perl",
-        "rb", "rs", "db2", "scala", "bash", "swift", "vue"
+        "rb", "rs", "db2", "scala", "bash", "swift", "vue", "svelte"
         ]
     file_ext=file.filename.split(".")[-1].lower()
     if file.content_type == "application/octet-stream" and file_ext not in (octet_markdown + octet_plain):
