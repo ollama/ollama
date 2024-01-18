@@ -75,6 +75,42 @@ async def create_new_chat(form_data: ChatForm, user=Depends(get_current_user)):
 
 
 ############################
+# GetAllTags
+############################
+
+
+@router.get("/tags/all", response_model=List[TagModel])
+async def get_all_tags(user=Depends(get_current_user)):
+    try:
+        tags = Tags.get_tags_by_user_id(user.id)
+        return tags
+    except Exception as e:
+        print(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
+        )
+
+
+############################
+# GetChatsByTags
+############################
+
+
+@router.get("/tags/tag/{tag_name}", response_model=List[ChatTitleIdResponse])
+async def get_user_chats_by_tag_name(
+    tag_name: str, user=Depends(get_current_user), skip: int = 0, limit: int = 50
+):
+    chat_ids = [
+        chat_id_tag.chat_id
+        for chat_id_tag in Tags.get_chat_ids_by_tag_name_and_user_id(tag_name, user.id)
+    ]
+
+    print(chat_ids)
+
+    return Chats.get_chat_lists_by_chat_ids(chat_ids, skip, limit)
+
+
+############################
 # GetChatById
 ############################
 

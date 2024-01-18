@@ -120,6 +120,19 @@ class TagTable:
         except:
             return None
 
+    def get_tags_by_user_id(self, user_id: str) -> List[TagModel]:
+        tag_names = [
+            ChatIdTagModel(**model_to_dict(chat_id_tag)).tag_name
+            for chat_id_tag in ChatIdTag.select()
+            .where(ChatIdTag.user_id == user_id)
+            .order_by(ChatIdTag.timestamp.desc())
+        ]
+
+        return [
+            TagModel(**model_to_dict(tag))
+            for tag in Tag.select().where(Tag.name.in_(tag_names))
+        ]
+
     def get_tags_by_chat_id_and_user_id(
         self, chat_id: str, user_id: str
     ) -> List[TagModel]:

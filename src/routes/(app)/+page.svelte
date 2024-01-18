@@ -6,7 +6,16 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
-	import { models, modelfiles, user, settings, chats, chatId, config } from '$lib/stores';
+	import {
+		models,
+		modelfiles,
+		user,
+		settings,
+		chats,
+		chatId,
+		config,
+		tags as _tags
+	} from '$lib/stores';
 	import { copyToClipboard, splitStream } from '$lib/utils';
 
 	import { generateChatCompletion, cancelChatCompletion, generateTitle } from '$lib/apis/ollama';
@@ -14,6 +23,7 @@
 		addTagById,
 		createNewChat,
 		deleteTagById,
+		getAllChatTags,
 		getChatList,
 		getTagsById,
 		updateChatById
@@ -695,6 +705,8 @@
 		chat = await updateChatById(localStorage.token, $chatId, {
 			tags: tags
 		});
+
+		_tags.set(await getAllChatTags(localStorage.token));
 	};
 
 	const deleteTag = async (tagName) => {
@@ -704,6 +716,8 @@
 		chat = await updateChatById(localStorage.token, $chatId, {
 			tags: tags
 		});
+
+		_tags.set(await getAllChatTags(localStorage.token));
 	};
 
 	const setChatTitle = async (_chatId, _title) => {

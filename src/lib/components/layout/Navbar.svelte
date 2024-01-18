@@ -6,7 +6,6 @@
 	import { getChatById } from '$lib/apis/chats';
 	import { chatId, modelfiles } from '$lib/stores';
 	import ShareChatModal from '../chat/ShareChatModal.svelte';
-	import { stringify } from 'postcss';
 
 	export let initNewChat: Function;
 	export let title: string = 'Ollama Web UI';
