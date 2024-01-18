@@ -134,7 +134,6 @@ async def get_chat_tags_by_id(id: str, user=Depends(get_current_user)):
     tags = Tags.get_tags_by_chat_id_and_user_id(id, user.id)
 
     if tags != None:
-        print(tags)
         return tags
     else:
         raise HTTPException(

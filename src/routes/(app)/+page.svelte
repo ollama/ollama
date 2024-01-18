@@ -189,6 +189,7 @@
 						},
 						messages: messages,
 						history: history,
+						tags: [],
 						timestamp: Date.now()
 					});
 					await chats.set(await getChatList(localStorage.token));
@@ -690,11 +691,19 @@
 	const addTag = async (tagName) => {
 		const res = await addTagById(localStorage.token, $chatId, tagName);
 		tags = await getTags();
+
+		chat = await updateChatById(localStorage.token, $chatId, {
+			tags: tags
+		});
 	};
 
 	const deleteTag = async (tagName) => {
 		const res = await deleteTagById(localStorage.token, $chatId, tagName);
 		tags = await getTags();
+
+		chat = await updateChatById(localStorage.token, $chatId, {
+			tags: tags
+		});
 	};
 
 	const setChatTitle = async (_chatId, _title) => {

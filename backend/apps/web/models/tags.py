@@ -101,7 +101,6 @@ class TagTable:
         if tag == None:
             tag = self.insert_new_tag(form_data.tag_name, user_id)
 
-        print(tag)
         id = str(uuid.uuid4())
         chatIdTag = ChatIdTagModel(
             **{
@@ -131,7 +130,6 @@ class TagTable:
             .order_by(ChatIdTag.timestamp.desc())
         ]
 
-        print(tag_names)
         return [
             TagModel(**model_to_dict(tag))
             for tag in Tag.select().where(Tag.name.in_(tag_names))
