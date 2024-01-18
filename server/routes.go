@@ -735,6 +735,7 @@ func ListModelsHandler(c *gin.Context) {
 		}
 
 		return api.ModelResponse{
+			Model:   model.ShortName,
 			Name:    model.ShortName,
 			Size:    model.Size,
 			Digest:  model.Digest,
