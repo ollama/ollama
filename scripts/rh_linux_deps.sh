@@ -28,6 +28,7 @@ fi
 
 if [ -n "${CMAKE_VERSION}" ]; then
     curl -s -L https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar -zx -C /usr --strip-components 1
+    dnf install -y bzip2
 fi
 
 if [ -n "${GOLANG_VERSION}" ]; then

@@ -10,6 +10,7 @@ COPY llm llm
 
 FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION-devel-centos7 AS cuda-build-amd64
 ARG CMAKE_VERSION
+ARG CGO_CFLAGS
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
@@ -19,6 +20,7 @@ RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
 FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION-devel-rockylinux8 AS cuda-build-arm64
 ARG CMAKE_VERSION
+ARG CGO_CFLAGS
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
@@ -28,6 +30,7 @@ RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
 FROM --platform=linux/amd64 rocm/dev-centos-7:5.7.1-complete AS rocm-5-build-amd64
 ARG CMAKE_VERSION
+ARG CGO_CFLAGS
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
@@ -38,6 +41,7 @@ RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
 FROM --platform=linux/amd64 rocm/dev-centos-7:6.0-complete AS rocm-6-build-amd64
 ARG CMAKE_VERSION
+ARG CGO_CFLAGS
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
@@ -50,6 +54,7 @@ FROM --platform=linux/amd64 centos:7 AS cpu-build-amd64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 ARG OLLAMA_CUSTOM_CPU_DEFS
+ARG CGO_CFLAGS
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
@@ -61,6 +66,7 @@ FROM --platform=linux/arm64 centos:7 AS cpu-build-arm64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 ARG OLLAMA_CUSTOM_CPU_DEFS
+ARG CGO_CFLAGS
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
@@ -72,7 +78,7 @@ RUN sh gen_linux.sh
 FROM --platform=linux/amd64 cpu-build-amd64 AS build-amd64
 ENV CGO_ENABLED 1
 ARG GOFLAGS
-ARG CGO_FLAGS
+ARG CGO_CFLAGS
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
 COPY --from=cuda-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
@@ -84,7 +90,7 @@ FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
 ENV CGO_ENABLED 1
 ARG GOLANG_VERSION
 ARG GOFLAGS
-ARG CGO_FLAGS
+ARG CGO_CFLAGS
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
 COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
