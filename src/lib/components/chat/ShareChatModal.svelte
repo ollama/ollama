@@ -17,7 +17,7 @@
 				show = false;
 			}}
 		>
-			Upload to OllamaHub
+			Share to OllamaHub
 		</button>
 
 		<div class="flex justify-center space-x-1 mt-1.5">
