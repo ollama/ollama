@@ -84,9 +84,37 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
         raise HTTPException(status_code=401,
                             detail=ERROR_MESSAGES.API_KEY_NOT_FOUND)
 
-    body = await request.body()
-    # headers = dict(request.headers)
-    # print(headers)
+    # Try to decode the body of the request from bytes to a UTF-8 string (Require add max_token to fix gpt-4-vision)
+    try:
+        body_str = (await request.body()).decode('utf-8')
+    except UnicodeDecodeError as e:
+        print("Error decoding request body:", e)
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    # Check if the body is not empty
+    if body_str:
+        try:
+            
+            body_dict = json.loads(body_str)
+        except json.JSONDecodeError as e:
+            print("Error loading request body into a dictionary:", e)
+            raise HTTPException(status_code=400, detail="Invalid JSON in request body")
+        
+        # Check if the model is "gpt-4-vision-preview" and set "max_tokens" to 10000
+        # This is a workaround until OpenAI fixes the issue with this model
+        if body_dict.get("model") == "gpt-4-vision-preview":
+            body_dict["max_tokens"] = 10000
+            print("Modified body_dict:", body_dict)
+        
+        # Try to convert the modified body back to JSON
+        try:
+            # Convert the modified body back to JSON
+            body_json = json.dumps(body_dict)
+        except TypeError as e:
+            print("Error converting modified body to JSON:", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
+    else:
+        body_json = body_str  # If the body is empty, use it as is
+
 
     headers = {}
     headers["Authorization"] = f"Bearer {app.state.OPENAI_API_KEY}"
@@ -96,7 +124,7 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
         r = requests.request(
             method=request.method,
             url=target_url,
-            data=body,
+            data=body_json,
             headers=headers,
             stream=True,
         )
