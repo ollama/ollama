@@ -173,7 +173,8 @@
 					) {
 						uploadDoc(file);
 					} else {
-						toast.error(`Unsupported File Type '${file['type']}'.`);
+						toast.error(`Unknown File Type '${file['type']}', but accepting and treating as plain text`);
+						uploadDoc(file);
 					}
 				} else {
 					toast.error(`File not found.`);
@@ -308,8 +309,9 @@
 								uploadDoc(file);
 								filesInputElement.value = '';
 							} else {
-								toast.error(`Unsupported File Type '${file['type']}'.`);
-								inputFiles = null;
+								toast.error(`Unknown File Type '${file['type']}', but accepting and treating as plain text`);
+								uploadDoc(file);
+								filesInputElement.value = '';
 							}
 						} else {
 							toast.error(`File not found.`);

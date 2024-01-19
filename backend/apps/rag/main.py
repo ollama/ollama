@@ -144,37 +144,21 @@ def store_doc(
     # "https://www.gutenberg.org/files/1727/1727-h/1727-h.htm"
 
     print(file.content_type)
-    if file.content_type not in [
-        "application/pdf",
-        "text/plain",
-        "text/csv",
-        "text/xml",
-        "text/x-python",
-        "text/css",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/octet-stream",
-        "application/x-javascript",
-    ]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
-        )
-    text_xml=["text/xml"]
+    
+    text_xml=["xml"]
     octet_markdown=["md"]
-    octet_plain=[
+    known_source_ext=[
         "go", "py", "java", "sh", "bat", "ps1", "cmd", "js", 
         "css", "cpp", "hpp","h", "c", "cs", "sql", "log", "ini",
         "pl" "pm", "r", "dart", "dockerfile", "env", "php", "hs",
         "hsc", "lua", "nginxconf", "conf", "m", "mm", "plsql", "perl",
         "rb", "rs", "db2", "scala", "bash", "swift", "vue", "svelte"
         ]
+    docx_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    known_doc_ext=["doc","docx"]
     file_ext=file.filename.split(".")[-1].lower()
-    if file.content_type == "application/octet-stream" and file_ext not in (octet_markdown + octet_plain):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
-        )
-
+    known_type=True
+    
     try:
         filename = file.filename
         file_path = f"{UPLOAD_DIR}/{filename}"
@@ -188,27 +172,22 @@ def store_doc(
             collection_name = calculate_sha256(f)[:63]
         f.close()
 
-        if file.content_type == "application/pdf":
+        if file_ext=="pdf":
             loader = PyPDFLoader(file_path)
-        elif (
-            file.content_type
-            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ):
+        elif (file.content_type ==docx_type or file_ext in known_doc_ext):
             loader = Docx2txtLoader(file_path)
-        
-        elif file.content_type == "text/csv":
+        elif file_ext=="csv":
             loader = CSVLoader(file_path)
-        elif file.content_type in text_xml:
+        elif file_ext in text_xml:
             loader=UnstructuredXMLLoader(file_path)
-        elif file.content_type == "text/plain" or file.content_type.find("text/")>=0:
+        elif file_ext in known_source_ext or file.content_type.find("text/")>=0:
             loader = TextLoader(file_path)
-        elif file.content_type == "application/octet-stream":
-            if file_ext in octet_markdown:
-                loader = UnstructuredMarkdownLoader(file_path)
-            if file_ext in octet_plain:
-                loader = TextLoader(file_path)
-        elif file.content_type == "application/x-javascript":
+        elif file_ext in octet_markdown:
+            loader = UnstructuredMarkdownLoader(file_path)
+        else:
             loader = TextLoader(file_path)
+            known_type=False
+
 
         data = loader.load()
         result = store_data_in_vector_db(data, collection_name)
@@ -218,6 +197,7 @@ def store_doc(
                 "status": True,
                 "collection_name": collection_name,
                 "filename": filename,
+                "known_type":known_type,
             }
         else:
             raise HTTPException(
