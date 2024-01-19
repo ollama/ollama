@@ -90,6 +90,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	opts.Messages = make([]api.Message, 0)
 
 	err := loadModel(cmd, &opts)
+	if err != nil {
+		return err
+	}
 
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
@@ -541,7 +544,7 @@ func buildModelfile(opts runOptions) string {
 	}
 
 	keys := make([]string, 0)
-	for k, _ := range opts.Options {
+	for k := range opts.Options {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)

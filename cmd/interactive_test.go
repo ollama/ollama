@@ -89,5 +89,6 @@ MESSAGE assistant """Yes it is true, I am half horse, half shark."""
 
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, opts)
+	assert.Nil(t, err)
 	assert.Equal(t, buf.String(), mf)
 }
