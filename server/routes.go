@@ -630,11 +630,10 @@ func ShowModelHandler(c *gin.Context) {
 		return
 	}
 
-	var model string
 	if req.Model != "" {
-		model = req.Model
+		// noop
 	} else if req.Name != "" {
-		model = req.Name
+		req.Model = req.Name
 	} else {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
@@ -643,7 +642,7 @@ func ShowModelHandler(c *gin.Context) {
 	resp, err := GetModelInfo(req)
 	if err != nil {
 		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", model)})
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
