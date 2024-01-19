@@ -142,13 +142,20 @@
 			importChats(chats);
 		};
 
-		reader.readAsText(importFiles[0]);
+		if (importFiles.length > 0) {
+			reader.readAsText(importFiles[0]);
+		}
 	}
 
 	const importChats = async (_chats) => {
 		for (const chat of _chats) {
 			console.log(chat);
-			await createNewChat(localStorage.token, chat.chat);
+
+			if (chat.chat) {
+				await createNewChat(localStorage.token, chat.chat);
+			} else {
+				await createNewChat(localStorage.token, chat);
+			}
 		}
 
 		await chats.set(await getChatList(localStorage.token));
