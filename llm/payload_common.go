@@ -1,7 +1,7 @@
 package llm
 
 import (
-	"compress/bzip2"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -182,9 +182,12 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 			}
 			src := io.Reader(srcFile)
 			filename := file
-			if strings.HasSuffix(file, ".bz2") {
-				src = bzip2.NewReader(src)
-				filename = strings.TrimSuffix(filename, ".bz2")
+			if strings.HasSuffix(file, ".gz") {
+				src, err = gzip.NewReader(src)
+				if err != nil {
+					return fmt.Errorf("decompress payload %s: %v", file, err)
+				}
+				filename = strings.TrimSuffix(filename, ".gz")
 			}
 
 			destFile := filepath.Join(targetDir, filepath.Base(filename))
@@ -229,9 +232,12 @@ func extractPayloadFiles(workDir, glob string) error {
 		}
 		src := io.Reader(srcFile)
 		filename := file
-		if strings.HasSuffix(file, ".bz2") {
-			src = bzip2.NewReader(src)
-			filename = strings.TrimSuffix(filename, ".bz2")
+		if strings.HasSuffix(file, ".gz") {
+			src, err = gzip.NewReader(src)
+			if err != nil {
+				return fmt.Errorf("decompress payload %s: %v", file, err)
+			}
+			filename = strings.TrimSuffix(filename, ".gz")
 		}
 
 		destFile := filepath.Join(workDir, filepath.Base(filename))

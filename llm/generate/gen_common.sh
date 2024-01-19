@@ -84,7 +84,7 @@ compress_libs() {
     echo "Compressing payloads to reduce overall binary size..."
     pids=""
     for lib in ${BUILD_DIR}/lib/*.${LIB_EXT}* ; do
-        bzip2 -v9 ${lib} &
+        gzip --best ${lib} &
         pids+=" $!"
     done
     echo 

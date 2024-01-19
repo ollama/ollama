@@ -23,7 +23,7 @@ function init_vars {
     } else {
         $script:CUDA_LIB_DIR=$env:CUDA_LIB_DIR
     }
-    $script:BZIP2=(get-command -ea 'silentlycontinue' bzip2).path
+    $script:GZIP=(get-command -ea 'silentlycontinue' gzip).path
     $script:DUMPBIN=(get-command -ea 'silentlycontinue' dumpbin).path
 }
 
@@ -69,14 +69,14 @@ function install {
 }
 
 function compress_libs {
-    if ($script:BZIP2 -eq $null) {
-        write-host "bzip2 not installed, not compressing files"
+    if ($script:GZIP -eq $null) {
+        write-host "gzip not installed, not compressing files"
         return
     }
     write-host "Compressing dlls..."
     $libs = dir "${script:buildDir}/lib/*.dll"
     foreach ($file in $libs) {
-        & "$script:BZIP2" -v9 $file
+        & "$script:GZIP" --best $file
     }
 }
 
