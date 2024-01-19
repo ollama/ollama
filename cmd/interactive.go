@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -258,33 +259,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				fmt.Println("Usage:\n  /save <modelname>")
 				continue
 			}
-			var mf strings.Builder
-			fmt.Fprintf(&mf, "FROM %s\n", opts.Model)
-			if opts.System != "" {
-				fmt.Fprintf(&mf, "SYSTEM \"\"\"%s\"\"\"\n", opts.System)
-			}
-
-			if opts.Template != "" {
-				fmt.Fprintf(&mf, "TEMPLATE \"\"\"%s\"\"\"\n", opts.System)
-			}
-
-			for k, v := range opts.Options {
-				fmt.Fprintf(&mf, "PARAMETER %s %v\n", k, v)
-			}
-			fmt.Fprintln(&mf)
-
-			for _, msg := range opts.Messages {
-				fmt.Fprintf(&mf, "MESSAGE %s %s\n", msg.Role, msg.Content)
-			}
 
 			client, err := api.ClientFromEnvironment()
 			if err != nil {
 				fmt.Println("error: couldn't connect to ollama server")
 				return err
 			}
+
 			req := &api.CreateRequest{
 				Name:      args[1],
-				Modelfile: mf.String(),
+				Modelfile: buildModelfile(opts),
 			}
 			fn := func(resp api.ProgressResponse) error { return nil }
 			err = client.Create(cmd.Context(), req, fn)
@@ -293,7 +277,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 			fmt.Printf("Created new model '%s'\n", args[1])
-
 			continue
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
@@ -544,6 +527,34 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 		}
 	}
+}
+
+func buildModelfile(opts runOptions) string {
+	var mf strings.Builder
+	fmt.Fprintf(&mf, "FROM %s\n", opts.Model)
+	if opts.System != "" {
+		fmt.Fprintf(&mf, "SYSTEM \"\"\"%s\"\"\"\n", opts.System)
+	}
+
+	if opts.Template != "" {
+		fmt.Fprintf(&mf, "TEMPLATE \"\"\"%s\"\"\"\n", opts.Template)
+	}
+
+	keys := make([]string, 0)
+	for k, _ := range opts.Options {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&mf, "PARAMETER %s %v\n", k, opts.Options[k])
+	}
+	fmt.Fprintln(&mf)
+
+	for _, msg := range opts.Messages {
+		fmt.Fprintf(&mf, "MESSAGE %s \"\"\"%s\"\"\"\n", msg.Role, msg.Content)
+	}
+
+	return mf.String()
 }
 
 func normalizeFilePath(fp string) string {
