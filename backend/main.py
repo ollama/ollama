@@ -14,7 +14,7 @@ from apps.openai.main import app as openai_app
 from apps.web.main import app as webui_app
 from apps.rag.main import app as rag_app
 
-from config import ENV
+from config import ENV, WEB_DIR
 
 
 class SPAStaticFiles(StaticFiles):
@@ -58,4 +58,4 @@ app.mount("/openai/api", openai_app)
 app.mount("/rag/api/v1", rag_app)
 
 
-app.mount("/", SPAStaticFiles(directory="../build", html=True), name="spa-static-files")
+app.mount("/", SPAStaticFiles(directory=str(WEB_DIR), html=True), name="spa-static-files")
