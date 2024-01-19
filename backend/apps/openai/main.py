@@ -99,10 +99,10 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
             print("Error loading request body into a dictionary:", e)
             raise HTTPException(status_code=400, detail="Invalid JSON in request body")
         
-        # Check if the model is "gpt-4-vision-preview" and set "max_tokens" to 10000
+        # Check if the model is "gpt-4-vision-preview" and set "max_tokens" to 4000
         # This is a workaround until OpenAI fixes the issue with this model
         if body_dict.get("model") == "gpt-4-vision-preview":
-            body_dict["max_tokens"] = 10000
+            body_dict["max_tokens"] = 4000
             print("Modified body_dict:", body_dict)
         
         # Try to convert the modified body back to JSON
