@@ -39,12 +39,14 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        arch: [amd64]
+        arch: [amd64, arm64]
         exclude:
           - os: ubuntu-latest
             arch: arm64
           - os: windows-latest
             arch: arm64
+          - os: macos-latest
+            arch: amd64
     runs-on: ${{ matrix.os }}
     env:
       GOARCH: ${{ matrix.arch }}
