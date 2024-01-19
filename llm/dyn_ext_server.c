@@ -59,7 +59,7 @@ void dyn_init(const char *libPath, struct dynamic_llama_server *s,
   };
 
   printf("loading library %s\n", libPath);
-  s->handle = LOAD_LIBRARY(libPath, RTLD_GLOBAL|RTLD_NOW);
+  s->handle = LOAD_LIBRARY(libPath, RTLD_LOCAL|RTLD_NOW);
   if (!s->handle) {
     err->id = -1;
     char *msg = LOAD_ERR();
