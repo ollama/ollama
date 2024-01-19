@@ -1,4 +1,3 @@
-from dotenv import load_dotenv, find_dotenv
 import os
 
 
@@ -14,7 +13,11 @@ from constants import ERROR_MESSAGES
 
 from pathlib import Path
 
-load_dotenv(find_dotenv("../.env"))
+try:
+    from dotenv import load_dotenv, find_dotenv
+    load_dotenv(find_dotenv("../.env"))
+except ImportError:
+    print("dotenv not installed, skipping...")
 
 
 ####################################
