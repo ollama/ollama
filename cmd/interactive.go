@@ -243,7 +243,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		case strings.HasPrefix(line, "/load"):
 			args := strings.Fields(line)
 			if len(args) != 2 {
-				fmt.Println("Usages\n  /load <modelname>")
+				fmt.Println("Usage:\n  /load <modelname>")
 				continue
 			}
 			opts.Model = args[1]
