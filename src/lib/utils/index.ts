@@ -206,25 +206,32 @@ const convertOpenAIMessages = (convo) => {
 	const mapping = convo['mapping'];
 	const messages = [];
 	let currentId = '';
+	let lastId = null;
 
 	for (let message_id in mapping) {
 		const message = mapping[message_id];
 		currentId = message_id;
-		if (message['message'] == null || message['message']['content']['parts'][0] == '') {
-			// Skip chat messages with no content
-			continue;
-		} else {
-			const new_chat = {
-				id: message_id,
-				parentId: messages.length > 0 && message['parent'] in mapping ? message['parent'] : null,
-				childrenIds: message['children'] || [],
-				role: message['message']?.['author']?.['role'] !== 'user' ? 'assistant' : 'user',
-				content: message['message']?.['content']?.['parts']?.[0] || '',
-				model: 'gpt-3.5-turbo',
-				done: true,
-				context: null
-			};
-			messages.push(new_chat);
+		try {
+				if (messages.length == 0 && (message['message'] == null || 
+				(message['message']['content']['parts']?.[0] == '' && message['message']['content']['text'] == null))) {
+				// Skip chat messages with no content
+				continue;
+			} else {
+				const new_chat = {
+					id: message_id,
+					parentId: lastId,
+					childrenIds: message['children'] || [],
+					role: message['message']?.['author']?.['role'] !== 'user' ? 'assistant' : 'user',
+					content: message['message']?.['content']?.['parts']?.[0] ||  message['message']?.['content']?.['text'] || '',
+					model: 'gpt-3.5-turbo',
+					done: true,
+					context: null
+				};
+				messages.push(new_chat);
+				lastId = currentId;
+			}
+		} catch (error) {
+			console.log("Error with", message, "\nError:", error);
 		}
 	}
 
@@ -245,13 +252,45 @@ const convertOpenAIMessages = (convo) => {
 	return chat;
 };
 
+const validateChat = (chat) => {
+	// Because ChatGPT sometimes has features we can't use like DALL-E or migh have corrupted messages, need to validate
+	const messages = chat.messages;
+
+    // Check if messages array is empty
+    if (messages.length === 0) {
+        return false;
+    }
+
+    // Last message's children should be an empty array
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.childrenIds.length !== 0) {
+        return false;
+    }
+
+    // First message's parent should be null
+    const firstMessage = messages[0];
+    if (firstMessage.parentId !== null) {
+        return false;
+    }
+
+    // Every message's content should be a string
+    for (let message of messages) {
+        if (typeof message.content !== 'string') {
+            return false;
+        }
+    }
+
+    return true;
+};
+
 export const convertOpenAIChats = (_chats) => {
 	// Create a list of dictionaries with each conversation from import
 	const chats = [];
+	let failed = 0;
 	for (let convo of _chats) {
 		const chat = convertOpenAIMessages(convo);
 
-		if (Object.keys(chat.history.messages).length > 0) {
+		if (validateChat(chat)) {
 			chats.push({
 				id: convo['id'],
 				user_id: '',
@@ -259,7 +298,8 @@ export const convertOpenAIChats = (_chats) => {
 				chat: chat,
 				timestamp: convo['timestamp']
 			});
-		}
+		} else { failed ++}
 	}
+	console.log(failed, "Conversations could not be imported");
 	return chats;
 };
