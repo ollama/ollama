@@ -15,19 +15,17 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/cmd/generate"
 	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/progress"
@@ -158,7 +156,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return RunGenerate(cmd, args)
+	return generate.Run(cmd, args)
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -406,265 +404,6 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
-
-	return nil
-}
-
-func RunGenerate(cmd *cobra.Command, args []string) error {
-	interactive := true
-
-	opts := runOptions{
-		Model:    args[0],
-		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]interface{}{},
-	}
-
-	format, err := cmd.Flags().GetString("format")
-	if err != nil {
-		return err
-	}
-	opts.Format = format
-
-	prompts := args[1:]
-	// prepend stdin to the prompt if provided
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		in, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return err
-		}
-
-		prompts = append([]string{string(in)}, prompts...)
-		opts.WordWrap = false
-		interactive = false
-	}
-	opts.Prompt = strings.Join(prompts, " ")
-	if len(prompts) > 0 {
-		interactive = false
-	}
-
-	nowrap, err := cmd.Flags().GetBool("nowordwrap")
-	if err != nil {
-		return err
-	}
-	opts.WordWrap = !nowrap
-
-	if !interactive {
-		return generate(cmd, opts)
-	}
-
-	return generateInteractive(cmd, opts)
-}
-
-type generateContextKey string
-
-type runOptions struct {
-	Model    string
-	Prompt   string
-	Messages []api.Message
-	WordWrap bool
-	Format   string
-	System   string
-	Template string
-	Images   []api.ImageData
-	Options  map[string]interface{}
-}
-
-type displayResponseState struct {
-	lineLength int
-	wordBuffer string
-}
-
-func displayResponse(content string, wordWrap bool, state *displayResponseState) {
-	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
-	if wordWrap && termWidth >= 10 {
-		for _, ch := range content {
-			if state.lineLength+1 > termWidth-5 {
-				if len(state.wordBuffer) > termWidth-10 {
-					fmt.Printf("%s%c", state.wordBuffer, ch)
-					state.wordBuffer = ""
-					state.lineLength = 0
-					continue
-				}
-
-				// backtrack the length of the last word and clear to the end of the line
-				fmt.Printf("\x1b[%dD\x1b[K\n", len(state.wordBuffer))
-				fmt.Printf("%s%c", state.wordBuffer, ch)
-				state.lineLength = len(state.wordBuffer) + 1
-			} else {
-				fmt.Print(string(ch))
-				state.lineLength += 1
-
-				switch ch {
-				case ' ':
-					state.wordBuffer = ""
-				case '\n':
-					state.lineLength = 0
-				default:
-					state.wordBuffer += string(ch)
-				}
-			}
-		}
-	} else {
-		fmt.Printf("%s%s", state.wordBuffer, content)
-		if len(state.wordBuffer) > 0 {
-			state.wordBuffer = ""
-		}
-	}
-}
-
-func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return nil, err
-	}
-
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	cancelCtx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
-	var state *displayResponseState = &displayResponseState{}
-	var latest api.ChatResponse
-	var fullResponse strings.Builder
-	var role string
-
-	fn := func(response api.ChatResponse) error {
-		p.StopAndClear()
-
-		latest = response
-
-		role = response.Message.Role
-		content := response.Message.Content
-		fullResponse.WriteString(content)
-
-		displayResponse(content, opts.WordWrap, state)
-
-		return nil
-	}
-
-	req := &api.ChatRequest{
-		Model:    opts.Model,
-		Messages: opts.Messages,
-		Format:   opts.Format,
-		Options:  opts.Options,
-	}
-
-	if err := client.Chat(cancelCtx, req, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	if len(opts.Messages) > 0 {
-		fmt.Println()
-		fmt.Println()
-	}
-
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return nil, err
-	}
-
-	if verbose {
-		latest.Summary()
-	}
-
-	return &api.Message{Role: role, Content: fullResponse.String()}, nil
-}
-
-func generate(cmd *cobra.Command, opts runOptions) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	var latest api.GenerateResponse
-
-	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
-	if !ok {
-		generateContext = []int{}
-	}
-
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
-	var state *displayResponseState = &displayResponseState{}
-
-	fn := func(response api.GenerateResponse) error {
-		p.StopAndClear()
-
-		latest = response
-		content := response.Response
-
-		displayResponse(content, opts.WordWrap, state)
-
-		return nil
-	}
-
-	request := api.GenerateRequest{
-		Model:    opts.Model,
-		Prompt:   opts.Prompt,
-		Context:  generateContext,
-		Format:   opts.Format,
-		System:   opts.System,
-		Template: opts.Template,
-		Options:  opts.Options,
-	}
-
-	if err := client.Generate(ctx, &request, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
-		return err
-	}
-
-	if opts.Prompt != "" {
-		fmt.Println()
-		fmt.Println()
-	}
-
-	if !latest.Done {
-		return nil
-	}
-
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return err
-	}
-
-	if verbose {
-		latest.Summary()
-	}
-
-	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
-	cmd.SetContext(ctx)
 
 	return nil
 }
