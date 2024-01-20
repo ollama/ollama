@@ -83,6 +83,7 @@ type model interface {
 	NumEmbed() uint32
 	NumHead() uint32
 	NumHeadKv() uint32
+	NumCtx() uint32
 }
 
 type container interface {

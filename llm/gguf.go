@@ -308,6 +308,15 @@ func (llm *ggufModel) NumHeadKv() uint32 {
 	return value.(uint32)
 }
 
+func (llm *ggufModel) NumCtx() uint32 {
+	value, exists := llm.kv[fmt.Sprintf("%s.context_length", llm.ModelFamily())]
+	if !exists {
+		return 0
+	}
+
+	return value.(uint32)
+}
+
 func (llm *ggufModel) NumGQA() uint32 {
 	numHeadKv := llm.NumHeadKv()
 	if numHeadKv == 0 {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -74,7 +73,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 
 	if needLoad {
 		if loaded.runner != nil {
-			log.Println("changing loaded model")
+			slog.Info("changing loaded model")
 			loaded.runner.Close()
 			loaded.runner = nil
 			loaded.Model = nil
@@ -392,7 +391,7 @@ func EmbeddingHandler(c *gin.Context) {
 
 	embedding, err := loaded.runner.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
-		log.Printf("embedding generation failed: %v", err)
+		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
 	}
@@ -415,8 +414,13 @@ func PullModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else if req.Name != "" {
+		model = req.Name
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
@@ -434,7 +438,7 @@ func PullModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := PullModel(ctx, req.Name, regOpts, fn); err != nil {
+		if err := PullModel(ctx, model, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -459,8 +463,13 @@ func PushModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else if req.Name != "" {
+		model = req.Name
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
@@ -478,7 +487,7 @@ func PushModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := PushModel(ctx, req.Name, regOpts, fn); err != nil {
+		if err := PushModel(ctx, model, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -503,12 +512,17 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else if req.Name != "" {
+		model = req.Name
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	if err := ParseModelPath(req.Name).Validate(); err != nil {
+	if err := ParseModelPath(model).Validate(); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -546,7 +560,7 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, req.Name, filepath.Dir(req.Path), commands, fn); err != nil {
+		if err := CreateModel(ctx, model, filepath.Dir(req.Path), commands, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -571,14 +585,19 @@ func DeleteModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else if req.Name != "" {
+		model = req.Name
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	if err := DeleteModel(req.Name); err != nil {
+	if err := DeleteModel(model); err != nil {
 		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Name)})
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", model)})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
@@ -611,21 +630,19 @@ func ShowModelHandler(c *gin.Context) {
 		return
 	}
 
-	switch {
-	case req.Model == "" && req.Name == "":
+	if req.Model != "" {
+		// noop
+	} else if req.Name != "" {
+		req.Model = req.Name
+	} else {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
-	case req.Model != "" && req.Name != "":
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "both model and name are set"})
-		return
-	case req.Model == "" && req.Name != "":
-		req.Model = req.Name
 	}
 
 	resp, err := GetModelInfo(req)
 	if err != nil {
 		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Name)})
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
@@ -668,27 +685,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	cs := 30
 	for k, v := range model.Options {
 		switch val := v.(type) {
-		case string:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, val))
-		case int:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(val)))
-		case float64:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(val, 'f', 0, 64)))
-		case bool:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(val)))
 		case []interface{}:
 			for _, nv := range val {
-				switch nval := nv.(type) {
-				case string:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, nval))
-				case int:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(nval)))
-				case float64:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
-				case bool:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(nval)))
-				}
+				params = append(params, fmt.Sprintf("%-*s %#v", cs, k, nv))
 			}
+		default:
+			params = append(params, fmt.Sprintf("%-*s %#v", cs, k, v))
 		}
 	}
 	resp.Parameters = strings.Join(params, "\n")
@@ -732,6 +734,7 @@ func ListModelsHandler(c *gin.Context) {
 		}
 
 		return api.ModelResponse{
+			Model:   model.ShortName,
 			Name:    model.ShortName,
 			Size:    model.Size,
 			Digest:  model.Digest,
@@ -748,7 +751,7 @@ func ListModelsHandler(c *gin.Context) {
 
 			resp, err := modelResponse(canonicalModelPath)
 			if err != nil {
-				log.Printf("skipping file: %s", canonicalModelPath)
+				slog.Info(fmt.Sprintf("skipping file: %s", canonicalModelPath))
 				// nolint: nilerr
 				return nil
 			}
@@ -908,6 +911,13 @@ func (s *Server) GenerateRoutes() http.Handler {
 }
 
 func Serve(ln net.Listener) error {
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		var programLevel = new(slog.LevelVar)
+		h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel, AddSource: true})
+		slog.SetDefault(slog.New(h))
+		programLevel.Set(slog.LevelDebug)
+		slog.Debug("Debug logging enabled")
+	}
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
@@ -930,7 +940,7 @@ func Serve(ln net.Listener) error {
 	}
 	r := s.GenerateRoutes()
 
-	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
+	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
 		Handler: r,
 	}
@@ -953,7 +963,7 @@ func Serve(ln net.Listener) error {
 	if runtime.GOOS == "linux" { // TODO - windows too
 		// check compatibility to log warnings
 		if _, err := gpu.CheckVRAM(); err != nil {
-			log.Print(err.Error())
+			slog.Info(err.Error())
 		}
 	}
 
@@ -995,14 +1005,14 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 		bts, err := json.Marshal(val)
 		if err != nil {
-			log.Printf("streamResponse: json.Marshal failed with %s", err)
+			slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
 			return false
 		}
 
 		// Delineate chunks with new-line delimiter
 		bts = append(bts, '\n')
 		if _, err := w.Write(bts); err != nil {
-			log.Printf("streamResponse: w.Write failed with %s", err)
+			slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
 			return false
 		}
 

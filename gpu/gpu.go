@@ -12,7 +12,7 @@ package gpu
 import "C"
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,7 +38,9 @@ var CudaLinuxGlobs = []string{
 	"/usr/lib/x86_64-linux-gnu/nvidia/current/libnvidia-ml.so*",
 	"/usr/lib/x86_64-linux-gnu/libnvidia-ml.so*",
 	"/usr/lib/wsl/lib/libnvidia-ml.so*",
+	"/usr/lib/wsl/drivers/*/libnvidia-ml.so*",
 	"/opt/cuda/lib64/libnvidia-ml.so*",
+	"/opt/cuda/targets/x86_64-linux/lib/stubs/libnvidia-ml.so*",
 	"/usr/lib*/libnvidia-ml.so*",
 	"/usr/local/lib*/libnvidia-ml.so*",
 	"/usr/lib/aarch64-linux-gnu/nvidia/current/libnvidia-ml.so*",
@@ -62,6 +64,7 @@ func initGPUHandles() {
 
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
 
+	gpuHandles = &handles{nil, nil}
 	var cudaMgmtName string
 	var cudaMgmtPatterns []string
 	var rocmMgmtName string
@@ -85,13 +88,12 @@ func initGPUHandles() {
 		return
 	}
 
-	log.Printf("Detecting GPU type")
-	gpuHandles = &handles{nil, nil}
+	slog.Info("Detecting GPU type")
 	cudaLibPaths := FindGPULibs(cudaMgmtName, cudaMgmtPatterns)
 	if len(cudaLibPaths) > 0 {
 		cuda := LoadCUDAMgmt(cudaLibPaths)
 		if cuda != nil {
-			log.Printf("Nvidia GPU detected")
+			slog.Info("Nvidia GPU detected")
 			gpuHandles.cuda = cuda
 			return
 		}
@@ -101,7 +103,7 @@ func initGPUHandles() {
 	if len(rocmLibPaths) > 0 {
 		rocm := LoadROCMMgmt(rocmLibPaths)
 		if rocm != nil {
-			log.Printf("Radeon GPU detected")
+			slog.Info("Radeon GPU detected")
 			gpuHandles.rocm = rocm
 			return
 		}
@@ -122,26 +124,26 @@ func GetGPUInfo() GpuInfo {
 	if gpuHandles.cuda != nil {
 		C.cuda_check_vram(*gpuHandles.cuda, &memInfo)
 		if memInfo.err != nil {
-			log.Printf("error looking up CUDA GPU memory: %s", C.GoString(memInfo.err))
+			slog.Info(fmt.Sprintf("error looking up CUDA GPU memory: %s", C.GoString(memInfo.err)))
 			C.free(unsafe.Pointer(memInfo.err))
 		} else {
 			// Verify minimum compute capability
 			var cc C.cuda_compute_capability_t
 			C.cuda_compute_capability(*gpuHandles.cuda, &cc)
 			if cc.err != nil {
-				log.Printf("error looking up CUDA GPU compute capability: %s", C.GoString(cc.err))
+				slog.Info(fmt.Sprintf("error looking up CUDA GPU compute capability: %s", C.GoString(cc.err)))
 				C.free(unsafe.Pointer(cc.err))
 			} else if cc.major >= CudaComputeMajorMin {
-				log.Printf("CUDA Compute Capability detected: %d.%d", cc.major, cc.minor)
+				slog.Info(fmt.Sprintf("CUDA Compute Capability detected: %d.%d", cc.major, cc.minor))
 				resp.Library = "cuda"
 			} else {
-				log.Printf("CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor)
+				slog.Info(fmt.Sprintf("CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
 			}
 		}
 	} else if gpuHandles.rocm != nil {
 		C.rocm_check_vram(*gpuHandles.rocm, &memInfo)
 		if memInfo.err != nil {
-			log.Printf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err))
+			slog.Info(fmt.Sprintf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err)))
 			C.free(unsafe.Pointer(memInfo.err))
 		} else {
 			resp.Library = "rocm"
@@ -151,7 +153,7 @@ func GetGPUInfo() GpuInfo {
 			if version.status == 0 {
 				resp.Variant = "v" + verString
 			} else {
-				log.Printf("failed to look up ROCm version: %s", verString)
+				slog.Info(fmt.Sprintf("failed to look up ROCm version: %s", verString))
 			}
 			C.free(unsafe.Pointer(version.str))
 		}
@@ -162,7 +164,7 @@ func GetGPUInfo() GpuInfo {
 		resp.Variant = GetCPUVariant()
 	}
 	if memInfo.err != nil {
-		log.Printf("error looking up CPU memory: %s", C.GoString(memInfo.err))
+		slog.Info(fmt.Sprintf("error looking up CPU memory: %s", C.GoString(memInfo.err)))
 		C.free(unsafe.Pointer(memInfo.err))
 		return resp
 	}
@@ -205,7 +207,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 	// Multiple GPU libraries may exist, and some may not work, so keep trying until we exhaust them
 	var ldPaths []string
 	gpuLibPaths := []string{}
-	log.Printf("Searching for GPU management library %s", baseLibName)
+	slog.Info(fmt.Sprintf("Searching for GPU management library %s", baseLibName))
 
 	switch runtime.GOOS {
 	case "windows":
@@ -223,6 +225,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 		}
 		patterns = append(patterns, filepath.Join(d, baseLibName+"*"))
 	}
+	slog.Debug(fmt.Sprintf("gpu management search paths: %v", patterns))
 	for _, pattern := range patterns {
 		// Ignore glob discovery errors
 		matches, _ := filepath.Glob(pattern)
@@ -250,7 +253,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 			}
 		}
 	}
-	log.Printf("Discovered GPU libraries: %v", gpuLibPaths)
+	slog.Info(fmt.Sprintf("Discovered GPU libraries: %v", gpuLibPaths))
 	return gpuLibPaths
 }
 
@@ -261,7 +264,7 @@ func LoadCUDAMgmt(cudaLibPaths []string) *C.cuda_handle_t {
 		defer C.free(unsafe.Pointer(lib))
 		C.cuda_init(lib, &resp)
 		if resp.err != nil {
-			log.Printf("Unable to load CUDA management library %s: %s", libPath, C.GoString(resp.err))
+			slog.Info(fmt.Sprintf("Unable to load CUDA management library %s: %s", libPath, C.GoString(resp.err)))
 			C.free(unsafe.Pointer(resp.err))
 		} else {
 			return &resp.ch
@@ -277,7 +280,7 @@ func LoadROCMMgmt(rocmLibPaths []string) *C.rocm_handle_t {
 		defer C.free(unsafe.Pointer(lib))
 		C.rocm_init(lib, &resp)
 		if resp.err != nil {
-			log.Printf("Unable to load ROCm management library %s: %s", libPath, C.GoString(resp.err))
+			slog.Info(fmt.Sprintf("Unable to load ROCm management library %s: %s", libPath, C.GoString(resp.err)))
 			C.free(unsafe.Pointer(resp.err))
 		} else {
 			return &resp.rh

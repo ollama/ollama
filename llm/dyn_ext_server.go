@@ -25,7 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -69,13 +69,13 @@ var llm *dynExtServer
 
 func newDynExtServer(library, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	if !mutex.TryLock() {
-		log.Printf("concurrent llm servers not yet supported, waiting for prior server to complete")
+		slog.Info("concurrent llm servers not yet supported, waiting for prior server to complete")
 		mutex.Lock()
 	}
 	updatePath(filepath.Dir(library))
 	libPath := C.CString(library)
 	defer C.free(unsafe.Pointer(libPath))
-	resp := newExtServerResp(128)
+	resp := newExtServerResp(512)
 	defer freeExtServerResp(resp)
 	var srv C.struct_dynamic_llama_server
 	C.dyn_init(libPath, &srv, &resp)
@@ -87,7 +87,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 		s:       srv,
 		options: opts,
 	}
-	log.Printf("Loading Dynamic llm server: %s", library)
+	slog.Info(fmt.Sprintf("Loading Dynamic llm server: %s", library))
 
 	var sparams C.ext_server_params_t
 	sparams.model = C.CString(model)
@@ -136,7 +136,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 
 	sparams.n_threads = C.uint(opts.NumThread)
 
-	log.Printf("Initializing llama server")
+	slog.Info("Initializing llama server")
 	initResp := newExtServerResp(128)
 	defer freeExtServerResp(initResp)
 	C.dyn_llama_server_init(llm.s, &sparams, &initResp)
@@ -144,7 +144,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 		return nil, extServerResponseToErr(initResp)
 	}
 
-	log.Printf("Starting llama main loop")
+	slog.Info("Starting llama main loop")
 	C.dyn_llama_server_start(llm.s)
 	return llm, nil
 }
@@ -158,7 +158,7 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 			imageData = append(imageData, ImageData{Data: i, ID: cnt})
 		}
 	}
-	log.Printf("loaded %d images", len(imageData))
+	slog.Info(fmt.Sprintf("loaded %d images", len(imageData)))
 
 	request := map[string]any{
 		"prompt":            predict.Prompt,
@@ -181,7 +181,6 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"seed":              predict.Options.Seed,
 		"stop":              predict.Options.Stop,
 		"image_data":        imageData,
-		"cache_prompt":      true,
 	}
 
 	if predict.Format == "json" {
@@ -371,17 +370,8 @@ func updatePath(dir string) {
 			}
 		}
 		newPath := strings.Join(append([]string{dir}, pathComponents...), ";")
-		log.Printf("Updating PATH to %s", newPath)
+		slog.Info(fmt.Sprintf("Updating PATH to %s", newPath))
 		os.Setenv("PATH", newPath)
-	} else {
-		pathComponents := strings.Split(os.Getenv("LD_LIBRARY_PATH"), ":")
-		for _, comp := range pathComponents {
-			if comp == dir {
-				return
-			}
-		}
-		newPath := strings.Join(append([]string{dir}, pathComponents...), ":")
-		log.Printf("Updating LD_LIBRARY_PATH to %s", newPath)
-		os.Setenv("LD_LIBRARY_PATH", newPath)
 	}
+	// linux and darwin rely on rpath
 }
