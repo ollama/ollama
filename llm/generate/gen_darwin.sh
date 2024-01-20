@@ -12,6 +12,12 @@ init_vars
 git_module_setup
 apply_patches
 
+sign() {
+    if [ -n "$APPLE_IDENTITY" ]; then
+        codesign -f --timestamp --deep --options=runtime --sign "$APPLE_IDENTITY" --identifier ai.ollama.ollama $1
+    fi
+}
+
 COMMON_DARWIN_DEFS="-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_SYSTEM_NAME=Darwin -DLLAMA_ACCELERATE=off"
 
 case "${GOARCH}" in
@@ -25,6 +31,7 @@ case "${GOARCH}" in
     BUILD_DIR="${LLAMACPP_DIR}/build/darwin/${ARCH}/cpu"
     echo "Building LCD CPU"
     build
+    sign ${LLAMACPP_DIR}/build/darwin/${ARCH}/cpu/lib/libext_server.dylib
     compress_libs
 
     #
@@ -36,6 +43,7 @@ case "${GOARCH}" in
     BUILD_DIR="${LLAMACPP_DIR}/build/darwin/${ARCH}/cpu_avx"
     echo "Building AVX CPU"
     build
+    sign ${LLAMACPP_DIR}/build/darwin/${ARCH}/cpu_avx/lib/libext_server.dylib
     compress_libs
 
     #
@@ -47,6 +55,7 @@ case "${GOARCH}" in
     BUILD_DIR="${LLAMACPP_DIR}/build/darwin/${ARCH}/cpu_avx2"
     echo "Building AVX2 CPU"
     build
+    sign ${LLAMACPP_DIR}/build/darwin/${ARCH}/cpu_avx2/lib/libext_server.dylib
     compress_libs
     ;;
 "arm64")
@@ -54,6 +63,7 @@ case "${GOARCH}" in
     BUILD_DIR="${LLAMACPP_DIR}/build/darwin/${ARCH}/metal"
     EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders"
     build
+    sign ${LLAMACPP_DIR}/build/darwin/${ARCH}/metal/lib/libext_server.dylib
     compress_libs
     ;;
 *)

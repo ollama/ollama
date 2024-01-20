@@ -76,7 +76,7 @@ function compress_libs {
     write-host "Compressing dlls..."
     $libs = dir "${script:buildDir}/lib/*.dll"
     foreach ($file in $libs) {
-        & "$script:GZIP" --best $file
+        & "$script:GZIP" --best -f $file
     }
 }
 
