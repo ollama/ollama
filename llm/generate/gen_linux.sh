@@ -125,7 +125,7 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
     if [ -n "${CUDA_MAJOR}" ]; then
         CUDA_VARIANT=_v${CUDA_MAJOR}
     fi
-    CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
+    CMAKE_DEFS="-DLLAMA_CUBLAS=on -DLLAMA_CUDA_FORCE_MMQ=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cuda${CUDA_VARIANT}"
     EXTRA_LIBS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
     build
