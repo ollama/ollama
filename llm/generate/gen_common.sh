@@ -39,6 +39,9 @@ init_vars() {
     *)
         ;;
     esac
+    if [ -z "${CMAKE_CUDA_ARCHITECTURES}" ] ; then 
+        CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
+    fi
 }
 
 git_module_setup() {
