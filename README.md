@@ -25,6 +25,8 @@ Coming soon! For now, you can install Ollama on Windows via WSL2.
 curl https://ollama.ai/install.sh | sh
 ```
 
+> Note: This will also update any existing Linux or WSL2 installation to the latest version.
+
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
 
 ### Docker
