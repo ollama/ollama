@@ -6,6 +6,7 @@ export VERSION=${VERSION:-0.0.0}
 export GOFLAGS="'-ldflags=-w -s \"-X=github.com/jmorganca/ollama/version.Version=$VERSION\" \"-X=github.com/jmorganca/ollama/server.mode=release\"'"
 
 BUILD_ARCH=${BUILD_ARCH:-"amd64 arm64"}
+export AMDGPU_TARGETS=${AMDGPU_TARGETS:=""}
 mkdir -p dist
 
 for TARGETARCH in ${BUILD_ARCH}; do
@@ -14,6 +15,7 @@ for TARGETARCH in ${BUILD_ARCH}; do
         --build-arg=GOFLAGS \
         --build-arg=CGO_CFLAGS \
         --build-arg=OLLAMA_CUSTOM_CPU_DEFS \
+        --build-arg=AMDGPU_TARGETS \
         --target build-$TARGETARCH \
         -f Dockerfile \
         -t builder:$TARGETARCH \
