@@ -22,6 +22,8 @@ import (
 type Client struct {
 	base   *url.URL
 	http   http.Client
+
+	// Header defines custom HTTP headers to be sent with each request.
 	Header http.Header
 }
 
