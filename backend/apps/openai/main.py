@@ -95,7 +95,6 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
         body = json.dumps(body)
     except json.JSONDecodeError as e:
         print("Error loading request body into a dictionary:", e)
-        raise HTTPException(status_code=400, detail="Invalid JSON in request body")
 
     headers = {}
     headers["Authorization"] = f"Bearer {app.state.OPENAI_API_KEY}"
