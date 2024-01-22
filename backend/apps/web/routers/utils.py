@@ -96,7 +96,7 @@ async def download(
     file_name = parse_huggingface_url(url)
 
     if file_name:
-        file_path = str(UPLOAD_DIR / file_name)
+        file_path = f"{UPLOAD_DIR}/{file_name}"
 
         return StreamingResponse(
             download_file_stream(url, file_path, file_name),
@@ -108,7 +108,7 @@ async def download(
 
 @router.post("/upload")
 def upload(file: UploadFile = File(...)):
-    file_path = UPLOAD_DIR / file.filename
+    file_path = f"{UPLOAD_DIR}/{file.filename}"
 
     # Save file in chunks
     with file_path.open("wb+") as f:
