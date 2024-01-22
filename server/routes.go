@@ -98,9 +98,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 	}
 
 	if sessionDuration < 0 {
-		loaded.expireTimer = time.AfterFunc(sessionDuration, func() {
-			return
-		})
+		loaded.expireTimer = time.AfterFunc(sessionDuration, func() {})
 		return nil
 	}
 
