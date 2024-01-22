@@ -20,7 +20,7 @@
 	$: highlightedCode = code ? hljs.highlightAuto(code, hljs.getLanguage(lang)?.aliases).value : '';
 </script>
 
-<div class="mb-3">
+<div class="mb-4">
 	<div
 		class="flex justify-between bg-[#202123] text-white text-xs px-4 pt-1 rounded-t-lg overflow-x-auto"
 	>
@@ -30,7 +30,7 @@
 		>
 	</div>
 
-	<pre class=" rounded-b-lg hljs p-4 overflow-x-auto rounded-t-none"><code
+	<pre class=" rounded-b-lg hljs p-4 px-5 overflow-x-auto rounded-t-none"><code
 			class="language-{lang} rounded-t-none whitespace-pre">{@html highlightedCode || code}</code
 		></pre>
 </div>
