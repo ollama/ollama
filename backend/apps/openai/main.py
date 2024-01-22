@@ -87,7 +87,8 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
         # Check if the model is "gpt-4-vision-preview" and set "max_tokens" to 4000
         # This is a workaround until OpenAI fixes the issue with this model
         if body.get("model") == "gpt-4-vision-preview":
-            body["max_tokens"] = 4000
+            if "max_tokens" not in body:
+                body["max_tokens"] = 4000
             print("Modified body_dict:", body)
 
         # Convert the modified body back to JSON
