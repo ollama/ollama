@@ -22,7 +22,7 @@
 
 <div class="mb-4">
 	<div
-		class="flex justify-between bg-[#202123] text-white text-xs px-4 pt-1 rounded-t-lg overflow-x-auto"
+		class="flex justify-between bg-[#202123] text-white text-xs px-4 pt-1 pb-0.5 rounded-t-lg overflow-x-auto"
 	>
 		<div class="p-1">{lang}</div>
 		<button class="copy-code-button bg-none border-none p-1" on:click={copyCode}
