@@ -30,16 +30,17 @@ std::atomic<bool> ext_server_running(false);
 std::thread ext_server_thread;
 
 void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
-#if SERVER_VERBOSE != 1
-  log_disable();
-#endif
-  LOG_TEE("system info: %s\n", llama_print_system_info());
   assert(err != NULL && sparams != NULL);
+  log_set_target(stderr);
+  if (!sparams->verbose_logging) {
+    log_disable();
+  }
+
+  LOG_TEE("system info: %s\n", llama_print_system_info());
   err->id = 0;
   err->msg[0] = '\0';
   try {
     llama = new llama_server_context;
-    log_set_target(stdout);
     gpt_params params;
     params.n_ctx = sparams->n_ctx;
     params.n_batch = sparams->n_batch;
