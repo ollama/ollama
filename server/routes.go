@@ -97,6 +97,13 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 		loaded.Options = &opts
 	}
 
+	if sessionDuration < 0 {
+		loaded.expireTimer = time.AfterFunc(sessionDuration, func() {
+			return
+		})
+		return nil
+	}
+
 	loaded.expireAt = time.Now().Add(sessionDuration)
 
 	if loaded.expireTimer == nil {
@@ -186,7 +193,13 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	sessionDuration := defaultSessionDuration
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = defaultSessionDuration
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

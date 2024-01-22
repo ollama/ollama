@@ -34,15 +34,16 @@ func (e StatusError) Error() string {
 type ImageData []byte
 
 type GenerateRequest struct {
-	Model    string      `json:"model"`
-	Prompt   string      `json:"prompt"`
-	System   string      `json:"system"`
-	Template string      `json:"template"`
-	Context  []int       `json:"context,omitempty"`
-	Stream   *bool       `json:"stream,omitempty"`
-	Raw      bool        `json:"raw,omitempty"`
-	Format   string      `json:"format"`
-	Images   []ImageData `json:"images,omitempty"`
+	Model     string      `json:"model"`
+	Prompt    string      `json:"prompt"`
+	System    string      `json:"system"`
+	Template  string      `json:"template"`
+	Context   []int       `json:"context,omitempty"`
+	Stream    *bool       `json:"stream,omitempty"`
+	Raw       bool        `json:"raw,omitempty"`
+	Format    string      `json:"format"`
+	KeepAlive *Duration   `json:"keep_alive,omitempty"`
+	Images    []ImageData `json:"images,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
