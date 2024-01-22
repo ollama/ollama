@@ -37,19 +37,16 @@ async def get_openai_url(user=Depends(get_current_user)):
     if user and user.role == "admin":
         return {"OPENAI_API_BASE_URL": app.state.OPENAI_API_BASE_URL}
     else:
-        raise HTTPException(status_code=401,
-                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.post("/url/update")
-async def update_openai_url(form_data: UrlUpdateForm,
-                            user=Depends(get_current_user)):
+async def update_openai_url(form_data: UrlUpdateForm, user=Depends(get_current_user)):
     if user and user.role == "admin":
         app.state.OPENAI_API_BASE_URL = form_data.url
         return {"OPENAI_API_BASE_URL": app.state.OPENAI_API_BASE_URL}
     else:
-        raise HTTPException(status_code=401,
-                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.get("/key")
@@ -57,19 +54,16 @@ async def get_openai_key(user=Depends(get_current_user)):
     if user and user.role == "admin":
         return {"OPENAI_API_KEY": app.state.OPENAI_API_KEY}
     else:
-        raise HTTPException(status_code=401,
-                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.post("/key/update")
-async def update_openai_key(form_data: KeyUpdateForm,
-                            user=Depends(get_current_user)):
+async def update_openai_key(form_data: KeyUpdateForm, user=Depends(get_current_user)):
     if user and user.role == "admin":
         app.state.OPENAI_API_KEY = form_data.key
         return {"OPENAI_API_KEY": app.state.OPENAI_API_KEY}
     else:
-        raise HTTPException(status_code=401,
-                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
@@ -78,43 +72,29 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
     print(target_url, app.state.OPENAI_API_KEY)
 
     if user.role not in ["user", "admin"]:
-        raise HTTPException(status_code=401,
-                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
     if app.state.OPENAI_API_KEY == "":
-        raise HTTPException(status_code=401,
-                            detail=ERROR_MESSAGES.API_KEY_NOT_FOUND)
+        raise HTTPException(status_code=401, detail=ERROR_MESSAGES.API_KEY_NOT_FOUND)
 
+    body = await request.body()
+
+    # TODO: Remove below after gpt-4-vision fix from Open AI
     # Try to decode the body of the request from bytes to a UTF-8 string (Require add max_token to fix gpt-4-vision)
     try:
-        body_str = (await request.body()).decode('utf-8')
-    except UnicodeDecodeError as e:
-        print("Error decoding request body:", e)
-        raise HTTPException(status_code=400, detail="Invalid request body")
-    # Check if the body is not empty
-    if body_str:
-        try:
-            
-            body_dict = json.loads(body_str)
-        except json.JSONDecodeError as e:
-            print("Error loading request body into a dictionary:", e)
-            raise HTTPException(status_code=400, detail="Invalid JSON in request body")
-        
+        body = body.decode("utf-8")
+        body = json.loads(body)
+
         # Check if the model is "gpt-4-vision-preview" and set "max_tokens" to 4000
         # This is a workaround until OpenAI fixes the issue with this model
-        if body_dict.get("model") == "gpt-4-vision-preview":
-            body_dict["max_tokens"] = 4000
-            print("Modified body_dict:", body_dict)
-        
-        # Try to convert the modified body back to JSON
-        try:
-            # Convert the modified body back to JSON
-            body_json = json.dumps(body_dict)
-        except TypeError as e:
-            print("Error converting modified body to JSON:", e)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    else:
-        body_json = body_str  # If the body is empty, use it as is
+        if body.get("model") == "gpt-4-vision-preview":
+            body["max_tokens"] = 4000
+            print("Modified body_dict:", body)
 
+        # Convert the modified body back to JSON
+        body = json.dumps(body)
+    except json.JSONDecodeError as e:
+        print("Error loading request body into a dictionary:", e)
+        raise HTTPException(status_code=400, detail="Invalid JSON in request body")
 
     headers = {}
     headers["Authorization"] = f"Bearer {app.state.OPENAI_API_KEY}"
@@ -124,7 +104,7 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
         r = requests.request(
             method=request.method,
             url=target_url,
-            data=body_json,
+            data=body,
             headers=headers,
             stream=True,
         )
@@ -153,8 +133,8 @@ async def proxy(path: str, request: Request, user=Depends(get_current_user)):
 
             if "openai" in app.state.OPENAI_API_BASE_URL and path == "models":
                 response_data["data"] = list(
-                    filter(lambda model: "gpt" in model["id"],
-                           response_data["data"]))
+                    filter(lambda model: "gpt" in model["id"], response_data["data"])
+                )
 
             return response_data
     except Exception as e:
