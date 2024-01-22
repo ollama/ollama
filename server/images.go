@@ -412,6 +412,13 @@ func realpath(mfDir, from string) string {
 }
 
 func CreateModel(ctx context.Context, name, modelFileDir string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
+	deleteMap := make(map[string]struct{})
+	if manifest, _, err := GetManifest(ParseModelPath(name)); err == nil {
+		for _, layer := range append(manifest.Layers, manifest.Config) {
+			deleteMap[layer.Digest] = struct{}{}
+		}
+	}
+
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
@@ -419,8 +426,6 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			Type: "layers",
 		},
 	}
-
-	deleteMap := make(map[string]struct{})
 
 	var layers Layers
 
