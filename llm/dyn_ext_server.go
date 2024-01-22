@@ -142,7 +142,9 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	C.dyn_llama_server_init(llm.s, &sparams, &initResp)
 	if initResp.id < 0 {
 		mutex.Unlock()
-		return nil, extServerResponseToErr(initResp)
+		err := extServerResponseToErr(initResp)
+		slog.Debug(fmt.Sprintf("failure during initialization: %s", err))
+		return nil, err
 	}
 
 	slog.Info("Starting llama main loop")
