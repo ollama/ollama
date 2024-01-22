@@ -1,17 +1,16 @@
 <script lang="ts">
 	import dayjs from 'dayjs';
 	import { marked } from 'marked';
-
 	import tippy from 'tippy.js';
-	import hljs from 'highlight.js';
-	import 'highlight.js/styles/github-dark.min.css';
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
 	import 'katex/dist/katex.min.css';
+
+	import { onMount, tick } from 'svelte';
 
 	import Name from './Name.svelte';
 	import ProfileImage from './ProfileImage.svelte';
 	import Skeleton from './Skeleton.svelte';
-	import { onMount, tick } from 'svelte';
+	import CodeBlock from './CodeBlock.svelte';
 
 	export let modelfiles = [];
 	export let message;
@@ -33,6 +32,20 @@
 	let tooltipInstance = null;
 	let speaking = null;
 
+	$: tokens = marked.lexer(message.content);
+
+	const renderer = new marked.Renderer();
+
+	// For code blocks with simple backticks
+	renderer.codespan = (code) => {
+		return `<code>${code.replaceAll('&amp;', '&')}</code>`;
+	};
+
+	const { extensions, ...defaults } = marked.getDefaults() as marked.MarkedOptions & {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		extensions: any;
+	};
+
 	$: if (message) {
 		renderStyling();
 	}
@@ -45,8 +58,6 @@
 		}
 
 		renderLatex();
-		hljs.highlightAll();
-		createCopyCodeBlockButton();
 
 		if (message.info) {
 			tooltipInstance = tippy(`#info-${message.id}`, {
@@ -75,71 +86,6 @@
 										}ms</span>`,
 				allowHTML: true
 			});
-		}
-	};
-
-	const createCopyCodeBlockButton = () => {
-		// use a class selector if available
-		let blocks = document.querySelectorAll('pre');
-
-		blocks.forEach((block) => {
-			// only add button if browser supports Clipboard API
-
-			if (block.childNodes.length < 2 && block.id !== 'user-message') {
-				let code = block.querySelector('code');
-				code.style.borderTopRightRadius = 0;
-				code.style.borderTopLeftRadius = 0;
-				code.style.whiteSpace = 'pre';
-
-				let topBarDiv = document.createElement('div');
-				topBarDiv.style.backgroundColor = '#202123';
-				topBarDiv.style.overflowX = 'auto';
-				topBarDiv.style.display = 'flex';
-				topBarDiv.style.justifyContent = 'space-between';
-				topBarDiv.style.padding = '0 1rem';
-				topBarDiv.style.paddingTop = '4px';
-				topBarDiv.style.borderTopRightRadius = '8px';
-				topBarDiv.style.borderTopLeftRadius = '8px';
-
-				let langDiv = document.createElement('div');
-
-				let codeClassNames = code?.className.split(' ');
-				langDiv.textContent =
-					codeClassNames[0] === 'hljs' ? codeClassNames[1].slice(9) : codeClassNames[0].slice(9);
-				langDiv.style.color = 'white';
-				langDiv.style.margin = '4px';
-				langDiv.style.fontSize = '0.75rem';
-
-				let button = document.createElement('button');
-				button.className = 'copy-code-button';
-				button.textContent = 'Copy Code';
-				button.style.background = 'none';
-				button.style.fontSize = '0.75rem';
-				button.style.border = 'none';
-				button.style.margin = '4px';
-				button.style.cursor = 'pointer';
-				button.style.color = '#ddd';
-				button.addEventListener('click', () => copyCode(block, button));
-
-				topBarDiv.appendChild(langDiv);
-				topBarDiv.appendChild(button);
-
-				block.prepend(topBarDiv);
-			}
-		});
-
-		async function copyCode(block, button) {
-			let code = block.querySelector('code');
-			let text = code.innerText;
-
-			await copyToClipboard(text);
-
-			// visual feedback that task is completed
-			button.innerText = 'Copied!';
-
-			setTimeout(() => {
-				button.innerText = 'Copy Code';
-			}, 1000);
 		}
 	};
 
@@ -292,7 +238,20 @@
 									</div>
 								</div>
 							{:else}
-								{@html marked(message.content.replaceAll('\\', '\\\\'))}
+								{#each tokens as token}
+									{#if token.type === 'code'}
+										<CodeBlock lang={token.lang} code={token.text} />
+									{:else}
+										<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+										{@html marked.parse(token.raw, {
+											...defaults,
+											gfm: true,
+											breaks: true,
+											renderer
+										})}
+									{/if}
+								{/each}
+								<!-- {@html marked(message.content.replaceAll('\\', '\\\\'))} -->
 							{/if}
 
 							{#if message.done}
