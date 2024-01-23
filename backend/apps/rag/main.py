@@ -19,6 +19,7 @@ from langchain_community.document_loaders import (
     PyPDFLoader,
     CSVLoader,
     Docx2txtLoader,
+    UnstructuredEPubLoader,
     UnstructuredWordDocumentLoader,
     UnstructuredMarkdownLoader,
     UnstructuredXMLLoader,
@@ -187,6 +188,8 @@ def store_doc(
             loader = TextLoader(file_path)
         elif file_ext in octet_markdown:
             loader = UnstructuredMarkdownLoader(file_path)
+        elif file.content_type == "application/epub+zip":
+            loader = UnstructuredEPubLoader(file_path)
         else:
             loader = TextLoader(file_path)
             known_type=False
@@ -209,10 +212,16 @@ def store_doc(
             )
     except Exception as e:
         print(e)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ERROR_MESSAGES.DEFAULT(e),
-        )
+        if "No pandoc was found" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ERROR_MESSAGES.PANDOC_NOT_INSTALLED,
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ERROR_MESSAGES.DEFAULT(e),
+            )
 
 
 @app.get("/reset/db")

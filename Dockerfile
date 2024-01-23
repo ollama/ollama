@@ -45,6 +45,13 @@ COPY ./backend/requirements.txt ./requirements.txt
 RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
 RUN pip3 install -r requirements.txt --no-cache-dir
 
+
+# Install pandoc
+# RUN python -c "import pypandoc; pypandoc.download_pandoc()"
+RUN apt-get update \
+    && apt-get install -y pandoc \
+    && rm -rf /var/lib/apt/lists/*
+
 # RUN python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY ./backend .
