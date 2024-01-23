@@ -30,7 +30,7 @@ export const SUPPORTED_FILE_EXTENSIONS = [
 	'pl', 'pm', 'r', 'dart', 'dockerfile', 'env', 'php', 'hs',
 	'hsc', 'lua', 'nginxconf', 'conf', 'm', 'mm', 'plsql', 'perl',
 	'rb', 'rs', 'db2', 'scala', 'bash', 'swift', 'vue', 'svelte',
-	'doc','docx', 'pdf', 'csv', 'txt'
+	'doc','docx', 'pdf', 'csv', 'txt', 'xls', 'xlsx'
 ];
 
 // Source: https://kit.svelte.dev/docs/modules#$env-static-public
