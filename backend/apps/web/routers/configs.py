@@ -49,14 +49,15 @@ async def set_global_default_models(
         )
 
 
-@router.post("/default/suggestions", response_model=str)
+@router.post("/default/suggestions", response_model=List[PromptSuggestion])
 async def set_global_default_suggestions(
     request: Request,
     form_data: SetDefaultSuggestionsForm,
     user=Depends(get_current_user),
 ):
     if user.role == "admin":
-        request.app.state.DEFAULT_PROMPT_SUGGESTIONS = form_data.suggestions
+        data = form_data.model_dump()
+        request.app.state.DEFAULT_PROMPT_SUGGESTIONS = data["suggestions"]
         return request.app.state.DEFAULT_PROMPT_SUGGESTIONS
     else:
         raise HTTPException(
