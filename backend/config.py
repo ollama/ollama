@@ -54,6 +54,34 @@ OPENAI_API_BASE_URL = os.environ.get("OPENAI_API_BASE_URL", "")
 if OPENAI_API_BASE_URL == "":
     OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
+
+####################################
+# WEBUI
+####################################
+
+DEFAULT_MODELS = os.environ.get("DEFAULT_MODELS", None)
+DEFAULT_PROMPT_SUGGESTIONS = os.environ.get(
+    "DEFAULT_PROMPT_SUGGESTIONS",
+    [
+        {
+            "title": ["Help me study", "vocabulary for a college entrance exam"],
+            "content": "Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.",
+        },
+        {
+            "title": ["Give me ideas", "for what to do with my kids' art"],
+            "content": "What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.",
+        },
+        {
+            "title": ["Tell me a fun fact", "about the Roman Empire"],
+            "content": "Tell me a random fun fact about the Roman Empire",
+        },
+        {
+            "title": ["Show me a code snippet", "of a website's sticky header"],
+            "content": "Show me a code snippet of a website's sticky header in CSS and JavaScript.",
+        },
+    ],
+)
+
 ####################################
 # WEBUI_VERSION
 ####################################

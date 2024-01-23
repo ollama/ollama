@@ -13,7 +13,7 @@
 				}}
 			>
 				<div class="flex flex-col text-left self-center">
-					{#if prompt.title}
+					{#if prompt.title && prompt.title[0] !== ''}
 						<div class="text-sm font-medium dark:text-gray-300">{prompt.title[0]}</div>
 						<div class="text-sm text-gray-500">{prompt.title[1]}</div>
 					{:else}

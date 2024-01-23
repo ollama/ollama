@@ -21,18 +21,44 @@ class SetDefaultModelsForm(BaseModel):
     models: str
 
 
+class PromptSuggestion(BaseModel):
+    title: List[str]
+    content: str
+
+
+class SetDefaultSuggestionsForm(BaseModel):
+    suggestions: List[PromptSuggestion]
+
+
 ############################
 # SetDefaultModels
 ############################
 
 
 @router.post("/default/models", response_model=str)
-async def set_global_default_models(request: Request,
-                                    form_data: SetDefaultModelsForm,
-                                    user=Depends(get_current_user)):
+async def set_global_default_models(
+    request: Request, form_data: SetDefaultModelsForm, user=Depends(get_current_user)
+):
     if user.role == "admin":
         request.app.state.DEFAULT_MODELS = form_data.models
         return request.app.state.DEFAULT_MODELS
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+
+@router.post("/default/suggestions", response_model=List[PromptSuggestion])
+async def set_global_default_suggestions(
+    request: Request,
+    form_data: SetDefaultSuggestionsForm,
+    user=Depends(get_current_user),
+):
+    if user.role == "admin":
+        data = form_data.model_dump()
+        request.app.state.DEFAULT_PROMPT_SUGGESTIONS = data["suggestions"]
+        return request.app.state.DEFAULT_PROMPT_SUGGESTIONS
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
