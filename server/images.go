@@ -450,7 +450,6 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	fromParams := make(map[string]any)
 
 	for _, c := range commands {
-		slog.Info(fmt.Sprintf("[%s] - %s", c.Name, c.Args))
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
 		switch c.Name {
