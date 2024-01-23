@@ -2,7 +2,7 @@
 
 set -eu
 
-export VERSION=${VERSION:-0.0.0}
+export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
 export GOFLAGS="'-ldflags=-w -s \"-X=github.com/jmorganca/ollama/version.Version=$VERSION\" \"-X=github.com/jmorganca/ollama/server.mode=release\"'"
 
 BUILD_ARCH=${BUILD_ARCH:-"amd64 arm64"}
