@@ -7,7 +7,7 @@
 	import { documents } from '$lib/stores';
 	import { createNewDoc, deleteDocByName, getDocs } from '$lib/apis/documents';
 
-	import { SUPPORTED_FILE_TYPE } from '$lib/constants';
+	import { SUPPORTED_FILE_TYPE, SUPPORTED_FILE_EXTENSIONS } from '$lib/constants';
 	import { uploadDocToVectorDB } from '$lib/apis/rag';
 	import { transformFileName } from '$lib/utils';
 
@@ -69,11 +69,13 @@
 				const file = inputFiles[0];
 				if (
 					SUPPORTED_FILE_TYPE.includes(file['type']) ||
-					['md'].includes(file.name.split('.').at(-1))
+					SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
 				) {
 					uploadDoc(file);
 				} else {
-					toast.error(`Unknown File Type '${file['type']}', but accepting and treating as plain text`);
+					toast.error(
+						`Unknown File Type '${file['type']}', but accepting and treating as plain text`
+					);
 					uploadDoc(file);
 				}
 			} else {
@@ -150,11 +152,13 @@
 						const file = inputFiles[0];
 						if (
 							SUPPORTED_FILE_TYPE.includes(file['type']) ||
-							['md'].includes(file.name.split('.').at(-1))
+							SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
 						) {
 							uploadDoc(file);
 						} else {
-							toast.error(`Unknown File Type '${file['type']}', but accepting and treating as plain text`);
+							toast.error(
+								`Unknown File Type '${file['type']}', but accepting and treating as plain text`
+							);
 							uploadDoc(file);
 						}
 

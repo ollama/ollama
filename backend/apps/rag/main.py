@@ -22,6 +22,7 @@ from langchain_community.document_loaders import (
     UnstructuredWordDocumentLoader,
     UnstructuredMarkdownLoader,
     UnstructuredXMLLoader,
+    UnstructuredRSTLoader,
 )
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -178,6 +179,8 @@ def store_doc(
             loader = Docx2txtLoader(file_path)
         elif file_ext=="csv":
             loader = CSVLoader(file_path)
+        elif file_ext=="rst":
+            loader = UnstructuredRSTLoader(file_path, mode="elements")
         elif file_ext in text_xml:
             loader=UnstructuredXMLLoader(file_path)
         elif file_ext in known_source_ext or file.content_type.find("text/")>=0:
