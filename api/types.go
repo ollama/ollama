@@ -79,6 +79,13 @@ type Metrics struct {
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	Runtime            Runtime       `json:"runtime,omitempty"`
+}
+
+type Runtime struct {
+	Library   string `json:"library,omitempty"`
+	Layers    int64  `json:"layers,omitempty"`
+	MaxLayers int64  `json:"max_layers,omitempty"`
 }
 
 // Options specfied in GenerateRequest, if you add a new option here add it to the API docs also
@@ -268,6 +275,11 @@ func (m *Metrics) Summary() {
 	if m.EvalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", m.EvalDuration)
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
+	}
+
+	if m.Runtime.Library != "" {
+		fmt.Fprintf(os.Stderr, "llm library:          %s\n", m.Runtime.Library)
+		fmt.Fprintf(os.Stderr, "GPU loaded layers:    %d/%d\n", m.Runtime.Layers, m.Runtime.MaxLayers)
 	}
 }
 

@@ -268,6 +268,7 @@ func GenerateHandler(c *gin.Context) {
 					PromptEvalDuration: r.PromptEvalDuration,
 					EvalCount:          r.EvalCount,
 					EvalDuration:       r.EvalDuration,
+					Runtime:            api.Runtime(r.Runtime),
 				},
 			}
 
@@ -1107,6 +1108,7 @@ func ChatHandler(c *gin.Context) {
 					PromptEvalDuration: r.PromptEvalDuration,
 					EvalCount:          r.EvalCount,
 					EvalDuration:       r.EvalDuration,
+					Runtime:            api.Runtime(r.Runtime),
 				},
 			}
 

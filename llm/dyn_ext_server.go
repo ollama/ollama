@@ -38,8 +38,10 @@ import (
 )
 
 type dynExtServer struct {
-	s       C.struct_dynamic_llama_server
-	options api.Options
+	s         C.struct_dynamic_llama_server
+	options   api.Options
+	library   string
+	maxLayers int64
 }
 
 // Note: current implementation does not support concurrent instantiations
@@ -67,7 +69,7 @@ func extServerResponseToErr(resp C.ext_server_resp_t) error {
 // Note: current implementation does not support concurrent instantiations
 var llm *dynExtServer
 
-func newDynExtServer(library, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+func newDynExtServer(library, model string, maxLayers int64, adapters, projectors []string, opts api.Options) (LLM, error) {
 	if !mutex.TryLock() {
 		slog.Info("concurrent llm servers not yet supported, waiting for prior server to complete")
 		mutex.Lock()
@@ -84,8 +86,10 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 		return nil, fmt.Errorf("Unable to load dynamic library: %s", C.GoString(resp.msg))
 	}
 	llm = &dynExtServer{
-		s:       srv,
-		options: opts,
+		s:         srv,
+		options:   opts,
+		library:   filepath.Base(filepath.Dir(library)),
+		maxLayers: maxLayers,
 	}
 	slog.Info(fmt.Sprintf("Loading Dynamic llm server: %s", library))
 
@@ -267,6 +271,11 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 						PromptEvalDuration: parseDurationMs(p.Timings.PromptMS),
 						EvalCount:          p.Timings.PredictedN,
 						EvalDuration:       parseDurationMs(p.Timings.PredictedMS),
+						Runtime: Runtime{
+							Library:   llm.library,
+							Layers:    int64(llm.options.NumGPU),
+							MaxLayers: llm.maxLayers,
+						},
 					})
 					return nil
 				}

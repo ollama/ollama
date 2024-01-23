@@ -73,6 +73,13 @@ type PredictResult struct {
 	PromptEvalDuration time.Duration
 	EvalCount          int
 	EvalDuration       time.Duration
+	Runtime            Runtime
+}
+
+type Runtime struct {
+	Library   string
+	Layers    int64
+	MaxLayers int64
 }
 
 type TokenizeRequest struct {

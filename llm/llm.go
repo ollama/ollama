@@ -56,6 +56,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	graph := int64(ggml.NumGQA()) * kv / 6
 
 	info := gpu.GetGPUInfo()
+	maxlayers := int64(ggml.NumLayers()) + 1
 	switch runtime.GOOS {
 	case "darwin":
 		if opts.NumGPU == 0 {
@@ -97,7 +98,6 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		// 2. the proportional kv cache for all devices (kv * % layers)
 		// 3. the proportional model (size * % layers / # devices)
 		// This estimates the number of layers
-		maxlayers := int64(ggml.NumLayers()) + 1
 		devices := int64(info.DeviceCount)
 		avg := vram / devices
 		layers := maxlayers * (avg - graph) / (kv + size/devices)
@@ -120,7 +120,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 	opts.RopeFrequencyBase = 0.0
 	opts.RopeFrequencyScale = 0.0
-	return newLlmServer(info, model, adapters, projectors, opts)
+	return newLlmServer(info, model, maxlayers, adapters, projectors, opts)
 }
 
 // Give any native cgo implementations an opportunity to initialize
@@ -128,7 +128,7 @@ func Init(workdir string) error {
 	return nativeInit(workdir)
 }
 
-func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+func newLlmServer(gpuInfo gpu.GpuInfo, model string, maxLayers int64, adapters, projectors []string, opts api.Options) (LLM, error) {
 	dynLibs := getDynLibs(gpuInfo)
 
 	// Check to see if the user has requested a specific library instead of auto-detecting
@@ -145,7 +145,7 @@ func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []stri
 
 	err2 := fmt.Errorf("unable to locate suitable llm library")
 	for _, dynLib := range dynLibs {
-		srv, err := newDynExtServer(dynLib, model, adapters, projectors, opts)
+		srv, err := newDynExtServer(dynLib, model, maxLayers, adapters, projectors, opts)
 		if err == nil {
 			return srv, nil
 		}
