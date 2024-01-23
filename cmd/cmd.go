@@ -458,16 +458,17 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 type generateContextKey string
 
 type runOptions struct {
-	Model      string
-	Prompt     string
-	Messages   []api.Message
-	WordWrap   bool
-	Format     string
-	System     string
-	Template   string
-	Images     []api.ImageData
-	Options    map[string]interface{}
-	MultiModal bool
+	Model         string
+	OriginalModel string
+	Prompt        string
+	Messages      []api.Message
+	WordWrap      bool
+	Format        string
+	System        string
+	Template      string
+	Images        []api.ImageData
+	Options       map[string]interface{}
+	MultiModal    bool
 }
 
 type displayResponseState struct {

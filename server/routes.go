@@ -664,6 +664,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Families:          model.Config.ModelFamilies,
 		ParameterSize:     model.Config.ModelType,
 		QuantizationLevel: model.Config.FileType,
+		OriginalModel:     model.OriginalModel,
 	}
 
 	if req.System != "" {

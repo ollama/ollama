@@ -242,6 +242,7 @@ type ModelDetails struct {
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
+	OriginalModel     string   `json:"original_model"`
 }
 
 func (m *Metrics) Summary() {

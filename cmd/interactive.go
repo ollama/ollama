@@ -45,6 +45,7 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 		return err
 	}
 	opts.MultiModal = slices.Contains(showResp.Details.Families, "clip")
+	opts.OriginalModel = showResp.Details.OriginalModel
 
 	if len(showResp.Messages) > 0 {
 		opts.Messages = append(opts.Messages, showResp.Messages...)
@@ -526,7 +527,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 func buildModelfile(opts runOptions) string {
 	var mf strings.Builder
-	fmt.Fprintf(&mf, "FROM %s\n", opts.Model)
+	model := opts.OriginalModel
+	if model == "" {
+		model = opts.Model
+	}
+	fmt.Fprintf(&mf, "FROM %s\n", model)
 	if opts.System != "" {
 		fmt.Fprintf(&mf, "SYSTEM \"\"\"%s\"\"\"\n", opts.System)
 	}
