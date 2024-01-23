@@ -21,8 +21,10 @@ export const SUPPORTED_FILE_TYPE = [
 	'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 	'application/octet-stream',
 	'application/x-javascript',
-	'text/markdown',
+	'text/markdown'
 ];
+
+export const SUPPORTED_FILE_EXTENSIONS = ['md', 'rst'];
 
 // Source: https://kit.svelte.dev/docs/modules#$env-static-public
 // This feature, akin to $env/static/private, exclusively incorporates environment variables

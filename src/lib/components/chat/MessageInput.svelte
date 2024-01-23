@@ -8,7 +8,7 @@
 	import Suggestions from './MessageInput/Suggestions.svelte';
 	import { uploadDocToVectorDB } from '$lib/apis/rag';
 	import AddFilesPlaceholder from '../AddFilesPlaceholder.svelte';
-	import { SUPPORTED_FILE_TYPE } from '$lib/constants';
+	import { SUPPORTED_FILE_TYPE, SUPPORTED_FILE_EXTENSIONS } from '$lib/constants';
 	import Documents from './MessageInput/Documents.svelte';
 	import Models from './MessageInput/Models.svelte';
 
@@ -169,11 +169,13 @@
 						reader.readAsDataURL(file);
 					} else if (
 						SUPPORTED_FILE_TYPE.includes(file['type']) ||
-						['md'].includes(file.name.split('.').at(-1))
+						SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
 					) {
 						uploadDoc(file);
 					} else {
-						toast.error(`Unknown File Type '${file['type']}', but accepting and treating as plain text`);
+						toast.error(
+							`Unknown File Type '${file['type']}', but accepting and treating as plain text`
+						);
 						uploadDoc(file);
 					}
 				} else {
@@ -304,12 +306,14 @@
 								reader.readAsDataURL(file);
 							} else if (
 								SUPPORTED_FILE_TYPE.includes(file['type']) ||
-								['md'].includes(file.name.split('.').at(-1))
+								SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
 							) {
 								uploadDoc(file);
 								filesInputElement.value = '';
 							} else {
-								toast.error(`Unknown File Type '${file['type']}', but accepting and treating as plain text`);
+								toast.error(
+									`Unknown File Type '${file['type']}', but accepting and treating as plain text`
+								);
 								uploadDoc(file);
 								filesInputElement.value = '';
 							}
@@ -466,8 +470,8 @@
 							placeholder={chatInputPlaceholder !== ''
 								? chatInputPlaceholder
 								: speechRecognitionListening
-									? 'Listening...'
-									: 'Send a message'}
+								? 'Listening...'
+								: 'Send a message'}
 							bind:value={prompt}
 							on:keypress={(e) => {
 								if (e.keyCode == 13 && !e.shiftKey) {
