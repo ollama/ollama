@@ -674,11 +674,17 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		model.Template = req.Template
 	}
 
+	msgs := make([]api.Message, 0)
+	for _, msg := range model.Messages {
+		msgs = append(msgs, api.Message{Role: msg.Role, Content: msg.Content})
+	}
+
 	resp := &api.ShowResponse{
 		License:  strings.Join(model.License, "\n"),
 		System:   model.System,
 		Template: model.Template,
 		Details:  modelDetails,
+		Messages: msgs,
 	}
 
 	var params []string
@@ -1075,16 +1081,11 @@ func ChatHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if len(req.Messages) == 0 {
-		msgs := make([]api.Message, 0)
-		for _, msg := range model.Messages {
-			msgs = append(msgs, api.Message{Role: msg.Role, Content: msg.Content})
-		}
 		resp := api.ChatResponse{
-			CreatedAt:      time.Now().UTC(),
-			Model:          req.Model,
-			Done:           true,
-			Message:        api.Message{Role: "assistant"},
-			LoadedMessages: msgs,
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true,
+			Message:   api.Message{Role: "assistant"},
 		}
 		c.JSON(http.StatusOK, resp)
 		return

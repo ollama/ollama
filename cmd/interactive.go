@@ -27,23 +27,6 @@ const (
 	MultilineTemplate
 )
 
-func modelIsMultiModal(cmd *cobra.Command, name string) bool {
-	// get model details
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		fmt.Println("error: couldn't connect to ollama server")
-		return false
-	}
-
-	req := api.ShowRequest{Name: name}
-	resp, err := client.Show(cmd.Context(), &req)
-	if err != nil {
-		return false
-	}
-
-	return slices.Contains(resp.Details.Families, "clip")
-}
-
 func loadModel(cmd *cobra.Command, opts *runOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -56,15 +39,25 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 	spinner := progress.NewSpinner("")
 	p.Add("", spinner)
 
-	req := &api.ChatRequest{
+	showReq := api.ShowRequest{Name: opts.Model}
+	showResp, err := client.Show(cmd.Context(), &showReq)
+	if err != nil {
+		return err
+	}
+	opts.MultiModal = slices.Contains(showResp.Details.Families, "clip")
+
+	if len(showResp.Messages) > 0 {
+		opts.Messages = append(opts.Messages, showResp.Messages...)
+	}
+
+	chatReq := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: []api.Message{},
 	}
-	err = client.Chat(cmd.Context(), req, func(resp api.ChatResponse) error {
-		if len(resp.LoadedMessages) > 0 {
-			p.StopAndClear()
-			opts.Messages = append(opts.Messages, resp.LoadedMessages...)
-			for _, msg := range resp.LoadedMessages {
+	err = client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
+		p.StopAndClear()
+		if len(opts.Messages) > 0 {
+			for _, msg := range opts.Messages {
 				switch msg.Role {
 				case "user":
 					fmt.Printf(">>> %s\n", msg.Content)
@@ -86,7 +79,6 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 }
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
-	multiModal := modelIsMultiModal(cmd, opts.Model)
 	opts.Messages = make([]api.Message, 0)
 
 	err := loadModel(cmd, &opts)
@@ -467,7 +459,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			args := strings.Fields(line)
 			isFile := false
 
-			if multiModal {
+			if opts.MultiModal {
 				for _, f := range extractFileNames(line) {
 					if strings.HasPrefix(f, args[0]) {
 						isFile = true
@@ -489,7 +481,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		if sb.Len() > 0 && multiline == MultilineNone {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
-			if multiModal {
+			if opts.MultiModal {
 				msg, images, err := extractFileData(sb.String())
 				if err != nil {
 					return err

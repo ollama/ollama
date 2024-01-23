@@ -67,8 +67,7 @@ type ChatResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 	Message   Message   `json:"message"`
 
-	LoadedMessages []Message `json:"loaded_messages,omitempty"`
-	Done           bool      `json:"done"`
+	Done bool `json:"done"`
 
 	Metrics
 }
@@ -172,6 +171,7 @@ type ShowResponse struct {
 	Template   string       `json:"template,omitempty"`
 	System     string       `json:"system,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
+	Messages   []Message    `json:"messages,omitempty"`
 }
 
 type CopyRequest struct {
