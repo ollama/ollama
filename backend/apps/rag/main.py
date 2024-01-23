@@ -23,6 +23,7 @@ from langchain_community.document_loaders import (
     UnstructuredMarkdownLoader,
     UnstructuredXMLLoader,
     UnstructuredRSTLoader,
+    UnstructuredExcelLoader,
 )
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -157,6 +158,9 @@ def store_doc(
         ]
     docx_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     known_doc_ext=["doc","docx"]
+    excel_types=["application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+    known_excel_ext=["xls", "xlsx"]
+
     file_ext=file.filename.split(".")[-1].lower()
     known_type=True
     
@@ -179,6 +183,8 @@ def store_doc(
             loader = Docx2txtLoader(file_path)
         elif file_ext=="csv":
             loader = CSVLoader(file_path)
+        elif (file.content_type in excel_types or file_ext in known_excel_ext):
+            loader = UnstructuredExcelLoader(file_path)
         elif file_ext=="rst":
             loader = UnstructuredRSTLoader(file_path, mode="elements")
         elif file_ext in text_xml:

@@ -29,3 +29,8 @@ PyJWT
 pyjwt[crypto]
 
 black
+
+pandas
+openpyxl
+pyxlsb
+xlrd
