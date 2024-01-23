@@ -794,24 +794,7 @@
 			bind:files
 			bind:prompt
 			bind:autoScroll
-			suggestionPrompts={selectedModelfile?.suggestionPrompts ?? [
-				{
-					title: ['Help me study', 'vocabulary for a college entrance exam'],
-					content: `Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.`
-				},
-				{
-					title: ['Give me ideas', `for what to do with my kids' art`],
-					content: `What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.`
-				},
-				{
-					title: ['Tell me a fun fact', 'about the Roman Empire'],
-					content: 'Tell me a random fun fact about the Roman Empire'
-				},
-				{
-					title: ['Show me a code snippet', `of a website's sticky header`],
-					content: `Show me a code snippet of a website's sticky header in CSS and JavaScript.`
-				}
-			]}
+			suggestionPrompts={selectedModelfile?.suggestionPrompts ?? $config.default_prompt_suggestions}
 			{messages}
 			{submitPrompt}
 			{stopResponse}
