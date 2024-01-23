@@ -24,7 +24,14 @@ export const SUPPORTED_FILE_TYPE = [
 	'text/markdown'
 ];
 
-export const SUPPORTED_FILE_EXTENSIONS = ['md', 'rst'];
+export const SUPPORTED_FILE_EXTENSIONS = [
+	'md', 'rst','go', 'py', 'java', 'sh', 'bat', 'ps1', 'cmd', 'js', 
+	'ts', 'css', 'cpp', 'hpp','h', 'c', 'cs', 'sql', 'log', 'ini',
+	'pl', 'pm', 'r', 'dart', 'dockerfile', 'env', 'php', 'hs',
+	'hsc', 'lua', 'nginxconf', 'conf', 'm', 'mm', 'plsql', 'perl',
+	'rb', 'rs', 'db2', 'scala', 'bash', 'swift', 'vue', 'svelte',
+	'doc','docx', 'pdf', 'csv', 'txt'
+];
 
 // Source: https://kit.svelte.dev/docs/modules#$env-static-public
 // This feature, akin to $env/static/private, exclusively incorporates environment variables
