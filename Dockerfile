@@ -26,7 +26,21 @@ ENV OPENAI_API_KEY ""
 
 ENV WEBUI_JWT_SECRET_KEY "SECRET_KEY"
 
-WORKDIR /app
+WORKDIR /app/backend
+
+# install python dependencies
+COPY ./backend/requirements.txt ./requirements.txt
+
+RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
+RUN pip3 install -r requirements.txt --no-cache-dir
+
+# Install pandoc
+# RUN python -c "import pypandoc; pypandoc.download_pandoc()"
+RUN apt-get update \
+    && apt-get install -y pandoc \
+    && rm -rf /var/lib/apt/lists/*
+
+# RUN python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('all-MiniLM-L6-v2')"
 
 # copy embedding weight from build
 RUN mkdir -p /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2
@@ -38,22 +52,7 @@ RUN cd /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2 &&\
 # copy built frontend files
 COPY --from=build /app/build /app/build
 
-WORKDIR /app/backend
-
-COPY ./backend/requirements.txt ./requirements.txt
-
-RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
-RUN pip3 install -r requirements.txt --no-cache-dir
-
-
-# Install pandoc
-# RUN python -c "import pypandoc; pypandoc.download_pandoc()"
-RUN apt-get update \
-    && apt-get install -y pandoc \
-    && rm -rf /var/lib/apt/lists/*
-
-# RUN python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('all-MiniLM-L6-v2')"
-
+# copy backend files
 COPY ./backend .
 
 CMD [ "sh", "start.sh"]
