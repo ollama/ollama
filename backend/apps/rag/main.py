@@ -150,9 +150,9 @@ def store_doc(
     text_xml=["xml"]
     octet_markdown=["md"]
     known_source_ext=[
-        "go", "py", "java", "sh", "bat", "ps1", "cmd", "js", 
+        "go", "py", "java", "sh", "bat", "ps1", "cmd", "js", "ts",
         "css", "cpp", "hpp","h", "c", "cs", "sql", "log", "ini",
-        "pl" "pm", "r", "dart", "dockerfile", "env", "php", "hs",
+        "pl", "pm", "r", "dart", "dockerfile", "env", "php", "hs",
         "hsc", "lua", "nginxconf", "conf", "m", "mm", "plsql", "perl",
         "rb", "rs", "db2", "scala", "bash", "swift", "vue", "svelte"
         ]
