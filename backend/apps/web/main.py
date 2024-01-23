@@ -11,14 +11,15 @@ from apps.web.routers import (
     configs,
     utils,
 )
-from config import WEBUI_VERSION, WEBUI_AUTH
+from config import WEBUI_VERSION, WEBUI_AUTH, DEFAULT_MODELS, DEFAULT_PROMPT_SUGGESTIONS
 
 app = FastAPI()
 
 origins = ["*"]
 
 app.state.ENABLE_SIGNUP = True
-app.state.DEFAULT_MODELS = None
+app.state.DEFAULT_MODELS = DEFAULT_MODELS
+app.state.DEFAULT_PROMPT_SUGGESTIONS = DEFAULT_PROMPT_SUGGESTIONS
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,4 +47,5 @@ async def get_status():
         "version": WEBUI_VERSION,
         "auth": WEBUI_AUTH,
         "default_models": app.state.DEFAULT_MODELS,
+        "default_prompt_suggestions": app.state.DEFAULT_PROMPT_SUGGESTIONS,
     }
