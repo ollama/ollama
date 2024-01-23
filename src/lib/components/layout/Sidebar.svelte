@@ -6,9 +6,14 @@
 
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { user, chats, settings, showSettings, chatId } from '$lib/stores';
+	import { user, chats, settings, showSettings, chatId, tags } from '$lib/stores';
 	import { onMount } from 'svelte';
-	import { deleteChatById, getChatList, updateChatById } from '$lib/apis/chats';
+	import {
+		deleteChatById,
+		getChatList,
+		getChatListByTagName,
+		updateChatById
+	} from '$lib/apis/chats';
 
 	let show = false;
 	let navElement;
@@ -28,6 +33,12 @@
 		}
 
 		await chats.set(await getChatList(localStorage.token));
+
+		tags.subscribe(async (value) => {
+			if (value.length === 0) {
+				await chats.set(await getChatList(localStorage.token));
+			}
+		});
 	});
 
 	const loadChat = async (id) => {
@@ -280,6 +291,29 @@
 					</div> -->
 				</div>
 			</div>
+
+			{#if $tags.length > 0}
+				<div class="px-2.5 mt-0.5 mb-2 flex gap-1 flex-wrap">
+					<button
+						class="px-2.5 text-xs font-medium bg-gray-900 hover:bg-gray-800 transition rounded-full"
+						on:click={async () => {
+							await chats.set(await getChatList(localStorage.token));
+						}}
+					>
+						all
+					</button>
+					{#each $tags as tag}
+						<button
+							class="px-2.5 text-xs font-medium bg-gray-900 hover:bg-gray-800 transition rounded-full"
+							on:click={async () => {
+								await chats.set(await getChatListByTagName(localStorage.token, tag.name));
+							}}
+						>
+							{tag.name}
+						</button>
+					{/each}
+				</div>
+			{/if}
 
 			<div class="pl-2.5 my-2 flex-1 flex flex-col space-y-1 overflow-y-auto">
 				{#each $chats.filter((chat) => {

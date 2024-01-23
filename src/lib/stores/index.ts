@@ -10,6 +10,7 @@ export const theme = writable('dark');
 export const chatId = writable('');
 
 export const chats = writable([]);
+export const tags = writable([]);
 export const models = writable([]);
 
 export const modelfiles = writable([]);

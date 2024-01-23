@@ -60,23 +60,23 @@ class ChatTitleIdResponse(BaseModel):
 
 
 class ChatTable:
-
     def __init__(self, db):
         self.db = db
         db.create_tables([Chat])
 
-    def insert_new_chat(self, user_id: str,
-                        form_data: ChatForm) -> Optional[ChatModel]:
+    def insert_new_chat(self, user_id: str, form_data: ChatForm) -> Optional[ChatModel]:
         id = str(uuid.uuid4())
         chat = ChatModel(
             **{
                 "id": id,
                 "user_id": user_id,
-                "title": form_data.chat["title"] if "title" in
-                form_data.chat else "New Chat",
+                "title": form_data.chat["title"]
+                if "title" in form_data.chat
+                else "New Chat",
                 "chat": json.dumps(form_data.chat),
                 "timestamp": int(time.time()),
-            })
+            }
+        )
 
         result = Chat.create(**chat.model_dump())
         return chat if result else None
@@ -109,25 +109,37 @@ class ChatTable:
         except:
             return None
 
-    def get_chat_lists_by_user_id(self,
-                                  user_id: str,
-                                  skip: int = 0,
-                                  limit: int = 50) -> List[ChatModel]:
+    def get_chat_lists_by_user_id(
+        self, user_id: str, skip: int = 0, limit: int = 50
+    ) -> List[ChatModel]:
         return [
-            ChatModel(**model_to_dict(chat)) for chat in Chat.select().where(
-                Chat.user_id == user_id).order_by(Chat.timestamp.desc())
+            ChatModel(**model_to_dict(chat))
+            for chat in Chat.select()
+            .where(Chat.user_id == user_id)
+            .order_by(Chat.timestamp.desc())
             # .limit(limit)
             # .offset(skip)
         ]
 
-    def get_all_chats_by_user_id(self, user_id: str) -> List[ChatModel]:
+    def get_chat_lists_by_chat_ids(
+        self, chat_ids: List[str], skip: int = 0, limit: int = 50
+    ) -> List[ChatModel]:
         return [
-            ChatModel(**model_to_dict(chat)) for chat in Chat.select().where(
-                Chat.user_id == user_id).order_by(Chat.timestamp.desc())
+            ChatModel(**model_to_dict(chat))
+            for chat in Chat.select()
+            .where(Chat.id.in_(chat_ids))
+            .order_by(Chat.timestamp.desc())
         ]
 
-    def get_chat_by_id_and_user_id(self, id: str,
-                                   user_id: str) -> Optional[ChatModel]:
+    def get_all_chats_by_user_id(self, user_id: str) -> List[ChatModel]:
+        return [
+            ChatModel(**model_to_dict(chat))
+            for chat in Chat.select()
+            .where(Chat.user_id == user_id)
+            .order_by(Chat.timestamp.desc())
+        ]
+
+    def get_chat_by_id_and_user_id(self, id: str, user_id: str) -> Optional[ChatModel]:
         try:
             chat = Chat.get(Chat.id == id, Chat.user_id == user_id)
             return ChatModel(**model_to_dict(chat))
@@ -142,8 +154,7 @@ class ChatTable:
 
     def delete_chat_by_id_and_user_id(self, id: str, user_id: str) -> bool:
         try:
-            query = Chat.delete().where((Chat.id == id)
-                                        & (Chat.user_id == user_id))
+            query = Chat.delete().where((Chat.id == id) & (Chat.user_id == user_id))
             query.execute()  # Remove the rows, return number of rows removed.
 
             return True
