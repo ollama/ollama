@@ -60,6 +60,6 @@ app.mount("/rag/api/v1", rag_app)
 
 app.mount(
     "/",
-    SPAStaticFiles(directory=str(FRONTEND_BUILD_DIR), html=True),
+    SPAStaticFiles(directory=FRONTEND_BUILD_DIR, html=True),
     name="spa-static-files",
 )

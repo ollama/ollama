@@ -111,12 +111,12 @@ def upload(file: UploadFile = File(...)):
     file_path = f"{UPLOAD_DIR}/{file.filename}"
 
     # Save file in chunks
-    with file_path.open("wb+") as f:
+    with open(file_path, "wb+") as f:
         for chunk in file.file:
             f.write(chunk)
 
     def file_process_stream():
-        total_size = os.path.getsize(str(file_path))
+        total_size = os.path.getsize(file_path)
         chunk_size = 1024 * 1024
         try:
             with open(file_path, "rb") as f:

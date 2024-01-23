@@ -25,12 +25,13 @@ except ImportError:
 # File Upload
 ####################################
 
-DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
+DATA_DIR = str(Path(os.getenv("DATA_DIR", "./data")).resolve())
 
 UPLOAD_DIR = f"{DATA_DIR}/uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-FRONTEND_BUILD_DIR = Path(os.getenv("FRONTEND_BUILD_DIR", "../build"))
+Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+
+FRONTEND_BUILD_DIR = str(Path(os.getenv("FRONTEND_BUILD_DIR", "../build")))
 
 ####################################
 # ENV (dev,test,prod)
@@ -88,7 +89,7 @@ if WEBUI_AUTH and WEBUI_JWT_SECRET_KEY == "":
 CHROMA_DATA_PATH = f"{DATA_DIR}/vector_db"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 CHROMA_CLIENT = chromadb.PersistentClient(
-    path=str(CHROMA_DATA_PATH), settings=Settings(allow_reset=True)
+    path=CHROMA_DATA_PATH, settings=Settings(allow_reset=True)
 )
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 100
