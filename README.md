@@ -39,6 +39,11 @@ If you prefer to use Webi on your platform of choice, simply:
 webi ollama
 ```
 
+### Libraries
+
+- [ollama-python](https://github.com/ollama/ollama-python)
+- [ollama-js](https://github.com/ollama/ollama-js)
+
 ## Quickstart
 
 To run and chat with [Llama 2](https://ollama.ai/library/llama2):
@@ -270,6 +275,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
 - [Amica](https://github.com/semperai/amica)
 - [chatd](https://github.com/BruceMacD/chatd)
+- [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
+
 
 ### Terminal
 
@@ -299,6 +306,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
+- [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [Ollama4j for Java](https://github.com/amithkoujalgi/ollama4j)
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
@@ -306,11 +314,14 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
 - [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
 - [LangChainDart](https://github.com/davidmigloz/langchain_dart)
+- [Semantic Kernel - Python](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama)
+- [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
+
 
 ### Mobile
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
-- [Maid](https://github.com/danemadsen/Maid)
+- [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 
 ### Extensions & Plugins
 
@@ -326,3 +337,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
 - [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
+- [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)

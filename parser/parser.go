@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 )
 
 type Command struct {
@@ -59,7 +59,7 @@ func Parse(reader io.Reader) ([]Command, error) {
 		default:
 			if !bytes.HasPrefix(fields[0], []byte("#")) {
 				// log a warning for unknown commands
-				log.Printf("WARNING: Unknown command: %s", fields[0])
+				slog.Warn(fmt.Sprintf("Unknown command: %s", fields[0]))
 			}
 			continue
 		}
