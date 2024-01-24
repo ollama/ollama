@@ -33,7 +33,6 @@ import (
 	"github.com/jmorganca/ollama/format"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/progress"
-	"github.com/jmorganca/ollama/readline"
 	"github.com/jmorganca/ollama/server"
 	"github.com/jmorganca/ollama/version"
 )
@@ -135,7 +134,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile)}
-	if err := client.Create(context.Background(), &request, fn); err != nil {
+	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
 
@@ -150,11 +149,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	// check if the model exists on the server
-	_, err = client.Show(context.Background(), &api.ShowRequest{Name: name})
+	_, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
 	var statusError api.StatusError
 	switch {
 	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
-		if err := PullHandler(cmd, args); err != nil {
+		if err := PullHandler(cmd, []string{name}); err != nil {
 			return err
 		}
 	case err != nil:
@@ -210,7 +209,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
-	if err := client.Push(context.Background(), &request, fn); err != nil {
+	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
 
@@ -224,7 +223,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	models, err := client.List(context.Background())
+	models, err := client.List(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -259,7 +258,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 
 	for _, name := range args {
 		req := api.DeleteRequest{Name: name}
-		if err := client.Delete(context.Background(), &req); err != nil {
+		if err := client.Delete(cmd.Context(), &req); err != nil {
 			return err
 		}
 		fmt.Printf("deleted '%s'\n", name)
@@ -324,7 +323,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	req := api.ShowRequest{Name: args[0]}
-	resp, err := client.Show(context.Background(), &req)
+	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return err
 	}
@@ -352,7 +351,7 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	req := api.CopyRequest{Source: args[0], Destination: args[1]}
-	if err := client.Copy(context.Background(), &req); err != nil {
+	if err := client.Copy(cmd.Context(), &req); err != nil {
 		return err
 	}
 	fmt.Printf("copied '%s' to '%s'\n", args[0], args[1])
@@ -406,7 +405,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	if err := client.Pull(context.Background(), &request, fn); err != nil {
+	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
 
@@ -414,13 +413,21 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 }
 
 func RunGenerate(cmd *cobra.Command, args []string) error {
+	interactive := true
+
+	opts := runOptions{
+		Model:    args[0],
+		WordWrap: os.Getenv("TERM") == "xterm-256color",
+		Options:  map[string]interface{}{},
+	}
+
 	format, err := cmd.Flags().GetString("format")
 	if err != nil {
 		return err
 	}
+	opts.Format = format
 
 	prompts := args[1:]
-
 	// prepend stdin to the prompt if provided
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		in, err := io.ReadAll(os.Stdin)
@@ -429,34 +436,158 @@ func RunGenerate(cmd *cobra.Command, args []string) error {
 		}
 
 		prompts = append([]string{string(in)}, prompts...)
+		opts.WordWrap = false
+		interactive = false
 	}
-
-	// output is being piped
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return generate(cmd, args[0], strings.Join(prompts, " "), false, format)
+	opts.Prompt = strings.Join(prompts, " ")
+	if len(prompts) > 0 {
+		interactive = false
 	}
-
-	wordWrap := os.Getenv("TERM") == "xterm-256color"
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
 	if err != nil {
 		return err
 	}
-	if nowrap {
-		wordWrap = false
+	opts.WordWrap = !nowrap
+
+	if !interactive {
+		return generate(cmd, opts)
 	}
 
-	// prompts are provided via stdin or args so don't enter interactive mode
-	if len(prompts) > 0 {
-		return generate(cmd, args[0], strings.Join(prompts, " "), wordWrap, format)
-	}
-
-	return generateInteractive(cmd, args[0], wordWrap, format)
+	return generateInteractive(cmd, opts)
 }
 
 type generateContextKey string
 
-func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format string) error {
+type runOptions struct {
+	Model    string
+	Prompt   string
+	Messages []api.Message
+	WordWrap bool
+	Format   string
+	System   string
+	Template string
+	Images   []api.ImageData
+	Options  map[string]interface{}
+}
+
+type displayResponseState struct {
+	lineLength int
+	wordBuffer string
+}
+
+func displayResponse(content string, wordWrap bool, state *displayResponseState) {
+	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	if wordWrap && termWidth >= 10 {
+		for _, ch := range content {
+			if state.lineLength+1 > termWidth-5 {
+				if len(state.wordBuffer) > termWidth-10 {
+					fmt.Printf("%s%c", state.wordBuffer, ch)
+					state.wordBuffer = ""
+					state.lineLength = 0
+					continue
+				}
+
+				// backtrack the length of the last word and clear to the end of the line
+				fmt.Printf("\x1b[%dD\x1b[K\n", len(state.wordBuffer))
+				fmt.Printf("%s%c", state.wordBuffer, ch)
+				state.lineLength = len(state.wordBuffer) + 1
+			} else {
+				fmt.Print(string(ch))
+				state.lineLength += 1
+
+				switch ch {
+				case ' ':
+					state.wordBuffer = ""
+				case '\n':
+					state.lineLength = 0
+				default:
+					state.wordBuffer += string(ch)
+				}
+			}
+		}
+	} else {
+		fmt.Printf("%s%s", state.wordBuffer, content)
+		if len(state.wordBuffer) > 0 {
+			state.wordBuffer = ""
+		}
+	}
+}
+
+func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.StopAndClear()
+
+	spinner := progress.NewSpinner("")
+	p.Add("", spinner)
+
+	cancelCtx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	var state *displayResponseState = &displayResponseState{}
+	var latest api.ChatResponse
+	var fullResponse strings.Builder
+	var role string
+
+	fn := func(response api.ChatResponse) error {
+		p.StopAndClear()
+
+		latest = response
+
+		role = response.Message.Role
+		content := response.Message.Content
+		fullResponse.WriteString(content)
+
+		displayResponse(content, opts.WordWrap, state)
+
+		return nil
+	}
+
+	req := &api.ChatRequest{
+		Model:    opts.Model,
+		Messages: opts.Messages,
+		Format:   opts.Format,
+		Options:  opts.Options,
+	}
+
+	if err := client.Chat(cancelCtx, req, fn); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if len(opts.Messages) > 0 {
+		fmt.Println()
+		fmt.Println()
+	}
+
+	verbose, err := cmd.Flags().GetBool("verbose")
+	if err != nil {
+		return nil, err
+	}
+
+	if verbose {
+		latest.Summary()
+	}
+
+	return &api.Message{Role: role, Content: fullResponse.String()}, nil
+}
+
+func generate(cmd *cobra.Command, opts runOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -475,77 +606,54 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 		generateContext = []int{}
 	}
 
-	termWidth, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		wordWrap = false
-	}
-
-	cancelCtx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT)
-	var abort bool
 
 	go func() {
 		<-sigChan
 		cancel()
-		abort = true
 	}()
 
-	var currentLineLength int
-	var wordBuffer string
+	var state *displayResponseState = &displayResponseState{}
 
-	request := api.GenerateRequest{Model: model, Prompt: prompt, Context: generateContext, Format: format}
 	fn := func(response api.GenerateResponse) error {
 		p.StopAndClear()
 
 		latest = response
+		content := response.Response
 
-		if wordWrap {
-			for _, ch := range response.Response {
-				if currentLineLength+1 > termWidth-5 {
-					// backtrack the length of the last word and clear to the end of the line
-					fmt.Printf("\x1b[%dD\x1b[K\n", len(wordBuffer))
-					fmt.Printf("%s%c", wordBuffer, ch)
-					currentLineLength = len(wordBuffer) + 1
-				} else {
-					fmt.Print(string(ch))
-					currentLineLength += 1
-
-					switch ch {
-					case ' ':
-						wordBuffer = ""
-					case '\n':
-						currentLineLength = 0
-					default:
-						wordBuffer += string(ch)
-					}
-				}
-			}
-		} else {
-			fmt.Print(response.Response)
-		}
+		displayResponse(content, opts.WordWrap, state)
 
 		return nil
 	}
 
-	if err := client.Generate(cancelCtx, &request, fn); err != nil {
-		if strings.Contains(err.Error(), "context canceled") && abort {
+	request := api.GenerateRequest{
+		Model:    opts.Model,
+		Prompt:   opts.Prompt,
+		Context:  generateContext,
+		Format:   opts.Format,
+		System:   opts.System,
+		Template: opts.Template,
+		Options:  opts.Options,
+	}
+
+	if err := client.Generate(ctx, &request, fn); err != nil {
+		if errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return err
 	}
-	if prompt != "" {
+
+	if opts.Prompt != "" {
 		fmt.Println()
 		fmt.Println()
 	}
 
 	if !latest.Done {
-		if abort {
-			return nil
-		}
-		return errors.New("unexpected end of response")
+		return nil
 	}
 
 	verbose, err := cmd.Flags().GetBool("verbose")
@@ -557,216 +665,10 @@ func generate(cmd *cobra.Command, model, prompt string, wordWrap bool, format st
 		latest.Summary()
 	}
 
-	ctx := cmd.Context()
-	ctx = context.WithValue(ctx, generateContextKey("context"), latest.Context)
+	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
 	cmd.SetContext(ctx)
 
 	return nil
-}
-
-func generateInteractive(cmd *cobra.Command, model string, wordWrap bool, format string) error {
-	// load the model
-	if err := generate(cmd, model, "", false, ""); err != nil {
-		return err
-	}
-
-	usage := func() {
-		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set         Set session variables")
-		fmt.Fprintln(os.Stderr, "  /show        Show model information")
-		fmt.Fprintln(os.Stderr, "  /bye         Exit")
-		fmt.Fprintln(os.Stderr, "  /?, /help    Help for a command")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
-		fmt.Fprintln(os.Stderr, "")
-	}
-
-	usageSet := func() {
-		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set history      Enable history")
-		fmt.Fprintln(os.Stderr, "  /set nohistory    Disable history")
-		fmt.Fprintln(os.Stderr, "  /set wordwrap     Enable wordwrap")
-		fmt.Fprintln(os.Stderr, "  /set nowordwrap   Disable wordwrap")
-		fmt.Fprintln(os.Stderr, "  /set format json  Enable JSON mode")
-		fmt.Fprintln(os.Stderr, "  /set noformat     Disable formatting")
-		fmt.Fprintln(os.Stderr, "  /set verbose      Show LLM stats")
-		fmt.Fprintln(os.Stderr, "  /set quiet        Disable LLM stats")
-		fmt.Fprintln(os.Stderr, "")
-	}
-
-	usageShow := func() {
-		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /show license      Show model license")
-		fmt.Fprintln(os.Stderr, "  /show modelfile    Show Modelfile for this model")
-		fmt.Fprintln(os.Stderr, "  /show parameters   Show parameters for this model")
-		fmt.Fprintln(os.Stderr, "  /show system       Show system prompt")
-		fmt.Fprintln(os.Stderr, "  /show template     Show prompt template")
-		fmt.Fprintln(os.Stderr, "")
-	}
-
-	prompt := readline.Prompt{
-		Prompt:         ">>> ",
-		AltPrompt:      "... ",
-		Placeholder:    "Send a message (/? for help)",
-		AltPlaceholder: `Use """ to end multi-line input`,
-	}
-
-	scanner, err := readline.New(prompt)
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(readline.StartBracketedPaste)
-	defer fmt.Printf(readline.EndBracketedPaste)
-
-	var multiLineBuffer string
-
-	for {
-		line, err := scanner.Readline()
-		switch {
-		case errors.Is(err, io.EOF):
-			fmt.Println()
-			return nil
-		case errors.Is(err, readline.ErrInterrupt):
-			if line == "" {
-				fmt.Println("\nUse Ctrl-D or /bye to exit.")
-			}
-
-			continue
-		case err != nil:
-			return err
-		}
-
-		line = strings.TrimSpace(line)
-
-		switch {
-		case scanner.Prompt.UseAlt:
-			if strings.HasSuffix(line, `"""`) {
-				scanner.Prompt.UseAlt = false
-				multiLineBuffer += strings.TrimSuffix(line, `"""`)
-				line = multiLineBuffer
-				multiLineBuffer = ""
-			} else {
-				multiLineBuffer += line + " "
-				continue
-			}
-		case strings.HasPrefix(line, `"""`):
-			scanner.Prompt.UseAlt = true
-			multiLineBuffer = strings.TrimPrefix(line, `"""`) + " "
-			continue
-		case strings.HasPrefix(line, "/list"):
-			args := strings.Fields(line)
-			if err := ListHandler(cmd, args[1:]); err != nil {
-				return err
-			}
-		case strings.HasPrefix(line, "/set"):
-			args := strings.Fields(line)
-			if len(args) > 1 {
-				switch args[1] {
-				case "history":
-					scanner.HistoryEnable()
-				case "nohistory":
-					scanner.HistoryDisable()
-				case "wordwrap":
-					wordWrap = true
-					fmt.Println("Set 'wordwrap' mode.")
-				case "nowordwrap":
-					wordWrap = false
-					fmt.Println("Set 'nowordwrap' mode.")
-				case "verbose":
-					cmd.Flags().Set("verbose", "true")
-					fmt.Println("Set 'verbose' mode.")
-				case "quiet":
-					cmd.Flags().Set("verbose", "false")
-					fmt.Println("Set 'quiet' mode.")
-				case "format":
-					if len(args) < 3 || args[2] != "json" {
-						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
-					} else {
-						format = args[2]
-						fmt.Printf("Set format to '%s' mode.\n", args[2])
-					}
-				case "noformat":
-					format = ""
-					fmt.Println("Disabled format.")
-				default:
-					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
-				}
-			} else {
-				usageSet()
-			}
-		case strings.HasPrefix(line, "/show"):
-			args := strings.Fields(line)
-			if len(args) > 1 {
-				client, err := api.ClientFromEnvironment()
-				if err != nil {
-					fmt.Println("error: couldn't connect to ollama server")
-					return err
-				}
-				resp, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model})
-				if err != nil {
-					fmt.Println("error: couldn't get model")
-					return err
-				}
-
-				switch args[1] {
-				case "license":
-					if resp.License == "" {
-						fmt.Print("No license was specified for this model.\n\n")
-					} else {
-						fmt.Println(resp.License)
-					}
-				case "modelfile":
-					fmt.Println(resp.Modelfile)
-				case "parameters":
-					if resp.Parameters == "" {
-						fmt.Print("No parameters were specified for this model.\n\n")
-					} else {
-						fmt.Println(resp.Parameters)
-					}
-				case "system":
-					if resp.System == "" {
-						fmt.Print("No system prompt was specified for this model.\n\n")
-					} else {
-						fmt.Println(resp.System)
-					}
-				case "template":
-					if resp.Template == "" {
-						fmt.Print("No prompt template was specified for this model.\n\n")
-					} else {
-						fmt.Println(resp.Template)
-					}
-				default:
-					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
-				}
-			} else {
-				usageShow()
-			}
-		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
-			args := strings.Fields(line)
-			if len(args) > 1 {
-				switch args[1] {
-				case "set", "/set":
-					usageSet()
-				case "show", "/show":
-					usageShow()
-				}
-			} else {
-				usage()
-			}
-		case line == "/exit", line == "/bye":
-			return nil
-		case strings.HasPrefix(line, "/"):
-			args := strings.Fields(line)
-			fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
-		}
-
-		if len(line) > 0 && line[0] != '/' {
-			if err := generate(cmd, model, line, wordWrap, format); err != nil {
-				return err
-			}
-		}
-	}
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
@@ -787,12 +689,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	var origins []string
-	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
-		origins = strings.Split(o, ",")
-	}
-
-	return server.Serve(ln, origins)
+	return server.Serve(ln)
 }
 
 func initializeKeypair() error {
@@ -844,7 +741,7 @@ func initializeKeypair() error {
 	return nil
 }
 
-func startMacApp(client *api.Client) error {
+func startMacApp(ctx context.Context, client *api.Client) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -868,24 +765,24 @@ func startMacApp(client *api.Client) error {
 		case <-timeout:
 			return errors.New("timed out waiting for server to start")
 		case <-tick:
-			if err := client.Heartbeat(context.Background()); err == nil {
+			if err := client.Heartbeat(ctx); err == nil {
 				return nil // server has started
 			}
 		}
 	}
 }
 
-func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
+func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
-	if err := client.Heartbeat(context.Background()); err != nil {
+	if err := client.Heartbeat(cmd.Context()); err != nil {
 		if !strings.Contains(err.Error(), "connection refused") {
 			return err
 		}
 		if runtime.GOOS == "darwin" {
-			if err := startMacApp(client); err != nil {
+			if err := startMacApp(cmd.Context(), client); err != nil {
 				return fmt.Errorf("could not connect to ollama app, is it running?")
 			}
 		} else {
@@ -895,8 +792,29 @@ func checkServerHeartbeat(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+func versionHandler(cmd *cobra.Command, _ []string) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return
+	}
+
+	serverVersion, err := client.Version(cmd.Context())
+	if err != nil {
+		fmt.Println("Warning: could not connect to a running Ollama instance")
+	}
+
+	if serverVersion != "" {
+		fmt.Printf("ollama version is %s\n", serverVersion)
+	}
+
+	if serverVersion != version.Version {
+		fmt.Printf("Warning: client version is %s\n", version.Version)
+	}
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	cobra.EnableCommandSorting = false
 
 	if runtime.GOOS == "windows" {
 		// Enable colorful ANSI escape code in Windows terminal (disabled by default)
@@ -911,10 +829,17 @@ func NewCLI() *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		Version: version.Version,
+		Run: func(cmd *cobra.Command, args []string) {
+			if version, _ := cmd.Flags().GetBool("version"); version {
+				versionHandler(cmd, args)
+				return
+			}
+
+			cmd.Print(cmd.UsageString())
+		},
 	}
 
-	cobra.EnableCommandSorting = false
+	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
@@ -938,7 +863,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("modelfile", false, "Show Modelfile of a model")
 	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")
 	showCmd.Flags().Bool("template", false, "Show template of a model")
-	showCmd.Flags().Bool("system", false, "Show system prompt of a model")
+	showCmd.Flags().Bool("system", false, "Show system message of a model")
 
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",

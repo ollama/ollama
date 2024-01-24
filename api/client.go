@@ -221,6 +221,19 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn Generate
 	})
 }
 
+type ChatResponseFunc func(ChatResponse) error
+
+func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/chat", req, func(bts []byte) error {
+		var resp ChatResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		return fn(resp)
+	})
+}
+
 type PullProgressFunc func(ProgressResponse) error
 
 func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
@@ -296,6 +309,13 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	}
 	return nil
 }
+func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
+	var resp EmbeddingResponse
+	if err := c.do(ctx, http.MethodPost, "/api/embeddings", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
 
 func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {
 	if err := c.do(ctx, http.MethodHead, fmt.Sprintf("/api/blobs/%s", digest), nil, nil); err != nil {
@@ -310,4 +330,16 @@ func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) err
 	}
 
 	return nil
+}
+
+func (c *Client) Version(ctx context.Context) (string, error) {
+	var version struct {
+		Version string `json:"version"`
+	}
+
+	if err := c.do(ctx, http.MethodGet, "/api/version", nil, &version); err != nil {
+		return "", err
+	}
+
+	return version.Version, nil
 }

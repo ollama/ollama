@@ -1,6 +1,9 @@
 node_modules
+bun.lockb
+.vscode
 # OSX
 .DS_STORE
+
 
 # Models
 models/

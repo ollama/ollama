@@ -16,6 +16,20 @@ type Prompt struct {
 	UseAlt         bool
 }
 
+func (p *Prompt) prompt() string {
+	if p.UseAlt {
+		return p.AltPrompt
+	}
+	return p.Prompt
+}
+
+func (p *Prompt) placeholder() string {
+	if p.UseAlt {
+		return p.AltPlaceholder
+	}
+	return p.Placeholder
+}
+
 type Terminal struct {
 	outchan chan rune
 }
@@ -24,6 +38,7 @@ type Instance struct {
 	Prompt   *Prompt
 	Terminal *Terminal
 	History  *History
+	Pasting  bool
 }
 
 func New(prompt Prompt) (*Instance, error) {
@@ -45,8 +60,9 @@ func New(prompt Prompt) (*Instance, error) {
 }
 
 func (i *Instance) Readline() (string, error) {
-	prompt := i.Prompt.Prompt
-	if i.Prompt.UseAlt {
+	prompt := i.Prompt.prompt()
+	if i.Pasting {
+		// force alt prompt when pasting
 		prompt = i.Prompt.AltPrompt
 	}
 	fmt.Print(prompt)
@@ -56,6 +72,7 @@ func (i *Instance) Readline() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// nolint: errcheck
 	defer UnsetRawMode(fd, termios)
 
 	buf, _ := NewBuffer(i.Prompt)
@@ -63,16 +80,14 @@ func (i *Instance) Readline() (string, error) {
 	var esc bool
 	var escex bool
 	var metaDel bool
-	var pasteMode PasteMode
 
 	var currentLineBuf []rune
 
 	for {
-		if buf.IsEmpty() {
-			ph := i.Prompt.Placeholder
-			if i.Prompt.UseAlt {
-				ph = i.Prompt.AltPlaceholder
-			}
+		// don't show placeholder when pasting unless we're in multiline mode
+		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
+		if buf.IsEmpty() && showPlaceholder {
+			ph := i.Prompt.placeholder()
 			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
 		}
 
@@ -119,9 +134,9 @@ func (i *Instance) Readline() (string, error) {
 					code += string(r)
 				}
 				if code == CharBracketedPasteStart {
-					pasteMode = PasteModeStart
+					i.Pasting = true
 				} else if code == CharBracketedPasteEnd {
-					pasteMode = PasteModeEnd
+					i.Pasting = false
 				}
 			case KeyDel:
 				if buf.Size() > 0 {
@@ -189,6 +204,8 @@ func (i *Instance) Readline() (string, error) {
 			buf.ClearScreen()
 		case CharCtrlW:
 			buf.DeleteWord()
+		case CharCtrlZ:
+			return handleCharCtrlZ(fd, termios)
 		case CharEnter:
 			output := buf.String()
 			if output != "" {
@@ -196,12 +213,7 @@ func (i *Instance) Readline() (string, error) {
 			}
 			buf.MoveToEnd()
 			fmt.Println()
-			switch pasteMode {
-			case PasteModeStart:
-				output = `"""` + output
-			case PasteModeEnd:
-				output = output + `"""`
-			}
+
 			return output, nil
 		default:
 			if metaDel {
