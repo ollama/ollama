@@ -136,12 +136,21 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 
 	sparams.n_threads = C.uint(opts.NumThread)
 
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		sparams.verbose_logging = C.bool(true)
+	} else {
+		sparams.verbose_logging = C.bool(false)
+	}
+
 	slog.Info("Initializing llama server")
 	initResp := newExtServerResp(128)
 	defer freeExtServerResp(initResp)
 	C.dyn_llama_server_init(llm.s, &sparams, &initResp)
 	if initResp.id < 0 {
-		return nil, extServerResponseToErr(initResp)
+		mutex.Unlock()
+		err := extServerResponseToErr(initResp)
+		slog.Debug(fmt.Sprintf("failure during initialization: %s", err))
+		return nil, err
 	}
 
 	slog.Info("Starting llama main loop")

@@ -45,6 +45,7 @@ typedef struct ext_server_params {
   bool embedding;        // get only sentence embedding
   ext_server_lora_adapter_t *lora_adapters;
   char *mmproj;
+  bool verbose_logging;  // Enable verbose logging of the server
 } ext_server_params_t;
 
 typedef struct ext_server_task_result {

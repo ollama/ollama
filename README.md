@@ -31,6 +31,11 @@ curl https://ollama.ai/install.sh | sh
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
+### Libraries
+
+- [ollama-python](https://github.com/ollama/ollama-python)
+- [ollama-js](https://github.com/ollama/ollama-js)
+
 ## Quickstart
 
 To run and chat with [Llama 2](https://ollama.ai/library/llama2):
@@ -248,10 +253,6 @@ curl http://localhost:11434/api/chat -d '{
 
 See the [API documentation](./docs/api.md) for all endpoints.
 
-## Integrations
-
-- [ollama-python](https://github.com/jmorganca/ollama-python)
-
 ## Community Integrations
 
 ### Web & Desktop
@@ -329,3 +330,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)
 - [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
+

@@ -3,22 +3,44 @@
 // Necessary evil since the server types are not defined in a header
 #include "server.cpp"
 
+// Low level API access to verify GPU access
+#if defined(GGML_USE_CUBLAS)
+#if defined(GGML_USE_HIPBLAS)
+#include <hip/hip_runtime.h>
+#include <hipblas/hipblas.h>
+#include <hip/hip_fp16.h>
+#ifdef __HIP_PLATFORM_AMD__
+// for rocblas_initialize()
+#include "rocblas/rocblas.h"
+#endif // __HIP_PLATFORM_AMD__
+#define cudaGetDevice hipGetDevice
+#define cudaError_t hipError_t
+#define cudaSuccess hipSuccess
+#define cudaGetErrorString hipGetErrorString
+#else
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+#include <cuda_fp16.h>
+#endif // defined(GGML_USE_HIPBLAS)
+#endif // GGML_USE_CUBLAS
+
 // Expose the llama server as a callable extern "C" API
 llama_server_context *llama = NULL;
 std::atomic<bool> ext_server_running(false);
 std::thread ext_server_thread;
 
 void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
-#if SERVER_VERBOSE != 1
-  log_disable();
-#endif
-  LOG_TEE("system info: %s", llama_print_system_info());
   assert(err != NULL && sparams != NULL);
+  log_set_target(stderr);
+  if (!sparams->verbose_logging) {
+    log_disable();
+  }
+
+  LOG_TEE("system info: %s\n", llama_print_system_info());
   err->id = 0;
   err->msg[0] = '\0';
   try {
     llama = new llama_server_context;
-    log_set_target(stdout);
     gpt_params params;
     params.n_ctx = sparams->n_ctx;
     params.n_batch = sparams->n_batch;
@@ -59,6 +81,18 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     if (sparams->mmproj != NULL) {
       params.mmproj = std::string(sparams->mmproj);
     }
+
+#if defined(GGML_USE_CUBLAS)
+    // Before attempting to init the backend which will assert on error, verify the CUDA/ROCM GPU is accessible
+    LOG_TEE("Performing pre-initialization of GPU\n");
+    int id;
+    cudaError_t cudaErr = cudaGetDevice(&id);
+    if (cudaErr != cudaSuccess) {
+      err->id = -1;
+      snprintf(err->msg, err->msg_len, "Unable to init GPU: %s", cudaGetErrorString(cudaErr));
+      return;
+    }
+#endif
 
     llama_backend_init(params.numa);
 
