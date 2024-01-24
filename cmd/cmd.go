@@ -393,6 +393,8 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 		model, err := server.GetModel(tag)
 		if err != nil {
+			slog.Info(fmt.Sprintf("skipping tag '%s'", tag))
+			// nolint: nilerr
 			return nil
 		}
 
