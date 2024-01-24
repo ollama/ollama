@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -357,6 +358,62 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 }
 
 func PullHandler(cmd *cobra.Command, args []string) error {
+	upgradeAll, err := cmd.Flags().GetBool("upgrade-all")
+	if err != nil {
+		return err
+	}
+
+	if !upgradeAll {
+		if len(args) == 0 {
+			return fmt.Errorf("no model specified to pull")
+		}
+		return pull(cmd, args[0], "")
+	}
+
+	fp, err := server.GetManifestPath()
+	if err != nil {
+		return err
+	}
+
+	type modelInfo struct {
+		Name   string
+		Digest string
+	}
+
+	var modelList []modelInfo
+
+	walkFunc := func(path string, info os.FileInfo, _ error) error {
+		if info.IsDir() {
+			return nil
+		}
+
+		dir, file := filepath.Split(path)
+		dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
+		tag := strings.Join([]string{dir, file}, ":")
+
+		model, err := server.GetModel(tag)
+		if err != nil {
+			return nil
+		}
+
+		modelList = append(modelList, modelInfo{tag, "sha256:" + model.Digest})
+		return nil
+	}
+
+	if err = filepath.Walk(fp, walkFunc); err != nil {
+		return err
+	}
+
+	for _, m := range modelList {
+		err = pull(cmd, m.Name, m.Digest)
+		if err != nil {
+			slog.Warn(fmt.Sprintf("couldn't pull model '%s'", m.Name))
+		}
+	}
+	return nil
+}
+
+func pull(cmd *cobra.Command, name string, currentDigest string) error {
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
 		return err
@@ -368,7 +425,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	p := progress.NewProgress(os.Stderr)
-	defer p.Stop()
+	defer p.StopWithoutClear()
 
 	bars := make(map[string]*progress.Bar)
 
@@ -402,7 +459,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
+	request := api.PullRequest{Name: name, Insecure: insecure, CurrentDigest: currentDigest}
 	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -884,12 +941,13 @@ func NewCLI() *cobra.Command {
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
 		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.RangeArgs(0, 1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PullHandler,
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("upgrade-all", false, "Upgrade all models if they're out of date")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",

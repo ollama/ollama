@@ -471,7 +471,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 				switch {
 				case errors.Is(err, os.ErrNotExist):
 					fn(api.ProgressResponse{Status: "pulling model"})
-					if err := PullModel(ctx, c.Args, &RegistryOptions{}, fn); err != nil {
+					if err := PullModel(ctx, c.Args, "", &RegistryOptions{}, fn); err != nil {
 						return err
 					}
 
@@ -1041,7 +1041,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func PullModel(ctx context.Context, name, currentDigest string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	var manifest *ManifestV2
@@ -1069,11 +1069,21 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 		return fmt.Errorf("insecure protocol http")
 	}
 
-	fn(api.ProgressResponse{Status: "pulling manifest"})
+	if currentDigest == "" {
+		fn(api.ProgressResponse{Status: "pulling manifest"})
+	}
 
-	manifest, err = pullModelManifest(ctx, mp, regOpts)
+	manifest, err = pullModelManifest(ctx, mp, currentDigest, regOpts)
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
+	}
+
+	if currentDigest != "" {
+		if manifest == nil {
+			// we already have the model
+			return nil
+		}
+		fn(api.ProgressResponse{Status: "upgrading " + mp.GetShortTagname()})
 	}
 
 	var layers []*Layer
@@ -1147,16 +1157,26 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	return nil
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, error) {
+func pullModelManifest(ctx context.Context, mp ModelPath, currentDigest string, regOpts *RegistryOptions) (*ManifestV2, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+
+	if currentDigest != "" {
+		headers.Set("If-None-Match", currentDigest)
+	}
+
 	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// todo we can potentially read the manifest locally and return it here
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, nil
+	}
 
 	var m *ManifestV2
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
