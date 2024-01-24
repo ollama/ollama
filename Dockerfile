@@ -55,4 +55,4 @@ COPY --from=build /app/build /app/build
 # copy backend files
 COPY ./backend .
 
-CMD [ "sh", "start.sh"]
+CMD [ "bash", "start.sh"]
