@@ -268,6 +268,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Amica](https://github.com/semperai/amica)
 - [chatd](https://github.com/BruceMacD/chatd)
 - [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
+- [Aide](https://github.com/codestoryai)
 
 
 ### Terminal
