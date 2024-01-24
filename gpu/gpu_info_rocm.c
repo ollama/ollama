@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-#define ROCM_LOOKUP_SIZE 5
+#define ROCM_LOOKUP_SIZE 14
 
 void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
   rsmi_status_t ret;
@@ -21,7 +21,15 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
       {"rsmi_dev_memory_total_get", (void *)&resp->rh.totalMemFn},
       {"rsmi_dev_memory_usage_get", (void *)&resp->rh.usageMemFn},
       {"rsmi_version_get", (void *)&resp->rh.versionGetFn},
-      // { "rsmi_dev_id_get", (void*)&resp->rh.getHandle },
+      {"rsmi_num_monitor_devices", (void*)&resp->rh.rsmi_num_monitor_devices},
+      {"rsmi_dev_id_get", (void*)&resp->rh.rsmi_dev_id_get},
+      {"rsmi_dev_name_get", (void *)&resp->rh.rsmi_dev_name_get},
+      {"rsmi_dev_brand_get", (void *)&resp->rh.rsmi_dev_brand_get},
+      {"rsmi_dev_vendor_name_get", (void *)&resp->rh.rsmi_dev_vendor_name_get},
+      {"rsmi_dev_vram_vendor_get", (void *)&resp->rh.rsmi_dev_vram_vendor_get},
+      {"rsmi_dev_serial_number_get", (void *)&resp->rh.rsmi_dev_serial_number_get},
+      {"rsmi_dev_subsystem_name_get", (void *)&resp->rh.rsmi_dev_subsystem_name_get},
+      {"rsmi_dev_vbios_version_get", (void *)&resp->rh.rsmi_dev_vbios_version_get},
   };
 
   resp->rh.handle = LOAD_LIBRARY(rocm_lib_path, RTLD_LAZY);
@@ -62,8 +70,6 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
 
 void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
   resp->err = NULL;
-  // uint32_t num_devices;
-  // uint16_t device;
   uint64_t totalMem = 0;
   uint64_t usedMem = 0;
   rsmi_status_t ret;
@@ -76,34 +82,82 @@ void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
     return;
   }
 
-  // TODO - iterate through devices...  ret =
-  // rsmi_num_monitor_devices(&num_devices);
-
-  // ret = (*h.getHandle)(0, &device);
-  // if (ret != RSMI_STATUS_SUCCESS) {
-  //     printf("rocm vram device lookup failure: %d\n", ret);
-  //     return -1;
-  // }
-
-  // Get total memory - used memory for available memory
-  ret = (*h.totalMemFn)(0, RSMI_MEM_TYPE_VRAM, &totalMem);
+  ret = (*h.rsmi_num_monitor_devices)(&resp->count);
   if (ret != RSMI_STATUS_SUCCESS) {
-    snprintf(buf, buflen, "rocm total mem lookup failure: %d", ret);
+    snprintf(buf, buflen, "unable to get device count: %d", ret);
     resp->err = strdup(buf);
     return;
   }
-  ret = (*h.usageMemFn)(0, RSMI_MEM_TYPE_VRAM, &usedMem);
-  if (ret != RSMI_STATUS_SUCCESS) {
-    snprintf(buf, buflen, "rocm usage mem lookup failure: %d", ret);
-    resp->err = strdup(buf);
-    return;
-  }
+  LOG(h.verbose, "discovered %d ROCm GPU Devices\n", resp->count);
 
-  // TODO: set this to the actual number of devices
-  resp->count = 1;
-  resp->total = totalMem;
-  resp->free = totalMem - usedMem;
-  return;
+  resp->total = 0;
+  resp->free = 0;
+  for (i = 0; i < resp->count; i++) {
+    if (h.verbose) {
+      // When in verbose mode, report more information about
+      // the card we discover, but don't fail on error
+      ret = (*h.rsmi_dev_name_get)(i, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "rsmi_dev_name_get failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] ROCm device name: %s\n", i, buf);
+      }
+      ret = (*h.rsmi_dev_brand_get)(i, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "rsmi_dev_brand_get failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] ROCm brand: %s\n", i, buf);
+      }
+      ret = (*h.rsmi_dev_vendor_name_get)(i, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "rsmi_dev_vendor_name_get failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] ROCm vendor: %s\n", i, buf);
+      }
+      ret = (*h.rsmi_dev_vram_vendor_get)(i, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "rsmi_dev_vram_vendor_get failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] ROCm VRAM vendor: %s\n", i, buf);
+      }
+      ret = (*h.rsmi_dev_serial_number_get)(i, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "rsmi_dev_serial_number_get failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] ROCm S/N: %s\n", i, buf);
+      }
+      ret = (*h.rsmi_dev_subsystem_name_get)(i, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "rsmi_dev_subsystem_name_get failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] ROCm subsystem name: %s\n", i, buf);
+      }
+      ret = (*h.rsmi_dev_vbios_version_get)(i, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "rsmi_dev_vbios_version_get failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] ROCm vbios version: %s\n", i, buf);
+      }
+    }
+
+    // Get total memory - used memory for available memory
+    ret = (*h.totalMemFn)(i, RSMI_MEM_TYPE_VRAM, &totalMem);
+    if (ret != RSMI_STATUS_SUCCESS) {
+      snprintf(buf, buflen, "rocm total mem lookup failure: %d", ret);
+      resp->err = strdup(buf);
+      return;
+    }
+    ret = (*h.usageMemFn)(i, RSMI_MEM_TYPE_VRAM, &usedMem);
+    if (ret != RSMI_STATUS_SUCCESS) {
+      snprintf(buf, buflen, "rocm usage mem lookup failure: %d", ret);
+      resp->err = strdup(buf);
+      return;
+    }
+    LOG(h.verbose, "[%d] ROCm totalMem %ld\n", i, totalMem);
+    LOG(h.verbose, "[%d] ROCm usedMem %ld\n", i, usedMem);
+    resp->total += totalMem;
+    resp->free += totalMem - usedMem;
+  }
 }
 
 void rocm_get_version(rocm_handle_t h, rocm_version_resp_t *resp) {

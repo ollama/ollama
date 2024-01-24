@@ -24,12 +24,21 @@ typedef enum rsmi_memory_type {
 
 typedef struct rocm_handle {
   void *handle;
+  uint16_t verbose;
   rsmi_status_t (*initFn)(uint64_t);
   rsmi_status_t (*shutdownFn)(void);
   rsmi_status_t (*totalMemFn)(uint32_t, rsmi_memory_type_t, uint64_t *);
   rsmi_status_t (*usageMemFn)(uint32_t, rsmi_memory_type_t, uint64_t *);
   rsmi_status_t (*versionGetFn) (rsmi_version_t *version);
-  // rsmi_status_t (*getHandle)(uint32_t, uint16_t *);
+  rsmi_status_t (*rsmi_num_monitor_devices) (uint32_t *);
+  rsmi_status_t (*rsmi_dev_id_get)(uint32_t, uint16_t *);
+  rsmi_status_t (*rsmi_dev_name_get) (uint32_t,char *,size_t);
+  rsmi_status_t (*rsmi_dev_brand_get) (uint32_t, char *, uint32_t);		
+  rsmi_status_t (*rsmi_dev_vendor_name_get) (uint32_t, char *, uint32_t);		
+  rsmi_status_t (*rsmi_dev_vram_vendor_get) (uint32_t, char *, uint32_t);		
+  rsmi_status_t (*rsmi_dev_serial_number_get) (uint32_t, char *, uint32_t);		
+  rsmi_status_t (*rsmi_dev_subsystem_name_get) (uint32_t, char *, uint32_t);		
+  rsmi_status_t (*rsmi_dev_vbios_version_get) (uint32_t, char *, uint32_t);		
 } rocm_handle_t;
 
 typedef struct rocm_init_resp {

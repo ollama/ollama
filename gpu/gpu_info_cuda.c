@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-#define CUDA_LOOKUP_SIZE 6
+#define CUDA_LOOKUP_SIZE 12
 
 void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
   nvmlReturn_t ret;
@@ -23,6 +23,12 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
       {"nvmlDeviceGetMemoryInfo", (void *)&resp->ch.getMemInfo},
       {"nvmlDeviceGetCount_v2", (void *)&resp->ch.getCount},
       {"nvmlDeviceGetCudaComputeCapability", (void *)&resp->ch.getComputeCapability},
+      {"nvmlSystemGetDriverVersion", (void *)&resp->ch.nvmlSystemGetDriverVersion},
+      {"nvmlDeviceGetName", (void *)&resp->ch.nvmlDeviceGetName},
+      {"nvmlDeviceGetSerial", (void *)&resp->ch.nvmlDeviceGetSerial},
+      {"nvmlDeviceGetVbiosVersion", (void *)&resp->ch.nvmlDeviceGetVbiosVersion},
+      {"nvmlDeviceGetBoardPartNumber", (void *)&resp->ch.nvmlDeviceGetBoardPartNumber},
+      {"nvmlDeviceGetBrand", (void *)&resp->ch.nvmlDeviceGetBrand},
   };
 
   resp->ch.handle = LOAD_LIBRARY(cuda_lib_path, RTLD_LAZY);
@@ -58,7 +64,13 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
     resp->err = strdup(buf);
   }
 
-  return;
+  // Report driver version if we're in verbose mode, ignore errors
+  ret = (*resp->ch.nvmlSystemGetDriverVersion)(buf, buflen);
+  if (ret != NVML_SUCCESS) {
+    LOG(resp->ch.verbose, "nvmlSystemGetDriverVersion failed: %d\n", ret);
+  } else {
+    LOG(resp->ch.verbose, "CUDA driver version: %s\n", buf);
+  }
 }
 
 void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
@@ -98,6 +110,44 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
       resp->err = strdup(buf);
       return;
     }
+    if (h.verbose) {
+      nvmlBrandType_t brand = 0;
+      // When in verbose mode, report more information about
+      // the card we discover, but don't fail on error
+      ret = (*h.nvmlDeviceGetName)(device, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "nvmlDeviceGetName failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] CUDA device name: %s\n", i, buf);
+      }
+      ret = (*h.nvmlDeviceGetBoardPartNumber)(device, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "nvmlDeviceGetBoardPartNumber failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] CUDA part number: %s\n", i, buf);
+      }
+      ret = (*h.nvmlDeviceGetSerial)(device, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "nvmlDeviceGetSerial failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] CUDA S/N: %s\n", i, buf);
+      }
+      ret = (*h.nvmlDeviceGetVbiosVersion)(device, buf, buflen);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "nvmlDeviceGetVbiosVersion failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] CUDA vbios version: %s\n", i, buf);
+      }
+      ret = (*h.nvmlDeviceGetBrand)(device, &brand);
+      if (ret != RSMI_STATUS_SUCCESS) {
+        LOG(h.verbose, "nvmlDeviceGetBrand failed: %d\n", ret);
+      } else {
+        LOG(h.verbose, "[%d] CUDA brand: %d\n", i, brand);
+      }
+    }
+
+    LOG(h.verbose, "[%d] CUDA totalMem %ld\n", i, memInfo.total);
+    LOG(h.verbose, "[%d] CUDA usedMem %ld\n", i, memInfo.free);
 
     resp->total += memInfo.total;
     resp->free += memInfo.free;
