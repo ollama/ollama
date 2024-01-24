@@ -4,8 +4,6 @@
 
 #include <string.h>
 
-#define CUDA_LOOKUP_SIZE 12
-
 void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
   nvmlReturn_t ret;
   resp->err = NULL;
@@ -16,24 +14,26 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
   struct lookup {
     char *s;
     void **p;
-  } l[CUDA_LOOKUP_SIZE] = {
-      {"nvmlInit_v2", (void *)&resp->ch.initFn},
-      {"nvmlShutdown", (void *)&resp->ch.shutdownFn},
-      {"nvmlDeviceGetHandleByIndex", (void *)&resp->ch.getHandle},
-      {"nvmlDeviceGetMemoryInfo", (void *)&resp->ch.getMemInfo},
-      {"nvmlDeviceGetCount_v2", (void *)&resp->ch.getCount},
-      {"nvmlDeviceGetCudaComputeCapability", (void *)&resp->ch.getComputeCapability},
+  } l[] = {
+      {"nvmlInit_v2", (void *)&resp->ch.nvmlInit_v2},
+      {"nvmlShutdown", (void *)&resp->ch.nvmlShutdown},
+      {"nvmlDeviceGetHandleByIndex", (void *)&resp->ch.nvmlDeviceGetHandleByIndex},
+      {"nvmlDeviceGetMemoryInfo", (void *)&resp->ch.nvmlDeviceGetMemoryInfo},
+      {"nvmlDeviceGetCount_v2", (void *)&resp->ch.nvmlDeviceGetCount_v2},
+      {"nvmlDeviceGetCudaComputeCapability", (void *)&resp->ch.nvmlDeviceGetCudaComputeCapability},
       {"nvmlSystemGetDriverVersion", (void *)&resp->ch.nvmlSystemGetDriverVersion},
       {"nvmlDeviceGetName", (void *)&resp->ch.nvmlDeviceGetName},
       {"nvmlDeviceGetSerial", (void *)&resp->ch.nvmlDeviceGetSerial},
       {"nvmlDeviceGetVbiosVersion", (void *)&resp->ch.nvmlDeviceGetVbiosVersion},
       {"nvmlDeviceGetBoardPartNumber", (void *)&resp->ch.nvmlDeviceGetBoardPartNumber},
       {"nvmlDeviceGetBrand", (void *)&resp->ch.nvmlDeviceGetBrand},
+      {NULL, NULL},
   };
 
   resp->ch.handle = LOAD_LIBRARY(cuda_lib_path, RTLD_LAZY);
   if (!resp->ch.handle) {
     char *msg = LOAD_ERR();
+    LOG(resp->ch.verbose, "library %s load err: %s\n", cuda_lib_path, msg);
     snprintf(buf, buflen,
              "Unable to load %s library to query for Nvidia GPUs: %s",
              cuda_lib_path, msg);
@@ -42,12 +42,19 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
     return;
   }
 
-  for (i = 0; i < CUDA_LOOKUP_SIZE; i++) {  // TODO - fix this to use a null terminated list
+  // TODO once we've squashed the remaining corner cases remove this log
+  LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", cuda_lib_path);
+  
+  for (i = 0; l[i].s != NULL; i++) {
+    // TODO once we've squashed the remaining corner cases remove this log
+    LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
+
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
     if (!l[i].p) {
-      UNLOAD_LIBRARY(resp->ch.handle);
       resp->ch.handle = NULL;
       char *msg = LOAD_ERR();
+      LOG(resp->ch.verbose, "dlerr: %s\n", msg);
+      UNLOAD_LIBRARY(resp->ch.handle);
       snprintf(buf, buflen, "symbol lookup for %s failed: %s", l[i].s,
                msg);
       free(msg);
@@ -56,8 +63,9 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
     }
   }
 
-  ret = (*resp->ch.initFn)();
+  ret = (*resp->ch.nvmlInit_v2)();
   if (ret != NVML_SUCCESS) {
+    LOG(resp->ch.verbose, "nvmlInit_v2 err: %d\n", ret);
     UNLOAD_LIBRARY(resp->ch.handle);
     resp->ch.handle = NULL;
     snprintf(buf, buflen, "nvml vram init failure: %d", ret);
@@ -87,7 +95,7 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
     return;
   }
 
-  ret = (*h.getCount)(&resp->count);
+  ret = (*h.nvmlDeviceGetCount_v2)(&resp->count);
   if (ret != NVML_SUCCESS) {
     snprintf(buf, buflen, "unable to get device count: %d", ret);
     resp->err = strdup(buf);
@@ -97,14 +105,14 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
   resp->total = 0;
   resp->free = 0;
   for (i = 0; i < resp->count; i++) {
-    ret = (*h.getHandle)(i, &device);
+    ret = (*h.nvmlDeviceGetHandleByIndex)(i, &device);
     if (ret != NVML_SUCCESS) {
       snprintf(buf, buflen, "unable to get device handle %d: %d", i, ret);
       resp->err = strdup(buf);
       return;
     }
 
-    ret = (*h.getMemInfo)(device, &memInfo);
+    ret = (*h.nvmlDeviceGetMemoryInfo)(device, &memInfo);
     if (ret != NVML_SUCCESS) {
       snprintf(buf, buflen, "device memory info lookup failure %d: %d", i, ret);
       resp->err = strdup(buf);
@@ -172,7 +180,7 @@ void cuda_compute_capability(cuda_handle_t h, cuda_compute_capability_t *resp) {
   }
 
   unsigned int devices;
-  ret = (*h.getCount)(&devices);
+  ret = (*h.nvmlDeviceGetCount_v2)(&devices);
   if (ret != NVML_SUCCESS) {
     snprintf(buf, buflen, "unable to get device count: %d", ret);
     resp->err = strdup(buf);
@@ -180,14 +188,14 @@ void cuda_compute_capability(cuda_handle_t h, cuda_compute_capability_t *resp) {
   }
 
   for (i = 0; i < devices; i++) {
-    ret = (*h.getHandle)(i, &device);
+    ret = (*h.nvmlDeviceGetHandleByIndex)(i, &device);
     if (ret != NVML_SUCCESS) {
       snprintf(buf, buflen, "unable to get device handle %d: %d", i, ret);
       resp->err = strdup(buf);
       return;
     }
 
-    ret = (*h.getComputeCapability)(device, &major, &minor);
+    ret = (*h.nvmlDeviceGetCudaComputeCapability)(device, &major, &minor);
     if (ret != NVML_SUCCESS) {
       snprintf(buf, buflen, "device compute capability lookup failure %d: %d", i, ret);
       resp->err = strdup(buf);

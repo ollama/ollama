@@ -4,8 +4,6 @@
 
 #include <string.h>
 
-#define ROCM_LOOKUP_SIZE 14
-
 void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
   rsmi_status_t ret;
   resp->err = NULL;
@@ -15,12 +13,12 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
   struct lookup {
     char *s;
     void **p;
-  } l[ROCM_LOOKUP_SIZE] = {
-      {"rsmi_init", (void *)&resp->rh.initFn},
-      {"rsmi_shut_down", (void *)&resp->rh.shutdownFn},
-      {"rsmi_dev_memory_total_get", (void *)&resp->rh.totalMemFn},
-      {"rsmi_dev_memory_usage_get", (void *)&resp->rh.usageMemFn},
-      {"rsmi_version_get", (void *)&resp->rh.versionGetFn},
+  } l[] = {
+      {"rsmi_init", (void *)&resp->rh.rsmi_init},
+      {"rsmi_shut_down", (void *)&resp->rh.rsmi_shut_down},
+      {"rsmi_dev_memory_total_get", (void *)&resp->rh.rsmi_dev_memory_total_get},
+      {"rsmi_dev_memory_usage_get", (void *)&resp->rh.rsmi_dev_memory_usage_get},
+      {"rsmi_version_get", (void *)&resp->rh.rsmi_version_get},
       {"rsmi_num_monitor_devices", (void*)&resp->rh.rsmi_num_monitor_devices},
       {"rsmi_dev_id_get", (void*)&resp->rh.rsmi_dev_id_get},
       {"rsmi_dev_name_get", (void *)&resp->rh.rsmi_dev_name_get},
@@ -30,6 +28,7 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
       {"rsmi_dev_serial_number_get", (void *)&resp->rh.rsmi_dev_serial_number_get},
       {"rsmi_dev_subsystem_name_get", (void *)&resp->rh.rsmi_dev_subsystem_name_get},
       {"rsmi_dev_vbios_version_get", (void *)&resp->rh.rsmi_dev_vbios_version_get},
+      {NULL, NULL},
   };
 
   resp->rh.handle = LOAD_LIBRARY(rocm_lib_path, RTLD_LAZY);
@@ -43,12 +42,19 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
     return;
   }
 
-  for (i = 0; i < ROCM_LOOKUP_SIZE; i++) {
+  // TODO once we've squashed the remaining corner cases remove this log
+  LOG(resp->rh.verbose, "wiring rocm management library functions in %s\n", rocm_lib_path);
+
+  for (i = 0; l[i].s != NULL; i++) {
+    // TODO once we've squashed the remaining corner cases remove this log
+    LOG(resp->rh.verbose, "dlsym: %s\n", l[i].s);
+
     *l[i].p = LOAD_SYMBOL(resp->rh.handle, l[i].s);
     if (!l[i].p) {
-      UNLOAD_LIBRARY(resp->rh.handle);
       resp->rh.handle = NULL;
       char *msg = LOAD_ERR();
+      LOG(resp->rh.verbose, "dlerr: %s\n", msg);
+      UNLOAD_LIBRARY(resp->rh.handle);
       snprintf(buf, buflen, "symbol lookup for %s failed: %s", l[i].s,
                msg);
       free(msg);
@@ -57,8 +63,9 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
     }
   }
 
-  ret = (*resp->rh.initFn)(0);
+  ret = (*resp->rh.rsmi_init)(0);
   if (ret != RSMI_STATUS_SUCCESS) {
+    LOG(resp->rh.verbose, "rsmi_init err: %d\n", ret);
     UNLOAD_LIBRARY(resp->rh.handle);
     resp->rh.handle = NULL;
     snprintf(buf, buflen, "rocm vram init failure: %d", ret);
@@ -141,13 +148,13 @@ void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
     }
 
     // Get total memory - used memory for available memory
-    ret = (*h.totalMemFn)(i, RSMI_MEM_TYPE_VRAM, &totalMem);
+    ret = (*h.rsmi_dev_memory_total_get)(i, RSMI_MEM_TYPE_VRAM, &totalMem);
     if (ret != RSMI_STATUS_SUCCESS) {
       snprintf(buf, buflen, "rocm total mem lookup failure: %d", ret);
       resp->err = strdup(buf);
       return;
     }
-    ret = (*h.usageMemFn)(i, RSMI_MEM_TYPE_VRAM, &usedMem);
+    ret = (*h.rsmi_dev_memory_usage_get)(i, RSMI_MEM_TYPE_VRAM, &usedMem);
     if (ret != RSMI_STATUS_SUCCESS) {
       snprintf(buf, buflen, "rocm usage mem lookup failure: %d", ret);
       resp->err = strdup(buf);
@@ -170,7 +177,7 @@ void rocm_get_version(rocm_handle_t h, rocm_version_resp_t *resp) {
   }
   rsmi_version_t ver;
   rsmi_status_t ret;
-  ret = h.versionGetFn(&ver);
+  ret = h.rsmi_version_get(&ver);
   if (ret != RSMI_STATUS_SUCCESS) {
     snprintf(buf, buflen, "unexpected response on version lookup %d", ret);
     resp->status = 1;
