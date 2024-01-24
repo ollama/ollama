@@ -23,12 +23,12 @@ typedef enum nvmlBrandType_enum
 typedef struct cuda_handle {
   void *handle;
   uint16_t verbose;
-  nvmlReturn_t (*initFn)(void);
-  nvmlReturn_t (*shutdownFn)(void);
-  nvmlReturn_t (*getHandle)(unsigned int, nvmlDevice_t *);
-  nvmlReturn_t (*getMemInfo)(nvmlDevice_t, nvmlMemory_t *);
-  nvmlReturn_t (*getCount)(unsigned int *);
-  nvmlReturn_t (*getComputeCapability)(nvmlDevice_t, int* major, int* minor);
+  nvmlReturn_t (*nvmlInit_v2)(void);
+  nvmlReturn_t (*nvmlShutdown)(void);
+  nvmlReturn_t (*nvmlDeviceGetHandleByIndex)(unsigned int, nvmlDevice_t *);
+  nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
+  nvmlReturn_t (*nvmlDeviceGetCount_v2)(unsigned int *);
+  nvmlReturn_t (*nvmlDeviceGetCudaComputeCapability)(nvmlDevice_t, int* major, int* minor);
   nvmlReturn_t (*nvmlSystemGetDriverVersion) (char* version, unsigned int  length);
   nvmlReturn_t (*nvmlDeviceGetName) (nvmlDevice_t device, char* name, unsigned int  length);
   nvmlReturn_t (*nvmlDeviceGetSerial) (nvmlDevice_t device, char* serial, unsigned int  length);
