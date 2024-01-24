@@ -31,6 +31,11 @@ curl https://ollama.ai/install.sh | sh
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
+### Libraries
+
+- [ollama-python](https://github.com/ollama/ollama-python)
+- [ollama-js](https://github.com/ollama/ollama-js)
+
 ## Quickstart
 
 To run and chat with [Llama 2](https://ollama.ai/library/llama2):
@@ -188,11 +193,6 @@ ollama list
 ### Start Ollama
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
-
-## Libraries
-
-- [ollama-python](https://github.com/ollama/ollama-python)
-- [ollama-js](https://github.com/ollama/ollama-js)
 
 ## Building
 
