@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -340,4 +341,109 @@ func ExampleClient_Chat() {
 
 	// Output:
 	// model responded
+}
+
+func ExampleClient_Create() {
+	createTestFile := func(name string) string {
+		f, err := os.CreateTemp("", name)
+		defer f.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		_, err = f.Write([]byte("GGUF"))
+		_, err = f.Write([]byte{0x2, 0})
+
+		return f.Name()
+	}
+
+	testFileName := createTestFile("ollama-model")
+
+	modelFileReader := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", testFileName))
+	modelFile := io.Reader(modelFileReader)
+
+	modelFileBytes, err := io.ReadAll(modelFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	modelFileString := string(modelFileBytes)
+
+	// Create a new context
+	ctx := context.Background()
+
+	// Create a new client
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create a new create request
+	req := &api.CreateRequest{
+		Path:      testFileName,
+		Model:     "tiny-spoof",
+		Modelfile: modelFileString,
+	}
+
+	var progressMessages []string // we will store the response from the server in this variable
+	// Create a function to handle the response from the server. This is a callback function that will be called for each response from the server.
+	fn := func(response api.ProgressResponse) error { // this callback function fires for each token returned from the server
+
+		progressMessages = append(progressMessages, response.Status) // append the response to the modelResponseText variable to retrieve the whole message
+		return nil
+	}
+
+	// Create the model
+	if err := client.Create(ctx, req, fn); err != nil { // send the request to the server and if there is an error, log it
+		if errors.Is(err, context.Canceled) {
+			log.Fatal("context was canceled")
+		}
+		log.Fatal(err)
+	}
+
+	// List all models on the server
+	tags, err := client.List(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Iterate through the tags and check if the model was created
+	modelCreatedFlag := false
+	for _, tag := range tags.Models {
+		if strings.Contains(tag.Model, "tiny-spoof") {
+			modelCreatedFlag = true
+		}
+	}
+
+	// delete the model
+	deleteRequest := &api.DeleteRequest{
+		Model: "tiny-spoof",
+	}
+
+	if err := client.Delete(ctx, deleteRequest); err != nil { // send the request to the server and if there is an error, log it
+		if errors.Is(err, context.Canceled) {
+			log.Fatal("context was canceled")
+		}
+		log.Fatal(err)
+	}
+
+	// check if the model was deleted
+	tags, err = client.List(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// iterate through the tags and check if the model was deleted
+	for _, tag := range tags.Models {
+		if strings.Contains(tag.Model, "tiny-spoof") {
+			log.Fatal("model was not deleted")
+		}
+	}
+
+	if modelCreatedFlag == true {
+		fmt.Println("model created")
+	} else {
+		log.Fatal("model not created")
+	}
+	// Output:
+	// model created
 }
