@@ -116,53 +116,6 @@ func ExampleClient_List() {
 	// tags returned
 }
 
-func ExampleClient_Show() {
-
-	// Create a new context
-	ctx := context.Background()
-
-	// Create a new client
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// List all the models on the server as tags
-	tags, err := client.List(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// if we get an empty list it means that there are no models on the server
-	if len(tags.Models) == 0 {
-		log.Fatal("no tags returned")
-	}
-
-	// sort the tags.models by Size least to greatest
-	sort.Slice(tags.Models, func(i, j int) bool {
-		return tags.Models[i].Size < tags.Models[j].Size
-	})
-
-	// Get the first model in the list
-	model := tags.Models[0].Model
-
-	request := api.ShowRequest{
-		Model: model,
-	}
-
-	// Show the model
-	show, err := client.Show(ctx, &request)
-
-	// if we get an empty show, something is wrong
-	if show == nil {
-		log.Fatal("show is empty")
-	} else {
-		fmt.Println("show is not empty")
-	}
-	// Output:
-	// show is not empty
-}
-
 func ExampleClient_Chat() {
 
 	// Create a new context
@@ -325,4 +278,46 @@ func ExampleClient_Create() {
 	}
 	// Output:
 	// model created
+}
+
+func ExampleClient_Show() {
+
+	// Create a new context
+	ctx := context.Background()
+
+	// Create a new client
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// List all the models on the server as tags
+	tags, err := client.List(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// if we get an empty list it means that there are no models on the server
+	if len(tags.Models) == 0 {
+		log.Fatal("no tags returned")
+	}
+
+	// Get the first model in the list
+	model := tags.Models[0].Model
+
+	request := api.ShowRequest{
+		Model: model,
+	}
+
+	// Show the model
+	show, err := client.Show(ctx, &request)
+
+	// if we get an empty show, something is wrong
+	if show == nil {
+		log.Fatal("show is empty")
+	} else {
+		fmt.Println("show is not empty")
+	}
+	// Output:
+	// show is not empty
 }
