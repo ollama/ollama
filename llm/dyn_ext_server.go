@@ -98,7 +98,12 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	sparams.n_batch = C.uint(opts.NumBatch)
 	sparams.n_gpu_layers = C.int(opts.NumGPU)
 	sparams.main_gpu = C.int(opts.MainGPU)
-	sparams.tensor_split = C.CString(opts.TensorSplit) // TODO - validate format, eg: "25,75".
+
+	// TODO - validate format (eg: "25,75"). 
+	// TODO - use for "layers := maxlayers * (avg - graph) / (kv + size/devices)" calculation in llm.go.
+	sparams.tensor_split = C.CString(opts.TensorSplit)
+	defer C.free(unsafe.Pointer(sparams.tensor_split))
+	
 	sparams.n_parallel = 1 // TODO - wire up concurrency
 
 	// Always use the value encoded in the model
