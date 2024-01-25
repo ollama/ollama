@@ -45,7 +45,6 @@ jobs:
           path: |
             llm/llama.cpp/build/**/lib/*
   lint:
-    needs: generate
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -69,10 +68,19 @@ jobs:
         with:
           go-version: '1.21'
           cache: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
-          path: llm/llama.cpp/build
+      - run: |
+          mkdir -p llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/stub.so
+        if: ${{ startsWith(matrix.os, 'ubuntu-') }}
+      - run: |
+          mkdir -p llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/stub.dylib
+          touch llm/llama.cpp/ggml-metal.metal
+        if: ${{ startsWith(matrix.os, 'macos-') }}
+      - run: |
+          mkdir -p llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/stub.dll
+        if: ${{ startsWith(matrix.os, 'windows-') }}
       - uses: golangci/golangci-lint-action@v3
   test:
     needs: generate
