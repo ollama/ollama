@@ -384,8 +384,8 @@ func DefaultOptions() Options {
 			RopeFrequencyScale: 1.0,
 			NumBatch:           512,
 			NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
-			MainGPU             0,
-			TensorSplit         "",
+			MainGPU:            0,
+			TensorSplit:        "",
 			NumGQA:             1,
 			NumThread:          0, // let the runtime decide
 			LowVRAM:            false,
