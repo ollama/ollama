@@ -618,7 +618,17 @@
 		gravatarEmail = settings.gravatarEmail ?? '';
 
 		speakVoice = settings.speakVoice ?? '';
-		await voices.set(await speechSynthesis.getVoices());
+		// await voices.set(await speechSynthesis.getVoices());
+
+		const getVoicesLoop = setInterval(async () => {
+			const _voices = await speechSynthesis.getVoices();
+			await voices.set(_voices);
+
+			// do your loop
+			if (_voices.length > 0) {
+				clearInterval(getVoicesLoop);
+			}
+		}, 100);
 
 		saveChatHistory = settings.saveChatHistory ?? true;
 
