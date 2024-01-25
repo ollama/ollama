@@ -39,6 +39,7 @@ typedef struct ext_server_params {
   bool memory_f16;        // use f16 instead of f32 for memory kv
   int32_t n_gpu_layers;  // number of layers to store in VRAM (-1 - use default)
   int32_t main_gpu;      // the GPU that is used for scratch and small tensors
+  char* tensor_split;    // how split tensors should be distributed across GPUs
   bool use_mlock;        // force system to keep model in RAM
   bool use_mmap;         // use mmap if possible
   bool numa;             // attempt optimizations that help on some NUMA systems
