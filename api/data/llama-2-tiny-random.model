@@ -1,4 +1,4 @@
-FROM test.gguf
+FROM llama-2-tiny-random.gguf
 PARAMETER seed 42
 PARAMETER top_p 0.9
 PARAMETER stop foo

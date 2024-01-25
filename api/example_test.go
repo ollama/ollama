@@ -15,6 +15,10 @@ import (
 	"github.com/jmorganca/ollama/server"
 )
 
+const testModelName = "llama-2-tiny-random"
+const testGgufFilePath = "data/llama-2-tiny-random.gguf"
+const testModelFilePath = "data/llama-2-tiny-random.model"
+
 func TestMain(m *testing.M) {
 
 	// Here we start a server in the background to run with our tests.
@@ -40,22 +44,12 @@ func TestMain(m *testing.M) {
 	// Create a new client
 	client, err := api.ClientFromEnvironment()
 
-	// create a tiny test model if there are no models on the server
-	tags, err := client.List(ctx)
+	// load our test model
+	err = loadTestModel(ctx, client, testModelName)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// if we get an empty list it means that there are no models on the server so we create one and delete it after the tests are done
-	if len(tags.Models) == 0 {
-		modelName := "tiny-main-spoof"
-		log.Println("no tags returned")
-		err = loadTestModel(ctx, client, modelName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer deleteTestModel(ctx, client, modelName)
-	}
+	defer deleteTestModel(ctx, client, testModelName) // not sure if we need this and is more of a question of what developers would prefer.
 
 	result := m.Run()
 
@@ -167,10 +161,10 @@ func ExampleClient_Chat() {
 		return tags.Models[i].Size < tags.Models[j].Size
 	})
 
-	// Get the first model in the list
+	// Get the first (smallest) model in the list (this will like the defined in the testModelName constant)
 	model := tags.Models[0].Model
 
-	// now we're getting ready for the big show. CHATTING WITH THE TINIEST MODEL ON THE SERVER!
+	// Now we're
 
 	// Create a new chat message to send to the server. Role must be defined and can be "user", system", or a third one that I forget.
 	// These should be defined in the api package as an enum constant or something.
@@ -221,9 +215,9 @@ func ExampleClient_Create() {
 		log.Fatal(err)
 	}
 
-	ggufFilePath := "test.gguf"
-	modelFilePath := "testModel"
-	modelName := "tiny-create-spoof"
+	ggufFilePath := testGgufFilePath
+	modelFilePath := testModelFilePath
+	modelName := "tiny-spoof"
 
 	// get the model file bytes from the testModel file
 	modelBytes, err := os.ReadFile(modelFilePath)
@@ -348,8 +342,8 @@ func ExampleClient_Show() {
 
 func loadTestModel(ctx context.Context, client *api.Client, modelName string) error {
 
-	ggufFilePath := "test.gguf"
-	modelFilePath := "testModel"
+	ggufFilePath := testGgufFilePath
+	modelFilePath := testModelFilePath
 
 	// get the model file bytes from the testModel file
 	modelBytes, err := os.ReadFile(modelFilePath)
