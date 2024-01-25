@@ -112,8 +112,9 @@ type Runner struct {
 	NumBatch           int     `json:"num_batch,omitempty"`
 	NumGQA             int     `json:"num_gqa,omitempty"`
 	NumGPU             int     `json:"num_gpu,omitempty"`
-	MainGPU            int     `json:"main_gpu,omitempty"`
+	SplitMode          string  `json:"tensor_split,omitempty"`
 	TensorSplit        string  `json:"tensor_split,omitempty"`
+	MainGPU            int     `json:"main_gpu,omitempty"`
 	LowVRAM            bool    `json:"low_vram,omitempty"`
 	F16KV              bool    `json:"f16_kv,omitempty"`
 	LogitsAll          bool    `json:"logits_all,omitempty"`
@@ -384,8 +385,9 @@ func DefaultOptions() Options {
 			RopeFrequencyScale: 1.0,
 			NumBatch:           512,
 			NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
-			MainGPU:            0,
+			SplitMode:          "layer", // default taken from llama.cpp::server::server_print_usage()
 			TensorSplit:        "",
+			MainGPU:            0,
 			NumGQA:             1,
 			NumThread:          0, // let the runtime decide
 			LowVRAM:            false,
