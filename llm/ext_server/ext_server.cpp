@@ -62,7 +62,7 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     params.n_gpu_layers = sparams->n_gpu_layers;
     params.main_gpu = sparams->main_gpu;
 
-    // This is taken from server.cpp::server_params_parse().
+    // This is taken dirrectly from server.cpp::server_params_parse().
 #ifdef GGML_USE_CUBLAS
     if (sparams->tensor_split != NULL) {
       std::string arg_next = sparams->tensor_split;
@@ -77,7 +77,13 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
       {
         if (i_device < split_arg.size())
         {
-          params.tensor_split[i_device] = std::stof(split_arg[i_device]);
+          // This avoids "Error: exception stof" for blank/unparsable floats.
+          try {
+            params.tensor_split[i_device] = std::stof(split_arg[i_device]);
+          }
+          catch (...) {
+            params.tensor_split[i_device] = 0.0f;
+          }
         }
         else
         {
