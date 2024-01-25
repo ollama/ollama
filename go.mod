@@ -1,6 +1,6 @@
 module github.com/jmorganca/ollama
 
-go 1.20
+go 1.21
 
 require (
 	github.com/emirpasic/gods v1.18.1
@@ -47,7 +47,7 @@ require (
 	golang.org/x/crypto v0.14.0
 	golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63
 	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/sys v0.13.0
 	golang.org/x/term v0.13.0
 	golang.org/x/text v0.13.0 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
