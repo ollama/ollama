@@ -60,16 +60,34 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     }
 
     params.n_gpu_layers = sparams->n_gpu_layers;
-    params.main_gpu = sparams->main_gpu;
 
     // This is taken dirrectly from server.cpp::server_params_parse().
 #ifdef GGML_USE_CUBLAS
+
+    // Parse split_mode, falling back to "layer" as default.
+    if (sparams->split_mode != NULL) {
+      std::string arg = sparams->split_mode;
+      if (arg == "none")
+      {
+        params.split_mode = LLAMA_SPLIT_NONE;
+      }
+      else if (arg == "row")
+      {
+        params.split_mode = LLAMA_SPLIT_ROW;
+      }
+      else
+      {
+        params.split_mode = LLAMA_SPLIT_LAYER;
+      }
+    }
+
+    // Parse tensor_split, falling back to 0.0f as default.
     if (sparams->tensor_split != NULL) {
-      std::string arg_next = sparams->tensor_split;
+      std::string arg = sparams->tensor_split;
       
       // split string by , and /
       const std::regex regex{R"([,/]+)"};
-      std::sregex_token_iterator it{arg_next.begin(), arg_next.end(), regex, -1};
+      std::sregex_token_iterator it{arg.begin(), arg.end(), regex, -1};
       std::vector<std::string> split_arg{it, {}};
       GGML_ASSERT(split_arg.size() <= LLAMA_MAX_DEVICES);
 
@@ -92,6 +110,8 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
       }
     }
 #endif
+
+    params.main_gpu = sparams->main_gpu;
     
     params.use_mlock = sparams->use_mlock;
     params.use_mmap = sparams->use_mmap;
