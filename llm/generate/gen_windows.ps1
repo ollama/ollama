@@ -42,7 +42,7 @@ function apply_patches {
     }
 
     # Apply temporary patches until fix is upstream
-    $patchesDir = "../patches"
+    $patches = Get-ChildItem "../patches/*.diff"
     foreach ($patch in $patches) {
         # Extract file paths from the patch file
         $filePaths = Get-Content $patch.FullName | Where-Object { $_ -match '^\+\+\+ ' } | ForEach-Object {
@@ -52,14 +52,14 @@ function apply_patches {
 
         # Checkout each file
         foreach ($file in $filePaths) {
-            Set-Location -Path $LLAMACPP_DIR
+            Set-Location -Path ${script:llamacppDir}
             git checkout $file
         }
     }
 
     # Apply each patch
     foreach ($patch in $patches) {
-        Set-Location -Path $LLAMACPP_DIR
+        Set-Location -Path ${script:llamacppDir}
         git apply $patch.FullName
     }
 
