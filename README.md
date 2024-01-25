@@ -304,6 +304,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChainDart](https://github.com/davidmigloz/langchain_dart)
 - [Semantic Kernel - Python](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama)
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
+- [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with [example](https://github.com/svilupp/PromptingTools.jl/blob/main/examples/working_with_ollama.jl)
 
 
 ### Mobile
