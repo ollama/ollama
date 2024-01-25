@@ -519,7 +519,7 @@
 				.filter((message) => message)
 				.map((message, idx, arr) => ({
 					role: message.role,
-					...(message.files
+					...(message.files.filter((file) => file.type === 'image')
 						? {
 								content: [
 									{
