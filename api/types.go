@@ -137,23 +137,31 @@ type EmbeddingResponse struct {
 }
 
 type CreateRequest struct {
-	Name      string `json:"name"`
+	Model     string `json:"model"`
 	Path      string `json:"path"`
 	Modelfile string `json:"modelfile"`
 	Stream    *bool  `json:"stream,omitempty"`
+
+	// Name is deprecated, see Model
+	Name string `json:"name"`
 }
 
 type DeleteRequest struct {
+	Model string `json:"model"`
+
+	// Name is deprecated, see Model
 	Name string `json:"name"`
 }
 
 type ShowRequest struct {
-	Name     string `json:"name"`
 	Model    string `json:"model"`
 	System   string `json:"system"`
 	Template string `json:"template"`
 
 	Options map[string]interface{} `json:"options"`
+
+	// Name is deprecated, see Model
+	Name string `json:"name"`
 }
 
 type ShowResponse struct {
@@ -163,6 +171,7 @@ type ShowResponse struct {
 	Template   string       `json:"template,omitempty"`
 	System     string       `json:"system,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
+	Messages   []Message    `json:"messages,omitempty"`
 }
 
 type CopyRequest struct {
@@ -171,11 +180,14 @@ type CopyRequest struct {
 }
 
 type PullRequest struct {
-	Name     string `json:"name"`
+	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
+
+	// Name is deprecated, see Model
+	Name string `json:"name"`
 }
 
 type ProgressResponse struct {
@@ -186,11 +198,14 @@ type ProgressResponse struct {
 }
 
 type PushRequest struct {
-	Name     string `json:"name"`
+	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
+
+	// Name is deprecated, see Model
+	Name string `json:"name"`
 }
 
 type ListResponse struct {
@@ -199,6 +214,7 @@ type ListResponse struct {
 
 type ModelResponse struct {
 	Name       string       `json:"name"`
+	Model      string       `json:"model"`
 	ModifiedAt time.Time    `json:"modified_at"`
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
@@ -221,6 +237,7 @@ type GenerateResponse struct {
 }
 
 type ModelDetails struct {
+	ParentModel       string   `json:"parent_model"`
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
 	Families          []string `json:"families"`
