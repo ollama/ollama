@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -147,7 +148,28 @@ func GetGPUInfo() GpuInfo {
 		if memInfo.err != nil {
 			slog.Info(fmt.Sprintf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err)))
 			C.free(unsafe.Pointer(memInfo.err))
+		} else if memInfo.igpu_index >= 0 && memInfo.count == 1 {
+			// Only one GPU detected and it appears to be an integrated GPU - skip it
+			slog.Info("ROCm unsupported integrated GPU detected")
 		} else {
+			if memInfo.igpu_index >= 0 {
+				// We have multiple GPUs reported, and one of them is an integrated GPU
+				// so we have to set the env var to bypass it
+				// If the user has specified their own ROCR_VISIBLE_DEVICES, don't clobber it
+				val := os.Getenv("ROCR_VISIBLE_DEVICES")
+				if val == "" {
+					devices := []string{}
+					for i := 0; i < int(memInfo.count); i++ {
+						if i == int(memInfo.igpu_index) {
+							continue
+						}
+						devices = append(devices, strconv.Itoa(i))
+					}
+					val = strings.Join(devices, ",")
+					os.Setenv("ROCR_VISIBLE_DEVICES", val)
+				}
+				slog.Info(fmt.Sprintf("ROCm integrated GPU detected - ROCR_VISIBLE_DEVICES=%s", val))
+			}
 			resp.Library = "rocm"
 			var version C.rocm_version_resp_t
 			C.rocm_get_version(*gpuHandles.rocm, &version)
@@ -199,7 +221,9 @@ func CheckVRAM() (int64, error) {
 		if overhead < gpus*1024*1024*1024 {
 			overhead = gpus * 1024 * 1024 * 1024
 		}
-		return int64(gpuInfo.FreeMemory - overhead), nil
+		avail := int64(gpuInfo.FreeMemory - overhead)
+		slog.Debug(fmt.Sprintf("%s detected %d devices with %dM available memory", gpuInfo.Library, gpuInfo.DeviceCount, avail/1024/1024))
+		return avail, nil
 	}
 
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation
