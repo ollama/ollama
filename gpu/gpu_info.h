@@ -27,6 +27,13 @@
 
 #endif
 
+#define LOG(verbose, ...) \
+  do { \
+    if (verbose) { \
+      fprintf(stderr, __VA_ARGS__); \
+    } \
+  } while (0)
+
 #ifdef __cplusplus
 extern "C" {
 #endif

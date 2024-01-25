@@ -40,11 +40,13 @@ var CudaLinuxGlobs = []string{
 	"/usr/lib/wsl/lib/libnvidia-ml.so*",
 	"/usr/lib/wsl/drivers/*/libnvidia-ml.so*",
 	"/opt/cuda/lib64/libnvidia-ml.so*",
-	"/opt/cuda/targets/x86_64-linux/lib/stubs/libnvidia-ml.so*",
 	"/usr/lib*/libnvidia-ml.so*",
 	"/usr/local/lib*/libnvidia-ml.so*",
 	"/usr/lib/aarch64-linux-gnu/nvidia/current/libnvidia-ml.so*",
 	"/usr/lib/aarch64-linux-gnu/libnvidia-ml.so*",
+
+	// TODO: are these stubs ever valid?
+	"/opt/cuda/targets/x86_64-linux/lib/stubs/libnvidia-ml.so*",
 }
 
 var CudaWindowsGlobs = []string{
@@ -259,6 +261,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 
 func LoadCUDAMgmt(cudaLibPaths []string) *C.cuda_handle_t {
 	var resp C.cuda_init_resp_t
+	resp.ch.verbose = getVerboseState()
 	for _, libPath := range cudaLibPaths {
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
@@ -275,6 +278,7 @@ func LoadCUDAMgmt(cudaLibPaths []string) *C.cuda_handle_t {
 
 func LoadROCMMgmt(rocmLibPaths []string) *C.rocm_handle_t {
 	var resp C.rocm_init_resp_t
+	resp.rh.verbose = getVerboseState()
 	for _, libPath := range rocmLibPaths {
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
@@ -287,4 +291,11 @@ func LoadROCMMgmt(rocmLibPaths []string) *C.rocm_handle_t {
 		}
 	}
 	return nil
+}
+
+func getVerboseState() C.uint16_t {
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		return C.uint16_t(1)
+	}
+	return C.uint16_t(0)
 }

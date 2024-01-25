@@ -1,8 +1,5 @@
 <div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" height="200px" srcset="https://github.com/jmorganca/ollama/assets/3325447/56ea1849-1284-4645-8970-956de6e51c3c">
-    <img alt="logo" height="200px" src="https://github.com/jmorganca/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
-  </picture>
+  <img alt="ollama" height="200px" src="https://github.com/jmorganca/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
 
 # Ollama
@@ -30,6 +27,11 @@ curl https://ollama.ai/install.sh | sh
 ### Docker
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
+
+### Libraries
+
+- [ollama-python](https://github.com/ollama/ollama-python)
+- [ollama-js](https://github.com/ollama/ollama-js)
 
 ## Quickstart
 
@@ -247,10 +249,6 @@ curl http://localhost:11434/api/chat -d '{
 ```
 
 See the [API documentation](./docs/api.md) for all endpoints.
-
-## Integrations
-
-- [ollama-python](https://github.com/jmorganca/ollama-python)
 
 ## Community Integrations
 
