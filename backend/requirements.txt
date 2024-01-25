@@ -25,6 +25,10 @@ docx2txt
 unstructured
 markdown
 pypandoc
+pandas
+openpyxl
+pyxlsb
+xlrd
 
 PyJWT
 pyjwt[crypto]

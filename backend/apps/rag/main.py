@@ -24,6 +24,7 @@ from langchain_community.document_loaders import (
     UnstructuredMarkdownLoader,
     UnstructuredXMLLoader,
     UnstructuredRSTLoader,
+    UnstructuredExcelLoader,
 )
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -137,6 +138,87 @@ def store_web(form_data: StoreWebForm, user=Depends(get_current_user)):
         )
 
 
+def get_loader(file, file_path):
+    file_ext = file.filename.split(".")[-1].lower()
+    known_type = True
+
+    known_source_ext = [
+        "go",
+        "py",
+        "java",
+        "sh",
+        "bat",
+        "ps1",
+        "cmd",
+        "js",
+        "ts",
+        "css",
+        "cpp",
+        "hpp",
+        "h",
+        "c",
+        "cs",
+        "sql",
+        "log",
+        "ini",
+        "pl",
+        "pm",
+        "r",
+        "dart",
+        "dockerfile",
+        "env",
+        "php",
+        "hs",
+        "hsc",
+        "lua",
+        "nginxconf",
+        "conf",
+        "m",
+        "mm",
+        "plsql",
+        "perl",
+        "rb",
+        "rs",
+        "db2",
+        "scala",
+        "bash",
+        "swift",
+        "vue",
+        "svelte",
+    ]
+
+    if file_ext == "pdf":
+        loader = PyPDFLoader(file_path)
+    elif file_ext == "csv":
+        loader = CSVLoader(file_path)
+    elif file_ext == "rst":
+        loader = UnstructuredRSTLoader(file_path, mode="elements")
+    elif file_ext == "xml":
+        loader = UnstructuredXMLLoader(file_path)
+    elif file_ext == "md":
+        loader = UnstructuredMarkdownLoader(file_path)
+    elif file.content_type == "application/epub+zip":
+        loader = UnstructuredEPubLoader(file_path)
+    elif (
+        file.content_type
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        or file_ext in ["doc", "docx"]
+    ):
+        loader = Docx2txtLoader(file_path)
+    elif file.content_type in [
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ] or file_ext in ["xls", "xlsx"]:
+        loader = UnstructuredExcelLoader(file_path)
+    elif file_ext in known_source_ext or file.content_type.find("text/") >= 0:
+        loader = TextLoader(file_path)
+    else:
+        loader = TextLoader(file_path)
+        known_type = False
+
+    return loader, known_type
+
+
 @app.post("/doc")
 def store_doc(
     collection_name: Optional[str] = Form(None),
@@ -146,21 +228,6 @@ def store_doc(
     # "https://www.gutenberg.org/files/1727/1727-h/1727-h.htm"
 
     print(file.content_type)
-    
-    text_xml=["xml"]
-    octet_markdown=["md"]
-    known_source_ext=[
-        "go", "py", "java", "sh", "bat", "ps1", "cmd", "js", "ts",
-        "css", "cpp", "hpp","h", "c", "cs", "sql", "log", "ini",
-        "pl", "pm", "r", "dart", "dockerfile", "env", "php", "hs",
-        "hsc", "lua", "nginxconf", "conf", "m", "mm", "plsql", "perl",
-        "rb", "rs", "db2", "scala", "bash", "swift", "vue", "svelte"
-        ]
-    docx_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    known_doc_ext=["doc","docx"]
-    file_ext=file.filename.split(".")[-1].lower()
-    known_type=True
-    
     try:
         filename = file.filename
         file_path = f"{UPLOAD_DIR}/{filename}"
@@ -174,27 +241,7 @@ def store_doc(
             collection_name = calculate_sha256(f)[:63]
         f.close()
 
-        if file_ext=="pdf":
-            loader = PyPDFLoader(file_path)
-        elif (file.content_type ==docx_type or file_ext in known_doc_ext):
-            loader = Docx2txtLoader(file_path)
-        elif file_ext=="csv":
-            loader = CSVLoader(file_path)
-        elif file_ext=="rst":
-            loader = UnstructuredRSTLoader(file_path, mode="elements")
-        elif file_ext in text_xml:
-            loader=UnstructuredXMLLoader(file_path)
-        elif file_ext in known_source_ext or file.content_type.find("text/")>=0:
-            loader = TextLoader(file_path)
-        elif file_ext in octet_markdown:
-            loader = UnstructuredMarkdownLoader(file_path)
-        elif file.content_type == "application/epub+zip":
-            loader = UnstructuredEPubLoader(file_path)
-        else:
-            loader = TextLoader(file_path)
-            known_type=False
-
-
+        loader, known_type = get_loader(file, file_path)
         data = loader.load()
         result = store_data_in_vector_db(data, collection_name)
 
@@ -203,7 +250,7 @@ def store_doc(
                 "status": True,
                 "collection_name": collection_name,
                 "filename": filename,
-                "known_type":known_type,
+                "known_type": known_type,
             }
         else:
             raise HTTPException(
