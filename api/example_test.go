@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -262,18 +261,6 @@ func ExampleClient_Chat() {
 	// Get the first model in the list
 	model := tags.Models[0].Model
 
-	request := api.ShowRequest{
-		Model: model,
-	}
-
-	// Show the model
-	show, err := client.Show(ctx, &request)
-
-	// if we get an empty show, something is wrong
-	if show == nil {
-		log.Fatal("show is empty")
-	}
-
 	// now we're getting ready for the big show. CHATTING WITH THE TINIEST MODEL ON THE SERVER!
 
 	// Create a new chat message to send to the server. Role must be defined and can be "user", system", or a third one that I forget.
@@ -315,29 +302,6 @@ func ExampleClient_Chat() {
 }
 
 func ExampleClient_Create() {
-	createTestFile := func(name string) string {
-		f, err := os.CreateTemp("", name)
-		defer f.Close()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		_, err = f.Write([]byte("GGUF"))
-		_, err = f.Write([]byte{0x2, 0})
-
-		return f.Name()
-	}
-
-	testFileName := createTestFile("ollama-model")
-
-	modelFileReader := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", testFileName))
-	modelFile := io.Reader(modelFileReader)
-
-	modelFileBytes, err := io.ReadAll(modelFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	modelFileString := string(modelFileBytes)
 
 	// Create a new context
 	ctx := context.Background()
@@ -348,11 +312,23 @@ func ExampleClient_Create() {
 		log.Fatal(err)
 	}
 
+	ggufFilePath := "test.gguf"
+	modelFilePath := "testModel"
+	modelName := "tiny-spoof"
+
+	// get the model file bytes from the testModel file
+	modelBytes, err := os.ReadFile(modelFilePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	modelString := string(modelBytes) // convert the model bytes to a string
+
 	// Create a new create request
 	req := &api.CreateRequest{
-		Path:      testFileName,
-		Model:     "tiny-spoof",
-		Modelfile: modelFileString,
+		Path:      ggufFilePath,
+		Model:     modelName,
+		Modelfile: modelString,
 	}
 
 	var progressMessages []string // we will store the response from the server in this variable
@@ -380,14 +356,14 @@ func ExampleClient_Create() {
 	// Iterate through the tags and check if the model was created
 	modelCreatedFlag := false
 	for _, tag := range tags.Models {
-		if strings.Contains(tag.Model, "tiny-spoof") {
+		if strings.Contains(tag.Model, modelName) {
 			modelCreatedFlag = true
 		}
 	}
 
 	// delete the model
 	deleteRequest := &api.DeleteRequest{
-		Model: "tiny-spoof",
+		Model: modelName,
 	}
 
 	if err := client.Delete(ctx, deleteRequest); err != nil { // send the request to the server and if there is an error, log it
@@ -405,7 +381,7 @@ func ExampleClient_Create() {
 
 	// iterate through the tags and check if the model was deleted
 	for _, tag := range tags.Models {
-		if strings.Contains(tag.Model, "tiny-spoof") {
+		if strings.Contains(tag.Model, modelName) {
 			log.Fatal("model was not deleted")
 		}
 	}

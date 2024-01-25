@@ -1,0 +1,5 @@
+FROM test.gguf
+PARAMETER seed 42
+PARAMETER top_p 0.9
+PARAMETER stop foo
+PARAMETER stop bar
