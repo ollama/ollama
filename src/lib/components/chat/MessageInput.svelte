@@ -121,13 +121,19 @@
 			error: ''
 		};
 
-		files = [...files, doc];
-		const res = await uploadDocToVectorDB(localStorage.token, '', file);
+		try {
+			files = [...files, doc];
+			const res = await uploadDocToVectorDB(localStorage.token, '', file);
 
-		if (res) {
-			doc.upload_status = true;
-			doc.collection_name = res.collection_name;
-			files = files;
+			if (res) {
+				doc.upload_status = true;
+				doc.collection_name = res.collection_name;
+				files = files;
+			}
+		} catch (e) {
+			// Remove the failed doc from the files array
+			files = files.filter((f) => f.name !== file.name);
+			toast.error(e);
 		}
 	};
 
