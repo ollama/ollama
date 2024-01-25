@@ -1,4 +1,6 @@
 from peewee import *
+from config import DATA_DIR
 
-DB = SqliteDatabase("./data/ollama.db")
+
+DB = SqliteDatabase(f"{DATA_DIR}/ollama.db")
 DB.connect()

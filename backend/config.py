@@ -1,29 +1,17 @@
-from dotenv import load_dotenv, find_dotenv
 import os
-
-
 import chromadb
 from chromadb import Settings
-
-
 from secrets import token_bytes
 from base64 import b64encode
-
 from constants import ERROR_MESSAGES
-
-
 from pathlib import Path
 
-load_dotenv(find_dotenv("../.env"))
+try:
+    from dotenv import load_dotenv, find_dotenv
 
-
-####################################
-# File Upload
-####################################
-
-
-UPLOAD_DIR = "./data/uploads"
-Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+    load_dotenv(find_dotenv("../.env"))
+except ImportError:
+    print("dotenv not installed, skipping...")
 
 
 ####################################
@@ -31,6 +19,21 @@ Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 ####################################
 
 ENV = os.environ.get("ENV", "dev")
+
+
+####################################
+# DATA/FRONTEND BUILD DIR
+####################################
+
+DATA_DIR = str(Path(os.getenv("DATA_DIR", "./data")).resolve())
+FRONTEND_BUILD_DIR = str(Path(os.getenv("FRONTEND_BUILD_DIR", "../build")))
+
+####################################
+# File Upload DIR
+####################################
+
+UPLOAD_DIR = f"{DATA_DIR}/uploads"
+Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
 ####################################
 # OLLAMA_API_BASE_URL
@@ -107,7 +110,7 @@ if WEBUI_AUTH and WEBUI_JWT_SECRET_KEY == "":
 # RAG
 ####################################
 
-CHROMA_DATA_PATH = "./data/vector_db"
+CHROMA_DATA_PATH = f"{DATA_DIR}/vector_db"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 CHROMA_CLIENT = chromadb.PersistentClient(
     path=CHROMA_DATA_PATH, settings=Settings(allow_reset=True)
