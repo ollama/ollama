@@ -816,30 +816,6 @@
 
 				<button
 					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
-					'voice'
-						? 'bg-gray-200 dark:bg-gray-700'
-						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
-					on:click={() => {
-						selectedTab = 'voice';
-					}}
-				>
-					<div class=" self-center mr-2">
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 20 20"
-							fill="currentColor"
-							class="w-4 h-4"
-						>
-							<path
-								d="M12.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"
-							/>
-						</svg>
-					</div>
-					<div class=" self-center">Voice</div>
-				</button>
-
-				<button
-					class="px-2.5 py-2.5 min-w-fit rounded-lg flex-1 md:flex-none flex text-right transition {selectedTab ===
 					'chats'
 						? 'bg-gray-200 dark:bg-gray-700'
 						: ' hover:bg-gray-300 dark:hover:bg-gray-800'}"
@@ -1632,6 +1608,9 @@
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
 						on:submit|preventDefault={() => {
+							saveSettings({
+								speakVoice: speakVoice !== '' ? speakVoice : undefined
+							});
 							show = false;
 						}}
 					>
@@ -1750,7 +1729,31 @@
 								</div>
 							</div>
 
-							<!-- <hr class=" dark:border-gray-700" />
+							<hr class=" dark:border-gray-700" />
+
+							<div class=" space-y-3">
+								<div>
+									<div class=" mb-2.5 text-sm font-medium">Set Default Voice</div>
+									<div class="flex w-full">
+										<div class="flex-1">
+											<select
+												class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+												bind:value={speakVoice}
+												placeholder="Select a voice"
+											>
+												<option value="" selected>Default</option>
+												{#each $voices.filter((v) => v.localService === true) as voice}
+													<option value={voice.name} class="bg-gray-100 dark:bg-gray-700"
+														>{voice.name}</option
+													>
+												{/each}
+											</select>
+										</div>
+									</div>
+								</div>
+							</div>
+
+							<!-- 
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									Gravatar Email <span class=" text-gray-400 text-sm">(optional)</span>
@@ -1779,49 +1782,6 @@
 						<div class="flex justify-end pt-3 text-sm font-medium">
 							<button
 								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
-								type="submit"
-							>
-								Save
-							</button>
-						</div>
-					</form>
-				{:else if selectedTab === 'voice'}
-					<form
-						class="flex flex-col h-full justify-between space-y-3 text-sm"
-						on:submit|preventDefault={() => {
-							show = false;
-						}}
-					>
-						<div class=" space-y-3">
-							<div>
-								<div class=" mb-2.5 text-sm font-medium">Set Default Voice</div>
-								<div class="flex w-full">
-									<div class="flex-1 mr-2">
-										<select
-											class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-											bind:value={speakVoice}
-											placeholder="Select a voice"
-										>
-											<option value="" selected>Default</option>
-											{#each $voices.filter((v) => v.localService === true) as voice}
-												<option value={voice.name} class="bg-gray-100 dark:bg-gray-700"
-													>{voice.name}</option
-												>
-											{/each}
-										</select>
-									</div>
-								</div>
-							</div>
-						</div>
-
-						<div class="flex justify-end pt-3 text-sm font-medium">
-							<button
-								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
-								on:click={() => {
-									saveSettings({
-										speakVoice: speakVoice !== '' ? speakVoice : undefined
-									});
-								}}
 								type="submit"
 							>
 								Save
