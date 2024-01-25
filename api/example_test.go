@@ -33,6 +33,30 @@ func TestMain(m *testing.M) {
 
 	go server.Serve(ln)
 
+	// check to see if there are any models on the server if not create one then delete after tests are done
+	// Create a new context
+	ctx := context.Background()
+
+	// Create a new client
+	client, err := api.ClientFromEnvironment()
+
+	// create a tiny test model if there are no models on the server
+	tags, err := client.List(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// if we get an empty list it means that there are no models on the server so we create one and delete it after the tests are done
+	if len(tags.Models) == 0 {
+		modelName := "tiny-main-spoof"
+		log.Println("no tags returned")
+		err = loadTestModel(ctx, client, modelName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer deleteTestModel(ctx, client, modelName)
+	}
+
 	result := m.Run()
 
 	ln.Close()
@@ -199,7 +223,7 @@ func ExampleClient_Create() {
 
 	ggufFilePath := "test.gguf"
 	modelFilePath := "testModel"
-	modelName := "tiny-spoof"
+	modelName := "tiny-create-spoof"
 
 	// get the model file bytes from the testModel file
 	modelBytes, err := os.ReadFile(modelFilePath)
@@ -320,4 +344,59 @@ func ExampleClient_Show() {
 	}
 	// Output:
 	// show is not empty
+}
+
+func loadTestModel(ctx context.Context, client *api.Client, modelName string) error {
+
+	ggufFilePath := "test.gguf"
+	modelFilePath := "testModel"
+
+	// get the model file bytes from the testModel file
+	modelBytes, err := os.ReadFile(modelFilePath)
+	if err != nil {
+		return err
+	}
+
+	modelString := string(modelBytes)
+
+	// Create a new create request
+	req := &api.CreateRequest{
+		Path:      ggufFilePath,
+		Model:     modelName,
+		Modelfile: modelString,
+	}
+
+	var progressMessages []string // we will store the response from the server in this variable
+	// Create a function to handle the response from the server. This is a callback function that will be called for each response from the server.
+	fn := func(response api.ProgressResponse) error { // this callback function fires for each response returned from the server
+
+		progressMessages = append(progressMessages, response.Status) // append the response to the modelResponseText variable to retrieve the whole message
+		return nil
+	}
+
+	// Create the model
+	if err := client.Create(ctx, req, fn); err != nil { // send the request to the server and if there is an error, log it
+		if errors.Is(err, context.Canceled) {
+			log.Fatal("context was canceled")
+		}
+		return err
+	}
+
+	return nil
+}
+
+func deleteTestModel(ctx context.Context, client *api.Client, modelName string) error {
+
+	deleteRequest := &api.DeleteRequest{
+		Model: modelName,
+	}
+
+	if err := client.Delete(ctx, deleteRequest); err != nil { // send the request to the server and if there is an error, log it
+		if errors.Is(err, context.Canceled) {
+			log.Fatal("context was canceled")
+		}
+		return err
+	}
+
+	return nil
 }
