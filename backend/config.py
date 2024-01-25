@@ -1,16 +1,9 @@
 import os
-
-
 import chromadb
 from chromadb import Settings
-
-
 from secrets import token_bytes
 from base64 import b64encode
-
 from constants import ERROR_MESSAGES
-
-
 from pathlib import Path
 
 try:
@@ -22,22 +15,25 @@ except ImportError:
 
 
 ####################################
-# File Upload
-####################################
-
-DATA_DIR = str(Path(os.getenv("DATA_DIR", "./data")).resolve())
-
-UPLOAD_DIR = f"{DATA_DIR}/uploads"
-
-Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
-
-FRONTEND_BUILD_DIR = str(Path(os.getenv("FRONTEND_BUILD_DIR", "../build")))
-
-####################################
 # ENV (dev,test,prod)
 ####################################
 
 ENV = os.environ.get("ENV", "dev")
+
+
+####################################
+# DATA/FRONTEND BUILD DIR
+####################################
+
+DATA_DIR = str(Path(os.getenv("DATA_DIR", "./data")).resolve())
+FRONTEND_BUILD_DIR = str(Path(os.getenv("FRONTEND_BUILD_DIR", "../build")))
+
+####################################
+# File Upload DIR
+####################################
+
+UPLOAD_DIR = f"{DATA_DIR}/uploads"
+Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
 ####################################
 # OLLAMA_API_BASE_URL
