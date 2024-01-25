@@ -5,9 +5,10 @@ FROM node:alpine as build
 WORKDIR /app
 
 # wget embedding model weight from alpine (does not exist from slim-buster)
-RUN wget "https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz"
+RUN wget "https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz" -O - | \
+    tar -xzf - -C /app
 
-COPY package.json package-lock.json ./ 
+COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
@@ -44,10 +45,7 @@ RUN apt-get update \
 
 # copy embedding weight from build
 RUN mkdir -p /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2
-COPY --from=build /app/onnx.tar.gz /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2
-
-RUN cd /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2 &&\
-    tar -xzf onnx.tar.gz
+COPY --from=build /app/onnx /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2/onnx
 
 # copy built frontend files
 COPY --from=build /app/build /app/build
@@ -55,4 +53,4 @@ COPY --from=build /app/build /app/build
 # copy backend files
 COPY ./backend .
 
-CMD [ "sh", "start.sh"]
+CMD [ "sh", "start.sh" ]
