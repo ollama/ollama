@@ -61,6 +61,9 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
 
     params.n_gpu_layers = sparams->n_gpu_layers;
     params.main_gpu = sparams->main_gpu;
+    if (sparams->tensor_split != NULL) {
+      params.tensor_split = sparams->tensor_split;
+    }
     params.use_mlock = sparams->use_mlock;
     params.use_mmap = sparams->use_mmap;
     params.numa = sparams->numa;
