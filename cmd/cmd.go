@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -370,46 +369,24 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return pull(cmd, args[0], "")
 	}
 
-	fp, err := server.GetManifestPath()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	type modelInfo struct {
-		Name   string
-		Digest string
-	}
-
-	var modelList []modelInfo
-
-	walkFunc := func(path string, info os.FileInfo, _ error) error {
-		if info.IsDir() {
-			return nil
-		}
-
-		dir, file := filepath.Split(path)
-		dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
-		tag := strings.Join([]string{dir, file}, ":")
-
-		model, err := server.GetModel(tag)
-		if err != nil {
-			slog.Info(fmt.Sprintf("skipping tag '%s'", tag))
-			// nolint: nilerr
-			return nil
-		}
-
-		modelList = append(modelList, modelInfo{tag, "sha256:" + model.Digest})
-		return nil
-	}
-
-	if err = filepath.Walk(fp, walkFunc); err != nil {
+	models, err := client.List(cmd.Context())
+	if err != nil {
 		return err
 	}
 
-	for _, m := range modelList {
-		err = pull(cmd, m.Name, m.Digest)
+	for _, m := range (*models).Models {
+		err = pull(cmd, m.Name, "sha256:"+m.Digest)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("couldn't pull model '%s'", m.Name))
+			if strings.Contains(err.Error(), "file does not exist") {
+				fmt.Printf("model '%s' is no longer available\n", m.Name)
+				continue
+			}
+			return err
 		}
 	}
 	return nil
