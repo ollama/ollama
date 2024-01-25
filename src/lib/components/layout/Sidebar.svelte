@@ -321,8 +321,9 @@
 						return true;
 					} else {
 						let title = chat.title.toLowerCase();
+						const query = search.toLowerCase();
 
-						if (title.includes(search)) {
+						if (title.includes(query)) {
 							return true;
 						} else {
 							return false;
