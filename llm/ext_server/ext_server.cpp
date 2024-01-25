@@ -61,9 +61,32 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
 
     params.n_gpu_layers = sparams->n_gpu_layers;
     params.main_gpu = sparams->main_gpu;
+
+    // This is taken from server.cpp::server_params_parse().
+#ifdef GGML_USE_CUBLAS
     if (sparams->tensor_split != NULL) {
-      params.tensor_split = sparams->tensor_split;
+      std::string arg_next = sparams->tensor_split;
+      
+      // split string by , and /
+      const std::regex regex{R"([,/]+)"};
+      std::sregex_token_iterator it{arg_next.begin(), arg_next.end(), regex, -1};
+      std::vector<std::string> split_arg{it, {}};
+      GGML_ASSERT(split_arg.size() <= LLAMA_MAX_DEVICES);
+
+      for (size_t i_device = 0; i_device < LLAMA_MAX_DEVICES; ++i_device)
+      {
+        if (i_device < split_arg.size())
+        {
+          params.tensor_split[i_device] = std::stof(split_arg[i_device]);
+        }
+        else
+        {
+          params.tensor_split[i_device] = 0.0f;
+        }
+      }
     }
+#endif
+    
     params.use_mlock = sparams->use_mlock;
     params.use_mmap = sparams->use_mmap;
     params.numa = sparams->numa;
