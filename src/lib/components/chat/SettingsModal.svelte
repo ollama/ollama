@@ -618,7 +618,6 @@
 		gravatarEmail = settings.gravatarEmail ?? '';
 
 		speakVoice = settings.speakVoice ?? '';
-		// await voices.set(await speechSynthesis.getVoices());
 
 		const getVoicesLoop = setInterval(async () => {
 			const _voices = await speechSynthesis.getVoices();
@@ -1763,7 +1762,7 @@
 								</div>
 							</div>
 
-							<!-- 
+							<!--
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									Gravatar Email <span class=" text-gray-400 text-sm">(optional)</span>
