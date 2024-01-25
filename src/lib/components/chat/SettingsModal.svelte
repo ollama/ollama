@@ -20,7 +20,7 @@
 	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
 	import { WEB_UI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
-	import { config, models, settings, user, chats } from '$lib/stores';
+	import { config, models, voices, settings, user, chats } from '$lib/stores';
 	import { splitStream, getGravatarURL, getImportOrigin, convertOpenAIChats } from '$lib/utils';
 
 	import Advanced from './Settings/Advanced.svelte';
@@ -111,6 +111,9 @@
 
 	let gravatarEmail = '';
 	let titleAutoGenerateModel = '';
+
+	// Voice
+	let speakVoice = '';
 
 	// Chats
 	let saveChatHistory = true;
@@ -614,6 +617,18 @@
 		titleAutoGenerateModel = settings.titleAutoGenerateModel ?? '';
 		gravatarEmail = settings.gravatarEmail ?? '';
 
+		speakVoice = settings.speakVoice ?? '';
+
+		const getVoicesLoop = setInterval(async () => {
+			const _voices = await speechSynthesis.getVoices();
+			await voices.set(_voices);
+
+			// do your loop
+			if (_voices.length > 0) {
+				clearInterval(getVoicesLoop);
+			}
+		}, 100);
+
 		saveChatHistory = settings.saveChatHistory ?? true;
 
 		authEnabled = settings.authHeader !== undefined ? true : false;
@@ -901,7 +916,7 @@
 										toggleTheme();
 									}}
 								>
-									
+
 								</button> -->
 
 								<div class="flex items-center relative">
@@ -1602,6 +1617,9 @@
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
 						on:submit|preventDefault={() => {
+							saveSettings({
+								speakVoice: speakVoice !== '' ? speakVoice : undefined
+							});
 							show = false;
 						}}
 					>
@@ -1720,7 +1738,31 @@
 								</div>
 							</div>
 
-							<!-- <hr class=" dark:border-gray-700" />
+							<hr class=" dark:border-gray-700" />
+
+							<div class=" space-y-3">
+								<div>
+									<div class=" mb-2.5 text-sm font-medium">Set Default Voice</div>
+									<div class="flex w-full">
+										<div class="flex-1">
+											<select
+												class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+												bind:value={speakVoice}
+												placeholder="Select a voice"
+											>
+												<option value="" selected>Default</option>
+												{#each $voices.filter((v) => v.localService === true) as voice}
+													<option value={voice.name} class="bg-gray-100 dark:bg-gray-700"
+														>{voice.name}</option
+													>
+												{/each}
+											</select>
+										</div>
+									</div>
+								</div>
+							</div>
+
+							<!--
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									Gravatar Email <span class=" text-gray-400 text-sm">(optional)</span>
