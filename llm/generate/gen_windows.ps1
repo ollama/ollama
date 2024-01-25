@@ -40,6 +40,29 @@ function apply_patches {
     if (!(Select-String -Path "${script:llamacppDir}/examples/server/CMakeLists.txt" -Pattern 'ollama')) {
         Add-Content -Path "${script:llamacppDir}/examples/server/CMakeLists.txt" -Value 'include (../../../ext_server/CMakeLists.txt) # ollama'
     }
+
+    # Apply temporary patches until fix is upstream
+    $patches = Get-ChildItem "../patches/*.diff"
+    foreach ($patch in $patches) {
+        # Extract file paths from the patch file
+        $filePaths = Get-Content $patch.FullName | Where-Object { $_ -match '^\+\+\+ ' } | ForEach-Object {
+            $parts = $_ -split ' '
+            ($parts[1] -split '/', 2)[1]
+        }
+
+        # Checkout each file
+        foreach ($file in $filePaths) {
+            Set-Location -Path ${script:llamacppDir}
+            git checkout $file
+        }
+    }
+
+    # Apply each patch
+    foreach ($patch in $patches) {
+        Set-Location -Path ${script:llamacppDir}
+        git apply $patch.FullName
+    }
+
     # Avoid duplicate main symbols when we link into the cgo binary
     $content = Get-Content -Path "${script:llamacppDir}/examples/server/server.cpp"
     $content = $content -replace 'int main\(', 'int __main('
