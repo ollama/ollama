@@ -254,7 +254,7 @@ func ExampleClient_Create() {
 		log.Fatal(err)
 	}
 
-	modelString := string(modelBytes) // convert the model bytes to a string
+	modelString := string(modelBytes)
 
 	// Create a new create request
 	req := &api.CreateRequest{
@@ -265,7 +265,7 @@ func ExampleClient_Create() {
 
 	var progressMessages []string // we will store the response from the server in this variable
 	// Create a function to handle the response from the server. This is a callback function that will be called for each response from the server.
-	fn := func(response api.ProgressResponse) error { // this callback function fires for each token returned from the server
+	fn := func(response api.ProgressResponse) error { // this callback function fires for each response returned from the server
 
 		progressMessages = append(progressMessages, response.Status) // append the response to the modelResponseText variable to retrieve the whole message
 		return nil
