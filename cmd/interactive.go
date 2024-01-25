@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/progress"
 	"github.com/jmorganca/ollama/readline"
 )
 
@@ -25,43 +27,75 @@ const (
 	MultilineTemplate
 )
 
-func modelIsMultiModal(cmd *cobra.Command, name string) bool {
-	// get model details
+func loadModel(cmd *cobra.Command, opts *runOptions) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		fmt.Println("error: couldn't connect to ollama server")
-		return false
+		return err
 	}
 
-	req := api.ShowRequest{Name: name}
-	resp, err := client.Show(cmd.Context(), &req)
+	p := progress.NewProgress(os.Stderr)
+	defer p.StopAndClear()
+
+	spinner := progress.NewSpinner("")
+	p.Add("", spinner)
+
+	showReq := api.ShowRequest{Name: opts.Model}
+	showResp, err := client.Show(cmd.Context(), &showReq)
 	if err != nil {
-		return false
+		return err
+	}
+	opts.MultiModal = slices.Contains(showResp.Details.Families, "clip")
+	opts.ParentModel = showResp.Details.ParentModel
+
+	if len(showResp.Messages) > 0 {
+		opts.Messages = append(opts.Messages, showResp.Messages...)
 	}
 
-	return slices.Contains(resp.Details.Families, "clip")
+	chatReq := &api.ChatRequest{
+		Model:    opts.Model,
+		Messages: []api.Message{},
+	}
+	err = client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
+		p.StopAndClear()
+		if len(opts.Messages) > 0 {
+			for _, msg := range opts.Messages {
+				switch msg.Role {
+				case "user":
+					fmt.Printf(">>> %s\n", msg.Content)
+				case "assistant":
+					state := &displayResponseState{}
+					displayResponse(msg.Content, opts.WordWrap, state)
+					fmt.Println()
+					fmt.Println()
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
-	multiModal := modelIsMultiModal(cmd, opts.Model)
+	opts.Messages = make([]api.Message, 0)
 
-	// load the model
-	loadOpts := runOptions{
-		Model:    opts.Model,
-		Prompt:   "",
-		Messages: []api.Message{},
-	}
-	if _, err := chat(cmd, loadOpts); err != nil {
+	err := loadModel(cmd, &opts)
+	if err != nil {
 		return err
 	}
 
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set          Set session variables")
-		fmt.Fprintln(os.Stderr, "  /show         Show model information")
-		fmt.Fprintln(os.Stderr, "  /bye          Exit")
-		fmt.Fprintln(os.Stderr, "  /?, /help     Help for a command")
-		fmt.Fprintln(os.Stderr, "  /? shortcuts  Help for keyboard shortcuts")
+		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
+		fmt.Fprintln(os.Stderr, "  /show           Show model information")
+		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
+		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
+		fmt.Fprintln(os.Stderr, "  /bye            Exit")
+		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
+		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 		fmt.Fprintln(os.Stderr, "")
@@ -140,7 +174,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
-	opts.Messages = make([]api.Message, 0)
 
 	for {
 		line, err := scanner.Readline()
@@ -203,6 +236,44 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if err := ListHandler(cmd, args[1:]); err != nil {
 				return err
 			}
+		case strings.HasPrefix(line, "/load"):
+			args := strings.Fields(line)
+			if len(args) != 2 {
+				fmt.Println("Usage:\n  /load <modelname>")
+				continue
+			}
+			opts.Model = args[1]
+			opts.Messages = []api.Message{}
+			fmt.Printf("Loading model '%s'\n", opts.Model)
+			if err := loadModel(cmd, &opts); err != nil {
+				return err
+			}
+			continue
+		case strings.HasPrefix(line, "/save"):
+			args := strings.Fields(line)
+			if len(args) != 2 {
+				fmt.Println("Usage:\n  /save <modelname>")
+				continue
+			}
+
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Println("error: couldn't connect to ollama server")
+				return err
+			}
+
+			req := &api.CreateRequest{
+				Name:      args[1],
+				Modelfile: buildModelfile(opts),
+			}
+			fn := func(resp api.ProgressResponse) error { return nil }
+			err = client.Create(cmd.Context(), req, fn)
+			if err != nil {
+				fmt.Println("error: couldn't save model")
+				return err
+			}
+			fmt.Printf("Created new model '%s'\n", args[1])
+			continue
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
@@ -389,7 +460,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			args := strings.Fields(line)
 			isFile := false
 
-			if multiModal {
+			if opts.MultiModal {
 				for _, f := range extractFileNames(line) {
 					if strings.HasPrefix(f, args[0]) {
 						isFile = true
@@ -411,7 +482,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		if sb.Len() > 0 && multiline == MultilineNone {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
-			if multiModal {
+			if opts.MultiModal {
 				msg, images, err := extractFileData(sb.String())
 				if err != nil {
 					return err
@@ -452,6 +523,38 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 		}
 	}
+}
+
+func buildModelfile(opts runOptions) string {
+	var mf strings.Builder
+	model := opts.ParentModel
+	if model == "" {
+		model = opts.Model
+	}
+	fmt.Fprintf(&mf, "FROM %s\n", model)
+	if opts.System != "" {
+		fmt.Fprintf(&mf, "SYSTEM \"\"\"%s\"\"\"\n", opts.System)
+	}
+
+	if opts.Template != "" {
+		fmt.Fprintf(&mf, "TEMPLATE \"\"\"%s\"\"\"\n", opts.Template)
+	}
+
+	keys := make([]string, 0)
+	for k := range opts.Options {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&mf, "PARAMETER %s %v\n", k, opts.Options[k])
+	}
+	fmt.Fprintln(&mf)
+
+	for _, msg := range opts.Messages {
+		fmt.Fprintf(&mf, "MESSAGE %s \"\"\"%s\"\"\"\n", msg.Role, msg.Content)
+	}
+
+	return mf.String()
 }
 
 func normalizeFilePath(fp string) string {

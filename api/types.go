@@ -171,6 +171,7 @@ type ShowResponse struct {
 	Template   string       `json:"template,omitempty"`
 	System     string       `json:"system,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
+	Messages   []Message    `json:"messages,omitempty"`
 }
 
 type CopyRequest struct {
@@ -236,6 +237,7 @@ type GenerateResponse struct {
 }
 
 type ModelDetails struct {
+	ParentModel       string   `json:"parent_model"`
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
 	Families          []string `json:"families"`
