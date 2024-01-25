@@ -659,12 +659,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	modelDetails := api.ModelDetails{
+		ParentModel:       model.ParentModel,
 		Format:            model.Config.ModelFormat,
 		Family:            model.Config.ModelFamily,
 		Families:          model.Config.ModelFamilies,
 		ParameterSize:     model.Config.ModelType,
 		QuantizationLevel: model.Config.FileType,
-		OriginalModel:     model.OriginalModel,
 	}
 
 	if req.System != "" {

@@ -91,4 +91,26 @@ MESSAGE assistant """Yes it is true, I am half horse, half shark."""
 	err = tmpl.Execute(&buf, opts)
 	assert.Nil(t, err)
 	assert.Equal(t, buf.String(), mf)
+
+	opts.ParentModel = "horseshark"
+	mf = buildModelfile(opts)
+	expectedModelfile = `FROM {{.ParentModel}}
+SYSTEM """{{.System}}"""
+TEMPLATE """{{.Template}}"""
+PARAMETER penalize_newline false
+PARAMETER seed 42
+PARAMETER stop [hi there]
+PARAMETER temperature 0.9
+
+MESSAGE user """Hey there hork!"""
+MESSAGE assistant """Yes it is true, I am half horse, half shark."""
+`
+
+	tmpl, err = template.New("").Parse(expectedModelfile)
+	assert.Nil(t, err)
+
+	var parentBuf bytes.Buffer
+	err = tmpl.Execute(&parentBuf, opts)
+	assert.Nil(t, err)
+	assert.Equal(t, parentBuf.String(), mf)
 }
