@@ -37,7 +37,6 @@ func TestMain(m *testing.M) {
 
 	go server.Serve(ln)
 
-	// check to see if there are any models on the server if not create one then delete after tests are done
 	// Create a new context
 	ctx := context.Background()
 
