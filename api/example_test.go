@@ -51,23 +51,6 @@ func Example_basic() {
 		log.Fatal(err)
 	}
 
-	// Get a heartbeat from the server. If no error is returned, we know the server is up.
-	err = client.Heartbeat(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Get the version of the server
-	version, err := client.Version(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// if we get an empty version, something is wrong
-	if version == "" {
-		log.Fatal("version is empty")
-	}
-
 	// List all the models on the server as tags
 	tags, err := client.List(ctx)
 	if err != nil {
@@ -86,18 +69,6 @@ func Example_basic() {
 
 	// Get the first model in the list
 	model := tags.Models[0].Model
-
-	request := api.ShowRequest{
-		Model: model,
-	}
-
-	// Show the model
-	show, err := client.Show(ctx, &request)
-
-	// if we get an empty show, something is wrong
-	if show == nil {
-		log.Fatal("show is empty")
-	}
 
 	// now we're getting ready for the big show. CHATTING WITH THE TINIEST MODEL ON THE SERVER!
 
