@@ -19,6 +19,7 @@ A model file is the blueprint to create and share models with Ollama.
   - [SYSTEM](#system)
   - [ADAPTER](#adapter)
   - [LICENSE](#license)
+  - [MESSAGE](#message)
 - [Notes](#notes)
 
 ## Format
