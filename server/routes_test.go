@@ -327,10 +327,8 @@ func Test_ChatPrompt(t *testing.T) {
 			chat: &ChatHistory{
 				Prompts: []PromptVars{
 					{
-						System:   "You are a wizard.",
 						Prompt:   "What are the magic words?",
 						Response: "abracadabra",
-						First:    true,
 					},
 					{
 						Prompt: "What is the spell for invisibility?",
@@ -338,7 +336,28 @@ func Test_ChatPrompt(t *testing.T) {
 				},
 				LastSystem: "You are a wizard.",
 			},
-			numCtx: 1, // only most recent message
+			numCtx: 2,
+			runner: MockLLM{
+				encoding: []int{1},
+			},
+			want: "[INST] You are a wizard. What is the spell for invisibility? [/INST]",
+		},
+		{
+			name:     "System is Preserved when Length Exceeded",
+			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+			chat: &ChatHistory{
+				Prompts: []PromptVars{
+					{
+						Prompt:   "What are the magic words?",
+						Response: "abracadabra",
+					},
+					{
+						Prompt: "What is the spell for invisibility?",
+					},
+				},
+				LastSystem: "You are a wizard.",
+			},
+			numCtx: 1,
 			runner: MockLLM{
 				encoding: []int{1},
 			},
@@ -350,12 +369,7 @@ func Test_ChatPrompt(t *testing.T) {
 
 			chat: &ChatHistory{
 				Prompts: []PromptVars{
-					{
-						System:   "You are a wizard.",
-						Prompt:   "What are the magic words?",
-						Response: "abracadabra",
-						First:    true,
-					},
+					// first message omitted for test
 					{
 						Prompt:   "Do you have a magic hat?",
 						Response: "Of course.",
@@ -366,7 +380,7 @@ func Test_ChatPrompt(t *testing.T) {
 				},
 				LastSystem: "You are a wizard.",
 			},
-			numCtx: 2, // two most recent messages
+			numCtx: 3, // two most recent messages and room for system message
 			runner: MockLLM{
 				encoding: []int{1},
 			},
