@@ -49,10 +49,11 @@ type GenerateRequest struct {
 }
 
 type ChatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   *bool     `json:"stream,omitempty"`
-	Format   string    `json:"format"`
+	Model     string    `json:"model"`
+	Messages  []Message `json:"messages"`
+	Stream    *bool     `json:"stream,omitempty"`
+	Format    string    `json:"format"`
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -127,8 +128,9 @@ type Runner struct {
 }
 
 type EmbeddingRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+	Model     string    `json:"model"`
+	Prompt    string    `json:"prompt"`
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -414,13 +416,18 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	case float64:
 		if t < 0 {
 			t = math.MaxFloat64
+			d.Duration = time.Duration(t)
+		} else {
+			d.Duration = time.Duration(t * float64(time.Second))
 		}
-
-		d.Duration = time.Duration(t)
 	case string:
 		d.Duration, err = time.ParseDuration(t)
 		if err != nil {
 			return err
+		}
+		if d.Duration < 0 {
+			mf := math.MaxFloat64
+			d.Duration = time.Duration(mf)
 		}
 	}
 

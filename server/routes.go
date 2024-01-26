@@ -97,11 +97,6 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 		loaded.Options = &opts
 	}
 
-	if sessionDuration < 0 {
-		loaded.expireTimer = time.AfterFunc(sessionDuration, func() {})
-		return nil
-	}
-
 	loaded.expireAt = time.Now().Add(sessionDuration)
 
 	if loaded.expireTimer == nil {
@@ -389,7 +384,14 @@ func EmbeddingHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	sessionDuration := defaultSessionDuration
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = defaultSessionDuration
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1085,7 +1087,14 @@ func ChatHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	sessionDuration := defaultSessionDuration
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = defaultSessionDuration
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
