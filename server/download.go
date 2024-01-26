@@ -247,7 +247,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 				}
 
 				if !part.lastUpdated.IsZero() && time.Since(part.lastUpdated) > 5*time.Second {
-					log.Printf("%s part %d stalled; retrying", b.Digest[7:19], part.N)
+					slog.Info(fmt.Sprintf("%s part %d stalled; retrying", b.Digest[7:19], part.N))
 					// reset last updated
 					part.lastUpdated = time.Time{}
 					return errPartStalled
