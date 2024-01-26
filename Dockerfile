@@ -109,7 +109,8 @@ ARG CGO_CFLAGS
 RUN go build .
 
 # Runtime stages
-FROM --platform=linux/amd64 rocm/dev-centos-7:6.0-complete as runtime-amd64
+FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
+RUN apt-get update && apt-get install -y ca-certificates
 COPY --from=build-amd64 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
 FROM --platform=linux/arm64 ubuntu:22.04 as runtime-arm64
 RUN apt-get update && apt-get install -y ca-certificates
