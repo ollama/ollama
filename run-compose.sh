@@ -181,6 +181,9 @@ else
         DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.data.yaml"
         export OLLAMA_DATA_DIR=$data_dir # Set OLLAMA_DATA_DIR environment variable
     fi
+    if [[ -n $webui_port ]]; then
+        export OLLAMA_WEBUI_PORT=$webui_port # Set OLLAMA_WEBUI_PORT environment variable
+    fi
     DEFAULT_COMPOSE_COMMAND+=" up -d"
     DEFAULT_COMPOSE_COMMAND+=" --remove-orphans"
     DEFAULT_COMPOSE_COMMAND+=" --force-recreate"
