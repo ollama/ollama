@@ -138,16 +138,13 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 }
 
 func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *registryOptions) {
-	b.err = b.run(ctx, requestURL, opts)
-}
-
-func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
 	defer blobDownloadManager.Delete(b.Digest)
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
 	file, err := os.OpenFile(b.Name+"-partial", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
-		return err
+		b.err = err
+		return
 	}
 	defer file.Close()
 
@@ -188,26 +185,30 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	}
 
 	if err := g.Wait(); err != nil {
-		return err
+		b.err = err
+		return
 	}
 
 	// explicitly close the file so we can rename it
 	if err := file.Close(); err != nil {
-		return err
+		b.err = err
+		return
 	}
 
 	for i := range b.Parts {
 		if err := os.Remove(file.Name() + "-" + strconv.Itoa(i)); err != nil {
-			return err
+			b.err = err
+			return
 		}
 	}
 
 	if err := os.Rename(file.Name(), b.Name); err != nil {
-		return err
+		b.err = err
+		return
 	}
 
 	b.done = true
-	return nil
+	return
 }
 
 func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *registryOptions) error {
