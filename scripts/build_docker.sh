@@ -13,3 +13,13 @@ docker build \
     -f Dockerfile \
     -t ollama/ollama:$VERSION \
     .
+
+docker build \
+    --load \
+    --platform=linux/amd64 \
+    --build-arg=VERSION \
+    --build-arg=GOFLAGS \
+    --target runtime-rocm \
+    -f Dockerfile \
+    -t ollama/ollama:$VERSION-rocm \
+    .
