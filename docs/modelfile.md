@@ -38,6 +38,7 @@ INSTRUCTION arguments
 | [`SYSTEM`](#system)                 | Specifies the system message that will be set in the template. |
 | [`ADAPTER`](#adapter)               | Defines the (Q)LoRA adapters to apply to the model.            |
 | [`LICENSE`](#license)               | Specifies the legal license.                                   |
+| [`MESSAGE`](#message)               | Specify message history.                                       |
 
 ## Examples
 
@@ -203,6 +204,19 @@ The `LICENSE` instruction allows you to specify the legal license under which th
 LICENSE """
 <license text>
 """
+```
+
+### MESSAGE
+
+The `MESSAGE` instruction allows you to specify a message history for the model to use when responding:
+
+```modelfile
+MESSAGE user Is Toronto in Canada?
+MESSAGE assistant yes
+MESSAGE user Is Sacramento in Canada?
+MESSAGE assistant no
+MESSAGE user Is Ontario in Canada?
+MESSAGE assistant yes
 ```
 
 ## Notes
