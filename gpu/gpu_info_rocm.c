@@ -178,7 +178,7 @@ void rocm_get_version(rocm_handle_t h, rocm_version_resp_t *resp) {
   const int buflen = 256;
   char buf[buflen + 1];
   if (h.handle == NULL) {
-    resp->str = strdup("nvml handle not initialized");
+    resp->str = strdup("rocm handle not initialized");
     resp->status = 1;
     return;
   }
