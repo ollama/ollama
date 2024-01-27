@@ -9,7 +9,7 @@ import os
 import aiohttp
 import json
 
-from utils.misc import calculate_sha256
+from utils.misc import calculate_sha256, get_gravatar_url
 
 from config import OLLAMA_API_BASE_URL, DATA_DIR, UPLOAD_DIR
 from constants import ERROR_MESSAGES
@@ -165,3 +165,10 @@ def upload(file: UploadFile = File(...)):
             yield f"data: {json.dumps(res)}\n\n"
 
     return StreamingResponse(file_process_stream(), media_type="text/event-stream")
+
+
+@router.get("/gravatar")
+async def get_gravatar(
+    email: str,
+):
+    return get_gravatar_url(email)
