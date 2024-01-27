@@ -65,7 +65,7 @@ class UsersTable:
                 "name": name,
                 "email": email,
                 "role": role,
-                "profile_image_url": get_gravatar_url(email),
+                "profile_image_url": "/user.png",
                 "timestamp": int(time.time()),
             }
         )
