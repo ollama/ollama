@@ -4,6 +4,7 @@
 	import { documents } from '$lib/stores';
 	import { removeFirstHashWord, isValidHttpUrl } from '$lib/utils';
 	import { tick } from 'svelte';
+	import toast from 'svelte-french-toast';
 
 	export let prompt = '';
 
@@ -92,6 +93,10 @@
 								const url = prompt.split(' ')?.at(0)?.substring(1);
 								if (isValidHttpUrl(url)) {
 									confirmSelectWeb(url);
+								} else {
+									toast.error(
+										'Oops! Looks like the URL is invalid. Please double-check and try again.'
+									);
 								}
 							}}
 						>
