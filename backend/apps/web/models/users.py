@@ -108,6 +108,20 @@ class UsersTable:
         except:
             return None
 
+    def update_user_profile_image_url_by_id(
+        self, id: str, profile_image_url: str
+    ) -> Optional[UserModel]:
+        try:
+            query = User.update(profile_image_url=profile_image_url).where(
+                User.id == id
+            )
+            query.execute()
+
+            user = User.get(User.id == id)
+            return UserModel(**model_to_dict(user))
+        except:
+            return None
+
     def update_user_by_id(self, id: str, updated: dict) -> Optional[UserModel]:
         try:
             query = User.update(**updated).where(User.id == id)
