@@ -39,7 +39,7 @@
 		updatePasswordHandler();
 	}}
 >
-	<div class="flex justify-between mb-2.5 items-center">
+	<div class="flex justify-between mb-2.5 items-center text-sm">
 		<div class="  font-medium">Change Password</div>
 		<button
 			class=" text-xs font-medium text-gray-500"

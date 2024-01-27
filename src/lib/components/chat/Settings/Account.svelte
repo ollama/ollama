@@ -96,7 +96,7 @@
 			}}
 		/>
 
-		<div class=" mb-2.5 font-medium">Profile</div>
+		<div class=" mb-2.5 text-sm font-medium">Profile</div>
 
 		<div class="flex space-x-5">
 			<div class="flex flex-col">
