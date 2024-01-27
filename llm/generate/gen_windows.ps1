@@ -25,6 +25,11 @@ function init_vars {
     }
     $script:GZIP=(get-command -ea 'silentlycontinue' gzip).path
     $script:DUMPBIN=(get-command -ea 'silentlycontinue' dumpbin).path
+    if ($null -eq $env:CMAKE_CUDA_ARCHITECTURES) {
+        $script:CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
+    } else {
+        $script:CMAKE_CUDA_ARCHITECTURES=$env:CMAKE_CUDA_ARCHITECTURES
+    }
 }
 
 function git_module_setup {
@@ -151,7 +156,7 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     }
     init_vars
     $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
-    $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on")
+    $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
     build
     install
     cp "${script:CUDA_LIB_DIR}/cudart64_*.dll" "${script:buildDir}/lib"

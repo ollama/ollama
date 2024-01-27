@@ -30,8 +30,8 @@ type handles struct {
 var gpuMutex sync.Mutex
 var gpuHandles *handles = nil
 
-// With our current CUDA compile flags, 5.2 and older will not work properly
-const CudaComputeMajorMin = 6
+// With our current CUDA compile flags, older than 5.0 will not work properly
+var CudaComputeMin = [2]C.int{5, 0}
 
 // Possible locations for the nvidia-ml library
 var CudaLinuxGlobs = []string{
@@ -142,7 +142,7 @@ func GetGPUInfo() GpuInfo {
 			if cc.err != nil {
 				slog.Info(fmt.Sprintf("error looking up CUDA GPU compute capability: %s", C.GoString(cc.err)))
 				C.free(unsafe.Pointer(cc.err))
-			} else if cc.major >= CudaComputeMajorMin {
+			} else if cc.major > CudaComputeMin[0] || (cc.major == CudaComputeMin[0] && cc.minor >= CudaComputeMin[1]) {
 				slog.Info(fmt.Sprintf("CUDA Compute Capability detected: %d.%d", cc.major, cc.minor))
 				resp.Library = "cuda"
 			} else {
