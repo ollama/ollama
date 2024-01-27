@@ -11,7 +11,7 @@ import uuid
 from apps.web.models.auths import (
     SigninForm,
     SignupForm,
-    ProfileImageUrlForm,
+    UpdateProfileForm,
     UpdatePasswordForm,
     UserResponse,
     SigninResponse,
@@ -42,17 +42,18 @@ async def get_session_user(user=Depends(get_current_user)):
 
 
 ############################
-# Update Profile Image Url
+# Update Profile
 ############################
 
 
 @router.post("/update/profile", response_model=UserResponse)
-async def update_profile_image_url(
-    form_data: ProfileImageUrlForm, session_user=Depends(get_current_user)
+async def update_profile(
+    form_data: UpdateProfileForm, session_user=Depends(get_current_user)
 ):
     if session_user:
-        user = Users.update_user_profile_image_url_by_id(
-            session_user.id, form_data.profile_image_url
+        user = Users.update_user_by_id(
+            session_user.id,
+            {"profile_image_url": form_data.profile_image_url, "name": form_data.name},
         )
         if user:
             return user

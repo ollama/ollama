@@ -67,6 +67,11 @@ class ProfileImageUrlForm(BaseModel):
     profile_image_url: str
 
 
+class UpdateProfileForm(BaseModel):
+    profile_image_url: str
+    name: str
+
+
 class UpdatePasswordForm(BaseModel):
     password: str
     new_password: str
