@@ -6,7 +6,7 @@
 
 	import Prompts from './MessageInput/PromptCommands.svelte';
 	import Suggestions from './MessageInput/Suggestions.svelte';
-	import { uploadDocToVectorDB } from '$lib/apis/rag';
+	import { uploadDocToVectorDB, uploadWebToVectorDB } from '$lib/apis/rag';
 	import AddFilesPlaceholder from '../AddFilesPlaceholder.svelte';
 	import { SUPPORTED_FILE_TYPE, SUPPORTED_FILE_EXTENSIONS } from '$lib/constants';
 	import Documents from './MessageInput/Documents.svelte';
@@ -137,6 +137,33 @@
 		}
 	};
 
+	const uploadWeb = async (url) => {
+		console.log(url);
+
+		const doc = {
+			type: 'doc',
+			name: url,
+			collection_name: '',
+			upload_status: false,
+			error: ''
+		};
+
+		try {
+			files = [...files, doc];
+			const res = await uploadWebToVectorDB(localStorage.token, '', url);
+
+			if (res) {
+				doc.upload_status = true;
+				doc.collection_name = res.collection_name;
+				files = files;
+			}
+		} catch (e) {
+			// Remove the failed doc from the files array
+			files = files.filter((f) => f.name !== url);
+			toast.error(e);
+		}
+	};
+
 	onMount(() => {
 		const dropZone = document.querySelector('body');
 
@@ -258,6 +285,10 @@
 					<Documents
 						bind:this={documentsElement}
 						bind:prompt
+						on:url={(e) => {
+							console.log(e);
+							uploadWeb(e.detail);
+						}}
 						on:select={(e) => {
 							console.log(e);
 							files = [

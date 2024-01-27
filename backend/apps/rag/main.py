@@ -37,7 +37,7 @@ from typing import Optional
 import uuid
 import time
 
-from utils.misc import calculate_sha256
+from utils.misc import calculate_sha256, calculate_sha256_string
 from utils.utils import get_current_user
 from config import UPLOAD_DIR, EMBED_MODEL, CHROMA_CLIENT, CHUNK_SIZE, CHUNK_OVERLAP
 from constants import ERROR_MESSAGES
@@ -124,10 +124,15 @@ def store_web(form_data: StoreWebForm, user=Depends(get_current_user)):
     try:
         loader = WebBaseLoader(form_data.url)
         data = loader.load()
-        store_data_in_vector_db(data, form_data.collection_name)
+
+        collection_name = form_data.collection_name
+        if collection_name == "":
+            collection_name = calculate_sha256_string(form_data.url)[:63]
+
+        store_data_in_vector_db(data, collection_name)
         return {
             "status": True,
-            "collection_name": form_data.collection_name,
+            "collection_name": collection_name,
             "filename": form_data.url,
         }
     except Exception as e:
