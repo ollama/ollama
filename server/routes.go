@@ -253,6 +253,8 @@ func GenerateHandler(c *gin.Context) {
 		prompt = rebuild.String()
 	}
 
+	slog.Debug(fmt.Sprintf("prompt: %s", prompt))
+
 	ch := make(chan any)
 	var generated strings.Builder
 	go func() {
@@ -1124,6 +1126,8 @@ func ChatHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	slog.Debug(fmt.Sprintf("prompt: %s", prompt))
 
 	ch := make(chan any)
 
