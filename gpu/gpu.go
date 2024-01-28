@@ -135,7 +135,7 @@ func GetGPUInfo() GpuInfo {
 		if memInfo.err != nil {
 			slog.Info(fmt.Sprintf("error looking up CUDA GPU memory: %s", C.GoString(memInfo.err)))
 			C.free(unsafe.Pointer(memInfo.err))
-		} else {
+		} else if memInfo.count > 0 {
 			// Verify minimum compute capability
 			var cc C.cuda_compute_capability_t
 			C.cuda_compute_capability(*gpuHandles.cuda, &cc)
@@ -157,7 +157,7 @@ func GetGPUInfo() GpuInfo {
 		} else if memInfo.igpu_index >= 0 && memInfo.count == 1 {
 			// Only one GPU detected and it appears to be an integrated GPU - skip it
 			slog.Info("ROCm unsupported integrated GPU detected")
-		} else {
+		} else if memInfo.count > 0 {
 			if memInfo.igpu_index >= 0 {
 				// We have multiple GPUs reported, and one of them is an integrated GPU
 				// so we have to set the env var to bypass it
