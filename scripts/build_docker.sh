@@ -2,7 +2,7 @@
 
 set -eu
 
-export VERSION=${VERSION:-0.0.0}
+export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
 export GOFLAGS="'-ldflags=-w -s \"-X=github.com/jmorganca/ollama/version.Version=$VERSION\" \"-X=github.com/jmorganca/ollama/server.mode=release\"'"
 
 docker build \
@@ -12,4 +12,14 @@ docker build \
     --build-arg=GOFLAGS \
     -f Dockerfile \
     -t ollama/ollama:$VERSION \
+    .
+
+docker build \
+    --load \
+    --platform=linux/amd64 \
+    --build-arg=VERSION \
+    --build-arg=GOFLAGS \
+    --target runtime-rocm \
+    -f Dockerfile \
+    -t ollama/ollama:$VERSION-rocm \
     .

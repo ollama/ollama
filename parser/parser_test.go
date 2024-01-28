@@ -61,3 +61,38 @@ PARAMETER param1
 	assert.ErrorContains(t, err, "missing value for [param1]")
 
 }
+
+func Test_Parser_Messages(t *testing.T) {
+
+	input := `
+FROM foo
+MESSAGE system You are a Parser. Always Parse things.
+MESSAGE user Hey there!
+MESSAGE assistant Hello, I want to parse all the things!
+`
+
+	reader := strings.NewReader(input)
+	commands, err := Parse(reader)
+	assert.Nil(t, err)
+
+	expectedCommands := []Command{
+		{Name: "model", Args: "foo"},
+		{Name: "message", Args: "system: You are a Parser. Always Parse things."},
+		{Name: "message", Args: "user: Hey there!"},
+		{Name: "message", Args: "assistant: Hello, I want to parse all the things!"},
+	}
+
+	assert.Equal(t, expectedCommands, commands)
+}
+
+func Test_Parser_Messages_BadRole(t *testing.T) {
+
+	input := `
+FROM foo
+MESSAGE badguy I'm a bad guy!
+`
+
+	reader := strings.NewReader(input)
+	_, err := Parse(reader)
+	assert.ErrorContains(t, err, "role must be one of \"system\", \"user\", or \"assistant\"")
+}

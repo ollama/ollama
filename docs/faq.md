@@ -8,35 +8,38 @@ To upgrade Ollama, run the installation process again. On the Mac, click the Oll
 
 Review the [Troubleshooting](./troubleshooting.md) docs for more about using logs.
 
-## How do I use Ollama server environment variables on Mac
+## How do I configure Ollama server?
 
-On macOS, Ollama runs in the background and is managed by the menubar app. If adding environment variables, Ollama will need to be run manually.
+Ollama server can be configured with environment variables.
 
-1. Click the menubar icon for Ollama and choose **Quit Ollama**.
-2. Open a new terminal window and run the following command (this example uses `OLLAMA_HOST` with an IP address of `123.1.1.1`):
+### Setting environment variables on Mac
 
-   ```bash
-   OLLAMA_HOST=123.1.1.1 ollama serve
-   ```
+If Ollama is run as a macOS application, environment variables should be set using `launchctl`:
 
-## How do I use Ollama server environment variables on Linux?
+1. For each environment variable, call `launchctl setenv`.
 
-If Ollama is installed with the install script, a systemd service was created, running as the Ollama user. To add an environment variable, such as OLLAMA_HOST, follow these steps:
+    ```bash
+    launchctl setenv OLLAMA_HOST "0.0.0.0"
+    ```
 
-1. Create a `systemd` drop-in directory and add a config file. This is only needed once.
+2. Restart Ollama application.
 
-   ```bash
-   mkdir -p /etc/systemd/system/ollama.service.d
-   echo '[Service]' >>/etc/systemd/system/ollama.service.d/environment.conf
-   ```
+### Setting environment variables on Linux
 
-2. For each environment variable, add it to the config file:
+If Ollama is run as a systemd service, environment variables should be set using `systemctl`:
 
-   ```bash
-   echo 'Environment="OLLAMA_HOST=0.0.0.0:11434"' >>/etc/systemd/system/ollama.service.d/environment.conf
-   ```
+1. Edit the systemd service by calling `systemctl edit ollama.service`. This will open an editor.
 
-3. Reload `systemd` and restart Ollama:
+2. For each environment variable, add a line `Environment` under section `[Service]`:
+
+    ```ini
+    [Service]
+    Environment="OLLAMA_HOST=0.0.0.0"
+    ```
+
+3. Save and exit.
+
+4. Reload `systemd` and restart Ollama:
 
    ```bash
    systemctl daemon-reload
@@ -45,26 +48,26 @@ If Ollama is installed with the install script, a systemd service was created, r
 
 ## How can I expose Ollama on my network?
 
-Ollama binds to 127.0.0.1 port 11434 by default. Change the bind address with the `OLLAMA_HOST` environment variable. Refer to the section above for how to use environment variables on your platform.
+Ollama binds 127.0.0.1 port 11434 by default. Change the bind address with the `OLLAMA_HOST` environment variable.
+
+Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
 ## How can I allow additional web origins to access Ollama?
 
-Ollama allows cross-origin requests from `127.0.0.1` and `0.0.0.0` by default. Add additional origins with the `OLLAMA_ORIGINS` environment variable. For example, to add all ports on 192.168.1.1 and https://example.com, use:
+Ollama allows cross-origin requests from `127.0.0.1` and `0.0.0.0` by default. Additional origins can be configured with `OLLAMA_ORIGINS`.
 
-```shell
-OLLAMA_ORIGINS=http://192.168.1.1:*,https://example.com
-```
-
-Refer to the section above for how to use environment variables on your platform.
+Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
 ## Where are models stored?
 
 - macOS: `~/.ollama/models`.
 - Linux: `/usr/share/ollama/.ollama/models`
 
-## How do I set them to a different location?
+### How do I set them to a different location?
 
-If a different directory needs to be used, set the environment variable `OLLAMA_MODELS` to the chosen directory. Refer to the section above for how to use environment variables on your platform.
+If a different directory needs to be used, set the environment variable `OLLAMA_MODELS` to the chosen directory.
+
+Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
 ## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
 

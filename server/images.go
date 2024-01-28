@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,7 +41,7 @@ type Model struct {
 	Config         ConfigV2
 	ShortName      string
 	ModelPath      string
-	OriginalModel  string
+	ParentModel    string
 	AdapterPaths   []string
 	ProjectorPaths []string
 	Template       string
@@ -49,6 +50,12 @@ type Model struct {
 	Digest         string
 	Size           int64
 	Options        map[string]interface{}
+	Messages       []Message
+}
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type PromptVars struct {
@@ -332,11 +339,11 @@ func GetModel(name string) (*Model, error) {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
-			model.OriginalModel = layer.From
+			model.ParentModel = layer.From
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
-			log.Print("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
+			slog.Info("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
 			model.AdapterPaths = append(model.AdapterPaths, filename)
 		case "application/vnd.ollama.image.projector":
@@ -371,6 +378,16 @@ func GetModel(name string) (*Model, error) {
 
 			// parse model options parameters into a map so that we can see which fields have been specified explicitly
 			if err = json.NewDecoder(params).Decode(&model.Options); err != nil {
+				return nil, err
+			}
+		case "application/vnd.ollama.image.messages":
+			msgs, err := os.Open(filename)
+			if err != nil {
+				return nil, err
+			}
+			defer msgs.Close()
+
+			if err = json.NewDecoder(msgs).Decode(&model.Messages); err != nil {
 				return nil, err
 			}
 		case "application/vnd.ollama.image.license":
@@ -411,6 +428,13 @@ func realpath(mfDir, from string) string {
 }
 
 func CreateModel(ctx context.Context, name, modelFileDir string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
+	deleteMap := make(map[string]struct{})
+	if manifest, _, err := GetManifest(ParseModelPath(name)); err == nil {
+		for _, layer := range append(manifest.Layers, manifest.Config) {
+			deleteMap[layer.Digest] = struct{}{}
+		}
+	}
+
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
@@ -419,15 +443,13 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 		},
 	}
 
-	deleteMap := make(map[string]struct{})
-
 	var layers Layers
+	messages := []string{}
 
 	params := make(map[string][]string)
 	fromParams := make(map[string]any)
 
 	for _, c := range commands {
-		log.Printf("[%s] - %s", c.Name, c.Args)
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
 		switch c.Name {
@@ -601,9 +623,35 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 
 			layers.Replace(layer)
+		case "message":
+			messages = append(messages, c.Args)
 		default:
 			params[c.Name] = append(params[c.Name], c.Args)
 		}
+	}
+
+	if len(messages) > 0 {
+		fn(api.ProgressResponse{Status: "creating parameters layer"})
+
+		msgs := make([]api.Message, 0)
+
+		for _, m := range messages {
+			// todo: handle images
+			msg := strings.SplitN(m, ": ", 2)
+			msgs = append(msgs, api.Message{Role: msg[0], Content: msg[1]})
+		}
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(msgs); err != nil {
+			return err
+		}
+
+		layer, err := NewLayer(&b, "application/vnd.ollama.image.messages")
+		if err != nil {
+			return err
+		}
+
+		layers.Replace(layer)
 	}
 
 	if len(params) > 0 {
@@ -767,16 +815,16 @@ func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{},
 	for k := range deleteMap {
 		fp, err := GetBlobsPath(k)
 		if err != nil {
-			log.Printf("couldn't get file path for '%s': %v", k, err)
+			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
 			continue
 		}
 		if !dryRun {
 			if err := os.Remove(fp); err != nil {
-				log.Printf("couldn't remove file '%s': %v", fp, err)
+				slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
 				continue
 			}
 		} else {
-			log.Printf("wanted to remove: %s", fp)
+			slog.Info(fmt.Sprintf("wanted to remove: %s", fp))
 		}
 	}
 
@@ -792,7 +840,7 @@ func PruneLayers() error {
 
 	blobs, err := os.ReadDir(p)
 	if err != nil {
-		log.Printf("couldn't read dir '%s': %v", p, err)
+		slog.Info(fmt.Sprintf("couldn't read dir '%s': %v", p, err))
 		return err
 	}
 
@@ -806,14 +854,14 @@ func PruneLayers() error {
 		}
 	}
 
-	log.Printf("total blobs: %d", len(deleteMap))
+	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
 
 	err = deleteUnusedLayers(nil, deleteMap, false)
 	if err != nil {
 		return err
 	}
 
-	log.Printf("total unused blobs removed: %d", len(deleteMap))
+	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
 
 	return nil
 }
@@ -875,7 +923,7 @@ func DeleteModel(name string) error {
 	}
 	err = os.Remove(fp)
 	if err != nil {
-		log.Printf("couldn't remove manifest file '%s': %v", fp, err)
+		slog.Info(fmt.Sprintf("couldn't remove manifest file '%s': %v", fp, err))
 		return err
 	}
 
@@ -902,8 +950,8 @@ func ShowModelfile(model *Model) (string, error) {
 	mt.Model = model
 	mt.From = model.ModelPath
 
-	if model.OriginalModel != "" {
-		mt.From = model.OriginalModel
+	if model.ParentModel != "" {
+		mt.From = model.ParentModel
 	}
 
 	modelFile := `# Modelfile generated by "ollama show"
@@ -929,14 +977,14 @@ PARAMETER {{ $k }} {{ printf "%#v" $parameter }}
 
 	tmpl, err := template.New("").Parse(modelFile)
 	if err != nil {
-		log.Printf("error parsing template: %q", err)
+		slog.Info(fmt.Sprintf("error parsing template: %q", err))
 		return "", err
 	}
 
 	var buf bytes.Buffer
 
 	if err = tmpl.Execute(&buf, mt); err != nil {
-		log.Printf("error executing template: %q", err)
+		slog.Info(fmt.Sprintf("error executing template: %q", err))
 		return "", err
 	}
 
@@ -963,7 +1011,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
-			log.Printf("error uploading blob: %v", err)
+			slog.Info(fmt.Sprintf("error uploading blob: %v", err))
 			if errors.Is(err, errUnauthorized) {
 				return fmt.Errorf("unable to push %s, make sure this namespace exists and you are authorized to push to it", ParseModelPath(name).GetNamespaceRepository())
 			}
@@ -1058,7 +1106,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 				}
 				if err := os.Remove(fp); err != nil {
 					// log this, but return the original error
-					log.Printf("couldn't remove file with digest mismatch '%s': %v", fp, err)
+					slog.Info(fmt.Sprintf("couldn't remove file with digest mismatch '%s': %v", fp, err))
 				}
 			}
 			return err
@@ -1082,7 +1130,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 
 	err = os.WriteFile(fp, manifestJSON, 0o644)
 	if err != nil {
-		log.Printf("couldn't write to %s", fp)
+		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
 		return err
 	}
 
@@ -1136,7 +1184,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("request failed: %v", err)
+				slog.Info(fmt.Sprintf("request failed: %v", err))
 			}
 
 			return nil, err

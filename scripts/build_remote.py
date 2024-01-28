@@ -66,3 +66,7 @@ subprocess.check_call(['ssh', netloc, 'cd', path, ';', GoCmd, 'generate', './...
 print("Building")
 subprocess.check_call(['ssh', netloc, 'cd', path, ';', GoCmd, 'build', '.'])
 
+print("Copying built result")
+subprocess.check_call(['scp', netloc +":"+ path + "/ollama.exe",  './dist/'])
+
+

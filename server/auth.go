@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -86,7 +86,7 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 
 	rawKey, err := os.ReadFile(keyPath)
 	if err != nil {
-		log.Printf("Failed to load private key: %v", err)
+		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
 		return "", err
 	}
 
@@ -105,7 +105,7 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 	headers.Set("Authorization", sig)
 	resp, err := makeRequest(ctx, http.MethodGet, redirectURL, headers, nil, nil)
 	if err != nil {
-		log.Printf("couldn't get token: %q", err)
+		slog.Info(fmt.Sprintf("couldn't get token: %q", err))
 		return "", err
 	}
 	defer resp.Body.Close()

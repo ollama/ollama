@@ -133,13 +133,6 @@ func (b *Buffer) Size() int {
 	return b.Buf.Size()
 }
 
-func min(n, m int) int {
-	if n > m {
-		return m
-	}
-	return n
-}
-
 func (b *Buffer) Add(r rune) {
 	if b.Pos == b.Buf.Size() {
 		fmt.Printf("%c", r)
