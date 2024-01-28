@@ -25,6 +25,11 @@ function init_vars {
     }
     $script:GZIP=(get-command -ea 'silentlycontinue' gzip).path
     $script:DUMPBIN=(get-command -ea 'silentlycontinue' dumpbin).path
+    if ($null -eq $env:CMAKE_CUDA_ARCHITECTURES) {
+        $script:CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
+    } else {
+        $script:CMAKE_CUDA_ARCHITECTURES=$env:CMAKE_CUDA_ARCHITECTURES
+    }
 }
 
 function git_module_setup {
@@ -40,6 +45,29 @@ function apply_patches {
     if (!(Select-String -Path "${script:llamacppDir}/examples/server/CMakeLists.txt" -Pattern 'ollama')) {
         Add-Content -Path "${script:llamacppDir}/examples/server/CMakeLists.txt" -Value 'include (../../../ext_server/CMakeLists.txt) # ollama'
     }
+
+    # Apply temporary patches until fix is upstream
+    $patches = Get-ChildItem "../patches/*.diff"
+    foreach ($patch in $patches) {
+        # Extract file paths from the patch file
+        $filePaths = Get-Content $patch.FullName | Where-Object { $_ -match '^\+\+\+ ' } | ForEach-Object {
+            $parts = $_ -split ' '
+            ($parts[1] -split '/', 2)[1]
+        }
+
+        # Checkout each file
+        foreach ($file in $filePaths) {
+            Set-Location -Path ${script:llamacppDir}
+            git checkout $file
+        }
+    }
+
+    # Apply each patch
+    foreach ($patch in $patches) {
+        Set-Location -Path ${script:llamacppDir}
+        git apply $patch.FullName
+    }
+
     # Avoid duplicate main symbols when we link into the cgo binary
     $content = Get-Content -Path "${script:llamacppDir}/examples/server/server.cpp"
     $content = $content -replace 'int main\(', 'int __main('
@@ -128,7 +156,7 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     }
     init_vars
     $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
-    $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on")
+    $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
     build
     install
     cp "${script:CUDA_LIB_DIR}/cudart64_*.dll" "${script:buildDir}/lib"

@@ -23,29 +23,72 @@ jobs:
         with:
           go-version: '1.21'
           cache: true
-      - if: ${{ startsWith(matrix.os, 'windows-') }}
-        shell: pwsh
-        run: |
-          $path = vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ($path) {
-              $path = join-path $path 'Common7\Tools\vsdevcmd.bat'
-              if (test-path $path) {
-                  cmd /s /c """$path"" $args && set" | where { $_ -match '(\w+)=(.*)' } | foreach {
-                      echo "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
-                  }
-              }
-          }
-
-          echo "C:\Program Files\Git\usr\bin" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf8 -Append
       - run: go get ./...
       - run: go generate -x ./...
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
-          path: |
-            llm/llama.cpp/build/**/lib/*
+          path: llm/llama.cpp/build/**/lib/*
+  generate-cuda:
+    strategy:
+      matrix:
+        cuda-version:
+          - '11.8.0'
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
+    steps:
+      - run: |
+          apt-get update && apt-get install -y git build-essential curl
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.1/cmake-3.28.1-linux-x86_64.tar.gz \
+            | tar -zx -C /usr --strip-components 1
+        env:
+          DEBIAN_FRONTEND: noninteractive
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
+      - run: go get ./...
+      - run: |
+          git config --global --add safe.directory /__w/ollama/ollama
+          go generate -x ./...
+        env:
+          OLLAMA_SKIP_CPU_GENERATE: '1'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cuda-${{ matrix.cuda-version }}-libraries
+          path: llm/llama.cpp/build/**/lib/*
+  generate-rocm:
+    strategy:
+      matrix:
+        rocm-version:
+          - '5.7.1'
+          - '6.0'
+    runs-on: ubuntu-latest
+    container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
+    steps:
+      - run: |
+          apt-get update && apt-get install -y git build-essential curl rocm-libs
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.1/cmake-3.28.1-linux-x86_64.tar.gz \
+            | tar -zx -C /usr --strip-components 1
+        env:
+          DEBIAN_FRONTEND: noninteractive
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
+      - run: go get ./...
+      - run: |
+          git config --global --add safe.directory /__w/ollama/ollama
+          go generate -x ./...
+        env:
+          OLLAMA_SKIP_CPU_GENERATE: '1'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rocm-${{ matrix.rocm-version }}-libraries
+          path: llm/llama.cpp/build/**/lib/*
   lint:
-    needs: generate
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -69,10 +112,19 @@ jobs:
         with:
           go-version: '1.21'
           cache: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
-          path: llm/llama.cpp/build
+      - run: |
+          mkdir -p llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/stub.so
+        if: ${{ startsWith(matrix.os, 'ubuntu-') }}
+      - run: |
+          mkdir -p llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/stub.dylib
+          touch llm/llama.cpp/ggml-metal.metal
+        if: ${{ startsWith(matrix.os, 'macos-') }}
+      - run: |
+          mkdir -p llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/stub.dll
+        if: ${{ startsWith(matrix.os, 'windows-') }}
       - uses: golangci/golangci-lint-action@v3
   test:
     needs: generate
@@ -104,3 +156,7 @@ jobs:
           path: llm/llama.cpp/build
       - run: go build
       - run: go test -v ./...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-binaries
+          path: ollama

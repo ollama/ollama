@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -29,8 +30,8 @@ type handles struct {
 var gpuMutex sync.Mutex
 var gpuHandles *handles = nil
 
-// With our current CUDA compile flags, 5.2 and older will not work properly
-const CudaComputeMajorMin = 6
+// With our current CUDA compile flags, older than 5.0 will not work properly
+var CudaComputeMin = [2]C.int{5, 0}
 
 // Possible locations for the nvidia-ml library
 var CudaLinuxGlobs = []string{
@@ -121,9 +122,15 @@ func GetGPUInfo() GpuInfo {
 		initGPUHandles()
 	}
 
+	// All our GPU builds have AVX enabled, so fallback to CPU if we don't detect at least AVX
+	cpuVariant := GetCPUVariant()
+	if cpuVariant == "" {
+		slog.Warn("CPU does not have AVX or AVX2, disabling GPU support.")
+	}
+
 	var memInfo C.mem_info_t
 	resp := GpuInfo{}
-	if gpuHandles.cuda != nil {
+	if gpuHandles.cuda != nil && cpuVariant != "" {
 		C.cuda_check_vram(*gpuHandles.cuda, &memInfo)
 		if memInfo.err != nil {
 			slog.Info(fmt.Sprintf("error looking up CUDA GPU memory: %s", C.GoString(memInfo.err)))
@@ -135,19 +142,40 @@ func GetGPUInfo() GpuInfo {
 			if cc.err != nil {
 				slog.Info(fmt.Sprintf("error looking up CUDA GPU compute capability: %s", C.GoString(cc.err)))
 				C.free(unsafe.Pointer(cc.err))
-			} else if cc.major >= CudaComputeMajorMin {
+			} else if cc.major > CudaComputeMin[0] || (cc.major == CudaComputeMin[0] && cc.minor >= CudaComputeMin[1]) {
 				slog.Info(fmt.Sprintf("CUDA Compute Capability detected: %d.%d", cc.major, cc.minor))
 				resp.Library = "cuda"
 			} else {
 				slog.Info(fmt.Sprintf("CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
 			}
 		}
-	} else if gpuHandles.rocm != nil {
+	} else if gpuHandles.rocm != nil && cpuVariant != "" {
 		C.rocm_check_vram(*gpuHandles.rocm, &memInfo)
 		if memInfo.err != nil {
 			slog.Info(fmt.Sprintf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err)))
 			C.free(unsafe.Pointer(memInfo.err))
+		} else if memInfo.igpu_index >= 0 && memInfo.count == 1 {
+			// Only one GPU detected and it appears to be an integrated GPU - skip it
+			slog.Info("ROCm unsupported integrated GPU detected")
 		} else {
+			if memInfo.igpu_index >= 0 {
+				// We have multiple GPUs reported, and one of them is an integrated GPU
+				// so we have to set the env var to bypass it
+				// If the user has specified their own ROCR_VISIBLE_DEVICES, don't clobber it
+				val := os.Getenv("ROCR_VISIBLE_DEVICES")
+				if val == "" {
+					devices := []string{}
+					for i := 0; i < int(memInfo.count); i++ {
+						if i == int(memInfo.igpu_index) {
+							continue
+						}
+						devices = append(devices, strconv.Itoa(i))
+					}
+					val = strings.Join(devices, ",")
+					os.Setenv("ROCR_VISIBLE_DEVICES", val)
+				}
+				slog.Info(fmt.Sprintf("ROCm integrated GPU detected - ROCR_VISIBLE_DEVICES=%s", val))
+			}
 			resp.Library = "rocm"
 			var version C.rocm_version_resp_t
 			C.rocm_get_version(*gpuHandles.rocm, &version)
@@ -163,7 +191,7 @@ func GetGPUInfo() GpuInfo {
 	if resp.Library == "" {
 		C.cpu_check_ram(&memInfo)
 		resp.Library = "cpu"
-		resp.Variant = GetCPUVariant()
+		resp.Variant = cpuVariant
 	}
 	if memInfo.err != nil {
 		slog.Info(fmt.Sprintf("error looking up CPU memory: %s", C.GoString(memInfo.err)))
@@ -199,7 +227,9 @@ func CheckVRAM() (int64, error) {
 		if overhead < gpus*1024*1024*1024 {
 			overhead = gpus * 1024 * 1024 * 1024
 		}
-		return int64(gpuInfo.FreeMemory - overhead), nil
+		avail := int64(gpuInfo.FreeMemory - overhead)
+		slog.Debug(fmt.Sprintf("%s detected %d devices with %dM available memory", gpuInfo.Library, gpuInfo.DeviceCount, avail/1024/1024))
+		return avail, nil
 	}
 
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation

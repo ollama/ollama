@@ -39,6 +39,9 @@ init_vars() {
     *)
         ;;
     esac
+    if [ -z "${CMAKE_CUDA_ARCHITECTURES}" ] ; then 
+        CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
+    fi
 }
 
 git_module_setup() {
@@ -61,6 +64,17 @@ apply_patches() {
     if ! grep ollama ${LLAMACPP_DIR}/examples/server/CMakeLists.txt; then
         echo 'include (../../../ext_server/CMakeLists.txt) # ollama' >>${LLAMACPP_DIR}/examples/server/CMakeLists.txt
     fi
+
+    # apply temporary patches until fix is upstream
+    for patch in ../patches/*.diff; do
+        for file in $(grep "^+++ " ${patch} | cut -f2 -d' ' | cut -f2- -d/); do
+            (cd ${LLAMACPP_DIR}; git checkout ${file})
+        done
+    done
+    for patch in ../patches/*.diff; do
+        (cd ${LLAMACPP_DIR} && git apply ${patch})
+    done
+
     # Avoid duplicate main symbols when we link into the cgo binary
     sed -e 's/int main(/int __main(/g' <${LLAMACPP_DIR}/examples/server/server.cpp >${LLAMACPP_DIR}/examples/server/server.cpp.tmp &&
         mv ${LLAMACPP_DIR}/examples/server/server.cpp.tmp ${LLAMACPP_DIR}/examples/server/server.cpp
