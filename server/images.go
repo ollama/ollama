@@ -119,10 +119,6 @@ func Prompt(promptTemplate string, p PromptVars) (string, error) {
 
 // PreResponsePrompt returns the prompt before the response tag
 func (m *Model) PreResponsePrompt(p PromptVars) (string, error) {
-	if p.System == "" {
-		// use the default system prompt for this model if one is not specified
-		p.System = m.System
-	}
 	pre, _, err := extractParts(m.Template)
 	if err != nil {
 		return "", err
