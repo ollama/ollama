@@ -37,7 +37,7 @@ ollama run example "What is your favourite condiment?"
 
 ## Importing (PyTorch & Safetensors)
 
-> Importing from PyTorch and Safetensors is longer process. Improvements that make it easier are a work in progress.
+> Importing from PyTorch and Safetensors is a longer process than importing from GGUF. Improvements that make it easier are a work in progress.
 
 ### Setup
 
