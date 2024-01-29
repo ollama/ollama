@@ -17,5 +17,5 @@ type OllamaTray struct {
 	installUpdateMI *systray.MenuItem
 	icon            []byte
 	updateIcon      []byte
-	upgradeCB       func()
+	upgradeCB       func() error
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -118,8 +119,38 @@ func StartBackgroundUpdaterChecker(ctx context.Context, cb func(bool)) {
 	}()
 }
 
-func DoUpgrade() {
-	log.Printf("XXX Would be performing upgrade magic here...")
-	// Start some sort of helper that does the heavy lifting while the main app is allowed to exit
+func DoUpgrade() error {
+	installerExe := filepath.Join(UpdateStageDir, Installer)
 
+	_, err := os.Stat(installerExe)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("could not locate ollama installer at %s", installerExe)
+	}
+	log.Printf("XXX attempting to start installer %s", installerExe)
+
+	installArgs := []string{
+		"/SP", // Skip the "This will install... Do you wish to continue" prompt
+		"/SILENT",
+		// "/VERYSILENT", // TODO - use this one once it's validated
+		"/SUPPRESSMSGBOXES",  // Might not be needed?
+		"/CLOSEAPPLICATIONS", // Quit the tray app if it's still running
+		// "/FORCECLOSEAPPLICATIONS", // Force close the tray app - might be needed
+	}
+	cmd := exec.Command(installerExe, installArgs...)
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("unable to start ollama app %w", err)
+	}
+
+	if cmd.Process != nil {
+		cmd.Process.Release()
+	} else {
+		// TODO - some details about why it didn't start, or is this a pedantic error case?
+		return fmt.Errorf("Installer process did not start")
+	}
+	log.Printf("Installer started in background, exiting")
+
+	os.Exit(0)
+	// Not reached
+	return nil
 }

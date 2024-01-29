@@ -9,7 +9,7 @@ import (
 	"github.com/jmorganca/ollama/desktop/assets"
 )
 
-func NewTray(upgradeCB func()) (*OllamaTray, error) {
+func NewTray(upgradeCB func() error) (*OllamaTray, error) {
 	extension := ".png"
 	if runtime.GOOS == "windows" {
 		extension = ".ico"

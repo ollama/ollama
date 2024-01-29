@@ -12,6 +12,7 @@ var (
 	AppDir         = "/opt/Ollama"
 	UpdateStageDir = "/tmp"
 	ServerLogFile  = "/tmp/ollama.log"
+	Installer      = "Ollama Setup.exe"
 )
 
 func init() {
