@@ -1,8 +1,8 @@
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index 0462fbd2..4fa7b57f 100644
+index a48582ad..9fffffd8 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
-@@ -1857,12 +1857,6 @@ struct llama_server_context
+@@ -1564,12 +1564,6 @@ struct llama_server_context
                          LOG_TEE("slot %d : in cache: %i tokens | to process: %i tokens\n", slot.id, slot.n_past, slot.num_prompt_tokens_processed);
                      }
  
@@ -15,8 +15,8 @@ index 0462fbd2..4fa7b57f 100644
                      if (slot.n_past == slot.num_prompt_tokens && slot.n_past > 0)
                      {
                          // we have to evaluate at least 1 token to generate logits.
-@@ -1870,6 +1864,12 @@ struct llama_server_context
-                         slot.n_past--;
+@@ -1581,6 +1575,12 @@ struct llama_server_context
+                         }
                      }
  
 +                    LOG_TEE("slot %d : kv cache rm - [%d, end)\n", slot.id, (int) system_tokens.size() + slot.n_past);
