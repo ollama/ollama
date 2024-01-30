@@ -27,6 +27,9 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
       {"nvmlDeviceGetVbiosVersion", (void *)&resp->ch.nvmlDeviceGetVbiosVersion},
       {"nvmlDeviceGetBoardPartNumber", (void *)&resp->ch.nvmlDeviceGetBoardPartNumber},
       {"nvmlDeviceGetBrand", (void *)&resp->ch.nvmlDeviceGetBrand},
+      {"nvmlDeviceGetMigMode", (void *)&resp->ch.nvmlDeviceGetMigMode},
+      {"nvmlDeviceGetMigDeviceHandleByIndex", (void *)&resp->ch.nvmlDeviceGetMigDeviceHandleByIndex},
+      {"nvmlDeviceGetDeviceHandleFromMigDeviceHandle", (void *)&resp->ch.nvmlDeviceGetDeviceHandleFromMigDeviceHandle},
       {NULL, NULL},
   };
 
@@ -111,6 +114,39 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
       snprintf(buf, buflen, "unable to get device handle %d: %d", i, ret);
       resp->err = strdup(buf);
       return;
+    }
+
+    // This code checks for MIG (Multi-Instance GPU) support and mode on a GPU device.
+    // It it checks the current MIG mode and takes appropriate actions:
+    //
+    // 1. If the current MIG mode is 0x1 (MIG mode enabled):
+    //    - Retrieves the MIG device handle for the first MIG device (index 0).
+    //    - Replaces the original GPU device handle with the MIG device handle.
+    //
+    // 2. If the current MIG mode is not enabled, continues using the original GPU handle.
+    //
+    // Note: MIG is NVIDIA's technology for partitioning a single GPU into multiple
+    // GPU instances with own resources.
+    unsigned int currentMode,pendingMode;
+    ret = (*h.nvmlDeviceGetMigMode)(device,&currentMode,&pendingMode);
+    if (ret != NVML_SUCCESS) {
+      snprintf(buf, buflen, "unable to get MIG mode for device %d: %d", i, ret);
+      resp->err = strdup(buf);
+      return;
+    }
+    else if(h.verbose) LOG(h.verbose,"MIG Mode is %d\n", currentMode);
+
+    if (currentMode == 0x1) {
+      // Get the MIG device handle for a specific MIG device index
+      nvmlDevice_t migDevice;
+      ret = (*h.nvmlDeviceGetMigDeviceHandleByIndex)(device, 0, &migDevice);
+      if (ret != NVML_SUCCESS) {
+        snprintf(buf, buflen, "unable to get MIG device handle (index 0) for device %d: %d", i, ret);
+        resp->err = strdup(buf);
+        return;
+      }
+      if(h.verbose) LOG(h.verbose,"MIG Device replaces device %d\n", i);
+      device = migDevice;
     }
 
     ret = (*h.nvmlDeviceGetMemoryInfo)(device, &memInfo);
