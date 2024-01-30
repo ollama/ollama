@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strconv"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
@@ -116,6 +117,11 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		}
 
 		opts.NumGPU = int(layers)
+	}
+
+	numthreads, err := strconv.ParseInt(os.Getenv("OLLAMA_THREADS"), 10, 0)
+	if err == nil {
+		opts.NumThread = int(numthreads)
 	}
 
 	opts.RopeFrequencyBase = 0.0
