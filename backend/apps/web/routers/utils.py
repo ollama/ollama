@@ -9,9 +9,9 @@ import os
 import aiohttp
 import json
 
-from utils.misc import calculate_sha256
+from utils.misc import calculate_sha256, get_gravatar_url
 
-from config import OLLAMA_API_BASE_URL
+from config import OLLAMA_API_BASE_URL, DATA_DIR, UPLOAD_DIR
 from constants import ERROR_MESSAGES
 
 
@@ -96,8 +96,7 @@ async def download(
     file_name = parse_huggingface_url(url)
 
     if file_name:
-        os.makedirs("./uploads", exist_ok=True)
-        file_path = os.path.join("./uploads", f"{file_name}")
+        file_path = f"{UPLOAD_DIR}/{file_name}"
 
         return StreamingResponse(
             download_file_stream(url, file_path, file_name),
@@ -109,8 +108,7 @@ async def download(
 
 @router.post("/upload")
 def upload(file: UploadFile = File(...)):
-    os.makedirs("./data/uploads", exist_ok=True)
-    file_path = os.path.join("./data/uploads", file.filename)
+    file_path = f"{UPLOAD_DIR}/{file.filename}"
 
     # Save file in chunks
     with open(file_path, "wb+") as f:
@@ -167,3 +165,10 @@ def upload(file: UploadFile = File(...)):
             yield f"data: {json.dumps(res)}\n\n"
 
     return StreamingResponse(file_process_stream(), media_type="text/event-stream")
+
+
+@router.get("/gravatar")
+async def get_gravatar(
+    email: str,
+):
+    return get_gravatar_url(email)

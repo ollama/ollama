@@ -11,8 +11,8 @@ TICK='\u2713'
 
 # Detect GPU driver
 get_gpu_driver() {
-    # Detect NVIDIA GPUs
-    if lspci | grep -i nvidia >/dev/null; then
+    # Detect NVIDIA GPUs using lspci or nvidia-smi
+    if lspci | grep -i nvidia >/dev/null || nvidia-smi >/dev/null 2>&1; then
         echo "nvidia"
         return
     fi
@@ -180,6 +180,9 @@ else
     if [[ -n $data_dir ]]; then
         DEFAULT_COMPOSE_COMMAND+=" -f docker-compose.data.yaml"
         export OLLAMA_DATA_DIR=$data_dir # Set OLLAMA_DATA_DIR environment variable
+    fi
+    if [[ -n $webui_port ]]; then
+        export OLLAMA_WEBUI_PORT=$webui_port # Set OLLAMA_WEBUI_PORT environment variable
     fi
     DEFAULT_COMPOSE_COMMAND+=" up -d"
     DEFAULT_COMPOSE_COMMAND+=" --remove-orphans"

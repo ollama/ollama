@@ -24,6 +24,16 @@ def calculate_sha256(file):
     return sha256.hexdigest()
 
 
+def calculate_sha256_string(string):
+    # Create a new SHA-256 hash object
+    sha256_hash = hashlib.sha256()
+    # Update the hash object with the bytes of the input string
+    sha256_hash.update(string.encode("utf-8"))
+    # Get the hexadecimal representation of the hash
+    hashed_string = sha256_hash.hexdigest()
+    return hashed_string
+
+
 def validate_email_format(email: str) -> bool:
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
         return False

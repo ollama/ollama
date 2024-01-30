@@ -10,10 +10,10 @@ docker pull ollama/ollama:latest
 
 docker_args="-d -v ollama:/root/.ollama -p $host_port:$container_port --name ollama ollama/ollama"
 
-if [ "$use_gpu" == "y" ]; then
-    docker_args+=" --gpus=all"
+if [ "$use_gpu" = "y" ]; then
+    docker_args="--gpus=all $docker_args"
 fi
 
-docker run "$docker_args"
+docker run $docker_args
 
 docker image prune -f

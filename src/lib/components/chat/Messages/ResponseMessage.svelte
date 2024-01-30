@@ -1,6 +1,7 @@
 <script lang="ts">
 	import dayjs from 'dayjs';
 	import { marked } from 'marked';
+	import { settings, voices } from '$lib/stores';
 	import tippy from 'tippy.js';
 	import auto_render from 'katex/dist/contrib/auto-render.mjs';
 	import 'katex/dist/katex.min.css';
@@ -116,6 +117,8 @@
 		} else {
 			speaking = true;
 			const speak = new SpeechSynthesisUtterance(message.content);
+			const voice = $voices?.filter((v) => v.name === $settings?.speakVoice)?.at(0) ?? undefined;
+			speak.voice = voice;
 			speechSynthesis.speak(speak);
 		}
 	};

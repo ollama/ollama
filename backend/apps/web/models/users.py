@@ -65,7 +65,7 @@ class UsersTable:
                 "name": name,
                 "email": email,
                 "role": role,
-                "profile_image_url": get_gravatar_url(email),
+                "profile_image_url": "/user.png",
                 "timestamp": int(time.time()),
             }
         )
@@ -101,6 +101,20 @@ class UsersTable:
     def update_user_role_by_id(self, id: str, role: str) -> Optional[UserModel]:
         try:
             query = User.update(role=role).where(User.id == id)
+            query.execute()
+
+            user = User.get(User.id == id)
+            return UserModel(**model_to_dict(user))
+        except:
+            return None
+
+    def update_user_profile_image_url_by_id(
+        self, id: str, profile_image_url: str
+    ) -> Optional[UserModel]:
+        try:
+            query = User.update(profile_image_url=profile_image_url).where(
+                User.id == id
+            )
             query.execute()
 
             user = User.get(User.id == id)

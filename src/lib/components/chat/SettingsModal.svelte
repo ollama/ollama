@@ -20,7 +20,7 @@
 	import { createNewChat, deleteAllChats, getAllChats, getChatList } from '$lib/apis/chats';
 	import { WEB_UI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 
-	import { config, models, settings, user, chats } from '$lib/stores';
+	import { config, models, voices, settings, user, chats } from '$lib/stores';
 	import { splitStream, getGravatarURL, getImportOrigin, convertOpenAIChats } from '$lib/utils';
 
 	import Advanced from './Settings/Advanced.svelte';
@@ -36,6 +36,8 @@
 	import { resetVectorDB } from '$lib/apis/rag';
 	import { setDefaultPromptSuggestions } from '$lib/apis/configs';
 	import { getBackendConfig } from '$lib/apis';
+	import UpdatePassword from './Settings/Account/UpdatePassword.svelte';
+	import Account from './Settings/Account.svelte';
 
 	export let show = false;
 
@@ -112,6 +114,9 @@
 	let gravatarEmail = '';
 	let titleAutoGenerateModel = '';
 
+	// Voice
+	let speakVoice = '';
+
 	// Chats
 	let saveChatHistory = true;
 	let importFiles;
@@ -123,6 +128,7 @@
 	let authContent = '';
 
 	// Account
+	let profileImageUrl = '';
 	let currentPassword = '';
 	let newPassword = '';
 	let newPasswordConfirm = '';
@@ -556,31 +562,6 @@
 		return models;
 	};
 
-	const updatePasswordHandler = async () => {
-		if (newPassword === newPasswordConfirm) {
-			const res = await updateUserPassword(localStorage.token, currentPassword, newPassword).catch(
-				(error) => {
-					toast.error(error);
-					return null;
-				}
-			);
-
-			if (res) {
-				toast.success('Successfully updated.');
-			}
-
-			currentPassword = '';
-			newPassword = '';
-			newPasswordConfirm = '';
-		} else {
-			toast.error(
-				`The passwords you entered don't quite match. Please double-check and try again.`
-			);
-			newPassword = '';
-			newPasswordConfirm = '';
-		}
-	};
-
 	onMount(async () => {
 		console.log('settings', $user.role === 'admin');
 		if ($user.role === 'admin') {
@@ -613,14 +594,19 @@
 		responseAutoCopy = settings.responseAutoCopy ?? false;
 		titleAutoGenerateModel = settings.titleAutoGenerateModel ?? '';
 		gravatarEmail = settings.gravatarEmail ?? '';
+		speakVoice = settings.speakVoice ?? '';
+
+		const getVoicesLoop = setInterval(async () => {
+			const _voices = await speechSynthesis.getVoices();
+			await voices.set(_voices);
+
+			// do your loop
+			if (_voices.length > 0) {
+				clearInterval(getVoicesLoop);
+			}
+		}, 100);
 
 		saveChatHistory = settings.saveChatHistory ?? true;
-
-		authEnabled = settings.authHeader !== undefined ? true : false;
-		if (authEnabled) {
-			authType = settings.authHeader.split(' ')[0];
-			authContent = settings.authHeader.split(' ')[1];
-		}
 
 		ollamaVersion = await getOllamaVersion(localStorage.token).catch((error) => {
 			return '';
@@ -901,7 +887,7 @@
 										toggleTheme();
 									}}
 								>
-									
+
 								</button> -->
 
 								<div class="flex items-center relative">
@@ -1602,6 +1588,9 @@
 					<form
 						class="flex flex-col h-full justify-between space-y-3 text-sm"
 						on:submit|preventDefault={() => {
+							saveSettings({
+								speakVoice: speakVoice !== '' ? speakVoice : undefined
+							});
 							show = false;
 						}}
 					>
@@ -1683,7 +1672,7 @@
 											bind:value={titleAutoGenerateModel}
 											placeholder="Select a model"
 										>
-											<option value="" selected>Default</option>
+											<option value="" selected>Current Model</option>
 											{#each $models.filter((m) => m.size != null) as model}
 												<option value={model.name} class="bg-gray-100 dark:bg-gray-700"
 													>{model.name +
@@ -1720,7 +1709,31 @@
 								</div>
 							</div>
 
-							<!-- <hr class=" dark:border-gray-700" />
+							<hr class=" dark:border-gray-700" />
+
+							<div class=" space-y-3">
+								<div>
+									<div class=" mb-2.5 text-sm font-medium">Set Default Voice</div>
+									<div class="flex w-full">
+										<div class="flex-1">
+											<select
+												class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
+												bind:value={speakVoice}
+												placeholder="Select a voice"
+											>
+												<option value="" selected>Default</option>
+												{#each $voices.filter((v) => v.localService === true) as voice}
+													<option value={voice.name} class="bg-gray-100 dark:bg-gray-700"
+														>{voice.name}</option
+													>
+												{/each}
+											</select>
+										</div>
+									</div>
+								</div>
+							</div>
+
+							<!--
 							<div>
 								<div class=" mb-2.5 text-sm font-medium">
 									Gravatar Email <span class=" text-gray-400 text-sm">(optional)</span>
@@ -1998,184 +2011,12 @@
 							{/if}
 						</div>
 					</div>
-				{:else if selectedTab === 'auth'}
-					<form
-						class="flex flex-col h-full justify-between space-y-3 text-sm"
-						on:submit|preventDefault={() => {
-							console.log('auth save');
-							saveSettings({
-								authHeader: authEnabled ? `${authType} ${authContent}` : undefined
-							});
+				{:else if selectedTab === 'account'}
+					<Account
+						saveHandler={() => {
 							show = false;
 						}}
-					>
-						<div class=" space-y-3">
-							<div>
-								<div class=" py-1 flex w-full justify-between">
-									<div class=" self-center text-sm font-medium">Authorization Header</div>
-
-									<button
-										class="p-1 px-3 text-xs flex rounded transition"
-										type="button"
-										on:click={() => {
-											toggleAuthHeader();
-										}}
-									>
-										{#if authEnabled === true}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 24 24"
-												fill="currentColor"
-												class="w-4 h-4"
-											>
-												<path
-													fill-rule="evenodd"
-													d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3a3 3 0 00-3 3v6.75a3 3 0 003 3h10.5a3 3 0 003-3v-6.75a3 3 0 00-3-3v-3c0-2.9-2.35-5.25-5.25-5.25zm3.75 8.25v-3a3.75 3.75 0 10-7.5 0v3h7.5z"
-													clip-rule="evenodd"
-												/>
-											</svg>
-
-											<span class="ml-2 self-center"> On </span>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 24 24"
-												fill="currentColor"
-												class="w-4 h-4"
-											>
-												<path
-													d="M18 1.5c2.9 0 5.25 2.35 5.25 5.25v3.75a.75.75 0 01-1.5 0V6.75a3.75 3.75 0 10-7.5 0v3a3 3 0 013 3v6.75a3 3 0 01-3 3H3.75a3 3 0 01-3-3v-6.75a3 3 0 013-3h9v-3c0-2.9 2.35-5.25 5.25-5.25z"
-												/>
-											</svg>
-
-											<span class="ml-2 self-center">Off</span>
-										{/if}
-									</button>
-								</div>
-							</div>
-
-							{#if authEnabled}
-								<hr class=" dark:border-gray-700" />
-
-								<div class="mt-2">
-									<div class=" py-1 flex w-full space-x-2">
-										<button
-											class=" py-1 font-semibold flex rounded transition"
-											on:click={() => {
-												authType = authType === 'Basic' ? 'Bearer' : 'Basic';
-											}}
-											type="button"
-										>
-											{#if authType === 'Basic'}
-												<span class="self-center mr-2">Basic</span>
-											{:else if authType === 'Bearer'}
-												<span class="self-center mr-2">Bearer</span>
-											{/if}
-										</button>
-
-										<div class="flex-1">
-											<input
-												class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-												placeholder="Enter Authorization Header Content"
-												bind:value={authContent}
-											/>
-										</div>
-									</div>
-									<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-										Toggle between <span class=" text-gray-500 dark:text-gray-300 font-medium"
-											>'Basic'</span
-										>
-										and <span class=" text-gray-500 dark:text-gray-300 font-medium">'Bearer'</span> by
-										clicking on the label next to the input.
-									</div>
-								</div>
-
-								<hr class=" dark:border-gray-700" />
-
-								<div>
-									<div class=" mb-2.5 text-sm font-medium">Preview Authorization Header</div>
-									<textarea
-										value={JSON.stringify({
-											Authorization: `${authType} ${authContent}`
-										})}
-										class="w-full rounded p-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none resize-none"
-										rows="2"
-										disabled
-									/>
-								</div>
-							{/if}
-						</div>
-
-						<div class="flex justify-end pt-3 text-sm font-medium">
-							<button
-								class=" px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-gray-100 transition rounded"
-								type="submit"
-							>
-								Save
-							</button>
-						</div>
-					</form>
-				{:else if selectedTab === 'account'}
-					<form
-						class="flex flex-col h-full text-sm"
-						on:submit|preventDefault={() => {
-							updatePasswordHandler();
-						}}
-					>
-						<div class=" mb-2.5 font-medium">Change Password</div>
-
-						<div class=" space-y-1.5">
-							<div class="flex flex-col w-full">
-								<div class=" mb-1 text-xs text-gray-500">Current Password</div>
-
-								<div class="flex-1">
-									<input
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										type="password"
-										bind:value={currentPassword}
-										autocomplete="current-password"
-										required
-									/>
-								</div>
-							</div>
-
-							<div class="flex flex-col w-full">
-								<div class=" mb-1 text-xs text-gray-500">New Password</div>
-
-								<div class="flex-1">
-									<input
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										type="password"
-										bind:value={newPassword}
-										autocomplete="new-password"
-										required
-									/>
-								</div>
-							</div>
-
-							<div class="flex flex-col w-full">
-								<div class=" mb-1 text-xs text-gray-500">Confirm Password</div>
-
-								<div class="flex-1">
-									<input
-										class="w-full rounded py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-800 outline-none"
-										type="password"
-										bind:value={newPasswordConfirm}
-										autocomplete="off"
-										required
-									/>
-								</div>
-							</div>
-						</div>
-
-						<div class="mt-3 flex justify-end">
-							<button
-								class=" px-4 py-2 text-xs bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-800 text-gray-100 transition rounded-md font-medium"
-							>
-								Update password
-							</button>
-						</div>
-					</form>
+					/>
 				{:else if selectedTab === 'about'}
 					<div class="flex flex-col h-full justify-between space-y-3 text-sm mb-6">
 						<div class=" space-y-3">
