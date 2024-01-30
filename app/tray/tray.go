@@ -6,7 +6,7 @@ import (
 	"runtime"
 
 	"github.com/getlantern/systray"
-	"github.com/jmorganca/ollama/desktop/assets"
+	"github.com/jmorganca/ollama/app/assets"
 )
 
 func NewTray(upgradeCB func() error) (*OllamaTray, error) {

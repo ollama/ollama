@@ -29,7 +29,7 @@ function buildOllama() {
 
 function buildApp() {
     write-host "Building Ollama App"
-    cd "${script:SRC_DIR}\desktop"
+    cd "${script:SRC_DIR}\app"
     & go build -ldflags="-H windowsgui" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
@@ -50,7 +50,7 @@ function gatherDependencies() {
 
 function buildInstaller() {
     write-host "Building Ollama Installer"
-    cd "${script:SRC_DIR}\desktop"
+    cd "${script:SRC_DIR}\app"
     & "${script:INNO_SETUP_DIR}\ISCC.exe" .\ollama.iss
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }

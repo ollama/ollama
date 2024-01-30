@@ -1,6 +1,12 @@
 # Ollama App
 
-TODO - rename this directory "app" once we've removed the Electron app
+## Linux
+
+TODO
+
+## MacOS
+
+TODO
 
 ## Windows
 

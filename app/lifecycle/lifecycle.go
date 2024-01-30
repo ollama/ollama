@@ -5,7 +5,7 @@ import (
 	"log"
 	"runtime"
 
-	"github.com/jmorganca/ollama/desktop/tray"
+	"github.com/jmorganca/ollama/app/tray"
 )
 
 func GetOllamaName() string {

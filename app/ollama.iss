@@ -70,7 +70,7 @@ DisableWelcomePage=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: ".\desktop.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ; Flags: ignoreversion 64bit
+Source: ".\app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ; Flags: ignoreversion 64bit
 Source: "..\ollama.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit
 Source: "..\dist\windeps\*.dll"; DestDir: "{app}"; Flags: ignoreversion 64bit
 

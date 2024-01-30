@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/jmorganca/ollama/desktop/store"
+	"github.com/jmorganca/ollama/app/store"
 	"github.com/jmorganca/ollama/version"
 )
 
