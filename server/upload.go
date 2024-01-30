@@ -172,7 +172,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 		select {
 		case <-inner.Done():
 		case requestURL := <-b.nextURL:
-			g.Go(func() error {
+			g.Go(inner, func() error {
 				var err error
 				for try := 0; try < maxRetries; try++ {
 					err = b.uploadPart(inner, http.MethodPatch, requestURL, part, opts)

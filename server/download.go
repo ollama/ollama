@@ -188,7 +188,7 @@ func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *regis
 			continue
 		}
 
-		g.Go(func() error {
+		g.Go(inner, func() error {
 			var err error
 			for try := 0; try < maxRetries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
@@ -238,7 +238,6 @@ func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *regis
 	}
 
 	b.done = true
-	return
 }
 
 func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *registryOptions) error {
@@ -411,7 +410,6 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 
 type LimitGroup struct {
 	*errgroup.Group
-	context.Context
 	Semaphore *semaphore.Weighted
 
 	weight, max_weight int64
@@ -421,17 +419,16 @@ func NewLimitGroup(ctx context.Context, n int64) (*LimitGroup, context.Context) 
 	g, ctx := errgroup.WithContext(ctx)
 	return &LimitGroup{
 		Group:      g,
-		Context:    ctx,
 		Semaphore:  semaphore.NewWeighted(n),
 		weight:     n,
 		max_weight: n,
 	}, ctx
 }
 
-func (g *LimitGroup) Go(fn func() error) {
+func (g *LimitGroup) Go(ctx context.Context, fn func() error) {
 	weight := g.weight
-	g.Semaphore.Acquire(g.Context, weight)
-	if g.Context.Err() != nil {
+	_ = g.Semaphore.Acquire(ctx, weight)
+	if ctx.Err() != nil {
 		return
 	}
 
