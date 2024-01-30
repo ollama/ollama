@@ -16,6 +16,12 @@ If manually running `ollama serve` in a terminal, the logs will be on that termi
 
 Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.
 
+In a container running on docker, the logs can be found by calling `docker logs <container-name>`
+Frequently:
+```shell
+docker logs ollama
+```
+
 ## LLM libraries
 
 Ollama includes multiple LLM libraries compiled for different GPUs and CPU
