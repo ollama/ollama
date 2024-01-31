@@ -156,7 +156,7 @@ type ChatHistory struct {
 func (m *Model) ChatPrompts(msgs []api.Message) (*ChatHistory, error) {
 	// build the prompt from the list of messages
 	var currentImages []api.ImageData
-	var lastSystem string
+	lastSystem := m.System
 	currentVars := PromptVars{
 		First:  true,
 		System: m.System,
@@ -167,7 +167,8 @@ func (m *Model) ChatPrompts(msgs []api.Message) (*ChatHistory, error) {
 	for _, msg := range msgs {
 		switch strings.ToLower(msg.Role) {
 		case "system":
-			if currentVars.System != "" {
+			// if this is the first message it overrides the system prompt in the modelfile
+			if !currentVars.First && currentVars.System != "" {
 				prompts = append(prompts, currentVars)
 				currentVars = PromptVars{}
 			}
