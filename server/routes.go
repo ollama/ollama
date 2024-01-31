@@ -938,13 +938,26 @@ func (s *Server) GenerateRoutes() http.Handler {
 }
 
 func Serve(ln net.Listener) error {
+	level := slog.LevelInfo
 	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
-		var programLevel = new(slog.LevelVar)
-		h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel, AddSource: true})
-		slog.SetDefault(slog.New(h))
-		programLevel.Set(slog.LevelDebug)
-		slog.Debug("Debug logging enabled")
+		level = slog.LevelDebug
 	}
+
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level:     level,
+		AddSource: true,
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.SourceKey {
+				source := attr.Value.Any().(*slog.Source)
+				source.File = filepath.Base(source.File)
+			}
+
+			return attr
+		},
+	})
+
+	slog.SetDefault(slog.New(handler))
+
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
