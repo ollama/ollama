@@ -253,7 +253,7 @@ func GenerateHandler(c *gin.Context) {
 		prompt = rebuild.String()
 	}
 
-	slog.Debug(fmt.Sprintf("prompt: %s", prompt))
+	slog.Debug("generate handler", "prompt", prompt)
 
 	ch := make(chan any)
 	var generated strings.Builder
@@ -1145,7 +1145,7 @@ func ChatHandler(c *gin.Context) {
 		return
 	}
 
-	slog.Debug(fmt.Sprintf("prompt: %s", prompt))
+	slog.Debug("chat handler", "prompt", prompt)
 
 	ch := make(chan any)
 
