@@ -48,7 +48,7 @@ def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> st
 
 def decode_token(token: str) -> Optional[dict]:
     try:
-        decoded = jwt.decode(token, SESSION_SECRET, options={"verify_signature": False})
+        decoded = jwt.decode(token, SESSION_SECRET)
         return decoded
     except Exception as e:
         return None
