@@ -93,7 +93,7 @@ async def update_password(
 async def signin(form_data: SigninForm):
     user = Auths.authenticate_user(form_data.email.lower(), form_data.password)
     if user:
-        token = create_token(data={"email": user.email})
+        token = create_token(data={"id": user.id})
 
         return {
             "token": token,
@@ -132,7 +132,7 @@ async def signup(request: Request, form_data: SignupForm):
         )
 
         if user:
-            token = create_token(data={"email": user.email})
+            token = create_token(data={"id": user.id})
             # response.set_cookie(key='token', value=token, httponly=True)
 
             return {

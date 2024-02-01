@@ -60,8 +60,8 @@ def extract_token_from_auth_header(auth_header: str):
 
 def get_current_user(auth_token: HTTPAuthorizationCredentials = Depends(HTTPBearer())):
     data = decode_token(auth_token.credentials)
-    if data != None and "email" in data:
-        user = Users.get_user_by_email(data["email"])
+    if data != None and "id" in data:
+        user = Users.get_user_by_id(data["id"])
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
