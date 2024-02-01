@@ -5,12 +5,7 @@ import uuid
 from peewee import *
 
 from apps.web.models.users import UserModel, Users
-from utils.utils import (
-    verify_password,
-    get_password_hash,
-    bearer_scheme,
-    create_token,
-)
+from utils.utils import verify_password
 
 from apps.web.internal.db import DB
 

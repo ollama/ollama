@@ -25,9 +25,6 @@ from apps.web.models.tags import (
     Tags,
 )
 
-from utils.utils import (
-    bearer_scheme,
-)
 from constants import ERROR_MESSAGES
 
 router = APIRouter()
