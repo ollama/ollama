@@ -145,6 +145,7 @@
 			name: url,
 			collection_name: '',
 			upload_status: false,
+			url: url,
 			error: ''
 		};
 
