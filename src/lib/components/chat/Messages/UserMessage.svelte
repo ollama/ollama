@@ -82,8 +82,14 @@
 							{#if file.type === 'image'}
 								<img src={file.url} alt="input" class=" max-h-96 rounded-lg" draggable="false" />
 							{:else if file.type === 'doc'}
-								<div
-									class="h-16 w-[15rem] flex items-center space-x-3 px-2.5 dark:bg-gray-600 rounded-xl border border-gray-200 dark:border-none"
+								<button
+									class="h-16 w-[15rem] flex items-center space-x-3 px-2.5 dark:bg-gray-600 rounded-xl border border-gray-200 dark:border-none text-left"
+									type="button"
+									on:click={() => {
+										if (file?.url) {
+											window.open(file?.url, '_blank').focus();
+										}
+									}}
 								>
 									<div class="p-2.5 bg-red-400 text-white rounded-lg">
 										<svg
@@ -110,7 +116,7 @@
 
 										<div class=" text-gray-500 text-sm">Document</div>
 									</div>
-								</div>
+								</button>
 							{/if}
 						</div>
 					{/each}
