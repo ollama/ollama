@@ -1254,7 +1254,8 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 	var images []llm.ImageData
 	// reverse iterate through the prompts to build the prompt string in a way that fits the max context length
 	for i := len(chat.Prompts) - 1; i >= 0; i-- {
-		promptText, err := promptString(model, chat.Prompts[i], i == len(chat.Prompts)-1)
+		prompt := chat.Prompts[i]
+		promptText, err := promptString(model, prompt, i == len(chat.Prompts)-1)
 		if err != nil {
 			return "", nil, err
 		}
@@ -1268,15 +1269,20 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 			break // reached max context length, stop adding more prompts
 		}
 
+		for j := range prompt.Images {
+			if totalTokenLength+768 > loaded.NumCtx {
+				// this decreases the token length but overestimating is fine
+				prompt.Prompt = strings.ReplaceAll(prompt.Prompt, fmt.Sprintf(" [img-%d]", prompt.Images[j].ID), "")
+				continue
+			}
+
+			totalTokenLength += 768
+			images = append(images, prompt.Images[j])
+		}
+
 		totalTokenLength += len(encodedTokens)
-		systemPromptIncluded = systemPromptIncluded || chat.Prompts[i].System != ""
-		promptsToAdd = append(promptsToAdd, promptInfo{vars: chat.Prompts[i], tokenLen: len(encodedTokens)})
-
-		images = append(images, chat.Prompts[i].Images...)
-
-		// clip has a projection dimension of 768
-		// TODO: use kv['clip.vision.projection_dim'] from projection instead
-		totalTokenLength += 768 * len(chat.Prompts[i].Images)
+		systemPromptIncluded = systemPromptIncluded || prompt.System != ""
+		promptsToAdd = append(promptsToAdd, promptInfo{vars: prompt, tokenLen: len(encodedTokens)})
 	}
 
 	// ensure the system prompt is included, if not already

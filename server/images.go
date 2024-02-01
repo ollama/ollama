@@ -184,10 +184,9 @@ func (m *Model) ChatPrompts(msgs []api.Message) (*ChatHistory, error) {
 			for i := range msg.Images {
 				currentVars.Prompt += fmt.Sprintf(" [img-%d]", len(images)+i)
 				currentVars.Images = append(currentVars.Images, llm.ImageData{
-					ID:   i,
+					ID:   len(images) + i,
 					Data: msg.Images[i],
 				})
-
 			}
 
 			images = append(images, currentVars.Images...)
