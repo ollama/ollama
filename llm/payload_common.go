@@ -173,12 +173,12 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 			// Include the variant in the path to avoid conflicts between multiple server libs
 			targetDir := filepath.Join(workDir, pathComps[pathComponentCount-3])
 			if err := os.MkdirAll(targetDir, 0o755); err != nil {
-				return fmt.Errorf("create payload temp dir %q: %v", targetDir, err)
+				return fmt.Errorf("create payload temp dir %q: %w", targetDir, err)
 			}
 
 			srcFile, err := libEmbed.Open(file)
 			if err != nil {
-				return fmt.Errorf("read payload %s: %v", file, err)
+				return fmt.Errorf("read payload %q: %w", file, err)
 			}
 			defer srcFile.Close()
 			destFile := filepath.Join(targetDir, filepath.Base(file))
@@ -202,7 +202,7 @@ func extractPayloadFiles(workDir, glob string) error {
 	}
 
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
+		return fmt.Errorf("create payload temp dir %q: %w", workDir, err)
 	}
 
 	for _, file := range files {
@@ -236,11 +236,11 @@ func extractFile(src io.Reader, destFile string) (err error) {
 			return fmt.Errorf("write payload: %w", err)
 		}
 		defer destFile.Close()
-		if _, err := io.Copy(destFile, src); err != nil { //nolint:gosec source can be trusted as it comes from a go:embed
+		if _, err := io.Copy(destFile, src); err != nil { //nolint:gosec // source can be trusted as it comes from a go:embed
 			return fmt.Errorf("copy payload: %w", err)
 		}
 	case err != nil:
-		return fmt.Errorf("stat payload: %v", err)
+		return fmt.Errorf("stat payload: %w", err)
 	}
 	return nil
 }
