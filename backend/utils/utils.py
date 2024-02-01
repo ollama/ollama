@@ -21,7 +21,7 @@ ALGORITHM = "HS256"
 # Auth Utils
 ##############
 
-bearer_scheme = HTTPBearer()
+bearer_security = HTTPBearer()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -58,7 +58,7 @@ def extract_token_from_auth_header(auth_header: str):
     return auth_header[len("Bearer ") :]
 
 
-def get_current_user(auth_token: HTTPAuthorizationCredentials = Depends(HTTPBearer())):
+def get_current_user(auth_token: HTTPAuthorizationCredentials = Depends(bearer_security)):
     data = decode_token(auth_token.credentials)
     if data != None and "id" in data:
         user = Users.get_user_by_id(data["id"])
