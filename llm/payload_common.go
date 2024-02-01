@@ -172,42 +172,22 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 			// llama.cpp/build/$OS/$GOARCH/$VARIANT/lib/$LIBRARY
 			// Include the variant in the path to avoid conflicts between multiple server libs
 			targetDir := filepath.Join(workDir, pathComps[pathComponentCount-3])
+			if err := os.MkdirAll(targetDir, 0o755); err != nil {
+				return fmt.Errorf("create payload temp dir %q: %v", targetDir, err)
+			}
+
 			srcFile, err := libEmbed.Open(file)
 			if err != nil {
 				return fmt.Errorf("read payload %s: %v", file, err)
 			}
 			defer srcFile.Close()
-			if err := os.MkdirAll(targetDir, 0o755); err != nil {
-				return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
-			}
-			src := io.Reader(srcFile)
-			filename := file
-			if strings.HasSuffix(file, ".gz") {
-				src, err = gzip.NewReader(src)
-				if err != nil {
-					return fmt.Errorf("decompress payload %s: %v", file, err)
-				}
-				filename = strings.TrimSuffix(filename, ".gz")
+			destFile := filepath.Join(targetDir, filepath.Base(file))
+			if err := extractFile(srcFile, destFile); err != nil {
+				return fmt.Errorf("extract file %q: %w", file, err)
 			}
 
-			destFile := filepath.Join(targetDir, filepath.Base(filename))
 			if strings.Contains(destFile, "server") {
 				libs = append(libs, destFile)
-			}
-
-			_, err = os.Stat(destFile)
-			switch {
-			case errors.Is(err, os.ErrNotExist):
-				destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-				if err != nil {
-					return fmt.Errorf("write payload %s: %v", file, err)
-				}
-				defer destFile.Close()
-				if _, err := io.Copy(destFile, src); err != nil {
-					return fmt.Errorf("copy payload %s: %v", file, err)
-				}
-			case err != nil:
-				return fmt.Errorf("stat payload %s: %v", file, err)
 			}
 			return nil
 		})
@@ -221,40 +201,46 @@ func extractPayloadFiles(workDir, glob string) error {
 		return payloadMissing
 	}
 
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
+	}
+
 	for _, file := range files {
 		srcFile, err := libEmbed.Open(file)
 		if err != nil {
-			return fmt.Errorf("read payload %s: %v", file, err)
+			return fmt.Errorf("read payload %q: %w", file, err)
 		}
 		defer srcFile.Close()
-		if err := os.MkdirAll(workDir, 0o755); err != nil {
-			return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
+		if err := extractFile(srcFile, filepath.Join(workDir, filepath.Base(file))); err != nil {
+			return fmt.Errorf("extract file %q: %w", file, err)
 		}
-		src := io.Reader(srcFile)
-		filename := file
-		if strings.HasSuffix(file, ".gz") {
-			src, err = gzip.NewReader(src)
-			if err != nil {
-				return fmt.Errorf("decompress payload %s: %v", file, err)
-			}
-			filename = strings.TrimSuffix(filename, ".gz")
-		}
+	}
+	return nil
+}
 
-		destFile := filepath.Join(workDir, filepath.Base(filename))
-		_, err = os.Stat(destFile)
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-			if err != nil {
-				return fmt.Errorf("write payload %s: %v", file, err)
-			}
-			defer destFile.Close()
-			if _, err := io.Copy(destFile, src); err != nil {
-				return fmt.Errorf("copy payload %s: %v", file, err)
-			}
-		case err != nil:
-			return fmt.Errorf("stat payload %s: %v", file, err)
+// copy to destination file. If the destination file has a .gz suffix, decompress the payload.
+// do not use with untrusted sources as they could contain zip bombs
+func extractFile(src io.Reader, destFile string) (err error) {
+	if strings.HasSuffix(destFile, ".gz") {
+		src, err = gzip.NewReader(src)
+		if err != nil {
+			return fmt.Errorf("decompress payload: %w", err)
 		}
+		destFile = strings.TrimSuffix(destFile, ".gz")
+	}
+
+	switch _, err = os.Stat(destFile); {
+	case errors.Is(err, os.ErrNotExist):
+		destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+		if err != nil {
+			return fmt.Errorf("write payload: %w", err)
+		}
+		defer destFile.Close()
+		if _, err := io.Copy(destFile, src); err != nil { //nolint:gosec source can be trusted as it comes from a go:embed
+			return fmt.Errorf("copy payload: %w", err)
+		}
+	case err != nil:
+		return fmt.Errorf("stat payload: %v", err)
 	}
 	return nil
 }
@@ -266,7 +252,7 @@ func verifyDriverAccess() error {
 	// Only check ROCm access if we have the dynamic lib loaded
 	if rocmDynLibPresent() {
 		// Verify we have permissions - either running as root, or we have group access to the driver
-		fd, err := os.OpenFile("/dev/kfd", os.O_RDWR, 0666)
+		fd, err := os.OpenFile("/dev/kfd", os.O_RDWR, 0o666)
 		if err != nil {
 			if errors.Is(err, fs.ErrPermission) {
 				return fmt.Errorf("Radeon card detected, but permissions not set up properly.  Either run ollama as root, or add you user account to the render group.")
