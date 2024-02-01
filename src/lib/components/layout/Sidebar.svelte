@@ -548,7 +548,7 @@
 					{#if showDropdown}
 						<div
 							id="dropdownDots"
-							class="absolute z-10 bottom-[70px] 4.5rem rounded-lg shadow w-[240px] bg-gray-900"
+							class="absolute z-40 bottom-[70px] 4.5rem rounded-lg shadow w-[240px] bg-gray-900"
 						>
 							<div class="py-2 w-full">
 								{#if $user.role === 'admin'}
