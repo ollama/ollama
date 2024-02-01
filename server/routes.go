@@ -244,6 +244,10 @@ func GenerateHandler(c *gin.Context) {
 			promptVars.System = model.System
 		}
 
+		for i := range req.Images {
+			promptVars.Prompt += fmt.Sprintf(" [img-%d]", i)
+		}
+
 		p, err := model.PreResponsePrompt(promptVars)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
