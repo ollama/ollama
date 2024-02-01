@@ -58,11 +58,9 @@
 					class="  self-center {selectedModelIdx === 0
 						? 'mr-3'
 						: 'mr-7'} disabled:text-gray-600 disabled:hover:text-gray-600"
-					disabled={selectedModels.length === 3 || disabled}
+					{disabled}
 					on:click={() => {
-						if (selectedModels.length < 3) {
-							selectedModels = [...selectedModels, ''];
-						}
+						selectedModels = [...selectedModels, ''];
 					}}
 				>
 					<svg
