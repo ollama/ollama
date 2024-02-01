@@ -26,6 +26,7 @@ services:
       - ${OLLAMA_WEBUI_PORT-3000}:8080
     environment:
       - 'OLLAMA_API_BASE_URL=http://ollama:11434/api'
+      - 'WEBUI_SECRET_KEY='
     extra_hosts:
       - host.docker.internal:host-gateway
     restart: unless-stopped

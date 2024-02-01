@@ -14,7 +14,7 @@ import config
 logging.getLogger("passlib").setLevel(logging.ERROR)
 
 
-JWT_SECRET_KEY = config.WEBUI_JWT_SECRET_KEY
+SESSION_SECRET = config.WEBUI_SECRET_KEY
 ALGORITHM = "HS256"
 
 ##############
@@ -42,13 +42,13 @@ def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> st
         expire = datetime.utcnow() + expires_delta
         payload.update({"exp": expire})
 
-    encoded_jwt = jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(payload, SESSION_SECRET, algorithm=ALGORITHM)
     return encoded_jwt
 
 
 def decode_token(token: str) -> Optional[dict]:
     try:
-        decoded = jwt.decode(token, JWT_SECRET_KEY, options={"verify_signature": False})
+        decoded = jwt.decode(token, SESSION_SECRET, options={"verify_signature": False})
         return decoded
     except Exception as e:
         return None
