@@ -62,7 +62,7 @@ const maxRetries = 3
 type PredictOpts struct {
 	Prompt  string
 	Format  string
-	Images  map[int]api.ImageData
+	Images  []ImageData
 	Options api.Options
 }
 

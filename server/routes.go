@@ -312,9 +312,12 @@ func GenerateHandler(c *gin.Context) {
 			ch <- resp
 		}
 
-		images := make(map[int]api.ImageData)
+		var images []llm.ImageData
 		for i := range req.Images {
-			images[i] = req.Images[i]
+			images = append(images, llm.ImageData{
+				ID:   i,
+				Data: req.Images[i],
+			})
 		}
 
 		// Start prediction
@@ -1188,11 +1191,19 @@ func ChatHandler(c *gin.Context) {
 			ch <- resp
 		}
 
+		var imageData []llm.ImageData
+		for k, v := range images {
+			imageData = append(imageData, llm.ImageData{
+				ID:   k,
+				Data: v,
+			})
+		}
+
 		// Start prediction
 		predictReq := llm.PredictOpts{
 			Prompt:  prompt,
 			Format:  req.Format,
-			Images:  images,
+			Images:  imageData,
 			Options: opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
