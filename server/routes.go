@@ -937,7 +937,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	return r
 }
 
-func Serve(ln net.Listener) error {
+func Serve(ln net.Listener, headerTimeout time.Duration) error {
 	level := slog.LevelInfo
 	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
 		level = slog.LevelDebug
@@ -982,7 +982,8 @@ func Serve(ln net.Listener) error {
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
-		Handler: r,
+		Handler:           r,
+		ReadHeaderTimeout: headerTimeout,
 	}
 
 	// listen for a ctrl+c and stop any loaded llm

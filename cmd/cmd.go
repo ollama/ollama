@@ -689,7 +689,11 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	return server.Serve(ln)
+	headerTimeout, err := cmd.Flags().GetDuration("request-header-timeout")
+	if err != nil {
+		return err
+	}
+	return server.Serve(ln, headerTimeout)
 }
 
 func initializeKeypair() error {
@@ -880,6 +884,7 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
+	serveCmd.Flags().Duration("request-header-timeout", 10*time.Second, "amount of time for the client to send headers before a timeout error will occur")
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
