@@ -1273,6 +1273,10 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 		promptsToAdd = append(promptsToAdd, promptInfo{vars: chat.Prompts[i], tokenLen: len(encodedTokens)})
 
 		images = append(images, chat.Prompts[i].Images...)
+
+		// clip has a projection dimension of 768
+		// TODO: use kv['clip.vision.projection_dim'] from projection instead
+		totalTokenLength += 768 * len(chat.Prompts[i].Images)
 	}
 
 	// ensure the system prompt is included, if not already
