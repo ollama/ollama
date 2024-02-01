@@ -161,13 +161,10 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn func(PredictResult)) error {
 	resp := newExtServerResp(128)
 	defer freeExtServerResp(resp)
-	var imageData []ImageData
+
 	if len(predict.Images) > 0 {
-		for cnt, i := range predict.Images {
-			imageData = append(imageData, ImageData{Data: i, ID: cnt})
-		}
+		slog.Info(fmt.Sprintf("loaded %d images", len(predict.Images)))
 	}
-	slog.Info(fmt.Sprintf("loaded %d images", len(imageData)))
 
 	request := map[string]any{
 		"prompt":            predict.Prompt,
@@ -189,7 +186,7 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"penalize_nl":       predict.Options.PenalizeNewline,
 		"seed":              predict.Options.Seed,
 		"stop":              predict.Options.Stop,
-		"image_data":        imageData,
+		"image_data":        predict.Images,
 		"cache_prompt":      true,
 	}
 
