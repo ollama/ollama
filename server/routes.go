@@ -1191,19 +1191,11 @@ func ChatHandler(c *gin.Context) {
 			ch <- resp
 		}
 
-		var imageData []llm.ImageData
-		for k, v := range images {
-			imageData = append(imageData, llm.ImageData{
-				ID:   k,
-				Data: v,
-			})
-		}
-
 		// Start prediction
 		predictReq := llm.PredictOpts{
 			Prompt:  prompt,
 			Format:  req.Format,
-			Images:  imageData,
+			Images:  images,
 			Options: opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
@@ -1250,7 +1242,7 @@ type promptInfo struct {
 
 // trimmedPrompt builds a prompt to send to a running model. It ensures the prompt fits within the max context length,
 // while preserving the most recent system message.
-func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string, map[int]api.ImageData, error) {
+func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string, []llm.ImageData, error) {
 	if len(chat.Prompts) == 0 {
 		return "", nil, nil
 	}
@@ -1259,8 +1251,7 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 	var totalTokenLength int
 	var systemPromptIncluded bool
 
-	images := make(map[int]api.ImageData)
-
+	var images []llm.ImageData
 	// reverse iterate through the prompts to build the prompt string in a way that fits the max context length
 	for i := len(chat.Prompts) - 1; i >= 0; i-- {
 		promptText, err := promptString(model, chat.Prompts[i], i == len(chat.Prompts)-1)
@@ -1281,9 +1272,7 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 		systemPromptIncluded = systemPromptIncluded || chat.Prompts[i].System != ""
 		promptsToAdd = append(promptsToAdd, promptInfo{vars: chat.Prompts[i], tokenLen: len(encodedTokens)})
 
-		for _, image := range chat.Prompts[i].Images {
-			images[image.Rank] = image.ImageData
-		}
+		images = append(images, chat.Prompts[i].Images...)
 	}
 
 	// ensure the system prompt is included, if not already
@@ -1306,6 +1295,7 @@ func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string
 		}
 		result = promptText + result
 	}
+
 	return result, images, nil
 }
 

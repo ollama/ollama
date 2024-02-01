@@ -58,17 +58,12 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-type ImageData struct {
-	Rank int
-	api.ImageData
-}
-
 type PromptVars struct {
 	System   string
 	Prompt   string
 	Response string
 	First    bool
-	Images   []ImageData
+	Images   []llm.ImageData
 }
 
 // extractParts extracts the parts of the template before and after the {{.Response}} node.
@@ -167,7 +162,7 @@ func (m *Model) ChatPrompts(msgs []api.Message) (*ChatHistory, error) {
 	}
 
 	prompts := []PromptVars{}
-	var images []ImageData
+	var images []llm.ImageData
 
 	for _, msg := range msgs {
 		switch strings.ToLower(msg.Role) {
@@ -188,9 +183,9 @@ func (m *Model) ChatPrompts(msgs []api.Message) (*ChatHistory, error) {
 			currentVars.Prompt = msg.Content
 			for i := range msg.Images {
 				currentVars.Prompt += fmt.Sprintf(" [img-%d]", len(images)+i)
-				currentVars.Images = append(currentVars.Images, ImageData{
-					Rank:      len(images) + i,
-					ImageData: msg.Images[i],
+				currentVars.Images = append(currentVars.Images, llm.ImageData{
+					ID:   i,
+					Data: msg.Images[i],
 				})
 
 			}
