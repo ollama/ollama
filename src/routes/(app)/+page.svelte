@@ -232,26 +232,28 @@
 			processing = 'Reading';
 			const query = history.messages[parentId].content;
 
-			let relevantContexts = await Promise.all(
-				docs.map(async (doc) => {
-					return await queryVectorDB(localStorage.token, doc.collection_name, query, 4).catch(
-						(error) => {
-							console.log(error);
-							return null;
-						}
-					);
-				})
-			);
-			relevantContexts = relevantContexts.filter((context) => context);
+			let relevantContexts = await queryVectorDB(
+				localStorage.token,
+				docs.map((d) => d.collection_name),
+				query,
+				4
+			).catch((error) => {
+				console.log(error);
+				return null;
+			});
 
-			const contextString = relevantContexts.reduce((a, context, i, arr) => {
-				return `${a}${context.documents.join(' ')}\n`;
-			}, '');
+			if (relevantContexts) {
+				relevantContexts = relevantContexts.filter((context) => context);
 
-			console.log(contextString);
+				const contextString = relevantContexts.reduce((a, context, i, arr) => {
+					return `${a}${context.documents.join(' ')}\n`;
+				}, '');
 
-			history.messages[parentId].raContent = RAGTemplate(contextString, query);
-			history.messages[parentId].contexts = relevantContexts;
+				console.log(contextString);
+
+				history.messages[parentId].raContent = RAGTemplate(contextString, query);
+				history.messages[parentId].contexts = relevantContexts;
+			}
 			await tick();
 			processing = '';
 		}

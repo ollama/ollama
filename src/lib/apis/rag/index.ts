@@ -66,28 +66,25 @@ export const uploadWebToVectorDB = async (token: string, collection_name: string
 
 export const queryVectorDB = async (
 	token: string,
-	collection_name: string,
+	collection_names: string[],
 	query: string,
 	k: number
 ) => {
 	let error = null;
-	const searchParams = new URLSearchParams();
 
-	searchParams.set('query', query);
-	if (k) {
-		searchParams.set('k', k.toString());
-	}
-
-	const res = await fetch(
-		`${RAG_API_BASE_URL}/query/${collection_name}/?${searchParams.toString()}`,
-		{
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
-	)
+	const res = await fetch(`${RAG_API_BASE_URL}/query/collections`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			collection_names: collection_names,
+			query: query,
+			k: k
+		})
+	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
 			return res.json();
