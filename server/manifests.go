@@ -30,5 +30,5 @@ func WriteManifest(name string, config *Layer, layers []*Layer) error {
 		return err
 	}
 
-	return os.WriteFile(manifestPath, b.Bytes(), 0o644)
+	return os.WriteFile(manifestPath, b.Bytes(), 0o600)
 }

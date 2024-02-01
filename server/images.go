@@ -756,7 +756,7 @@ func CopyModel(src, dest string) error {
 		return err
 	}
 
-	err = os.WriteFile(destPath, input, 0o644)
+	err = os.WriteFile(destPath, input, 0o600)
 	if err != nil {
 		fmt.Println("Error reading file:", err)
 		return err
@@ -1122,7 +1122,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 		return err
 	}
 
-	err = os.WriteFile(fp, manifestJSON, 0o644)
+	err = os.WriteFile(fp, manifestJSON, 0o600)
 	if err != nil {
 		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
 		return err

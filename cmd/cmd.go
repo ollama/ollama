@@ -731,7 +731,7 @@ func initializeKeypair() error {
 
 		pubKeyData := ssh.MarshalAuthorizedKey(sshPrivateKey.PublicKey())
 
-		err = os.WriteFile(pubKeyPath, pubKeyData, 0o644)
+		err = os.WriteFile(pubKeyPath, pubKeyData, 0o600)
 		if err != nil {
 			return err
 		}
