@@ -147,12 +147,7 @@ func (s SignatureData) Bytes() []byte {
 
 // SignData takes a SignatureData object and signs it with a raw private key
 func (s SignatureData) Sign(rawKey []byte) (string, error) {
-	privateKey, err := ssh.ParseRawPrivateKey(rawKey)
-	if err != nil {
-		return "", err
-	}
-
-	signer, err := ssh.NewSignerFromKey(privateKey)
+	signer, err := ssh.ParsePrivateKey(rawKey)
 	if err != nil {
 		return "", err
 	}
