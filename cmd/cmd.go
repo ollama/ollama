@@ -147,12 +147,18 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	name := args[0]
+
 	// check if the model exists on the server
 	show, err := client.Show(cmd.Context(), &api.ShowRequest{Name: name})
 	var statusError api.StatusError
 	switch {
 	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
 		if err := PullHandler(cmd, []string{name}); err != nil {
+			return err
+		}
+
+		show, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+		if err != nil {
 			return err
 		}
 	case err != nil:
