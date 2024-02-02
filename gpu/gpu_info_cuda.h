@@ -6,9 +6,18 @@
 // Just enough typedef's to dlopen/dlsym for memory information
 typedef enum nvmlReturn_enum {
   NVML_SUCCESS = 0,
+  NVML_ERROR_NOT_SUPPORTED = 3,
+  NVML_ERROR_NOT_FOUND = 6,
   // Other values omitted for now...
 } nvmlReturn_t;
 typedef void *nvmlDevice_t;  // Opaque is sufficient
+
+typedef struct {
+  unsigned numDevices;
+  nvmlDevice_t **layout;
+} deviceMap_t;
+
+
 typedef struct nvmlMemory_st {
   unsigned long long total;
   unsigned long long free;
