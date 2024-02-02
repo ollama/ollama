@@ -282,6 +282,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [gptel Emacs client](https://github.com/karthink/gptel)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
 - [cmdh](https://github.com/pgibler/cmdh)
+- [tenere](https://github.com/pythops/tenere)
 
 ### Database
 
