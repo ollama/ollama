@@ -997,17 +997,13 @@ func Serve(ln net.Listener) error {
 		Handler: r,
 	}
 
-	// listen for a ctrl+c and stop any loaded llm
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-signals
-		if loaded.runner != nil {
-			loaded.runner.Close()
-		}
-		os.RemoveAll(s.WorkDir)
-		os.Exit(0)
-	}()
+	doCleanup, awaitCleanupComplete := cleanupHook(s.WorkDir)
+	srvr.RegisterOnShutdown(doCleanup)
+
+	go awaitSignal(func() {
+		ctx, _ := context.WithTimeout(context.Background(), time.Second*10)
+		_ = srvr.Shutdown(ctx)
+	})
 
 	if err := llm.Init(s.WorkDir); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
@@ -1018,8 +1014,34 @@ func Serve(ln net.Listener) error {
 			slog.Info(err.Error())
 		}
 	}
-
+	defer func() { <-awaitCleanupComplete }()
 	return srvr.Serve(ln)
+}
+
+// cleanupHook cleans up resources and directories associated with the server.
+// It returns a function that should be called to perform the cleanupHook, and a channel that signals when the cleanupHook is complete.
+func cleanupHook(workDir string) (func(), <-chan struct{}) {
+	done := make(chan struct{})
+	return func() {
+		defer close(done)
+		if loaded.runner != nil {
+			loaded.runner.Close()
+		}
+		_ = os.RemoveAll(workDir)
+	}, done
+}
+
+// awaitSignal waits for a termination signal (SIGINT or SIGTERM) and then calls the doGraceful function.
+// If another termination signal is received, it exits the program with code 1
+func awaitSignal(doGraceful func()) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-signals
+		go doGraceful()
+		<-signals // kill on the second control-k
+		os.Exit(1)
+	}()
 }
 
 func waitForStream(c *gin.Context, ch chan interface{}) {
