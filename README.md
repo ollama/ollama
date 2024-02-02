@@ -270,6 +270,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [chatd](https://github.com/BruceMacD/chatd)
 - [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
 - [MindMac](https://mindmac.app)
+- [Fusion Quill - Chat+AI Wordprocessor](https://FusionQuill.AI)
 
 ### Terminal
 
