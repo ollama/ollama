@@ -53,7 +53,4 @@ COPY --from=build /app/build /app/build
 # copy backend files
 COPY ./backend .
 
-# Generate a random value to use as a WEBUI_SECRET_KEY in case the user didn't provide one.
-RUN echo $(head -c 12 /dev/random | base64) > docker_secret_key
-
 CMD [ "bash", "start.sh"]
