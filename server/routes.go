@@ -398,6 +398,10 @@ func EmbeddingHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
+	if req.Prompt == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "empty prompt"})
+		return
+	}
 
 	model, err := GetModel(req.Model)
 	if err != nil {

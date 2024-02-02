@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/llm"
@@ -205,6 +206,27 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, expectedParams, params)
 			},
 		},
+		{
+			Name:   "Calc embeddings with empty prompt should fail",
+			Method: http.MethodPost,
+			Path:   "/api/embeddings",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "my-model")
+				embReq := api.EmbeddingRequest{
+					Model:  "my-model",
+					Prompt: "",
+				}
+				jsonData, err := json.Marshal(embReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, 400, resp.StatusCode)
+				body, err := io.ReadAll(resp.Body)
+				require.Nil(t, err)
+				assert.JSONEq(t, `{"error":"empty prompt"}`, string(body))
+			},
+		},
 	}
 
 	s, err := setupServer(t)
@@ -215,29 +237,26 @@ func Test_Routes(t *testing.T) {
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)
 
-	workDir, err := os.MkdirTemp("", "ollama-test")
-	assert.Nil(t, err)
-	defer os.RemoveAll(workDir)
-	os.Setenv("OLLAMA_MODELS", workDir)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	for _, tc := range testCases {
-		t.Logf("Running Test: [%s]", tc.Name)
-		u := httpSrv.URL + tc.Path
-		req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
-		assert.Nil(t, err)
+		t.Run(tc.Name, func(t *testing.T) {
+			u := httpSrv.URL + tc.Path
+			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			assert.Nil(t, err)
 
-		if tc.Setup != nil {
-			tc.Setup(t, req)
-		}
+			if tc.Setup != nil {
+				tc.Setup(t, req)
+			}
 
-		resp, err := httpSrv.Client().Do(req)
-		assert.Nil(t, err)
-		defer resp.Body.Close()
+			resp, err := httpSrv.Client().Do(req)
+			assert.Nil(t, err)
+			defer resp.Body.Close()
 
-		if tc.Expected != nil {
-			tc.Expected(t, resp)
-		}
-
+			if tc.Expected != nil {
+				tc.Expected(t, resp)
+			}
+		})
 	}
 }
 

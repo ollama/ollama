@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -331,7 +332,12 @@ func (llm *dynExtServer) Decode(ctx context.Context, tokens []int) (string, erro
 	return decoded.Content, err
 }
 
+// Embedding calculates the embedding of the input string.
+// Empty input is rejected with an error
 func (llm *dynExtServer) Embedding(ctx context.Context, input string) ([]float64, error) {
+	if len(input) == 0 {
+		return nil, errors.New("empty input")
+	}
 	data, err := json.Marshal(TokenizeRequest{Content: input})
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
