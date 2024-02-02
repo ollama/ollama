@@ -113,7 +113,7 @@ if WEBUI_AUTH and WEBUI_JWT_SECRET_KEY == "":
 CHROMA_DATA_PATH = f"{DATA_DIR}/vector_db"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 CHROMA_CLIENT = chromadb.PersistentClient(
-    path=CHROMA_DATA_PATH, settings=Settings(allow_reset=True)
+    path=CHROMA_DATA_PATH, settings=Settings(allow_reset=True, anonymized_telemetry=False)
 )
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 100
