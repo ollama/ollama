@@ -18,6 +18,8 @@
 	let inputFiles = '';
 	let query = '';
 
+	let tags = [];
+
 	let showEditDocModal = false;
 	let selectedDoc;
 
@@ -50,6 +52,11 @@
 	};
 
 	onMount(() => {
+		documents.subscribe((docs) => {
+			tags = docs.reduce((a, e, i, arr) => {
+				return [...new Set([...a, ...(e?.content?.tags ?? []).map((tag) => tag.name)])];
+			}, []);
+		});
 		const dropZone = document.querySelector('body');
 
 		const onDragOver = (e) => {
@@ -141,6 +148,34 @@
 	<EditDocModal bind:show={showEditDocModal} {selectedDoc} />
 {/key}
 
+<input
+	id="upload-doc-input"
+	bind:files={inputFiles}
+	type="file"
+	hidden
+	on:change={async (e) => {
+		if (inputFiles && inputFiles.length > 0) {
+			const file = inputFiles[0];
+			if (
+				SUPPORTED_FILE_TYPE.includes(file['type']) ||
+				SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
+			) {
+				uploadDoc(file);
+			} else {
+				toast.error(
+					`Unknown File Type '${file['type']}', but accepting and treating as plain text`
+				);
+				uploadDoc(file);
+			}
+
+			inputFiles = null;
+			e.target.value = '';
+		} else {
+			toast.error(`File not found.`);
+		}
+	}}
+/>
+
 <div class="min-h-screen w-full flex justify-center dark:text-white">
 	<div class=" py-2.5 flex flex-col justify-between w-full">
 		<div class="max-w-2xl mx-auto w-full px-3 md:px-0 my-10">
@@ -191,34 +226,32 @@
 					</button>
 				</div>
 			</div>
+			<hr class=" dark:border-gray-700 my-2.5" />
 
-			<input
-				id="upload-doc-input"
-				bind:files={inputFiles}
-				type="file"
-				hidden
-				on:change={async (e) => {
-					if (inputFiles && inputFiles.length > 0) {
-						const file = inputFiles[0];
-						if (
-							SUPPORTED_FILE_TYPE.includes(file['type']) ||
-							SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
-						) {
-							uploadDoc(file);
-						} else {
-							toast.error(
-								`Unknown File Type '${file['type']}', but accepting and treating as plain text`
-							);
-							uploadDoc(file);
-						}
-
-						inputFiles = null;
-						e.target.value = '';
-					} else {
-						toast.error(`File not found.`);
-					}
-				}}
-			/>
+			{#if tags.length > 0}
+				<div class="px-2.5 mt-0.5 mb-2 flex gap-1 flex-wrap">
+					<button
+						class="px-2 py-0.5 space-x-1 flex h-fit items-center rounded-full transition border dark:border-gray-600 dark:text-white"
+						on:click={async () => {
+							// await chats.set(await getChatListByTagName(localStorage.token, tag.name));
+						}}
+					>
+						<div class=" text-xs font-medium self-center line-clamp-1">all</div>
+					</button>
+					{#each tags as tag}
+						<button
+							class="px-2 py-0.5 space-x-1 flex h-fit items-center rounded-full transition border dark:border-gray-600 dark:text-white"
+							on:click={async () => {
+								// await chats.set(await getChatListByTagName(localStorage.token, tag.name));
+							}}
+						>
+							<div class=" text-xs font-medium self-center line-clamp-1">
+								#{tag}
+							</div>
+						</button>
+					{/each}
+				</div>
+			{/if}
 
 			<!-- <div>
 				<div
@@ -240,8 +273,7 @@
 			</div> -->
 
 			{#each $documents.filter((p) => query === '' || p.name.includes(query)) as doc}
-				<hr class=" dark:border-gray-700 my-2.5" />
-				<div class=" flex space-x-4 cursor-pointer w-full mb-3">
+				<div class=" flex space-x-4 cursor-pointer w-full mt-3 mb-3">
 					<div class=" flex flex-1 space-x-4 cursor-pointer w-full">
 						<div class=" flex items-center space-x-3">
 							<div class="p-2.5 bg-red-400 text-white rounded-lg">
