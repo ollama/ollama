@@ -2,9 +2,12 @@ package lifecycle
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"log/slog"
 	"runtime"
 
+	"github.com/jmorganca/ollama/app/store"
 	"github.com/jmorganca/ollama/app/tray"
 )
 
@@ -25,26 +28,61 @@ func Run() {
 	if err != nil {
 		log.Fatalf("Failed to start: %s", err)
 	}
+	callbacks := t.GetCallbacks()
 
-	var done <-chan int
-	if IsServerRunning(ctx) {
-		log.Printf("XXX detected server already running")
-		// TODO - should we fail fast, try to kill it, or just ignore?
-	} else {
-		log.Printf("XXX spawning server")
-		done, err = SpawnServer(ctx, CLIName)
+	go func() {
+		slog.Debug("XXX starting callback handler")
+		for {
+			select {
+			case <-callbacks.Quit:
+				slog.Debug("QUIT called")
+				t.Quit()
+			case <-callbacks.Update:
+				slog.Debug("XXX about to call DoUpgrade")
+				err := DoUpgrade()
+				if err != nil {
+					slog.Debug(fmt.Sprintf("DoUpgrade FAILED: %s", err))
+				}
+			case <-callbacks.ShowLogs:
+				slog.Debug("SHOW LOGS CALLED")
+				ShowLogs()
+			case <-callbacks.DoFirstUse:
+				slog.Debug("XXX Would be popping up powershell with a custom profile")
+			}
+		}
+	}()
+
+	// Are we first use?
+	if store.GetFirstTimeRun() {
+		err = t.DisplayFirstUseNotification()
 		if err != nil {
-			log.Printf("Failed to spawn server %s", err)
+			slog.Debug(fmt.Sprintf("XXX failed to display first use notification %v", err))
 		}
 	}
 
-	StartBackgroundUpdaterChecker(ctx, t.SetUpdateAvailable)
+	var done chan int
+	if IsServerRunning(ctx) {
+		slog.Debug("XXX detected server already running")
+		// TODO - should we fail fast, try to kill it, or just ignore?
+	} else {
+		slog.Debug("XXX spawning server")
+		done, err = SpawnServer(ctx, CLIName)
+		if err != nil {
+			// TODO - should we retry in a backoff loop?
+			// TODO - should we pop up a warning and maybe add a menu item to view application logs?
+			slog.Error(fmt.Sprintf("Failed to spawn ollama server %s", err))
+			done = make(chan int, 1)
+			done <- 1
+		}
+	}
+
+	StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
 
 	t.Run()
 	cancel()
-	log.Printf("Waiting for ollama server to shutdown...")
+	slog.Info("Waiting for ollama server to shutdown...")
 	if done != nil {
 		<-done
 	}
-	log.Printf("Done.")
+	slog.Info("Ollama app exiting")
 }

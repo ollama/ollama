@@ -7,9 +7,10 @@ import (
 )
 
 var (
-	AppName        = "ollama app"
-	CLIName        = "ollama"
-	AppDir         = "/opt/Ollama"
+	AppName = "ollama app"
+	CLIName = "ollama"
+	AppDir  = "/opt/Ollama"
+	// TODO - should there be a distinct log dir?
 	UpdateStageDir = "/tmp"
 	ServerLogFile  = "/tmp/ollama.log"
 	Installer      = "Ollama Setup.exe"

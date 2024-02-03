@@ -739,6 +739,7 @@ func initializeKeypair() error {
 	return nil
 }
 
+//nolint:unused
 func waitForServer(ctx context.Context, client *api.Client) error {
 	// wait for the server to start
 	timeout := time.After(5 * time.Second)

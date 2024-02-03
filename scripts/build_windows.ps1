@@ -61,3 +61,4 @@ buildApp
 gatherDependencies
 buildInstaller
 
+cd $script:SRC_DIR

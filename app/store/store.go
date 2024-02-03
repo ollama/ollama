@@ -3,7 +3,8 @@ package store
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -54,11 +55,11 @@ func initStore() {
 		defer storeFile.Close()
 		err = json.NewDecoder(storeFile).Decode(&store)
 		if err == nil {
-			log.Printf("XXX loaded existing store - ID: %s", store.ID)
+			slog.Debug(fmt.Sprintf("XXX loaded existing store - ID: %s", store.ID))
 			return
 		}
 	}
-	log.Printf("XXX initializing new store %s", err)
+	slog.Debug(fmt.Sprintf("XXX initializing new store %s", err))
 	store.ID = uuid.New().String()
 	writeStore(getStorePath())
 }
@@ -68,21 +69,25 @@ func writeStore(storeFilename string) {
 	_, err := os.Stat(ollamaDir)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(ollamaDir, 0o755); err != nil {
-			log.Printf("create ollama dir %s: %v", ollamaDir, err)
+			slog.Debug(fmt.Sprintf("create ollama dir %s: %v", ollamaDir, err))
 			return
 		}
-		log.Printf("XXX created ollamaDir: %s", ollamaDir)
+		slog.Debug(fmt.Sprintf("XXX created ollamaDir: %s", ollamaDir))
 	}
 	payload, err := json.Marshal(store)
+	if err != nil {
+		slog.Error(fmt.Sprintf("failed to marshal store: %s", err))
+		return
+	}
 	fp, err := os.OpenFile(storeFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
-		log.Printf("write store payload %s: %v", storeFilename, err)
+		slog.Debug(fmt.Sprintf("write store payload %s: %v", storeFilename, err))
 		return
 	}
 	defer fp.Close()
 	if n, err := fp.Write(payload); err != nil || n != len(payload) {
-		log.Printf("write store payload %s: %d vs %d -- %v", storeFilename, n, len(payload), err)
+		slog.Debug(fmt.Sprintf("write store payload %s: %d vs %d -- %v", storeFilename, n, len(payload), err))
 		return
 	}
-	log.Printf("XXX wrote store: %s", storeFilename)
+	slog.Debug(fmt.Sprintf("XXX wrote store: %s", storeFilename))
 }

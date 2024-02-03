@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -37,23 +37,27 @@ type UpdateResponse struct {
 func IsNewReleaseAvailable() (bool, UpdateResponse) {
 	var updateResp UpdateResponse
 	updateCheckURL := GetUpdateCheckURL(store.GetID())
-	log.Printf("XXX checking for update via %s", updateCheckURL)
+	slog.Debug(fmt.Sprintf("XXX checking for update via %s", updateCheckURL))
 	resp, err := http.Get(updateCheckURL)
 	if err != nil {
-		log.Printf("XXX error checking for update: %s", err)
+		slog.Debug(fmt.Sprintf("XXX error checking for update: %s", err))
 		return false, updateResp
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 204 {
-		log.Printf("XXX got 204 when checking for update")
+		slog.Debug("XXX got 204 when checking for update")
 		return false, updateResp
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("XXX failed to read body response: %s", err)
+		slog.Debug(fmt.Sprintf("XXX failed to read body response: %s", err))
 	}
-	json.Unmarshal(body, &updateResp)
-	log.Printf("XXX New update available at %s", updateResp.UpdateURL)
+	err = json.Unmarshal(body, &updateResp)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("malformed response checking for update: %s", err))
+		return false, updateResp
+	}
+	slog.Info("New update available at" + updateResp.UpdateURL)
 	return true, updateResp
 }
 
@@ -71,7 +75,7 @@ func DownloadNewRelease(updateResp UpdateResponse) error {
 	}
 	_, err = os.Stat(escapedFilename)
 	if errors.Is(err, os.ErrNotExist) {
-		log.Printf("XXX downloading %s", updateResp.UpdateURL)
+		slog.Debug(fmt.Sprintf("XXX downloading %s", updateResp.UpdateURL))
 		resp, err := http.Get(updateResp.UpdateURL)
 		if err != nil {
 			return fmt.Errorf("error downloading update: %w", err)
@@ -89,28 +93,36 @@ func DownloadNewRelease(updateResp UpdateResponse) error {
 		if n, err := fp.Write(payload); err != nil || n != len(payload) {
 			return fmt.Errorf("write payload %s: %d vs %d -- %w", escapedFilename, n, len(payload), err)
 		}
-		log.Printf("XXX completed writing out update payload to %s", escapedFilename)
+		slog.Debug(fmt.Sprintf("XXX completed writing out update payload to %s", escapedFilename))
 	} else if err != nil {
 		return fmt.Errorf("XXX unexpected stat error %w", err)
 	} else {
-		log.Printf("XXX update already downloaded")
+		slog.Debug("XXX update already downloaded")
 	}
 	UpdateDownloaded = true
 	return nil
 }
 
-func StartBackgroundUpdaterChecker(ctx context.Context, cb func(bool)) {
-	// TODO - shutdown mechanism
+func StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
 	go func() {
+		// TODO - remove this - only for debugging...
+		time.Sleep(5 * time.Second)
+
 		for {
 			available, resp := IsNewReleaseAvailable()
 			if available {
-				DownloadNewRelease(resp)
-				cb(UpdateDownloaded)
+				err := DownloadNewRelease(resp)
+				if err != nil {
+					slog.Error(fmt.Sprintf("failed to download new release: %s", err))
+				}
+				err = cb("TODO version")
+				if err != nil {
+					slog.Debug("XXX failed to register update available with tray")
+				}
 			}
 			select {
 			case <-ctx.Done():
-				log.Printf("XXX stopping background update checker")
+				slog.Debug("XXX stopping background update checker")
 				return
 			default:
 				time.Sleep(60 * 60 * time.Second)
@@ -126,7 +138,7 @@ func DoUpgrade() error {
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("could not locate ollama installer at %s", installerExe)
 	}
-	log.Printf("XXX attempting to start installer %s", installerExe)
+	slog.Debug(fmt.Sprintf("XXX attempting to start installer %s", installerExe))
 
 	installArgs := []string{
 		"/SP", // Skip the "This will install... Do you wish to continue" prompt
@@ -143,12 +155,15 @@ func DoUpgrade() error {
 	}
 
 	if cmd.Process != nil {
-		cmd.Process.Release()
+		err = cmd.Process.Release()
+		if err != nil {
+			slog.Error(fmt.Sprintf("failed to release server process: %s", err))
+		}
 	} else {
 		// TODO - some details about why it didn't start, or is this a pedantic error case?
 		return fmt.Errorf("Installer process did not start")
 	}
-	log.Printf("Installer started in background, exiting")
+	slog.Info("Installer started in background, exiting")
 
 	os.Exit(0)
 	// Not reached
