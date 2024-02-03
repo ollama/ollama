@@ -64,7 +64,7 @@ export const uploadWebToVectorDB = async (token: string, collection_name: string
 	return res;
 };
 
-export const queryVectorDB = async (
+export const queryCollection = async (
 	token: string,
 	collection_name: string,
 	query: string,
