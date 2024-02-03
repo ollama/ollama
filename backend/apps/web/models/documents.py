@@ -44,6 +44,16 @@ class DocumentModel(BaseModel):
 ####################
 
 
+class DocumentResponse(BaseModel):
+    collection_name: str
+    name: str
+    title: str
+    filename: str
+    content: Optional[dict] = None
+    user_id: str
+    timestamp: int  # timestamp in epoch
+
+
 class DocumentUpdateForm(BaseModel):
     name: str
     title: str
@@ -106,6 +116,26 @@ class DocumentsTable:
             query.execute()
 
             doc = Document.get(Document.name == form_data.name)
+            return DocumentModel(**model_to_dict(doc))
+        except Exception as e:
+            print(e)
+            return None
+
+    def update_doc_content_by_name(
+        self, name: str, updated: dict
+    ) -> Optional[DocumentModel]:
+        try:
+            doc = self.get_doc_by_name(name)
+            doc_content = json.loads(doc.content if doc.content else "{}")
+            doc_content = {**doc_content, **updated}
+
+            query = Document.update(
+                content=json.dumps(doc_content),
+                timestamp=int(time.time()),
+            ).where(Document.name == name)
+            query.execute()
+
+            doc = Document.get(Document.name == name)
             return DocumentModel(**model_to_dict(doc))
         except Exception as e:
             print(e)

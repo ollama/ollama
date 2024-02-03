@@ -13,7 +13,6 @@
 
 	import EditDocModal from '$lib/components/documents/EditDocModal.svelte';
 	import AddFilesPlaceholder from '$lib/components/AddFilesPlaceholder.svelte';
-
 	let importFiles = '';
 
 	let inputFiles = '';
