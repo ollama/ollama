@@ -22,6 +22,7 @@
 
 	let showEditDocModal = false;
 	let selectedDoc;
+	let selectedTag = '';
 
 	let dragged = false;
 
@@ -233,6 +234,7 @@
 					<button
 						class="px-2 py-0.5 space-x-1 flex h-fit items-center rounded-full transition border dark:border-gray-600 dark:text-white"
 						on:click={async () => {
+							selectedTag = '';
 							// await chats.set(await getChatListByTagName(localStorage.token, tag.name));
 						}}
 					>
@@ -242,6 +244,7 @@
 						<button
 							class="px-2 py-0.5 space-x-1 flex h-fit items-center rounded-full transition border dark:border-gray-600 dark:text-white"
 							on:click={async () => {
+								selectedTag = tag;
 								// await chats.set(await getChatListByTagName(localStorage.token, tag.name));
 							}}
 						>
@@ -272,7 +275,9 @@
 				</div>
 			</div> -->
 
-			{#each $documents.filter((p) => query === '' || p.name.includes(query)) as doc}
+			{#each $documents.filter((doc) => (selectedTag === '' || (doc?.content?.tags ?? [])
+							.map((tag) => tag.name)
+							.includes(selectedTag)) && (query === '' || doc.name.includes(query))) as doc}
 				<div class=" flex space-x-4 cursor-pointer w-full mt-3 mb-3">
 					<div class=" flex flex-1 space-x-4 cursor-pointer w-full">
 						<div class=" flex items-center space-x-3">
