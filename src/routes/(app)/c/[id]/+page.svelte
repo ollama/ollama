@@ -29,7 +29,7 @@
 		getTagsById,
 		updateChatById
 	} from '$lib/apis/chats';
-	import { queryCollection } from '$lib/apis/rag';
+	import { queryCollection, queryDoc } from '$lib/apis/rag';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
@@ -238,7 +238,9 @@
 
 		const docs = messages
 			.filter((message) => message?.files ?? null)
-			.map((message) => message.files.filter((item) => item.type === 'doc'))
+			.map((message) =>
+				message.files.filter((item) => item.type === 'doc' || item.type === 'collection')
+			)
 			.flat(1);
 
 		console.log(docs);
@@ -248,12 +250,21 @@
 
 			let relevantContexts = await Promise.all(
 				docs.map(async (doc) => {
-					return await queryCollection(localStorage.token, doc.collection_name, query, 4).catch(
-						(error) => {
-							console.log(error);
-							return null;
-						}
-					);
+					if (doc.type === 'collection') {
+						return await queryCollection(localStorage.token, doc.collection_names, query, 4).catch(
+							(error) => {
+								console.log(error);
+								return null;
+							}
+						);
+					} else {
+						return await queryDoc(localStorage.token, doc.collection_name, query, 4).catch(
+							(error) => {
+								console.log(error);
+								return null;
+							}
+						);
+					}
 				})
 			);
 			relevantContexts = relevantContexts.filter((context) => context);

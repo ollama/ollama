@@ -64,9 +64,46 @@ export const uploadWebToVectorDB = async (token: string, collection_name: string
 	return res;
 };
 
-export const queryCollection = async (
+export const queryDoc = async (
 	token: string,
 	collection_name: string,
+	query: string,
+	k: number
+) => {
+	let error = null;
+
+	const res = await fetch(`${RAG_API_BASE_URL}/query/doc`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			collection_name: collection_name,
+			query: query,
+			k: k
+		})
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err.detail;
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+export const queryCollection = async (
+	token: string,
+	collection_names: string,
 	query: string,
 	k: number
 ) => {
@@ -80,7 +117,7 @@ export const queryCollection = async (
 			authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			collection_name: collection_name,
+			collection_names: collection_names,
 			query: query,
 			k: k
 		})

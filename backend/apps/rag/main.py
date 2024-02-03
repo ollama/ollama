@@ -97,15 +97,15 @@ async def get_status():
     return {"status": True}
 
 
-class QueryCollectionForm(BaseModel):
+class QueryDocForm(BaseModel):
     collection_name: str
     query: str
     k: Optional[int] = 4
 
 
-@app.post("/query/collection")
-def query_collection(
-    form_data: QueryCollectionForm,
+@app.post("/query/doc")
+def query_doc(
+    form_data: QueryDocForm,
     user=Depends(get_current_user),
 ):
     try:
@@ -173,8 +173,8 @@ def merge_and_sort_query_results(query_results, k):
     return merged_query_results
 
 
-@app.post("/query/collections")
-def query_collections(
+@app.post("/query/collection")
+def query_collection(
     form_data: QueryCollectionsForm,
     user=Depends(get_current_user),
 ):
