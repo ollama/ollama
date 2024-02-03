@@ -10,11 +10,34 @@
 
 	const dispatch = createEventDispatcher();
 	let selectedIdx = 0;
+
+	let filteredItems = [];
 	let filteredDocs = [];
+	let filteredTags = [];
+
+	let collections = [];
+
+	$: collections = $documents
+		.reduce((a, e, i, arr) => {
+			return [...new Set([...a, ...(e?.content?.tags ?? []).map((tag) => tag.name)])];
+		}, [])
+		.map((tag) => ({
+			name: tag,
+			type: 'collection',
+			collection_names: $documents
+				.filter((doc) => (doc?.content?.tags ?? []).map((tag) => tag.name).includes(tag))
+				.map((doc) => doc.collection_name)
+		}));
+
+	$: filteredCollections = collections
+		.filter((tag) => tag.name.includes(prompt.split(' ')?.at(0)?.substring(1) ?? ''))
+		.sort((a, b) => a.name.localeCompare(b.name));
 
 	$: filteredDocs = $documents
 		.filter((p) => p.name.includes(prompt.split(' ')?.at(0)?.substring(1) ?? ''))
 		.sort((a, b) => a.title.localeCompare(b.title));
+
+	$: filteredItems = [...filteredCollections, ...filteredDocs];
 
 	$: if (prompt) {
 		selectedIdx = 0;
@@ -25,7 +48,7 @@
 	};
 
 	export const selectDown = () => {
-		selectedIdx = Math.min(selectedIdx + 1, filteredDocs.length - 1);
+		selectedIdx = Math.min(selectedIdx + 1, filteredItems.length - 1);
 	};
 
 	const confirmSelect = async (doc) => {
@@ -60,7 +83,7 @@
 
 			<div class="max-h-60 flex flex-col w-full rounded-r-lg">
 				<div class=" overflow-y-auto bg-white p-2 rounded-tr-lg space-y-0.5">
-					{#each filteredDocs as doc, docIdx}
+					{#each filteredItems as doc, docIdx}
 						<button
 							class=" px-3 py-1.5 rounded-lg w-full text-left {docIdx === selectedIdx
 								? ' bg-gray-100 selected-command-option-button'
@@ -68,6 +91,7 @@
 							type="button"
 							on:click={() => {
 								console.log(doc);
+
 								confirmSelect(doc);
 							}}
 							on:mousemove={() => {
@@ -75,13 +99,21 @@
 							}}
 							on:focus={() => {}}
 						>
-							<div class=" font-medium text-black line-clamp-1">
-								#{doc.name} ({doc.filename})
-							</div>
+							{#if doc.type === 'collection'}
+								<div class=" font-medium text-black line-clamp-1">
+									#{doc.name}
+								</div>
 
-							<div class=" text-xs text-gray-600 line-clamp-1">
-								{doc.title}
-							</div>
+								<div class=" text-xs text-gray-600 line-clamp-1">Collection</div>
+							{:else}
+								<div class=" font-medium text-black line-clamp-1">
+									#{doc.name} ({doc.filename})
+								</div>
+
+								<div class=" text-xs text-gray-600 line-clamp-1">
+									{doc.title}
+								</div>
+							{/if}
 						</button>
 					{/each}
 
