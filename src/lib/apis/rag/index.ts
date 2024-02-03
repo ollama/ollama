@@ -66,13 +66,13 @@ export const uploadWebToVectorDB = async (token: string, collection_name: string
 
 export const queryVectorDB = async (
 	token: string,
-	collection_names: string[],
+	collection_name: string,
 	query: string,
 	k: number
 ) => {
 	let error = null;
 
-	const res = await fetch(`${RAG_API_BASE_URL}/query/collections`, {
+	const res = await fetch(`${RAG_API_BASE_URL}/query/collection`, {
 		method: 'POST',
 		headers: {
 			Accept: 'application/json',
@@ -80,7 +80,7 @@ export const queryVectorDB = async (
 			authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			collection_names: collection_names,
+			collection_name: collection_name,
 			query: query,
 			k: k
 		})

@@ -28,7 +28,7 @@
 		getTagsById,
 		updateChatById
 	} from '$lib/apis/chats';
-	import { queryVectorDB } from '$lib/apis/rag';
+	import { queryCollection } from '$lib/apis/rag';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
@@ -232,28 +232,26 @@
 			processing = 'Reading';
 			const query = history.messages[parentId].content;
 
-			let relevantContexts = await queryVectorDB(
-				localStorage.token,
-				docs.map((d) => d.collection_name),
-				query,
-				4
-			).catch((error) => {
-				console.log(error);
-				return null;
-			});
+			let relevantContexts = await Promise.all(
+				docs.map(async (doc) => {
+					return await queryCollection(localStorage.token, doc.collection_name, query, 4).catch(
+						(error) => {
+							console.log(error);
+							return null;
+						}
+					);
+				})
+			);
+			relevantContexts = relevantContexts.filter((context) => context);
 
-			if (relevantContexts) {
-				relevantContexts = relevantContexts.filter((context) => context);
+			const contextString = relevantContexts.reduce((a, context, i, arr) => {
+				return `${a}${context.documents.join(' ')}\n`;
+			}, '');
 
-				const contextString = relevantContexts.reduce((a, context, i, arr) => {
-					return `${a}${context.documents.join(' ')}\n`;
-				}, '');
+			console.log(contextString);
 
-				console.log(contextString);
-
-				history.messages[parentId].raContent = RAGTemplate(contextString, query);
-				history.messages[parentId].contexts = relevantContexts;
-			}
+			history.messages[parentId].raContent = RAGTemplate(contextString, query);
+			history.messages[parentId].contexts = relevantContexts;
 			await tick();
 			processing = '';
 		}
