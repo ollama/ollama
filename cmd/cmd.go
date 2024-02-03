@@ -26,6 +26,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
@@ -147,19 +148,68 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	name := args[0]
+
 	// check if the model exists on the server
-	_, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+	show, err := client.Show(cmd.Context(), &api.ShowRequest{Name: name})
 	var statusError api.StatusError
 	switch {
 	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
 		if err := PullHandler(cmd, []string{name}); err != nil {
 			return err
 		}
+
+		show, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+		if err != nil {
+			return err
+		}
 	case err != nil:
 		return err
 	}
 
-	return RunGenerate(cmd, args)
+	interactive := true
+
+	opts := runOptions{
+		Model:       args[0],
+		WordWrap:    os.Getenv("TERM") == "xterm-256color",
+		Options:     map[string]interface{}{},
+		MultiModal:  slices.Contains(show.Details.Families, "clip"),
+		ParentModel: show.Details.ParentModel,
+	}
+
+	format, err := cmd.Flags().GetString("format")
+	if err != nil {
+		return err
+	}
+	opts.Format = format
+
+	prompts := args[1:]
+	// prepend stdin to the prompt if provided
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		in, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+
+		prompts = append([]string{string(in)}, prompts...)
+		opts.WordWrap = false
+		interactive = false
+	}
+	opts.Prompt = strings.Join(prompts, " ")
+	if len(prompts) > 0 {
+		interactive = false
+	}
+
+	nowrap, err := cmd.Flags().GetBool("nowordwrap")
+	if err != nil {
+		return err
+	}
+	opts.WordWrap = !nowrap
+
+	if !interactive {
+		return generate(cmd, opts)
+	}
+
+	return generateInteractive(cmd, opts)
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -478,63 +528,20 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func RunGenerate(cmd *cobra.Command, args []string) error {
-	interactive := true
-
-	opts := runOptions{
-		Model:    args[0],
-		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]interface{}{},
-	}
-
-	format, err := cmd.Flags().GetString("format")
-	if err != nil {
-		return err
-	}
-	opts.Format = format
-
-	prompts := args[1:]
-	// prepend stdin to the prompt if provided
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		in, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return err
-		}
-
-		prompts = append([]string{string(in)}, prompts...)
-		opts.WordWrap = false
-		interactive = false
-	}
-	opts.Prompt = strings.Join(prompts, " ")
-	if len(prompts) > 0 {
-		interactive = false
-	}
-
-	nowrap, err := cmd.Flags().GetBool("nowordwrap")
-	if err != nil {
-		return err
-	}
-	opts.WordWrap = !nowrap
-
-	if !interactive {
-		return generate(cmd, opts)
-	}
-
-	return generateInteractive(cmd, opts)
-}
-
 type generateContextKey string
 
 type runOptions struct {
-	Model    string
-	Prompt   string
-	Messages []api.Message
-	WordWrap bool
-	Format   string
-	System   string
-	Template string
-	Images   []api.ImageData
-	Options  map[string]interface{}
+	Model       string
+	ParentModel string
+	Prompt      string
+	Messages    []api.Message
+	WordWrap    bool
+	Format      string
+	System      string
+	Template    string
+	Images      []api.ImageData
+	Options     map[string]interface{}
+	MultiModal  bool
 }
 
 type displayResponseState struct {
@@ -696,10 +703,18 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		return nil
 	}
 
+	if opts.MultiModal {
+		opts.Prompt, opts.Images, err = extractFileData(opts.Prompt)
+		if err != nil {
+			return err
+		}
+	}
+
 	request := api.GenerateRequest{
 		Model:    opts.Model,
 		Prompt:   opts.Prompt,
 		Context:  generateContext,
+		Images:   opts.Images,
 		Format:   opts.Format,
 		System:   opts.System,
 		Template: opts.Template,

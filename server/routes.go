@@ -186,7 +186,13 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	sessionDuration := defaultSessionDuration
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = defaultSessionDuration
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -233,6 +239,15 @@ func GenerateHandler(c *gin.Context) {
 			Prompt: req.Prompt,
 			First:  len(req.Context) == 0,
 		}
+
+		if promptVars.System == "" {
+			promptVars.System = model.System
+		}
+
+		for i := range req.Images {
+			promptVars.Prompt += fmt.Sprintf(" [img-%d]", i)
+		}
+
 		p, err := model.PreResponsePrompt(promptVars)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -241,6 +256,8 @@ func GenerateHandler(c *gin.Context) {
 		rebuild.WriteString(p)
 		prompt = rebuild.String()
 	}
+
+	slog.Debug("generate handler", "prompt", prompt)
 
 	ch := make(chan any)
 	var generated strings.Builder
@@ -295,11 +312,19 @@ func GenerateHandler(c *gin.Context) {
 			ch <- resp
 		}
 
+		var images []llm.ImageData
+		for i := range req.Images {
+			images = append(images, llm.ImageData{
+				ID:   i,
+				Data: req.Images[i],
+			})
+		}
+
 		// Start prediction
 		predictReq := llm.PredictOpts{
 			Prompt:  prompt,
 			Format:  req.Format,
-			Images:  req.Images,
+			Images:  images,
 			Options: opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
@@ -378,7 +403,14 @@ func EmbeddingHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	sessionDuration := defaultSessionDuration
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = defaultSessionDuration
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -659,6 +691,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	modelDetails := api.ModelDetails{
+		ParentModel:       model.ParentModel,
 		Format:            model.Config.ModelFormat,
 		Family:            model.Config.ModelFamily,
 		Families:          model.Config.ModelFamilies,
@@ -674,11 +707,17 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		model.Template = req.Template
 	}
 
+	msgs := make([]api.Message, 0)
+	for _, msg := range model.Messages {
+		msgs = append(msgs, api.Message{Role: msg.Role, Content: msg.Content})
+	}
+
 	resp := &api.ShowResponse{
 		License:  strings.Join(model.License, "\n"),
 		System:   model.System,
 		Template: model.Template,
 		Details:  modelDetails,
+		Messages: msgs,
 	}
 
 	var params []string
@@ -911,13 +950,26 @@ func (s *Server) GenerateRoutes() http.Handler {
 }
 
 func Serve(ln net.Listener) error {
+	level := slog.LevelInfo
 	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
-		var programLevel = new(slog.LevelVar)
-		h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel, AddSource: true})
-		slog.SetDefault(slog.New(h))
-		programLevel.Set(slog.LevelDebug)
-		slog.Debug("Debug logging enabled")
+		level = slog.LevelDebug
 	}
+
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level:     level,
+		AddSource: true,
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.SourceKey {
+				source := attr.Value.Any().(*slog.Source)
+				source.File = filepath.Base(source.File)
+			}
+
+			return attr
+		},
+	})
+
+	slog.SetDefault(slog.New(handler))
+
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
@@ -1067,7 +1119,14 @@ func ChatHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	sessionDuration := defaultSessionDuration
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = defaultSessionDuration
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1075,17 +1134,31 @@ func ChatHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if len(req.Messages) == 0 {
-		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true, Message: api.Message{Role: "assistant"}})
+		resp := api.ChatResponse{
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true,
+			Message:   api.Message{Role: "assistant"},
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 
 	checkpointLoaded := time.Now()
 
-	prompt, images, err := model.ChatPrompt(req.Messages)
+	chat, err := model.ChatPrompts(req.Messages)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	prompt, images, err := trimmedPrompt(c.Request.Context(), chat, model)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	slog.Debug("chat handler", "prompt", prompt)
 
 	ch := make(chan any)
 
@@ -1159,4 +1232,116 @@ func ChatHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+// promptInfo stores the variables used to template a prompt, and the token length of the resulting template for some model
+type promptInfo struct {
+	vars     PromptVars
+	tokenLen int
+}
+
+// trimmedPrompt builds a prompt to send to a running model. It ensures the prompt fits within the max context length,
+// while preserving the most recent system message.
+func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string, []llm.ImageData, error) {
+	if len(chat.Prompts) == 0 {
+		return "", nil, nil
+	}
+
+	var promptsToAdd []promptInfo
+	var totalTokenLength int
+	var systemPromptIncluded bool
+
+	var images []llm.ImageData
+	// reverse iterate through the prompts to build the prompt string in a way that fits the max context length
+	for i := len(chat.Prompts) - 1; i >= 0; i-- {
+		prompt := chat.Prompts[i]
+		promptText, err := promptString(model, prompt, i == len(chat.Prompts)-1)
+		if err != nil {
+			return "", nil, err
+		}
+
+		encodedTokens, err := loaded.runner.Encode(ctx, promptText)
+		if err != nil {
+			return "", nil, err
+		}
+
+		if totalTokenLength+len(encodedTokens) > loaded.NumCtx && i != len(chat.Prompts)-1 {
+			break // reached max context length, stop adding more prompts
+		}
+
+		for j := range prompt.Images {
+			if totalTokenLength+768 > loaded.NumCtx {
+				// this decreases the token length but overestimating is fine
+				prompt.Prompt = strings.ReplaceAll(prompt.Prompt, fmt.Sprintf(" [img-%d]", prompt.Images[j].ID), "")
+				continue
+			}
+
+			totalTokenLength += 768
+			images = append(images, prompt.Images[j])
+		}
+
+		totalTokenLength += len(encodedTokens)
+		systemPromptIncluded = systemPromptIncluded || prompt.System != ""
+		promptsToAdd = append(promptsToAdd, promptInfo{vars: prompt, tokenLen: len(encodedTokens)})
+	}
+
+	// ensure the system prompt is included, if not already
+	if chat.LastSystem != "" && !systemPromptIncluded {
+		var err error
+		promptsToAdd, err = includeSystemPrompt(ctx, chat.LastSystem, totalTokenLength, promptsToAdd)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+
+	promptsToAdd[len(promptsToAdd)-1].vars.First = true
+
+	// construct the final prompt string from the prompts which fit within the context window
+	var result string
+	for i, prompt := range promptsToAdd {
+		promptText, err := promptString(model, prompt.vars, i == 0)
+		if err != nil {
+			return "", nil, err
+		}
+		result = promptText + result
+	}
+
+	return result, images, nil
+}
+
+// promptString applies the model template to the prompt
+func promptString(model *Model, vars PromptVars, isMostRecent bool) (string, error) {
+	if isMostRecent {
+		p, err := model.PreResponsePrompt(vars)
+		if err != nil {
+			return "", fmt.Errorf("pre-response template: %w", err)
+		}
+		return p, nil
+	}
+	p, err := Prompt(model.Template, vars)
+	if err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// includeSystemPrompt adjusts the prompts to include the system prompt.
+func includeSystemPrompt(ctx context.Context, systemPrompt string, totalTokenLength int, promptsToAdd []promptInfo) ([]promptInfo, error) {
+	systemTokens, err := loaded.runner.Encode(ctx, systemPrompt)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := len(promptsToAdd) - 1; i >= 0; i-- {
+		if totalTokenLength+len(systemTokens) <= loaded.NumCtx {
+			promptsToAdd[i].vars.System = systemPrompt
+			return promptsToAdd[:i+1], nil
+		}
+		totalTokenLength -= promptsToAdd[i].tokenLen
+	}
+
+	// if got here, system did not fit anywhere, so return the most recent prompt with the system message set
+	recent := promptsToAdd[len(promptsToAdd)-1]
+	recent.vars.System = systemPrompt
+	return []promptInfo{recent}, nil
 }
