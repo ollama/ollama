@@ -44,20 +44,27 @@ func Run() {
 					slog.Debug(fmt.Sprintf("DoUpgrade FAILED: %s", err))
 				}
 			case <-callbacks.ShowLogs:
-				slog.Debug("SHOW LOGS CALLED")
 				ShowLogs()
 			case <-callbacks.DoFirstUse:
-				slog.Debug("XXX Would be popping up powershell with a custom profile")
+				slog.Debug("Spawning getting started shell terminal")
+				err := GetStarted()
+				if err != nil {
+					slog.Warn(fmt.Sprintf("Failed to launch getting started shell: %s", err))
+				}
 			}
 		}
 	}()
 
 	// Are we first use?
-	if store.GetFirstTimeRun() {
+	if !store.GetFirstTimeRun() {
+		slog.Debug("First time run")
 		err = t.DisplayFirstUseNotification()
 		if err != nil {
 			slog.Debug(fmt.Sprintf("XXX failed to display first use notification %v", err))
 		}
+		store.SetFirstTimeRun(true)
+	} else {
+		slog.Debug("Not first time, skipping first run notification")
 	}
 
 	var done chan int

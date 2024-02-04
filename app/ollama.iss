@@ -10,6 +10,7 @@
 #define MyAppPublisher "Ollama, Inc."
 #define MyAppURL "https://ollama.ai/"
 #define MyAppExeName "ollama app.exe"
+#define MyIcon ".\assets\ollama_32_32_solid.ico"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -17,6 +18,7 @@
 AppId={{44E83376-CE68-45EB-8FC1-393500EB558C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
 ;AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
@@ -24,35 +26,35 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-; LicenseFile=..\LICENSE
-
-; TODO consider shifting these to RTF
-; InfoBeforeFile=.\about.txt
-; InfoAfterFile=.\getstarted.txt
 PrivilegesRequired=lowest
 OutputBaseFilename="Ollama Setup"
-SetupIconFile=.\assets\iconTemplate@2x.ico
-Compression=lzma
-SolidCompression=yes
+SetupIconFile={#MyIcon}
+UninstallDisplayIcon={uninstallexe}
+Compression=lzma2
+SolidCompression=no
 WizardStyle=modern
 ChangesEnvironment=yes
 OutputDir=..\dist\
+
+; Disable logging once everything's battle tested
+; Filename will be %TEMP%\Setup Log*.txt
+SetupLogging=yes
 
 ; TODO This still results in the user being prompted to close or not on ugprades which is messy
 ;      Try to find a pattern (likely with code block) to shut down the app and server automatically
 CloseApplications=yes
 RestartApplications=no
 
-; TODO Set to something reasonable to be able to download a basic model
-ExtraDiskSpaceRequired=0
+; Make sure they can at least download llama2 as a minimum
+ExtraDiskSpaceRequired=3826806784
 
 ; TODO Wire up custom image
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
-; WizardImageFile
-; WizardSmallImageFile
+;WizardImageFile=.\assets\ollama.bmp
+WizardSmallImageFile=.\assets\ollama.bmp
 
 ; TODO verifty actual min windows version...
 ; https://jrsoftware.org/ishelp/index.php?topic=winvernotes
@@ -66,6 +68,9 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
+; TODO - percentage can't be set less than 100
+; WizardSizePercent=100,80
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
@@ -73,10 +78,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: ".\app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ; Flags: ignoreversion 64bit
 Source: "..\ollama.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit
 Source: "..\dist\windeps\*.dll"; DestDir: "{app}"; Flags: ignoreversion 64bit
+Source: ".\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: {#MyIcon}
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: {#MyIcon}
 
 [Run]
 ; TODO consider starting a powershell window with a wall of text showing how to run ollama
@@ -91,14 +97,21 @@ Filename: "taskkill"; Parameters: "/im ""ollama.exe"" /f /t"; Flags: runhidden
 ; TODO - convert this to a Pascal code script so it waits until they're no longer running, then completes
 Filename: "{cmd}"; Parameters: "/c timeout 5"; Flags: runhidden
 
+[UninstallDelete]
+Type: filesandordirs; Name: "{%TEMP}\ollama*"
+Type: filesandordirs; Name: "{%LOCALAPPDATA}\Ollama"
+Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
+Type: filesandordirs; Name: "{%USERPROFILE}\.ollama"
+; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
+
 [Messages]
 WizardReady=Welcome to Ollama
 ReadyLabel1=%nLet's get you up and running with your own large language models.
 ReadyLabel2b=We'll be installing Ollama in your user account without requiring Admin permissions
 
-FinishedHeadingLabel=Run your first model
-FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama2
-ClickFinish=%n
+;FinishedHeadingLabel=Run your first model
+;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama2
+;ClickFinish=%n
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; \

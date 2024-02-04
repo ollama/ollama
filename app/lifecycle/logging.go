@@ -23,14 +23,14 @@ func InitLogging(filename string) {
 		logFile = os.Stderr
 		// TODO - write one-line to the app.log file saying we're running in console mode to help avoid confusion
 	} else {
-		_, err := os.Stat(AppDir)
+		_, err := os.Stat(AppDataDir)
 		if errors.Is(err, os.ErrNotExist) {
-			if err := os.MkdirAll(AppDir, 0o755); err != nil {
-				slog.Error(fmt.Sprintf("create ollama dir %s: %v", AppDir, err))
+			if err := os.MkdirAll(AppDataDir, 0o755); err != nil {
+				slog.Error(fmt.Sprintf("create ollama dir %s: %v", AppDataDir, err))
 				return
 			}
 		}
-		logFilename := filepath.Join(AppDir, filename)
+		logFilename := filepath.Join(AppDataDir, filename)
 		logFile, err = os.OpenFile(logFilename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
 		if err != nil {
 			slog.Error(fmt.Sprintf("failed to create server log %v", err))

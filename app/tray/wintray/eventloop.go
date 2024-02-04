@@ -78,21 +78,28 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			case t.callbacks.Quit <- struct{}{}:
 			// should not happen but in case not listening
 			default:
-				slog.Debug("XXX NO ONE LISTENING")
+				slog.Error("no listener on Quit")
 			}
 		case UpdateMenuID:
 			select {
 			case t.callbacks.Update <- struct{}{}:
 			// should not happen but in case not listening
 			default:
-				slog.Debug("XXX NO ONE LISTENING")
+				slog.Error("no listener on Update")
 			}
 		case LogsMenuID:
 			select {
 			case t.callbacks.ShowLogs <- struct{}{}:
 			// should not happen but in case not listening
 			default:
-				slog.Debug("XXX NO ONE LISTENING")
+				slog.Error("no listener on ShowLogs")
+			}
+		case GetStartedMenuID:
+			select {
+			case t.callbacks.DoFirstUse <- struct{}{}:
+			// should not happen but in case not listening
+			default:
+				slog.Error("no listener on DoFirstUse")
 			}
 
 		default:
@@ -120,14 +127,15 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			}
 		}
 		t.muNID.Unlock()
-		slog.Debug("XXX would be doing exit callback here")
+		// TODO nuke this once we confirm we don't need any final callback cleanup logic
+		// slog.Debug("XXX would be doing exit callback here")
 		// systrayExit()
 	case t.wmSystrayMessage:
 		switch lParam {
 		case WM_MOUSEMOVE, WM_LBUTTONDOWN:
 			// Ignore these...
 		case WM_RBUTTONUP, WM_LBUTTONUP:
-			slog.Debug("XXX showing menu")
+			// slog.Debug("XXX showing menu")
 			err := t.showMenu()
 			if err != nil {
 				slog.Error(fmt.Sprintf("failed to show menu: %s", err))
@@ -138,21 +146,20 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 				case t.callbacks.Update <- struct{}{}:
 				// should not happen but in case not listening
 				default:
-					slog.Debug("XXX NO ONE LISTENING")
+					slog.Error("no listener on Update")
 				}
 			} else {
 				select {
 				case t.callbacks.DoFirstUse <- struct{}{}:
 				// should not happen but in case not listening
 				default:
-					slog.Debug("XXX NO ONE LISTENING")
+					slog.Error("no listener on DoFirstUse")
 				}
 			}
 		case 0x404: // Middle click or close notification
-			slog.Debug("XXX doing nothing on close of first time notification")
+			// slog.Debug("doing nothing on close of first time notification")
 		default:
-			// This gets lots of events, mouse movement, etc...
-			slog.Debug(fmt.Sprintf("XXX unmanaged app specific message, lParm: 0x%x", lParam))
+			slog.Debug(fmt.Sprintf("unmanaged app specific message, lParm: 0x%x", lParam))
 		}
 	case t.wmTaskbarCreated: // on explorer.exe restarts
 		slog.Debug("XXX got taskbar created event")

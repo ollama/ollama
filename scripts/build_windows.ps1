@@ -55,10 +55,15 @@ function buildInstaller() {
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
-checkEnv
-buildOllama
-buildApp
-gatherDependencies
-buildInstaller
-
-cd $script:SRC_DIR
+try {
+    checkEnv
+    buildOllama
+    buildApp
+    gatherDependencies
+    buildInstaller
+} catch {
+    write-host "Build Failed"
+    write-host $_
+} finally {
+    set-location $script:SRC_DIR
+}

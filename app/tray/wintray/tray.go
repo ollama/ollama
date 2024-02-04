@@ -24,7 +24,8 @@ const (
 	UpdateMenuID         = 2
 	separatorMenuID      = 3
 	LogsMenuID           = 4
-	QuitMenuID           = 5
+	GetStartedMenuID     = 5
+	QuitMenuID           = 6
 )
 
 // Contains information about loaded resources
@@ -95,6 +96,9 @@ func InitTray(icon, updateIcon []byte) (*winTray, error) {
 	}
 
 	if err := wt.addOrUpdateMenuItem(LogsMenuID, 0, "[EA] View diagnostic logs", false); err != nil {
+		return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
+	}
+	if err := wt.addOrUpdateMenuItem(GetStartedMenuID, 0, "[EA] Get Started", false); err != nil {
 		return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
 	}
 	if err := wt.addOrUpdateMenuItem(QuitMenuID, 0, "Quit Ollama", false); err != nil {

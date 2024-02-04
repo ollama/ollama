@@ -35,6 +35,9 @@ func GetID() string {
 func GetFirstTimeRun() bool {
 	lock.Lock()
 	defer lock.Unlock()
+	if store.ID == "" {
+		initStore()
+	}
 	return store.FirstTimeRun
 }
 
@@ -55,7 +58,7 @@ func initStore() {
 		defer storeFile.Close()
 		err = json.NewDecoder(storeFile).Decode(&store)
 		if err == nil {
-			slog.Debug(fmt.Sprintf("XXX loaded existing store - ID: %s", store.ID))
+			slog.Debug(fmt.Sprintf("loaded existing store %s - ID: %s", getStorePath(), store.ID))
 			return
 		}
 	}
@@ -81,13 +84,14 @@ func writeStore(storeFilename string) {
 	}
 	fp, err := os.OpenFile(storeFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
-		slog.Debug(fmt.Sprintf("write store payload %s: %v", storeFilename, err))
+		slog.Error(fmt.Sprintf("write store payload %s: %v", storeFilename, err))
 		return
 	}
 	defer fp.Close()
 	if n, err := fp.Write(payload); err != nil || n != len(payload) {
-		slog.Debug(fmt.Sprintf("write store payload %s: %d vs %d -- %v", storeFilename, n, len(payload), err))
+		slog.Error(fmt.Sprintf("write store payload %s: %d vs %d -- %v", storeFilename, n, len(payload), err))
 		return
 	}
-	slog.Debug(fmt.Sprintf("XXX wrote store: %s", storeFilename))
+	slog.Debug("Store: " + string(payload))
+	slog.Info(fmt.Sprintf("wrote store: %s", storeFilename))
 }
