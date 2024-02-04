@@ -13,34 +13,43 @@
 
 	let filteredItems = [];
 	let filteredDocs = [];
-	let filteredTags = [];
 
 	let collections = [];
 
-	$: collections = $documents
-		.reduce((a, e, i, arr) => {
-			return [...new Set([...a, ...(e?.content?.tags ?? []).map((tag) => tag.name)])];
-		}, [])
-		.map((tag) => ({
-			name: tag,
+	$: collections = [
+		{
+			name: 'All Documents',
 			type: 'collection',
-			collection_names: $documents
-				.filter((doc) => (doc?.content?.tags ?? []).map((tag) => tag.name).includes(tag))
-				.map((doc) => doc.collection_name)
-		}));
+			title: 'All Documents',
+			collection_names: $documents.map((doc) => doc.collection_name)
+		},
+		...$documents
+			.reduce((a, e, i, arr) => {
+				return [...new Set([...a, ...(e?.content?.tags ?? []).map((tag) => tag.name)])];
+			}, [])
+			.map((tag) => ({
+				name: tag,
+				type: 'collection',
+				collection_names: $documents
+					.filter((doc) => (doc?.content?.tags ?? []).map((tag) => tag.name).includes(tag))
+					.map((doc) => doc.collection_name)
+			}))
+	];
 
 	$: filteredCollections = collections
-		.filter((tag) => tag.name.includes(prompt.split(' ')?.at(0)?.substring(1) ?? ''))
+		.filter((collection) => collection.name.includes(prompt.split(' ')?.at(0)?.substring(1) ?? ''))
 		.sort((a, b) => a.name.localeCompare(b.name));
 
 	$: filteredDocs = $documents
-		.filter((p) => p.name.includes(prompt.split(' ')?.at(0)?.substring(1) ?? ''))
+		.filter((doc) => doc.name.includes(prompt.split(' ')?.at(0)?.substring(1) ?? ''))
 		.sort((a, b) => a.title.localeCompare(b.title));
 
 	$: filteredItems = [...filteredCollections, ...filteredDocs];
 
 	$: if (prompt) {
 		selectedIdx = 0;
+
+		console.log(filteredCollections);
 	}
 
 	export const selectUp = () => {
@@ -74,7 +83,7 @@
 	};
 </script>
 
-{#if filteredDocs.length > 0 || prompt.split(' ')?.at(0)?.substring(1).startsWith('http')}
+{#if filteredItems.length > 0 || prompt.split(' ')?.at(0)?.substring(1).startsWith('http')}
 	<div class="md:px-2 mb-3 text-left w-full">
 		<div class="flex w-full rounded-lg border border-gray-100 dark:border-gray-700">
 			<div class=" bg-gray-100 dark:bg-gray-700 w-10 rounded-l-lg text-center">
@@ -101,7 +110,7 @@
 						>
 							{#if doc.type === 'collection'}
 								<div class=" font-medium text-black line-clamp-1">
-									#{doc.name}
+									{doc?.title ?? `#${doc.name}`}
 								</div>
 
 								<div class=" text-xs text-gray-600 line-clamp-1">Collection</div>

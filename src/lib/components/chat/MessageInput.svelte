@@ -468,7 +468,7 @@
 
 											<div class="flex flex-col justify-center -space-y-0.5">
 												<div class=" dark:text-gray-100 text-sm font-medium line-clamp-1">
-													#{file.name}
+													{file?.title ?? `#${file.name}`}
 												</div>
 
 												<div class=" text-gray-500 text-sm">Collection</div>

@@ -37,7 +37,7 @@
 	};
 
 	const addTagHandler = async (tagName) => {
-		if (!tags.find((tag) => tag.name === tagName)) {
+		if (!tags.find((tag) => tag.name === tagName) && tagName !== '') {
 			tags = [...tags, { name: tagName }];
 
 			await tagDocByName(localStorage.token, doc.name, {
