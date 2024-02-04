@@ -9,7 +9,7 @@
 	<div
 		class="px-2 py-0.5 space-x-1 flex h-fit items-center rounded-full transition border dark:border-gray-600 dark:text-white"
 	>
-		<div class=" text-[0.65rem] font-medium self-center line-clamp-1">
+		<div class=" text-[0.7rem] font-medium self-center line-clamp-1">
 			{tag.name}
 		</div>
 		<button
