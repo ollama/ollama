@@ -343,3 +343,16 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 
 	return version.Version, nil
 }
+
+type EncodeResponseFunc func(EncodeResponse) error
+
+func (c *Client) Encode(ctx context.Context, req *GenerateRequest, fn EncodeResponseFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/encode", req, func(bts []byte) error {
+		var resp EncodeResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		return fn(resp)
+	})
+}

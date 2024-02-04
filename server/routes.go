@@ -934,6 +934,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/show", ShowModelHandler)
 	r.POST("/api/blobs/:digest", CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
+	r.POST("/api/encode", EncoderHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
@@ -1344,4 +1345,149 @@ func includeSystemPrompt(ctx context.Context, systemPrompt string, totalTokenLen
 	recent := promptsToAdd[len(promptsToAdd)-1]
 	recent.vars.System = systemPrompt
 	return []promptInfo{recent}, nil
+}
+
+func EncoderHandler(c *gin.Context) {
+	loaded.mu.Lock()
+	defer loaded.mu.Unlock()
+
+	checkpointStart := time.Now()
+	var req api.GenerateRequest
+	err := c.ShouldBindJSON(&req)
+
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// validate the request
+	switch {
+	case req.Model == "":
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	case len(req.Format) > 0 && req.Format != "json":
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
+		return
+	case req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
+		return
+	}
+
+	model, err := GetModel(req.Model)
+	if err != nil {
+		var pErr *fs.PathError
+		if errors.As(err, &pErr) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	opts, err := modelOptions(model, req.Options)
+	if err != nil {
+		if errors.Is(err, api.ErrInvalidOpts) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = defaultSessionDuration
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
+	if err := load(c, model, opts, sessionDuration); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// an empty request loads the model
+	if req.Prompt == "" && req.Template == "" && req.System == "" {
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true,
+		})
+		return
+	}
+
+	loadDuration := time.Since(checkpointStart)
+
+	var prompt string
+	var promptVars PromptVars
+	switch {
+	case req.Raw:
+		prompt = req.Prompt
+	case req.Prompt != "":
+		if req.Template != "" {
+			// override the default model template
+			model.Template = req.Template
+		}
+
+		var rebuild strings.Builder
+		if req.Context != nil {
+			// TODO: context is deprecated, at some point the context logic within this conditional should be removed
+			prevCtx, err := loaded.runner.Decode(c.Request.Context(), req.Context)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Remove leading spaces from prevCtx if present
+			prevCtx = strings.TrimPrefix(prevCtx, " ")
+			rebuild.WriteString(prevCtx)
+		}
+		promptVars = PromptVars{
+			System: req.System,
+			Prompt: req.Prompt,
+			First:  len(req.Context) == 0,
+		}
+
+		if promptVars.System == "" {
+			promptVars.System = model.System
+		}
+
+		for i := range req.Images {
+			promptVars.Prompt += fmt.Sprintf(" [img-%d]", i)
+		}
+
+		p, err := model.PreResponsePrompt(promptVars)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		rebuild.WriteString(p)
+		prompt = rebuild.String()
+	}
+
+	slog.Debug("generate handler", "prompt", prompt)
+
+	encodedTokens, err := loaded.runner.Encode(c.Request.Context(), prompt)
+	if err != nil {
+		slog.Info(fmt.Sprintf("encoding generation failed: %v", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate encoding"})
+		return
+	}
+
+	totalDuration := time.Since(checkpointStart)
+
+	resp := api.EncodeResponse{
+		Model:           req.Model,
+		CreatedAt:       time.Now().UTC(),
+		TotalDuration:   totalDuration,
+		LoadDuration:    loadDuration,
+		Context:         encodedTokens,
+		PromptEvalCount: len(encodedTokens),
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

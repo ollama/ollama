@@ -248,6 +248,16 @@ type ModelDetails struct {
 	QuantizationLevel string   `json:"quantization_level"`
 }
 
+type EncodeResponse struct {
+	Model         string        `json:"model"`
+	CreatedAt     time.Time     `json:"created_at"`
+	TotalDuration time.Duration `json:"total_duration,omitempty"`
+	LoadDuration  time.Duration `json:"load_duration,omitempty"`
+
+	Context         []int `json:"context,omitempty"`
+	PromptEvalCount int   `json:"prompt_eval_count,omitempty"`
+}
+
 func (m *Metrics) Summary() {
 	if m.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", m.TotalDuration)
