@@ -17,12 +17,16 @@
 	let collections = [];
 
 	$: collections = [
-		{
-			name: 'All Documents',
-			type: 'collection',
-			title: 'All Documents',
-			collection_names: $documents.map((doc) => doc.collection_name)
-		},
+		...($documents.length > 0
+			? [
+					{
+						name: 'All Documents',
+						type: 'collection',
+						title: 'All Documents',
+						collection_names: $documents.map((doc) => doc.collection_name)
+					}
+			  ]
+			: []),
 		...$documents
 			.reduce((a, e, i, arr) => {
 				return [...new Set([...a, ...(e?.content?.tags ?? []).map((tag) => tag.name)])];
