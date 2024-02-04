@@ -70,9 +70,9 @@ class ChatTable:
             **{
                 "id": id,
                 "user_id": user_id,
-                "title": form_data.chat["title"]
-                if "title" in form_data.chat
-                else "New Chat",
+                "title": (
+                    form_data.chat["title"] if "title" in form_data.chat else "New Chat"
+                ),
                 "chat": json.dumps(form_data.chat),
                 "timestamp": int(time.time()),
             }
@@ -129,6 +129,12 @@ class ChatTable:
             for chat in Chat.select()
             .where(Chat.id.in_(chat_ids))
             .order_by(Chat.timestamp.desc())
+        ]
+
+    def get_all_chats(self) -> List[ChatModel]:
+        return [
+            ChatModel(**model_to_dict(chat))
+            for chat in Chat.select().order_by(Chat.timestamp.desc())
         ]
 
     def get_all_chats_by_user_id(self, user_id: str) -> List[ChatModel]:
