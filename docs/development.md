@@ -50,7 +50,8 @@ development and runtime packages.
 Typically the build scripts will auto-detect CUDA, however, if your Linux distro
 or installation approach uses unusual paths, you can specify the location by
 specifying an environment variable `CUDA_LIB_DIR` to the location of the shared
-libraries, and `CUDACXX` to the location of the nvcc compiler.
+libraries, and `CUDACXX` to the location of the nvcc compiler.  You can customize
+set set of target CUDA architectues by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "50;60;70")
 
 Then generate dependencies:
 
@@ -74,7 +75,8 @@ Typically the build scripts will auto-detect ROCm, however, if your Linux distro
 or installation approach uses unusual paths, you can specify the location by
 specifying an environment variable `ROCM_PATH` to the location of the ROCm
 install (typically `/opt/rocm`), and `CLBlast_DIR` to the location of the
-CLBlast install (typically `/usr/lib/cmake/CLBlast`).
+CLBlast install (typically `/usr/lib/cmake/CLBlast`).  You can also customize
+the AMD GPU targets by setting AMDGPU_TARGETS (e.g. `AMDGPU_TARGETS="gfx1101;gfx1102"`)
 
 ```
 go generate ./...

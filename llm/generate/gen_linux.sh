@@ -16,6 +16,10 @@ set -o pipefail
 
 # See https://llvm.org/docs/AMDGPUUsage.html#processors for reference
 amdGPUs() {
+    if [ -n "${AMDGPU_TARGETS}" ]; then
+        echo "${AMDGPU_TARGETS}"
+        return
+    fi
     GPU_LIST=(
         "gfx803"
         "gfx900"
@@ -73,36 +77,42 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
         # -DLLAMA_AVX512_VNNI -- 2021 Intel Alder Lake
 
         COMMON_CPU_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off"
-        #
-        # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
-        #
-        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-        BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu"
-        echo "Building LCD CPU"
-        build
-        compress_libs
+        if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu" ]; then
+            #
+            # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
+            #
+            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu"
+            echo "Building LCD CPU"
+            build
+            compress_libs
+        fi
 
-        #
-        # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
-        # Approximately 400% faster than LCD on same CPU
-        #
-        init_vars
-        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-        BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx"
-        echo "Building AVX CPU"
-        build
-        compress_libs
+        if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx" ]; then
+            #
+            # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
+            # Approximately 400% faster than LCD on same CPU
+            #
+            init_vars
+            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx"
+            echo "Building AVX CPU"
+            build
+            compress_libs
+        fi
 
-        #
-        # ~2013 CPU Dynamic library
-        # Approximately 10% faster than AVX on same CPU
-        #
-        init_vars
-        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
-        BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx2"
-        echo "Building AVX2 CPU"
-        build
-        compress_libs
+        if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx2" ]; then
+            #
+            # ~2013 CPU Dynamic library
+            # Approximately 10% faster than AVX on same CPU
+            #
+            init_vars
+            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
+            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx2"
+            echo "Building AVX2 CPU"
+            build
+            compress_libs
+        fi
     fi
 else
     echo "Skipping CPU generation step as requested"
@@ -125,7 +135,7 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
     if [ -n "${CUDA_MAJOR}" ]; then
         CUDA_VARIANT=_v${CUDA_MAJOR}
     fi
-    CMAKE_DEFS="-DLLAMA_CUBLAS=on ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
+    CMAKE_DEFS="-DLLAMA_CUBLAS=on -DLLAMA_CUDA_FORCE_MMQ=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cuda${CUDA_VARIANT}"
     EXTRA_LIBS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
     build

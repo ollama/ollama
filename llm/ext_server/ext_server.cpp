@@ -3,22 +3,44 @@
 // Necessary evil since the server types are not defined in a header
 #include "server.cpp"
 
+// Low level API access to verify GPU access
+#if defined(GGML_USE_CUBLAS)
+#if defined(GGML_USE_HIPBLAS)
+#include <hip/hip_runtime.h>
+#include <hipblas/hipblas.h>
+#include <hip/hip_fp16.h>
+#ifdef __HIP_PLATFORM_AMD__
+// for rocblas_initialize()
+#include "rocblas/rocblas.h"
+#endif // __HIP_PLATFORM_AMD__
+#define cudaGetDevice hipGetDevice
+#define cudaError_t hipError_t
+#define cudaSuccess hipSuccess
+#define cudaGetErrorString hipGetErrorString
+#else
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+#include <cuda_fp16.h>
+#endif // defined(GGML_USE_HIPBLAS)
+#endif // GGML_USE_CUBLAS
+
 // Expose the llama server as a callable extern "C" API
 llama_server_context *llama = NULL;
-std::atomic<bool> ext_server_running(false);
 std::thread ext_server_thread;
 
 void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
-#if SERVER_VERBOSE != 1
-  log_disable();
-#endif
-  LOG_TEE("system info: %s", llama_print_system_info());
   assert(err != NULL && sparams != NULL);
+  log_set_target(stderr);
+  if (!sparams->verbose_logging) {
+    server_verbose = true;
+    log_disable();
+  }
+
+  LOG_TEE("system info: %s\n", llama_print_system_info());
   err->id = 0;
   err->msg[0] = '\0';
   try {
     llama = new llama_server_context;
-    log_set_target(stdout);
     gpt_params params;
     params.n_ctx = sparams->n_ctx;
     params.n_batch = sparams->n_batch;
@@ -60,6 +82,18 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
       params.mmproj = std::string(sparams->mmproj);
     }
 
+#if defined(GGML_USE_CUBLAS)
+    // Before attempting to init the backend which will assert on error, verify the CUDA/ROCM GPU is accessible
+    LOG_TEE("Performing pre-initialization of GPU\n");
+    int id;
+    cudaError_t cudaErr = cudaGetDevice(&id);
+    if (cudaErr != cudaSuccess) {
+      err->id = -1;
+      snprintf(err->msg, err->msg_len, "Unable to init GPU: %s", cudaGetErrorString(cudaErr));
+      return;
+    }
+#endif
+
     llama_backend_init(params.numa);
 
     // load the model
@@ -88,18 +122,23 @@ void llama_server_start() {
   assert(llama != NULL);
   // TODO mutex to protect thread creation
   ext_server_thread = std::thread([&]() {
-    ext_server_running = true;
     try {
       LOG_TEE("llama server main loop starting\n");
       ggml_time_init();
-      while (ext_server_running.load()) {
-        if (!llama->update_slots()) {
-          LOG_TEE(
-              "unexpected error in llama server update_slots - exiting main "
-              "loop\n");
-          break;
-        }
-      }
+      llama->queue_tasks.on_new_task(std::bind(
+        &llama_server_context::process_single_task, llama, std::placeholders::_1));
+      llama->queue_tasks.on_finish_multitask(std::bind(
+          &llama_server_context::on_finish_multitask, llama, std::placeholders::_1));
+      llama->queue_tasks.on_all_tasks_finished(std::bind(
+          &llama_server_context::run_on_all_tasks_finished, llama));
+      llama->queue_results.on_multitask_update(std::bind(
+          &llama_server_queue::update_multitask,
+          &llama->queue_tasks,
+          std::placeholders::_1,
+          std::placeholders::_2,
+          std::placeholders::_3
+        ));
+      llama->queue_tasks.start_loop();
     } catch (std::exception &e) {
       LOG_TEE("caught exception in llama server main loop: %s\n", e.what());
     } catch (...) {
@@ -112,13 +151,10 @@ void llama_server_start() {
 
 void llama_server_stop() {
   assert(llama != NULL);
-  // TODO - too verbose, remove once things are solid
-  LOG_TEE("requesting llama server shutdown\n");
-  ext_server_running = false;
-
-  // unblocks the update_slots() loop so it can clean up and exit
-  llama->request_cancel(0);
-
+  LOG_TEE("\ninitiating shutdown - draining remaining tasks...\n");
+  // This may take a while for any pending tasks to drain
+  // TODO - consider a timeout to cancel tasks if it's taking too long
+  llama->queue_tasks.terminate();
   ext_server_thread.join();
   delete llama;
   llama = NULL;
@@ -131,7 +167,9 @@ void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
   resp->msg[0] = '\0';
   try {
     json data = json::parse(json_req);
-    resp->id = llama->request_completion(data, false, false, -1);
+    resp->id = llama->queue_tasks.get_new_id();
+    llama->queue_results.add_waiting_task_id(resp->id);
+    llama->request_completion(resp->id, data, false, false, -1);
   } catch (std::exception &e) {
     snprintf(resp->msg, resp->msg_len, "exception %s", e.what());
   } catch (...) {
@@ -149,16 +187,22 @@ void llama_server_completion_next_result(const int task_id,
   resp->json_resp = NULL;
   std::string result_json;
   try {
-    task_result result = llama->next_result(task_id);
+    task_result result = llama->queue_results.recv(task_id);
     result_json =
         result.result_json.dump(-1, ' ', false, json::error_handler_t::replace);
     resp->id = result.id;
     resp->stop = result.stop;
     resp->error = result.error;
     if (result.error) {
+      LOG_TEE("next result cancel on error\n");
       llama->request_cancel(task_id);
+      LOG_TEE("next result removing waiting tak ID: %d\n", task_id);
+      llama->queue_results.remove_waiting_task_id(task_id);
     } else if (result.stop) {
+      LOG_TEE("next result cancel on stop\n");
       llama->request_cancel(task_id);
+      LOG_TEE("next result removing waiting task ID: %d\n", task_id);
+      llama->queue_results.remove_waiting_task_id(task_id);
     }
   } catch (std::exception &e) {
     resp->error = true;
@@ -189,6 +233,7 @@ void llama_server_completion_cancel(const int task_id, ext_server_resp_t *err) {
   err->msg[0] = '\0';
   try {
     llama->request_cancel(task_id);
+    llama->queue_results.remove_waiting_task_id(task_id);
   } catch (std::exception &e) {
     err->id = -1;
     snprintf(err->msg, err->msg_len, "exception %s", e.what());
@@ -273,13 +318,15 @@ void llama_server_embedding(const char *json_req, char **json_resp,
     } else {
       prompt = "";
     }
-    const int task_id = llama->request_completion(
-        {{"prompt", prompt}, {"n_predict", 0}}, false, true, -1);
-    task_result result = llama->next_result(task_id);
+    const int task_id = llama->queue_tasks.get_new_id();
+    llama->queue_results.add_waiting_task_id(task_id);
+    llama->request_completion(task_id, {{"prompt", prompt}, {"n_predict", 0}}, false, true, -1);
+    task_result result = llama->queue_results.recv(task_id);
     std::string result_json = result.result_json.dump();
     const std::string::size_type size = result_json.size() + 1;
     *json_resp = new char[size];
     snprintf(*json_resp, size, "%s", result_json.c_str());
+    llama->queue_results.remove_waiting_task_id(task_id);
   } catch (std::exception &e) {
     err->id = -1;
     snprintf(err->msg, err->msg_len, "exception %s", e.what());

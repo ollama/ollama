@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 )
 
 type Command struct {
@@ -56,6 +57,16 @@ func Parse(reader io.Reader) ([]Command, error) {
 			command.Args = string(bytes.TrimSpace(fields[1]))
 		case "EMBED":
 			return nil, fmt.Errorf("deprecated command: EMBED is no longer supported, use the /embed API endpoint instead")
+		case "MESSAGE":
+			command.Name = string(bytes.ToLower(fields[0]))
+			fields = bytes.SplitN(fields[1], []byte(" "), 2)
+			if len(fields) < 2 {
+				return nil, fmt.Errorf("should be in the format <role> <message>")
+			}
+			if !slices.Contains([]string{"system", "user", "assistant"}, string(bytes.ToLower(fields[0]))) {
+				return nil, fmt.Errorf("role must be one of \"system\", \"user\", or \"assistant\"")
+			}
+			command.Args = fmt.Sprintf("%s: %s", string(bytes.ToLower(fields[0])), string(fields[1]))
 		default:
 			if !bytes.HasPrefix(fields[0], []byte("#")) {
 				// log a warning for unknown commands

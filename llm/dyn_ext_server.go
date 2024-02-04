@@ -4,7 +4,7 @@ package llm
 #cgo CFLAGS: -I${SRCDIR}/ext_server -I${SRCDIR}/llama.cpp -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp/examples/server
 #cgo CFLAGS: -DNDEBUG -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo CFLAGS: -Wmissing-noreturn -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
-#cgo CPPFLAGS: -Ofast -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
+#cgo CPPFLAGS: -Ofast -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations
 #cgo darwin CFLAGS: -D_DARWIN_C_SOURCE
 #cgo darwin CPPFLAGS:  -DGGML_USE_ACCELERATE
 #cgo darwin CPPFLAGS: -DGGML_USE_METAL -DGGML_METAL_NDEBUG
@@ -137,12 +137,21 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 
 	sparams.n_threads = C.uint(opts.NumThread)
 
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		sparams.verbose_logging = C.bool(true)
+	} else {
+		sparams.verbose_logging = C.bool(false)
+	}
+
 	slog.Info("Initializing llama server")
 	initResp := newExtServerResp(128)
 	defer freeExtServerResp(initResp)
 	C.dyn_llama_server_init(llm.s, &sparams, &initResp)
 	if initResp.id < 0 {
-		return nil, extServerResponseToErr(initResp)
+		mutex.Unlock()
+		err := extServerResponseToErr(initResp)
+		slog.Debug(fmt.Sprintf("failure during initialization: %s", err))
+		return nil, err
 	}
 
 	slog.Info("Starting llama main loop")
@@ -153,13 +162,10 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn func(PredictResult)) error {
 	resp := newExtServerResp(128)
 	defer freeExtServerResp(resp)
-	var imageData []ImageData
+
 	if len(predict.Images) > 0 {
-		for cnt, i := range predict.Images {
-			imageData = append(imageData, ImageData{Data: i, ID: cnt})
-		}
+		slog.Info(fmt.Sprintf("loaded %d images", len(predict.Images)))
 	}
-	slog.Info(fmt.Sprintf("loaded %d images", len(imageData)))
 
 	request := map[string]any{
 		"prompt":            predict.Prompt,
@@ -182,7 +188,8 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"seed":              predict.Options.Seed,
 		"stop":              predict.Options.Stop,
 		"grammar":           predict.Options.Grammar,
-		"image_data":        imageData,
+		"image_data":        predict.Images,
+		"cache_prompt":      true,
 	}
 
 	if predict.Format == "json" {
