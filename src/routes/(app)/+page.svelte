@@ -316,27 +316,45 @@
 		// Scroll down
 		window.scrollTo({ top: document.body.scrollHeight });
 
+		const messagesBody = [
+			$settings.system
+				? {
+						role: 'system',
+						content: $settings.system
+				  }
+				: undefined,
+			...messages
+		]
+			.filter((message) => message)
+			.map((message, idx, arr) => ({
+				role: message.role,
+				content: arr.length - 2 !== idx ? message.content : message?.raContent ?? message.content,
+				...(message.files && {
+					images: message.files
+						.filter((file) => file.type === 'image')
+						.map((file) => file.url.slice(file.url.indexOf(',') + 1))
+				})
+			}));
+
+		let lastImageIndex = -1;
+
+		// Find the index of the last object with images
+		messagesBody.forEach((item, index) => {
+			if (item.images) {
+				lastImageIndex = index;
+			}
+		});
+
+		// Remove images from all but the last one
+		messagesBody.forEach((item, index) => {
+			if (index !== lastImageIndex) {
+				delete item.images;
+			}
+		});
+
 		const [res, controller] = await generateChatCompletion(localStorage.token, {
 			model: model,
-			messages: [
-				$settings.system
-					? {
-							role: 'system',
-							content: $settings.system
-					  }
-					: undefined,
-				...messages
-			]
-				.filter((message) => message)
-				.map((message, idx, arr) => ({
-					role: message.role,
-					content: arr.length - 2 !== idx ? message.content : message?.raContent ?? message.content,
-					...(message.files && {
-						images: message.files
-							.filter((file) => file.type === 'image')
-							.map((file) => file.url.slice(file.url.indexOf(',') + 1))
-					})
-				})),
+			messages: messagesBody,
 			options: {
 				...($settings.options ?? {})
 			},
