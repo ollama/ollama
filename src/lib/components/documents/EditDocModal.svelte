@@ -3,16 +3,22 @@
 	import dayjs from 'dayjs';
 	import { onMount } from 'svelte';
 
-	import { getDocs, updateDocByName } from '$lib/apis/documents';
+	import { getDocs, tagDocByName, updateDocByName } from '$lib/apis/documents';
 	import Modal from '../common/Modal.svelte';
 	import { documents } from '$lib/stores';
+	import TagInput from '../common/Tags/TagInput.svelte';
+	import Tags from '../common/Tags.svelte';
+	import { addTagById } from '$lib/apis/chats';
 
 	export let show = false;
 	export let selectedDoc;
 
+	let tags = [];
+
 	let doc = {
 		name: '',
-		title: ''
+		title: '',
+		content: null
 	};
 
 	const submitHandler = async () => {
@@ -30,9 +36,37 @@
 		}
 	};
 
+	const addTagHandler = async (tagName) => {
+		if (!tags.find((tag) => tag.name === tagName) && tagName !== '') {
+			tags = [...tags, { name: tagName }];
+
+			await tagDocByName(localStorage.token, doc.name, {
+				name: doc.name,
+				tags: tags
+			});
+
+			documents.set(await getDocs(localStorage.token));
+		} else {
+			console.log('tag already exists');
+		}
+	};
+
+	const deleteTagHandler = async (tagName) => {
+		tags = tags.filter((tag) => tag.name !== tagName);
+
+		await tagDocByName(localStorage.token, doc.name, {
+			name: doc.name,
+			tags: tags
+		});
+
+		documents.set(await getDocs(localStorage.token));
+	};
+
 	onMount(() => {
 		if (selectedDoc) {
 			doc = JSON.parse(JSON.stringify(selectedDoc));
+
+			tags = doc?.content?.tags ?? [];
 		}
 	});
 </script>
@@ -111,6 +145,12 @@
 									required
 								/>
 							</div>
+						</div>
+
+						<div class="flex flex-col w-full">
+							<div class=" mb-1.5 text-xs text-gray-500">Tags</div>
+
+							<Tags {tags} addTag={addTagHandler} deleteTag={deleteTagHandler} />
 						</div>
 					</div>
 

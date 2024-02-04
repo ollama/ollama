@@ -12,14 +12,17 @@
 	import { transformFileName } from '$lib/utils';
 
 	import EditDocModal from '$lib/components/documents/EditDocModal.svelte';
-
+	import AddFilesPlaceholder from '$lib/components/AddFilesPlaceholder.svelte';
 	let importFiles = '';
 
 	let inputFiles = '';
 	let query = '';
 
+	let tags = [];
+
 	let showEditDocModal = false;
 	let selectedDoc;
+	let selectedTag = '';
 
 	let dragged = false;
 
@@ -49,47 +52,130 @@
 		}
 	};
 
-	const onDragOver = (e) => {
-		e.preventDefault();
-		dragged = true;
-	};
+	onMount(() => {
+		documents.subscribe((docs) => {
+			tags = docs.reduce((a, e, i, arr) => {
+				return [...new Set([...a, ...(e?.content?.tags ?? []).map((tag) => tag.name)])];
+			}, []);
+		});
+		const dropZone = document.querySelector('body');
 
-	const onDragLeave = () => {
-		dragged = false;
-	};
+		const onDragOver = (e) => {
+			e.preventDefault();
+			dragged = true;
+		};
 
-	const onDrop = async (e) => {
-		e.preventDefault();
-		console.log(e);
+		const onDragLeave = () => {
+			dragged = false;
+		};
 
-		if (e.dataTransfer?.files) {
-			const inputFiles = e.dataTransfer?.files;
+		const onDrop = async (e) => {
+			e.preventDefault();
+			console.log(e);
 
-			if (inputFiles && inputFiles.length > 0) {
-				const file = inputFiles[0];
-				if (
-					SUPPORTED_FILE_TYPE.includes(file['type']) ||
-					SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
-				) {
-					uploadDoc(file);
+			if (e.dataTransfer?.files) {
+				let reader = new FileReader();
+
+				reader.onload = (event) => {
+					files = [
+						...files,
+						{
+							type: 'image',
+							url: `${event.target.result}`
+						}
+					];
+				};
+
+				const inputFiles = e.dataTransfer?.files;
+
+				if (inputFiles && inputFiles.length > 0) {
+					const file = inputFiles[0];
+					console.log(file, file.name.split('.').at(-1));
+					if (['image/gif', 'image/jpeg', 'image/png'].includes(file['type'])) {
+						reader.readAsDataURL(file);
+					} else if (
+						SUPPORTED_FILE_TYPE.includes(file['type']) ||
+						SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
+					) {
+						uploadDoc(file);
+					} else {
+						toast.error(
+							`Unknown File Type '${file['type']}', but accepting and treating as plain text`
+						);
+						uploadDoc(file);
+					}
 				} else {
-					toast.error(
-						`Unknown File Type '${file['type']}', but accepting and treating as plain text`
-					);
-					uploadDoc(file);
+					toast.error(`File not found.`);
 				}
-			} else {
-				toast.error(`File not found.`);
 			}
-		}
 
-		dragged = false;
-	};
+			dragged = false;
+		};
+
+		dropZone?.addEventListener('dragover', onDragOver);
+		dropZone?.addEventListener('drop', onDrop);
+		dropZone?.addEventListener('dragleave', onDragLeave);
+
+		return () => {
+			dropZone?.removeEventListener('dragover', onDragOver);
+			dropZone?.removeEventListener('drop', onDrop);
+			dropZone?.removeEventListener('dragleave', onDragLeave);
+		};
+	});
 </script>
+
+{#if dragged}
+	<div
+		class="fixed w-full h-full flex z-50 touch-none pointer-events-none"
+		id="dropzone"
+		role="region"
+		aria-label="Drag and Drop Container"
+	>
+		<div class="absolute rounded-xl w-full h-full backdrop-blur bg-gray-800/40 flex justify-center">
+			<div class="m-auto pt-64 flex flex-col justify-center">
+				<div class="max-w-md">
+					<AddFilesPlaceholder>
+						<div class=" mt-2 text-center text-sm dark:text-gray-200 w-full">
+							Drop any files here to add to my documents
+						</div>
+					</AddFilesPlaceholder>
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
 
 {#key selectedDoc}
 	<EditDocModal bind:show={showEditDocModal} {selectedDoc} />
 {/key}
+
+<input
+	id="upload-doc-input"
+	bind:files={inputFiles}
+	type="file"
+	hidden
+	on:change={async (e) => {
+		if (inputFiles && inputFiles.length > 0) {
+			const file = inputFiles[0];
+			if (
+				SUPPORTED_FILE_TYPE.includes(file['type']) ||
+				SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
+			) {
+				uploadDoc(file);
+			} else {
+				toast.error(
+					`Unknown File Type '${file['type']}', but accepting and treating as plain text`
+				);
+				uploadDoc(file);
+			}
+
+			inputFiles = null;
+			e.target.value = '';
+		} else {
+			toast.error(`File not found.`);
+		}
+	}}
+/>
 
 <div class="min-h-screen w-full flex justify-center dark:text-white">
 	<div class=" py-2.5 flex flex-col justify-between w-full">
@@ -141,36 +227,36 @@
 					</button>
 				</div>
 			</div>
+			<hr class=" dark:border-gray-700 my-2.5" />
 
-			<input
-				id="upload-doc-input"
-				bind:files={inputFiles}
-				type="file"
-				hidden
-				on:change={async (e) => {
-					if (inputFiles && inputFiles.length > 0) {
-						const file = inputFiles[0];
-						if (
-							SUPPORTED_FILE_TYPE.includes(file['type']) ||
-							SUPPORTED_FILE_EXTENSIONS.includes(file.name.split('.').at(-1))
-						) {
-							uploadDoc(file);
-						} else {
-							toast.error(
-								`Unknown File Type '${file['type']}', but accepting and treating as plain text`
-							);
-							uploadDoc(file);
-						}
+			{#if tags.length > 0}
+				<div class="px-2.5 mt-0.5 mb-2 flex gap-1 flex-wrap">
+					<button
+						class="px-2 py-0.5 space-x-1 flex h-fit items-center rounded-full transition border dark:border-gray-600 dark:text-white"
+						on:click={async () => {
+							selectedTag = '';
+							// await chats.set(await getChatListByTagName(localStorage.token, tag.name));
+						}}
+					>
+						<div class=" text-xs font-medium self-center line-clamp-1">all</div>
+					</button>
+					{#each tags as tag}
+						<button
+							class="px-2 py-0.5 space-x-1 flex h-fit items-center rounded-full transition border dark:border-gray-600 dark:text-white"
+							on:click={async () => {
+								selectedTag = tag;
+								// await chats.set(await getChatListByTagName(localStorage.token, tag.name));
+							}}
+						>
+							<div class=" text-xs font-medium self-center line-clamp-1">
+								#{tag}
+							</div>
+						</button>
+					{/each}
+				</div>
+			{/if}
 
-						inputFiles = null;
-						e.target.value = '';
-					} else {
-						toast.error(`File not found.`);
-					}
-				}}
-			/>
-
-			<div>
+			<!-- <div>
 				<div
 					class="my-3 py-16 rounded-lg border-2 border-dashed dark:border-gray-600 {dragged &&
 						' dark:bg-gray-700'} "
@@ -187,11 +273,12 @@
 						</div>
 					</div>
 				</div>
-			</div>
+			</div> -->
 
-			{#each $documents.filter((p) => query === '' || p.name.includes(query)) as doc}
-				<hr class=" dark:border-gray-700 my-2.5" />
-				<div class=" flex space-x-4 cursor-pointer w-full mb-3">
+			{#each $documents.filter((doc) => (selectedTag === '' || (doc?.content?.tags ?? [])
+							.map((tag) => tag.name)
+							.includes(selectedTag)) && (query === '' || doc.name.includes(query))) as doc}
+				<div class=" flex space-x-4 cursor-pointer w-full mt-3 mb-3">
 					<div class=" flex flex-1 space-x-4 cursor-pointer w-full">
 						<div class=" flex items-center space-x-3">
 							<div class="p-2.5 bg-red-400 text-white rounded-lg">
@@ -330,106 +417,97 @@
 					</div>
 				</div>
 			{/each}
-			{#if $documents.length != 0}
-				<hr class=" dark:border-gray-700 my-2.5" />
 
-				<div class=" flex justify-between w-full mb-3">
-					<div class="flex space-x-2">
-						<input
-							id="documents-import-input"
-							bind:files={importFiles}
-							type="file"
-							accept=".json"
-							hidden
-							on:change={() => {
-								console.log(importFiles);
+			<hr class=" dark:border-gray-700 my-2.5" />
 
-								const reader = new FileReader();
-								reader.onload = async (event) => {
-									const savedDocs = JSON.parse(event.target.result);
-									console.log(savedDocs);
+			<div class=" flex justify-between w-full mb-3">
+				<div class="flex space-x-2">
+					<input
+						id="documents-import-input"
+						bind:files={importFiles}
+						type="file"
+						accept=".json"
+						hidden
+						on:change={() => {
+							console.log(importFiles);
 
-									for (const doc of savedDocs) {
-										await createNewDoc(
-											localStorage.token,
-											doc.collection_name,
-											doc.filename,
-											doc.name,
-											doc.title
-										).catch((error) => {
-											toast.error(error);
-											return null;
-										});
-									}
+							const reader = new FileReader();
+							reader.onload = async (event) => {
+								const savedDocs = JSON.parse(event.target.result);
+								console.log(savedDocs);
 
-									await documents.set(await getDocs(localStorage.token));
-								};
+								for (const doc of savedDocs) {
+									await createNewDoc(
+										localStorage.token,
+										doc.collection_name,
+										doc.filename,
+										doc.name,
+										doc.title
+									).catch((error) => {
+										toast.error(error);
+										return null;
+									});
+								}
 
-								reader.readAsText(importFiles[0]);
-							}}
-						/>
+								await documents.set(await getDocs(localStorage.token));
+							};
 
-						<button
-							class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
-							on:click={async () => {
-								document.getElementById('documents-import-input')?.click();
-							}}
-						>
-							<div class=" self-center mr-2 font-medium">Import Documents Mapping</div>
+							reader.readAsText(importFiles[0]);
+						}}
+					/>
 
-							<div class=" self-center">
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									viewBox="0 0 16 16"
-									fill="currentColor"
-									class="w-4 h-4"
-								>
-									<path
-										fill-rule="evenodd"
-										d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
-										clip-rule="evenodd"
-									/>
-								</svg>
-							</div>
-						</button>
-
-						<button
-							class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
-							on:click={async () => {
-								let blob = new Blob([JSON.stringify($documents)], {
-									type: 'application/json'
-								});
-								saveAs(blob, `documents-mapping-export-${Date.now()}.json`);
-							}}
-						>
-							<div class=" self-center mr-2 font-medium">Export Documents Mapping</div>
-
-							<div class=" self-center">
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									viewBox="0 0 16 16"
-									fill="currentColor"
-									class="w-4 h-4"
-								>
-									<path
-										fill-rule="evenodd"
-										d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 3.5a.75.75 0 0 1 .75.75v2.69l.72-.72a.75.75 0 1 1 1.06 1.06l-2 2a.75.75 0 0 1-1.06 0l-2-2a.75.75 0 0 1 1.06-1.06l.72.72V6.25A.75.75 0 0 1 8 5.5Z"
-										clip-rule="evenodd"
-									/>
-								</svg>
-							</div>
-						</button>
-
-						<!-- <button
-						on:click={() => {
-							loadDefaultPrompts();
+					<button
+						class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
+						on:click={async () => {
+							document.getElementById('documents-import-input')?.click();
 						}}
 					>
-						dd
-					</button> -->
-					</div>
+						<div class=" self-center mr-2 font-medium">Import Documents Mapping</div>
+
+						<div class=" self-center">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 16 16"
+								fill="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 9.5a.75.75 0 0 1-.75-.75V8.06l-.72.72a.75.75 0 0 1-1.06-1.06l2-2a.75.75 0 0 1 1.06 0l2 2a.75.75 0 1 1-1.06 1.06l-.72-.72v2.69a.75.75 0 0 1-.75.75Z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</div>
+					</button>
+
+					<button
+						class="self-center w-fit text-sm px-3 py-1 border dark:border-gray-600 rounded-xl flex"
+						on:click={async () => {
+							let blob = new Blob([JSON.stringify($documents)], {
+								type: 'application/json'
+							});
+							saveAs(blob, `documents-mapping-export-${Date.now()}.json`);
+						}}
+					>
+						<div class=" self-center mr-2 font-medium">Export Documents Mapping</div>
+
+						<div class=" self-center">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								viewBox="0 0 16 16"
+								fill="currentColor"
+								class="w-4 h-4"
+							>
+								<path
+									fill-rule="evenodd"
+									d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm4 3.5a.75.75 0 0 1 .75.75v2.69l.72-.72a.75.75 0 1 1 1.06 1.06l-2 2a.75.75 0 0 1-1.06 0l-2-2a.75.75 0 0 1 1.06-1.06l.72.72V6.25A.75.75 0 0 1 8 5.5Z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</div>
+					</button>
 				</div>
-			{/if}
+			</div>
 
 			<div class="text-xs flex items-center space-x-1">
 				<div>
