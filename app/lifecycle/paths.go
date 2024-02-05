@@ -1,9 +1,12 @@
 package lifecycle
 
 import (
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 var (
@@ -29,6 +32,30 @@ func init() {
 
 		// Executables are stored in APPDATA
 		AppDir = filepath.Join(localAppData, "Programs", "Ollama")
+
+		// Make sure we have PATH set correctly for any spawned children
+		paths := strings.Split(os.Getenv("PATH"), ";")
+		// Start with whatever we find in the PATH/LD_LIBRARY_PATH
+		found := false
+		for _, path := range paths {
+			d, err := filepath.Abs(path)
+			if err != nil {
+				continue
+			}
+			if strings.EqualFold(AppDir, d) {
+				found = true
+			}
+		}
+		if !found {
+			paths = append(paths, AppDir)
+
+			pathVal := strings.Join(paths, ";")
+			slog.Debug("setting PATH=" + pathVal)
+			err := os.Setenv("PATH", pathVal)
+			if err != nil {
+				slog.Error(fmt.Sprintf("failed to update PATH: %s", err))
+			}
+		}
 
 	} else if runtime.GOOS == "darwin" {
 		// TODO

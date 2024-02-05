@@ -40,12 +40,15 @@ function gatherDependencies() {
     rm -ea 0 -recurse -force -path "${script:DEPS_DIR}"
     md "${script:DEPS_DIR}" -ea 0 > $null
 
+    # TODO - this varies based on host build system and MSVC version - drive from dumpbin output
+    # currently works for Win11 + MSVC 2022 + Cuda V12
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\msvcp140.dll" "${script:DEPS_DIR}\"
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DEPS_DIR}\"
-    cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DEPS_DIR}\"
+    cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DEPS_DIR}\"
 
     cp "${script:NVIDIA_DIR}\cudart64_*.dll" "${script:DEPS_DIR}\"
     cp "${script:NVIDIA_DIR}\cublas64_*.dll" "${script:DEPS_DIR}\"
+    # cp "${script:NVIDIA_DIR}\nvcuda.dll" "${script:DEPS_DIR}\"
 }
 
 function buildInstaller() {
