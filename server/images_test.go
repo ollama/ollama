@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -233,17 +234,58 @@ func TestModel_PreResponsePrompt_PostResponsePrompt(t *testing.T) {
 	}
 }
 
+func chatHistoryEqual(a, b ChatHistory) bool {
+	if len(a.Prompts) != len(b.Prompts) {
+		return false
+	}
+	for i, v := range a.Prompts {
+
+		if v.First != b.Prompts[i].First {
+			return false
+		}
+
+		if v.Response != b.Prompts[i].Response {
+			return false
+		}
+
+		if v.Prompt != b.Prompts[i].Prompt {
+			return false
+		}
+
+		if v.System != b.Prompts[i].System {
+			return false
+		}
+
+		if len(v.Images) != len(b.Prompts[i].Images) {
+			return false
+		}
+
+		for j, img := range v.Images {
+			if img.ID != b.Prompts[i].Images[j].ID {
+				return false
+			}
+
+			if !bytes.Equal(img.Data, b.Prompts[i].Images[j].Data) {
+				return false
+			}
+		}
+	}
+	return a.LastSystem == b.LastSystem
+}
+
 func TestChat(t *testing.T) {
 	tests := []struct {
-		name     string
-		template string
-		msgs     []api.Message
-		want     string
-		wantErr  string
+		name    string
+		model   Model
+		msgs    []api.Message
+		want    ChatHistory
+		wantErr string
 	}{
 		{
-			name:     "Single Message",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+			name: "Single Message",
+			model: Model{
+				Template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+			},
 			msgs: []api.Message{
 				{
 					Role:    "system",
@@ -254,34 +296,22 @@ func TestChat(t *testing.T) {
 					Content: "What are the potion ingredients?",
 				},
 			},
-			want: "[INST] You are a Wizard. What are the potion ingredients? [/INST]",
-		},
-		{
-			name:     "First Message",
-			template: "[INST] {{if .First}}Hello!{{end}} {{ .System }} {{ .Prompt }} [/INST]",
-			msgs: []api.Message{
-				{
-					Role:    "system",
-					Content: "You are a Wizard.",
+			want: ChatHistory{
+				Prompts: []PromptVars{
+					{
+						System: "You are a Wizard.",
+						Prompt: "What are the potion ingredients?",
+						First:  true,
+					},
 				},
-				{
-					Role:    "user",
-					Content: "What are the potion ingredients?",
-				},
-				{
-					Role:    "assistant",
-					Content: "eye of newt",
-				},
-				{
-					Role:    "user",
-					Content: "Anything else?",
-				},
+				LastSystem: "You are a Wizard.",
 			},
-			want: "[INST] Hello! You are a Wizard. What are the potion ingredients? [/INST]eye of newt[INST]   Anything else? [/INST]",
 		},
 		{
-			name:     "Message History",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+			name: "Message History",
+			model: Model{
+				Template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+			},
 			msgs: []api.Message{
 				{
 					Role:    "system",
@@ -300,18 +330,85 @@ func TestChat(t *testing.T) {
 					Content: "Anything else?",
 				},
 			},
-			want: "[INST] You are a Wizard. What are the potion ingredients? [/INST]sugar[INST]  Anything else? [/INST]",
+			want: ChatHistory{
+				Prompts: []PromptVars{
+					{
+						System:   "You are a Wizard.",
+						Prompt:   "What are the potion ingredients?",
+						Response: "sugar",
+						First:    true,
+					},
+					{
+						Prompt: "Anything else?",
+					},
+				},
+				LastSystem: "You are a Wizard.",
+			},
 		},
 		{
-			name:     "Assistant Only",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+			name: "Assistant Only",
+			model: Model{
+				Template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+			},
 			msgs: []api.Message{
 				{
 					Role:    "assistant",
 					Content: "everything nice",
 				},
 			},
-			want: "[INST]   [/INST]everything nice",
+			want: ChatHistory{
+				Prompts: []PromptVars{
+					{
+						Response: "everything nice",
+						First:    true,
+					},
+				},
+			},
+		},
+		{
+			name: "Last system message is preserved from modelfile",
+			model: Model{
+				Template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+				System:   "You are Mojo Jojo.",
+			},
+			msgs: []api.Message{
+				{
+					Role:    "user",
+					Content: "hi",
+				},
+			},
+			want: ChatHistory{
+				Prompts: []PromptVars{
+					{
+						System: "You are Mojo Jojo.",
+						Prompt: "hi",
+						First:  true,
+					},
+				},
+				LastSystem: "You are Mojo Jojo.",
+			},
+		},
+		{
+			name: "Last system message is preserved from messages",
+			model: Model{
+				Template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
+				System:   "You are Mojo Jojo.",
+			},
+			msgs: []api.Message{
+				{
+					Role:    "system",
+					Content: "You are Professor Utonium.",
+				},
+			},
+			want: ChatHistory{
+				Prompts: []PromptVars{
+					{
+						System: "You are Professor Utonium.",
+						First:  true,
+					},
+				},
+				LastSystem: "You are Professor Utonium.",
+			},
 		},
 		{
 			name: "Invalid Role",
@@ -326,11 +423,8 @@ func TestChat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		m := Model{
-			Template: tt.template,
-		}
 		t.Run(tt.name, func(t *testing.T) {
-			got, _, err := m.ChatPrompt(tt.msgs)
+			got, err := tt.model.ChatPrompts(tt.msgs)
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Errorf("ChatPrompt() expected error, got nil")
@@ -338,9 +432,10 @@ func TestChat(t *testing.T) {
 				if !strings.Contains(err.Error(), tt.wantErr) {
 					t.Errorf("ChatPrompt() error = %v, wantErr %v", err, tt.wantErr)
 				}
+				return
 			}
-			if got != tt.want {
-				t.Errorf("ChatPrompt() got = %v, want %v", got, tt.want)
+			if !chatHistoryEqual(*got, tt.want) {
+				t.Errorf("ChatPrompt() got = %#v, want %#v", got, tt.want)
 			}
 		})
 	}

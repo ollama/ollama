@@ -122,15 +122,15 @@ func GetGPUInfo() GpuInfo {
 		initGPUHandles()
 	}
 
-	// All our GPU builds have AVX enabled, so fallback to CPU if we don't detect at least AVX
+	// All our GPU builds on x86 have AVX enabled, so fallback to CPU if we don't detect at least AVX
 	cpuVariant := GetCPUVariant()
-	if cpuVariant == "" {
+	if cpuVariant == "" && runtime.GOARCH == "amd64" {
 		slog.Warn("CPU does not have AVX or AVX2, disabling GPU support.")
 	}
 
 	var memInfo C.mem_info_t
 	resp := GpuInfo{}
-	if gpuHandles.cuda != nil && cpuVariant != "" {
+	if gpuHandles.cuda != nil && (cpuVariant != "" || runtime.GOARCH != "amd64") {
 		C.cuda_check_vram(*gpuHandles.cuda, &memInfo)
 		if memInfo.err != nil {
 			slog.Info(fmt.Sprintf("error looking up CUDA GPU memory: %s", C.GoString(memInfo.err)))
@@ -149,7 +149,7 @@ func GetGPUInfo() GpuInfo {
 				slog.Info(fmt.Sprintf("CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
 			}
 		}
-	} else if gpuHandles.rocm != nil && cpuVariant != "" {
+	} else if gpuHandles.rocm != nil && (cpuVariant != "" || runtime.GOARCH != "amd64") {
 		C.rocm_check_vram(*gpuHandles.rocm, &memInfo)
 		if memInfo.err != nil {
 			slog.Info(fmt.Sprintf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err)))

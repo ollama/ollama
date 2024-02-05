@@ -12,6 +12,13 @@ On Linux systems with systemd, the logs can be found with this command:
 journalctl -u ollama
 ```
 
+When you run Ollama in a container, the logs go to stdout/stderr in the container:
+
+```shell
+docker logs <container-name>
+```
+(Use `docker ps` to find the container name)
+
 If manually running `ollama serve` in a terminal, the logs will be on that terminal.
 
 Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.

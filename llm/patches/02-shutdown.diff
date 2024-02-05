@@ -1,0 +1,90 @@
+diff --git a/examples/server/server.cpp b/examples/server/server.cpp
+index 11dd82c3..311495a8 100644
+--- a/examples/server/server.cpp
++++ b/examples/server/server.cpp
+@@ -28,6 +28,7 @@
+ #include <chrono>
+ #include <condition_variable>
+ #include <atomic>
++#include <signal.h>
+ 
+ using json = nlohmann::json;
+ 
+@@ -2394,6 +2395,9 @@ static void append_to_generated_text_from_generated_token_probs(llama_server_con
+     }
+ }
+ 
++std::function<void(int)> shutdown_handler;
++inline void signal_handler(int signal) { shutdown_handler(signal); }
++
+ int main(int argc, char **argv)
+ {
+ #if SERVER_VERBOSE != 1
+@@ -3014,8 +3018,14 @@ int main(int argc, char **argv)
+         std::placeholders::_2,
+         std::placeholders::_3
+     ));
+-    llama.queue_tasks.start_loop();
+ 
++    shutdown_handler = [&](int) {
++        llama.queue_tasks.terminate();
++    };
++    signal(SIGTERM, signal_handler);
++    signal(SIGINT, signal_handler);
++    llama.queue_tasks.start_loop();
++    svr.stop();
+     t.join();
+ 
+     llama_backend_free();
+diff --git a/examples/server/utils.hpp b/examples/server/utils.hpp
+index 70cce072..2acb1eab 100644
+--- a/examples/server/utils.hpp
++++ b/examples/server/utils.hpp
+@@ -6,6 +6,7 @@
+ #include <mutex>
+ #include <condition_variable>
+ #include <unordered_map>
++#include <atomic>
+ 
+ #include "json.hpp"
+ 
+@@ -190,6 +191,7 @@ inline std::string format_chatml(std::vector<json> messages)
+ struct llama_server_queue {
+     int id = 0;
+     std::mutex mutex_tasks;
++    std::atomic<bool> running;
+     // queues
+     std::vector<task_server> queue_tasks;
+     std::vector<task_server> queue_tasks_deferred;
+@@ -248,9 +250,15 @@ struct llama_server_queue {
+         queue_tasks_deferred.clear();
+     }
+ 
+-    // Start the main loop. This call is blocking
+-    [[noreturn]]
++    // end the start_loop routine
++    void terminate() {
++        running = false;
++        condition_tasks.notify_all();
++    }
++
++    // Start the main loop.
+     void start_loop() {
++        running = true;
+         while (true) {
+             // new task arrived
+             LOG_VERBOSE("have new task", {});
+@@ -294,8 +302,12 @@ struct llama_server_queue {
+             {
+                 std::unique_lock<std::mutex> lock(mutex_tasks);
+                 if (queue_tasks.empty()) {
++                    if (!running.load()) {
++                        LOG_VERBOSE("ending start_loop", {});
++                        return;
++                    }
+                     condition_tasks.wait(lock, [&]{
+-                        return !queue_tasks.empty();
++                        return (!queue_tasks.empty() || !running.load());
+                     });
+                 }
+             }
