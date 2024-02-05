@@ -15,7 +15,7 @@ FROM ./mistral-7b-v0.1.Q4_0.gguf
 (Optional) many chat models require a prompt template in order to answer correctly. A default prompt template can be specified with the `TEMPLATE` instruction in the `Modelfile`:
 
 ```
-FROM ./q4_0.bin
+FROM ./mistral-7b-v0.1.Q4_0.gguf
 TEMPLATE "[INST] {{ .Prompt }} [/INST]"
 ```
 
@@ -37,55 +37,69 @@ ollama run example "What is your favourite condiment?"
 
 ## Importing (PyTorch & Safetensors)
 
-### Supported models
+> Importing from PyTorch and Safetensors is a longer process than importing from GGUF. Improvements that make it easier are a work in progress.
 
-Ollama supports a set of model architectures, with support for more coming soon:
+### Setup
 
-- Llama & Mistral
-- Falcon & RW
-- BigCode
+First, clone the `ollama/ollama` repo:
 
-To view a model's architecture, check the `config.json` file in its HuggingFace repo. You should see an entry under `architectures` (e.g. `LlamaForCausalLM`).
+```
+git clone git@github.com:ollama/ollama.git ollama
+cd ollama
+```
 
-### Step 1: Clone the HuggingFace repository (optional)
+and then fetch its `llama.cpp` submodule:
+
+```shell
+git submodule init
+git submodule update llm/llama.cpp
+```
+
+Next, install the Python dependencies:
+
+```
+python3 -m venv llm/llama.cpp/.venv
+source llm/llama.cpp/.venv/bin/activate
+pip install -r llm/llama.cpp/requirements.txt
+```
+
+Then build the `quantize` tool:
+
+```
+make -C llm/llama.cpp quantize
+```
+
+### Clone the HuggingFace repository (optional)
 
 If the model is currently hosted in a HuggingFace repository, first clone that repository to download the raw model.
 
+Install [Git LFS](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage), verify it's installed, and then clone the model's repository:
+
 ```
 git lfs install
-git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
-cd Mistral-7B-Instruct-v0.1
+git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 model
 ```
 
-### Step 2: Convert and quantize to a `.bin` file (optional, for PyTorch and Safetensors)
+### Convert the model
 
-If the model is in PyTorch or Safetensors format, a [Docker image](https://hub.docker.com/r/ollama/quantize) with the tooling required to convert and quantize models is available.
-
-First, Install [Docker](https://www.docker.com/get-started/).
-
-Next, to convert and quantize your model, run:
+> Note: some model architectures require using specific convert scripts. For example, Qwen models require running `convert-hf-to-gguf.py` instead of `convert.py`
 
 ```
-docker run --rm -v .:/model ollama/quantize -q q4_0 /model
+python llm/llama.cpp/convert.py ./model --outtype f16 --outfile converted.bin
 ```
 
-This will output two files into the directory:
+### Quantize the model
 
-- `f16.bin`: the model converted to GGUF
-- `q4_0.bin` the model quantized to a 4-bit quantization (Ollama will use this file to create the Ollama model)
+```
+llm/llama.cpp/quantize converted.bin quantized.bin q4_0
+```
 
 ### Step 3: Write a `Modelfile`
 
 Next, create a `Modelfile` for your model:
 
 ```
-FROM ./q4_0.bin
-```
-
-(Optional) many chat models require a prompt template in order to answer correctly. A default prompt template can be specified with the `TEMPLATE` instruction in the `Modelfile`:
-
-```
-FROM ./q4_0.bin
+FROM quantized.bin
 TEMPLATE "[INST] {{ .Prompt }} [/INST]"
 ```
 
@@ -149,47 +163,3 @@ The quantization options are as follow (from highest highest to lowest levels of
 - `q6_K`
 - `q8_0`
 - `f16`
-
-## Manually converting & quantizing models
-
-### Prerequisites
-
-Start by cloning the `llama.cpp` repo to your machine in another directory:
-
-```
-git clone https://github.com/ggerganov/llama.cpp.git
-cd llama.cpp
-```
-
-Next, install the Python dependencies:
-
-```
-pip install -r requirements.txt
-```
-
-Finally, build the `quantize` tool:
-
-```
-make quantize
-```
-
-### Convert the model
-
-Run the correct conversion script for your model architecture:
-
-```shell
-# LlamaForCausalLM or MistralForCausalLM
-python convert.py <path to model directory>
-
-# FalconForCausalLM
-python convert-falcon-hf-to-gguf.py <path to model directory>
-
-# GPTBigCodeForCausalLM
-python convert-starcoder-hf-to-gguf.py <path to model directory>
-```
-
-### Quantize the model
-
-```
-quantize <path to model dir>/ggml-model-f32.bin <path to model dir>/q4_0.bin q4_0
-```

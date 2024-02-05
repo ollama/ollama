@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -98,6 +99,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
+
+		if opts.MultiModal {
+			fmt.Fprintf(os.Stderr, "Use %s to include .jpg or .png images.\n", filepath.FromSlash("/path/to/file"))
+		}
+
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -207,6 +213,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			switch multiline {
 			case MultilineSystem:
 				opts.System = sb.String()
+				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
 				fmt.Println("Set system message.")
 				sb.Reset()
 			case MultilineTemplate:
@@ -226,7 +233,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				fmt.Fprintln(&sb)
 				multiline = MultilinePrompt
 				scanner.Prompt.UseAlt = true
-				break
 			}
 		case scanner.Pasting:
 			fmt.Fprintln(&sb, line)
@@ -349,10 +355,13 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 					if args[1] == "system" {
 						opts.System = sb.String()
+						opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
 						fmt.Println("Set system message.")
+						sb.Reset()
 					} else if args[1] == "template" {
 						opts.Template = sb.String()
 						fmt.Println("Set prompt template.")
+						sb.Reset()
 					}
 
 					sb.Reset()
@@ -487,29 +496,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				if err != nil {
 					return err
 				}
-				newMessage.Content = msg
 
-				// reset the context if we find another image
+				// clear all previous images for better responses
 				if len(images) > 0 {
-					newMessage.Images = append(newMessage.Images, images...)
-					// reset the context for the new image
-					opts.Messages = []api.Message{}
-				} else {
-					if len(opts.Messages) > 1 {
-						newMessage.Images = append(newMessage.Images, opts.Messages[len(opts.Messages)-2].Images...)
+					for i := range opts.Messages {
+						opts.Messages[i].Images = nil
 					}
 				}
-				if len(newMessage.Images) == 0 {
-					fmt.Println("This model requires you to add a jpeg, png, or svg image.")
-					fmt.Println()
-					sb.Reset()
-					continue
-				}
+
+				newMessage.Content = msg
+				newMessage.Images = images
 			}
 
-			if opts.System != "" {
-				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
-			}
 			opts.Messages = append(opts.Messages, newMessage)
 
 			assistant, err := chat(cmd, opts)
@@ -603,10 +601,10 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			fmt.Printf("Couldn't process image: %q\n", err)
+			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
 			return "", imgs, err
 		}
-		fmt.Printf("Added image '%s'\n", nfp)
+		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
