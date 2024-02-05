@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/auth"
 	"github.com/jmorganca/ollama/format"
 	"golang.org/x/sync/errgroup"
 )
@@ -49,7 +50,7 @@ const (
 	maxUploadPartSize int64 = 1000 * format.MegaByte
 )
 
-func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
+func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *auth.RegistryOptions) error {
 	p, err := GetBlobsPath(b.Digest)
 	if err != nil {
 		return err
@@ -121,7 +122,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 
 // Run uploads blob parts to the upstream. If the upstream supports redirection, parts will be uploaded
 // in parallel as defined by Prepare. Otherwise, parts will be uploaded serially. Run sets b.err on error.
-func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
+func (b *blobUpload) Run(ctx context.Context, opts *auth.RegistryOptions) {
 	defer blobUploadManager.Delete(b.Digest)
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
@@ -212,7 +213,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 	b.done = true
 }
 
-func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *RegistryOptions) error {
+func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *auth.RegistryOptions) error {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/octet-stream")
 	headers.Set("Content-Length", fmt.Sprintf("%d", part.Size))
@@ -227,7 +228,7 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 	md5sum := md5.New()
 	w := &progressWriter{blobUpload: b}
 
-	resp, err := makeRequest(ctx, method, requestURL, headers, io.TeeReader(sr, io.MultiWriter(w, md5sum)), opts)
+	resp, err := auth.MakeRequest(ctx, method, requestURL, headers, io.TeeReader(sr, io.MultiWriter(w, md5sum)), opts)
 	if err != nil {
 		w.Rollback()
 		return err
@@ -277,9 +278,9 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 
 	case resp.StatusCode == http.StatusUnauthorized:
 		w.Rollback()
-		auth := resp.Header.Get("www-authenticate")
-		authRedir := ParseAuthRedirectString(auth)
-		token, err := getAuthToken(ctx, authRedir)
+		authenticate := resp.Header.Get("www-authenticate")
+		authRedir := ParseAuthRedirectString(authenticate)
+		token, err := auth.GetAuthToken(ctx, authRedir)
 		if err != nil {
 			return err
 		}
@@ -364,7 +365,7 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *auth.RegistryOptions, fn func(api.ProgressResponse)) error {
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
 

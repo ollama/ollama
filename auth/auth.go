@@ -1,4 +1,4 @@
-package server
+package auth
 
 import (
 	"bytes"
@@ -22,6 +22,10 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/jmorganca/ollama/api"
+)
+
+const (
+	KeyType = "id_ed25519"
 )
 
 type AuthRedirect struct {
@@ -71,39 +75,47 @@ func (r AuthRedirect) URL() (*url.URL, error) {
 	return redirectURL, nil
 }
 
-func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
+func SignRequest(method, url string, data []byte, headers http.Header) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	keyPath := filepath.Join(home, ".ollama", KeyType)
+
+	rawKey, err := os.ReadFile(keyPath)
+	if err != nil {
+		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
+		return err
+	}
+
+	s := SignatureData{
+		Method: method,
+		Path:   url,
+		Data:   data,
+	}
+
+	sig, err := s.Sign(rawKey)
+	if err != nil {
+		return err
+	}
+
+	headers.Set("Authorization", sig)
+	return nil
+}
+
+func GetAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 	redirectURL, err := redirData.URL()
 	if err != nil {
 		return "", err
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	keyPath := filepath.Join(home, ".ollama", "id_ed25519")
-
-	rawKey, err := os.ReadFile(keyPath)
-	if err != nil {
-		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
-		return "", err
-	}
-
-	s := SignatureData{
-		Method: http.MethodGet,
-		Path:   redirectURL.String(),
-		Data:   nil,
-	}
-
-	sig, err := s.Sign(rawKey)
-	if err != nil {
-		return "", err
-	}
-
 	headers := make(http.Header)
-	headers.Set("Authorization", sig)
-	resp, err := makeRequest(ctx, http.MethodGet, redirectURL, headers, nil, nil)
+	err = SignRequest(http.MethodGet, redirectURL.String(), nil, headers)
+	if err != nil {
+		return "", err
+	}
+	resp, err := MakeRequest(ctx, http.MethodGet, redirectURL, headers, nil, nil)
 	if err != nil {
 		slog.Info(fmt.Sprintf("couldn't get token: %q", err))
 		return "", err
