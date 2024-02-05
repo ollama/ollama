@@ -41,7 +41,14 @@ ollama run example "What is your favourite condiment?"
 
 ### Setup
 
-First, clone the `llama.cpp` submodule:
+First, clone the `ollama/ollama` repo:
+
+```
+git clone git@github.com:ollama/ollama.git ollama
+cd ollama
+```
+
+and then fetch its `llama.cpp` submodule:
 
 ```shell
 git submodule init
@@ -66,6 +73,8 @@ make -C llm/llama.cpp quantize
 
 If the model is currently hosted in a HuggingFace repository, first clone that repository to download the raw model.
 
+Install [Git LFS](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage), verify it's installed, and then clone the model's repository:
+
 ```
 git lfs install
 git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 model
@@ -73,16 +82,16 @@ git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 model
 
 ### Convert the model
 
-> Note: some model architectures require using specific convert scripts. For example, starcoder requires running `convert-starcoder-hf-to-gguf.py` instead of `convert.py`
+> Note: some model architectures require using specific convert scripts. For example, Qwen models require running `convert-hf-to-gguf.py` instead of `convert.py`
 
 ```
-python llm/llama.cpp/convert.py ./model --outtype f16 --outfile ./model/converted.bin
+python llm/llama.cpp/convert.py ./model --outtype f16 --outfile converted.bin
 ```
 
 ### Quantize the model
 
 ```
-llm/llama.cpp/quantize ./model/converted.bin ./model/quantized.bin q4_0
+llm/llama.cpp/quantize converted.bin quantized.bin q4_0
 ```
 
 ### Step 3: Write a `Modelfile`
@@ -90,7 +99,7 @@ llm/llama.cpp/quantize ./model/converted.bin ./model/quantized.bin q4_0
 Next, create a `Modelfile` for your model:
 
 ```
-FROM ./quantized.bin
+FROM quantized.bin
 TEMPLATE "[INST] {{ .Prompt }} [/INST]"
 ```
 
