@@ -16,24 +16,16 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"text/template"
 
 	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/auth"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/version"
 )
-
-type RegistryOptions struct {
-	Insecure bool
-	Username string
-	Password string
-	Token    string
-}
 
 type Model struct {
 	Name           string `json:"name"`
@@ -320,7 +312,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 				switch {
 				case errors.Is(err, os.ErrNotExist):
 					fn(api.ProgressResponse{Status: "pulling model"})
-					if err := PullModel(ctx, c.Args, &RegistryOptions{}, fn); err != nil {
+					if err := PullModel(ctx, c.Args, &auth.RegistryOptions{}, fn); err != nil {
 						return err
 					}
 
@@ -840,7 +832,7 @@ PARAMETER {{ $k }} {{ printf "%#v" $parameter }}
 	return buf.String(), nil
 }
 
-func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func PushModel(ctx context.Context, name string, regOpts *auth.RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
@@ -890,7 +882,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func PullModel(ctx context.Context, name string, regOpts *auth.RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	var manifest *ManifestV2
@@ -996,7 +988,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	return nil
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, error) {
+func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *auth.RegistryOptions) (*ManifestV2, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
@@ -1028,9 +1020,9 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 
 var errUnauthorized = fmt.Errorf("unauthorized")
 
-func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
+func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *auth.RegistryOptions) (*http.Response, error) {
 	for i := 0; i < 2; i++ {
-		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
+		resp, err := auth.MakeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				slog.Info(fmt.Sprintf("request failed: %v", err))
@@ -1042,9 +1034,9 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized:
 			// Handle authentication error with one retry
-			auth := resp.Header.Get("www-authenticate")
-			authRedir := ParseAuthRedirectString(auth)
-			token, err := getAuthToken(ctx, authRedir)
+			authenticate := resp.Header.Get("www-authenticate")
+			authRedir := ParseAuthRedirectString(authenticate)
+			token, err := auth.GetAuthToken(ctx, authRedir)
 			if err != nil {
 				return nil, err
 			}
@@ -1071,58 +1063,6 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 	return nil, errUnauthorized
 }
 
-func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
-	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
-		requestURL.Scheme = "http"
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	if headers != nil {
-		req.Header = headers
-	}
-
-	if regOpts != nil {
-		if regOpts.Token != "" {
-			req.Header.Set("Authorization", "Bearer "+regOpts.Token)
-		} else if regOpts.Username != "" && regOpts.Password != "" {
-			req.SetBasicAuth(regOpts.Username, regOpts.Password)
-		}
-	}
-
-	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
-
-	if s := req.Header.Get("Content-Length"); s != "" {
-		contentLength, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-
-		req.ContentLength = contentLength
-	}
-
-	proxyURL, err := http.ProxyFromEnvironment(req)
-	if err != nil {
-		return nil, err
-	}
-
-	client := http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
-
 func getValue(header, key string) string {
 	startIdx := strings.Index(header, key+"=")
 	if startIdx == -1 {
@@ -1146,10 +1086,10 @@ func getValue(header, key string) string {
 	return header[startIdx:endIdx]
 }
 
-func ParseAuthRedirectString(authStr string) AuthRedirect {
+func ParseAuthRedirectString(authStr string) auth.AuthRedirect {
 	authStr = strings.TrimPrefix(authStr, "Bearer ")
 
-	return AuthRedirect{
+	return auth.AuthRedirect{
 		Realm:   getValue(authStr, "realm"),
 		Service: getValue(authStr, "service"),
 		Scope:   getValue(authStr, "scope"),
