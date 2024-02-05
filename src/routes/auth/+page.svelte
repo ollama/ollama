@@ -90,7 +90,7 @@
 					}}
 				>
 					<div class=" text-xl md:text-2xl font-bold">
-						{mode === 'signin' ? 'Sign in' : 'Sign up'} to Ollama Web UI
+						{mode === 'signin' ? 'Sign in' : 'Sign up'} to Cere LLM Web UI
 					</div>
 
 					<div class="flex flex-col mt-4">

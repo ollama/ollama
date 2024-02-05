@@ -18,7 +18,7 @@
 	let show = false;
 	let navElement;
 
-	let title: string = 'Ollama Web UI';
+	let title: string = 'Cere LLM Web UI';
 	let search = '';
 
 	let chatDeleteId = null;
