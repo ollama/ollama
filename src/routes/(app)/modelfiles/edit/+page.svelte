@@ -12,7 +12,7 @@
 	import { createModel } from '$lib/apis/ollama';
 	import { getModelfiles, updateModelfileByTagName } from '$lib/apis/modelfiles';
 
-	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
+	import AdvancedParams from '$lib/components/chat/Settings/Advanced/AdvancedParams.svelte';
 
 	let loading = false;
 

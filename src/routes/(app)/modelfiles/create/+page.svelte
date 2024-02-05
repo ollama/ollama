@@ -4,7 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { settings, user, config, modelfiles, models } from '$lib/stores';
 
-	import Advanced from '$lib/components/chat/Settings/Advanced.svelte';
+	import AdvancedParams from '$lib/components/chat/Settings/Advanced/AdvancedParams.svelte';
 	import { splitStream } from '$lib/utils';
 	import { onMount, tick } from 'svelte';
 	import { createModel } from '$lib/apis/ollama';
@@ -552,7 +552,7 @@ SYSTEM """${system}"""`.replace(/^\s*\n/gm, '');
 								<div class=" text-xs font-semibold mb-2">Parameters</div>
 
 								<div>
-									<Advanced bind:options />
+									<AdvancedParams bind:options />
 								</div>
 							</div>
 						{/if}
