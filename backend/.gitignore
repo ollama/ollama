@@ -7,3 +7,4 @@ uploads
 _test
 Pipfile
 data/*
+.webui_secret_key
