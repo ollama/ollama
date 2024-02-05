@@ -309,6 +309,7 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
 	var resp EmbeddingResponse
 	if err := c.do(ctx, http.MethodPost, "/api/embeddings", req, &resp); err != nil {
@@ -342,4 +343,12 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	}
 
 	return version.Version, nil
+}
+
+func (c *Client) Ps(ctx context.Context) (*PsResponse, error) {
+	var resp PsResponse
+	if err := c.do(ctx, http.MethodGet, "/api/ps", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

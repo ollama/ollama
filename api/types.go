@@ -239,6 +239,11 @@ type GenerateResponse struct {
 	Metrics
 }
 
+type PsResponse struct {
+	Model    *string    `json:"model,omitempty"`
+	ExpireAt *time.Time `json:"expire_at,omitempty"`
+}
+
 type ModelDetails struct {
 	ParentModel       string   `json:"parent_model"`
 	Format            string   `json:"format"`

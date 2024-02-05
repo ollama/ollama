@@ -298,6 +298,37 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func PsHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Ps(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	var data [][]string
+
+	if resp.Model != nil {
+		data = append(data, []string{*resp.Model, format.HumanTime(*resp.ExpireAt, "Never")})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"NAME", "EXPIRES"})
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("\t")
+	table.AppendBulk(data)
+	table.Render()
+
+	return nil
+}
+
 func DeleteHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -938,6 +969,13 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	psCmd := &cobra.Command{
+		Use:     "ps",
+		Short:   "List active model",
+		PreRunE: checkServerHeartbeat,
+		RunE:    PsHandler,
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
@@ -948,6 +986,7 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		copyCmd,
 		deleteCmd,
+		psCmd,
 	)
 
 	return rootCmd
