@@ -1,8 +1,5 @@
 <div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" height="200px" srcset="https://github.com/jmorganca/ollama/assets/3325447/56ea1849-1284-4645-8970-956de6e51c3c">
-    <img alt="logo" height="200px" src="https://github.com/jmorganca/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
-  </picture>
+  <img alt="ollama" height="200px" src="https://github.com/jmorganca/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
 
 # Ollama
@@ -17,7 +14,7 @@ Get up and running with large language models locally.
 
 ### Windows
 
-Coming soon!
+Coming soon! For now, you can install Ollama on Windows via WSL2.
 
 ### Linux & WSL2
 
@@ -30,6 +27,11 @@ curl https://ollama.ai/install.sh | sh
 ### Docker
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
+
+### Libraries
+
+- [ollama-python](https://github.com/ollama/ollama-python)
+- [ollama-js](https://github.com/ollama/ollama-js)
 
 ## Quickstart
 
@@ -47,18 +49,23 @@ Here are some example open-source models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
-| Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
 | Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
+| Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
+| Dolphin Phi        | 2.7B       | 1.6GB | `ollama run dolphin-phi`       |
+| Phi-2              | 2.7B       | 1.7GB | `ollama run phi`               |
+| Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
+| Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
 | Llama 2 13B        | 13B        | 7.3GB | `ollama run llama2:13b`        |
 | Llama 2 70B        | 70B        | 39GB  | `ollama run llama2:70b`        |
 | Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | Vicuna             | 7B         | 3.8GB | `ollama run vicuna`            |
+| LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 
-> Note: You should have at least 8 GB of RAM to run the 3B models, 16 GB to run the 7B models, and 32 GB to run the 13B models.
+> Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
-## Customize your own model
+## Customize a model
 
 ### Import from GGUF
 
@@ -102,7 +109,7 @@ FROM llama2
 # set the temperature to 1 [higher is more creative, lower is more coherent]
 PARAMETER temperature 1
 
-# set the system prompt
+# set the system message
 SYSTEM """
 You are Mario from Super Mario Bros. Answer as Mario, the assistant, only.
 """
@@ -124,6 +131,10 @@ For more examples, see the [examples](examples) directory. For more information 
 ### Create a model
 
 `ollama create` is used to create a model from a Modelfile.
+
+```
+ollama create mymodel -f ./Modelfile
+```
 
 ### Pull a model
 
@@ -154,6 +165,13 @@ For multiline input, you can wrap text with `"""`:
 ... world!
 ... """
 I'm a basic program that prints the famous "Hello, world!" message to the console.
+```
+
+### Multimodal models
+
+```
+>>> What's in this image? /Users/jmorgan/Desktop/smile.png
+The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
 ### Pass in prompt as arguments
@@ -197,12 +215,21 @@ Install `cmake` and `go`:
 brew install cmake go
 ```
 
-Then generate dependencies and build:
+Then generate dependencies:
 
 ```
 go generate ./...
+```
+
+Then build the binary:
+
+```
 go build .
 ```
+
+More detailed instructions can be found in the [developer guide](https://github.com/jmorganca/ollama/blob/main/docs/development.md)
+
+### Running local builds
 
 Next, start the server:
 
@@ -219,7 +246,8 @@ Finally, in a separate shell, run a model:
 ## REST API
 
 Ollama has a REST API for running and managing models.
-For example, to generate text from a model:
+
+### Generate a response
 
 ```
 curl http://localhost:11434/api/generate -d '{
@@ -228,16 +256,24 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
+### Chat with a model
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "mistral",
+  "messages": [
+    { "role": "user", "content": "why is the sky blue?" }
+  ]
+}'
+```
+
 See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
-### Mobile
-
-- [Mobile Artificial Intelligence Distribution](https://github.com/MaidFoundation/Maid) (Maid)
-
 ### Web & Desktop
 
+- [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
@@ -246,6 +282,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollamac](https://github.com/kevinhermawan/Ollamac)
 - [big-AGI](https://github.com/enricoros/big-agi/blob/main/docs/config-ollama.md)
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
+- [Amica](https://github.com/semperai/amica)
+- [chatd](https://github.com/BruceMacD/chatd)
+- [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
+- [MindMac](https://mindmac.app)
 
 ### Terminal
 
@@ -257,6 +297,12 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
+- [cmdh](https://github.com/pgibler/cmdh)
+- [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
+
+### Database
+
+- [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md)
 
 ### Package managers
 
@@ -269,16 +315,22 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
+- [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [Ollama4j for Java](https://github.com/amithkoujalgi/ollama4j)
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
 - [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
+- [LangChainDart](https://github.com/davidmigloz/langchain_dart)
+- [Semantic Kernel - Python](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama)
+- [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
+- [Ollama for R - rollama](https://github.com/JBGruber/rollama)
 
 ### Mobile
 
-- [Maid](https://github.com/danemadsen/Maid) (Mobile Artificial Intelligence Distribution)
+- [Enchanted](https://github.com/AugustDev/enchanted)
+- [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 
 ### Extensions & Plugins
 
@@ -289,7 +341,11 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
+- [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
 - [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
+- [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)
+- [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
+- [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)

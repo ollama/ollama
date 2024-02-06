@@ -46,7 +46,8 @@ func ParseModelPath(name string) ModelPath {
 		name = after
 	}
 
-	parts := strings.Split(name, string(os.PathSeparator))
+	name = strings.ReplaceAll(name, string(os.PathSeparator), "/")
+	parts := strings.Split(name, "/")
 	switch len(parts) {
 	case 3:
 		mp.Registry = parts[0]
@@ -65,6 +66,20 @@ func ParseModelPath(name string) ModelPath {
 	}
 
 	return mp
+}
+
+var errModelPathInvalid = errors.New("invalid model path")
+
+func (mp ModelPath) Validate() error {
+	if mp.Repository == "" {
+		return fmt.Errorf("%w: model repository name is required", errModelPathInvalid)
+	}
+
+	if strings.Contains(mp.Tag, ":") {
+		return fmt.Errorf("%w: ':' (colon) is not allowed in tag names", errModelPathInvalid)
+	}
+
+	return nil
 }
 
 func (mp ModelPath) GetNamespaceRepository() string {
