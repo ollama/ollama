@@ -6,9 +6,18 @@
 // Just enough typedef's to dlopen/dlsym for memory information
 typedef enum nvmlReturn_enum {
   NVML_SUCCESS = 0,
+  NVML_ERROR_NOT_SUPPORTED = 3,
+  NVML_ERROR_NOT_FOUND = 6,
   // Other values omitted for now...
 } nvmlReturn_t;
 typedef void *nvmlDevice_t;  // Opaque is sufficient
+
+typedef struct {
+  unsigned numDevices;
+  nvmlDevice_t **layout;
+} deviceMap_t;
+
+
 typedef struct nvmlMemory_st {
   unsigned long long total;
   unsigned long long free;
@@ -35,6 +44,9 @@ typedef struct cuda_handle {
   nvmlReturn_t (*nvmlDeviceGetVbiosVersion) (nvmlDevice_t device, char* version, unsigned int  length);
   nvmlReturn_t (*nvmlDeviceGetBoardPartNumber) (nvmlDevice_t device, char* partNumber, unsigned int  length);
   nvmlReturn_t (*nvmlDeviceGetBrand) (nvmlDevice_t device, nvmlBrandType_t* type);
+  nvmlReturn_t (*nvmlDeviceGetMigMode) (nvmlDevice_t device, unsigned int* currentMode, unsigned int* pendingMode);
+  nvmlReturn_t (*nvmlDeviceGetMigDeviceHandleByIndex)(nvmlDevice_t device, unsigned int  index, nvmlDevice_t* migDevice);
+  nvmlReturn_t (*nvmlDeviceGetDeviceHandleFromMigDeviceHandle)(nvmlDevice_t migDevice, nvmlDevice_t* device);
 } cuda_handle_t;
 
 typedef struct cuda_init_resp {
