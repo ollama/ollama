@@ -899,10 +899,10 @@ func RequestLogger() gin.HandlerFunc {
 
 		endTime := time.Now()
 
-		log.Printf("Request %s - %s; QueryParams: %v; URLParams: %v; Body: %s; ClientIP: %s; Status: %d; UserAgent: %s; Duration: %v",
+		slog.Info(fmt.Sprintf("Request %s - %s; QueryParams: %v; URLParams: %v; Body: %s; ClientIP: %s; Status: %d; UserAgent: %s; Duration: %v",
 			method, path, queryParams, urlParams, bodyString,
 			c.ClientIP(), c.Writer.Status(),
-			c.Request.UserAgent(), endTime.Sub(startTime))
+			c.Request.UserAgent(), endTime.Sub(startTime)))
 	}
 }
 
