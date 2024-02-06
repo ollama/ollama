@@ -49,7 +49,8 @@ Advanced parameters (optional):
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
-- `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API.
+- `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 #### JSON mode
 
@@ -379,6 +380,7 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Examples
 
@@ -958,6 +960,7 @@ Generate embeddings from a model
 Advanced parameters:
 
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Examples
 
