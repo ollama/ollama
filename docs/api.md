@@ -960,7 +960,7 @@ Generate embeddings from a model
 Advanced parameters:
 
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `keep_alive`: controls how long the model will stay loaded into memory following the request
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Examples
 
