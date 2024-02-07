@@ -70,6 +70,7 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
     resp->ch.handle = NULL;
     snprintf(buf, buflen, "nvml vram init failure: %d", ret);
     resp->err = strdup(buf);
+    return;
   }
 
   // Report driver version if we're in verbose mode, ignore errors

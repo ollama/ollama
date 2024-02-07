@@ -41,7 +41,7 @@ type Model struct {
 	Config         ConfigV2
 	ShortName      string
 	ModelPath      string
-	OriginalModel  string
+	ParentModel    string
 	AdapterPaths   []string
 	ProjectorPaths []string
 	Template       string
@@ -50,6 +50,12 @@ type Model struct {
 	Digest         string
 	Size           int64
 	Options        map[string]interface{}
+	Messages       []Message
+}
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type PromptVars struct {
@@ -57,6 +63,7 @@ type PromptVars struct {
 	Prompt   string
 	Response string
 	First    bool
+	Images   []llm.ImageData
 }
 
 // extractParts extracts the parts of the template before and after the {{.Response}} node.
@@ -113,10 +120,6 @@ func Prompt(promptTemplate string, p PromptVars) (string, error) {
 
 // PreResponsePrompt returns the prompt before the response tag
 func (m *Model) PreResponsePrompt(p PromptVars) (string, error) {
-	if p.System == "" {
-		// use the default system prompt for this model if one is not specified
-		p.System = m.System
-	}
 	pre, _, err := extractParts(m.Template)
 	if err != nil {
 		return "", err
@@ -144,62 +147,68 @@ func (m *Model) PostResponseTemplate(p PromptVars) (string, error) {
 	return Prompt(post, p)
 }
 
-func (m *Model) ChatPrompt(msgs []api.Message) (string, []api.ImageData, error) {
+type ChatHistory struct {
+	Prompts    []PromptVars
+	LastSystem string
+}
+
+// ChatPrompts returns a list of formatted chat prompts from a list of messages
+func (m *Model) ChatPrompts(msgs []api.Message) (*ChatHistory, error) {
 	// build the prompt from the list of messages
-	var prompt strings.Builder
-	var currentImages []api.ImageData
+	lastSystem := m.System
 	currentVars := PromptVars{
 		First:  true,
 		System: m.System,
 	}
 
-	writePrompt := func() error {
-		p, err := Prompt(m.Template, currentVars)
-		if err != nil {
-			return err
-		}
-		prompt.WriteString(p)
-		currentVars = PromptVars{}
-		return nil
-	}
+	prompts := []PromptVars{}
+	var images []llm.ImageData
 
 	for _, msg := range msgs {
 		switch strings.ToLower(msg.Role) {
 		case "system":
-			if currentVars.System != "" {
-				if err := writePrompt(); err != nil {
-					return "", nil, err
-				}
+			// if this is the first message it overrides the system prompt in the modelfile
+			if !currentVars.First && currentVars.System != "" {
+				prompts = append(prompts, currentVars)
+				currentVars = PromptVars{}
 			}
 			currentVars.System = msg.Content
+			lastSystem = msg.Content
 		case "user":
 			if currentVars.Prompt != "" {
-				if err := writePrompt(); err != nil {
-					return "", nil, err
-				}
+				prompts = append(prompts, currentVars)
+				currentVars = PromptVars{}
 			}
+
 			currentVars.Prompt = msg.Content
-			currentImages = msg.Images
+			for i := range msg.Images {
+				id := len(images) + i
+				currentVars.Prompt += fmt.Sprintf(" [img-%d]", id)
+				currentVars.Images = append(currentVars.Images, llm.ImageData{
+					ID:   id,
+					Data: msg.Images[i],
+				})
+			}
+
+			images = append(images, currentVars.Images...)
 		case "assistant":
 			currentVars.Response = msg.Content
-			if err := writePrompt(); err != nil {
-				return "", nil, err
-			}
+			prompts = append(prompts, currentVars)
+			currentVars = PromptVars{}
 		default:
-			return "", nil, fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
+			return nil, fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
 		}
 	}
 
 	// Append the last set of vars if they are non-empty
 	if currentVars.Prompt != "" || currentVars.System != "" {
-		p, err := m.PreResponsePrompt(currentVars)
-		if err != nil {
-			return "", nil, fmt.Errorf("pre-response template: %w", err)
-		}
-		prompt.WriteString(p)
+		prompts = append(prompts, currentVars)
 	}
 
-	return prompt.String(), currentImages, nil
+	return &ChatHistory{
+		Prompts:    prompts,
+		LastSystem: lastSystem,
+	}, nil
 }
 
 type ManifestV2 struct {
@@ -333,7 +342,7 @@ func GetModel(name string) (*Model, error) {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
-			model.OriginalModel = layer.From
+			model.ParentModel = layer.From
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -372,6 +381,16 @@ func GetModel(name string) (*Model, error) {
 
 			// parse model options parameters into a map so that we can see which fields have been specified explicitly
 			if err = json.NewDecoder(params).Decode(&model.Options); err != nil {
+				return nil, err
+			}
+		case "application/vnd.ollama.image.messages":
+			msgs, err := os.Open(filename)
+			if err != nil {
+				return nil, err
+			}
+			defer msgs.Close()
+
+			if err = json.NewDecoder(msgs).Decode(&model.Messages); err != nil {
 				return nil, err
 			}
 		case "application/vnd.ollama.image.license":
@@ -428,12 +447,12 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	}
 
 	var layers Layers
+	messages := []string{}
 
 	params := make(map[string][]string)
 	fromParams := make(map[string]any)
 
 	for _, c := range commands {
-		slog.Info(fmt.Sprintf("[%s] - %s", c.Name, c.Args))
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
 		switch c.Name {
@@ -607,9 +626,35 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 
 			layers.Replace(layer)
+		case "message":
+			messages = append(messages, c.Args)
 		default:
 			params[c.Name] = append(params[c.Name], c.Args)
 		}
+	}
+
+	if len(messages) > 0 {
+		fn(api.ProgressResponse{Status: "creating parameters layer"})
+
+		msgs := make([]api.Message, 0)
+
+		for _, m := range messages {
+			// todo: handle images
+			msg := strings.SplitN(m, ": ", 2)
+			msgs = append(msgs, api.Message{Role: msg[0], Content: msg[1]})
+		}
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(msgs); err != nil {
+			return err
+		}
+
+		layer, err := NewLayer(&b, "application/vnd.ollama.image.messages")
+		if err != nil {
+			return err
+		}
+
+		layers.Replace(layer)
 	}
 
 	if len(params) > 0 {
@@ -908,8 +953,8 @@ func ShowModelfile(model *Model) (string, error) {
 	mt.Model = model
 	mt.From = model.ModelPath
 
-	if model.OriginalModel != "" {
-		mt.From = model.OriginalModel
+	if model.ParentModel != "" {
+		mt.From = model.ParentModel
 	}
 
 	modelFile := `# Modelfile generated by "ollama show"
