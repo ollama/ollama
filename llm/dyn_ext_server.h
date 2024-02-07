@@ -11,6 +11,7 @@ struct dynamic_llama_server {
                             ext_server_resp_t *err);
   void (*llama_server_start)();
   void (*llama_server_stop)();
+  void (*llama_server_kill)();
   void (*llama_server_completion)(const char *json_req,
                                   ext_server_resp_t *resp);
   void (*llama_server_completion_next_result)(const int task_id,
@@ -38,6 +39,7 @@ void dyn_llama_server_init(struct dynamic_llama_server s,
 void dyn_llama_server_start(struct dynamic_llama_server s);
 
 void dyn_llama_server_stop(struct dynamic_llama_server s);
+void dyn_llama_server_kill(struct dynamic_llama_server s);
 
 void dyn_llama_server_completion(struct dynamic_llama_server s,
                                           const char *json_req,

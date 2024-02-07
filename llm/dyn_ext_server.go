@@ -361,6 +361,10 @@ func (llm *dynExtServer) Close() {
 	mutex.Unlock()
 }
 
+func (llm *dynExtServer) Kill() {
+	C.dyn_llama_server_kill(llm.s)
+}
+
 func updatePath(dir string) {
 	if runtime.GOOS == "windows" {
 		tmpDir := filepath.Dir(dir)

@@ -16,7 +16,8 @@ type LLM interface {
 	Embedding(context.Context, string) ([]float64, error)
 	Encode(context.Context, string) ([]int, error)
 	Decode(context.Context, []int) (string, error)
-	Close()
+	Close() // Gracefull shutdown
+	Kill()  // Abort pending requests
 }
 
 func New(workDir, model string, adapters, projectors []string, opts api.Options) (LLM, error) {

@@ -65,6 +65,8 @@ void llama_server_start();
 // Stop the main loop and free up resources allocated in init and start.  Init
 // must be called again to reuse
 void llama_server_stop();
+// Kill pending requests, called with a pending stop to cleanly shutdown
+void llama_server_kill();
 
 // json_req null terminated string, memory managed by caller
 // resp->id >= 0 on success (task ID)

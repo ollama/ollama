@@ -161,6 +161,18 @@ void llama_server_stop() {
   LOG_TEE("llama server shutdown complete\n");
 }
 
+void llama_server_kill() {
+  assert(llama != NULL);
+  LOG_TEE("\ninitiating kill - canceling remaining tasks...\n");
+  int count = llama->queue_tasks.id;
+  for (int i = 0; i < count; i++) {
+    LOG_TEE("Canceling task %d\n", i);
+    llama->request_cancel(i);
+    llama->queue_results.remove_waiting_task_id(i);
+  }
+  LOG_TEE("llama server kill complete\n");
+}
+
 void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
   assert(llama != NULL && json_req != NULL && resp != NULL);
   resp->id = -1;

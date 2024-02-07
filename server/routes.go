@@ -1003,6 +1003,11 @@ func Serve(ln net.Listener) error {
 	go func() {
 		<-signals
 		if loaded.runner != nil {
+			// Wire up a secondary signal handler to kill if we get stuck
+			go func() {
+				<-signals
+				loaded.runner.Kill()
+			}()
 			loaded.runner.Close()
 		}
 		os.RemoveAll(s.WorkDir)

@@ -43,6 +43,7 @@ void dyn_init(const char *libPath, struct dynamic_llama_server *s,
       {"llama_server_init", (void *)&s->llama_server_init},
       {"llama_server_start", (void *)&s->llama_server_start},
       {"llama_server_stop", (void *)&s->llama_server_stop},
+      {"llama_server_kill", (void *)&s->llama_server_kill},
       {"llama_server_completion", (void *)&s->llama_server_completion},
       {"llama_server_completion_next_result",
        (void *)&s->llama_server_completion_next_result},
@@ -95,6 +96,9 @@ inline void dyn_llama_server_start(struct dynamic_llama_server s) {
 
 inline void dyn_llama_server_stop(struct dynamic_llama_server s) {
   s.llama_server_stop();
+}
+inline void dyn_llama_server_kill(struct dynamic_llama_server s) {
+  s.llama_server_kill();
 }
 
 inline void dyn_llama_server_completion(struct dynamic_llama_server s,
