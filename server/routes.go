@@ -1136,18 +1136,6 @@ func ChatHandler(c *gin.Context) {
 		return
 	}
 
-	// an empty request loads the model
-	if len(req.Messages) == 0 {
-		resp := api.ChatResponse{
-			CreatedAt: time.Now().UTC(),
-			Model:     req.Model,
-			Done:      true,
-			Message:   api.Message{Role: "assistant"},
-		}
-		c.JSON(http.StatusOK, resp)
-		return
-	}
-
 	checkpointLoaded := time.Now()
 
 	chat, err := model.ChatPrompts(req.Messages)
@@ -1159,6 +1147,18 @@ func ChatHandler(c *gin.Context) {
 	prompt, images, err := trimmedPrompt(c.Request.Context(), chat, model)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// an empty request loads the model
+	if len(prompt) == 0 {
+		resp := api.ChatResponse{
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true,
+			Message:   api.Message{Role: "assistant"},
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 
