@@ -107,8 +107,8 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	sparams.n_parallel = 1 // TODO - wire up concurrency
 
 	// Always use the value encoded in the model
-	sparams.rope_freq_base = 0.0
-	sparams.rope_freq_scale = 0.0
+	sparams.rope_freq_base = C.float(opts.RopeFrequencyBase)
+	sparams.rope_freq_scale = C.float(opts.RopeFrequencyScale)
 	sparams.memory_f16 = C.bool(opts.F16KV)
 	sparams.use_mlock = C.bool(opts.UseMLock)
 	sparams.use_mmap = C.bool(opts.UseMMap)
