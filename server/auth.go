@@ -111,8 +111,14 @@ func getAuthToken(ctx context.Context, redirData AuthRedirect) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("on pull registry responded with code %d: %s", resp.StatusCode, body)
+		responseBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("%d: %v", resp.StatusCode, err)
+		} else if len(responseBody) > 0 {
+			return "", fmt.Errorf("%d: %s", resp.StatusCode, responseBody)
+		}
+
+		return "", fmt.Errorf("%s", resp.Status)
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
