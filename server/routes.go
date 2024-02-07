@@ -26,6 +26,7 @@ import (
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
 	"github.com/jmorganca/ollama/llm"
+	"github.com/jmorganca/ollama/openai"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
 )
@@ -934,6 +935,9 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/show", ShowModelHandler)
 	r.POST("/api/blobs/:digest", CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
+
+	// Compatibility endpoints
+	r.POST("/v1/chat/completions", openai.Middleware(), ChatHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
