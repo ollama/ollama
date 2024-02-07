@@ -37,26 +37,18 @@ index 11dd82c3..311495a8 100644
  
      llama_backend_free();
 diff --git a/examples/server/utils.hpp b/examples/server/utils.hpp
-index 70cce072..2acb1eab 100644
+index 70cce072..9124869a 100644
 --- a/examples/server/utils.hpp
 +++ b/examples/server/utils.hpp
-@@ -6,6 +6,7 @@
- #include <mutex>
- #include <condition_variable>
- #include <unordered_map>
-+#include <atomic>
- 
- #include "json.hpp"
- 
-@@ -190,6 +191,7 @@ inline std::string format_chatml(std::vector<json> messages)
+@@ -190,6 +190,7 @@ inline std::string format_chatml(std::vector<json> messages)
  struct llama_server_queue {
      int id = 0;
      std::mutex mutex_tasks;
-+    std::atomic<bool> running;
++    bool running;
      // queues
      std::vector<task_server> queue_tasks;
      std::vector<task_server> queue_tasks_deferred;
-@@ -248,9 +250,15 @@ struct llama_server_queue {
+@@ -248,9 +249,18 @@ struct llama_server_queue {
          queue_tasks_deferred.clear();
      }
  
@@ -64,7 +56,10 @@ index 70cce072..2acb1eab 100644
 -    [[noreturn]]
 +    // end the start_loop routine
 +    void terminate() {
-+        running = false;
++        {
++            std::unique_lock<std::mutex> lock(mutex_tasks);
++            running = false;
++        }
 +        condition_tasks.notify_all();
 +    }
 +
@@ -74,17 +69,17 @@ index 70cce072..2acb1eab 100644
          while (true) {
              // new task arrived
              LOG_VERBOSE("have new task", {});
-@@ -294,8 +302,12 @@ struct llama_server_queue {
+@@ -294,8 +304,12 @@ struct llama_server_queue {
              {
                  std::unique_lock<std::mutex> lock(mutex_tasks);
                  if (queue_tasks.empty()) {
-+                    if (!running.load()) {
++                    if (!running) {
 +                        LOG_VERBOSE("ending start_loop", {});
 +                        return;
 +                    }
                      condition_tasks.wait(lock, [&]{
 -                        return !queue_tasks.empty();
-+                        return (!queue_tasks.empty() || !running.load());
++                        return (!queue_tasks.empty() || !running);
                      });
                  }
              }
