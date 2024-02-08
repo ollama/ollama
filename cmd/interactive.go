@@ -102,6 +102,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 		if opts.MultiModal {
 			fmt.Fprintf(os.Stderr, "Use %s to include .jpg or .png images.\n", filepath.FromSlash("/path/to/file"))
+			fmt.Fprintln(os.Stderr, "Use /screenshot to include your current screen as context.")
 		}
 
 		fmt.Fprintln(os.Stderr, "")
