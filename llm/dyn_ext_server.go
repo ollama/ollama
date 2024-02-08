@@ -183,6 +183,7 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"mirostat":          predict.Options.Mirostat,
 		"mirostat_tau":      predict.Options.MirostatTau,
 		"mirostat_eta":      predict.Options.MirostatEta,
+		"grammar":           predict.Options.Grammar,
 		"penalize_nl":       predict.Options.PenalizeNewline,
 		"seed":              predict.Options.Seed,
 		"stop":              predict.Options.Stop,
