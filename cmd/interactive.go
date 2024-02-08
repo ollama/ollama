@@ -699,7 +699,7 @@ func captureScreenshots() ([]string, error) {
 
 		filePaths = append(filePaths, filePath) // Add the file path to the slice
 
-		fmt.Printf("#%d : %v \"%s\"\n", i, bounds, filePath) // Optional: Print the file path
+		fmt.Printf("#%d : Captured screenshot as \"%s\"\n", i, filePath) // Optional: Print the file path
 	}
 
 	return filePaths, nil // Return the slice of file paths
