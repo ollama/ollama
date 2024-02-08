@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"image/png"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/exp/slices"
@@ -17,6 +18,8 @@ import (
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/progress"
 	"github.com/jmorganca/ollama/readline"
+	"github.com/kbinani/screenshot"
+	
 )
 
 type MultilineState int
@@ -466,6 +469,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 		case line == "/exit", line == "/bye":
 			return nil
+		case strings.HasPrefix(line, "/screenshot"):
+			
+			filePaths, err := captureScreenshots()
+			if err != nil {
+				fmt.Printf("Error capturing screenshots: %v\n", err)
+				return nil
+			}
+
+			sb.WriteString(line+ strings.Join(filePaths, " "))
+
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
 			isFile := false
@@ -654,4 +667,40 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	return buf, nil
+}
+
+		
+func captureScreenshots() ([]string, error) {
+	var filePaths []string // To store paths of all the screenshots
+
+	n := screenshot.NumActiveDisplays()
+
+	tempDir := os.TempDir()
+
+	for i := 0; i < n; i++ {
+		bounds := screenshot.GetDisplayBounds(i)
+
+		img, err := screenshot.CaptureRect(bounds)
+		if err != nil {
+			return nil, err // Return the error to the caller
+		}
+
+		fileName := fmt.Sprintf("%d_%dx%d.png", i, bounds.Dx(), bounds.Dy())
+		filePath := filepath.Join(tempDir, fileName)
+		file, err := os.Create(filePath)
+		if err != nil {
+			return nil, err // Return the error to the caller
+		}
+		defer file.Close()
+
+		if err := png.Encode(file, img); err != nil {
+			return nil, err // Return the error to the caller
+		}
+
+		filePaths = append(filePaths, filePath) // Add the file path to the slice
+
+		fmt.Printf("#%d : %v \"%s\"\n", i, bounds, filePath) // Optional: Print the file path
+	}
+
+	return filePaths, nil // Return the slice of file paths
 }
