@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"image/png"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/exp/slices"
@@ -19,7 +19,6 @@ import (
 	"github.com/jmorganca/ollama/progress"
 	"github.com/jmorganca/ollama/readline"
 	"github.com/kbinani/screenshot"
-	
 )
 
 type MultilineState int
@@ -469,15 +468,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 		case line == "/exit", line == "/bye":
 			return nil
-		case strings.HasPrefix(line, "/screenshot"):
-			
+		case strings.Contains(line, "/screenshot"):
+
 			filePaths, err := captureScreenshots()
 			if err != nil {
 				fmt.Printf("Error capturing screenshots: %v\n", err)
 				return nil
 			}
 
-			sb.WriteString(line+ strings.Join(filePaths, " "))
+			cleanedLine := strings.ReplaceAll(line, "/screenshot", strings.Join(filePaths, " "))
+
+			sb.WriteString(cleanedLine)
 
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
@@ -669,7 +670,6 @@ func getImageData(filePath string) ([]byte, error) {
 	return buf, nil
 }
 
-		
 func captureScreenshots() ([]string, error) {
 	var filePaths []string // To store paths of all the screenshots
 
