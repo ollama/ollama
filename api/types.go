@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"reflect"
@@ -109,22 +110,19 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA            bool    `json:"numa,omitempty"`
-	NumCtx             int     `json:"num_ctx,omitempty"`
-	NumBatch           int     `json:"num_batch,omitempty"`
-	NumGQA             int     `json:"num_gqa,omitempty"`
-	NumGPU             int     `json:"num_gpu,omitempty"`
-	MainGPU            int     `json:"main_gpu,omitempty"`
-	LowVRAM            bool    `json:"low_vram,omitempty"`
-	F16KV              bool    `json:"f16_kv,omitempty"`
-	LogitsAll          bool    `json:"logits_all,omitempty"`
-	VocabOnly          bool    `json:"vocab_only,omitempty"`
-	UseMMap            bool    `json:"use_mmap,omitempty"`
-	UseMLock           bool    `json:"use_mlock,omitempty"`
-	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
-	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
-	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
-	NumThread          int     `json:"num_thread,omitempty"`
+	UseNUMA       bool `json:"numa,omitempty"`
+	NumCtx        int  `json:"num_ctx,omitempty"`
+	NumBatch      int  `json:"num_batch,omitempty"`
+	NumGPU        int  `json:"num_gpu,omitempty"`
+	MainGPU       int  `json:"main_gpu,omitempty"`
+	LowVRAM       bool `json:"low_vram,omitempty"`
+	F16KV         bool `json:"f16_kv,omitempty"`
+	LogitsAll     bool `json:"logits_all,omitempty"`
+	VocabOnly     bool `json:"vocab_only,omitempty"`
+	UseMMap       bool `json:"use_mmap,omitempty"`
+	UseMLock      bool `json:"use_mlock,omitempty"`
+	EmbeddingOnly bool `json:"embedding_only,omitempty"`
+	NumThread     int  `json:"num_thread,omitempty"`
 }
 
 type EmbeddingRequest struct {
@@ -276,8 +274,6 @@ func (m *Metrics) Summary() {
 	}
 }
 
-var ErrInvalidOpts = fmt.Errorf("invalid options")
-
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct
@@ -356,8 +352,9 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 	}
 
 	if len(invalidOpts) > 0 {
-		return fmt.Errorf("%w: %v", ErrInvalidOpts, strings.Join(invalidOpts, ", "))
+		log.Println("warning, invalid options provided:", strings.Join(invalidOpts, ", "))
 	}
+
 	return nil
 }
 
@@ -383,19 +380,16 @@ func DefaultOptions() Options {
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:             2048,
-			RopeFrequencyBase:  10000.0,
-			RopeFrequencyScale: 1.0,
-			NumBatch:           512,
-			NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
-			NumGQA:             1,
-			NumThread:          0, // let the runtime decide
-			LowVRAM:            false,
-			F16KV:              true,
-			UseMLock:           false,
-			UseMMap:            true,
-			UseNUMA:            false,
-			EmbeddingOnly:      true,
+			NumCtx:        2048,
+			NumBatch:      512,
+			NumGPU:        -1, // -1 here indicates that NumGPU should be set dynamically
+			NumThread:     0,  // let the runtime decide
+			LowVRAM:       false,
+			F16KV:         true,
+			UseMLock:      false,
+			UseMMap:       true,
+			UseNUMA:       false,
+			EmbeddingOnly: true,
 		},
 	}
 }

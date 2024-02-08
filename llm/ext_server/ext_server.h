@@ -34,8 +34,6 @@ typedef struct ext_server_params {
   uint32_t n_batch;       // prompt processing maximum batch size
   uint32_t n_threads;     // number of threads to use for generation
   int32_t n_parallel;     // number of parallel sequences to decodewra
-  float rope_freq_base;   // RoPE base frequency, 0 = from model
-  float rope_freq_scale;  // RoPE frequency scaling factor, 0 = from model
   bool memory_f16;        // use f16 instead of f32 for memory kv
   int32_t n_gpu_layers;  // number of layers to store in VRAM (-1 - use default)
   int32_t main_gpu;      // the GPU that is used for scratch and small tensors

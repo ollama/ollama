@@ -99,10 +99,6 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	sparams.n_gpu_layers = C.int(opts.NumGPU)
 	sparams.main_gpu = C.int(opts.MainGPU)
 	sparams.n_parallel = 1 // TODO - wire up concurrency
-
-	// Always use the value encoded in the model
-	sparams.rope_freq_base = 0.0
-	sparams.rope_freq_scale = 0.0
 	sparams.memory_f16 = C.bool(opts.F16KV)
 	sparams.use_mlock = C.bool(opts.UseMLock)
 	sparams.use_mmap = C.bool(opts.UseMMap)

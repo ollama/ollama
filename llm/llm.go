@@ -118,8 +118,6 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		opts.NumGPU = int(layers)
 	}
 
-	opts.RopeFrequencyBase = 0.0
-	opts.RopeFrequencyScale = 0.0
 	return newLlmServer(info, model, adapters, projectors, opts)
 }
 

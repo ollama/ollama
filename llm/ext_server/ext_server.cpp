@@ -48,8 +48,6 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
       params.n_threads = sparams->n_threads;
     }
     params.n_parallel = sparams->n_parallel;
-    params.rope_freq_base = sparams->rope_freq_base;
-    params.rope_freq_scale = sparams->rope_freq_scale;
 
     if (sparams->memory_f16) {
       params.cache_type_k = "f16";
