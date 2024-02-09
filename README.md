@@ -10,7 +10,7 @@ Get up and running with large language models locally.
 
 ### macOS
 
-[Download](https://ollama.ai/download/Ollama-darwin.zip)
+[Download](https://ollama.com/download/Ollama-darwin.zip)
 
 ### Windows
 
@@ -19,7 +19,7 @@ Coming soon! For now, you can install Ollama on Windows via WSL2.
 ### Linux & WSL2
 
 ```
-curl https://ollama.ai/install.sh | sh
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
@@ -35,7 +35,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 ## Quickstart
 
-To run and chat with [Llama 2](https://ollama.ai/library/llama2):
+To run and chat with [Llama 2](https://ollama.com/library/llama2):
 
 ```
 ollama run llama2
@@ -43,7 +43,7 @@ ollama run llama2
 
 ## Model library
 
-Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
+Ollama supports a list of open-source models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
 
 Here are some example open-source models that can be downloaded:
 

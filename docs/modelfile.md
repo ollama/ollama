@@ -67,13 +67,13 @@ To use this:
 
 More examples are available in the [examples directory](../examples).
 
-### `Modelfile`s in [ollama.ai/library][1]
+### `Modelfile`s in [ollama.com/library][1]
 
-There are two ways to view `Modelfile`s underlying the models in [ollama.ai/library][1]:
+There are two ways to view `Modelfile`s underlying the models in [ollama.com/library][1]:
 
 - Option 1: view a details page from a model's tags page:
-  1.  Go to a particular model's tags (e.g. https://ollama.ai/library/llama2/tags)
-  2.  Click on a tag (e.g. https://ollama.ai/library/llama2:13b)
+  1.  Go to a particular model's tags (e.g. https://ollama.com/library/llama2/tags)
+  2.  Click on a tag (e.g. https://ollama.com/library/llama2:13b)
   3.  Scroll down to "Layers"
       - Note: if the [`FROM` instruction](#from-required) is not present,
         it means the model was created from a local file
@@ -225,4 +225,4 @@ MESSAGE assistant yes
 - the **`Modelfile` is not case sensitive**. In the examples, uppercase instructions are used to make it easier to distinguish it from arguments.
 - Instructions can be in any order. In the examples, the `FROM` instruction is first to keep it easily readable.
 
-[1]: https://ollama.ai/library
+[1]: https://ollama.com/library
