@@ -5,13 +5,13 @@ In this tutorial, we are going to use JavaScript with LangChain and Ollama to le
 To get started, let's just use **LangChain** to ask a simple question to a model. To do this with JavaScript, we need to install **LangChain**:
 
 ```bash
-npm install langchain
+npm install langchain @langchain/community
 ```
 
 Now we can start building out our JavaScript:
 
 ```javascript
-import { Ollama } from "langchain/llms/ollama";
+import { Ollama } from "@langchain/community/llms/ollama";
 
 const ollama = new Ollama({
   baseUrl: "http://localhost:11434",
@@ -48,7 +48,7 @@ If you just install those components without the version numbers, it will instal
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter"
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
 import "@tensorflow/tfjs-node";
-import { TensorFlowEmbeddings } from "langchain/embeddings/tensorflow";
+import { TensorFlowEmbeddings } from "@langchain/community/embeddings/tensorflow";
 
 // Split the text into 500 character chunks. And overlap each chunk by 20 characters
 const textSplitter = new RecursiveCharacterTextSplitter({

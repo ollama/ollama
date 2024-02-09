@@ -1,4 +1,4 @@
-import { Ollama } from 'langchain/llms/ollama';
+import { Ollama } from '@langchain/community/llms/ollama';
 import * as readline from "readline";
 
 async function main() {

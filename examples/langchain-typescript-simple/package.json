@@ -7,7 +7,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "langchain": "^0.0.165",
+    "@langchain/community": "^0.0.26",
     "readline": "^1.3.0"
   }
 }
