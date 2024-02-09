@@ -123,9 +123,9 @@ ollama run example "What is your favourite condiment?"
 
 Publishing models is in early alpha. If you'd like to publish your model to share with others, follow these steps:
 
-1. Create [an account](https://ollama.ai/signup)
+1. Create [an account](https://ollama.com/signup)
 2. Run `cat ~/.ollama/id_ed25519.pub` to view your Ollama public key. Copy this to the clipboard.
-3. Add your public key to your [Ollama account](https://ollama.ai/settings/keys)
+3. Add your public key to your [Ollama account](https://ollama.com/settings/keys)
 
 Next, copy your model to your username's namespace:
 
@@ -139,7 +139,7 @@ Then push the model:
 ollama push <your username>/example
 ```
 
-After publishing, your model will be available at `https://ollama.ai/<your username>/example`.
+After publishing, your model will be available at `https://ollama.com/<your username>/example`.
 
 ## Quantization reference
 
