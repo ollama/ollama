@@ -128,6 +128,11 @@ if [ -z "${CUDA_LIB_DIR}" ] && [ -d /opt/cuda/targets/x86_64-linux/lib ]; then
     CUDA_LIB_DIR=/opt/cuda/targets/x86_64-linux/lib
 fi
 
+# Allow override in case libcudart is in the wrong place
+if [ -z "${CUDART_LIB_DIR}" ]; then
+    CUDART_LIB_DIR="${CUDA_LIB_DIR}"
+fi
+
 if [ -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
@@ -151,6 +156,8 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
             cp "${CUDA_LIB_DIR}/${DEP}" "${BUILD_DIR}/lib/"
         elif [ -e "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" ]; then
             cp "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" "${BUILD_DIR}/lib/"
+        elif [ -e "${CUDART_LIB_DIR}/${lib}" ]; then
+            cp -d ${CUDART_LIB_DIR}/${lib}* "${BUILD_DIR}/lib/"
         else
             cp -d "${CUDA_LIB_DIR}/${lib}*" "${BUILD_DIR}/lib/"
         fi

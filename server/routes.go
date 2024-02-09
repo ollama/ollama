@@ -26,6 +26,7 @@ import (
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
 	"github.com/jmorganca/ollama/llm"
+	"github.com/jmorganca/ollama/openai"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
 )
@@ -935,6 +936,9 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
 
+	// Compatibility endpoints
+	r.POST("/v1/chat/completions", openai.Middleware(), ChatHandler)
+
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
 			c.String(http.StatusOK, "Ollama is running")
@@ -1132,18 +1136,6 @@ func ChatHandler(c *gin.Context) {
 		return
 	}
 
-	// an empty request loads the model
-	if len(req.Messages) == 0 {
-		resp := api.ChatResponse{
-			CreatedAt: time.Now().UTC(),
-			Model:     req.Model,
-			Done:      true,
-			Message:   api.Message{Role: "assistant"},
-		}
-		c.JSON(http.StatusOK, resp)
-		return
-	}
-
 	checkpointLoaded := time.Now()
 
 	chat, err := model.ChatPrompts(req.Messages)
@@ -1155,6 +1147,18 @@ func ChatHandler(c *gin.Context) {
 	prompt, images, err := trimmedPrompt(c.Request.Context(), chat, model)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// an empty request loads the model
+	if len(prompt) == 0 {
+		resp := api.ChatResponse{
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true,
+			Message:   api.Message{Role: "assistant"},
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 
