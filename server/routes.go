@@ -884,6 +884,11 @@ var defaultAllowOrigins = []string{
 	"0.0.0.0",
 }
 
+var defaultAllowSchemas = []string{
+	"http",
+	"https",
+}
+
 func NewServer() (*Server, error) {
 	workDir, err := os.MkdirTemp("", "ollama")
 	if err != nil {
@@ -902,12 +907,12 @@ func buildCORSConfig(origins []string) cors.Config {
 
 	config.AllowOrigins = origins
 	for _, allowOrigin := range defaultAllowOrigins {
-		config.AllowOrigins = append(config.AllowOrigins,
-			fmt.Sprintf("http://%s", allowOrigin),
-			fmt.Sprintf("https://%s", allowOrigin),
-			fmt.Sprintf("http://%s:*", allowOrigin),
-			fmt.Sprintf("https://%s:*", allowOrigin),
-		)
+		for _, schema := range defaultAllowSchemas {
+			config.AllowOrigins = append(config.AllowOrigins,
+				fmt.Sprintf("%s://%s", schema, allowOrigin),
+				fmt.Sprintf("%s://%s:*", schema, allowOrigin),
+			)
+		}
 	}
 	return config
 }

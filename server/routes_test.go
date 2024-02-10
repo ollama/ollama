@@ -50,7 +50,7 @@ func TestBuildCORSConfig(t *testing.T) {
 	)
 
 	if !assert.ElementsMatch(t, config.AllowOrigins, expectedOrigins) {
-		t.Errorf("AllowOrigins mismatch.\nExpected: %v\nActual: %v", expectedOrigins, config.AllowOrigins)
+		t.Errorf("AllowOrigins mismatch.\nExpected: %v\n  Actual: %v", expectedOrigins, config.AllowOrigins)
 	}
 
 }
