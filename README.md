@@ -270,6 +270,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [chatd](https://github.com/BruceMacD/chatd)
 - [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
 - [MindMac](https://mindmac.app)
+- [Page Assist](https://github.com/n4ze3m/page-assist)
 
 ### Terminal
 
