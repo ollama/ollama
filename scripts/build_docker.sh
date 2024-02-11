@@ -51,6 +51,16 @@ if [ -z "${OLLAMA_SKIP_IMAGE_BUILD}" ]; then
             -f Dockerfile \
             -t ${ARCH_IMAGE_REPO}:$VERSION-rocm \
             .
+
+        docker build \
+            --load \
+            --platform=linux/amd64 \
+            --build-arg=VERSION \
+            --build-arg=GOFLAGS \
+            --target runtime-oneapi \
+            -f Dockerfile \
+            -t ${ARCH_IMAGE_REPO}:$VERSION-oneapi \
+            .
     fi
 fi
 
@@ -61,12 +71,15 @@ if [ -z "${OLLAMA_SKIP_MANIFEST_CREATE}" ]; then
             ${ARCH_IMAGE_REPO}:$VERSION-arm64
         docker manifest push ${FINAL_IMAGE_REPO}:$VERSION
 
-        # For symmetry, tag/push the rocm image
+        # For symmetry, tag/push the rocm/oneapi image
         if [ "${ARCH_IMAGE_REPO}" != "${FINAL_IMAGE_REPO}" ]; then
-            echo "Tagging and pushing rocm image"
+            echo "Tagging and pushing rocm/oneapi image"
             docker pull ${ARCH_IMAGE_REPO}:$VERSION-rocm
             docker tag ${ARCH_IMAGE_REPO}:$VERSION-rocm ${FINAL_IMAGE_REPO}:$VERSION-rocm
             docker push ${FINAL_IMAGE_REPO}:$VERSION-rocm
+            docker pull ${ARCH_IMAGE_REPO}:$VERSION-oneapi
+            docker tag ${ARCH_IMAGE_REPO}:$VERSION-oneapi ${FINAL_IMAGE_REPO}:$VERSION-oneapi
+            docker push ${FINAL_IMAGE_REPO}:$VERSION-oneapi
         fi
     else
         echo "Skipping manifest generation when not pushing images are available locally as "
