@@ -194,4 +194,17 @@ if [ -d "${ROCM_PATH}" ]; then
     compress_libs
 fi
 
+if [ -d "${ONEAPI_ROOT}" ]; then
+    echo "OneAPI libraries detected - building dynamic OneAPI library"
+    init_vars
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_SYCL=ON -DLLAMA_SYCL_F16=OFF -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx"
+    BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/oneapi"
+    EXTRA_LIBS="-L${ONEAPI_ROOT}/mkl/latest/lib -L${ONEAPI_ROOT}/compiler/latest/lib -L${ONEAPI_ROOT}/compiler/latest/opt/oclfpga/host/linux64/lib -lmkl_core -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -lsycl -ltbb -lOpenCL"
+    build
+
+    # Note: the OneAPI libs and runtime library files are too large to embed, so we depend on
+    #       them being present at runtime on the host
+    compress_libs
+fi
+
 cleanup
