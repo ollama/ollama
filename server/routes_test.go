@@ -30,7 +30,7 @@ func setupServer(t *testing.T) (*Server, error) {
 func TestBuildCORSConfig(t *testing.T) {
 	origins := defaultAllowOrigins
 
-	config := buildCORSConfig(origins)
+	config := BuildCORSConfig(origins)
 
 	expectedOrigins := append(origins,
 		"http://localhost",

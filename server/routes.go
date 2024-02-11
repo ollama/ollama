@@ -900,7 +900,7 @@ func NewServer() (*Server, error) {
 	}, nil
 }
 
-func buildCORSConfig(origins []string) cors.Config {
+func BuildCORSConfig(origins []string) cors.Config {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
@@ -923,7 +923,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 		origins = strings.Split(o, ",")
 	}
 
-	config := buildCORSConfig(origins)
+	config := BuildCORSConfig(origins)
 
 	r := gin.Default()
 	r.Use(
