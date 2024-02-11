@@ -33,7 +33,7 @@ esac
 
 if [ -f '/etc/systemd/system/ollama.service' ]; then
     echo "Stopping and disabling ollama service at system startup..."
-    systemctl is-enabled --quiet ollama && $SUDO systemctl disable --now --quiet ollama 
+    $SUDO systemctl is-enabled --quiet ollama && $SUDO systemctl disable --now --quiet ollama 
 
     echo "Deleting the ollama service file..."
     $SUDO rm -f /etc/systemd/system/ollama.service
@@ -44,7 +44,7 @@ fi
 
 if available ollama; then
     echo "Deleting the ollama binary..."
-    $SUDO rm -f "$(command -v ollama)"
+    $SUDO rm -f "$(which ollama)"
 fi
 
 if [ -d '/usr/share/ollama' ]; then
