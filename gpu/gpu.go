@@ -23,8 +23,8 @@ import (
 )
 
 type handles struct {
-	cuda *C.cuda_handle_t
-	rocm *C.rocm_handle_t
+	cuda   *C.cuda_handle_t
+	rocm   *C.rocm_handle_t
 	oneapi *C.oneapi_handle_t
 }
 
@@ -220,9 +220,13 @@ func GetGPUInfo() GpuInfo {
 			if memInfo.igpu_index >= 0 {
 				// We have multiple GPUs reported, and one of them is an integrated GPU
 				// so we have to set the env var to bypass it
-				// If the user has specified their own ROCR_VISIBLE_DEVICES, don't clobber it
-
-				// TODO
+				// If the user has specified their own SYCL_DEVICE_ALLOWLIST, don't clobber it
+				val := os.Getenv("SYCL_DEVICE_ALLOWLIST")
+				if val == "" {
+					val = "DeviceType:gpu"
+					os.Setenv("SYCL_DEVICE_ALLOWLIST", val)
+				}
+				slog.Info(fmt.Sprintf("oneAPI integrated GPU detected - SYCL_DEVICE_ALLOWLIST=%s", val))
 			}
 			resp.Library = "oneapi"
 		}

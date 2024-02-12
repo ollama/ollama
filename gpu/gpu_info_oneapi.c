@@ -17,6 +17,7 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
       {"zesInit", (void *)&resp->oh.zesInit},
       {"zesDriverGet", (void *)&resp->oh.zesDriverGet},
       {"zesDeviceGet", (void *)&resp->oh.zesDeviceGet},
+      {"zesDeviceGetProperties", (void *)&resp->oh.zesDeviceGetProperties},
       {"zesDeviceEnumMemoryModules",
        (void *)&resp->oh.zesDeviceEnumMemoryModules},
       {"zesMemoryGetProperties", (void *)&resp->oh.zesMemoryGetProperties},
@@ -36,7 +37,8 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
   }
 
   // TODO once we've squashed the remaining corner cases remove this log
-  LOG(resp->oh.verbose, "wiring oneapi management library functions in %s\n",
+  LOG(resp->oh.verbose,
+      "wiring Level-Zero management library functions in %s\n",
       oneapi_lib_path);
 
   for (i = 0; l[i].s != NULL; i++) {
@@ -79,7 +81,7 @@ void oneapi_check_vram(oneapi_handle_t h, mem_info_t *resp) {
   int i, d, m;
 
   if (h.handle == NULL) {
-    resp->err = strdup("oneapi handle not initialized");
+    resp->err = strdup("Level-Zero handle not initialized");
     return;
   }
 
@@ -90,7 +92,7 @@ void oneapi_check_vram(oneapi_handle_t h, mem_info_t *resp) {
     resp->err = strdup(buf);
     return;
   }
-  LOG(h.verbose, "discovered %d LevelZero drivers\n", driversCount);
+  LOG(h.verbose, "discovered %d Level-Zero drivers\n", driversCount);
 
   zes_driver_handle_t *allDrivers =
       malloc(driversCount * sizeof(zes_driver_handle_t));
@@ -109,40 +111,72 @@ void oneapi_check_vram(oneapi_handle_t h, mem_info_t *resp) {
       return;
     }
 
-    LOG(h.verbose, "discovered %d LevelZero devices\n", deviceCount);
-
-    resp->count += deviceCount;
+    LOG(h.verbose, "discovered %d Level-Zero devices\n", deviceCount);
 
     zes_device_handle_t *devices =
         malloc(deviceCount * sizeof(zes_device_handle_t));
     (*h.zesDeviceGet)(allDrivers[d], &deviceCount, devices);
 
     for (i = 0; i < deviceCount; i++) {
-      if (h.verbose) {
-        // When in verbose mode, report more information about
-        // the card we discover, but don't fail on error
+      uint32_t globalDeviceIndex = resp->count;
+      resp->count++;
 
-        // TODO
-      }
+      zes_device_ext_properties_t ext_props;
+      ext_props.stype = ZES_STRUCTURE_TYPE_DEVICE_EXT_PROPERTIES;
+      ext_props.pNext = NULL;
 
-      uint32_t memCount = 0;
-      ret = (*h.zesDeviceEnumMemoryModules)(devices[i], &memCount, NULL);
+      zes_device_properties_t props;
+      props.stype = ZES_STRUCTURE_TYPE_DEVICE_PROPERTIES;
+      props.pNext = &ext_props;
+
+      ret = (*h.zesDeviceGetProperties)(devices[i], &props);
       if (ret != ZE_RESULT_SUCCESS) {
-        snprintf(buf, buflen,
-                 "unable to enumerate LevelZero memory modules: %d", ret);
+        snprintf(buf, buflen, "unable to get device properties: %d", ret);
         resp->err = strdup(buf);
         free(allDrivers);
         free(devices);
         return;
       }
 
-      LOG(h.verbose, "discovered %d LevelZero memory modules\n", memCount);
+      if (h.verbose) {
+        // When in verbose mode, report more information about
+        // the card we discover.
+        LOG(h.verbose, "[%d] oneAPI device name: %s\n", globalDeviceIndex,
+            props.modelName);
+        LOG(h.verbose, "[%d] oneAPI brand: %s\n", globalDeviceIndex,
+            props.brandName);
+        LOG(h.verbose, "[%d] oneAPI vendor: %s\n", globalDeviceIndex,
+            props.vendorName);
+        LOG(h.verbose, "[%d] oneAPI S/N: %s\n", globalDeviceIndex,
+            props.serialNumber);
+        LOG(h.verbose, "[%d] oneAPI board number: %s\n", globalDeviceIndex,
+            props.boardNumber);
+      }
+
+      if (ext_props.flags & ZES_DEVICE_PROPERTY_FLAG_INTEGRATED) {
+        resp->igpu_index = globalDeviceIndex;
+      }
+
+      uint32_t memCount = 0;
+      ret = (*h.zesDeviceEnumMemoryModules)(devices[i], &memCount, NULL);
+      if (ret != ZE_RESULT_SUCCESS) {
+        snprintf(buf, buflen,
+                 "unable to enumerate Level-Zero memory modules: %d", ret);
+        resp->err = strdup(buf);
+        free(allDrivers);
+        free(devices);
+        return;
+      }
+
+      LOG(h.verbose, "discovered %d Level-Zero memory modules\n", memCount);
 
       zes_mem_handle_t *mems = malloc(memCount * sizeof(zes_mem_handle_t));
       (*h.zesDeviceEnumMemoryModules)(devices[i], &memCount, mems);
 
       for (m = 0; m < memCount; m++) {
         zes_mem_state_t state;
+        state.stype = ZES_STRUCTURE_TYPE_MEM_STATE;
+        state.pNext = NULL;
         ret = (*h.zesMemoryGetState)(mems[m], &state);
         if (ret != ZE_RESULT_SUCCESS) {
           snprintf(buf, buflen, "unable to get memory state: %d", ret);
