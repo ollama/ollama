@@ -194,12 +194,20 @@ if [ -d "${ROCM_PATH}" ]; then
     compress_libs
 fi
 
+if [ -z "${ONEAPI_ROOT}" ]; then
+    # Try the default location in case it exists
+    ONEAPI_ROOT=/opt/intel/oneapi
+fi
+
 if [ -d "${ONEAPI_ROOT}" ]; then
     echo "OneAPI libraries detected - building dynamic OneAPI library"
     init_vars
-    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_SYCL=ON -DLLAMA_SYCL_F16=OFF -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx"
+    source ${ONEAPI_ROOT}/setvars.sh # set up environment variables for oneAPI
+    CC=icx
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DLLAMA_SYCL=ON -DLLAMA_SYCL_F16=OFF"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/oneapi"
-    EXTRA_LIBS="-L${ONEAPI_ROOT}/mkl/latest/lib -L${ONEAPI_ROOT}/compiler/latest/lib -L${ONEAPI_ROOT}/compiler/latest/opt/oclfpga/host/linux64/lib -lmkl_core -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -lsycl -ltbb -lOpenCL"
+    EXTRA_LIBS="-fsycl -Wl,-rpath,${ONEAPI_ROOT}/compiler/latest/lib,-rpath,${ONEAPI_ROOT}/mkl/latest/lib,-rpath,${ONEAPI_ROOT}/tbb/latest/lib,-rpath,${ONEAPI_ROOT}/compiler/latest/opt/oclfpga/linux64/lib -lOpenCL -lmkl_core -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -ltbb"
+    DEBUG_FLAGS="" # icx compiles with -O0 if we pass -g, so we must remove it
     build
 
     # Note: the OneAPI libs and runtime library files are too large to embed, so we depend on
