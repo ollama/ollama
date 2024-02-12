@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
@@ -136,6 +137,12 @@ func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options
 	return opts, nil
 }
 
+func isSupportedImageType(image []byte) bool {
+	contentType := http.DetectContentType(image)
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
+	return slices.Contains(allowedTypes, contentType)
+}
+
 func GenerateHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -164,6 +171,13 @@ func GenerateHandler(c *gin.Context) {
 	case req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
 		return
+	}
+
+	for _, img := range req.Images {
+		if !isSupportedImageType(img) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unsupported image format"})
+			return
+		}
 	}
 
 	model, err := GetModel(req.Model)
@@ -1101,6 +1115,15 @@ func ChatHandler(c *gin.Context) {
 	case len(req.Format) > 0 && req.Format != "json":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
 		return
+	}
+
+	for _, msg := range req.Messages {
+		for _, img := range msg.Images {
+			if !isSupportedImageType(img) {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unsupported image format"})
+				return
+			}
+		}
 	}
 
 	model, err := GetModel(req.Model)
