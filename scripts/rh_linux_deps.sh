@@ -20,7 +20,7 @@ if grep -i "centos" /etc/system-release >/dev/null; then
     fi
     dnf install -y devtoolset-10-gcc devtoolset-10-gcc-c++
 elif grep -i "rocky" /etc/system-release >/dev/null; then
-    dnf install -y git gcc-toolset-10-gcc gcc-toolset-10-gcc-c++
+    dnf install -y git gcc-toolset-12-gcc gcc-toolset-12-gcc-c++
 else
     echo "ERROR Unexpected distro"
     exit 1
