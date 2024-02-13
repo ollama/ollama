@@ -826,6 +826,64 @@ func ListModelsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
+func ListModelsOpenAIHandler(c *gin.Context) {
+	var models []openai.Model
+
+	manifestsPath, err := GetManifestPath()
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	modelResponse := func(modelName string) (openai.Model, error) {
+		model, err := GetModel(modelName)
+		if err != nil {
+			return openai.Model{}, err
+		}
+
+		return openai.Model{
+			ID:      model.ShortName,
+			Object:  "model",
+			Created: int(time.Now().Unix()),
+			OwnedBy: "ollama",
+		}, nil
+	}
+
+	walkFunc := func(path string, info os.FileInfo, _ error) error {
+		if !info.IsDir() {
+			path, tag := filepath.Split(path)
+			model := strings.Trim(strings.TrimPrefix(path, manifestsPath), string(os.PathSeparator))
+			modelPath := strings.Join([]string{model, tag}, ":")
+			canonicalModelPath := strings.ReplaceAll(modelPath, string(os.PathSeparator), "/")
+
+			resp, err := modelResponse(canonicalModelPath)
+			if err != nil {
+				slog.Info(fmt.Sprintf("skipping file: %s", canonicalModelPath))
+				// nolint: nilerr
+				return nil
+			}
+
+			resp.Created = int(info.ModTime().Unix())
+			models = append(models, resp)
+		}
+
+		return nil
+	}
+
+	if err := filepath.Walk(manifestsPath, walkFunc); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	response := openai.ModelsListResponse{
+		Object: "list",
+		Data:   models,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 func CopyModelHandler(c *gin.Context) {
 	var req api.CopyRequest
 	err := c.ShouldBindJSON(&req)
@@ -953,6 +1011,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.Middleware(), ChatHandler)
+	r.GET("/v1/models", ListModelsOpenAIHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/jmorganca/ollama/openai"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -203,6 +204,34 @@ func Test_Routes(t *testing.T) {
 					"top_p 0.9",
 				}
 				assert.Equal(t, expectedParams, params)
+			},
+		}, {
+			Name:   "Show Model Handler OpenAI",
+			Method: http.MethodGet,
+			Path:   "/v1/models",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "show-model")
+				showReq := api.ShowRequest{Model: "show-model"}
+				jsonData, err := json.Marshal(showReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, contentType, "application/json; charset=utf-8")
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+
+				var showResp openai.ModelsListResponse
+				err = json.Unmarshal(body, &showResp)
+				assert.Nil(t, err)
+
+				assert.Equal(t, "list", showResp.Object)
+				assert.Len(t, showResp.Data, 5)
+				assert.Equal(t, "beefsteak:latest", showResp.Data[0].ID)
+				assert.Equal(t, "model", showResp.Data[0].Object)
+				assert.IsType(t, int(0), showResp.Data[0].Created)
+				assert.Equal(t, "ollama", showResp.Data[0].OwnedBy)
 			},
 		},
 	}
