@@ -202,7 +202,7 @@ fi
 if [ -d "${ONEAPI_ROOT}" ]; then
     echo "OneAPI libraries detected - building dynamic OneAPI library"
     init_vars
-    source ${ONEAPI_ROOT}/setvars.sh # set up environment variables for oneAPI
+    source ${ONEAPI_ROOT}/setvars.sh --force # set up environment variables for oneAPI
     CC=icx
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DLLAMA_SYCL=ON -DLLAMA_SYCL_F16=OFF"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/oneapi"
