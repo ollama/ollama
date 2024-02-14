@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,7 +23,7 @@ import (
 )
 
 var (
-	UpdateCheckURLBase = "https://ollama.ai/api/update"
+	UpdateCheckURLBase = "https://ollama.com/api/update"
 	UpdateDownloaded   = false
 )
 
@@ -47,22 +49,42 @@ func getClient(req *http.Request) http.Client {
 
 func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	var updateResp UpdateResponse
-	updateCheckURL := UpdateCheckURLBase + "?os=" + runtime.GOOS + "&arch=" + runtime.GOARCH + "&version=" + version.Version
-	headers := make(http.Header)
-	err := auth.SignRequest(http.MethodGet, updateCheckURL, nil, headers)
+
+	requestURL, err := url.Parse(UpdateCheckURLBase)
 	if err != nil {
-		slog.Info(fmt.Sprintf("failed to sign update request %s", err))
+		return false, updateResp
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, updateCheckURL, nil)
+
+	query := requestURL.Query()
+	query.Add("os", runtime.GOOS)
+	query.Add("arch", runtime.GOARCH)
+	query.Add("version", version.Version)
+	query.Add("ts", fmt.Sprintf("%d", time.Now().Unix()))
+
+	nonce, err := auth.NewNonce(rand.Reader, 16)
+	if err != nil {
+		return false, updateResp
+	}
+
+	query.Add("nonce", nonce)
+	requestURL.RawQuery = query.Encode()
+
+	data := []byte(fmt.Sprintf("%s,%s", http.MethodGet, requestURL.RequestURI()))
+	signature, err := auth.Sign(ctx, data)
+	if err != nil {
+		return false, updateResp
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to check for update: %s", err))
 		return false, updateResp
 	}
-	req.Header = headers
+	req.Header.Set("Authorization", signature)
 	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 	client := getClient(req)
 
-	slog.Debug(fmt.Sprintf("checking for available update at %s with headers %v", updateCheckURL, headers))
+	slog.Debug(fmt.Sprintf("checking for available update at %s with headers %v", requestURL, req.Header))
 	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to check for update: %s", err))
