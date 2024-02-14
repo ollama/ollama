@@ -1070,6 +1070,13 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
+	// migrate registry.ollama.ai to ollama.com
+	if err := migrateRegistryDomain(); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+
 	ctx, done := context.WithCancel(context.Background())
 	schedCtx, schedDone := context.WithCancel(ctx)
 	sched := InitScheduler(schedCtx)

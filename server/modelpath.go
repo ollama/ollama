@@ -3,6 +3,8 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,7 +23,7 @@ type ModelPath struct {
 }
 
 const (
-	DefaultRegistry       = "registry.ollama.ai"
+	DefaultRegistry       = "ollama.com"
 	DefaultNamespace      = "library"
 	DefaultTag            = "latest"
 	DefaultProtocolScheme = "https"
@@ -150,4 +152,34 @@ func GetBlobsPath(digest string) (string, error) {
 	}
 
 	return path, nil
+}
+
+func migrateRegistryDomain() error {
+	manifests, err := GetManifestPath()
+	if err != nil {
+		return err
+	}
+
+	olddomainpath := filepath.Join(manifests, "registry.ollama.ai")
+	newdomainpath := filepath.Join(manifests, DefaultRegistry)
+
+	return filepath.Walk(olddomainpath, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			slog.Info("migrating registry domain", "path", path)
+			newpath := filepath.Join(newdomainpath, strings.TrimPrefix(path, olddomainpath))
+			if err := os.MkdirAll(filepath.Dir(newpath), 0o755); err != nil {
+				return err
+			}
+
+			if err := os.Rename(path, newpath); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
