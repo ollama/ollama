@@ -625,7 +625,7 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	contentType := http.DetectContentType(buf)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/svg+xml", "image/png"}
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
 	if !slices.Contains(allowedTypes, contentType) {
 		return nil, fmt.Errorf("invalid image type: %s", contentType)
 	}

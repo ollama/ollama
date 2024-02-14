@@ -258,7 +258,7 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 					})
 				}
 
-				if p.Stop {
+				if p.Stop || bool(result.stop) {
 					fn(PredictResult{
 						Done:               true,
 						PromptEvalCount:    p.Timings.PromptN,
