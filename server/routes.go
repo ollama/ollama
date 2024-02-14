@@ -25,7 +25,6 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/auth"
 	"github.com/jmorganca/ollama/gpu"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/openai"
@@ -480,7 +479,7 @@ func PullModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &auth.RegistryOptions{
+		regOpts := &registryOptions{
 			Insecure: req.Insecure,
 		}
 
@@ -529,7 +528,7 @@ func PushModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &auth.RegistryOptions{
+		regOpts := &registryOptions{
 			Insecure: req.Insecure,
 		}
 
