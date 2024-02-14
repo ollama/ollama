@@ -125,6 +125,8 @@ type Runner struct {
 	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 	NumThread          int     `json:"num_thread,omitempty"`
+	GSize              int     `json:"g_size,omitempty"`
+	WSize              int     `json:"w_size,omitempty"`
 }
 
 type EmbeddingRequest struct {
