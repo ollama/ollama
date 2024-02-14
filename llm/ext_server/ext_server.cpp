@@ -183,6 +183,7 @@ void llama_server_stop() {
   delete llama;
   llama = NULL;
   LOG_TEE("llama server shutdown complete\n");
+  shutting_down = false;
 }
 
 void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
