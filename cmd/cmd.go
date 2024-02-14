@@ -815,7 +815,7 @@ func NewCLI() *cobra.Command {
 
 	if runtime.GOOS == "windows" {
 		// Enable colorful ANSI escape code in Windows terminal (disabled by default)
-		console.ConsoleFromFile(os.Stdout)
+		console.ConsoleFromFile(os.Stdout) //nolint:errcheck
 	}
 
 	rootCmd := &cobra.Command{
