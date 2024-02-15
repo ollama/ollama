@@ -58,6 +58,6 @@ func SetRawMode(fd int) (*State, error) {
 
 func UnsetRawMode(fd int, state any) error {
 	s := state.(*State)
-	_, _, err := syscall.SyscallN(procSetConsoleMode.Addr(), uintptr(fd), uintptr(state.mode), 0)
+	_, _, err := syscall.SyscallN(procSetConsoleMode.Addr(), uintptr(fd), uintptr(s.mode), 0)
 	return err
 }
