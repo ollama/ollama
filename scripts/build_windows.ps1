@@ -65,6 +65,7 @@ function buildOllama() {
 function buildApp() {
     write-host "Building Ollama App"
     cd "${script:SRC_DIR}\app"
+    & windres -l 0 -o ollama.syso ollama.rc
     & go build "-ldflags=-H windowsgui -w -s ""-X=github.com/jmorganca/ollama/version.Version=$script:VERSION"" ""-X=github.com/jmorganca/ollama/server.mode=release""" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {
