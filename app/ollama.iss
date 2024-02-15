@@ -11,7 +11,7 @@
 #else
   #define MyAppVersion "0.0.0"
 #endif
-#define MyAppPublisher "Ollama, Inc."
+#define MyAppPublisher "Ollama"
 #define MyAppURL "https://ollama.com/"
 #define MyAppExeName "ollama app.exe"
 #define MyIcon ".\assets\app.ico"

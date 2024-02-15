@@ -15,7 +15,6 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName", "Ollama Inc."
             VALUE "FileDescription", "Ollama"
             VALUE "InternalName", "Ollama"
             VALUE "OriginalFilename", "ollama app.exe"
