@@ -311,6 +311,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
 - [Ollama for R - rollama](https://github.com/JBGruber/rollama)
 - [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
+- [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
 
 ### Mobile
 
