@@ -48,7 +48,8 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 	if done != nil {
 		<-done
 	} else {
-		slog.Warn("XXX done chan was nil, not actually waiting")
+		// Shouldn't happen
+		slog.Warn("done chan was nil, not actually waiting")
 	}
 
 	slog.Debug(fmt.Sprintf("starting installer: %s %v", installerExe, installArgs))
