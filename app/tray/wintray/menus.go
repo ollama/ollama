@@ -21,14 +21,11 @@ const (
 )
 
 func (t *winTray) initMenus() error {
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
-		if err := t.addOrUpdateMenuItem(diagLogsMenuID, 0, diagLogsMenuTitle, false); err != nil {
-			return fmt.Errorf("unable to create menu entries %w\n", err)
-		}
-		if err := t.addSeparatorMenuItem(diagSeparatorMenuID, 0); err != nil {
-			return fmt.Errorf("unable to create menu entries %w", err)
-		}
-
+	if err := t.addOrUpdateMenuItem(diagLogsMenuID, 0, diagLogsMenuTitle, false); err != nil {
+		return fmt.Errorf("unable to create menu entries %w\n", err)
+	}
+	if err := t.addSeparatorMenuItem(diagSeparatorMenuID, 0); err != nil {
+		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	if err := t.addOrUpdateMenuItem(quitMenuID, 0, quitMenuTitle, false); err != nil {
 		return fmt.Errorf("unable to create menu entries %w\n", err)
