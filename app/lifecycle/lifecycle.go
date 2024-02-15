@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 
 	"github.com/jmorganca/ollama/app/store"
 	"github.com/jmorganca/ollama/app/tray"
@@ -58,8 +59,8 @@ func Run() {
 	}
 
 	if IsServerRunning(ctx) {
-		slog.Debug("XXX detected server already running")
-		// TODO - should we fail fast, try to kill it, or just ignore?
+		slog.Info("Detected another instance of ollama running, exiting")
+		os.Exit(1)
 	} else {
 		done, err = SpawnServer(ctx, CLIName)
 		if err != nil {
