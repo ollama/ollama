@@ -3,11 +3,13 @@ package openai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,8 +28,23 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"` // Can be a string or []ContentPart
+}
+
+type ContentPart struct {
+	Type     string               `json:"type"`
+	Text     *TextContentPart     `json:"text,omitempty"`
+	ImageURL *ImageURLContentPart `json:"image_url,omitempty"`
+}
+
+type TextContentPart struct {
+	Text string `json:"text"`
+}
+
+type ImageURLContentPart struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"` // 'auto' | 'low' | 'high'
 }
 
 type Choice struct {
@@ -118,7 +135,6 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			}(r.Done),
 		}},
 		Usage: Usage{
-			// TODO: ollama returns 0 for prompt eval if the prompt was cached, but openai returns the actual count
 			PromptTokens:     r.PromptEvalCount,
 			CompletionTokens: r.EvalCount,
 			TotalTokens:      r.PromptEvalCount + r.EvalCount,
@@ -149,10 +165,49 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 	}
 }
 
+// serializeContent checks the type of the content and serializes it if it's a slice of ContentPart.
+func serializeContent(content interface{}) (string, error) {
+	switch c := content.(type) {
+	case string:
+		return c, nil
+	case []ContentPart:
+		serialized, err := json.Marshal(c)
+		if err != nil {
+			return "", err // Handle or return the error
+		}
+		return string(serialized), nil
+	default:
+		return "", fmt.Errorf("unsupported content type")
+	}
+}
+
 func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
-		messages = append(messages, api.Message{Role: msg.Role, Content: msg.Content})
+		switch content := msg.Content.(type) {
+		case string:
+			messages = append(messages, api.Message{Role: msg.Role, Content: content})
+		case []interface{}:
+			for _, item := range content {
+				switch item := item.(type) {
+				case map[string]interface{}:
+					if text, ok := item["text"].(string); ok {
+						messages = append(messages, api.Message{Role: msg.Role, Content: text})
+					}
+					if imageUrl, ok := item["image_url"].(map[string]interface{}); ok {
+						if url, ok := imageUrl["url"].(string); ok {
+							sanitizedURL := strings.TrimPrefix(url, "data:application/octet-stream;base64,")
+							imageData, err := base64.StdEncoding.DecodeString(sanitizedURL)
+							if err != nil {
+								// Handle error, maybe log it or use a default image data value
+								imageData = []byte{}
+							}
+							messages = append(messages, api.Message{Role: msg.Role, Content: "", Images: []api.ImageData{imageData}})
+						}
+					}
+				}
+			}
+		}
 	}
 
 	options := make(map[string]interface{})
