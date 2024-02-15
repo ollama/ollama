@@ -208,7 +208,6 @@ void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
 void llama_server_completion_next_result(const int task_id,
                                          ext_server_task_result_t *resp) {
   assert(llama != NULL && resp != NULL);
-  std::string msg;
   resp->id = -1;
   resp->stop = false;
   resp->error = false;
