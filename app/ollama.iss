@@ -118,9 +118,8 @@ Type: filesandordirs; Name: "{%USERPROFILE}\.ollama"
 ; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
 [Messages]
-WizardReady=Welcome to Ollama Windows Preview
+WizardReady=Ollama Windows Preview
 ReadyLabel1=%nLet's get you up and running with your own large language models.
-;ReadyLabel2b=We'll be installing Ollama in your user account without requiring Admin permissions
 
 ;FinishedHeadingLabel=Run your first model
 ;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama2
