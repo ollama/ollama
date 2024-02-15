@@ -59,7 +59,6 @@ func (c *ContainerGGUF) Decode(rso *readSeekOffset) (model, error) {
 	return model, nil
 }
 
-
 const (
 	GGUFTypeUint8 uint32 = iota
 	GGUFTypeInt8
@@ -86,9 +85,9 @@ type Tensor struct {
 	// shape is the number of elements in each dimension
 	Shape [4]uint64
 
-	FileName string
+	FileName      string
 	OffsetPadding uint64
-	FileOffsets []uint64
+	FileOffsets   []uint64
 }
 
 func (t Tensor) BlockSize() uint64 {
@@ -346,7 +345,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 			if err := binary.Write(f, llm.ByteOrder, uint64(len(iList))); err != nil {
 				return err
 			}
-			for _, i := range(iList) {
+			for _, i := range iList {
 				if err := llm.writeInt32(f, i); err != nil {
 					return err
 				}
@@ -364,7 +363,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 			if err := binary.Write(f, llm.ByteOrder, uint64(len(iList))); err != nil {
 				return err
 			}
-			for _, i := range(iList) {
+			for _, i := range iList {
 				if err := llm.writeUint32(f, i); err != nil {
 					return err
 				}
@@ -382,7 +381,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 			if err := binary.Write(f, llm.ByteOrder, uint64(len(fList))); err != nil {
 				return err
 			}
-			for _, fl := range(fList) {
+			for _, fl := range fList {
 				if err := llm.writeF32(f, fl); err != nil {
 					return err
 				}
@@ -401,7 +400,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				return err
 			}
 
-			for _, s := range(strList) {
+			for _, s := range strList {
 				if err := llm.writeString(f, s); err != nil {
 					return err
 				}
@@ -481,7 +480,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 
 		matches := re.FindAllStringSubmatch(t.Name, -1)
 		if len(matches) > 0 {
-			layerSize := t.FileOffsets[1]-t.FileOffsets[0]
+			layerSize := t.FileOffsets[1] - t.FileOffsets[0]
 
 			var err error
 			tData := make([]uint16, layerSize/2)
@@ -530,7 +529,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 			continue
 		}
 
-		remaining := t.FileOffsets[1]-t.FileOffsets[0]
+		remaining := t.FileOffsets[1] - t.FileOffsets[0]
 
 		bufSize := uint64(10240)
 		var finished bool
@@ -638,7 +637,7 @@ func (llm *GGUFModel) writeString(f *os.File, s string) error {
 		return err
 	}
 	return nil
-} 
+}
 
 func (llm *GGUFModel) Decode(rso *readSeekOffset) error {
 	// decode key-values

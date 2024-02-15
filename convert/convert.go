@@ -124,13 +124,13 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 		}
 
 		t := llm.Tensor{
-			Name:           ggufName,
-			Kind:           kind,
-			Offset:         offset,
-			Shape:          shape,
-			FileName:       fn,
-			OffsetPadding:  8 + num,
-			FileOffsets:    []uint64{uint64(data.Offsets[0]), uint64(data.Offsets[1])},
+			Name:          ggufName,
+			Kind:          kind,
+			Offset:        offset,
+			Shape:         shape,
+			FileName:      fn,
+			OffsetPadding: 8 + num,
+			FileOffsets:   []uint64{uint64(data.Offsets[0]), uint64(data.Offsets[1])},
 		}
 		tensors = append(tensors, t)
 		offset += size
@@ -222,8 +222,8 @@ func GetTensorName(n string) (string, error) {
 		"model.layers.(\\d+).self_attn.o_proj.weight":         "blk.$1.attn_output.weight",
 		"model.layers.(\\d+).self_attn.q_proj.weight":         "blk.$1.attn_q.weight",
 		"model.layers.(\\d+).self_attn.v_proj.weight":         "blk.$1.attn_v.weight",
-		"lm_head.weight":                                      "output.weight",
-		"model.norm.weight":                                   "output_norm.weight",
+		"lm_head.weight":    "output.weight",
+		"model.norm.weight": "output_norm.weight",
 	}
 
 	v, ok := tMap[n]
