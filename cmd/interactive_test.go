@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"os"
 	"testing"
 	"text/template"
 
+	"github.com/kbinani/screenshot"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jmorganca/ollama/api"
@@ -113,4 +115,34 @@ MESSAGE assistant """Yes it is true, I am half horse, half shark."""
 	err = tmpl.Execute(&parentBuf, opts)
 	assert.Nil(t, err)
 	assert.Equal(t, parentBuf.String(), mf)
+}
+
+func TestCaptureScreenshots(t *testing.T) {
+	// Call the captureScreenshots() function and handle the returned values
+	filePaths, err := captureScreenshots()
+	if err != nil {
+		t.Fatalf("Error: %v\n", err)
+	}
+
+	// Verify that the correct number of screenshots were captured
+	n := screenshot.NumActiveDisplays()
+	assert.Len(t, filePaths, n)
+
+	// Verify that each screenshot has been saved in the temporary directory
+	tempDir := os.TempDir()
+	for i, filePath := range filePaths {
+		assert.Contains(t, filePath, tempDir)
+	}
+
+	// Verify that each screenshot has a valid PNG file extension
+	for _, filePath := range filePaths {
+		assert.Contains(t, filePath, ".png")
+	}
+
+	// Verify that the captured screenshots have reasonable file sizes
+	for _, filePath := range filePaths {
+		info, err := os.Stat(filePath)
+		assert.Nil(t, err)
+		assert.LessOrEqual(t, info.Size(), 10*1024*1024) // Max file size: 10 MB
+	}
 }
