@@ -60,6 +60,7 @@ function buildOllama() {
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
+    cp .\ollama.exe .\dist\ollama-windows-amd64.exe
 }
 
 function buildApp() {
