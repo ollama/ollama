@@ -84,7 +84,7 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 	client := getClient(req)
 
-	slog.Debug(fmt.Sprintf("checking for available update at %s with headers %v", requestURL, req.Header))
+	slog.Debug("checking for available update", "requestURL", requestURL)
 	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to check for update: %s", err))
