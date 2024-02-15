@@ -45,7 +45,6 @@ func nativeLoop() {
 		case 0:
 			return
 		default:
-			// slog.Debug(fmt.Sprintf("XXX dispatching message from run loop 0x%x", m.Message))
 			pTranslateMessage.Call(uintptr(unsafe.Pointer(m))) //nolint:errcheck
 			pDispatchMessage.Call(uintptr(unsafe.Pointer(m)))  //nolint:errcheck
 
@@ -66,11 +65,9 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		WM_MOUSEMOVE   = 0x0200
 		WM_LBUTTONDOWN = 0x0201
 	)
-	// slog.Debug(fmt.Sprintf("XXX in wndProc: 0x%x", message))
 	switch message {
 	case WM_COMMAND:
 		menuItemId := int32(wParam)
-		// slog.Debug(fmt.Sprintf("XXX Menu Click: %d", menuItemId))
 		// https://docs.microsoft.com/en-us/windows/win32/menurc/wm-command#menus
 		switch menuItemId {
 		case quitMenuID:
@@ -151,7 +148,6 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			slog.Debug(fmt.Sprintf("unmanaged app message, lParm: 0x%x", lParam))
 		}
 	case t.wmTaskbarCreated: // on explorer.exe restarts
-		slog.Debug("XXX got taskbar created event")
 		t.muNID.Lock()
 		err := t.nid.add()
 		if err != nil {
@@ -161,7 +157,6 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 	default:
 		// Calls the default window procedure to provide default processing for any window messages that an application does not process.
 		// https://msdn.microsoft.com/en-us/library/windows/desktop/ms633572(v=vs.85).aspx
-		// slog.Debug(fmt.Sprintf("XXX default wndProc handler 0x%x", message))
 		lResult, _, _ = pDefWindowProc.Call(
 			uintptr(hWnd),
 			uintptr(message),
