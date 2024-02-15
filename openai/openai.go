@@ -166,22 +166,6 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 	}
 }
 
-// serializeContent checks the type of the content and serializes it if it's a slice of ContentPart.
-func serializeContent(content interface{}) (string, error) {
-	switch c := content.(type) {
-	case string:
-		return c, nil
-	case []ContentPart:
-		serialized, err := json.Marshal(c)
-		if err != nil {
-			return "", err // Handle or return the error
-		}
-		return string(serialized), nil
-	default:
-		return "", fmt.Errorf("unsupported content type")
-	}
-}
-
 func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
