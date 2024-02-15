@@ -404,6 +404,22 @@ type Duration struct {
 	time.Duration
 }
 
+func (d *Duration) FromString(s string) error {
+	var err error
+	d.Duration, err = time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	if d.Duration < 0 {
+		d.Duration = time.Duration(math.MaxInt64)
+	}
+	return nil
+}
+
+func (d *Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.String())
+}
+
 func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	var v any
 	if err := json.Unmarshal(b, &v); err != nil {
@@ -420,12 +436,8 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 			d.Duration = time.Duration(t * float64(time.Second))
 		}
 	case string:
-		d.Duration, err = time.ParseDuration(t)
-		if err != nil {
+		if err = d.FromString(t); err != nil {
 			return err
-		}
-		if d.Duration < 0 {
-			d.Duration = time.Duration(math.MaxInt64)
 		}
 	}
 
