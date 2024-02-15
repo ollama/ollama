@@ -5,7 +5,6 @@ package wintray
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
