@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
 )
@@ -50,7 +52,7 @@ func Test_Routes(t *testing.T) {
 	createTestModel := func(t *testing.T, name string) {
 		fname := createTestFile(t, "ollama-model")
 
-		modelfile := strings.NewReader(fmt.Sprintf("FROM %s", fname))
+		modelfile := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
 		commands, err := parser.Parse(modelfile)
 		assert.Nil(t, err)
 		fn := func(resp api.ProgressResponse) {
@@ -167,6 +169,42 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, "beefsteak:latest", model.ShortName)
 			},
 		},
+		{
+			Name:   "Show Model Handler",
+			Method: http.MethodPost,
+			Path:   "/api/show",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "show-model")
+				showReq := api.ShowRequest{Model: "show-model"}
+				jsonData, err := json.Marshal(showReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, contentType, "application/json; charset=utf-8")
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+
+				var showResp api.ShowResponse
+				err = json.Unmarshal(body, &showResp)
+				assert.Nil(t, err)
+
+				var params []string
+				paramsSplit := strings.Split(showResp.Parameters, "\n")
+				for _, p := range paramsSplit {
+					params = append(params, strings.Join(strings.Fields(p), " "))
+				}
+				sort.Strings(params)
+				expectedParams := []string{
+					"seed 42",
+					"stop \"bar\"",
+					"stop \"foo\"",
+					"top_p 0.9",
+				}
+				assert.Equal(t, expectedParams, params)
+			},
+		},
 	}
 
 	s, err := setupServer(t)
@@ -201,4 +239,28 @@ func Test_Routes(t *testing.T) {
 		}
 
 	}
+}
+
+type MockLLM struct {
+	encoding []int
+}
+
+func (llm *MockLLM) Predict(ctx context.Context, pred llm.PredictOpts, fn func(llm.PredictResult)) error {
+	return nil
+}
+
+func (llm *MockLLM) Encode(ctx context.Context, prompt string) ([]int, error) {
+	return llm.encoding, nil
+}
+
+func (llm *MockLLM) Decode(ctx context.Context, tokens []int) (string, error) {
+	return "", nil
+}
+
+func (llm *MockLLM) Embedding(ctx context.Context, input string) ([]float64, error) {
+	return []float64{}, nil
+}
+
+func (llm *MockLLM) Close() {
+	// do nothing
 }

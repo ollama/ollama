@@ -1,16 +1,19 @@
 package llm
 
 import (
+	"compress/gzip"
 	"errors"
 	"fmt"
-	"golang.org/x/exp/slices"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jmorganca/ollama/gpu"
 )
@@ -20,7 +23,7 @@ import (
 // Any library without a variant is the lowest common denominator
 var availableDynLibs = map[string]string{}
 
-const pathComponentCount = 6
+const pathComponentCount = 7
 
 // getDynLibs returns an ordered list of LLM libraries to try, starting with the best
 func getDynLibs(gpuInfo gpu.GpuInfo) []string {
@@ -87,6 +90,7 @@ func getDynLibs(gpuInfo gpu.GpuInfo) []string {
 	if len(dynLibs) == 0 {
 		dynLibs = []string{availableDynLibs["cpu"]}
 	}
+	slog.Debug(fmt.Sprintf("ordered list of LLM libraries to try %v", dynLibs))
 	return dynLibs
 }
 
@@ -100,12 +104,13 @@ func rocmDynLibPresent() bool {
 }
 
 func nativeInit(workdir string) error {
+	slog.Info("Extracting dynamic libraries...")
 	if runtime.GOOS == "darwin" {
 		err := extractPayloadFiles(workdir, "llama.cpp/ggml-metal.metal")
 		if err != nil {
 			if err == payloadMissing {
 				// TODO perhaps consider this a hard failure on arm macs?
-				log.Printf("ggml-meta.metal payload missing")
+				slog.Info("ggml-meta.metal payload missing")
 				return nil
 			}
 			return err
@@ -113,10 +118,10 @@ func nativeInit(workdir string) error {
 		os.Setenv("GGML_METAL_PATH_RESOURCES", workdir)
 	}
 
-	libs, err := extractDynamicLibs(workdir, "llama.cpp/build/*/*/lib/*")
+	libs, err := extractDynamicLibs(workdir, "llama.cpp/build/*/*/*/lib/*")
 	if err != nil {
 		if err == payloadMissing {
-			log.Printf("%s", payloadMissing)
+			slog.Info(fmt.Sprintf("%s", payloadMissing))
 			return nil
 		}
 		return err
@@ -138,8 +143,8 @@ func nativeInit(workdir string) error {
 		variants[i] = variant
 		i++
 	}
-	log.Printf("Dynamic LLM libraries %v", variants)
-	log.Printf("Override detection logic by setting OLLAMA_LLM_LIBRARY")
+	slog.Info(fmt.Sprintf("Dynamic LLM libraries %v", variants))
+	slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	return nil
 }
@@ -151,45 +156,64 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 	}
 	libs := []string{}
 
+	// TODO consider making this idempotent with some sort of persistent directory (where we store models probably)
+	// and tracking by version so we don't reexpand the files every time
+	// Also maybe consider lazy loading only what is needed
+
+	g := new(errgroup.Group)
 	for _, file := range files {
 		pathComps := strings.Split(file, "/")
 		if len(pathComps) != pathComponentCount {
-			log.Printf("unexpected payload components: %v", pathComps)
+			slog.Error(fmt.Sprintf("unexpected payload components: %v", pathComps))
 			continue
 		}
-		// llama.cpp/build/$OS/$VARIANT/lib/$LIBRARY
-		// Include the variant in the path to avoid conflicts between multiple server libs
-		targetDir := filepath.Join(workDir, pathComps[pathComponentCount-3])
-		srcFile, err := libEmbed.Open(file)
-		if err != nil {
-			return nil, fmt.Errorf("read payload %s: %v", file, err)
-		}
-		defer srcFile.Close()
-		if err := os.MkdirAll(targetDir, 0o755); err != nil {
-			return nil, fmt.Errorf("create payload temp dir %s: %v", workDir, err)
-		}
 
-		destFile := filepath.Join(targetDir, filepath.Base(file))
-		if strings.Contains(destFile, "server") {
-			libs = append(libs, destFile)
-		}
-
-		_, err = os.Stat(destFile)
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+		file := file
+		g.Go(func() error {
+			// llama.cpp/build/$OS/$GOARCH/$VARIANT/lib/$LIBRARY
+			// Include the variant in the path to avoid conflicts between multiple server libs
+			targetDir := filepath.Join(workDir, pathComps[pathComponentCount-3])
+			srcFile, err := libEmbed.Open(file)
 			if err != nil {
-				return nil, fmt.Errorf("write payload %s: %v", file, err)
+				return fmt.Errorf("read payload %s: %v", file, err)
 			}
-			defer destFile.Close()
-			if _, err := io.Copy(destFile, srcFile); err != nil {
-				return nil, fmt.Errorf("copy payload %s: %v", file, err)
+			defer srcFile.Close()
+			if err := os.MkdirAll(targetDir, 0o755); err != nil {
+				return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
 			}
-		case err != nil:
-			return nil, fmt.Errorf("stat payload %s: %v", file, err)
-		}
+			src := io.Reader(srcFile)
+			filename := file
+			if strings.HasSuffix(file, ".gz") {
+				src, err = gzip.NewReader(src)
+				if err != nil {
+					return fmt.Errorf("decompress payload %s: %v", file, err)
+				}
+				filename = strings.TrimSuffix(filename, ".gz")
+			}
+
+			destFile := filepath.Join(targetDir, filepath.Base(filename))
+			if strings.Contains(destFile, "server") {
+				libs = append(libs, destFile)
+			}
+
+			_, err = os.Stat(destFile)
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+				if err != nil {
+					return fmt.Errorf("write payload %s: %v", file, err)
+				}
+				defer destFile.Close()
+				if _, err := io.Copy(destFile, src); err != nil {
+					return fmt.Errorf("copy payload %s: %v", file, err)
+				}
+			case err != nil:
+				return fmt.Errorf("stat payload %s: %v", file, err)
+			}
+			return nil
+		})
 	}
-	return libs, nil
+	return libs, g.Wait()
 }
 
 func extractPayloadFiles(workDir, glob string) error {
@@ -207,8 +231,17 @@ func extractPayloadFiles(workDir, glob string) error {
 		if err := os.MkdirAll(workDir, 0o755); err != nil {
 			return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
 		}
+		src := io.Reader(srcFile)
+		filename := file
+		if strings.HasSuffix(file, ".gz") {
+			src, err = gzip.NewReader(src)
+			if err != nil {
+				return fmt.Errorf("decompress payload %s: %v", file, err)
+			}
+			filename = strings.TrimSuffix(filename, ".gz")
+		}
 
-		destFile := filepath.Join(workDir, filepath.Base(file))
+		destFile := filepath.Join(workDir, filepath.Base(filename))
 		_, err = os.Stat(destFile)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
@@ -217,7 +250,7 @@ func extractPayloadFiles(workDir, glob string) error {
 				return fmt.Errorf("write payload %s: %v", file, err)
 			}
 			defer destFile.Close()
-			if _, err := io.Copy(destFile, srcFile); err != nil {
+			if _, err := io.Copy(destFile, src); err != nil {
 				return fmt.Errorf("copy payload %s: %v", file, err)
 			}
 		case err != nil:

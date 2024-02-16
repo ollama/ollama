@@ -2,28 +2,28 @@
 
 ## Prerequisites
 
-- Ollama: https://ollama.ai/download
+- Ollama: https://ollama.com/download
 - Kubernetes cluster. This example will use Google Kubernetes Engine.
 
 ## Steps
 
 1. Create the Ollama namespace, daemon set, and service
 
-    ```bash
-    kubectl apply -f cpu.yaml
-    ```
+   ```bash
+   kubectl apply -f cpu.yaml
+   ```
 
 1. Port forward the Ollama service to connect and use it locally
 
-    ```bash
-    kubectl -n ollama port-forward service/ollama 11434:80
-    ```
+   ```bash
+   kubectl -n ollama port-forward service/ollama 11434:80
+   ```
 
 1. Pull and run a model, for example `orca-mini:3b`
 
-    ```bash
-    ollama run orca-mini:3b
-    ```
+   ```bash
+   ollama run orca-mini:3b
+   ```
 
 ## (Optional) Hardware Acceleration
 
