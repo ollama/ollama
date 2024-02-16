@@ -60,13 +60,17 @@ subprocess.check_call(['ssh', netloc, 'cd', path, ';', 'git', 'checkout', branch
 # subprocess.check_call(['ssh', netloc, 'cd', path, ';', 'env'])
 # TODO - or consider paramiko maybe
 
-print("Performing generate")
-subprocess.check_call(['ssh', netloc, 'cd', path, ';', GoCmd, 'generate', './...'])
+print("Running Windows Build Script")
+subprocess.check_call(['ssh', netloc, 'cd', path, ';', "powershell", "-ExecutionPolicy", "Bypass", "-File", "./scripts/build_windows.ps1"])
 
-print("Building")
-subprocess.check_call(['ssh', netloc, 'cd', path, ';', GoCmd, 'build', '.'])
+# print("Building")
+# subprocess.check_call(['ssh', netloc, 'cd', path, ';', GoCmd, 'build', '.'])
 
 print("Copying built result")
 subprocess.check_call(['scp', netloc +":"+ path + "/ollama.exe",  './dist/'])
+
+print("Copying installer")
+subprocess.check_call(['scp', netloc +":"+ path + "/dist/Ollama Setup.exe",  './dist/'])
+
 
 
