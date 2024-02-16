@@ -180,6 +180,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
+	var system string
 
 	for {
 		line, err := scanner.Readline()
@@ -354,8 +355,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 
 					if args[1] == "system" {
-						opts.System = sb.String()
-						opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
+						opts.System = sb.String() // for display in modelfile
+						system = sb.String()
 						fmt.Println("Set system message.")
 						sb.Reset()
 					} else if args[1] == "template" {
@@ -489,6 +490,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		}
 
 		if sb.Len() > 0 && multiline == MultilineNone {
+			if system != "" {
+				// the user has set a new system message
+				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: system})
+				system = ""
+			}
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
 			if opts.MultiModal {
