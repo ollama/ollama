@@ -2,7 +2,7 @@ from langchain.llms import Ollama
 from langchain.document_loaders import WebBaseLoader
 from langchain.chains.summarize import load_summarize_chain
 
-loader = WebBaseLoader("https://ollama.ai/blog/run-llama2-uncensored-locally")
+loader = WebBaseLoader("https://ollama.com/blog/run-llama2-uncensored-locally")
 docs = loader.load()
 
 llm = Ollama(model="llama2")

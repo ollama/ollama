@@ -1,8 +1,13 @@
+<<<<<< main
  <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" height="200px" srcset="https://github.com/jmorganca/ollama/assets/3325447/56ea1849-1284-4645-8970-956de6e51c3c">
     <img alt="logo" height="200px" src="https://github.com/jmorganca/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
   </picture>
+======
+<div align="center">
+  <img alt="ollama" height="200px" src="https://github.com/jmorganca/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+>>>>>> main
 </div>
 
 # Ollama
@@ -13,16 +18,16 @@ Get up and running with large language models locally.
 
 ### macOS
 
-[Download](https://ollama.ai/download/Ollama-darwin.zip)
+[Download](https://ollama.com/download/Ollama-darwin.zip)
 
-### Windows
+### Windows preview
 
-Coming soon! For now, you can install Ollama on Windows via WSL2.
+[Download](https://ollama.com/download/OllamaSetup.exe)
 
-### Linux & WSL2
+### Linux
 
 ```
-curl https://ollama.ai/install.sh | sh
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
@@ -31,9 +36,14 @@ curl https://ollama.ai/install.sh | sh
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
+### Libraries
+
+- [ollama-python](https://github.com/ollama/ollama-python)
+- [ollama-js](https://github.com/ollama/ollama-js)
+
 ## Quickstart
 
-To run and chat with [Llama 2](https://ollama.ai/library/llama2):
+To run and chat with [Llama 2](https://ollama.com/library/llama2):
 
 ```
 ollama run llama2
@@ -41,7 +51,7 @@ ollama run llama2
 
 ## Model library
 
-Ollama supports a list of open-source models available on [ollama.ai/library](https://ollama.ai/library 'ollama model library')
+Ollama supports a list of open-source models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
 
 Here are some example open-source models that can be downloaded:
 
@@ -198,18 +208,21 @@ brew install cmake go
 ```
 
 Then generate dependencies:
+
 ```
 go generate ./...
 ```
+
 Then build the binary:
+
 ```
 go build .
 ```
 
 More detailed instructions can be found in the [developer guide](https://github.com/jmorganca/ollama/blob/main/docs/development.md)
 
-
 ### Running local builds
+
 Next, start the server:
 
 ```
@@ -251,6 +264,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ## Community Integrations
 
 ### Web & Desktop
+
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
@@ -263,7 +277,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Amica](https://github.com/semperai/amica)
 - [chatd](https://github.com/BruceMacD/chatd)
 - [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
-
+- [MindMac](https://mindmac.app)
 
 ### Terminal
 
@@ -276,6 +290,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [gptel Emacs client](https://github.com/karthink/gptel)
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
 - [cmdh](https://github.com/pgibler/cmdh)
+- [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
 
 ### Database
 
@@ -301,6 +316,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
 - [LangChainDart](https://github.com/davidmigloz/langchain_dart)
 - [Semantic Kernel - Python](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama)
+- [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
+- [Ollama for R - rollama](https://github.com/JBGruber/rollama)
+- [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
 
 ### Mobile
 
@@ -321,3 +339,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
 - [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
+- [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)
+- [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
+- [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)

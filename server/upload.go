@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -49,7 +49,7 @@ const (
 	maxUploadPartSize int64 = 1000 * format.MegaByte
 )
 
-func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
+func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
 	p, err := GetBlobsPath(b.Digest)
 	if err != nil {
 		return err
@@ -107,7 +107,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 		offset += size
 	}
 
-	log.Printf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size))
+	slog.Info(fmt.Sprintf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
 
 	requestURL, err = url.Parse(location)
 	if err != nil {
@@ -121,7 +121,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *Reg
 
 // Run uploads blob parts to the upstream. If the upstream supports redirection, parts will be uploaded
 // in parallel as defined by Prepare. Otherwise, parts will be uploaded serially. Run sets b.err on error.
-func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
+func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 	defer blobUploadManager.Delete(b.Digest)
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
@@ -156,7 +156,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 						return err
 					case err != nil:
 						sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-						log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+						slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
 						time.Sleep(sleep)
 						continue
 					}
@@ -200,7 +200,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 			break
 		} else if err != nil {
 			sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-			log.Printf("%s complete upload attempt %d failed: %v, retrying in %s", b.Digest[7:19], try, err, sleep)
+			slog.Info(fmt.Sprintf("%s complete upload attempt %d failed: %v, retrying in %s", b.Digest[7:19], try, err, sleep))
 			time.Sleep(sleep)
 			continue
 		}
@@ -212,7 +212,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *RegistryOptions) {
 	b.done = true
 }
 
-func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *RegistryOptions) error {
+func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *registryOptions) error {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/octet-stream")
 	headers.Set("Content-Length", fmt.Sprintf("%d", part.Size))
@@ -265,7 +265,7 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 				return err
 			case err != nil:
 				sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-				log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+				slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
 				time.Sleep(sleep)
 				continue
 			}
@@ -277,9 +277,8 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 
 	case resp.StatusCode == http.StatusUnauthorized:
 		w.Rollback()
-		auth := resp.Header.Get("www-authenticate")
-		authRedir := ParseAuthRedirectString(auth)
-		token, err := getAuthToken(ctx, authRedir)
+		challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
+		token, err := getAuthorizationToken(ctx, challenge)
 		if err != nil {
 			return err
 		}
@@ -364,7 +363,7 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
 

@@ -27,6 +27,13 @@
 
 #endif
 
+#define LOG(verbose, ...) \
+  do { \
+    if (verbose) { \
+      fprintf(stderr, __VA_ARGS__); \
+    } \
+  } while (0)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -35,6 +42,7 @@ typedef struct mem_info {
   uint64_t total;
   uint64_t free;
   unsigned int count;
+  int igpu_index; // If >= 0, we detected an integrated GPU to ignore
   char *err;  // If non-nill, caller responsible for freeing
 } mem_info_t;
 
