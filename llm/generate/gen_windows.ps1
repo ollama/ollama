@@ -3,6 +3,7 @@
 $ErrorActionPreference = "Stop"
 
 function init_vars {
+    $script:SRC_DIR = $(resolve-path "..\..\")
     $script:llamacppDir = "../llama.cpp"
     $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off",  "-A", "x64")
     $script:cmakeTargets = @("ext_server")
@@ -33,6 +34,9 @@ function init_vars {
     }
     # Note: 10 Windows Kit signtool crashes with GCP's plugin
     ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
+    if ("${env:KEY_CONTAINER}") {
+        ${script:OLLAMA_CERT}=$(resolve-path "${script:SRC_DIR}\ollama_inc.crt")
+    }
 }
 
 function git_module_setup {
@@ -102,7 +106,7 @@ function sign {
     if ("${env:KEY_CONTAINER}") {
         write-host "Signing ${script:buildDir}/lib/*.dll"
         foreach ($file in (get-childitem "${script:buildDir}/lib/*.dll")){
-            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${env:OLLAMA_CERT}" `
+            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
                 /csp "Google Cloud KMS Provider" /kc "${env:KEY_CONTAINER}" $file
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
