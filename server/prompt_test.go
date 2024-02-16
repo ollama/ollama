@@ -77,7 +77,6 @@ func TestChatPrompt(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		system   string
 		messages []api.Message
 		window   int
 		want     string
@@ -90,16 +89,6 @@ func TestChatPrompt(t *testing.T) {
 			},
 			window: 1024,
 			want:   "[INST] Hello [/INST]",
-		},
-		{
-			name:     "with default system message",
-			system:   "You are a Wizard.",
-			template: "[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>> {{ end }}{{ .Prompt }} [/INST]",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
-			},
-			window: 1024,
-			want:   "[INST] <<SYS>>You are a Wizard.<</SYS>> Hello [/INST]",
 		},
 		{
 			name:     "with system message",
@@ -186,24 +175,6 @@ func TestChatPrompt(t *testing.T) {
 			want:     "",
 		},
 		{
-			name:     "empty list default system",
-			system:   "You are a Wizard.",
-			template: "{{ .System }} {{ .Prompt }}",
-			messages: []api.Message{},
-			window:   1024,
-			want:     "You are a Wizard. ",
-		},
-		{
-			name:     "empty user message",
-			system:   "You are a Wizard.",
-			template: "{{ .System }} {{ .Prompt }}",
-			messages: []api.Message{
-				{Role: "user", Content: ""},
-			},
-			window: 1024,
-			want:   "You are a Wizard. ",
-		},
-		{
 			name:     "empty prompt",
 			template: "[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>> {{ end }}{{ .Prompt }} [/INST] {{ .Response }} ",
 			messages: []api.Message{
@@ -221,7 +192,7 @@ func TestChatPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ChatPrompt(tc.template, tc.system, tc.messages, tc.window, encode)
+			got, err := ChatPrompt(tc.template, tc.messages, tc.window, encode)
 			if err != nil {
 				t.Errorf("error = %v", err)
 			}
