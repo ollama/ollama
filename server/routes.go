@@ -66,8 +66,6 @@ var defaultSessionDuration = 5 * time.Minute
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
 func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
-	workDir := c.GetString("workDir")
-
 	needLoad := loaded.runner == nil || // is there a model loaded?
 		loaded.ModelPath != model.ModelPath || // has the base model changed?
 		!reflect.DeepEqual(loaded.AdapterPaths, model.AdapterPaths) || // have the adapters changed?
@@ -82,7 +80,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			loaded.Options = nil
 		}
 
-		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
+		llmRunner, err := llm.New(model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
@@ -1035,7 +1033,7 @@ func Serve(ln net.Listener) error {
 		os.Exit(0)
 	}()
 
-	if err := llm.Init(s.WorkDir); err != nil {
+	if err := llm.Init(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
 	if runtime.GOOS == "linux" { // TODO - windows too
