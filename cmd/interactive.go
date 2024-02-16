@@ -361,7 +361,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 							// Replace the last message
 							opts.Messages[len(opts.Messages)-1] = newMessage
 						} else {
-							// Append the new message
 							opts.Messages = append(opts.Messages, newMessage)
 						}
 						fmt.Println("Set system message.")
