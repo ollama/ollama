@@ -1167,6 +1167,16 @@ func ChatHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
+	if len(req.Messages) > 0 && req.Messages[0].Role != "system" {
+		// if the first message is not a system message, then add the model's default system message
+		req.Messages = append([]api.Message{
+			{
+				Role:    "system",
+				Content: model.System,
+			},
+		}, req.Messages...)
+	}
+
 	prompt, err := chatPrompt(c.Request.Context(), req.Messages)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
