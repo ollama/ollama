@@ -1092,12 +1092,12 @@ func streamResponse(c *gin.Context, ch chan any) {
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
-func chatPrompt(ctx context.Context, messages []api.Message) (string, error) {
+func chatPrompt(ctx context.Context, model *Model, messages []api.Message) (string, error) {
 	encode := func(s string) ([]int, error) {
 		return loaded.runner.Encode(ctx, s)
 	}
 
-	prompt, err := ChatPrompt(loaded.Model.Template, loaded.Model.System, messages, loaded.Options.NumCtx, encode)
+	prompt, err := ChatPrompt(model.Template, model.System, messages, loaded.Options.NumCtx, encode)
 	if err != nil {
 		return "", err
 	}
@@ -1167,7 +1167,7 @@ func ChatHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	prompt, err := chatPrompt(c.Request.Context(), req.Messages)
+	prompt, err := chatPrompt(c.Request.Context(), model, req.Messages)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
