@@ -180,7 +180,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
-	var system string
 
 	for {
 		line, err := scanner.Readline()
@@ -356,7 +355,15 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 					if args[1] == "system" {
 						opts.System = sb.String() // for display in modelfile
-						system = sb.String()
+						newMessage := api.Message{Role: "system", Content: sb.String()}
+						// Check if the slice is not empty and the last message is from 'system'
+						if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
+							// Replace the last message
+							opts.Messages[len(opts.Messages)-1] = newMessage
+						} else {
+							// Append the new message
+							opts.Messages = append(opts.Messages, newMessage)
+						}
 						fmt.Println("Set system message.")
 						sb.Reset()
 					} else if args[1] == "template" {
@@ -490,11 +497,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		}
 
 		if sb.Len() > 0 && multiline == MultilineNone {
-			if system != "" {
-				// the user has set a new system message
-				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: system})
-				system = ""
-			}
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
 			if opts.MultiModal {
