@@ -100,11 +100,14 @@ func (mp ModelPath) GetShortTagname() string {
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
-// modelsDir returns the value of the OLLAMA_MODELS environment variable or the user's home directory if OLLAMA_MODELS is not set.
+// modelsDir returns the value of the OLLAMA_MODELS environment variable or OLLAMA_HOME/models, or $HOME/.ollama/models.
 // The models directory is where Ollama stores its model files and manifests.
 func modelsDir() (string, error) {
 	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
 		return models, nil
+	}
+	if ollamaHome, exists := os.LookupEnv("OLLAMA_HOME"); exists {
+		return filepath.Join(ollamaHome, "models"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

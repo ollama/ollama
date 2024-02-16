@@ -103,10 +103,14 @@ func rocmDynLibPresent() bool {
 	return false
 }
 
-func nativeInit(workdir string) error {
+func nativeInit() error {
 	slog.Info("Extracting dynamic libraries...")
+	libDir, err := libDir()
+	if err != nil {
+		return err
+	}
 	if runtime.GOOS == "darwin" {
-		err := extractPayloadFiles(workdir, "llama.cpp/ggml-metal.metal")
+		err := extractPayloadFiles(libDir, "llama.cpp/ggml-metal.metal")
 		if err != nil {
 			if err == payloadMissing {
 				// TODO perhaps consider this a hard failure on arm macs?
@@ -115,10 +119,10 @@ func nativeInit(workdir string) error {
 			}
 			return err
 		}
-		os.Setenv("GGML_METAL_PATH_RESOURCES", workdir)
+		os.Setenv("GGML_METAL_PATH_RESOURCES", libDir)
 	}
 
-	libs, err := extractDynamicLibs(workdir, "llama.cpp/build/*/*/*/lib/*")
+	libs, err := extractDynamicLibs(libDir, "llama.cpp/build/*/*/*/lib/*")
 	if err != nil {
 		if err == payloadMissing {
 			slog.Info(fmt.Sprintf("%s", payloadMissing))
@@ -149,16 +153,12 @@ func nativeInit(workdir string) error {
 	return nil
 }
 
-func extractDynamicLibs(workDir, glob string) ([]string, error) {
+func extractDynamicLibs(libDir, glob string) ([]string, error) {
 	files, err := fs.Glob(libEmbed, glob)
 	if err != nil || len(files) == 0 {
 		return nil, payloadMissing
 	}
 	libs := []string{}
-
-	// TODO consider making this idempotent with some sort of persistent directory (where we store models probably)
-	// and tracking by version so we don't reexpand the files every time
-	// Also maybe consider lazy loading only what is needed
 
 	g := new(errgroup.Group)
 	for _, file := range files {
@@ -172,14 +172,14 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 		g.Go(func() error {
 			// llama.cpp/build/$OS/$GOARCH/$VARIANT/lib/$LIBRARY
 			// Include the variant in the path to avoid conflicts between multiple server libs
-			targetDir := filepath.Join(workDir, pathComps[pathComponentCount-3])
+			targetDir := filepath.Join(libDir, pathComps[pathComponentCount-3])
 			srcFile, err := libEmbed.Open(file)
 			if err != nil {
 				return fmt.Errorf("read payload %s: %v", file, err)
 			}
 			defer srcFile.Close()
 			if err := os.MkdirAll(targetDir, 0o755); err != nil {
-				return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
+				return fmt.Errorf("create payload lib dir %s: %v", libDir, err)
 			}
 			src := io.Reader(srcFile)
 			filename := file
@@ -199,16 +199,18 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 			_, err = os.Stat(destFile)
 			switch {
 			case errors.Is(err, os.ErrNotExist):
-				destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+				destFp, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 				if err != nil {
 					return fmt.Errorf("write payload %s: %v", file, err)
 				}
-				defer destFile.Close()
-				if _, err := io.Copy(destFile, src); err != nil {
+				defer destFp.Close()
+				if _, err := io.Copy(destFp, src); err != nil {
 					return fmt.Errorf("copy payload %s: %v", file, err)
 				}
 			case err != nil:
 				return fmt.Errorf("stat payload %s: %v", file, err)
+			case err == nil:
+				slog.Debug("payload already exists: " + destFile)
 			}
 			return nil
 		})
@@ -216,7 +218,7 @@ func extractDynamicLibs(workDir, glob string) ([]string, error) {
 	return libs, g.Wait()
 }
 
-func extractPayloadFiles(workDir, glob string) error {
+func extractPayloadFiles(libDir, glob string) error {
 	files, err := fs.Glob(libEmbed, glob)
 	if err != nil || len(files) == 0 {
 		return payloadMissing
@@ -228,8 +230,8 @@ func extractPayloadFiles(workDir, glob string) error {
 			return fmt.Errorf("read payload %s: %v", file, err)
 		}
 		defer srcFile.Close()
-		if err := os.MkdirAll(workDir, 0o755); err != nil {
-			return fmt.Errorf("create payload temp dir %s: %v", workDir, err)
+		if err := os.MkdirAll(libDir, 0o755); err != nil {
+			return fmt.Errorf("create payload lib dir %s: %v", libDir, err)
 		}
 		src := io.Reader(srcFile)
 		filename := file
@@ -241,20 +243,22 @@ func extractPayloadFiles(workDir, glob string) error {
 			filename = strings.TrimSuffix(filename, ".gz")
 		}
 
-		destFile := filepath.Join(workDir, filepath.Base(filename))
+		destFile := filepath.Join(libDir, filepath.Base(filename))
 		_, err = os.Stat(destFile)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
-			destFile, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+			destFp, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 			if err != nil {
 				return fmt.Errorf("write payload %s: %v", file, err)
 			}
-			defer destFile.Close()
-			if _, err := io.Copy(destFile, src); err != nil {
+			defer destFp.Close()
+			if _, err := io.Copy(destFp, src); err != nil {
 				return fmt.Errorf("copy payload %s: %v", file, err)
 			}
 		case err != nil:
 			return fmt.Errorf("stat payload %s: %v", file, err)
+		case err == nil:
+			slog.Debug("payload already exists: " + destFile)
 		}
 	}
 	return nil
