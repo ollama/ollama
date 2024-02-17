@@ -253,6 +253,10 @@ curl http://localhost:11434/api/chat -d '{
 
 See the [API documentation](./docs/api.md) for all endpoints.
 
+### Frequently Asked Questions for Debugging
+
+1. If you interrupt installation, for example if you run out of space, there will be partially installed models in your `/usr/share/ollama/.ollama/models/blobs` directory (or `~/.ollama/models`) that you can delete using `find . -type f -name "*-partial*" -delete` as you can see [described here](https://github.com/ollama/ollama/issues/2497)
+
 ## Community Integrations
 
 ### Web & Desktop
