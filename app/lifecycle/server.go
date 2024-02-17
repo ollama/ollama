@@ -31,11 +31,15 @@ func getCLIFullPath(command string) string {
 			return cmdPath
 		}
 	}
-	cmdPath = filepath.Join(".", command)
-	_, err = os.Stat(cmdPath)
+	pwd, err := os.Getwd()
 	if err == nil {
-		return cmdPath
+		cmdPath = filepath.Join(pwd, command)
+		_, err = os.Stat(cmdPath)
+		if err == nil {
+			return cmdPath
+		}
 	}
+
 	return command
 }
 
