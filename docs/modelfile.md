@@ -218,3 +218,15 @@ MESSAGE assistant yes
 - Instructions can be in any order. In the examples, the `FROM` instruction is first to keep it easily readable.
 
 [1]: https://ollama.com/library
+
+
+## Alpaca ```TEMPLATE``` example
+```
+TEMPLATE """{{- if and .First .System }}
+<<YOUR SYSTEM PROMPT HERE>>
+### Input:
+{{ .System }}
+{{- end }}
+### Instruction:
+{{ .Prompt }}
+### Response:"""
