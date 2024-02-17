@@ -15,10 +15,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/mitchellh/mapstructure"
-	//"gorgonia.org/tensor"
-	//"gorgonia.org/tensor/native"
-	//"github.com/d4l3k/go-bfloat16"
-	//"github.com/x448/float16"
 
 	"github.com/jmorganca/ollama/convert/sentencepiece"
 	"github.com/jmorganca/ollama/llm"

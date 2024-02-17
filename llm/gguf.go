@@ -11,7 +11,7 @@ import (
 	"github.com/d4l3k/go-bfloat16"
 	"github.com/x448/float16"
 	"gorgonia.org/tensor"
-	//"gorgonia.org/tensor/native"
+	"gorgonia.org/tensor/native"
 
 	"github.com/jmorganca/ollama/format"
 )
@@ -160,26 +160,23 @@ func (t Tensor) Repack(data []uint16, heads int) ([]uint16, error) {
 	fmt.Printf("dims = %d x %d x %d x %d\n", heads, 2, origShape[0]/heads/2, origShape[1])
 	// reshape the tensor and swap axes 1 and 2 to unpack the layer for gguf
 	n.Reshape(heads, 2, origShape[0]/heads/2, origShape[1])
-	n.T(0, 2, 1, 3)
+	if err := n.T(0, 2, 1, 3); err != nil {
+		return []uint16{}, err
+	}
 	n.Reshape(origShape...)
-
-	m := make([]uint16, len(data))
-	i := n.Iterator()
-	for {
-		idx, err := i.Next()
-		if err != nil {
-			if _, ok := err.(tensor.NoOpError); ok {
-				break
-			}
-			return []uint16{}, err
-		}
-		val := n.Get(idx)
-		m[idx] = val.(uint16)
+	if err := n.Transpose(); err != nil {
+		return []uint16{}, err
+	}
+	newN, err := native.SelectU16(n, 1)
+	if err != nil {
+		return []uint16{}, err
 	}
 
-	fmt.Printf("%v\n", m[0:5])
-
-	return m, nil
+	var fullTensor []uint16
+	for _, v := range newN {
+		fullTensor = append(fullTensor, v...)
+	}
+	return fullTensor, nil
 }
 
 type GGUFModel struct {
@@ -506,6 +503,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				return err
 			}
 
+			fmt.Printf("tData len = %d\n", len(tData))
 			var buf []byte
 			for _, n := range tData {
 				buf = binary.LittleEndian.AppendUint16(buf, n)
@@ -518,6 +516,8 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				tDataF16 := float16.Fromfloat32(v)
 				tempBuf[cnt] = uint16(tDataF16)
 			}
+			fmt.Printf("f16 data: %v\n", tempBuf[0:5])
+			fmt.Printf("f16 data: %v\n", tempBuf[4096+0:4096+5])
 
 			if err = binary.Write(f, llm.ByteOrder, tempBuf); err != nil {
 				return err
