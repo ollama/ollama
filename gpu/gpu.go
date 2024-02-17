@@ -153,6 +153,9 @@ func GetGPUInfo() GpuInfo {
 		ver, err := AMDDriverVersion()
 		if err == nil {
 			slog.Info("AMD Driver: " + ver)
+		} else {
+			// For now this is benign, but we may eventually need to fail compatibility checks
+			slog.Debug("error looking up amd driver version: %s", err)
 		}
 		gfx := AMDGFXVersions()
 		tooOld := false
