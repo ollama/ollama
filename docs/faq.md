@@ -45,6 +45,26 @@ If Ollama is run as a systemd service, environment variables should be set using
    systemctl daemon-reload
    systemctl restart ollama
    ```
+### Setting environment variables on Windows
+
+You can setup environment variables on Windows using the provided System Control Panel. These variables can be set in the User and System scopes. Usually you would like to store them in the System scopes, so it is independent from the logged on user. To do so:
+
+1. Configure the environmental variable under System Control Panel:
+  
+   - Open the `System Control Panel`
+   - Select `System`
+   - Select `Advanced System Settings`
+   - Go to the `Advanced Tab`
+   - Click on the button `Environment Variables...`
+   - Under the System Variables box, click the `New` button
+   - Insert your variable name, p.e `OLLAMA_HOST`
+   - Insert your variable value, p.e `0.0.0.0`
+   - Press `Accept` button and close the window.
+   
+2. Restart Ollama so that new changes are applied:
+  
+   - Right click on the Ollama icon at the task bar and select the `Quit Ollama` option.
+   - Press the Start button (Windows key) and click on the Ollama icon, so it restarts again.
 
 ## How can I expose Ollama on my network?
 
