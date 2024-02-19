@@ -46,6 +46,21 @@ If Ollama is run as a systemd service, environment variables should be set using
    systemctl restart ollama
    ```
 
+### Setting environment variables on Windows
+
+On windows, Ollama inherits your user and system environment variables.
+
+1. First Quit Ollama by clicking on it in the task bar
+
+2. Edit system environment variables from the control panel
+
+3. Edit or create New variable(s) for your user account for `OLLAMA_HOST`, `OLLAMA_MODELS`, etc.
+
+4. Click OK/Apply to save 
+
+5. Run `ollama` from a new terminal window 
+
+
 ## How can I expose Ollama on my network?
 
 Ollama binds 127.0.0.1 port 11434 by default. Change the bind address with the `OLLAMA_HOST` environment variable.
