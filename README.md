@@ -19,8 +19,10 @@ Get up and running with large language models locally.
 ### Linux
 
 ```
+sudo apt install curl
 curl -fsSL https://ollama.com/install.sh | sh
 ```
+(Warning: `curl` installed via `snap` does not work.)
 
 [Manual install instructions](https://github.com/jmorganca/ollama/blob/main/docs/linux.md)
 
