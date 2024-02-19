@@ -1,5 +1,5 @@
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index 11dd82c3..311495a8 100644
+index a0b46970..7800c6e7 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
 @@ -28,6 +28,7 @@
@@ -10,7 +10,7 @@ index 11dd82c3..311495a8 100644
  
  using json = nlohmann::json;
  
-@@ -2394,6 +2395,9 @@ static void append_to_generated_text_from_generated_token_probs(llama_server_con
+@@ -2511,6 +2512,9 @@ static void append_to_generated_text_from_generated_token_probs(llama_server_con
      }
  }
  
@@ -20,7 +20,7 @@ index 11dd82c3..311495a8 100644
  int main(int argc, char **argv)
  {
  #if SERVER_VERBOSE != 1
-@@ -3014,8 +3018,14 @@ int main(int argc, char **argv)
+@@ -3128,8 +3132,25 @@ int main(int argc, char **argv)
          std::placeholders::_2,
          std::placeholders::_3
      ));
@@ -29,18 +29,29 @@ index 11dd82c3..311495a8 100644
 +    shutdown_handler = [&](int) {
 +        llama.queue_tasks.terminate();
 +    };
-+    signal(SIGTERM, signal_handler);
-+    signal(SIGINT, signal_handler);
++
++#if defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
++    struct sigaction sigint_action;
++    sigint_action.sa_handler = signal_handler;
++    sigemptyset (&sigint_action.sa_mask);
++    sigint_action.sa_flags = 0;
++    sigaction(SIGINT, &sigint_action, NULL);
++#elif defined (_WIN32)
++    auto console_ctrl_handler = +[](DWORD ctrl_type) -> BOOL {
++        return (ctrl_type == CTRL_C_EVENT) ? (signal_handler(SIGINT), true) : false;
++    };
++    SetConsoleCtrlHandler(reinterpret_cast<PHANDLER_ROUTINE>(console_ctrl_handler), true);
++#endif
 +    llama.queue_tasks.start_loop();
 +    svr.stop();
      t.join();
  
      llama_backend_free();
 diff --git a/examples/server/utils.hpp b/examples/server/utils.hpp
-index 70cce072..9124869a 100644
+index 54854896..0ee670db 100644
 --- a/examples/server/utils.hpp
 +++ b/examples/server/utils.hpp
-@@ -190,6 +190,7 @@ inline std::string format_chatml(std::vector<json> messages)
+@@ -220,6 +220,7 @@ inline std::string format_chatml(std::vector<json> messages)
  struct llama_server_queue {
      int id = 0;
      std::mutex mutex_tasks;
@@ -48,7 +59,7 @@ index 70cce072..9124869a 100644
      // queues
      std::vector<task_server> queue_tasks;
      std::vector<task_server> queue_tasks_deferred;
-@@ -248,9 +249,18 @@ struct llama_server_queue {
+@@ -278,9 +279,18 @@ struct llama_server_queue {
          queue_tasks_deferred.clear();
      }
  
@@ -69,7 +80,7 @@ index 70cce072..9124869a 100644
          while (true) {
              // new task arrived
              LOG_VERBOSE("have new task", {});
-@@ -294,8 +304,12 @@ struct llama_server_queue {
+@@ -324,8 +334,12 @@ struct llama_server_queue {
              {
                  std::unique_lock<std::mutex> lock(mutex_tasks);
                  if (queue_tasks.empty()) {
