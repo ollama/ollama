@@ -148,7 +148,7 @@ curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": -
 
 To unload the model and free up memory use:
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama2", "prompt": "Why is the sky blue?", "keep_alive": 0}'
+curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": 0}'
 ```
 
 
