@@ -7,8 +7,10 @@ Install Ollama running this one-liner:
 >
 
 ```bash
+sudo apt install curl
 curl -fsSL https://ollama.com/install.sh | sh
 ```
+(Warning: installing `curl` via `snap` leads to issues.)
 
 ## Manual install
 
