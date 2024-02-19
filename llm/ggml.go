@@ -163,9 +163,9 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	case FILE_MAGIC_GGLA:
 		c = &containerLORA{}
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{bo: binary.LittleEndian}
+		c = &ContainerGGUF{ByteOrder: binary.LittleEndian}
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{bo: binary.BigEndian}
+		c = &ContainerGGUF{ByteOrder: binary.BigEndian}
 	default:
 		return nil, errors.New("invalid file magic")
 	}
