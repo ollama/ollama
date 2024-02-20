@@ -24,6 +24,7 @@ type Client struct {
 	http   http.Client
 
 	// Header defines custom HTTP headers to be sent with each request.
+	// "User-Agent", "Content-Type", and "Accept" headers are set by the client and cannot be overridden.
 	Header http.Header
 }
 
@@ -77,8 +78,6 @@ func ClientFromEnvironment() (*Client, error) {
 		Header: make(http.Header),
 	}
 
-	client.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
-
 	mockRequest, err := http.NewRequest(http.MethodHead, client.base.String(), nil)
 	if err != nil {
 		return nil, err
@@ -128,6 +127,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 		request.Header[k] = v
 	}
 
+	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 
@@ -177,6 +177,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		request.Header[k] = v
 	}
 
+	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/x-ndjson")
 
