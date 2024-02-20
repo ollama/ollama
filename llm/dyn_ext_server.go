@@ -194,6 +194,7 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		request["grammar"] = jsonGrammar
 	}
 
+	var whitespace int
 	retryDelay := 100 * time.Microsecond
 	for retries := 0; retries < maxRetries; retries++ {
 		if retries > 0 {
@@ -250,6 +251,24 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 					retryNeeded = true
 					// task will already be canceled
 					break out
+				}
+
+				// detect if p.Content is entirely whitespace
+				if predict.Format == "json" && strings.TrimSpace(p.Content) == "" {
+					whitespace++
+
+					// if we get 100 consecutive whitespace responses, cancel
+					if whitespace > 100 {
+						slog.Debug("cancelling due to excessive whitespace")
+						C.dyn_llama_server_completion_cancel(llm.s, resp.id, &resp)
+						if resp.id < 0 {
+							return extServerResponseToErr(resp)
+						}
+
+						return nil
+					}
+				} else {
+					whitespace = 0
 				}
 
 				if p.Content != "" {
