@@ -3,7 +3,7 @@ version: "3.8"
 
 services:
   ollama:
-    build: .
+    build: ../..  # NOTE: Dockerfile is in the repo root
     container_name: ollama
     image: ollama/ollama
     healthcheck:
