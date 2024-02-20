@@ -13,6 +13,8 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 
+---
+
 ## Conventions
 
 ### Model names
@@ -27,6 +29,9 @@ All durations are returned in nanoseconds.
 
 Certain endpoints stream responses as JSON objects and can optional return non-streamed responses.
 
+---
+
+<a name="generate-a-completion"></a>
 ## Generate a completion
 
 ```shell
@@ -52,15 +57,15 @@ Advanced parameters (optional):
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
-#### JSON mode
-
-Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#generate-request-json-mode) below.
-
-> Note: it's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
+> **JSON mode**
+> 
+> Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#generate-request-json-mode) below.
+> 
+> **Note**: it's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
 
 ### Examples
 
-#### Generate request (Streaming)
+#### Streaming
 
 ##### Request
 
@@ -113,7 +118,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 }
 ```
 
-#### Request (No streaming)
+#### No Streaming
 
 ##### Request
 
@@ -147,7 +152,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 }
 ```
 
-#### Request (JSON mode)
+#### JSON Mode
 
 > When `format` is set to `json`, the output will always be a well-formed JSON object. It's important to also instruct the model to respond in JSON.
 
@@ -199,11 +204,11 @@ The value of `response` will be a string containing JSON similar to:
 }
 ```
 
-#### Request (with images)
+#### Images (Multimodal)
 
 To submit images to multimodal models such as `llava` or `bakllava`, provide a list of base64-encoded `images`:
 
-#### Request
+##### Request
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
@@ -214,7 +219,7 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 ```
 {
@@ -232,7 +237,7 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-#### Request (Raw Mode)
+#### Raw Mode
 
 In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
 
@@ -247,7 +252,24 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
-#### Request (Reproducible outputs)
+##### Response
+
+```json
+{
+  "model": "mistral",
+  "created_at": "2023-11-03T15:36:02.583064Z",
+  "response": " The sky appears blue because of a phenomenon called Rayleigh scattering.",
+  "done": true,
+  "total_duration": 8493852375,
+  "load_duration": 6589624375,
+  "prompt_eval_count": 14,
+  "prompt_eval_duration": 119039000,
+  "eval_count": 110,
+  "eval_duration": 1779061000
+}
+```
+
+#### Reproducible Outputs
 
 For reproducible outputs, set `temperature` to 0 and `seed` to a number:
 
@@ -281,7 +303,7 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-#### Generate request (With options)
+#### Options
 
 If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but you can set any of them individually and omit the ones you do not want to override.
 
@@ -347,7 +369,7 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-#### Load a model
+#### Load a Model
 
 If an empty prompt is provided, the model will be loaded into memory.
 
@@ -372,6 +394,9 @@ A single JSON object is returned:
 }
 ```
 
+---
+
+<a name="generate-a-chat-completion"></a>
 ## Generate a chat completion
 
 ```shell
@@ -401,7 +426,7 @@ Advanced parameters (optional):
 
 ### Examples
 
-#### Chat Request (Streaming)
+#### Streaming
 
 ##### Request
 
@@ -452,7 +477,7 @@ Final response:
 }
 ```
 
-#### Chat request (No streaming)
+#### No Streaming
 
 ##### Request
 
@@ -489,7 +514,7 @@ curl http://localhost:11434/api/chat -d '{
 }
 ```
 
-#### Chat request (With History)
+#### With Chat History
 
 Send a chat message with a conversation history. You can use this same approach to start the conversation using multi-shot or chain-of-thought prompting.
 
@@ -547,7 +572,7 @@ Final response:
 }
 ```
 
-#### Chat request (with images)
+#### Images (Multimodal)
 
 ##### Request
 
@@ -587,7 +612,7 @@ curl http://localhost:11434/api/chat -d '{
 }
 ```
 
-#### Chat request (Reproducible outputs)
+#### Reproducible Outputs
 
 ##### Request
 
@@ -627,6 +652,9 @@ curl http://localhost:11434/api/chat -d '{
 }
 ```
 
+---
+
+<a name="create-a-model"></a>
 ## Create a Model
 
 ```shell
@@ -644,7 +672,7 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 
 ### Examples
 
-#### Create a new model
+#### Create a New Model
 
 Create a new model from a `Modelfile`.
 
@@ -675,7 +703,7 @@ A stream of JSON objects. Notice that the final JSON object shows a `"status": "
 {"status":"success"}
 ```
 
-### Check if a Blob Exists
+#### Check if a Blob Exists
 
 ```shell
 HEAD /api/blobs/:digest
@@ -683,11 +711,9 @@ HEAD /api/blobs/:digest
 
 Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not Ollama.ai.
 
-#### Query Parameters
+##### Query Parameters
 
 - `digest`: the SHA256 digest of the blob
-
-#### Examples
 
 ##### Request
 
@@ -699,7 +725,7 @@ curl -I http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931
 
 Return 200 OK if the blob exists, 404 Not Found if it does not.
 
-### Create a Blob
+#### Create a Blob
 
 ```shell
 POST /api/blobs/:digest
@@ -707,11 +733,9 @@ POST /api/blobs/:digest
 
 Create a blob from a file on the server. Returns the server file path.
 
-#### Query Parameters
+##### Query Parameters
 
 - `digest`: the expected SHA256 digest of the file
-
-#### Examples
 
 ##### Request
 
@@ -723,6 +747,9 @@ curl -T model.bin -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf08
 
 Return 201 Created if the blob was successfully created, 400 Bad Request if the digest used is not expected.
 
+---
+
+<a name="list-local-models"></a>
 ## List Local Models
 
 ```shell
@@ -733,13 +760,15 @@ List models that are available locally.
 
 ### Examples
 
-#### Request
+#### List All Local Models
+
+##### Request
 
 ```shell
 curl http://localhost:11434/api/tags
 ```
 
-#### Response
+##### Response
 
 A single JSON object will be returned.
 
@@ -776,6 +805,9 @@ A single JSON object will be returned.
 }
 ```
 
+---
+
+<a name="show-model-information"></a>
 ## Show Model Information
 
 ```shell
@@ -790,7 +822,8 @@ Show information about a model including details, modelfile, template, parameter
 
 ### Examples
 
-#### Request
+#### Show Information About a Model
+##### Request
 
 ```shell
 curl http://localhost:11434/api/show -d '{
@@ -798,7 +831,7 @@ curl http://localhost:11434/api/show -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 ```json
 {
@@ -815,6 +848,9 @@ curl http://localhost:11434/api/show -d '{
 }
 ```
 
+---
+
+<a name="copy-a-model"></a>
 ## Copy a Model
 
 ```shell
@@ -825,7 +861,8 @@ Copy a model. Creates a model with another name from an existing model.
 
 ### Examples
 
-#### Request
+#### Create a New Model with a Different Name
+##### Request
 
 ```shell
 curl http://localhost:11434/api/copy -d '{
@@ -834,10 +871,13 @@ curl http://localhost:11434/api/copy -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't exist.
 
+---
+
+<a name="delete-a-model"></a>
 ## Delete a Model
 
 ```shell
@@ -852,7 +892,8 @@ Delete a model and its data.
 
 ### Examples
 
-#### Request
+#### Delete a Model by Name
+##### Request
 
 ```shell
 curl -X DELETE http://localhost:11434/api/delete -d '{
@@ -860,10 +901,13 @@ curl -X DELETE http://localhost:11434/api/delete -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 Returns a 200 OK if successful, 404 Not Found if the model to be deleted doesn't exist.
 
+---
+
+<a name="pull-a-model"></a>
 ## Pull a Model
 
 ```shell
@@ -880,7 +924,8 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ### Examples
 
-#### Request
+#### Pull a Model by Name
+##### Request
 
 ```shell
 curl http://localhost:11434/api/pull -d '{
@@ -888,7 +933,7 @@ curl http://localhost:11434/api/pull -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 If `stream` is not specified, or set to `true`, a stream of JSON objects is returned:
 
@@ -936,6 +981,9 @@ if `stream` is set to false, then the response is a single JSON object:
 }
 ```
 
+---
+
+<a name="push-a-model"></a>
 ## Push a Model
 
 ```shell
@@ -952,7 +1000,8 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ### Examples
 
-#### Request
+#### Push a Local Model
+##### Request
 
 ```shell
 curl http://localhost:11434/api/push -d '{
@@ -960,7 +1009,7 @@ curl http://localhost:11434/api/push -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 If `stream` is not specified, or set to `true`, a stream of JSON objects is returned:
 
@@ -1001,6 +1050,9 @@ If `stream` is set to `false`, then the response is a single JSON object:
 { "status": "success" }
 ```
 
+---
+
+<a name="generate-embeddings"></a>
 ## Generate Embeddings
 
 ```shell
@@ -1021,7 +1073,8 @@ Advanced parameters:
 
 ### Examples
 
-#### Request
+#### Generate an Embedding from a Prompt
+##### Request
 
 ```shell
 curl http://localhost:11434/api/embeddings -d '{
@@ -1030,7 +1083,7 @@ curl http://localhost:11434/api/embeddings -d '{
 }'
 ```
 
-#### Response
+##### Response
 
 ```json
 {
