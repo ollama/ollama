@@ -31,7 +31,6 @@ Certain endpoints stream responses as JSON objects and can optional return non-s
 
 ---
 
-<a name="generate-a-completion"></a>
 ## Generate a completion
 
 ```shell
@@ -396,7 +395,6 @@ A single JSON object is returned:
 
 ---
 
-<a name="generate-a-chat-completion"></a>
 ## Generate a chat completion
 
 ```shell
@@ -654,7 +652,6 @@ curl http://localhost:11434/api/chat -d '{
 
 ---
 
-<a name="create-a-model"></a>
 ## Create a Model
 
 ```shell
@@ -749,7 +746,6 @@ Return 201 Created if the blob was successfully created, 400 Bad Request if the 
 
 ---
 
-<a name="list-local-models"></a>
 ## List Local Models
 
 ```shell
@@ -807,7 +803,6 @@ A single JSON object will be returned.
 
 ---
 
-<a name="show-model-information"></a>
 ## Show Model Information
 
 ```shell
@@ -850,7 +845,6 @@ curl http://localhost:11434/api/show -d '{
 
 ---
 
-<a name="copy-a-model"></a>
 ## Copy a Model
 
 ```shell
@@ -877,7 +871,6 @@ Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't e
 
 ---
 
-<a name="delete-a-model"></a>
 ## Delete a Model
 
 ```shell
@@ -907,7 +900,6 @@ Returns a 200 OK if successful, 404 Not Found if the model to be deleted doesn't
 
 ---
 
-<a name="pull-a-model"></a>
 ## Pull a Model
 
 ```shell
@@ -983,7 +975,6 @@ if `stream` is set to false, then the response is a single JSON object:
 
 ---
 
-<a name="push-a-model"></a>
 ## Push a Model
 
 ```shell
@@ -1052,7 +1043,6 @@ If `stream` is set to `false`, then the response is a single JSON object:
 
 ---
 
-<a name="generate-embeddings"></a>
 ## Generate Embeddings
 
 ```shell
