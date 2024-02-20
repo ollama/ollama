@@ -14,6 +14,28 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 Review the [Troubleshooting](./troubleshooting.md) docs for more about using logs.
 
+## How can I specify the context window size?
+
+By default, Ollama uses a context window size of 2048 tokens.
+
+To change this when using `ollama run`, use `/set parameter`:
+
+```
+/set parameter num_ctx 4096
+```
+
+When using the API, specify the `num_ctx` parameter:
+
+```
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama2",
+  "prompt": "Why is the sky blue?",
+  "options": {
+    "num_ctx": 4096
+  }
+}'
+```
+
 ## How do I configure Ollama server?
 
 Ollama server can be configured with environment variables.
