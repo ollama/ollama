@@ -106,7 +106,12 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	sparams.memory_f16 = C.bool(opts.F16KV)
 	sparams.use_mlock = C.bool(opts.UseMLock)
 	sparams.use_mmap = C.bool(opts.UseMMap)
-	sparams.numa = C.bool(opts.UseNUMA)
+
+	if opts.UseNUMA {
+		sparams.numa = C.int(1)
+	} else {
+		sparams.numa = C.int(0)
+	}
 
 	sparams.lora_adapters = nil
 	for i := 0; i < len(adapters); i++ {
