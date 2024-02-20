@@ -315,6 +315,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChainDart](https://github.com/davidmigloz/langchain_dart)
 - [Semantic Kernel - Python](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama)
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
+- [Elixir LangChain](https://github.com/brainlid/langchain)
 - [Ollama for R - rollama](https://github.com/JBGruber/rollama)
 - [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
 
