@@ -470,7 +470,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			} else {
 				usage()
 			}
-		case line == "/exit", line == "/bye":
+		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
