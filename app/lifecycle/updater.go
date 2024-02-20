@@ -34,20 +34,6 @@ type UpdateResponse struct {
 	UpdateVersion string `json:"version"`
 }
 
-func getClient(req *http.Request) http.Client {
-	proxyURL, err := http.ProxyFromEnvironment(req)
-	if err != nil {
-		slog.Warn(fmt.Sprintf("failed to handle proxy: %s", err))
-		return http.Client{}
-	}
-
-	return http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-	}
-}
-
 func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	var updateResp UpdateResponse
 
@@ -83,10 +69,9 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	}
 	req.Header.Set("Authorization", signature)
 	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
-	client := getClient(req)
 
 	slog.Debug("checking for available update", "requestURL", requestURL)
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to check for update: %s", err))
 		return false, updateResp
@@ -119,8 +104,8 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	if err != nil {
 		return err
 	}
-	client := getClient(req)
-	resp, err := client.Do(req)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("error checking update: %w", err)
 	}
@@ -151,7 +136,7 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	cleanupOldDownloads()
 
 	req.Method = http.MethodGet
-	resp, err = client.Do(req)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("error checking update: %w", err)
 	}
