@@ -23,23 +23,11 @@ docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ol
 
 ## Docker Compose
 
-Or run using Docker Compose and the starter `docker-compose.yaml` in this folder:
+There is an example `docker-compose.yaml` file in `examples/docker-compose`.
+Here's how to use it:
 
 ```bash
 git clone git@github.com:jmorganca/ollama.git
-cd ollama/
+cd ollama/examples/docker-compose
 docker compose up --wait --detach
-```
-
-Here's how to execute `ollama run llama2` commands within the container:
-
-```bash
-container_id=$(docker ps | grep ollama | awk '{print $1}')
-docker exec -it $container_id ollama run llama2
-```
-
-Or here is how to open a bash shell in the container:
-
-```bash
-docker exec -it $container_id bash
 ```
