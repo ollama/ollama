@@ -1,0 +1,116 @@
+diff --git a/examples/server/server.cpp b/examples/server/server.cpp
+index 3102762c..568ac1d0 100644
+--- a/examples/server/server.cpp
++++ b/examples/server/server.cpp
+@@ -307,6 +307,10 @@ struct llama_client_slot
+     }
+ };
+ 
++#ifdef GGML_USE_CUBLAS
++extern "C" GGML_CALL void ggml_free_cublas(void);
++#endif
++
+ struct llama_server_context
+ {
+     llama_model *model = nullptr;
+@@ -353,6 +357,10 @@ struct llama_server_context
+             llama_free_model(model);
+             model = nullptr;
+         }
++#ifdef GGML_USE_CUBLAS
++        ggml_free_cublas();
++#endif
++
+     }
+ 
+     bool load_model(const gpt_params &params_)
+@@ -3093,6 +3101,7 @@ int main(int argc, char **argv)
+     sigemptyset (&sigint_action.sa_mask);
+     sigint_action.sa_flags = 0;
+     sigaction(SIGINT, &sigint_action, NULL);
++    sigaction(SIGUSR1, &sigint_action, NULL);
+ #elif defined (_WIN32)
+     auto console_ctrl_handler = +[](DWORD ctrl_type) -> BOOL {
+         return (ctrl_type == CTRL_C_EVENT) ? (signal_handler(SIGINT), true) : false;
+@@ -3106,3 +3115,4 @@ int main(int argc, char **argv)
+     llama_backend_free();
+     return 0;
+ }
++
+diff --git a/ggml-cuda.cu b/ggml-cuda.cu
+index 96976f24..3543920e 100644
+--- a/ggml-cuda.cu
++++ b/ggml-cuda.cu
+@@ -39,6 +39,7 @@
+ #define __shfl_xor_sync(mask, var, laneMask, width) __shfl_xor(var, laneMask, width)
+ #define cublasComputeType_t hipblasDatatype_t //deprecated, new hipblasComputeType_t not in 5.6
+ #define cublasCreate hipblasCreate
++#define cublasDestroy hipblasDestroy
+ #define cublasGemmEx hipblasGemmEx
+ #define cublasGemmBatchedEx hipblasGemmBatchedEx
+ #define cublasGemmStridedBatchedEx hipblasGemmStridedBatchedEx
+@@ -7928,10 +7929,11 @@ GGML_CALL bool ggml_cublas_loaded(void) {
+     return g_cublas_loaded;
+ }
+ 
++static bool g_cublas_initialized = false;
++
+ GGML_CALL void ggml_init_cublas() {
+-    static bool initialized = false;
+ 
+-    if (!initialized) {
++    if (!g_cublas_initialized) {
+ 
+ #ifdef __HIP_PLATFORM_AMD__
+         // Workaround for a rocBLAS bug when using multiple graphics cards:
+@@ -7941,7 +7943,7 @@ GGML_CALL void ggml_init_cublas() {
+ #endif
+ 
+         if (cudaGetDeviceCount(&g_device_count) != cudaSuccess) {
+-            initialized = true;
++            g_cublas_initialized = true;
+             g_cublas_loaded = false;
+             return;
+         }
+@@ -8011,7 +8013,7 @@ GGML_CALL void ggml_init_cublas() {
+         // configure logging to stdout
+         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
+ 
+-        initialized = true;
++        g_cublas_initialized = true;
+         g_cublas_loaded = true;
+     }
+ }
+@@ -11528,3 +11530,17 @@ GGML_CALL int ggml_backend_cuda_reg_devices() {
+     }
+     return device_count;
+ }
++
++extern "C" GGML_CALL void ggml_free_cublas(void);
++GGML_CALL void ggml_free_cublas(void) {
++    for (int id = 0; id < g_device_count; ++id) {
++#if !defined(GGML_USE_HIPBLAS)
++        CU_CHECK(cuMemUnmap(g_cuda_pool_addr[id], g_cuda_pool_size[id]));
++        g_cuda_pool_size[id] = 0;
++        g_cuda_pool_addr[id] = 0;
++#endif
++        CUBLAS_CHECK(cublasDestroy(g_cublas_handles[id]));
++        g_cublas_handles[id] = nullptr;
++    }
++    g_cublas_initialized = false;
++}
+\ No newline at end of file
+diff --git a/ggml-cuda.h b/ggml-cuda.h
+index b1ebd61d..b4c80c2c 100644
+--- a/ggml-cuda.h
++++ b/ggml-cuda.h
+@@ -20,6 +20,9 @@ extern "C" {
+ // Always success. To check if CUDA is actually loaded, use `ggml_cublas_loaded`.
+ GGML_API GGML_CALL void   ggml_init_cublas(void);
+ 
++// Release CUDA resources
++GGML_API GGML_CALL void   ggml_free_cublas(void);
++
+ // Returns `true` if there are available CUDA devices and cublas loads successfully; otherwise, it returns `false`.
+ GGML_API GGML_CALL bool   ggml_cublas_loaded(void);
+ 
