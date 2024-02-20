@@ -271,7 +271,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
 - [MindMac](https://mindmac.app)
 - [NextJS Web Interface for Ollama](https://github.com/jakobhoeg/nextjs-ollama-llm-ui)
-- [Msty](https://msty.app/?ref=ollama-github)
+- [Msty](https://msty.app)
 
 ### Terminal
 
