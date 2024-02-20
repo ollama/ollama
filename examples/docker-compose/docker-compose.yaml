@@ -7,7 +7,7 @@ services:
     container_name: ollama
     image: ollama/ollama
     healthcheck:
-      test: ollama --version || exit 1
+      test: "bash -c 'cat < /dev/null > /dev/tcp/localhost/11434'"
       interval: 1s
     ports:
       - "11434:11434"
