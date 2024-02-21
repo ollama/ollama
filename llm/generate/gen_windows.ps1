@@ -154,8 +154,9 @@ apply_patches
 # -DLLAMA_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
 # -DLLAMA_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
-$script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on", "-DLLAMA_NATIVE=off")
+$script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
 
+init_vars
 $script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
 $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
 write-host "Building LCD CPU"
@@ -164,6 +165,7 @@ install
 sign
 compress_libs
 
+init_vars
 $script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
 $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
 write-host "Building AVX CPU"
@@ -172,6 +174,7 @@ install
 sign
 compress_libs
 
+init_vars
 $script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
 $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
 write-host "Building AVX2 CPU"
