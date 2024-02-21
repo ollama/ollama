@@ -60,9 +60,50 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
-status "Downloading ollama..."
-curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.com/download/ollama-linux-$ARCH"
+# Default is latest
+TAG="latest"
 
+# Check for argument
+while [ $# -gt 0 ]; do
+    key="$1"
+
+    case $key in
+        --tag)
+        TAG="$2"
+        shift # past argument
+        shift # past value
+        ;;
+        *)    # unknown option
+        shift # past argument
+        ;;
+    esac
+done
+
+# Validate the tag format
+if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+    status "Tag format ${TAG} invalid, expected v[major#].[minor#].[checkin#], e.. v0.1.26"
+
+    # exiting, it would confuse users if they downloaded the wrong version and thought
+    #	they successfully completed the install
+    exit 1 
+fi
+
+# Output tag, by default 'lastest'
+status "Downloading ollama ${TAG}..."
+
+DOWNLOAD_URL="https://ollama.com/download/ollama-linux-$ARCH"
+
+# Only use github when TAG is set
+if [ "$TAG" != "latest" ]; then
+    DOWNLOAD_URL="https://github.com/ollama/ollama/releases/download/$TAG/ollama-linux-$ARCH"
+fi
+
+# Download from the selected URL to our temp directory
+if ! curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "${DOWNLOAD_URL}"; then
+    status "Failed to download ${TAG} ollama from $DOWNLOAD_URL, exiting"
+    exit 1
+fi	
+    
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
