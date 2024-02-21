@@ -915,10 +915,86 @@ func NewServer() (*Server, error) {
 	}, nil
 }
 
+type Settings struct {
+	Origins []string `json:"OLLAMA_ORIGINS"`
+}
+
+func getSettingsPath() string {
+	var settingsPath string
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = ""
+	}
+	switch runtime.GOOS {
+	case "darwin", "windows":
+		settingsPath = filepath.Join(homeDir, ".ollama", "models", "settings.json")
+	case "linux":
+		settingsPath = "/usr/share/ollama/.ollama/models/settings.json"
+	default:
+		settingsPath = filepath.Join(homeDir, ".ollama", "models", "settings.json")
+	}
+	return settingsPath
+}
+
+func ensureSettingsFile() error {
+	settingsPath := getSettingsPath()
+
+	// Check if the file exists
+	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
+		// File does not exist, create directories and file
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+			return err
+		}
+
+		file, err := os.Create(settingsPath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		// Define default settings
+		defaultSettings := Settings{
+			Origins: []string{"localhost", "127.0.0.1", "0.0.0.0"},
+		}
+
+		// Marshal the default settings into JSON
+		settingsJSON, err := json.MarshalIndent(defaultSettings, "", "  ")
+		if err != nil {
+			return err
+		}
+
+		// Write the JSON to the file
+		if _, err := file.Write(settingsJSON); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func prependHttpIfMissing(origins []string) []string {
+	var correctedOrigins []string
+	for _, origin := range origins {
+		if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
+			// Default to http if no scheme is specified
+			correctedOrigin := "http://" + origin
+			correctedOrigins = append(correctedOrigins, correctedOrigin)
+		} else {
+			correctedOrigins = append(correctedOrigins, origin)
+		}
+	}
+	return correctedOrigins
+}
+
 func (s *Server) GenerateRoutes() http.Handler {
+	// Ensure the settings file exists before attempting to read from it
+	if err := ensureSettingsFile(); err != nil {
+		slog.Info("Failed to ensure settings file: %v", err)
+	}
+
 	var origins []string
 	// Attempt to read OLLAMA_ORIGINS from settings file
-	settingsPath := filepath.Join(os.Getenv("HOME"), ".ollama", "settings.json")
+	settingsPath := getSettingsPath()
 	if settingsFile, err := os.ReadFile(settingsPath); err == nil {
 		var settings struct {
 			Origins []string `json:"OLLAMA_ORIGINS"`
@@ -935,12 +1011,15 @@ func (s *Server) GenerateRoutes() http.Handler {
 		}
 	}
 
+	origins = prependHttpIfMissing(origins)
+
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
 
 	// Append default and specified origins
-	config.AllowOrigins = append(origins, generateDefaultOrigins(defaultAllowOrigins)...)
+	// config.AllowOrigins = append(origins, generateDefaultOrigins(defaultAllowOrigins)...)
+	config.AllowOrigins = origins
 
 	r := gin.Default()
 	r.Use(cors.New(config), func(c *gin.Context) {
