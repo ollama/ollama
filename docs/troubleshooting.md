@@ -1,18 +1,18 @@
 # How to troubleshoot issues
 
-Sometimes Ollama may not perform as expected. One of the best ways to figure out what happened is to take a look at the logs. Find the logs on Mac by running the command:
+Sometimes Ollama may not perform as expected. One of the best ways to figure out what happened is to take a look at the logs. Find the logs on **Mac** by running the command:
 
 ```shell
 cat ~/.ollama/logs/server.log
 ```
 
-On Linux systems with systemd, the logs can be found with this command:
+On **Linux** systems with systemd, the logs can be found with this command:
 
 ```shell
 journalctl -u ollama
 ```
 
-When you run Ollama in a container, the logs go to stdout/stderr in the container:
+When you run Ollama in a **container**, the logs go to stdout/stderr in the container:
 
 ```shell
 docker logs <container-name>
@@ -20,6 +20,18 @@ docker logs <container-name>
 (Use `docker ps` to find the container name)
 
 If manually running `ollama serve` in a terminal, the logs will be on that terminal.
+
+When you run Ollama on **Windows**, there are a few different locations.  You can view them in the explorer window by hitting `<cmd>+R` and type in:
+- `explorer %LOCALAPPDATA%\Ollama` to view logs
+- `explorer %LOCALAPPDATA%\Programs\Ollama` to browse the binaries (The installer adds this to your user PATH)
+- `explorer %HOMEPATH%\.ollama` to browse where models and configuration is stored
+- `explorer %TEMP%` where temporary executable files are stored in one or more `ollama*` directories
+
+To enable additional debug logging to help troubleshoot problems, first **Quit the running app from the tray menu** then in a powershell terminal
+```powershell
+$env:OLLAMA_DEBUG="1"
+& "ollama app.exe"
+```
 
 Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.
 

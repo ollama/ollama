@@ -14,13 +14,14 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/containerd/console"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
@@ -685,7 +686,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, err := net.SplitHostPort(os.Getenv("OLLAMA_HOST"))
+	host, port, err := net.SplitHostPort(strings.Trim(os.Getenv("OLLAMA_HOST"), "\"'"))
 	if err != nil {
 		host, port = "127.0.0.1", "11434"
 		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
@@ -754,22 +755,8 @@ func initializeKeypair() error {
 	return nil
 }
 
-func startMacApp(ctx context.Context, client *api.Client) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	link, err := os.Readlink(exe)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(link, "Ollama.app") {
-		return fmt.Errorf("could not find ollama app")
-	}
-	path := strings.Split(link, "Ollama.app")
-	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
-		return err
-	}
+//nolint:unused
+func waitForServer(ctx context.Context, client *api.Client) error {
 	// wait for the server to start
 	timeout := time.After(5 * time.Second)
 	tick := time.Tick(500 * time.Millisecond)
@@ -783,6 +770,7 @@ func startMacApp(ctx context.Context, client *api.Client) error {
 			}
 		}
 	}
+
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
@@ -791,15 +779,11 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if err := client.Heartbeat(cmd.Context()); err != nil {
-		if !strings.Contains(err.Error(), "connection refused") {
+		if !strings.Contains(err.Error(), " refused") {
 			return err
 		}
-		if runtime.GOOS == "darwin" {
-			if err := startMacApp(cmd.Context(), client); err != nil {
-				return fmt.Errorf("could not connect to ollama app, is it running?")
-			}
-		} else {
-			return fmt.Errorf("could not connect to ollama server, run 'ollama serve' to start it")
+		if err := startApp(cmd.Context(), client); err != nil {
+			return fmt.Errorf("could not connect to ollama app, is it running?")
 		}
 	}
 	return nil
@@ -828,6 +812,11 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
+
+	if runtime.GOOS == "windows" {
+		// Enable colorful ANSI escape code in Windows terminal (disabled by default)
+		console.ConsoleFromFile(os.Stdout) //nolint:errcheck
+	}
 
 	rootCmd := &cobra.Command{
 		Use:           "ollama",

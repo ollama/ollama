@@ -415,8 +415,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	switch t := v.(type) {
 	case float64:
 		if t < 0 {
-			t = math.MaxFloat64
-			d.Duration = time.Duration(t)
+			d.Duration = time.Duration(math.MaxInt64)
 		} else {
 			d.Duration = time.Duration(t * float64(time.Second))
 		}
@@ -426,8 +425,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 			return err
 		}
 		if d.Duration < 0 {
-			mf := math.MaxFloat64
-			d.Duration = time.Duration(mf)
+			d.Duration = time.Duration(math.MaxInt64)
 		}
 	}
 
