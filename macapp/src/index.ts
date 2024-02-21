@@ -129,23 +129,23 @@ function updateTray() {
       label: 'Settings',
       // See: https://github.com/ollama/ollama/blob/main/docs/faq.md#where-are-models-stored
       click: () => {
-        let settingsPath;
+        let settingsPath
         switch (os.platform()) {
           case 'darwin': // macOS
-            settingsPath = path.join(os.homedir(), '.ollama', 'models', 'settings.json');
-            break;
+            settingsPath = path.join(os.homedir(), '.ollama', 'settings.json')
+            break
           case 'win32': // Windows
-            settingsPath = path.join(os.homedir(), '.ollama', 'models', 'settings.json');
-            break;
+            settingsPath = path.join(os.homedir(), '.ollama', 'settings.json')
+            break
           case 'linux': // Linux
-            settingsPath = path.join('/usr', 'share', 'ollama', '.ollama', 'models', 'settings.json');
-            break;
+            settingsPath = path.join('/usr', 'share', 'ollama', '.ollama', 'settings.json')
+            break
           default:
             // Default to home directory if OS is not recognized
-            settingsPath = path.join(os.homedir(), '.ollama', 'models', 'settings.json');
-            break;
+            settingsPath = path.join(os.homedir(), '.ollama', 'settings.json')
+            break
         }
-        shell.openPath(settingsPath);
+        shell.openPath(settingsPath)
       },
       accelerator: 'Command+,',
     },

@@ -922,11 +922,11 @@ func getSettingsPath() string {
 	}
 	switch runtime.GOOS {
 	case "darwin", "windows":
-		settingsPath = filepath.Join(homeDir, ".ollama", "models", "settings.json")
+		settingsPath = filepath.Join(homeDir, ".ollama", "settings.json")
 	case "linux":
-		settingsPath = "/usr/share/ollama/.ollama/models/settings.json"
+		settingsPath = "/usr/share/ollama/.ollama/settings.json"
 	default:
-		settingsPath = filepath.Join(homeDir, ".ollama", "models", "settings.json")
+		settingsPath = filepath.Join(homeDir, ".ollama", "settings.json")
 	}
 	return settingsPath
 }
@@ -1019,7 +1019,6 @@ func (s *Server) GenerateRoutes() http.Handler {
 		c.Next()
 	})
 
-	// Define API endpoints
 	defineAPIEndpoints(r)
 
 	return r
