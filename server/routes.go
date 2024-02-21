@@ -898,12 +898,6 @@ func CreateBlobHandler(c *gin.Context) {
 	c.Status(http.StatusCreated)
 }
 
-var defaultAllowOrigins = []string{
-	"localhost",
-	"127.0.0.1",
-	"0.0.0.0",
-}
-
 func NewServer() (*Server, error) {
 	workDir, err := os.MkdirTemp("", "ollama")
 	if err != nil {
@@ -1016,9 +1010,6 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
-
-	// Append default and specified origins
-	// config.AllowOrigins = append(origins, generateDefaultOrigins(defaultAllowOrigins)...)
 	config.AllowOrigins = origins
 
 	r := gin.Default()
@@ -1031,19 +1022,6 @@ func (s *Server) GenerateRoutes() http.Handler {
 	defineAPIEndpoints(r)
 
 	return r
-}
-
-func generateDefaultOrigins(origins []string) []string {
-	var formattedOrigins []string
-	for _, origin := range origins {
-		formattedOrigins = append(formattedOrigins,
-			fmt.Sprintf("http://%s", origin),
-			fmt.Sprintf("https://%s", origin),
-			fmt.Sprintf("http://%s:*", origin),
-			fmt.Sprintf("https://%s:*", origin),
-		)
-	}
-	return formattedOrigins
 }
 
 func defineAPIEndpoints(r *gin.Engine) {
