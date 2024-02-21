@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -177,16 +176,14 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 	requestURL := <-b.nextURL
 
 	// calculate md5 checksum and add it to the commit request
-	var sb strings.Builder
+	md5sum := md5.New()
 	for _, part := range b.Parts {
-		sb.Write(part.Sum(nil))
+		md5sum.Write(part.Sum(nil))
 	}
-
-	md5sum := md5.Sum([]byte(sb.String()))
 
 	values := requestURL.Query()
 	values.Add("digest", b.Digest)
-	values.Add("etag", fmt.Sprintf("%x-%d", md5sum, len(b.Parts)))
+	values.Add("etag", fmt.Sprintf("%x-%d", md5sum.Sum(nil), len(b.Parts)))
 	requestURL.RawQuery = values.Encode()
 
 	headers := make(http.Header)
