@@ -917,33 +917,57 @@ func NewServer() (*Server, error) {
 
 func (s *Server) GenerateRoutes() http.Handler {
 	var origins []string
-	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
-		origins = strings.Split(o, ",")
+	// Attempt to read OLLAMA_ORIGINS from settings file
+	settingsPath := filepath.Join(os.Getenv("HOME"), ".ollama", "settings.json")
+	if settingsFile, err := os.ReadFile(settingsPath); err == nil {
+		var settings struct {
+			Origins []string `json:"OLLAMA_ORIGINS"`
+		}
+		if err := json.Unmarshal(settingsFile, &settings); err == nil {
+			origins = settings.Origins
+		}
+	}
+
+	// Fallback to environment variable if settings file doesn't specify origins
+	if len(origins) == 0 {
+		if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
+			origins = strings.Split(o, ",")
+		}
 	}
 
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
 
-	config.AllowOrigins = origins
-	for _, allowOrigin := range defaultAllowOrigins {
-		config.AllowOrigins = append(config.AllowOrigins,
-			fmt.Sprintf("http://%s", allowOrigin),
-			fmt.Sprintf("https://%s", allowOrigin),
-			fmt.Sprintf("http://%s:*", allowOrigin),
-			fmt.Sprintf("https://%s:*", allowOrigin),
-		)
-	}
+	// Append default and specified origins
+	config.AllowOrigins = append(origins, generateDefaultOrigins(defaultAllowOrigins)...)
 
 	r := gin.Default()
-	r.Use(
-		cors.New(config),
-		func(c *gin.Context) {
-			c.Set("workDir", s.WorkDir)
-			c.Next()
-		},
-	)
+	r.Use(cors.New(config), func(c *gin.Context) {
+		c.Set("workDir", s.WorkDir)
+		c.Next()
+	})
 
+	// Define API endpoints
+	defineAPIEndpoints(r)
+
+	return r
+}
+
+func generateDefaultOrigins(origins []string) []string {
+	var formattedOrigins []string
+	for _, origin := range origins {
+		formattedOrigins = append(formattedOrigins,
+			fmt.Sprintf("http://%s", origin),
+			fmt.Sprintf("https://%s", origin),
+			fmt.Sprintf("http://%s:*", origin),
+			fmt.Sprintf("https://%s:*", origin),
+		)
+	}
+	return formattedOrigins
+}
+
+func defineAPIEndpoints(r *gin.Engine) {
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/chat", ChatHandler)
@@ -963,14 +987,11 @@ func (s *Server) GenerateRoutes() http.Handler {
 		r.Handle(method, "/", func(c *gin.Context) {
 			c.String(http.StatusOK, "Ollama is running")
 		})
-
 		r.Handle(method, "/api/tags", ListModelsHandler)
 		r.Handle(method, "/api/version", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"version": version.Version})
 		})
 	}
-
-	return r
 }
 
 func Serve(ln net.Listener) error {

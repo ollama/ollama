@@ -129,6 +129,7 @@ function updateTray() {
       click: () => {
         // TODO: check if the settings file exists, if not, create it
         // TODO: move this to a new browser window with a settings page
+        // ~/.ollama/settings.json
         const settingsFilePath = path.join(app.getPath('home'), '.ollama', 'settings.json')
         shell.openPath(settingsFilePath)
       },
