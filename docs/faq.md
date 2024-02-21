@@ -113,9 +113,9 @@ If a different directory needs to be used, set the environment variable `OLLAMA_
 
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
-## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
+## Does Ollama send my prompts and answers back to ollama.com?
 
-No, Ollama runs entirely locally, and conversation data will never leave your machine.
+No. Ollama runs locally, and conversation data does not leave your machine.
 
 ## How can I use Ollama in Visual Studio Code?
 
