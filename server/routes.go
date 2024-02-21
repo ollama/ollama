@@ -191,6 +191,11 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	if model.IsEmbedding() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model does not support generate"})
+		return
+	}
+
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
 		if errors.Is(err, api.ErrInvalidOpts) {
@@ -1140,6 +1145,11 @@ func ChatHandler(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if model.IsEmbedding() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model does not support chat"})
 		return
 	}
 

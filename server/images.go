@@ -52,6 +52,10 @@ type Model struct {
 	Messages       []Message
 }
 
+func (m *Model) IsEmbedding() bool {
+	return slices.Contains(m.Config.ModelFamilies, "bert") || slices.Contains(m.Config.ModelFamilies, "nomic-bert")
+}
+
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
