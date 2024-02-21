@@ -913,6 +913,7 @@ type Settings struct {
 	Origins []string `json:"OLLAMA_ORIGINS"`
 }
 
+// See: https://github.com/ollama/ollama/blob/main/docs/faq.md#where-are-models-stored
 func getSettingsPath() string {
 	var settingsPath string
 	homeDir, err := os.UserHomeDir()

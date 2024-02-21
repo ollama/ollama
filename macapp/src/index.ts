@@ -14,6 +14,7 @@ import Store from 'electron-store'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
 import * as path from 'path'
+import * as os from 'os'
 
 import { v4 as uuidv4 } from 'uuid'
 import { installed } from './install'
@@ -126,12 +127,25 @@ function updateTray() {
     ...(updateAvailable ? updateItems : []),
     {
       label: 'Settings',
+      // See: https://github.com/ollama/ollama/blob/main/docs/faq.md#where-are-models-stored
       click: () => {
-        // TODO: check if the settings file exists, if not, create it
-        // TODO: move this to a new browser window with a settings page
-        // ~/.ollama/settings.json
-        const settingsFilePath = path.join(app.getPath('home'), '.ollama', 'settings.json')
-        shell.openPath(settingsFilePath)
+        let settingsPath;
+        switch (os.platform()) {
+          case 'darwin': // macOS
+            settingsPath = path.join(os.homedir(), '.ollama', 'models', 'settings.json');
+            break;
+          case 'win32': // Windows
+            settingsPath = path.join(os.homedir(), '.ollama', 'models', 'settings.json');
+            break;
+          case 'linux': // Linux
+            settingsPath = path.join('/usr', 'share', 'ollama', '.ollama', 'models', 'settings.json');
+            break;
+          default:
+            // Default to home directory if OS is not recognized
+            settingsPath = path.join(os.homedir(), '.ollama', 'models', 'settings.json');
+            break;
+        }
+        shell.openPath(settingsPath);
       },
       accelerator: 'Command+,',
     },
