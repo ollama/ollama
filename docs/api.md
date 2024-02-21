@@ -13,8 +13,6 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 
----
-
 ## Conventions
 
 ### Model names
@@ -28,8 +26,6 @@ All durations are returned in nanoseconds.
 ### Streaming responses
 
 Certain endpoints stream responses as JSON objects and can optional return non-streamed responses.
-
----
 
 ## Generate a completion
 
@@ -393,8 +389,6 @@ A single JSON object is returned:
 }
 ```
 
----
-
 ## Generate a chat completion
 
 ```shell
@@ -650,8 +644,6 @@ curl http://localhost:11434/api/chat -d '{
 }
 ```
 
----
-
 ## Create a Model
 
 ```shell
@@ -744,8 +736,6 @@ curl -T model.bin -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf08
 
 Return 201 Created if the blob was successfully created, 400 Bad Request if the digest used is not expected.
 
----
-
 ## List Local Models
 
 ```shell
@@ -801,8 +791,6 @@ A single JSON object will be returned.
 }
 ```
 
----
-
 ## Show Model Information
 
 ```shell
@@ -843,8 +831,6 @@ curl http://localhost:11434/api/show -d '{
 }
 ```
 
----
-
 ## Copy a Model
 
 ```shell
@@ -868,8 +854,6 @@ curl http://localhost:11434/api/copy -d '{
 ##### Response
 
 Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't exist.
-
----
 
 ## Delete a Model
 
@@ -897,8 +881,6 @@ curl -X DELETE http://localhost:11434/api/delete -d '{
 ##### Response
 
 Returns a 200 OK if successful, 404 Not Found if the model to be deleted doesn't exist.
-
----
 
 ## Pull a Model
 
@@ -973,8 +955,6 @@ if `stream` is set to false, then the response is a single JSON object:
 }
 ```
 
----
-
 ## Push a Model
 
 ```shell
@@ -1040,8 +1020,6 @@ If `stream` is set to `false`, then the response is a single JSON object:
 ```json
 { "status": "success" }
 ```
-
----
 
 ## Generate Embeddings
 
