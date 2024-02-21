@@ -3,9 +3,11 @@
 ## Install
 
 Install Ollama running this one-liner:
+
 >
+
 ```bash
-curl https://ollama.ai/install.sh | sh
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
 ## Manual install
@@ -15,7 +17,7 @@ curl https://ollama.ai/install.sh | sh
 Ollama is distributed as a self-contained binary. Download it to a directory in your PATH:
 
 ```bash
-sudo curl -L https://ollama.ai/download/ollama-linux-amd64 -o /usr/bin/ollama
+sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
 sudo chmod +x /usr/bin/ollama
 ```
 
@@ -75,13 +77,13 @@ sudo systemctl start ollama
 Update ollama by running the install script again:
 
 ```bash
-curl https://ollama.ai/install.sh | sh
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
 Or by downloading the ollama binary:
 
 ```bash
-sudo curl -L https://ollama.ai/download/ollama-linux-amd64 -o /usr/bin/ollama
+sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
 sudo chmod +x /usr/bin/ollama
 ```
 
@@ -109,8 +111,10 @@ Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr
 sudo rm $(which ollama)
 ```
 
-Remove the downloaded models and Ollama service user:
+Remove the downloaded models and Ollama service user and group:
+
 ```bash
 sudo rm -r /usr/share/ollama
 sudo userdel ollama
+sudo groupdel ollama
 ```

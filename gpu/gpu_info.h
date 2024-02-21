@@ -9,22 +9,30 @@
 #include <dlfcn.h>
 #define LOAD_LIBRARY(lib, flags) dlopen(lib, flags)
 #define LOAD_SYMBOL(handle, sym) dlsym(handle, sym)
-#define LOAD_ERR() dlerror()
+#define LOAD_ERR() strdup(dlerror())
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
 #else
 #include <windows.h>
 #define LOAD_LIBRARY(lib, flags) LoadLibrary(lib)
 #define LOAD_SYMBOL(handle, sym) GetProcAddress(handle, sym)
 #define UNLOAD_LIBRARY(handle) FreeLibrary(handle)
-
-// TODO - refactor this with proper error message handling on windows
-inline static char *LOAD_ERR() {
-  static char errbuf[8];
-  snprintf(errbuf, 8, "0x%lx", GetLastError());
-  return errbuf;
-}
+#define LOAD_ERR() ({\
+  LPSTR messageBuffer = NULL; \
+  size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, \
+                                 NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL); \
+  char *resp = strdup(messageBuffer); \
+  LocalFree(messageBuffer); \
+  resp; \
+})
 
 #endif
+
+#define LOG(verbose, ...) \
+  do { \
+    if (verbose) { \
+      fprintf(stderr, __VA_ARGS__); \
+    } \
+  } while (0)
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,6 +41,8 @@ extern "C" {
 typedef struct mem_info {
   uint64_t total;
   uint64_t free;
+  unsigned int count;
+  int igpu_index; // If >= 0, we detected an integrated GPU to ignore
   char *err;  // If non-nill, caller responsible for freeing
 } mem_info_t;
 

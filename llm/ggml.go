@@ -31,6 +31,11 @@ const (
 	fileTypeQ5_K_S
 	fileTypeQ5_K_M
 	fileTypeQ6_K
+	fileTypeIQ2_XXS
+	fileTypeIQ2_XS
+	fileTypeQ2_K_S
+	fileTypeQ3_K_XS
+	fileTypeIQ3_XXS
 )
 
 func fileType(fileType uint32) string {
@@ -69,6 +74,16 @@ func fileType(fileType uint32) string {
 		return "Q5_K_M"
 	case fileTypeQ6_K:
 		return "Q6_K"
+	case fileTypeIQ2_XXS:
+		return "IQ2_XXS"
+	case fileTypeIQ2_XS:
+		return "IQ2_XS"
+	case fileTypeQ2_K_S:
+		return "Q2_K_S"
+	case fileTypeQ3_K_XS:
+		return "Q3_K_XS"
+	case fileTypeIQ3_XXS:
+		return "IQ3_XXS"
 	default:
 		return "unknown"
 	}
@@ -78,7 +93,12 @@ type model interface {
 	ModelFamily() string
 	ModelType() string
 	FileType() string
-	NumLayers() int64
+	NumLayers() uint32
+	NumGQA() uint32
+	NumEmbed() uint32
+	NumHead() uint32
+	NumHeadKv() uint32
+	NumCtx() uint32
 }
 
 type container interface {
@@ -94,9 +114,9 @@ func (c *containerLORA) Name() string {
 	return "ggla"
 }
 
-func (c *containerLORA) Decode(ro *readSeekOffset) (model, error) {
+func (c *containerLORA) Decode(rso *readSeekOffset) (model, error) {
 	var version uint32
-	binary.Read(ro, binary.LittleEndian, &version)
+	binary.Read(rso, binary.LittleEndian, &version)
 
 	switch version {
 	case 1:
@@ -107,7 +127,7 @@ func (c *containerLORA) Decode(ro *readSeekOffset) (model, error) {
 	c.version = version
 
 	// remaining file contents aren't decoded
-	ro.Seek(0, io.SeekEnd)
+	rso.Seek(0, io.SeekEnd)
 
 	return nil, nil
 }

@@ -16,8 +16,24 @@ type Prompt struct {
 	UseAlt         bool
 }
 
+func (p *Prompt) prompt() string {
+	if p.UseAlt {
+		return p.AltPrompt
+	}
+	return p.Prompt
+}
+
+func (p *Prompt) placeholder() string {
+	if p.UseAlt {
+		return p.AltPlaceholder
+	}
+	return p.Placeholder
+}
+
 type Terminal struct {
 	outchan chan rune
+	rawmode bool
+	termios any
 }
 
 type Instance struct {
@@ -46,18 +62,29 @@ func New(prompt Prompt) (*Instance, error) {
 }
 
 func (i *Instance) Readline() (string, error) {
-	prompt := i.Prompt.Prompt
-	if i.Prompt.UseAlt || i.Pasting {
+	if !i.Terminal.rawmode {
+		fd := int(syscall.Stdin)
+		termios, err := SetRawMode(fd)
+		if err != nil {
+			return "", err
+		}
+		i.Terminal.rawmode = true
+		i.Terminal.termios = termios
+	}
+
+	prompt := i.Prompt.prompt()
+	if i.Pasting {
+		// force alt prompt when pasting
 		prompt = i.Prompt.AltPrompt
 	}
 	fmt.Print(prompt)
 
-	fd := int(syscall.Stdin)
-	termios, err := SetRawMode(fd)
-	if err != nil {
-		return "", err
-	}
-	defer UnsetRawMode(fd, termios)
+	defer func() {
+		fd := int(syscall.Stdin)
+		// nolint: errcheck
+		UnsetRawMode(fd, i.Terminal.termios)
+		i.Terminal.rawmode = false
+	}()
 
 	buf, _ := NewBuffer(i.Prompt)
 
@@ -71,10 +98,7 @@ func (i *Instance) Readline() (string, error) {
 		// don't show placeholder when pasting unless we're in multiline mode
 		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
 		if buf.IsEmpty() && showPlaceholder {
-			ph := i.Prompt.Placeholder
-			if i.Prompt.UseAlt {
-				ph = i.Prompt.AltPlaceholder
-			}
+			ph := i.Prompt.placeholder()
 			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
 		}
 
@@ -192,7 +216,8 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
-			return handleCharCtrlZ(fd, termios)
+			fd := int(syscall.Stdin)
+			return handleCharCtrlZ(fd, i.Terminal.termios)
 		case CharEnter:
 			output := buf.String()
 			if output != "" {
@@ -223,8 +248,16 @@ func (i *Instance) HistoryDisable() {
 }
 
 func NewTerminal() (*Terminal, error) {
+	fd := int(syscall.Stdin)
+	termios, err := SetRawMode(fd)
+	if err != nil {
+		return nil, err
+	}
+
 	t := &Terminal{
 		outchan: make(chan rune),
+		rawmode: true,
+		termios: termios,
 	}
 
 	go t.ioloop()
