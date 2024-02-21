@@ -81,7 +81,7 @@ done
 
 # Validate the tag format
 if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-    status "Tag format ${TAG} invalid, expected v[major#].[minor#].[checkin#], e.. v0.1.26"
+    status "Tag format ${TAG} invalid, expected v[major#].[minor#].[checkin#], e.g. 'v0.1.26'"
 
     # exiting, it would confuse users if they downloaded the wrong version and thought
     #	they successfully completed the install
