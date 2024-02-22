@@ -17,7 +17,7 @@ The service configuration is managed through the `docker-compose.yml` file and e
 
 1. **Run:** To start the Ollama service run:
 ```bash
-   docker-compose up
+   docker-compose up -d 
 ```
 
 2. **Build and Run:** To build the project and start the Ollama service, run:
