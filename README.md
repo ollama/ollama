@@ -62,6 +62,8 @@ Here are some example models that can be downloaded:
 | Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | Vicuna             | 7B         | 3.8GB | `ollama run vicuna`            |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
+| Gemma              | 2B         | 1.4GB | `ollama run gemma:2b`          |
+| Gemma              | 7B         | 4.8GB | `ollama run gemma:7b`          |
 
 > Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
