@@ -120,7 +120,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 	opts.RopeFrequencyBase = 0.0
 	opts.RopeFrequencyScale = 0.0
-	return newLlmServer(info, model, adapters, projectors, opts)
+	return newLlmServer(info, workDir, model, adapters, projectors, opts)
 }
 
 // Give any native cgo implementations an opportunity to initialize
@@ -128,7 +128,7 @@ func Init(workdir string) error {
 	return nativeInit(workdir)
 }
 
-func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+func newLlmServer(gpuInfo gpu.GpuInfo, workDir, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	dynLibs := getDynLibs(gpuInfo)
 
 	// Check to see if the user has requested a specific library instead of auto-detecting
@@ -140,6 +140,16 @@ func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []stri
 		} else {
 			slog.Info(fmt.Sprintf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib))
 			dynLibs = []string{libPath}
+		}
+	}
+
+	// We stage into a temp directory, and if we've been idle for a while, it may have been reaped
+	_, err := os.Stat(dynLibs[0])
+	if err != nil {
+		slog.Info(fmt.Sprintf("%s has disappeared, reloading libraries", dynLibs[0]))
+		err = nativeInit(workDir)
+		if err != nil {
+			return nil, err
 		}
 	}
 

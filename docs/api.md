@@ -49,7 +49,8 @@ Advanced parameters (optional):
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
-- `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API.
+- `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 #### JSON mode
 
@@ -246,6 +247,23 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
+#### Request (Reproducible outputs)
+
+For reproducible outputs, set `temperature` to 0 and `seed` to a number:
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "mistral",
+  "prompt": "[INST] why is the sky blue? [/INST]",
+  "options": {
+    "seed": 101,
+    "temperature": 0
+  }
+}'
+```
+
 ##### Response
 
 ```json
@@ -379,6 +397,7 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Examples
 
@@ -565,6 +584,46 @@ curl http://localhost:11434/api/chat -d '{
   "prompt_eval_duration": 359682000,
   "eval_count": 83,
   "eval_duration": 1303285000
+}
+```
+
+#### Chat request (Reproducible outputs)
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "options": {
+    "seed": 101,
+    "temperature": 0
+  }
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "registry.ollama.ai/library/llama2:latest",
+  "created_at": "2023-12-12T14:13:43.416799Z",
+  "message": {
+    "role": "assistant",
+    "content": "Hello! How are you today?"
+  },
+  "done": true,
+  "total_duration": 5191566416,
+  "load_duration": 2154458,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 383809000,
+  "eval_count": 298,
+  "eval_duration": 4799921000
 }
 ```
 
@@ -958,6 +1017,7 @@ Generate embeddings from a model
 Advanced parameters:
 
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Examples
 

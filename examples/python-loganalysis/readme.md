@@ -40,13 +40,13 @@ You are a log file analyzer. You will receive a set of lines from a log file for
 """
 ```
 
-This model is available at https://ollama.ai/mattw/loganalyzer. You can customize it and add to your own namespace using the command `ollama create <namespace/modelname> -f <path-to-modelfile>` then `ollama push <namespace/modelname>`.
+This model is available at https://ollama.com/mattw/loganalyzer. You can customize it and add to your own namespace using the command `ollama create <namespace/modelname> -f <path-to-modelfile>` then `ollama push <namespace/modelname>`.
 
 Then loganalysis.py scans all the lines in the given log file and searches for the word 'error'. When the word is found, the 10 lines before and after are set as the prompt for a call to the Generate API.
 
 ```python
 data = {
-  "prompt": "\n".join(error_logs), 
+  "prompt": "\n".join(error_logs),
   "model": "mattw/loganalyzer"
 }
 ```

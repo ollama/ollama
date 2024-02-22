@@ -3,8 +3,9 @@
 $ErrorActionPreference = "Stop"
 
 function init_vars {
+    $script:SRC_DIR = $(resolve-path "..\..\")
     $script:llamacppDir = "../llama.cpp"
-    $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off",  "-A","x64")
+    $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off",  "-A", "x64")
     $script:cmakeTargets = @("ext_server")
     $script:ARCH = "amd64" # arm not yet supported.
     if ($env:CGO_CFLAGS -contains "-g") {
@@ -19,6 +20,7 @@ function init_vars {
         $d=(get-command -ea 'silentlycontinue' nvcc).path
         if ($d -ne $null) {
             $script:CUDA_LIB_DIR=($d| split-path -parent)
+            $script:CUDA_INCLUDE_DIR=($script:CUDA_LIB_DIR|split-path -parent)+"\include"
         }
     } else {
         $script:CUDA_LIB_DIR=$env:CUDA_LIB_DIR
@@ -29,6 +31,11 @@ function init_vars {
         $script:CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
     } else {
         $script:CMAKE_CUDA_ARCHITECTURES=$env:CMAKE_CUDA_ARCHITECTURES
+    }
+    # Note: 10 Windows Kit signtool crashes with GCP's plugin
+    ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
+    if ("${env:KEY_CONTAINER}") {
+        ${script:OLLAMA_CERT}=$(resolve-path "${script:SRC_DIR}\ollama_inc.crt")
     }
 }
 
@@ -56,8 +63,8 @@ function apply_patches {
         }
 
         # Checkout each file
+        Set-Location -Path ${script:llamacppDir}
         foreach ($file in $filePaths) {
-            Set-Location -Path ${script:llamacppDir}
             git checkout $file
         }
     }
@@ -89,10 +96,20 @@ function install {
     md "${script:buildDir}/lib" -ea 0 > $null
     cp "${script:buildDir}/bin/${script:config}/ext_server.dll" "${script:buildDir}/lib"
     cp "${script:buildDir}/bin/${script:config}/llama.dll" "${script:buildDir}/lib"
-
     # Display the dll dependencies in the build log
     if ($script:DUMPBIN -ne $null) {
         & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+    }
+}
+
+function sign {
+    if ("${env:KEY_CONTAINER}") {
+        write-host "Signing ${script:buildDir}/lib/*.dll"
+        foreach ($file in (get-childitem "${script:buildDir}/lib/*.dll")){
+            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
+                /csp "Google Cloud KMS Provider" /kc "${env:KEY_CONTAINER}" $file
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
     }
 }
 
@@ -109,8 +126,23 @@ function compress_libs {
 }
 
 function cleanup {
+    $patches = Get-ChildItem "../patches/*.diff"
+    foreach ($patch in $patches) {
+        # Extract file paths from the patch file
+        $filePaths = Get-Content $patch.FullName | Where-Object { $_ -match '^\+\+\+ ' } | ForEach-Object {
+            $parts = $_ -split ' '
+            ($parts[1] -split '/', 2)[1]
+        }
+
+        # Checkout each file
+        Set-Location -Path ${script:llamacppDir}
+        foreach ($file in $filePaths) {            
+            git checkout $file
+        }
+    }
     Set-Location "${script:llamacppDir}/examples/server"
     git checkout CMakeLists.txt server.cpp
+
 }
 
 init_vars
@@ -122,46 +154,48 @@ apply_patches
 # -DLLAMA_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
 # -DLLAMA_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
-$script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on", "-DLLAMA_NATIVE=off")
+$script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
 
+init_vars
 $script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
 $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
 write-host "Building LCD CPU"
 build
 install
+sign
 compress_libs
 
+init_vars
 $script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
 $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
 write-host "Building AVX CPU"
 build
 install
+sign
 compress_libs
 
+init_vars
 $script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
 $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
 write-host "Building AVX2 CPU"
 build
 install
+sign
 compress_libs
 
 if ($null -ne $script:CUDA_LIB_DIR) {
     # Then build cuda as a dynamically loaded library
-    $nvcc = (get-command -ea 'silentlycontinue' nvcc)
-    if ($null -ne $nvcc) {
-        $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
-    }
+    $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
+    $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
     if ($null -ne $script:CUDA_VERSION) {
         $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
     }
     init_vars
     $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
-    $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+    $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
     build
     install
-    cp "${script:CUDA_LIB_DIR}/cudart64_*.dll" "${script:buildDir}/lib"
-    cp "${script:CUDA_LIB_DIR}/cublas64_*.dll" "${script:buildDir}/lib"
-    cp "${script:CUDA_LIB_DIR}/cublasLt64_*.dll" "${script:buildDir}/lib"
+    sign
     compress_libs
 }
 # TODO - actually implement ROCm support on windows
