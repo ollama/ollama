@@ -50,6 +50,7 @@ Here are some example models that can be downloaded:
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
 | Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
+| Gemma              | 2B         | 1.4GB | `ollama run gemma`             |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
 | Dolphin Phi        | 2.7B       | 1.6GB | `ollama run dolphin-phi`       |
 | Phi-2              | 2.7B       | 1.7GB | `ollama run phi`               |
