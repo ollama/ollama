@@ -11,7 +11,7 @@ Ensure Docker and Docker Compose are installed and up-to-date on your system.
 
 ## Configuration
 
-The service configuration is managed through the `docker-compose.yml` file and environment variables. You can customize the Ollama service port by setting the `OLLAMA_PORT` environment variable; if not set, it defaults to 11434.
+The service configuration is managed through the `docker-compose.yaml` file and environment variables. You can customize the Ollama service port by setting the `OLLAMA_PORT` environment variable; if not set, it defaults to 11434.
 
 ## Getting Started
 
