@@ -77,6 +77,7 @@ void rocm_init(char *rocm_lib_path, rocm_init_resp_t *resp) {
 
 void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
   resp->err = NULL;
+  resp->igpu_index = -1;
   uint64_t totalMem = 0;
   uint64_t usedMem = 0;
   rsmi_status_t ret;
@@ -162,8 +163,14 @@ void rocm_check_vram(rocm_handle_t h, mem_info_t *resp) {
     }
     LOG(h.verbose, "[%d] ROCm totalMem %ld\n", i, totalMem);
     LOG(h.verbose, "[%d] ROCm usedMem %ld\n", i, usedMem);
-    resp->total += totalMem;
-    resp->free += totalMem - usedMem;
+    if (totalMem < 1024 * 1024 * 1024) {
+      // Do not add up integrated GPU memory capacity, it's a bogus 512M, and actually uses system memory
+      LOG(h.verbose, "[%d] ROCm integrated GPU\n", i);
+      resp->igpu_index = i;
+    } else {
+      resp->total += totalMem;
+      resp->free += totalMem - usedMem;
+    }
   }
 }
 
@@ -171,7 +178,7 @@ void rocm_get_version(rocm_handle_t h, rocm_version_resp_t *resp) {
   const int buflen = 256;
   char buf[buflen + 1];
   if (h.handle == NULL) {
-    resp->str = strdup("nvml handle not initialized");
+    resp->str = strdup("rocm handle not initialized");
     resp->status = 1;
     return;
   }

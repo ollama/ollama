@@ -4,7 +4,7 @@ package llm
 #cgo CFLAGS: -I${SRCDIR}/ext_server -I${SRCDIR}/llama.cpp -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp/examples/server
 #cgo CFLAGS: -DNDEBUG -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo CFLAGS: -Wmissing-noreturn -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
-#cgo CPPFLAGS: -Ofast -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
+#cgo CPPFLAGS: -Ofast -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations
 #cgo darwin CFLAGS: -D_DARWIN_C_SOURCE
 #cgo darwin CPPFLAGS:  -DGGML_USE_ACCELERATE
 #cgo darwin CPPFLAGS: -DGGML_USE_METAL -DGGML_METAL_NDEBUG
@@ -106,7 +106,12 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	sparams.memory_f16 = C.bool(opts.F16KV)
 	sparams.use_mlock = C.bool(opts.UseMLock)
 	sparams.use_mmap = C.bool(opts.UseMMap)
-	sparams.numa = C.bool(opts.UseNUMA)
+
+	if opts.UseNUMA {
+		sparams.numa = C.int(1)
+	} else {
+		sparams.numa = C.int(0)
+	}
 
 	sparams.lora_adapters = nil
 	for i := 0; i < len(adapters); i++ {
@@ -161,13 +166,10 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn func(PredictResult)) error {
 	resp := newExtServerResp(128)
 	defer freeExtServerResp(resp)
-	var imageData []ImageData
+
 	if len(predict.Images) > 0 {
-		for cnt, i := range predict.Images {
-			imageData = append(imageData, ImageData{Data: i, ID: cnt})
-		}
+		slog.Info(fmt.Sprintf("loaded %d images", len(predict.Images)))
 	}
-	slog.Info(fmt.Sprintf("loaded %d images", len(imageData)))
 
 	request := map[string]any{
 		"prompt":            predict.Prompt,
@@ -189,7 +191,7 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"penalize_nl":       predict.Options.PenalizeNewline,
 		"seed":              predict.Options.Seed,
 		"stop":              predict.Options.Stop,
-		"image_data":        imageData,
+		"image_data":        predict.Images,
 		"cache_prompt":      true,
 	}
 
@@ -261,7 +263,7 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 					})
 				}
 
-				if p.Stop {
+				if p.Stop || bool(result.stop) {
 					fn(PredictResult{
 						Done:               true,
 						PromptEvalCount:    p.Timings.PromptN,

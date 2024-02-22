@@ -115,6 +115,14 @@ func (t tensor) typeSize() uint64 {
 		return 2 + 2 + 12 + blockSize/8 + blockSize/2
 	case 14: // Q6_K
 		return blockSize/2 + blockSize/4 + blockSize/16 + 2
+	case 15: // Q8_K
+		return 2 + blockSize + 2*blockSize/16
+	case 16: // IQ2_XXS
+		return 2 + 2*blockSize/8
+	case 17: // IQ2_XS
+		return 2 + 2*blockSize/8 + blockSize/32
+	case 18: // IQ3_XXS
+		return 2 + 3*blockSize/8
 	default:
 		return 0
 	}
