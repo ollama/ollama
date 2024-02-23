@@ -34,7 +34,7 @@ jobs:
       matrix:
         cuda-version:
           - '11.8.0'
-    runs-on: ubuntu-latest
+    runs-on: linux
     container: nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
     steps:
       - run: |
@@ -64,7 +64,7 @@ jobs:
         rocm-version:
           - '5.7.1'
           - '6.0'
-    runs-on: ubuntu-latest
+    runs-on: linux
     container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
     steps:
       - run: |
