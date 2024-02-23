@@ -1,21 +1,21 @@
 package gpu
 
 import (
-	"log"
+	"log/slog"
 
 	"golang.org/x/sys/cpu"
 )
 
 func GetCPUVariant() string {
 	if cpu.X86.HasAVX2 {
-		log.Printf("CPU has AVX2")
+		slog.Info("CPU has AVX2")
 		return "avx2"
 	}
 	if cpu.X86.HasAVX {
-		log.Printf("CPU has AVX")
+		slog.Info("CPU has AVX")
 		return "avx"
 	}
-	log.Printf("CPU does not have vector extensions")
+	slog.Info("CPU does not have vector extensions")
 	// else LCD
 	return ""
 }

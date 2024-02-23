@@ -3,7 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"runtime"
 
@@ -36,7 +36,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	}
 
 	if opts.NumCtx > int(ggml.NumCtx()) {
-		log.Printf("WARNING: requested context length is greater than model's max context length (%d > %d), using %d instead", opts.NumCtx, ggml.NumCtx(), ggml.NumCtx())
+		slog.Warn(fmt.Sprintf("requested context length is greater than model's max context length (%d > %d), using %d instead", opts.NumCtx, ggml.NumCtx(), ggml.NumCtx()))
 		opts.NumCtx = int(ggml.NumCtx())
 	}
 
@@ -63,17 +63,18 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		}
 
 		if size+kv+graph > vram {
-			log.Println("not enough vram available, falling back to CPU only")
+			slog.Info("not enough vram available, falling back to CPU only")
 			info.Library = "cpu"
 			info.Variant = gpu.GetCPUVariant()
 			opts.NumGPU = 0
 			break
 		}
 
-		opts.NumGPU = 1
+		// TODO: implement layer splitting on macOS
+		opts.NumGPU = 999
 	default:
 		if info.Library == "cpu" {
-			log.Println("GPU not available, falling back to CPU")
+			slog.Info("GPU not available, falling back to CPU")
 			opts.NumGPU = 0
 			break
 		}
@@ -107,7 +108,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		// 1 + 2 must fit on the main gpu
 		min := graph + kv*layers/maxlayers
 		if layers <= 0 || min > avg {
-			log.Printf("not enough vram available, falling back to CPU only")
+			slog.Info("not enough vram available, falling back to CPU only")
 			info.Library = "cpu"
 			info.Variant = gpu.GetCPUVariant()
 			opts.NumGPU = 0
@@ -119,7 +120,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 
 	opts.RopeFrequencyBase = 0.0
 	opts.RopeFrequencyScale = 0.0
-	return newLlmServer(info, model, adapters, projectors, opts)
+	return newLlmServer(info, workDir, model, adapters, projectors, opts)
 }
 
 // Give any native cgo implementations an opportunity to initialize
@@ -127,7 +128,7 @@ func Init(workdir string) error {
 	return nativeInit(workdir)
 }
 
-func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+func newLlmServer(gpuInfo gpu.GpuInfo, workDir, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	dynLibs := getDynLibs(gpuInfo)
 
 	// Check to see if the user has requested a specific library instead of auto-detecting
@@ -135,10 +136,20 @@ func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []stri
 	if demandLib != "" {
 		libPath := availableDynLibs[demandLib]
 		if libPath == "" {
-			log.Printf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib)
+			slog.Info(fmt.Sprintf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib))
 		} else {
-			log.Printf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib)
+			slog.Info(fmt.Sprintf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib))
 			dynLibs = []string{libPath}
+		}
+	}
+
+	// We stage into a temp directory, and if we've been idle for a while, it may have been reaped
+	_, err := os.Stat(dynLibs[0])
+	if err != nil {
+		slog.Info(fmt.Sprintf("%s has disappeared, reloading libraries", dynLibs[0]))
+		err = nativeInit(workDir)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -148,7 +159,7 @@ func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []stri
 		if err == nil {
 			return srv, nil
 		}
-		log.Printf("Failed to load dynamic library %s  %s", dynLib, err)
+		slog.Warn(fmt.Sprintf("Failed to load dynamic library %s  %s", dynLib, err))
 		err2 = err
 	}
 
