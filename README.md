@@ -272,7 +272,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [MindMac](https://mindmac.app)
 - [NextJS Web Interface for Ollama](https://github.com/jakobhoeg/nextjs-ollama-llm-ui)
 - [Msty](https://msty.app)
-- [Java UI](https://github.com/leonid20000/OdinRunes)
+- [Odin Runes](https://github.com/leonid20000/OdinRunes)
 
 ### Terminal
 
