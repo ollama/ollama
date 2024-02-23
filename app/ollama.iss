@@ -116,7 +116,8 @@ Filename: "{cmd}"; Parameters: "/c timeout 5"; Flags: runhidden
 Type: filesandordirs; Name: "{%TEMP}\ollama*"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Ollama"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
-Type: filesandordirs; Name: "{%USERPROFILE}\.ollama"
+Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\models"
+Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
 ; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
 [Messages]
