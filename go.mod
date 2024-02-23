@@ -3,6 +3,7 @@ module github.com/jmorganca/ollama
 go 1.21
 
 require (
+	github.com/containerd/console v1.0.3
 	github.com/emirpasic/gods v1.18.1
 	github.com/gin-gonic/gin v1.9.1
 	github.com/olekukonko/tablewriter v0.0.5
@@ -12,7 +13,6 @@ require (
 )
 
 require (
-	github.com/containerd/console v1.0.3 // indirect
 	github.com/cratonica/2goarray v0.0.0-20190331194516-514510793eaa // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
@@ -30,7 +30,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 )
-
 
 require (
 	github.com/bytedance/sonic v1.9.1 // indirect

@@ -461,6 +461,26 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func ClearHistoryHandler(cmd *cobra.Command, args []string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	path := filepath.Join(home, ".ollama", "history")
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Println("chat history is already empty")
+			return nil
+		}
+		return err
+	}
+
+	fmt.Println("cleared chat history")
+
+	return nil
+}
+
 type generateContextKey string
 
 type runOptions struct {
@@ -927,6 +947,15 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	clearHistoryCmd := &cobra.Command{
+		Use:     "clear",
+		Aliases: []string{"clr"},
+		Short:   "Clear chat history",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ClearHistoryHandler,
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
@@ -937,6 +966,7 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		copyCmd,
 		deleteCmd,
+		clearHistoryCmd,
 	)
 
 	return rootCmd
