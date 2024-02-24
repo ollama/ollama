@@ -718,39 +718,36 @@ func initializeKeypair() error {
 	_, err = os.Stat(privKeyPath)
 	if os.IsNotExist(err) {
 		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
-		_, privKey, err := ed25519.GenerateKey(rand.Reader)
+		cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return err
 		}
 
-		privKeyBytes, err := format.OpenSSHPrivateKey(privKey, "")
+		privateKeyBytes, err := ssh.MarshalPrivateKey(cryptoPrivateKey, "")
 		if err != nil {
 			return err
 		}
 
-		err = os.MkdirAll(filepath.Dir(privKeyPath), 0o755)
-		if err != nil {
+		if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
 			return fmt.Errorf("could not create directory %w", err)
 		}
 
-		err = os.WriteFile(privKeyPath, pem.EncodeToMemory(privKeyBytes), 0o600)
+		if err := os.WriteFile(privKeyPath, pem.EncodeToMemory(privateKeyBytes), 0o600); err != nil {
+			return err
+		}
+
+		sshPublicKey, err := ssh.NewPublicKey(cryptoPublicKey)
 		if err != nil {
 			return err
 		}
 
-		sshPrivateKey, err := ssh.NewSignerFromKey(privKey)
-		if err != nil {
+		publicKeyBytes := ssh.MarshalAuthorizedKey(sshPublicKey)
+
+		if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o644); err != nil {
 			return err
 		}
 
-		pubKeyData := ssh.MarshalAuthorizedKey(sshPrivateKey.PublicKey())
-
-		err = os.WriteFile(pubKeyPath, pubKeyData, 0o644)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("Your new public key is: \n\n%s\n", string(pubKeyData))
+		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
 	}
 	return nil
 }
