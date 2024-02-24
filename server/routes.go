@@ -811,6 +811,87 @@ func ListModelsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
+func GetOpenAIModels() ([]openai.Model, error) {
+	models := make([]openai.Model, 0)
+	manifestsPath, err := GetManifestPath()
+	if err != nil {
+		return nil, err
+	}
+
+	modelResponse := func(modelName string, info os.FileInfo) (openai.Model, error) {
+		model, err := GetModel(modelName)
+		if err != nil {
+			return openai.Model{}, err
+		}
+
+		return openai.Model{
+			Object:  "model",
+			Id:      model.ShortName,
+			Created: info.ModTime().Unix(),
+			OwnedBy: "ollama",
+		}, nil
+	}
+
+	walkFunc := func(path string, info os.FileInfo, _ error) error {
+		if !info.IsDir() {
+			path, tag := filepath.Split(path)
+			model := strings.Trim(strings.TrimPrefix(path, manifestsPath), string(os.PathSeparator))
+			modelPath := strings.Join([]string{model, tag}, ":")
+			canonicalModelPath := strings.ReplaceAll(modelPath, string(os.PathSeparator), "/")
+
+			resp, err := modelResponse(canonicalModelPath, info)
+			if err != nil {
+				slog.Info(fmt.Sprintf("skipping file: %s", canonicalModelPath))
+				// nolint: nilerr
+				return nil
+			}
+
+			models = append(models, resp)
+		}
+
+		return nil
+	}
+
+	if err := filepath.Walk(manifestsPath, walkFunc); err != nil {
+		return nil, err
+	}
+
+	return models, nil
+}
+
+// OpenAIListModelsHandler https://platform.openai.com/docs/api-reference/models/list
+func OpenAIListModelsHandler(c *gin.Context) {
+	models, err := GetOpenAIModels()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, openai.ModelResponse{Object: "list", Data: models})
+}
+
+// OpenAIGetModelHandler https://platform.openai.com/docs/api-reference/models/retrieve
+func OpenAIGetModelHandler(c *gin.Context) {
+	modelId := strings.TrimPrefix(c.Param("id"), "/")
+	slog.Info(fmt.Sprintf("model: %s", modelId))
+
+	models, err := GetOpenAIModels()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	for _, model := range models {
+		if model.Id == modelId {
+			c.JSON(http.StatusOK, model)
+			return
+		}
+	}
+
+	c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "model not found: " + modelId})
+
+}
+
 func CopyModelHandler(c *gin.Context) {
 	var req api.CopyRequest
 	err := c.ShouldBindJSON(&req)
@@ -937,7 +1018,9 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
 
 	// Compatibility endpoints
-	r.POST("/v1/chat/completions", openai.Middleware(), ChatHandler)
+	r.POST("/v1/chat/completions", openai.CompletionMiddleware(), ChatHandler)
+	r.GET("/v1/models", OpenAIListModelsHandler)
+	r.GET("/v1/models/*id", OpenAIGetModelHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
