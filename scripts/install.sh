@@ -72,7 +72,7 @@ $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
 
 install_success() { 
-    status 'The Ollama API is now available at 0.0.0.0:11434.'
+    status 'The Ollama API is now available at 127.0.0.1:11434.'
     status 'Install complete. Run "ollama" from the command line.'
 }
 trap install_success EXIT
