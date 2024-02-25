@@ -49,9 +49,6 @@ SetupLogging=yes
 CloseApplications=yes
 RestartApplications=no
 
-; Make sure they can at least download llama2 as a minimum
-ExtraDiskSpaceRequired=3826806784
-
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
 WizardSmallImageFile=.\assets\setup.bmp
 
