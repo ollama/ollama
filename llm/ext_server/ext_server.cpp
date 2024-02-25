@@ -80,7 +80,7 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     params.main_gpu = sparams->main_gpu;
     params.use_mlock = sparams->use_mlock;
     params.use_mmap = sparams->use_mmap;
-    params.numa = sparams->numa;
+    params.numa = (ggml_numa_strategy)sparams->numa;
     params.embedding = sparams->embedding;
     if (sparams->model != NULL) {
       params.model = sparams->model;
@@ -111,7 +111,8 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     }
 #endif
 
-    llama_backend_init(params.numa);
+    llama_backend_init();
+    llama_numa_init(params.numa);
 
     // load the model
     if (!llama->load_model(params)) {
@@ -208,7 +209,6 @@ void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
 void llama_server_completion_next_result(const int task_id,
                                          ext_server_task_result_t *resp) {
   assert(llama != NULL && resp != NULL);
-  std::string msg;
   resp->id = -1;
   resp->stop = false;
   resp->error = false;

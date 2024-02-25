@@ -42,12 +42,12 @@ text_splitter=RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
 all_splits = text_splitter.split_documents(data)
 ```
 
-It's split up, but we have to find the relevant splits and then submit those to the model. We can do this by creating embeddings and storing them in a vector database. We can use Ollama directly to instantiate an embedding model. We will use ChromaDB in this example for a vector database. `pip install GPT4All chromadb`
+It's split up, but we have to find the relevant splits and then submit those to the model. We can do this by creating embeddings and storing them in a vector database. We can use Ollama directly to instantiate an embedding model. We will use ChromaDB in this example for a vector database. `pip install chromadb`
 
 ```python
 from langchain.embeddings import OllamaEmbeddings
 from langchain.vectorstores import Chroma
-oembed = OllamaEmbeddings(base_url="http://localhost:11434", model="llama2")
+oembed = OllamaEmbeddings(base_url="http://localhost:11434", model="nomic-embed-text")
 vectorstore = Chroma.from_documents(documents=all_splits, embedding=oembed)
 ```
 
@@ -66,7 +66,7 @@ The next thing is to send the question and the relevant parts of the docs to the
 ```python
 from langchain.chains import RetrievalQA
 qachain=RetrievalQA.from_chain_type(ollama, retriever=vectorstore.as_retriever())
-qachain({"query": question})
+qachain.invoke({"query": question})
 ```
 
 The answer received from this chain was:

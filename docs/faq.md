@@ -2,11 +2,39 @@
 
 ## How can I upgrade Ollama?
 
-To upgrade Ollama, run the installation process again. On the Mac, click the Ollama icon in the menubar and choose the restart option if an update is available.
+Ollama on macOS and Windows will automatically download updates. Click on the taskbar or menubar item and then click "Restart to update" to apply the update. Updates can also be installed by downloading the latest version [manually](https://ollama.com/download/).
+
+On Linux, re-run the install script:
+
+```
+curl -fsSL https://ollama.com/install.sh | sh
+```
 
 ## How can I view the logs?
 
 Review the [Troubleshooting](./troubleshooting.md) docs for more about using logs.
+
+## How can I specify the context window size?
+
+By default, Ollama uses a context window size of 2048 tokens.
+
+To change this when using `ollama run`, use `/set parameter`:
+
+```
+/set parameter num_ctx 4096
+```
+
+When using the API, specify the `num_ctx` parameter:
+
+```
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama2",
+  "prompt": "Why is the sky blue?",
+  "options": {
+    "num_ctx": 4096
+  }
+}'
+```
 
 ## How do I configure Ollama server?
 
@@ -46,6 +74,21 @@ If Ollama is run as a systemd service, environment variables should be set using
    systemctl restart ollama
    ```
 
+### Setting environment variables on Windows
+
+On windows, Ollama inherits your user and system environment variables.
+
+1. First Quit Ollama by clicking on it in the task bar
+
+2. Edit system environment variables from the control panel
+
+3. Edit or create New variable(s) for your user account for `OLLAMA_HOST`, `OLLAMA_MODELS`, etc.
+
+4. Click OK/Apply to save 
+
+5. Run `ollama` from a new terminal window 
+
+
 ## How can I expose Ollama on my network?
 
 Ollama binds 127.0.0.1 port 11434 by default. Change the bind address with the `OLLAMA_HOST` environment variable.
@@ -70,9 +113,9 @@ If a different directory needs to be used, set the environment variable `OLLAMA_
 
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
-## Does Ollama send my prompts and answers back to Ollama.ai to use in any way?
+## Does Ollama send my prompts and answers back to ollama.com?
 
-No, Ollama runs entirely locally, and conversation data will never leave your machine.
+No. Ollama runs locally, and conversation data does not leave your machine.
 
 ## How can I use Ollama in Visual Studio Code?
 
@@ -116,3 +159,37 @@ This can impact both installing Ollama, as well as downloading models.
 Open `Control Panel > Networking and Internet > View network status and tasks` and click on `Change adapter settings` on the left panel. Find the `vEthernel (WSL)` adapter, right click and select `Properties`.
 Click on `Configure` and open the `Advanced` tab. Search through each of the properties until you find `Large Send Offload Version 2 (IPv4)` and `Large Send Offload Version 2 (IPv6)`. *Disable* both of these
 properties.
+
+## How can I pre-load a model to get faster response times?
+
+If you are using the API you can preload a model by sending the Ollama server an empty request. This works with both the `/api/generate` and `/api/chat` API endpoints.
+
+To preload the mistral model using the generate endpoint, use:
+```shell
+curl http://localhost:11434/api/generate -d '{"model": "mistral"}'
+```
+
+To use the chat completions endpoint, use:
+```shell
+curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
+```
+
+## How do I keep a model loaded in memory or make it unload immediately?
+
+By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you are making numerous requests to the LLM. You may, however, want to free up the memory before the 5 minutes have elapsed or keep the model loaded indefinitely. Use the `keep_alive` parameter with either the `/api/generate` and `/api/chat` API endpoints to control how long the model is left in memory.
+
+The `keep_alive` parameter can be set to:
+* a duration string (such as "10m" or "24h")
+* a number in seconds (such as 3600)
+* any negative number which will keep the model loaded in memory (e.g. -1 or "-1m")
+* '0' which will unload the model immediately after generating a response
+
+For example, to preload a model and leave it in memory use:
+```shell
+curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": -1}'
+```
+
+To unload the model and free up memory use:
+```shell
+curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": 0}'
+```

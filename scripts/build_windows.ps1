@@ -53,13 +53,14 @@ function buildOllama() {
     write-host "Building ollama CLI"
     & go generate ./...
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    & go build "-ldflags=-w -s ""-X=github.com/jmorganca/ollama/version.Version=$script:VERSION"" ""-X=github.com/jmorganca/ollama/server.mode=release""" .
+    & go build -ldflags "-s -w -X=github.com/jmorganca/ollama/version.Version=$script:VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
+    New-Item -ItemType Directory -Path .\dist -Force
     cp .\ollama.exe .\dist\ollama-windows-amd64.exe
 }
 
@@ -67,7 +68,7 @@ function buildApp() {
     write-host "Building Ollama App"
     cd "${script:SRC_DIR}\app"
     & windres -l 0 -o ollama.syso ollama.rc
-    & go build "-ldflags=-H windowsgui -w -s ""-X=github.com/jmorganca/ollama/version.Version=$script:VERSION"" ""-X=github.com/jmorganca/ollama/server.mode=release""" .
+    & go build -ldflags "-s -w -H windowsgui -X=github.com/jmorganca/ollama/version.Version=$script:VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `

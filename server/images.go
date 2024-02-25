@@ -52,6 +52,10 @@ type Model struct {
 	Messages       []Message
 }
 
+func (m *Model) IsEmbedding() bool {
+	return slices.Contains(m.Config.ModelFamilies, "bert") || slices.Contains(m.Config.ModelFamilies, "nomic-bert")
+}
+
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -1103,18 +1107,7 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	proxyURL, err := http.ProxyFromEnvironment(req)
-	if err != nil {
-		return nil, err
-	}
-
-	client := http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-	}
-
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
