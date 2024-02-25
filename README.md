@@ -4,6 +4,7 @@
 
 # Ollama
 
+[![test](https://github.com/ollama/ollama/actions/workflows/test.yaml/badge.svg)](https://github.com/ollama/ollama/actions/workflows/test.yaml)
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
 Get up and running with large language models locally.
