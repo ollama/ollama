@@ -925,6 +925,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
 
+	config.AddAllowHeaders("X-Requested-With")
 	config.AllowOrigins = origins
 	for _, allowOrigin := range defaultAllowOrigins {
 		config.AllowOrigins = append(config.AllowOrigins,
