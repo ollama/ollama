@@ -4,6 +4,8 @@
 uint64_t getRecommendedMaxVRAM()
 {
 	id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-	return device.recommendedMaxWorkingSetSize;
+	uint64_t result = device.recommendedMaxWorkingSetSize;
+	CFRelease(device);
+	return result;
 }
 
