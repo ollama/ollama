@@ -189,15 +189,12 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"mirostat":          predict.Options.Mirostat,
 		"mirostat_tau":      predict.Options.MirostatTau,
 		"mirostat_eta":      predict.Options.MirostatEta,
+		"grammar":           predict.Grammar,
 		"penalize_nl":       predict.Options.PenalizeNewline,
 		"seed":              predict.Options.Seed,
 		"stop":              predict.Options.Stop,
 		"image_data":        predict.Images,
 		"cache_prompt":      true,
-	}
-
-	if predict.Format == "json" {
-		request["grammar"] = jsonGrammar
 	}
 
 	retryDelay := 100 * time.Microsecond

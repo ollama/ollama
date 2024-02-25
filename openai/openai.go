@@ -48,22 +48,18 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
-type ResponseFormat struct {
-	Type string `json:"type"`
-}
-
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Stream           bool            `json:"stream"`
-	MaxTokens        *int            `json:"max_tokens"`
-	Seed             *int            `json:"seed"`
-	Stop             any             `json:"stop"`
-	Temperature      *float64        `json:"temperature"`
-	FrequencyPenalty *float64        `json:"frequency_penalty"`
-	PresencePenalty  *float64        `json:"presence_penalty_penalty"`
-	TopP             *float64        `json:"top_p"`
-	ResponseFormat   *ResponseFormat `json:"response_format"`
+	Model            string    `json:"model"`
+	Messages         []Message `json:"messages"`
+	Stream           bool      `json:"stream"`
+	MaxTokens        *int      `json:"max_tokens"`
+	Seed             *int      `json:"seed"`
+	Stop             any       `json:"stop"`
+	Temperature      *float64  `json:"temperature"`
+	FrequencyPenalty *float64  `json:"frequency_penalty"`
+	PresencePenalty  *float64  `json:"presence_penalty_penalty"`
+	TopP             *float64  `json:"top_p"`
+	Grammar          string    `json:"grammar"`
 }
 
 type ChatCompletion struct {
@@ -201,15 +197,10 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 		options["top_p"] = 1.0
 	}
 
-	var format string
-	if r.ResponseFormat != nil && r.ResponseFormat.Type == "json_object" {
-		format = "json"
-	}
-
 	return api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
-		Format:   format,
+		Grammar:  r.Grammar,
 		Options:  options,
 		Stream:   &r.Stream,
 	}
