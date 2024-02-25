@@ -8,6 +8,8 @@ package gpu
 */
 import "C"
 import (
+	"fmt"
+	"log/slog"
 	"runtime"
 )
 
@@ -18,6 +20,7 @@ func CheckVRAM() (int64, error) {
 		return 0, nil
 	}
 	recommendedMaxVRAM := int64(C.getRecommendedMaxVRAM())
+	slog.Info(fmt.Sprintf("Recommended max VRAM: %d MB", recommendedMaxVRAM/1024/1024))
 	return recommendedMaxVRAM, nil
 }
 
