@@ -917,6 +917,7 @@ func NewServer() (*Server, error) {
 
 func (s *Server) GenerateRoutes() http.Handler {
 	var origins []string
+	
 	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
 		origins = strings.Split(o, ",")
 	}
@@ -924,7 +925,12 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
-
+	
+	if o := os.Getenv("OLLAMA_ALLOW_HEADERS"); o != "" {
+		var headers []string
+		headers = strings.Split(o, ",")
+		config.AddAllowHeaders(headers)
+	}
 	config.AllowOrigins = origins
 	for _, allowOrigin := range defaultAllowOrigins {
 		config.AllowOrigins = append(config.AllowOrigins,
