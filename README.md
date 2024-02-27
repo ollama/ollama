@@ -276,6 +276,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [NextJS Web Interface for Ollama](https://github.com/jakobhoeg/nextjs-ollama-llm-ui)
 - [Msty](https://msty.app)
 - [Chatbox](https://github.com/Bin-Huang/Chatbox)
+- [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) with [Get Started Doc](https://docs.nextchat.dev/models/ollama)
 
 ### Terminal
 
