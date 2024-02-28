@@ -180,7 +180,7 @@ type Vocab struct {
 }
 
 func LoadTokens(dirpath string) (*Vocab, error) {
-	in, err := ioutil.ReadFile(dirpath + "/tokenizer.model")
+	in, err := ioutil.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func GetTensorName(n string) (string, error) {
 	return "", fmt.Errorf("couldn't find a layer name for '%s'", n)
 }
 
-func WriteGGUF(tensors []llm.Tensor, params *Params, vocab *Vocab) error {
+func WriteGGUF(tensors []llm.Tensor, params *Params, vocab *Vocab) (string, error) {
 	c := llm.ContainerGGUF{
 		ByteOrder: binary.LittleEndian,
 	}
@@ -276,16 +276,16 @@ func WriteGGUF(tensors []llm.Tensor, params *Params, vocab *Vocab) error {
 
 	fmt.Printf("c - %#v\n", c)
 
-	f, err := os.Create("output.bin")
+	f, err := os.CreateTemp("", "ollama-gguf")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 
 	err = m.Encode(f)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	return f.Name(), nil
 }

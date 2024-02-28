@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -23,6 +24,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/convert"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
@@ -316,7 +318,20 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 				c.Args = blobPath
 			}
 
-			bin, err := os.Open(realpath(modelFileDir, c.Args))
+			pathName := realpath(modelFileDir, c.Args)
+
+			ggufName, err := checkZip(pathName)
+			if err != nil {
+				// TODO check if it's not a zip
+				return err
+			}
+			// TODO rm ggufName
+
+			if ggufName != "" {
+				pathName = ggufName
+			}
+
+			bin, err := os.Open(pathName)
 			if err != nil {
 				// not a file on disk so must be a model reference
 				modelpath := ParseModelPath(c.Args)
@@ -590,6 +605,62 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 	fn(api.ProgressResponse{Status: "success"})
 	return nil
+}
+
+func checkZip(fn string) (string, error) {
+	r, err := zip.OpenReader(fn)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+
+	tempDir, err := os.MkdirTemp("", "ollama-model")
+	if err != nil {
+		return "", err
+	}
+
+	for _, f := range r.File {
+		fpath := filepath.Join(tempDir, f.Name)
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return "", err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return "", err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		if err != nil {
+			return "", err
+		}
+
+		outFile.Close()
+		rc.Close()
+	}
+
+	t, err := convert.GetSafeTensors(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	params, err := convert.GetParams(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	vocab, err := convert.LoadTokens(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	fn, err = convert.WriteGGUF(t, params, vocab)
+	if err != nil {
+		return "", err
+	}
+
+	return fn, nil
 }
 
 func CopyModel(src, dest string) error {
