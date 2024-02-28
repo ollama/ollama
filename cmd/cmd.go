@@ -95,12 +95,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
+			// TODO make this work w/ adapters
 			if fi.IsDir() {
-				fmt.Printf("It's a dir!\n")
 				tf, err := os.CreateTemp("", "ollama-tf")
 				if err != nil {
 					return err
 				}
+				defer os.RemoveAll(tf.Name())
 				zf := zip.NewWriter(tf)
 
 				files, err := filepath.Glob(filepath.Join(path, "model-*.safetensors"))
@@ -147,20 +148,15 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				if err := tf.Close(); err != nil {
 					return err
 				}
-				digest, err := createBlob(cmd, client, tf.Name())
-				if err != nil {
-					return err
-				}
-
-				fmt.Printf("fn = %s\ndigest = %s\n", tf.Name(), digest)
-				modelfile = bytes.ReplaceAll(modelfile, []byte(c.Args), []byte("@"+digest))
-			} else {
-				digest, err := createBlob(cmd, client, path)
-				if err != nil {
-					return err
-				}
-				modelfile = bytes.ReplaceAll(modelfile, []byte(c.Args), []byte("@"+digest))
+				path = tf.Name()
 			}
+
+			digest, err := createBlob(cmd, client, path)
+			if err != nil {
+				return err
+			}
+
+			modelfile = bytes.ReplaceAll(modelfile, []byte(c.Args), []byte("@"+digest))
 		}
 	}
 
