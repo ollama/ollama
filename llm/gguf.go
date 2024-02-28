@@ -156,8 +156,6 @@ func (t Tensor) Repack(data []uint16, heads int) ([]uint16, error) {
 	n := tensor.New(tensor.WithShape(int(t.Shape[0]), int(t.Shape[1])), tensor.WithBacking(data))
 	origShape := n.Shape()
 
-	fmt.Printf("rows = %d cols = %d heads = %d\n", t.Shape[0], t.Shape[1], heads)
-	fmt.Printf("dims = %d x %d x %d x %d\n", heads, 2, origShape[0]/heads/2, origShape[1])
 	// reshape the tensor and swap axes 1 and 2 to unpack the layer for gguf
 	n.Reshape(heads, 2, origShape[0]/heads/2, origShape[1])
 	if err := n.T(0, 2, 1, 3); err != nil {
@@ -236,6 +234,7 @@ func (llm *GGUFModel) FileType() string {
 }
 
 func (llm *GGUFModel) Encode(f *os.File) error {
+	// this mimics the order of the llama.cpp convert script
 	kOrder := []string{
 		"general.architecture",
 		"general.name",
@@ -405,9 +404,6 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 		}
 	}
 
-	off, _ := f.Seek(0, io.SeekCurrent)
-	fmt.Printf("Starting layer metadata at %x\n", off)
-
 	// write layer metadata
 	for _, t := range llm.Tensors {
 		if err := llm.writeString(f, t.Name); err != nil {
@@ -447,18 +443,10 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 	var currentFile string
 	var err error
 	for _, t := range llm.Tensors {
-		var off int64
-		off, err = f.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("writing layer %s [pos %x]\n", t.Name, off)
-
 		if currentFile != t.FileName {
 			if f != nil {
 				dataFile.Close()
 			}
-			fmt.Printf("opening file %s\n", t.FileName)
 			currentFile = t.FileName
 			dataFile, err = os.Open(t.FileName)
 			if err != nil {
@@ -497,13 +485,11 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				}
 			}
 
-			fmt.Printf("repacking layer %s heads = %d\n", t.Name, heads)
 			tData, err = t.Repack(tData, int(heads))
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("tData len = %d\n", len(tData))
 			var buf []byte
 			for _, n := range tData {
 				buf = binary.LittleEndian.AppendUint16(buf, n)
@@ -511,13 +497,10 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 
 			tempBuf := make([]uint16, len(tData))
 			tDataF32 := bfloat16.DecodeFloat32(buf)
-			fmt.Printf("f32 len = %d\n", len(tDataF32))
 			for cnt, v := range tDataF32 {
 				tDataF16 := float16.Fromfloat32(v)
 				tempBuf[cnt] = uint16(tDataF16)
 			}
-			fmt.Printf("f16 data: %v\n", tempBuf[0:5])
-			fmt.Printf("f16 data: %v\n", tempBuf[4096+0:4096+5])
 
 			if err = binary.Write(f, llm.ByteOrder, tempBuf); err != nil {
 				return err
@@ -591,7 +574,6 @@ func (llm *GGUFModel) writePadding(f *os.File, align int64) error {
 		return err
 	}
 	padding := ((offset + align - 1) / align) * align
-	fmt.Printf("offset = %d padding = %d\n", offset, padding)
 	buf := make([]byte, padding-offset)
 	if err := binary.Write(f, llm.ByteOrder, buf); err != nil {
 		return err

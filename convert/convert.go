@@ -61,11 +61,6 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 		return []llm.Tensor{}, 0, err
 	}
 
-	// todo remove this
-	if err := ioutil.WriteFile(fmt.Sprintf("%s-config.json", fn), buf, 0644); err != nil {
-		return []llm.Tensor{}, 0, err
-	}
-
 	d := json.NewDecoder(bytes.NewBuffer(buf))
 	d.UseNumber()
 	var parsed map[string]interface{}
@@ -97,7 +92,6 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 			// metadata
 			continue
 		case 1:
-			fmt.Printf("%s is a vector\n", k)
 			// convert to float32
 			kind = 0
 			size = uint64(data.Shape[0] * 4)
@@ -105,7 +99,6 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 			// convert to float16
 			kind = 1
 			size = uint64(data.Shape[0] * data.Shape[1] * 2)
-			//size = uint64((data.Offsets[1] - data.Offsets[0]) * 2)
 		}
 
 		ggufName, err := GetTensorName(k)
@@ -273,8 +266,6 @@ func WriteGGUF(tensors []llm.Tensor, params *Params, vocab *Vocab) (string, erro
 
 	c.V3.NumTensor = uint64(len(tensors))
 	c.V3.NumKV = uint64(len(m.KV))
-
-	fmt.Printf("c - %#v\n", c)
 
 	f, err := os.CreateTemp("", "ollama-gguf")
 	if err != nil {

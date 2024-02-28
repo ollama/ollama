@@ -320,7 +320,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			pathName := realpath(modelFileDir, c.Args)
 
-			ggufName, err := checkZip(pathName)
+			ggufName, err := convertSafetensors(pathName)
 			if err != nil {
 				// TODO check if it's not a zip
 				return err
@@ -607,7 +607,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	return nil
 }
 
-func checkZip(fn string) (string, error) {
+func convertSafetensors(fn string) (string, error) {
 	r, err := zip.OpenReader(fn)
 	if err != nil {
 		return "", err
