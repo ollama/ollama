@@ -125,6 +125,16 @@ There is already a large collection of plugins available for VSCode as well as o
 
 Ollama is compatible with proxy servers if `HTTP_PROXY` or `HTTPS_PROXY` are configured. When using either variables, ensure it is set where `ollama serve` can access the values. When using `HTTPS_PROXY`, ensure the proxy certificate is installed as a system certificate. Refer to the section above for how to use environment variables on your platform.
 
+If using the default installer on Linux, first stop the server:
+
+    sudo systemctl stop ollama
+
+Then run
+
+    ollama serve
+
+with the appropriate `HTTP_PROXY` etc. set.
+
 ### How do I use Ollama behind a proxy in Docker?
 
 The Ollama Docker container image can be configured to use a proxy by passing `-e HTTPS_PROXY=https://proxy.example.com` when starting the container.
