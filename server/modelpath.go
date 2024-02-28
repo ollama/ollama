@@ -108,7 +108,7 @@ func modelsDir() (string, error) {
 		return "", err
 	}
 	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
-		if strings.HasPrefix(models, "~/") {
+		if strings.HasPrefix(models, "~"+string(os.PathSeparator)) {
 			return filepath.Join(home, models[2:]), nil
 		}
 		return models, nil
