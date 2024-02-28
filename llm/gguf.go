@@ -10,8 +10,8 @@ import (
 
 	"github.com/d4l3k/go-bfloat16"
 	"github.com/x448/float16"
-	"gorgonia.org/tensor"
-	"gorgonia.org/tensor/native"
+	"github.com/pdevine/tensor"
+	"github.com/pdevine/tensor/native"
 
 	"github.com/jmorganca/ollama/format"
 )
