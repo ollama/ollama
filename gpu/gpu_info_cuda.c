@@ -156,7 +156,7 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
     }
 
     LOG(h.verbose, "[%d] CUDA totalMem %ld\n", i, memInfo.total);
-    LOG(h.verbose, "[%d] CUDA usedMem %ld\n", i, memInfo.free);
+    LOG(h.verbose, "[%d] CUDA usedMem %ld\n", i, memInfo.used);
 
     resp->total += memInfo.total;
     resp->free += memInfo.free;
