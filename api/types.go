@@ -83,7 +83,7 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specfied in GenerateRequest, if you add a new option here add it to the API docs also
+// Options specified in GenerateRequest, if you add a new option here add it to the API docs also
 type Options struct {
 	Runner
 

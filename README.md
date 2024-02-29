@@ -62,6 +62,8 @@ Here are some example models that can be downloaded:
 | Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | Vicuna             | 7B         | 3.8GB | `ollama run vicuna`            |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
+| Gemma              | 2B         | 1.4GB | `ollama run gemma:2b`          |
+| Gemma              | 7B         | 4.8GB | `ollama run gemma:7b`          |
 
 > Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
@@ -258,6 +260,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Web & Desktop
 
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
+- [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
@@ -272,6 +275,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [MindMac](https://mindmac.app)
 - [NextJS Web Interface for Ollama](https://github.com/jakobhoeg/nextjs-ollama-llm-ui)
 - [Msty](https://msty.app)
+- [Chatbox](https://github.com/Bin-Huang/Chatbox)
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
 
 ### Terminal
@@ -303,6 +307,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
 - [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
+- [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LangChain4j](https://github.com/langchain4j/langchain4j/tree/main/langchain4j-ollama)
 - [LiteLLM](https://github.com/BerriAI/litellm)
@@ -320,6 +325,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Elixir LangChain](https://github.com/brainlid/langchain)
 - [Ollama for R - rollama](https://github.com/JBGruber/rollama)
 - [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
+- [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
 
 ### Mobile
 
@@ -340,6 +346,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
 - [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
+- [Copilot for Obsidian plugin](https://github.com/logancyang/obsidian-copilot)
+- [Obsidian Local GPT plugin](https://github.com/pfrankov/obsidian-local-gpt)
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)
 - [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
 - [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)
