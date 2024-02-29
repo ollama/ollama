@@ -250,6 +250,19 @@ func GenerateHandler(c *gin.Context) {
 		slog.Debug("generate handler", "system", req.System)
 
 		var sb strings.Builder
+		for i := range req.Images {
+			fmt.Fprintf(&sb, "[img-%d] ", i)
+		}
+
+		sb.WriteString(req.Prompt)
+
+		p, err := Prompt(req.Template, req.System, sb.String(), "", true)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		sb.Reset()
 		if req.Context != nil {
 			prev, err := loaded.runner.Decode(c.Request.Context(), req.Context)
 			if err != nil {
@@ -258,18 +271,6 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			sb.WriteString(prev)
-		}
-
-		// write image tags
-		// TODO: limit the number of images to fit in the context similar to the chat endpoint
-		for i := range req.Images {
-			req.Prompt += fmt.Sprintf(" [img-%d]", i)
-		}
-
-		p, err := Prompt(req.Template, req.System, req.Prompt, "", true)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
 		}
 
 		sb.WriteString(p)
