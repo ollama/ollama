@@ -7,14 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/mitchellh/mapstructure"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/jmorganca/ollama/convert/sentencepiece"
 	"github.com/jmorganca/ollama/llm"
@@ -133,7 +132,7 @@ func GetSafeTensors(dirpath string) ([]llm.Tensor, error) {
 	var tensors []llm.Tensor
 	files, err := filepath.Glob(dirpath + "/model-*.safetensors")
 	if err != nil {
-		return []llm.Tensor{}, nil
+		return []llm.Tensor{}, err
 	}
 
 	var offset uint64
@@ -175,7 +174,7 @@ type Vocab struct {
 }
 
 func LoadTokens(dirpath string) (*Vocab, error) {
-	in, err := ioutil.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
+	in, err := os.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
 	if err != nil {
 		return nil, err
 	}

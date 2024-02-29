@@ -115,6 +115,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 				for _, fn := range files {
 					f, err := os.Open(fn)
+					if err != nil {
+						return err
+					}
 
 					fi, err := f.Stat()
 					if err != nil {

@@ -9,9 +9,9 @@ import (
 	"regexp"
 
 	"github.com/d4l3k/go-bfloat16"
-	"github.com/x448/float16"
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
+	"github.com/x448/float16"
 
 	"github.com/jmorganca/ollama/format"
 )
@@ -154,14 +154,21 @@ func (t Tensor) Size() uint64 {
 
 func (t Tensor) Repack(data []uint16, heads int) ([]uint16, error) {
 	n := tensor.New(tensor.WithShape(int(t.Shape[0]), int(t.Shape[1])), tensor.WithBacking(data))
-	origShape := n.Shape()
+	origShape := n.Shape().Clone()
 
 	// reshape the tensor and swap axes 1 and 2 to unpack the layer for gguf
-	n.Reshape(heads, 2, origShape[0]/heads/2, origShape[1])
+	if err := n.Reshape(heads, 2, origShape[0]/heads/2, origShape[1]); err != nil {
+		return []uint16{}, err
+	}
+
 	if err := n.T(0, 2, 1, 3); err != nil {
 		return []uint16{}, err
 	}
-	n.Reshape(origShape...)
+
+	if err := n.Reshape(origShape...); err != nil {
+		return []uint16{}, err
+	}
+
 	if err := n.Transpose(); err != nil {
 		return []uint16{}, err
 	}
@@ -277,7 +284,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 	}
 
 	for _, k := range kOrder {
-		v, ok := llm.KV[k]
+		val, ok := llm.KV[k]
 		if !ok {
 			continue
 		}
@@ -289,15 +296,13 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 			return err
 		}
 
-		// todo - pad the buffer to only to a single write for the arrays
-		switch v.(type) {
+		switch v := val.(type) {
 		case uint32:
 			if err := binary.Write(f, llm.ByteOrder, GGUFTypeUint32); err != nil {
 				return err
 			}
 
-			intVal := v.(uint32)
-			if err := llm.writeUint32(f, intVal); err != nil {
+			if err := llm.writeUint32(f, v); err != nil {
 				return err
 			}
 		case float32:
@@ -305,8 +310,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				return err
 			}
 
-			floatVal := v.(float32)
-			if err := llm.writeF32(f, floatVal); err != nil {
+			if err := llm.writeF32(f, v); err != nil {
 				return err
 			}
 		case bool:
@@ -314,18 +318,15 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				return err
 			}
 
-			bVal := v.(bool)
-			if err := llm.writeBool(f, bVal); err != nil {
+			if err := llm.writeBool(f, v); err != nil {
 				return err
 			}
 		case string:
-			strVal := v.(string)
-
 			if err := binary.Write(f, llm.ByteOrder, GGUFTypeString); err != nil {
 				return err
 			}
 
-			if err := llm.writeString(f, strVal); err != nil {
+			if err := llm.writeString(f, v); err != nil {
 				return err
 			}
 		case []int32:
@@ -337,11 +338,10 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				return err
 			}
 
-			iList := v.([]int32)
-			if err := binary.Write(f, llm.ByteOrder, uint64(len(iList))); err != nil {
+			if err := binary.Write(f, llm.ByteOrder, uint64(len(v))); err != nil {
 				return err
 			}
-			for _, i := range iList {
+			for _, i := range v {
 				if err := llm.writeInt32(f, i); err != nil {
 					return err
 				}
@@ -355,11 +355,10 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				return err
 			}
 
-			iList := v.([]uint32)
-			if err := binary.Write(f, llm.ByteOrder, uint64(len(iList))); err != nil {
+			if err := binary.Write(f, llm.ByteOrder, uint64(len(v))); err != nil {
 				return err
 			}
-			for _, i := range iList {
+			for _, i := range v {
 				if err := llm.writeUint32(f, i); err != nil {
 					return err
 				}
@@ -373,11 +372,10 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				return err
 			}
 
-			fList := v.([]float32)
-			if err := binary.Write(f, llm.ByteOrder, uint64(len(fList))); err != nil {
+			if err := binary.Write(f, llm.ByteOrder, uint64(len(v))); err != nil {
 				return err
 			}
-			for _, fl := range fList {
+			for _, fl := range v {
 				if err := llm.writeF32(f, fl); err != nil {
 					return err
 				}
@@ -391,12 +389,11 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 				return err
 			}
 
-			strList := v.([]string)
-			if err := binary.Write(f, llm.ByteOrder, uint64(len(strList))); err != nil {
+			if err := binary.Write(f, llm.ByteOrder, uint64(len(v))); err != nil {
 				return err
 			}
 
-			for _, s := range strList {
+			for _, s := range v {
 				if err := llm.writeString(f, s); err != nil {
 					return err
 				}
