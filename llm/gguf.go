@@ -558,14 +558,8 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 	return nil
 }
 
-func min(a, b uint64) uint64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func (llm *GGUFModel) writePadding(f *os.File, align int64) error {
+	// gguf file padding is defined in https://github.com/ggerganov/ggml/blob/master/docs/gguf.md#file-structure
 	offset, err := f.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err

@@ -167,6 +167,8 @@ func GetParams(dirpath string) (*Params, error) {
 	return &params, nil
 }
 
+// Details on gguf's tokenizer can be found at:
+// https://github.com/ggerganov/ggml/blob/master/docs/gguf.md#tokenizer
 type Vocab struct {
 	Tokens []string
 	Scores []float32
@@ -179,6 +181,8 @@ func LoadTokens(dirpath string) (*Vocab, error) {
 		return nil, err
 	}
 
+	// To regenerate sentencepiece from the protobufs use:
+	// protoc -I=./ --go_out=./ sentencepiece_model.proto
 	modelProto := &sentencepiece.ModelProto{}
 	if err := proto.Unmarshal(in, modelProto); err != nil {
 		return nil, err
