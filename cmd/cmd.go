@@ -167,10 +167,13 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	interactive := true
 
-	var defaultSessionDuration = 5 * time.Minute
-	keepAlive := &api.Duration{Duration: defaultSessionDuration}
-	if envKeepAlive := os.Getenv("OLLAMA_KEEPALIVE"); envKeepAlive != "" {
-		if err = keepAlive.FromString(envKeepAlive); err != nil {
+	// leaves it nil if unset. will use the default server behavior
+	var keepAlive *api.SessionDuration
+	if os.Getenv("OLLAMA_KEEPALIVE") != "" {
+		keepAlive, err = api.NewSessionDuration(
+			api.WithEnvVar("OLLAMA_KEEPALIVE"),
+		)
+		if err != nil {
 			return err
 		}
 	}
@@ -483,7 +486,7 @@ type runOptions struct {
 	Images      []api.ImageData
 	Options     map[string]interface{}
 	MultiModal  bool
-	KeepAlive   *api.Duration
+	KeepAlive   *api.SessionDuration
 }
 
 type displayResponseState struct {

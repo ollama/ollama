@@ -35,7 +35,8 @@ import (
 var mode string = gin.DebugMode
 
 type Server struct {
-	WorkDir string
+	WorkDir   string
+	KeepAlive *api.SessionDuration
 }
 
 func init() {
@@ -62,10 +63,8 @@ var loaded struct {
 	*api.Options
 }
 
-var defaultSessionDuration = 5 * time.Minute
-
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
-func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
+func load(c *gin.Context, model *Model, opts api.Options, keepAlive *api.SessionDuration) error {
 	workDir := c.GetString("workDir")
 
 	needLoad := loaded.runner == nil || // is there a model loaded?
@@ -99,10 +98,10 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 		loaded.Options = &opts
 	}
 
-	loaded.expireAt = time.Now().Add(sessionDuration)
+	loaded.expireAt = time.Now().Add(keepAlive.Duration)
 
 	if loaded.expireTimer == nil {
-		loaded.expireTimer = time.AfterFunc(sessionDuration, func() {
+		loaded.expireTimer = time.AfterFunc(keepAlive.Duration, func() {
 			loaded.mu.Lock()
 			defer loaded.mu.Unlock()
 
@@ -120,7 +119,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 		})
 	}
 
-	loaded.expireTimer.Reset(sessionDuration)
+	loaded.expireTimer.Reset(keepAlive.Duration)
 	return nil
 }
 
@@ -201,14 +200,13 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	var sessionDuration time.Duration
-	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
-	} else {
-		sessionDuration = req.KeepAlive.Duration
+	keepAliveServer, _ := c.Get("keepAliveServer")
+	keepAlive := keepAliveServer.(*api.SessionDuration)
+	if keepAliveClient := req.KeepAlive; keepAliveClient != nil {
+		keepAlive = keepAliveClient
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	if err := load(c, model, opts, keepAlive); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -281,8 +279,8 @@ func GenerateHandler(c *gin.Context) {
 
 		fn := func(r llm.PredictResult) {
 			// Update model expiration
-			loaded.expireAt = time.Now().Add(sessionDuration)
-			loaded.expireTimer.Reset(sessionDuration)
+			loaded.expireAt = time.Now().Add(keepAlive.Duration)
+			loaded.expireTimer.Reset(keepAlive.Duration)
 
 			// Build up the full response
 			if _, err := generated.WriteString(r.Content); err != nil {
@@ -420,14 +418,13 @@ func EmbeddingHandler(c *gin.Context) {
 		return
 	}
 
-	var sessionDuration time.Duration
-	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
-	} else {
-		sessionDuration = req.KeepAlive.Duration
+	keepAliveServer, _ := c.Get("keepAliveServer")
+	keepAlive := keepAliveServer.(*api.SessionDuration)
+	if keepAliveClient := req.KeepAlive; keepAliveClient != nil {
+		keepAlive = keepAliveClient
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	if err := load(c, model, opts, keepAlive); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -905,8 +902,16 @@ func NewServer() (*Server, error) {
 		return nil, err
 	}
 
+	keepAliveServer, err := api.NewSessionDuration(
+		api.WithEnvVar("OLLAMA_DEFAULT_KEEPALIVE"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Server{
-		WorkDir: workDir,
+		WorkDir:   workDir,
+		KeepAlive: keepAliveServer,
 	}, nil
 }
 
@@ -935,6 +940,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 		cors.New(config),
 		func(c *gin.Context) {
 			c.Set("workDir", s.WorkDir)
+			c.Set("keepAliveServer", s.KeepAlive)
 			c.Next()
 		},
 	)
@@ -1153,14 +1159,13 @@ func ChatHandler(c *gin.Context) {
 		return
 	}
 
-	var sessionDuration time.Duration
-	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
-	} else {
-		sessionDuration = req.KeepAlive.Duration
+	keepAliveServer, _ := c.Get("keepAliveServer")
+	keepAlive := keepAliveServer.(*api.SessionDuration)
+	if keepAliveClient := req.KeepAlive; keepAliveClient != nil {
+		keepAlive = keepAliveClient
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	if err := load(c, model, opts, keepAlive); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1211,8 +1216,8 @@ func ChatHandler(c *gin.Context) {
 
 		fn := func(r llm.PredictResult) {
 			// Update model expiration
-			loaded.expireAt = time.Now().Add(sessionDuration)
-			loaded.expireTimer.Reset(sessionDuration)
+			loaded.expireAt = time.Now().Add(keepAlive.Duration)
+			loaded.expireTimer.Reset(keepAlive.Duration)
 
 			resp := api.ChatResponse{
 				Model:     req.Model,

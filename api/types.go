@@ -34,26 +34,26 @@ func (e StatusError) Error() string {
 type ImageData []byte
 
 type GenerateRequest struct {
-	Model     string      `json:"model"`
-	Prompt    string      `json:"prompt"`
-	System    string      `json:"system"`
-	Template  string      `json:"template"`
-	Context   []int       `json:"context,omitempty"`
-	Stream    *bool       `json:"stream,omitempty"`
-	Raw       bool        `json:"raw,omitempty"`
-	Format    string      `json:"format"`
-	KeepAlive *Duration   `json:"keep_alive,omitempty"`
-	Images    []ImageData `json:"images,omitempty"`
+	Model     string           `json:"model"`
+	Prompt    string           `json:"prompt"`
+	System    string           `json:"system"`
+	Template  string           `json:"template"`
+	Context   []int            `json:"context,omitempty"`
+	Stream    *bool            `json:"stream,omitempty"`
+	Raw       bool             `json:"raw,omitempty"`
+	Format    string           `json:"format"`
+	KeepAlive *SessionDuration `json:"keep_alive,omitempty"`
+	Images    []ImageData      `json:"images,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
 
 type ChatRequest struct {
-	Model     string    `json:"model"`
-	Messages  []Message `json:"messages"`
-	Stream    *bool     `json:"stream,omitempty"`
-	Format    string    `json:"format"`
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	Model     string           `json:"model"`
+	Messages  []Message        `json:"messages"`
+	Stream    *bool            `json:"stream,omitempty"`
+	Format    string           `json:"format"`
+	KeepAlive *SessionDuration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -128,9 +128,9 @@ type Runner struct {
 }
 
 type EmbeddingRequest struct {
-	Model     string    `json:"model"`
-	Prompt    string    `json:"prompt"`
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	Model     string           `json:"model"`
+	Prompt    string           `json:"prompt"`
+	KeepAlive *SessionDuration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -400,47 +400,74 @@ func DefaultOptions() Options {
 	}
 }
 
-type Duration struct {
+type SessionDuration struct {
 	time.Duration
 }
 
-func (d *Duration) FromString(s string) error {
-	var err error
-	d.Duration, err = time.ParseDuration(s)
-	if err != nil {
+type SessionDurationFunc func(*SessionDuration) error
+
+func WithDuration(duration time.Duration) SessionDurationFunc {
+	return func(s *SessionDuration) error {
+		s.Duration = duration
+		return nil
+	}
+}
+func WithEnvVar(name string) SessionDurationFunc {
+	return func(s *SessionDuration) error {
+		var err error
+		if envKeepAlive := os.Getenv(name); envKeepAlive != "" {
+			err = s.fromString(envKeepAlive)
+		}
 		return err
 	}
+}
+
+func NewSessionDuration(opts ...SessionDurationFunc) (*SessionDuration, error) {
+	keepAlive := &SessionDuration{
+		5 * time.Minute, // default value
+	}
+	defer keepAlive.validate()
+
+	for _, opt := range opts {
+		err := opt(keepAlive)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return keepAlive, nil
+}
+
+func (d *SessionDuration) validate() {
 	if d.Duration < 0 {
 		d.Duration = time.Duration(math.MaxInt64)
 	}
-	return nil
 }
 
-func (d *Duration) MarshalJSON() ([]byte, error) {
+func (d *SessionDuration) fromString(s string) error {
+	var err error
+	d.Duration, err = time.ParseDuration(s)
+	return err
+}
+
+func (d *SessionDuration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(d.String())
 }
 
-func (d *Duration) UnmarshalJSON(b []byte) (err error) {
+func (d *SessionDuration) UnmarshalJSON(b []byte) (err error) {
+	defer d.validate()
 	var v any
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
 	}
 
-	d.Duration = 5 * time.Minute
-
 	switch t := v.(type) {
 	case float64:
-		if t < 0 {
-			d.Duration = time.Duration(math.MaxInt64)
-		} else {
-			d.Duration = time.Duration(t * float64(time.Second))
-		}
+		d.Duration = time.Duration(t * float64(time.Second))
 	case string:
-		if err = d.FromString(t); err != nil {
+		if err = d.fromString(t); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
