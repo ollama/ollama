@@ -30,6 +30,8 @@ type Params struct {
 	KeyValHeads      int     `json:"num_key_value_heads"`
 	NormEPS          float64 `json:"rms_norm_eps"`
 	RopeFreqBase     float64 `json:"rope_theta"`
+	BoSTokenID       int     `json:"bos_token_id"`
+	EoSTokenID       int     `json:"eos_token_id"`
 }
 
 type MetaData struct {
@@ -232,7 +234,7 @@ func GetTensorName(n string) (string, error) {
 	return "", fmt.Errorf("couldn't find a layer name for '%s'", n)
 }
 
-func WriteGGUF(tensors []llm.Tensor, params *Params, vocab *Vocab) (string, error) {
+func WriteGGUF(name string, tensors []llm.Tensor, params *Params, vocab *Vocab) (string, error) {
 	c := llm.ContainerGGUF{
 		ByteOrder: binary.LittleEndian,
 	}
@@ -240,7 +242,7 @@ func WriteGGUF(tensors []llm.Tensor, params *Params, vocab *Vocab) (string, erro
 	m := llm.NewGGUFModel(&c)
 	m.Tensors = tensors
 	m.KV["general.architecture"] = "llama"
-	m.KV["general.name"] = ".." // XXX changeme
+	m.KV["general.name"] = name
 	m.KV["llama.context_length"] = uint32(params.ContextSize)
 	m.KV["llama.embedding_length"] = uint32(params.HiddenSize)
 	m.KV["llama.block_count"] = uint32(params.HiddenLayers)
@@ -257,12 +259,14 @@ func WriteGGUF(tensors []llm.Tensor, params *Params, vocab *Vocab) (string, erro
 	m.KV["tokenizer.ggml.scores"] = vocab.Scores
 	m.KV["tokenizer.ggml.token_type"] = vocab.Types
 
-	m.KV["tokenizer.ggml.bos_token_id"] = uint32(1)
-	m.KV["tokenizer.ggml.eos_token_id"] = uint32(2)
+	m.KV["tokenizer.ggml.bos_token_id"] = uint32(params.BoSTokenID)
+	m.KV["tokenizer.ggml.eos_token_id"] = uint32(params.EoSTokenID)
 	m.KV["tokenizer.ggml.unknown_token_id"] = uint32(0)
 	m.KV["tokenizer.ggml.add_bos_token"] = true
 	m.KV["tokenizer.ggml.add_eos_token"] = false
-	m.KV["tokenizer.chat_template"] = "{{ bos_token }}{% for message in messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if message['role'] == 'user' %}{{ '[INST] ' + message['content'] + ' [/INST]' }}{% elif message['role'] == 'assistant' %}{{ message['content'] + eos_token}}{% else %}{{ raise_exception('Only user and assistant roles are supported!') }}{% endif %}{% endfor %}" // XXX removeme
+
+	// llamacpp sets the chat template, however we don't need to set it since we pass it in through a layer
+	// m.KV["tokenizer.chat_template"] = "{{ bos_token }}{% for message in messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if message['role'] == 'user' %}{{ '[INST] ' + message['content'] + ' [/INST]' }}{% elif message['role'] == 'assistant' %}{{ message['content'] + eos_token}}{% else %}{{ raise_exception('Only user and assistant roles are supported!') }}{% endif %}{% endfor %}" // XXX removeme
 
 	c.V3.NumTensor = uint64(len(tensors))
 	c.V3.NumKV = uint64(len(m.KV))

@@ -320,15 +320,19 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			pathName := realpath(modelFileDir, c.Args)
 
-			ggufName, err := convertSafetensors(pathName)
+			ggufName, err := convertSafetensors(name, pathName)
 			if err != nil {
-				// TODO check if it's not a zip
-				return err
+				switch {
+				case errors.Is(err, zip.ErrFormat):
+					// it's not a safetensor archive
+				default:
+					return err
+				}
 			}
-			// TODO rm ggufName
 
 			if ggufName != "" {
 				pathName = ggufName
+				defer os.RemoveAll(ggufName)
 			}
 
 			bin, err := os.Open(pathName)
@@ -607,7 +611,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	return nil
 }
 
-func convertSafetensors(fn string) (string, error) {
+func convertSafetensors(name, fn string) (string, error) {
 	r, err := zip.OpenReader(fn)
 	if err != nil {
 		return "", err
@@ -655,7 +659,7 @@ func convertSafetensors(fn string) (string, error) {
 		return "", err
 	}
 
-	fn, err = convert.WriteGGUF(t, params, vocab)
+	fn, err = convert.WriteGGUF(name, t, params, vocab)
 	if err != nil {
 		return "", err
 	}
