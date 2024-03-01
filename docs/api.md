@@ -321,7 +321,6 @@ curl http://localhost:11434/api/generate -d '{
     "vocab_only": false,
     "use_mmap": true,
     "use_mlock": false,
-    "embedding_only": false,
     "rope_frequency_base": 1.1,
     "rope_frequency_scale": 0.8,
     "num_thread": 8
