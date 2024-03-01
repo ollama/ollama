@@ -146,9 +146,9 @@ void llama_server_start() {
       llama->queue_tasks.on_new_task(std::bind(
         &llama_server_context::process_single_task, llama, std::placeholders::_1));
       llama->queue_tasks.on_finish_multitask(std::bind(
-          &llama_server_context::on_finish_multitask, llama, std::placeholders::_1));
-      llama->queue_tasks.on_all_tasks_finished(std::bind(
-          &llama_server_context::run_on_all_tasks_finished, llama));
+        &llama_server_context::on_finish_multitask, llama, std::placeholders::_1));
+      llama->queue_tasks.on_run_slots(std::bind(
+        &llama_server_context::update_slots, llama));
       llama->queue_results.on_multitask_update(std::bind(
           &llama_server_queue::update_multitask,
           &llama->queue_tasks,
