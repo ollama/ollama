@@ -385,7 +385,7 @@ func GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func EmbeddingHandler(c *gin.Context) {
+func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
 
@@ -438,8 +438,9 @@ func EmbeddingHandler(c *gin.Context) {
 		return
 	}
 
-	if !loaded.Options.EmbeddingOnly {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "embedding option must be set to true"})
+	// an empty request loads the model
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
@@ -948,7 +949,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/chat", ChatHandler)
-	r.POST("/api/embeddings", EmbeddingHandler)
+	r.POST("/api/embeddings", EmbeddingsHandler)
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)

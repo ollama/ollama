@@ -121,7 +121,6 @@ type Runner struct {
 	VocabOnly          bool    `json:"vocab_only,omitempty"`
 	UseMMap            bool    `json:"use_mmap,omitempty"`
 	UseMLock           bool    `json:"use_mlock,omitempty"`
-	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
 	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 	NumThread          int     `json:"num_thread,omitempty"`
@@ -395,7 +394,6 @@ func DefaultOptions() Options {
 			UseMLock:           false,
 			UseMMap:            true,
 			UseNUMA:            false,
-			EmbeddingOnly:      true,
 		},
 	}
 }
