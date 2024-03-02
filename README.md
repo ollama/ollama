@@ -277,6 +277,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Msty](https://msty.app)
 - [Chatbox](https://github.com/Bin-Huang/Chatbox)
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) with [Get Started Doc](https://docs.nextchat.dev/models/ollama)
+- [Alpaca WebUI](https://github.com/mmo80/alpaca-webui)
 
 ### Terminal
 
