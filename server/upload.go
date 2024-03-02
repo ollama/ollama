@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/format"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/format"
 	"golang.org/x/sync/errgroup"
 )
 

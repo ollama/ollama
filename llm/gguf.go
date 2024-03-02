@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/jmorganca/ollama/format"
+	"github.com/ollama/ollama/format"
 )
 
 type containerGGUF struct {
