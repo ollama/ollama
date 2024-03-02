@@ -60,7 +60,7 @@ type GenerateRequest struct {
 	// Raw set to true means that no formatting will be applied to the prompt.
 	Raw bool `json:"raw,omitempty"`
 
-	// Format specifies the format to return a reponse in.
+	// Format specifies the format to return a response in.
 	Format string `json:"format"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
