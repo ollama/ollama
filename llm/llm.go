@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
@@ -164,4 +165,13 @@ func newLlmServer(gpuInfo gpu.GpuInfo, workDir, model string, adapters, projecto
 	}
 
 	return nil, err2
+}
+
+func parseDurationMs(ms float64) time.Duration {
+	dur, err := time.ParseDuration(fmt.Sprintf("%fms", ms))
+	if err != nil {
+		panic(err)
+	}
+
+	return dur
 }
