@@ -340,6 +340,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Continue](https://github.com/continuedev/continue)
 - [Obsidian Ollama plugin](https://github.com/hinterdupfinger/obsidian-ollama)
 - [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
+- [NotesOllama](https://github.com/andersrex/notesollama) (Apple Notes Ollama plugin)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram)
