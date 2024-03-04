@@ -125,17 +125,65 @@ type Runner struct {
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 	NumThread          int     `json:"num_thread,omitempty"`
 }
+type EmbeddingInput struct {
+	prompt  string
+	prompts []string
+}
+
+func (e *EmbeddingInput) IsEmpty() bool {
+	return e.prompt == "" && e.prompts == nil
+}
+
+func (e *EmbeddingInput) GetPrompt() string {
+	if e.prompt != "" {
+		return e.prompt
+	}
+	return ""
+}
+
+func (e *EmbeddingInput) GetPrompts() []string {
+	if e.prompts != nil {
+		return e.prompts
+	}
+	return nil
+}
+
+func (e *EmbeddingInput) UnmarshalJSON(b []byte) error {
+	fmt.Printf("Unmarshal")
+	// Try to unmarshal data into a single string
+	if err := json.Unmarshal(b, &e.prompt); err == nil {
+		return nil
+	}
+	// If the above fails, try to unmarshal data into an array of strings
+	if err := json.Unmarshal(b, &e.prompts); err == nil {
+		return nil
+	}
+	// Return error if neither unmarshalling succeeds
+	return fmt.Errorf("EmbeddingInput must be a string or an array of strings")
+}
+
+func (e *EmbeddingInput) MarshalJSON() ([]byte, error) {
+	fmt.Printf("e.Prompts: %v\n", e.prompts)
+	if e.prompt != "" {
+		return json.Marshal(e.prompt)
+	}
+	if e.prompts != nil {
+		return json.Marshal(e.prompts)
+	}
+	return nil, fmt.Errorf("EmbeddingInput has no data") // Or a more appropriate error
+}
 
 type EmbeddingRequest struct {
-	Model     string    `json:"model"`
-	Prompt    string    `json:"prompt"`
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	Model     string          `json:"model"`
+	Prompt    *EmbeddingInput `json:"prompt"`
+	KeepAlive *Duration       `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
 
 type EmbeddingResponse struct {
-	Embedding []float64 `json:"embedding"`
+	Embedding  []float64   `json:"embedding,omitempty"`
+	Embeddings [][]float64 `json:"embeddings,omitempty"`
 }
 
 type CreateRequest struct {
