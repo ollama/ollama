@@ -126,51 +126,29 @@ type Runner struct {
 	NumThread          int     `json:"num_thread,omitempty"`
 }
 type EmbeddingInput struct {
-	prompt  string
-	prompts []string
-}
-
-func (e *EmbeddingInput) IsEmpty() bool {
-	return e.prompt == "" && e.prompts == nil
-}
-
-func (e *EmbeddingInput) GetPrompt() string {
-	if e.prompt != "" {
-		return e.prompt
-	}
-	return ""
-}
-
-func (e *EmbeddingInput) GetPrompts() []string {
-	if e.prompts != nil {
-		return e.prompts
-	}
-	return nil
+	Prompt  string
+	Prompts []string
 }
 
 func (e *EmbeddingInput) UnmarshalJSON(b []byte) error {
 	fmt.Printf("Unmarshal")
-	// Try to unmarshal data into a single string
-	if err := json.Unmarshal(b, &e.prompt); err == nil {
+	if err := json.Unmarshal(b, &e.Prompt); err == nil {
 		return nil
 	}
-	// If the above fails, try to unmarshal data into an array of strings
-	if err := json.Unmarshal(b, &e.prompts); err == nil {
+	if err := json.Unmarshal(b, &e.Prompts); err == nil {
 		return nil
 	}
-	// Return error if neither unmarshalling succeeds
 	return fmt.Errorf("EmbeddingInput must be a string or an array of strings")
 }
 
 func (e *EmbeddingInput) MarshalJSON() ([]byte, error) {
-	fmt.Printf("e.Prompts: %v\n", e.prompts)
-	if e.prompt != "" {
-		return json.Marshal(e.prompt)
+	if e.Prompt != "" {
+		return json.Marshal(e.Prompt)
 	}
-	if e.prompts != nil {
-		return json.Marshal(e.prompts)
+	if e.Prompts != nil {
+		return json.Marshal(e.Prompts)
 	}
-	return nil, fmt.Errorf("EmbeddingInput has no data") // Or a more appropriate error
+	return nil, fmt.Errorf("EmbeddingInput has no data")
 }
 
 type EmbeddingRequest struct {

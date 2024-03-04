@@ -440,16 +440,16 @@ func EmbeddingsHandler(c *gin.Context) {
 	}
 
 	// an empty request loads the model
-	if req.Prompt.GetPrompt() == "" && req.Prompt.GetPrompts() == nil {
+	if req.Prompt.Prompt == "" && req.Prompt.Prompts == nil {
 		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
 	var embedding []float64
 	var embeddings [][]float64
-	if req.Prompt.GetPrompt() != "" {
+	if req.Prompt.Prompt != "" {
 		slog.Info("Single embedding")
-		embedding, err = loaded.runner.Embedding(c.Request.Context(), req.Prompt.GetPrompt())
+		embedding, err = loaded.runner.Embedding(c.Request.Context(), req.Prompt.Prompt)
 		if err != nil {
 			slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
@@ -457,7 +457,7 @@ func EmbeddingsHandler(c *gin.Context) {
 		}
 	} else {
 		embeddings = make([][]float64, 0)
-		for _, p := range req.Prompt.GetPrompts() {
+		for _, p := range req.Prompt.Prompts {
 			slog.Info("Multi embedding " + p)
 			membedding, err := loaded.runner.Embedding(c.Request.Context(), p)
 			if err != nil {
