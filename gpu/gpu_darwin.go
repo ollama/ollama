@@ -1,12 +1,14 @@
 //go:build darwin
 
 package gpu
-
+/*
+#cgo CFLAGS: -x objective-c
+#cgo LDFLAGS: -framework Foundation -framework CoreGraphics -framework Metal
+#include "gpu_info_darwin.h"
+*/
 import "C"
 import (
 	"runtime"
-
-	"github.com/pbnjay/memory"
 )
 
 // CheckVRAM returns the free VRAM in bytes on Linux machines with NVIDIA GPUs
@@ -15,19 +17,8 @@ func CheckVRAM() (int64, error) {
 		// gpu not supported, this may not be metal
 		return 0, nil
 	}
-
-	// on macOS, there's already buffer for available vram (see below) so just return the total
-	systemMemory := int64(memory.TotalMemory())
-
-	// macOS limits how much memory is available to the GPU based on the amount of system memory
-	// TODO: handle case where iogpu.wired_limit_mb is set to a higher value
-	if systemMemory <= 36*1024*1024*1024 {
-		systemMemory = systemMemory * 2 / 3
-	} else {
-		systemMemory = systemMemory * 3 / 4
-	}
-
-	return systemMemory, nil
+	recommendedMaxVRAM := int64(C.getRecommendedMaxVRAM())
+	return recommendedMaxVRAM, nil
 }
 
 func GetGPUInfo() GpuInfo {

@@ -1,9 +1,9 @@
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index d86d7e04..2694e92e 100644
+index 2b2f4a0f..afac49af 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
-@@ -901,13 +901,15 @@ struct llama_server_context
-                 slot.sent_count += result.text_to_send.size();
+@@ -997,13 +997,15 @@ struct llama_server_context
+                 slot.n_sent_text += result.text_to_send.size();
                  // add the token to slot queue and cache
              }
 -            slot.add_token_string(result);

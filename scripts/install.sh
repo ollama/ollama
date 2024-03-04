@@ -88,6 +88,10 @@ configure_systemd() {
         status "Adding ollama user to render group..."
         $SUDO usermod -a -G render ollama
     fi
+    if getent group video >/dev/null 2>&1; then
+        status "Adding ollama user to video group..."
+        $SUDO usermod -a -G video ollama
+    fi
 
     status "Adding current user to ollama group..."
     $SUDO usermod -a -G ollama $(whoami)
