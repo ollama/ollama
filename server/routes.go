@@ -448,20 +448,16 @@ func EmbeddingsHandler(c *gin.Context) {
 	var embedding []float64
 	var embeddings [][]float64
 	if req.Prompt.Prompt != "" {
-		slog.Info("Single embedding")
 		embedding, err = loaded.runner.Embedding(c.Request.Context(), req.Prompt.Prompt)
 		if err != nil {
-			slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 			return
 		}
 	} else {
 		embeddings = make([][]float64, 0)
 		for _, p := range req.Prompt.Prompts {
-			slog.Info("Multi embedding " + p)
 			membedding, err := loaded.runner.Embedding(c.Request.Context(), p)
 			if err != nil {
-				slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 				return
 			}
