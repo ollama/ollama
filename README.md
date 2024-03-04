@@ -259,6 +259,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search)
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
