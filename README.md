@@ -73,7 +73,7 @@ Here are some example models that can be downloaded:
 
 Ollama supports importing GGUF models in the Modelfile:
 
-1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
+1. Run the `init` command to create a Modelfile, or create a file named `Modelfile` with a `FROM` instruction with the local filepath to the model you want to import.
 
    ```
    FROM ./vicuna-33b.Q4_0.gguf
@@ -103,18 +103,10 @@ Models from the Ollama library can be customized with a prompt. For example, to 
 ollama pull llama2
 ```
 
-Create a `Modelfile`:
+Run the `init` command to create a Modelfile:
 
 ```
-FROM llama2
-
-# set the temperature to 1 [higher is more creative, lower is more coherent]
-PARAMETER temperature 1
-
-# set the system message
-SYSTEM """
-You are Mario from Super Mario Bros. Answer as Mario, the assistant, only.
-"""
+ollama init
 ```
 
 Next, create and run the model:

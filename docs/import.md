@@ -4,9 +4,9 @@ This guide walks through importing a GGUF, PyTorch or Safetensors model.
 
 ## Importing (GGUF)
 
-### Step 1: Write a `Modelfile`
+### Step 1: Initialize a `Modelfile`
 
-Start by creating a `Modelfile`. This file is the blueprint for your model, specifying weights, parameters, prompt templates and more.
+Start by running `ollama init` to create a `Modelfile`. This file is the blueprint for your model, specifying weights, parameters, prompt templates and more.
 
 ```
 FROM ./mistral-7b-v0.1.Q4_0.gguf
