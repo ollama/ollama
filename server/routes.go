@@ -389,7 +389,6 @@ func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
 	var req api.EmbeddingRequest
-	fmt.Printf("req.Input: %v\n", c.Request.Body)
 	err := c.ShouldBindJSON(&req)
 	switch {
 	case errors.Is(err, io.EOF):
