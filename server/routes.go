@@ -399,7 +399,6 @@ func EmbeddingsHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	slog.Info("Got this far")
 
 	if req.Model == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
