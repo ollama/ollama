@@ -315,6 +315,32 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func InitHandler(cmd *cobra.Command, args []string) error {
+	if _, err := os.Stat("Modelfile"); !os.IsNotExist(err) {
+		fmt.Println("Modelfile already exists. Overwrite? (y/n)")
+		var response string
+		fmt.Scanln(&response)
+		if response != "y" {
+			return nil
+		}
+	}
+
+	content := `# For more info check out the documentation in the [Modelfile reference](/docs/modelfile.md)
+FROM llama2
+# sets the temperature to 1 [higher is more creative, lower is more coherent]
+PARAMETER temperature 1
+# sets the context window size to 4096, this controls how many tokens the LLM can use as context to generate the next token
+PARAMETER num_ctx 4096
+
+# sets a custom system message to specify the behavior of the chat assistant
+SYSTEM You are Mario from super mario bros, acting as an assistant.`
+	if err := os.WriteFile("Modelfile", []byte(content), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("Modelfile created \n")
+	return nil
+}
+
 func ShowHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -924,6 +950,13 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Initialize a new Modelfile",
+		Args: cobra.ExactArgs(0),
+		RunE: InitHandler,
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
@@ -934,6 +967,7 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		copyCmd,
 		deleteCmd,
+		initCmd,
 	)
 
 	return rootCmd
