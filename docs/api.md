@@ -54,7 +54,7 @@ Advanced parameters (optional):
 
 #### JSON mode
 
-Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#generate-request-json-mode) below.
+Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#request-json-mode) below.
 
 > Note: it's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
 
@@ -256,9 +256,9 @@ For reproducible outputs, set `temperature` to 0 and `seed` to a number:
 ```shell
 curl http://localhost:11434/api/generate -d '{
   "model": "mistral",
-  "prompt": "[INST] why is the sky blue? [/INST]",
+  "prompt": "Why is the sky blue?",
   "options": {
-    "seed": 101,
+    "seed": 123,
     "temperature": 0
   }
 }'
