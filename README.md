@@ -278,6 +278,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Chatbox](https://github.com/Bin-Huang/Chatbox)
 - [WinForm Ollama Copilot](https://github.com/tgraupmann/WinForm_Ollama_Copilot)
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) with [Get Started Doc](https://docs.nextchat.dev/models/ollama)
+- [Ollama4j Web UI for Java](https://github.com/ollama4j/ollama4j-web-ui) - Built with Vaadin and Spring Boot
 
 ### Terminal
 
