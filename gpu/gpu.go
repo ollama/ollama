@@ -56,6 +56,7 @@ var CudaWindowsGlobs = []string{
 
 var RocmLinuxGlobs = []string{
 	"/opt/rocm*/lib*/librocm_smi64.so*",
+	"/usr*/lib*/librocm_smi64.so*",
 }
 
 var RocmWindowsGlobs = []string{
