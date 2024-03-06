@@ -250,6 +250,19 @@ func GenerateHandler(c *gin.Context) {
 		slog.Debug("generate handler", "system", req.System)
 
 		var sb strings.Builder
+		for i := range req.Images {
+			fmt.Fprintf(&sb, "[img-%d] ", i)
+		}
+
+		sb.WriteString(req.Prompt)
+
+		p, err := Prompt(req.Template, req.System, sb.String(), "", true)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		sb.Reset()
 		if req.Context != nil {
 			prev, err := loaded.runner.Decode(c.Request.Context(), req.Context)
 			if err != nil {
@@ -258,18 +271,6 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			sb.WriteString(prev)
-		}
-
-		// write image tags
-		// TODO: limit the number of images to fit in the context similar to the chat endpoint
-		for i := range req.Images {
-			req.Prompt += fmt.Sprintf(" [img-%d]", i)
-		}
-
-		p, err := Prompt(req.Template, req.System, req.Prompt, "", true)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
 		}
 
 		sb.WriteString(p)
@@ -384,7 +385,7 @@ func GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func EmbeddingHandler(c *gin.Context) {
+func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
 
@@ -437,8 +438,9 @@ func EmbeddingHandler(c *gin.Context) {
 		return
 	}
 
-	if !loaded.Options.EmbeddingOnly {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "embedding option must be set to true"})
+	// an empty request loads the model
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
@@ -947,7 +949,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/chat", ChatHandler)
-	r.POST("/api/embeddings", EmbeddingHandler)
+	r.POST("/api/embeddings", EmbeddingsHandler)
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)
