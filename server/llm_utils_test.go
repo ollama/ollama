@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/llm"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/stretchr/testify/require"
 )
 

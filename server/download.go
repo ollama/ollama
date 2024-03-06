@@ -21,8 +21,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/format"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/format"
 )
 
 const maxRetries = 6

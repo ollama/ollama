@@ -3,7 +3,7 @@ package llm
 import (
 	"testing"
 
-	"github.com/jmorganca/ollama/gpu"
+	"github.com/ollama/ollama/gpu"
 	"github.com/stretchr/testify/assert"
 )
 

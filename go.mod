@@ -1,4 +1,4 @@
-module github.com/jmorganca/ollama
+module github.com/ollama/ollama
 
 go 1.21
 
