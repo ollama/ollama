@@ -495,7 +495,9 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(msgs); err != nil {
+		encoder := json.NewEncoder(&b)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(msgs); err != nil {
 			return err
 		}
 
@@ -529,7 +531,9 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(formattedParams); err != nil {
+		encoder := json.NewEncoder(&b)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(formattedParams); err != nil {
 			return err
 		}
 
@@ -550,7 +554,9 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	config.RootFS.DiffIDs = digests
 
 	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(config); err != nil {
+	encoder := json.NewEncoder(&b)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(config); err != nil {
 		return err
 	}
 
