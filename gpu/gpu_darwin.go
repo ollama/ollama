@@ -1,6 +1,7 @@
 //go:build darwin
 
 package gpu
+
 /*
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework Foundation -framework CoreGraphics -framework Metal

@@ -1,3 +1,4 @@
+#!/bin/bash
 # common logic accross linux and darwin
 
 init_vars() {
@@ -12,14 +13,14 @@ init_vars() {
         ARCH=$(uname -m | sed -e "s/aarch64/arm64/g")
     esac
 
-    LLAMACPP_DIR=../llama.cpp
+    LLAMACPP_DIR=./llama.cpp
     CMAKE_DEFS=""
-    CMAKE_TARGETS="--target ext_server"
+    CMAKE_TARGETS="--target server"
     if echo "${CGO_CFLAGS}" | grep -- '-g' >/dev/null; then
-        CMAKE_DEFS="-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_VERBOSE_MAKEFILE=on -DLLAMA_GPROF=on -DLLAMA_SERVER_VERBOSE=on ${CMAKE_DEFS}"
+        CMAKE_DEFS="-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_VERBOSE_MAKEFILE=on -DLLAMA_GPROF=on ${CMAKE_DEFS}"
     else
         # TODO - add additional optimization flags...
-        CMAKE_DEFS="-DCMAKE_BUILD_TYPE=Release -DLLAMA_SERVER_VERBOSE=off ${CMAKE_DEFS}"
+        CMAKE_DEFS="-DCMAKE_BUILD_TYPE=Release ${CMAKE_DEFS}"
     fi
     case $(uname -s) in 
     "Darwin")
@@ -60,51 +61,40 @@ git_module_setup() {
 }
 
 apply_patches() {
-    # Wire up our CMakefile
-    if ! grep ollama ${LLAMACPP_DIR}/examples/server/CMakeLists.txt; then
-        echo 'include (../../../ext_server/CMakeLists.txt) # ollama' >>${LLAMACPP_DIR}/examples/server/CMakeLists.txt
-    fi
-
-    if [ -n "$(ls -A ../patches/*.diff)" ]; then
+    if [ -n "$(ls -A patches/*.diff)" ]; then
         # apply temporary patches until fix is upstream
-        for patch in ../patches/*.diff; do
+        for patch in patches/*.diff; do
             for file in $(grep "^+++ " ${patch} | cut -f2 -d' ' | cut -f2- -d/); do
                 (cd ${LLAMACPP_DIR}; git checkout ${file})
             done
         done
-        for patch in ../patches/*.diff; do
-            (cd ${LLAMACPP_DIR} && git apply ${patch})
+        for patch in patches/*.diff; do
+            (cd ${LLAMACPP_DIR} && git apply ../${patch})
         done
     fi
-
-    # Avoid duplicate main symbols when we link into the cgo binary
-    sed -e 's/int main(/int __main(/g' <${LLAMACPP_DIR}/examples/server/server.cpp >${LLAMACPP_DIR}/examples/server/server.cpp.tmp &&
-        mv ${LLAMACPP_DIR}/examples/server/server.cpp.tmp ${LLAMACPP_DIR}/examples/server/server.cpp
 }
 
 build() {
     cmake -S ${LLAMACPP_DIR} -B ${BUILD_DIR} ${CMAKE_DEFS}
     cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8
-    mkdir -p ${BUILD_DIR}/lib/
-    g++ -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.${LIB_EXT} \
-        ${GCC_ARCH} \
-        ${WHOLE_ARCHIVE} ${BUILD_DIR}/examples/server/libext_server.a ${NO_WHOLE_ARCHIVE} \
-        ${BUILD_DIR}/common/libcommon.a \
-        ${BUILD_DIR}/libllama.a \
-        -Wl,-rpath,\$ORIGIN \
-        -lpthread -ldl -lm \
-        ${EXTRA_LIBS}
 }
 
-compress_libs() {
+compress() {
     echo "Compressing payloads to reduce overall binary size..."
     pids=""
-    rm -rf ${BUILD_DIR}/lib/*.${LIB_EXT}*.gz
-    for lib in ${BUILD_DIR}/lib/*.${LIB_EXT}* ; do
-        gzip -n --best -f ${lib} &
+    rm -rf ${BUILD_DIR}/bin/*.gz
+    for f in ${BUILD_DIR}/bin/* ; do
+        gzip -n --best -f ${f} &
         pids+=" $!"
     done
-    echo 
+    # check for lib directory
+    if [ -d ${BUILD_DIR}/lib ]; then
+        for f in ${BUILD_DIR}/lib/* ; do
+            gzip -n --best -f ${f} &
+            pids+=" $!"
+        done
+    fi
+    echo
     for pid in ${pids}; do
         wait $pid
     done
@@ -113,10 +103,8 @@ compress_libs() {
 
 # Keep the local tree clean after we're done with the build
 cleanup() {
-    (cd ${LLAMACPP_DIR}/examples/server/ && git checkout CMakeLists.txt server.cpp)
-
-    if [ -n "$(ls -A ../patches/*.diff)" ]; then
-        for patch in ../patches/*.diff; do
+    if [ -n "$(ls -A patches/*.diff)" ]; then
+        for patch in patches/*.diff; do
             for file in $(grep "^+++ " ${patch} | cut -f2 -d' ' | cut -f2- -d/); do
                 (cd ${LLAMACPP_DIR}; git checkout ${file})
             done
