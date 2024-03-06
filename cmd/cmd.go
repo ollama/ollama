@@ -883,10 +883,10 @@ func NewCLI() *cobra.Command {
 Environment Variables:
 
 	OLLAMA_HOST
-		The host:port to bind to (default "localhost:11434")
+		The host:port to bind to (default "127.0.0.1:11434")
 
 		Examples:
-			"localhost:11434"
+			"127.0.0.1:11434"
 	OLLAMA_ORIGINS
 		A comma separated list of allowed origins. If unset, the
 		default behavior is to allow same origin requests, only.
