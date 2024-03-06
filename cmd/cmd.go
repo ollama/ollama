@@ -879,6 +879,24 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
+	serveCmd.SetUsageTemplate(serveCmd.UsageTemplate() + `
+Environment Variables:
+
+	OLLAMA_HOST
+		The host:port to bind to (default "127.0.0.1:11434")
+
+		Examples:
+			"127.0.0.1:11434"
+	OLLAMA_ORIGINS
+		A comma separated list of allowed origins. If unset, the
+		default behavior is to allow same origin requests, only.
+
+		Examples:
+			"localhost:11434"
+			"example.com,api.example.com"
+	OLLAMA_MODELS
+		The path to the models directory (default is "~/.ollama/models")
+`)
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
@@ -907,7 +925,6 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
-
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE TARGET",
 		Short:   "Copy a model",
