@@ -101,6 +101,7 @@ ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
 COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+RUN mkdir -p /go/src/github.com/jmorganca/ollama/dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN go build .
