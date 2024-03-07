@@ -2,6 +2,10 @@ name: test
 
 on:
   pull_request:
+    paths:
+      - '!docs/**'
+      - '!examples/**'
+      - '!README.md'
 
 jobs:
   generate:
