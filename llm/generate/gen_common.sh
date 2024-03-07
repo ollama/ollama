@@ -1,4 +1,4 @@
-# common logic accross linux and darwin
+# common logic across linux and darwin
 
 init_vars() {
     case "${GOARCH}" in
