@@ -671,6 +671,16 @@ func DeleteModelHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, nil)
 }
 
+func PsHandler(c *gin.Context) {
+	resp := &api.PsResponse{}
+	if loaded.runner != nil {
+		resp.Model = &loaded.Model.ShortName
+		resp.ExpireAt = &loaded.expireAt
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 func ShowModelHandler(c *gin.Context) {
 	var req api.ShowRequest
 	err := c.ShouldBindJSON(&req)
@@ -964,6 +974,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 			c.String(http.StatusOK, "Ollama is running")
 		})
 
+		r.Handle(method, "/api/ps", PsHandler)
 		r.Handle(method, "/api/tags", ListModelsHandler)
 		r.Handle(method, "/api/version", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"version": version.Version})
