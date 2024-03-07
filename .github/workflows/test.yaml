@@ -27,6 +27,14 @@ jobs:
         with:
           go-version: '1.22'
           cache: true
+      - if: ${{ startsWith(matrix.os, 'windows-') }}
+        uses: Jimver/cuda-toolkit@v0.2.14
+        id: cuda-toolkit
+        with:
+          cuda: '11.3.1'
+          use-local-cache: true
+      - if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: nvcc -V
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
