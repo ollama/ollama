@@ -10,6 +10,14 @@ Install Ollama running this one-liner:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
+## AMD Radeon GPU support
+
+While AMD has contributed the `amdgpu` driver upstream to the official linux
+kernel source, the version is older and may not support all ROCm features. We
+recommend you install the latest driver from
+https://www.amd.com/en/support/linux-drivers for best support of your Radeon
+GPU.
+
 ## Manual install
 
 ### Download the `ollama` binary

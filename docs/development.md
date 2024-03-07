@@ -116,7 +116,7 @@ Note: The windows build for Ollama is still under development.
 
 Install required tools:
 
-- MSVC toolchain - C/C++ and cmake as minimal requirements
+- MSVC toolchain - C/C++ and cmake as minimal requirements - You must build from a "Developer Shell" with the environment variables set
 - go version 1.22 or higher
 - MinGW (pick one variant) with GCC.
   - <https://www.mingw-w64.org/>
@@ -132,6 +132,6 @@ go build .
 
 #### Windows CUDA (NVIDIA)
 
-In addition to the common Windows development tools described above, install:
+In addition to the common Windows development tools described above, install CUDA **AFTER** you install MSVC.
 
 - [NVIDIA CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
