@@ -242,6 +242,15 @@ func getCPUMem() (memInfo, error) {
 }
 
 func CheckVRAM() (int64, error) {
+	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
+	if userLimit != "" {
+		avail, err := strconv.ParseInt(userLimit, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("Invalid OLLAMA_MAX_VRAM setting %s: %s", userLimit, err)
+		}
+		slog.Info(fmt.Sprintf("user override OLLAMA_MAX_VRAM=%d", avail))
+		return avail, nil
+	}
 	gpuInfo := GetGPUInfo()
 	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
 		// leave 10% or 1024MiB of VRAM free per GPU to handle unaccounted for overhead
