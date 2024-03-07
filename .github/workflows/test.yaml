@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
       - run: go get ./...
       - run: go generate -x ./...
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
       - run: go get ./...
       - run: |
@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
       - run: go get ./...
       - run: |
@@ -103,14 +103,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: "1"
+      CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: false
       - run: |
           mkdir -p llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/
@@ -140,14 +140,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: "1"
+      CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
       - run: go get
       - uses: actions/download-artifact@v4
