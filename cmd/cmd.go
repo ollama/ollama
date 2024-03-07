@@ -102,6 +102,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 					return err
 				}
 				defer os.RemoveAll(tf.Name())
+
 				zf := zip.NewWriter(tf)
 
 				files, err := filepath.Glob(filepath.Join(path, "model-*.safetensors"))
@@ -109,13 +110,20 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 					return err
 				}
 
+				if len(files) == 0 {
+					return fmt.Errorf("no safetensors files were found in '%s'", path)
+				}
+
 				// add the safetensor config file + tokenizer
 				files = append(files, filepath.Join(path, "config.json"))
+				files = append(files, filepath.Join(path, "added_tokens.json"))
 				files = append(files, filepath.Join(path, "tokenizer.model"))
 
 				for _, fn := range files {
 					f, err := os.Open(fn)
-					if err != nil {
+					if os.IsNotExist(err) && strings.HasSuffix(fn, "added_tokens.json") {
+						continue
+					} else if err != nil {
 						return err
 					}
 

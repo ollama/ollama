@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,17 +21,18 @@ import (
 )
 
 type Params struct {
-	VocabSize        int     `json:"vocab_size"`
-	HiddenSize       int     `json:"hidden_size"`       // n_embd
-	HiddenLayers     int     `json:"num_hidden_layers"` // n_layer
-	ContextSize      int     `json:"max_position_embeddings"`
-	IntermediateSize int     `json:"intermediate_size"`
-	AttentionHeads   int     `json:"num_attention_heads"` // n_head
-	KeyValHeads      int     `json:"num_key_value_heads"`
-	NormEPS          float64 `json:"rms_norm_eps"`
-	RopeFreqBase     float64 `json:"rope_theta"`
-	BoSTokenID       int     `json:"bos_token_id"`
-	EoSTokenID       int     `json:"eos_token_id"`
+	Architectures    []string `json:"architectures"`
+	VocabSize        int      `json:"vocab_size"`
+	HiddenSize       int      `json:"hidden_size"`       // n_embd
+	HiddenLayers     int      `json:"num_hidden_layers"` // n_layer
+	ContextSize      int      `json:"max_position_embeddings"`
+	IntermediateSize int      `json:"intermediate_size"`
+	AttentionHeads   int      `json:"num_attention_heads"` // n_head
+	KeyValHeads      int      `json:"num_key_value_heads"`
+	NormEPS          float64  `json:"rms_norm_eps"`
+	RopeFreqBase     float64  `json:"rope_theta"`
+	BoSTokenID       int      `json:"bos_token_id"`
+	EoSTokenID       int      `json:"eos_token_id"`
 }
 
 type MetaData struct {
@@ -46,17 +48,10 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 	}
 	defer f.Close()
 
-	// read the first 8 bytes of the file
-	buf := make([]byte, 8)
-	_, err = io.ReadFull(f, buf)
-	if err != nil {
-		return []llm.Tensor{}, 0, err
-	}
+	var jsonSize uint64
+	binary.Read(f, binary.LittleEndian, &jsonSize)
 
-	// convert to little endian uint64
-	num := binary.LittleEndian.Uint64(buf)
-
-	buf = make([]byte, num)
+	buf := make([]byte, jsonSize)
 	_, err = io.ReadFull(f, buf)
 	if err != nil {
 		return []llm.Tensor{}, 0, err
@@ -74,9 +69,9 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 		keys = append(keys, k)
 	}
 
-	slices.SortFunc(keys, func(a, b string) int {
-		return cmp.Compare(a, b)
-	})
+	slices.Sort(keys)
+
+	slog.Info("converting layers")
 
 	var tensors []llm.Tensor
 	for _, k := range keys {
@@ -104,7 +99,7 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 
 		ggufName, err := GetTensorName(k)
 		if err != nil {
-			fmt.Println(err)
+			slog.Error("%v", err)
 			return []llm.Tensor{}, 0, err
 		}
 
@@ -119,9 +114,10 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 			Offset:        offset,
 			Shape:         shape,
 			FileName:      fn,
-			OffsetPadding: 8 + num,
+			OffsetPadding: 8 + jsonSize,
 			FileOffsets:   []uint64{uint64(data.Offsets[0]), uint64(data.Offsets[1])},
 		}
+		slog.Debug(fmt.Sprintf("%v", t))
 		tensors = append(tensors, t)
 		offset += size
 	}
@@ -130,7 +126,7 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 
 func GetSafeTensors(dirpath string) ([]llm.Tensor, error) {
 	var tensors []llm.Tensor
-	files, err := filepath.Glob(dirpath + "/model-*.safetensors")
+	files, err := filepath.Glob(filepath.Join(dirpath, "/model-*.safetensors"))
 	if err != nil {
 		return []llm.Tensor{}, err
 	}
@@ -141,7 +137,7 @@ func GetSafeTensors(dirpath string) ([]llm.Tensor, error) {
 		var err error
 		t, offset, err = ReadSafeTensors(f, offset)
 		if err != nil {
-			fmt.Println(err)
+			slog.Error("%v", err)
 			return []llm.Tensor{}, err
 		}
 		tensors = append(tensors, t...)
@@ -150,7 +146,7 @@ func GetSafeTensors(dirpath string) ([]llm.Tensor, error) {
 }
 
 func GetParams(dirpath string) (*Params, error) {
-	f, err := os.Open(dirpath + "/config.json")
+	f, err := os.Open(filepath.Join(dirpath, "config.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +172,7 @@ type Vocab struct {
 }
 
 func LoadTokens(dirpath string) (*Vocab, error) {
+	slog.Info(fmt.Sprintf("reading vocab from %s", filepath.Join(dirpath, "tokenizer.model")))
 	in, err := os.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
 	if err != nil {
 		return nil, err
@@ -201,6 +198,51 @@ func LoadTokens(dirpath string) (*Vocab, error) {
 		t := p.GetType()
 		v.Types = append(v.Types, int32(t))
 	}
+
+	slog.Info(fmt.Sprintf("vocab size: %d", len(v.Tokens)))
+
+	// add any additional tokens
+	addIn, err := os.ReadFile(filepath.Join(dirpath, "added_tokens.json"))
+	if os.IsNotExist(err) {
+		return v, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	slog.Info("reading user defined tokens")
+
+	var extraTokenData map[string]int
+	if err := json.Unmarshal(addIn, &extraTokenData); err != nil {
+		return nil, err
+	}
+
+	type token struct {
+		key string
+		pos int
+	}
+
+	extraTokens := make([]token, 0)
+	for k, id := range extraTokenData {
+		extraTokens = append(extraTokens, token{k, id})
+	}
+
+	slices.SortFunc(extraTokens, func(a, b token) int {
+		return cmp.Compare(a.pos, b.pos)
+	})
+
+	numToks := len(v.Tokens)
+
+	for cnt, t := range extraTokens {
+		// the token id should match the specific index for the total number of tokens
+		if t.pos != cnt+numToks {
+			return nil, fmt.Errorf("token ID '%d' for '%s' doesn't match total token size", t.pos, t.key)
+		}
+		v.Tokens = append(v.Tokens, t.key)
+		v.Scores = append(v.Scores, -1000.0)
+		v.Types = append(v.Types, int32(llm.GGUFTokenUserDefined))
+	}
+	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
+
 	return v, nil
 }
 

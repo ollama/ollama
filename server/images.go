@@ -618,10 +618,11 @@ func convertSafetensors(name, fn string) (string, error) {
 	}
 	defer r.Close()
 
-	tempDir, err := os.MkdirTemp("", "ollama-model")
+	tempDir, err := os.MkdirTemp("", "ollama-convert")
 	if err != nil {
 		return "", err
 	}
+	defer os.RemoveAll(tempDir)
 
 	for _, f := range r.File {
 		fpath := filepath.Join(tempDir, f.Name)
@@ -644,12 +645,22 @@ func convertSafetensors(name, fn string) (string, error) {
 		rc.Close()
 	}
 
-	t, err := convert.GetSafeTensors(tempDir)
+	params, err := convert.GetParams(tempDir)
 	if err != nil {
 		return "", err
 	}
 
-	params, err := convert.GetParams(tempDir)
+	SupportedArchs := []string{
+		"MistralForCausalLM",
+	}
+
+	for _, arch := range params.Architectures {
+		if !slices.Contains(SupportedArchs, arch) {
+			return "", fmt.Errorf("this safetensors model is not yet supported")
+		}
+	}
+
+	t, err := convert.GetSafeTensors(tempDir)
 	if err != nil {
 		return "", err
 	}

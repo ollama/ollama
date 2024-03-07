@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"regexp"
 
@@ -58,6 +59,16 @@ func (c *ContainerGGUF) Decode(rso *readSeekOffset) (model, error) {
 
 	return model, nil
 }
+
+const (
+	_ uint32 = iota
+	GGUFTokenNormal
+	GGUFTokenUnknown
+	GGUFTokenControl
+	GGUFTokenUserDefined
+	GGUFTokenUnused
+	GGUFTokenByte
+)
 
 const (
 	GGUFTypeUint8 uint32 = iota
@@ -431,6 +442,12 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 			return err
 		}
 	}
+
+	offset, terr := f.Seek(0, io.SeekCurrent)
+	if terr != nil {
+		return terr
+	}
+	slog.Debug(fmt.Sprintf("tensors offset = %x", offset))
 
 	if err := llm.writePadding(f, 32); err != nil {
 		return err
