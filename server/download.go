@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -151,7 +152,7 @@ func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *regis
 
 	_ = file.Truncate(b.Total)
 
-	var limit int64 = 2
+	limit := int64(runtime.NumCPU())
 	g, inner := NewLimitGroup(ctx, numDownloadParts, limit)
 	go watchDelta(inner, g, &b.Completed, limit)
 
@@ -424,8 +425,8 @@ func watchDelta(ctx context.Context, g *LimitGroup, c *atomic.Int64, limit int64
 	var maxDelta float64
 	var buckets []int64
 
-	// 5s ramp up period
-	nextUpdate := time.Now().Add(5 * time.Second)
+	// 3s ramp up period
+	nextUpdate := time.Now().Add(3 * time.Second)
 
 	ticker := time.NewTicker(time.Second)
 	for {
@@ -446,7 +447,7 @@ func watchDelta(ctx context.Context, g *LimitGroup, c *atomic.Int64, limit int64
 				continue
 			} else if maxDelta > 0 {
 				x := delta / maxDelta
-				if x < 1.2 {
+				if x < 1 {
 					continue
 				}
 
@@ -456,7 +457,7 @@ func watchDelta(ctx context.Context, g *LimitGroup, c *atomic.Int64, limit int64
 			}
 
 			// 3s cooldown period
-			nextUpdate = time.Now().Add(3 * time.Second)
+			nextUpdate = time.Now().Add(2 * time.Second)
 			maxDelta = delta
 
 		case <-ctx.Done():
