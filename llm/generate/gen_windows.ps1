@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 function init_vars {
     $script:SRC_DIR = $(resolve-path "..\..\")
     $script:llamacppDir = "../llama.cpp"
-    $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off",  "-A", "x64")
+    $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off")
     $script:cmakeTargets = @("ext_server")
     $script:ARCH = "amd64" # arm not yet supported.
     if ($env:CGO_CFLAGS -contains "-g") {
@@ -90,17 +90,38 @@ function build {
     & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ })
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
-
 function install {
+    Write-Host "Installing ${script:buildDir}"
     rm -ea 0 -recurse -force -path "${script:buildDir}/lib"
     md "${script:buildDir}/lib" -ea 0 > $null
-    cp "${script:buildDir}/bin/${script:config}/ext_server.dll" "${script:buildDir}/lib"
-    cp "${script:buildDir}/bin/${script:config}/llama.dll" "${script:buildDir}/lib"
-    # Display the dll dependencies in the build log
-    if ($script:DUMPBIN -ne $null) {
-        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+
+    $extServerDllPath = "${script:buildDir}/bin/${script:config}/ext_server.dll"
+    $extServerDllPathWithoutConfig = "${script:buildDir}/bin/libext_server.dll"
+
+    if (Test-Path $extServerDllPath) {
+        cp $extServerDllPath "${script:buildDir}/lib"
+        cp "${script:buildDir}/bin/${script:config}/llama.dll" "${script:buildDir}/lib"
+
+        # Display the dll dependencies in the build log
+        if ($script:DUMPBIN -ne $null) {
+            & "$script:DUMPBIN" /dependents $extServerDllPath | Select-String ".dll"
+        }
+    }
+    elseif (Test-Path $extServerDllPathWithoutConfig) {
+        cp $extServerDllPathWithoutConfig "${script:buildDir}/lib"
+        cp "${script:buildDir}/bin/libllama.dll" "${script:buildDir}/lib"
+
+        # Display the dll dependencies in the build log
+        if ($script:DUMPBIN -ne $null) {
+            & "$script:DUMPBIN" /dependents $extServerDllPathWithoutConfig | Select-String ".dll"
+        }
+    }
+    else {
+        Write-Host "ext_server.dll not found in ${script:buildDir}/bin/${script:config} or ${script:buildDir}/bin"
+        Write-Error "Installation failed."
     }
 }
+
 
 function sign {
     if ("${env:KEY_CONTAINER}") {
