@@ -86,7 +86,10 @@ func (i *Instance) Readline() (string, error) {
 		i.Terminal.rawmode = false
 	}()
 
-	buf, _ := NewBuffer(i.Prompt)
+	buf, err := NewBuffer(i.Prompt)
+	if err != nil {
+		return "", err
+	}
 
 	var esc bool
 	var escex bool

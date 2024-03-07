@@ -1,6 +1,7 @@
 package readline
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -17,11 +18,27 @@ type Buffer struct {
 	Height    int
 }
 
-func NewBuffer(prompt *Prompt) (*Buffer, error) {
-	fd := int(os.Stdout.Fd())
-	width, height, err := term.GetSize(fd)
+func getTermSize() (width, height int, err error) {
+	// if we can't get the size from stderr, try /dev/tty
+	fd := int(os.Stderr.Fd())
+	width, height, err = term.GetSize(fd)
 	if err != nil {
-		fmt.Println("Error getting size:", err)
+		tty, ttyErr := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+		if ttyErr != nil {
+			return 0, 0, errors.New("Error getting term size: " + ttyErr.Error())
+		}
+		defer tty.Close()
+		width, height, err = term.GetSize(int(tty.Fd()))
+		if err != nil {
+			return 0, 0, errors.New("Error getting term size: " + err.Error())
+		}
+	}
+	return width, height, nil
+}
+
+func NewBuffer(prompt *Prompt) (*Buffer, error) {
+	width, height, err := getTermSize()
+	if err != nil {
 		return nil, err
 	}
 
