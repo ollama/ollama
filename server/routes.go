@@ -909,6 +909,7 @@ var defaultAllowOrigins = []string{
 var defaultAllowSchemas = []string{
 	"http",
 	"https",
+	"tauri",
 }
 
 func NewServer() (*Server, error) {
@@ -926,6 +927,7 @@ func BuildCORSConfig(origins []string) cors.Config {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
+	config.CustomSchemas = []string{"tauri"}
 
 	config.AllowOrigins = origins
 	for _, allowOrigin := range defaultAllowOrigins {

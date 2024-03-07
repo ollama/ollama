@@ -35,18 +35,24 @@ func TestBuildCORSConfig(t *testing.T) {
 	expectedOrigins := append(origins,
 		"http://localhost",
 		"https://localhost",
+		"tauri://localhost",
 		"http://localhost:*",
 		"https://localhost:*",
+		"tauri://localhost:*",
 
 		"http://127.0.0.1",
 		"https://127.0.0.1",
+		"tauri://127.0.0.1",
 		"http://127.0.0.1:*",
 		"https://127.0.0.1:*",
+		"tauri://127.0.0.1:*",
 
 		"http://0.0.0.0",
 		"https://0.0.0.0",
+		"tauri://0.0.0.0",
 		"http://0.0.0.0:*",
 		"https://0.0.0.0:*",
+		"tauri://0.0.0.0:*",
 	)
 
 	if !assert.ElementsMatch(t, config.AllowOrigins, expectedOrigins) {
