@@ -65,8 +65,12 @@ function init_vars {
     } else {
         $script:CMAKE_CUDA_ARCHITECTURES=$env:CMAKE_CUDA_ARCHITECTURES
     }
-    # Note: 10 Windows Kit signtool crashes with GCP's plugin
-    ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
+    # Note: Windows Kits 10 signtool crashes with GCP's plugin
+    if ($null -eq $env:SIGN_TOOL) {
+        ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
+    } else {
+        ${script:SignTool}=${env:SIGN_TOOL}
+    }
     if ("${env:KEY_CONTAINER}") {
         ${script:OLLAMA_CERT}=$(resolve-path "${script:SRC_DIR}\ollama_inc.crt")
     }
@@ -139,7 +143,7 @@ function sign {
     if ("${env:KEY_CONTAINER}") {
         write-host "Signing ${script:buildDir}/lib/*.dll"
         foreach ($file in (get-childitem "${script:buildDir}/lib/*.dll")){
-            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
+            & "${script:SignTool}" sign /v /debug /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
                 /csp "Google Cloud KMS Provider" /kc "${env:KEY_CONTAINER}" $file
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
@@ -189,32 +193,37 @@ apply_patches
 
 $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
 
-init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
-write-host "Building LCD CPU"
-build
-install
-sign
-compress_libs
+if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
 
-init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
-write-host "Building AVX CPU"
-build
-install
-sign
-compress_libs
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
+    write-host "Building LCD CPU"
+    build
+    install
+    sign
+    compress_libs
 
-init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
-write-host "Building AVX2 CPU"
-build
-install
-sign
-compress_libs
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
+    write-host "Building AVX CPU"
+    build
+    install
+    sign
+    compress_libs
+
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
+    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
+    write-host "Building AVX2 CPU"
+    build
+    install
+    sign
+    compress_libs
+} else {
+    write-host "Skipping CPU generation step as requested"
+}
 
 if ($null -ne $script:CUDA_LIB_DIR) {
     # Then build cuda as a dynamically loaded library
@@ -272,4 +281,4 @@ if ($null -ne $env:HIP_PATH) {
 }
 
 cleanup
-write-host "`ngo generate completed"
+write-host "`ngo generate completed.  LLM runners: $(get-childitem -path ${script:SRC_DIR}\llm\llama.cpp\build\windows\${script:ARCH})"
