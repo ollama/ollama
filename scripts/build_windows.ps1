@@ -51,8 +51,12 @@ function checkEnv() {
 
 function buildOllama() {
     write-host "Building ollama CLI"
-    & go generate ./...
-    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
+        & go generate ./...
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+    } else {
+        write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
+    }
     & go build -ldflags "-s -w -X=github.com/jmorganca/ollama/version.Version=$script:VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {

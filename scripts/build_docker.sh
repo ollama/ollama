@@ -16,19 +16,23 @@ docker build \
     -t ${IMAGE_NAME}:$VERSION \
     .
 
-docker build \
-    --load \
-    --platform=linux/amd64 \
-    --build-arg=VERSION \
-    --build-arg=GOFLAGS \
-    --target runtime-rocm \
-    -f Dockerfile \
-    -t ${IMAGE_NAME}:$VERSION-rocm \
-    .
+if echo ${BUILD_PLATFORM} | grep "amd64" > /dev/null; then
+    docker build \
+        --load \
+        --platform=linux/amd64 \
+        --build-arg=VERSION \
+        --build-arg=GOFLAGS \
+        --target runtime-rocm \
+        -f Dockerfile \
+        -t ${IMAGE_NAME}:$VERSION-rocm \
+        .
+    docker tag ${IMAGE_NAME}:$VERSION-rocm ${IMAGE_NAME}:rocm
+fi
 
 docker tag ${IMAGE_NAME}:$VERSION ${IMAGE_NAME}:latest
-docker tag ${IMAGE_NAME}:$VERSION-rocm ${IMAGE_NAME}:rocm
 
 echo "To release, run:"
 echo "  docker push ${IMAGE_NAME}:$VERSION && docker push ${IMAGE_NAME}:latest"
-echo "  docker push ${IMAGE_NAME}:$VERSION-rocm && docker push ${IMAGE_NAME}:rocm"
+if echo ${BUILD_PLATFORM} | grep "amd64" > /dev/null; then
+    echo "  docker push ${IMAGE_NAME}:$VERSION-rocm && docker push ${IMAGE_NAME}:rocm"
+fi

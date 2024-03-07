@@ -189,32 +189,37 @@ apply_patches
 
 $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
 
-init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
-write-host "Building LCD CPU"
-build
-install
-sign
-compress_libs
+if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
 
-init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
-write-host "Building AVX CPU"
-build
-install
-sign
-compress_libs
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
+    write-host "Building LCD CPU"
+    build
+    install
+    sign
+    compress_libs
 
-init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
-write-host "Building AVX2 CPU"
-build
-install
-sign
-compress_libs
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
+    write-host "Building AVX CPU"
+    build
+    install
+    sign
+    compress_libs
+
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
+    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
+    write-host "Building AVX2 CPU"
+    build
+    install
+    sign
+    compress_libs
+} else {
+    write-host "Skipping CPU generation step as requested"
+}
 
 if ($null -ne $script:CUDA_LIB_DIR) {
     # Then build cuda as a dynamically loaded library
@@ -272,4 +277,4 @@ if ($null -ne $env:HIP_PATH) {
 }
 
 cleanup
-write-host "`ngo generate completed"
+write-host "`ngo generate completed.  LLM runners: $(get-childitem -path ${script:SRC_DIR}\llm\llama.cpp\build\windows\${script:ARCH})"
