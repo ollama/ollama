@@ -55,7 +55,6 @@ var CudaWindowsGlobs = []string{
 
 // Note: gpuMutex must already be held
 func initGPUHandles() {
-
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
 
 	gpuHandles = &handles{nil}
