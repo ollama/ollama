@@ -887,6 +887,14 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
+func appendHostEnvDocs(cmd *cobra.Command) {
+	const hostEnvDocs = `
+Environment Variables:
+      OLLAMA_HOST        The host:port or base URL of the Ollama server (e.g. http://localhost:11434)
+`
+	cmd.SetUsageTemplate(cmd.UsageTemplate() + hostEnvDocs)
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -952,7 +960,6 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
-
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
@@ -963,20 +970,9 @@ func NewCLI() *cobra.Command {
 	serveCmd.SetUsageTemplate(serveCmd.UsageTemplate() + `
 Environment Variables:
 
-	OLLAMA_HOST
-		The host:port to bind to (default "127.0.0.1:11434")
-
-		Examples:
-			"127.0.0.1:11434"
-	OLLAMA_ORIGINS
-		A comma separated list of allowed origins. If unset, the
-		default behavior is to allow same origin requests, only.
-
-		Examples:
-			"localhost:11434"
-			"example.com,api.example.com"
-	OLLAMA_MODELS
-		The path to the models directory (default is "~/.ollama/models")
+    OLLAMA_HOST       The host:port to bind to (default "127.0.0.1:11434")
+    OLLAMA_ORIGINS    A comma separated list of allowed origins.
+    OLLAMA_MODELS     The path to the models directory (default is "~/.ollama/models")
 `)
 
 	pullCmd := &cobra.Command{
@@ -1020,6 +1016,19 @@ Environment Variables:
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    DeleteHandler,
+	}
+
+	for _, cmd := range []*cobra.Command{
+		createCmd,
+		showCmd,
+		runCmd,
+		pullCmd,
+		pushCmd,
+		listCmd,
+		copyCmd,
+		deleteCmd,
+	} {
+		appendHostEnvDocs(cmd)
 	}
 
 	rootCmd.AddCommand(
