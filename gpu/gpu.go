@@ -177,7 +177,7 @@ func CheckVRAM() (int64, error) {
 			overhead = gpus * 1024 * 1024 * 1024
 		}
 		avail := int64(gpuInfo.FreeMemory - overhead)
-		slog.Debug(fmt.Sprintf("%s detected %d devices with %dM available memory", gpuInfo.Library, gpuInfo.DeviceCount, avail/1024/1024))
+		slog.Info(fmt.Sprintf("%s detected %d devices with %dM available memory", gpuInfo.Library, gpuInfo.DeviceCount, avail/1024/1024))
 		return avail, nil
 	}
 
