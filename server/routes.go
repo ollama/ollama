@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
@@ -136,6 +137,12 @@ func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options
 	return opts, nil
 }
 
+func isSupportedImageType(image []byte) bool {
+	contentType := http.DetectContentType(image)
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
+	return slices.Contains(allowedTypes, contentType)
+}
+
 func GenerateHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -166,6 +173,13 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	for _, img := range req.Images {
+		if !isSupportedImageType(img) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unsupported image format"})
+			return
+		}
+	}
+
 	model, err := GetModel(req.Model)
 	if err != nil {
 		var pErr *fs.PathError
@@ -174,6 +188,11 @@ func GenerateHandler(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if model.IsEmbedding() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "embedding models do not support generate"})
 		return
 	}
 
@@ -200,6 +219,8 @@ func GenerateHandler(c *gin.Context) {
 	}
 
 	// an empty request loads the model
+	// note: for a short while template was used in lieu
+	// of `raw` mode so we need to check for it too
 	if req.Prompt == "" && req.Template == "" && req.System == "" {
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			CreatedAt: time.Now().UTC(),
@@ -212,50 +233,49 @@ func GenerateHandler(c *gin.Context) {
 	checkpointLoaded := time.Now()
 
 	var prompt string
-	var promptVars PromptVars
 	switch {
 	case req.Raw:
 		prompt = req.Prompt
 	case req.Prompt != "":
-		if req.Template != "" {
-			// override the default model template
-			model.Template = req.Template
+		if req.Template == "" {
+			req.Template = model.Template
 		}
 
-		var rebuild strings.Builder
+		if req.System == "" {
+			req.System = model.System
+		}
+
+		slog.Debug("generate handler", "prompt", req.Prompt)
+		slog.Debug("generate handler", "template", req.Template)
+		slog.Debug("generate handler", "system", req.System)
+
+		var sb strings.Builder
+		for i := range req.Images {
+			fmt.Fprintf(&sb, "[img-%d] ", i)
+		}
+
+		sb.WriteString(req.Prompt)
+
+		p, err := Prompt(req.Template, req.System, sb.String(), "", true)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		sb.Reset()
 		if req.Context != nil {
-			// TODO: context is deprecated, at some point the context logic within this conditional should be removed
-			prevCtx, err := loaded.runner.Decode(c.Request.Context(), req.Context)
+			prev, err := loaded.runner.Decode(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
 
-			// Remove leading spaces from prevCtx if present
-			prevCtx = strings.TrimPrefix(prevCtx, " ")
-			rebuild.WriteString(prevCtx)
-		}
-		promptVars = PromptVars{
-			System: req.System,
-			Prompt: req.Prompt,
-			First:  len(req.Context) == 0,
+			sb.WriteString(prev)
 		}
 
-		if promptVars.System == "" {
-			promptVars.System = model.System
-		}
+		sb.WriteString(p)
 
-		for i := range req.Images {
-			promptVars.Prompt += fmt.Sprintf(" [img-%d]", i)
-		}
-
-		p, err := model.PreResponsePrompt(promptVars)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		rebuild.WriteString(p)
-		prompt = rebuild.String()
+		prompt = sb.String()
 	}
 
 	slog.Debug("generate handler", "prompt", prompt)
@@ -294,19 +314,20 @@ func GenerateHandler(c *gin.Context) {
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
 				if !req.Raw {
-					// append the generated text to the history and template it if needed
-					promptVars.Response = generated.String()
-					result, err := model.PostResponseTemplate(promptVars)
+					p, err := Prompt(req.Template, req.System, req.Prompt, generated.String(), false)
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+						return
+					}
+
+					// TODO (jmorganca): encode() should not strip special tokens
+					tokens, err := loaded.runner.Encode(c.Request.Context(), p)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
-					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+result)
-					if err != nil {
-						ch <- gin.H{"error": err.Error()}
-						return
-					}
-					resp.Context = embd
+
+					resp.Context = append(req.Context, tokens...)
 				}
 			}
 
@@ -364,7 +385,7 @@ func GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func EmbeddingHandler(c *gin.Context) {
+func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
 
@@ -417,8 +438,9 @@ func EmbeddingHandler(c *gin.Context) {
 		return
 	}
 
-	if !loaded.Options.EmbeddingOnly {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "embedding option must be set to true"})
+	// an empty request loads the model
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
@@ -464,7 +486,7 @@ func PullModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &RegistryOptions{
+		regOpts := &registryOptions{
 			Insecure: req.Insecure,
 		}
 
@@ -513,7 +535,7 @@ func PushModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &RegistryOptions{
+		regOpts := &registryOptions{
 			Insecure: req.Insecure,
 		}
 
@@ -937,7 +959,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/chat", ChatHandler)
-	r.POST("/api/embeddings", EmbeddingHandler)
+	r.POST("/api/embeddings", EmbeddingsHandler)
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)
@@ -1086,6 +1108,20 @@ func streamResponse(c *gin.Context, ch chan any) {
 	})
 }
 
+// ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
+func chatPrompt(ctx context.Context, template string, messages []api.Message, numCtx int) (string, error) {
+	encode := func(s string) ([]int, error) {
+		return loaded.runner.Encode(ctx, s)
+	}
+
+	prompt, err := ChatPrompt(template, messages, numCtx, encode)
+	if err != nil {
+		return "", err
+	}
+
+	return prompt, nil
+}
+
 func ChatHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -1124,6 +1160,11 @@ func ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if model.IsEmbedding() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "embedding models do not support chat"})
+		return
+	}
+
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
 		if errors.Is(err, api.ErrInvalidOpts) {
@@ -1148,20 +1189,24 @@ func ChatHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	chat, err := model.ChatPrompts(req.Messages)
+	// if the first message is not a system message, then add the model's default system message
+	if len(req.Messages) > 0 && req.Messages[0].Role != "system" {
+		req.Messages = append([]api.Message{
+			{
+				Role:    "system",
+				Content: model.System,
+			},
+		}, req.Messages...)
+	}
+
+	prompt, err := chatPrompt(c.Request.Context(), model.Template, req.Messages, opts.NumCtx)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	prompt, images, err := trimmedPrompt(c.Request.Context(), chat, model)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
 	// an empty request loads the model
-	if len(prompt) == 0 {
+	if len(req.Messages) == 0 || prompt == "" {
 		resp := api.ChatResponse{
 			CreatedAt: time.Now().UTC(),
 			Model:     req.Model,
@@ -1172,7 +1217,24 @@ func ChatHandler(c *gin.Context) {
 		return
 	}
 
-	slog.Debug("chat handler", "prompt", prompt)
+	// only send images that are in the prompt
+	var i int
+	var images []llm.ImageData
+	for _, m := range req.Messages {
+		for _, img := range m.Images {
+			if !isSupportedImageType(img) {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unsupported image format"})
+				return
+			}
+
+			if strings.Contains(prompt, fmt.Sprintf("[img-%d]", i)) {
+				images = append(images, llm.ImageData{Data: img, ID: i})
+			}
+			i += 1
+		}
+	}
+
+	slog.Debug("chat handler", "prompt", prompt, "images", len(images))
 
 	ch := make(chan any)
 
@@ -1246,116 +1308,4 @@ func ChatHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
-}
-
-// promptInfo stores the variables used to template a prompt, and the token length of the resulting template for some model
-type promptInfo struct {
-	vars     PromptVars
-	tokenLen int
-}
-
-// trimmedPrompt builds a prompt to send to a running model. It ensures the prompt fits within the max context length,
-// while preserving the most recent system message.
-func trimmedPrompt(ctx context.Context, chat *ChatHistory, model *Model) (string, []llm.ImageData, error) {
-	if len(chat.Prompts) == 0 {
-		return "", nil, nil
-	}
-
-	var promptsToAdd []promptInfo
-	var totalTokenLength int
-	var systemPromptIncluded bool
-
-	var images []llm.ImageData
-	// reverse iterate through the prompts to build the prompt string in a way that fits the max context length
-	for i := len(chat.Prompts) - 1; i >= 0; i-- {
-		prompt := chat.Prompts[i]
-		promptText, err := promptString(model, prompt, i == len(chat.Prompts)-1)
-		if err != nil {
-			return "", nil, err
-		}
-
-		encodedTokens, err := loaded.runner.Encode(ctx, promptText)
-		if err != nil {
-			return "", nil, err
-		}
-
-		if totalTokenLength+len(encodedTokens) > loaded.NumCtx && i != len(chat.Prompts)-1 {
-			break // reached max context length, stop adding more prompts
-		}
-
-		for j := range prompt.Images {
-			if totalTokenLength+768 > loaded.NumCtx {
-				// this decreases the token length but overestimating is fine
-				prompt.Prompt = strings.ReplaceAll(prompt.Prompt, fmt.Sprintf(" [img-%d]", prompt.Images[j].ID), "")
-				continue
-			}
-
-			totalTokenLength += 768
-			images = append(images, prompt.Images[j])
-		}
-
-		totalTokenLength += len(encodedTokens)
-		systemPromptIncluded = systemPromptIncluded || prompt.System != ""
-		promptsToAdd = append(promptsToAdd, promptInfo{vars: prompt, tokenLen: len(encodedTokens)})
-	}
-
-	// ensure the system prompt is included, if not already
-	if chat.LastSystem != "" && !systemPromptIncluded {
-		var err error
-		promptsToAdd, err = includeSystemPrompt(ctx, chat.LastSystem, totalTokenLength, promptsToAdd)
-		if err != nil {
-			return "", nil, err
-		}
-	}
-
-	promptsToAdd[len(promptsToAdd)-1].vars.First = true
-
-	// construct the final prompt string from the prompts which fit within the context window
-	var result string
-	for i, prompt := range promptsToAdd {
-		promptText, err := promptString(model, prompt.vars, i == 0)
-		if err != nil {
-			return "", nil, err
-		}
-		result = promptText + result
-	}
-
-	return result, images, nil
-}
-
-// promptString applies the model template to the prompt
-func promptString(model *Model, vars PromptVars, isMostRecent bool) (string, error) {
-	if isMostRecent {
-		p, err := model.PreResponsePrompt(vars)
-		if err != nil {
-			return "", fmt.Errorf("pre-response template: %w", err)
-		}
-		return p, nil
-	}
-	p, err := Prompt(model.Template, vars)
-	if err != nil {
-		return "", err
-	}
-	return p, nil
-}
-
-// includeSystemPrompt adjusts the prompts to include the system prompt.
-func includeSystemPrompt(ctx context.Context, systemPrompt string, totalTokenLength int, promptsToAdd []promptInfo) ([]promptInfo, error) {
-	systemTokens, err := loaded.runner.Encode(ctx, systemPrompt)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := len(promptsToAdd) - 1; i >= 0; i-- {
-		if totalTokenLength+len(systemTokens) <= loaded.NumCtx {
-			promptsToAdd[i].vars.System = systemPrompt
-			return promptsToAdd[:i+1], nil
-		}
-		totalTokenLength -= promptsToAdd[i].tokenLen
-	}
-
-	// if got here, system did not fit anywhere, so return the most recent prompt with the system message set
-	recent := promptsToAdd[len(promptsToAdd)-1]
-	recent.vars.System = systemPrompt
-	return []promptInfo{recent}, nil
 }

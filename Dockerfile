@@ -1,4 +1,4 @@
-ARG GOLANG_VERSION=1.21.3
+ARG GOLANG_VERSION=1.22.1
 ARG CMAKE_VERSION=3.22.1
 ARG CUDA_VERSION=11.3.1
 
@@ -132,6 +132,7 @@ ENV OLLAMA_HOST 0.0.0.0
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]

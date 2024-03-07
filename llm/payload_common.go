@@ -90,6 +90,7 @@ func getDynLibs(gpuInfo gpu.GpuInfo) []string {
 	if len(dynLibs) == 0 {
 		dynLibs = []string{availableDynLibs["cpu"]}
 	}
+	slog.Debug(fmt.Sprintf("ordered list of LLM libraries to try %v", dynLibs))
 	return dynLibs
 }
 

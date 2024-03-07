@@ -31,6 +31,11 @@ const (
 	fileTypeQ5_K_S
 	fileTypeQ5_K_M
 	fileTypeQ6_K
+	fileTypeIQ2_XXS
+	fileTypeIQ2_XS
+	fileTypeQ2_K_S
+	fileTypeQ3_K_XS
+	fileTypeIQ3_XXS
 )
 
 func fileType(fileType uint32) string {
@@ -69,6 +74,16 @@ func fileType(fileType uint32) string {
 		return "Q5_K_M"
 	case fileTypeQ6_K:
 		return "Q6_K"
+	case fileTypeIQ2_XXS:
+		return "IQ2_XXS"
+	case fileTypeIQ2_XS:
+		return "IQ2_XS"
+	case fileTypeQ2_K_S:
+		return "Q2_K_S"
+	case fileTypeQ3_K_XS:
+		return "Q3_K_XS"
+	case fileTypeIQ3_XXS:
+		return "IQ3_XXS"
 	default:
 		return "unknown"
 	}
@@ -148,9 +163,9 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	case FILE_MAGIC_GGLA:
 		c = &containerLORA{}
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{bo: binary.LittleEndian}
+		c = &ContainerGGUF{ByteOrder: binary.LittleEndian}
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{bo: binary.BigEndian}
+		c = &ContainerGGUF{ByteOrder: binary.BigEndian}
 	default:
 		return nil, errors.New("invalid file magic")
 	}

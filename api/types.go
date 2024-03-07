@@ -83,7 +83,7 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specfied in GenerateRequest, if you add a new option here add it to the API docs also
+// Options specified in GenerateRequest, if you add a new option here add it to the API docs also
 type Options struct {
 	Runner
 
@@ -121,7 +121,6 @@ type Runner struct {
 	VocabOnly          bool    `json:"vocab_only,omitempty"`
 	UseMMap            bool    `json:"use_mmap,omitempty"`
 	UseMLock           bool    `json:"use_mlock,omitempty"`
-	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
 	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 	NumThread          int     `json:"num_thread,omitempty"`
@@ -395,7 +394,6 @@ func DefaultOptions() Options {
 			UseMLock:           false,
 			UseMMap:            true,
 			UseNUMA:            false,
-			EmbeddingOnly:      true,
 		},
 	}
 }
@@ -415,8 +413,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	switch t := v.(type) {
 	case float64:
 		if t < 0 {
-			t = math.MaxFloat64
-			d.Duration = time.Duration(t)
+			d.Duration = time.Duration(math.MaxInt64)
 		} else {
 			d.Duration = time.Duration(t * float64(time.Second))
 		}
@@ -426,8 +423,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 			return err
 		}
 		if d.Duration < 0 {
-			mf := math.MaxFloat64
-			d.Duration = time.Duration(mf)
+			d.Duration = time.Duration(math.MaxInt64)
 		}
 	}
 

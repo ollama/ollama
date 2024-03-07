@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -19,17 +20,17 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
-	"text/template/parse"
 
 	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/convert"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
 )
 
-type RegistryOptions struct {
+type registryOptions struct {
 	Insecure bool
 	Username string
 	Password string
@@ -53,165 +54,13 @@ type Model struct {
 	Messages       []Message
 }
 
+func (m *Model) IsEmbedding() bool {
+	return slices.Contains(m.Config.ModelFamilies, "bert") || slices.Contains(m.Config.ModelFamilies, "nomic-bert")
+}
+
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
-}
-
-type PromptVars struct {
-	System   string
-	Prompt   string
-	Response string
-	First    bool
-	Images   []llm.ImageData
-}
-
-// extractParts extracts the parts of the template before and after the {{.Response}} node.
-func extractParts(tmplStr string) (pre string, post string, err error) {
-	tmpl, err := template.New("").Parse(tmplStr)
-	if err != nil {
-		return "", "", err
-	}
-
-	var foundResponse bool
-
-	for _, node := range tmpl.Tree.Root.Nodes {
-		if node.Type() == parse.NodeAction && node.String() == "{{.Response}}" {
-			foundResponse = true
-		}
-		if !foundResponse {
-			pre += node.String()
-		} else {
-			post += node.String()
-		}
-	}
-
-	return pre, post, nil
-}
-
-func Prompt(promptTemplate string, p PromptVars) (string, error) {
-	var prompt strings.Builder
-	// Use the "missingkey=zero" option to handle missing variables without panicking
-	tmpl, err := template.New("").Option("missingkey=zero").Parse(promptTemplate)
-	if err != nil {
-		return "", err
-	}
-
-	vars := map[string]any{
-		"System":   p.System,
-		"Prompt":   p.Prompt,
-		"Response": p.Response,
-		"First":    p.First,
-	}
-
-	var sb strings.Builder
-	if err := tmpl.Execute(&sb, vars); err != nil {
-		return "", err
-	}
-	prompt.WriteString(sb.String())
-
-	if !strings.Contains(prompt.String(), p.Response) {
-		// if the response is not in the prompt template, append it to the end
-		prompt.WriteString(p.Response)
-	}
-
-	return prompt.String(), nil
-}
-
-// PreResponsePrompt returns the prompt before the response tag
-func (m *Model) PreResponsePrompt(p PromptVars) (string, error) {
-	pre, _, err := extractParts(m.Template)
-	if err != nil {
-		return "", err
-	}
-
-	return Prompt(pre, p)
-}
-
-// PostResponseTemplate returns the template after the response tag
-func (m *Model) PostResponseTemplate(p PromptVars) (string, error) {
-	if p.System == "" {
-		// use the default system prompt for this model if one is not specified
-		p.System = m.System
-	}
-	_, post, err := extractParts(m.Template)
-	if err != nil {
-		return "", err
-	}
-
-	if post == "" {
-		// if there is no post-response template, return the provided response
-		return p.Response, nil
-	}
-
-	return Prompt(post, p)
-}
-
-type ChatHistory struct {
-	Prompts    []PromptVars
-	LastSystem string
-}
-
-// ChatPrompts returns a list of formatted chat prompts from a list of messages
-func (m *Model) ChatPrompts(msgs []api.Message) (*ChatHistory, error) {
-	// build the prompt from the list of messages
-	lastSystem := m.System
-	currentVars := PromptVars{
-		First:  true,
-		System: m.System,
-	}
-
-	prompts := []PromptVars{}
-	var images []llm.ImageData
-
-	for _, msg := range msgs {
-		switch strings.ToLower(msg.Role) {
-		case "system":
-			// if this is the first message it overrides the system prompt in the modelfile
-			if !currentVars.First && currentVars.System != "" {
-				prompts = append(prompts, currentVars)
-				currentVars = PromptVars{}
-			}
-			currentVars.System = msg.Content
-			lastSystem = msg.Content
-		case "user":
-			if currentVars.Prompt != "" {
-				prompts = append(prompts, currentVars)
-				currentVars = PromptVars{}
-			}
-
-			currentVars.Prompt = msg.Content
-
-			if len(m.ProjectorPaths) > 0 {
-				for i := range msg.Images {
-					id := len(images) + i
-					currentVars.Prompt += fmt.Sprintf(" [img-%d]", id)
-					currentVars.Images = append(currentVars.Images, llm.ImageData{
-						ID:   id,
-						Data: msg.Images[i],
-					})
-				}
-
-				images = append(images, currentVars.Images...)
-			}
-		case "assistant":
-			currentVars.Response = msg.Content
-			prompts = append(prompts, currentVars)
-			currentVars = PromptVars{}
-		default:
-			return nil, fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
-		}
-	}
-
-	// Append the last set of vars if they are non-empty
-	if currentVars.Prompt != "" || currentVars.System != "" {
-		prompts = append(prompts, currentVars)
-	}
-
-	return &ChatHistory{
-		Prompts:    prompts,
-		LastSystem: lastSystem,
-	}, nil
 }
 
 type ManifestV2 struct {
@@ -469,7 +318,24 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 				c.Args = blobPath
 			}
 
-			bin, err := os.Open(realpath(modelFileDir, c.Args))
+			pathName := realpath(modelFileDir, c.Args)
+
+			ggufName, err := convertSafetensors(name, pathName)
+			if err != nil {
+				switch {
+				case errors.Is(err, zip.ErrFormat):
+					// it's not a safetensor archive
+				default:
+					return err
+				}
+			}
+
+			if ggufName != "" {
+				pathName = ggufName
+				defer os.RemoveAll(ggufName)
+			}
+
+			bin, err := os.Open(pathName)
 			if err != nil {
 				// not a file on disk so must be a model reference
 				modelpath := ParseModelPath(c.Args)
@@ -477,7 +343,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 				switch {
 				case errors.Is(err, os.ErrNotExist):
 					fn(api.ProgressResponse{Status: "pulling model"})
-					if err := PullModel(ctx, c.Args, &RegistryOptions{}, fn); err != nil {
+					if err := PullModel(ctx, c.Args, &registryOptions{}, fn); err != nil {
 						return err
 					}
 
@@ -745,6 +611,73 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	return nil
 }
 
+func convertSafetensors(name, fn string) (string, error) {
+	r, err := zip.OpenReader(fn)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+
+	tempDir, err := os.MkdirTemp("", "ollama-convert")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tempDir)
+
+	for _, f := range r.File {
+		fpath := filepath.Join(tempDir, f.Name)
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return "", err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return "", err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		if err != nil {
+			return "", err
+		}
+
+		outFile.Close()
+		rc.Close()
+	}
+
+	params, err := convert.GetParams(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	SupportedArchs := []string{
+		"MistralForCausalLM",
+	}
+
+	for _, arch := range params.Architectures {
+		if !slices.Contains(SupportedArchs, arch) {
+			return "", fmt.Errorf("this safetensors model is not yet supported")
+		}
+	}
+
+	t, err := convert.GetSafeTensors(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	vocab, err := convert.LoadTokens(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	fn, err = convert.WriteGGUF(name, t, params, vocab)
+	if err != nil {
+		return "", err
+	}
+
+	return fn, nil
+}
+
 func CopyModel(src, dest string) error {
 	srcModelPath := ParseModelPath(src)
 	srcPath, err := srcModelPath.GetManifestPath()
@@ -997,7 +930,7 @@ PARAMETER {{ $k }} {{ printf "%#v" $parameter }}
 	return buf.String(), nil
 }
 
-func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
@@ -1047,7 +980,7 @@ func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
+func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	var manifest *ManifestV2
@@ -1153,7 +1086,7 @@ func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn fu
 	return nil
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptions) (*ManifestV2, error) {
+func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*ManifestV2, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
@@ -1185,7 +1118,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 
 var errUnauthorized = fmt.Errorf("unauthorized")
 
-func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
+func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
 	for i := 0; i < 2; i++ {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
@@ -1199,9 +1132,8 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized:
 			// Handle authentication error with one retry
-			auth := resp.Header.Get("www-authenticate")
-			authRedir := ParseAuthRedirectString(auth)
-			token, err := getAuthToken(ctx, authRedir)
+			challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
+			token, err := getAuthorizationToken(ctx, challenge)
 			if err != nil {
 				return nil, err
 			}
@@ -1228,7 +1160,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 	return nil, errUnauthorized
 }
 
-func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
+func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
 	}
@@ -1261,18 +1193,7 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	proxyURL, err := http.ProxyFromEnvironment(req)
-	if err != nil {
-		return nil, err
-	}
-
-	client := http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-	}
-
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1303,10 +1224,10 @@ func getValue(header, key string) string {
 	return header[startIdx:endIdx]
 }
 
-func ParseAuthRedirectString(authStr string) AuthRedirect {
+func parseRegistryChallenge(authStr string) registryChallenge {
 	authStr = strings.TrimPrefix(authStr, "Bearer ")
 
-	return AuthRedirect{
+	return registryChallenge{
 		Realm:   getValue(authStr, "realm"),
 		Service: getValue(authStr, "service"),
 		Scope:   getValue(authStr, "scope"),
