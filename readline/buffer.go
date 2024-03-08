@@ -19,21 +19,33 @@ type Buffer struct {
 }
 
 func getTermSize() (width, height int, err error) {
-	// if we can't get the size from stderr, try /dev/tty
-	fd := int(os.Stderr.Fd())
+	// if we can't get the size from stdout and stderr, try /dev/tty
+	fd := int(os.Stdout.Fd())
 	width, height, err = term.GetSize(fd)
-	if err != nil {
-		tty, ttyErr := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-		if ttyErr != nil {
-			return 0, 0, errors.New("Error getting term size: " + ttyErr.Error())
-		}
+	if err == nil {
+		return width, height, nil
+	}
+	err = errors.Join(err, errors.New("Get term size from stdout: "+err.Error()))
+
+	fd = int(os.Stderr.Fd())
+	width, height, err = term.GetSize(fd)
+	if err == nil {
+		return width, height, nil
+	}
+	err = errors.Join(err, errors.New("Get term size from stderr: "+err.Error()))
+
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err == nil {
 		defer tty.Close()
-		width, height, err = term.GetSize(int(tty.Fd()))
-		if err != nil {
-			return 0, 0, errors.New("Error getting term size: " + err.Error())
+		fd = int(tty.Fd())
+		width, height, err = term.GetSize(fd)
+		if err == nil {
+			return width, height, nil
 		}
 	}
-	return width, height, nil
+	err = errors.Join(err, errors.New("Get term size from /dev/tty: "+err.Error()))
+
+	return 0, 0, err
 }
 
 func NewBuffer(prompt *Prompt) (*Buffer, error) {
