@@ -1024,7 +1024,7 @@ Advanced parameters:
 
 ```shell
 curl http://localhost:11434/api/embeddings -d '{
-  "model": "llama2",
+  "model": "all-minilm",
   "prompt": "Here is an article about llamas..."
 }'
 ```
