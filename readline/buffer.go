@@ -37,9 +37,9 @@ func getTermSize() (width, height int, err error) {
 }
 
 func NewBuffer(prompt *Prompt) (*Buffer, error) {
-	width, height, err := getTermSize()
-	if err != nil {
-		return nil, err
+	width, height := 80, 24
+	if termWidth, termHeight, err := getTermSize(); err == nil {
+		width, height = termWidth, termHeight
 	}
 
 	lwidth := width - len(prompt.prompt())
