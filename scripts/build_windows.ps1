@@ -13,7 +13,21 @@ function checkEnv() {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
-    $script:NVIDIA_DIR=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\")[0]
+    # Try to find the CUDA dir
+    if ($null -eq $env:NVIDIA_DIR) {
+        $d=(get-command -ea 'silentlycontinue' nvcc).path
+        if ($d -ne $null) {
+            $script:NVIDIA_DIR=($d| split-path -parent)
+        } else {
+            $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
+            if ($cudaList.length > 0) {
+                $script:NVIDIA_DIR=$cudaList[0]
+            }
+        }
+    } else {
+        $script:NVIDIA_DIR=$env:NVIDIA_DIR
+    }
+    
     $script:INNO_SETUP_DIR=(get-item "C:\Program Files*\Inno Setup*\")[0]
 
     $script:DEPS_DIR="${script:SRC_DIR}\dist\windeps"
