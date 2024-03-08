@@ -109,6 +109,12 @@ func nativeInit() error {
 	if err != nil {
 		return err
 	}
+
+	// delete the assetsDir
+	if err := os.RemoveAll(assetsDir); err != nil {
+		return err
+	}
+
 	if runtime.GOOS == "darwin" {
 		err := extractPayloadFiles(assetsDir, "llama.cpp/ggml-metal.metal")
 		if err != nil {

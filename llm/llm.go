@@ -143,25 +143,15 @@ func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []stri
 		}
 	}
 
-	// We stage into a temp directory, and if we've been idle for a while, it may have been reaped
-	_, err := os.Stat(dynLibs[0])
-	if err != nil {
-		slog.Info(fmt.Sprintf("%s has disappeared, reloading libraries", dynLibs[0]))
-		err = nativeInit()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	err2 := fmt.Errorf("unable to locate suitable llm library")
+	err := fmt.Errorf("unable to locate suitable llm library")
 	for _, dynLib := range dynLibs {
 		srv, err := newDynExtServer(dynLib, model, adapters, projectors, opts)
 		if err == nil {
 			return srv, nil
 		}
 		slog.Warn(fmt.Sprintf("Failed to load dynamic library %s  %s", dynLib, err))
-		err2 = err
+		err = err
 	}
 
-	return nil, err2
+	return nil, err
 }

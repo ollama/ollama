@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/jmorganca/ollama/version"
 )
 
 func AssetsDir() (string, error) {
@@ -16,25 +14,8 @@ func AssetsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	baseDir := filepath.Join(home, ".ollama", "assets")
-	libDirs, err := os.ReadDir(baseDir)
-	if err == nil {
-		for _, d := range libDirs {
-			if d.Name() == version.Version {
-				continue
-			}
-			// Special case the rocm dependencies, which are handled by the installer
-			if d.Name() == "rocm" {
-				continue
-			}
-			slog.Debug("stale lib detected, cleaning up " + d.Name())
-			err = os.RemoveAll(filepath.Join(baseDir, d.Name()))
-			if err != nil {
-				slog.Warn(fmt.Sprintf("unable to clean up stale library %s: %s", filepath.Join(baseDir, d.Name()), err))
-			}
-		}
-	}
-	return filepath.Join(baseDir, version.Version), nil
+
+	return filepath.Join(home, ".ollama", "assets"), nil
 }
 
 func UpdatePath(dir string) {
