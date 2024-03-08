@@ -1092,6 +1092,7 @@ func Serve(ln net.Listener) error {
 		if loaded.runner != nil {
 			loaded.runner.Close()
 		}
+		gpu.Cleanup()
 		os.Exit(0)
 	}()
 
