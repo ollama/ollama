@@ -1,0 +1,2 @@
+go test fuzz v1
+string("GGUF\x03\x00\x00\x0000000000000000000000000\xe5")

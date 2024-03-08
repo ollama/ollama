@@ -1,0 +1,50 @@
+package registry
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+
+	"bllamo.com/oweb"
+)
+
+type Client struct {
+	BaseURL string
+}
+
+// Push pushes a manifest to the server.
+func (c *Client) Push(ctx context.Context, ref string, manifest []byte) ([]Requirement, error) {
+	// TODO(bmizerany): backoff
+	v, err := oweb.Do[PushResponse](ctx, "POST", c.BaseURL+"/v1/push/"+ref, struct {
+		Manifest json.RawMessage `json:"manifest"`
+	}{manifest})
+	if err != nil {
+		return nil, err
+	}
+	return v.Requirements, nil
+}
+
+func PushLayer(ctx context.Context, dstURL string, size int64, file io.Reader) error {
+	req, err := http.NewRequest("PUT", dstURL, file)
+	if err != nil {
+		return err
+	}
+	req.ContentLength = size
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		e := &oweb.Error{Status: res.StatusCode}
+		msg, err := io.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		// TODO(bmizerany): format error message
+		e.Message = string(msg)
+	}
+	return nil
+}
