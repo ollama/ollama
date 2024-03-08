@@ -103,7 +103,7 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 			return []llm.Tensor{}, 0, err
 		}
 
-		shape := [4]uint64{0, 0, 0, 0}
+		shape := [4]uint64{1, 1, 1, 1}
 		for cnt, s := range data.Shape {
 			shape[cnt] = uint64(s)
 		}
