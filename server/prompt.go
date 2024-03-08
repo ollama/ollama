@@ -121,13 +121,15 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 				p = prompt{}
 			}
 
-			p.Prompt = msg.Content
-
+			var sb strings.Builder
 			for range msg.Images {
-				p.Prompt += fmt.Sprintf(" [img-%d]", imgId)
+				fmt.Fprintf(&sb, "[img-%d] ", imgId)
 				p.images = append(p.images, imgId)
 				imgId += 1
 			}
+
+			sb.WriteString(msg.Content)
+			p.Prompt = sb.String()
 		case "assistant":
 			if p.Response != "" {
 				prompts = append(prompts, p)
