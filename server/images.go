@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -322,9 +323,12 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			ggufName, err := convertSafetensors(name, pathName)
 			if err != nil {
+				var pathErr *fs.PathError
 				switch {
 				case errors.Is(err, zip.ErrFormat):
 					// it's not a safetensor archive
+				case errors.As(err, &pathErr):
+					// it's not a file on disk, could be a model reference
 				default:
 					return err
 				}
