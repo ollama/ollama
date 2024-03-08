@@ -451,7 +451,7 @@ func watchDelta(ctx context.Context, g *LimitGroup, c *atomic.Int64, limit int64
 					continue
 				}
 
-				limit += int64(x)
+				limit += min(int64(x), int64(runtime.NumCPU()))
 				slog.Debug("setting", "limit", limit)
 				g.SetLimit(limit)
 			}
