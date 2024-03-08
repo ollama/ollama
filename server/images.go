@@ -473,7 +473,13 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 			defer bin.Close()
 
-			layer, err := NewLayer(bin, mediatype)
+			ggml, err := llm.DecodeGGML(bin)
+			if err != nil {
+				return err
+			}
+
+			sr := io.NewSectionReader(bin, 0, ggml.Size)
+			layer, err := NewLayer(sr, mediatype)
 			if err != nil {
 				return err
 			}

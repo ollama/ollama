@@ -112,7 +112,7 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 			Name:          ggufName,
 			Kind:          kind,
 			Offset:        offset,
-			Shape:         shape,
+			Shape:         shape[:],
 			FileName:      fn,
 			OffsetPadding: 8 + jsonSize,
 			FileOffsets:   []uint64{uint64(data.Offsets[0]), uint64(data.Offsets[1])},

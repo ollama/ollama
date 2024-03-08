@@ -106,32 +106,6 @@ type container interface {
 	Decode(*readSeekOffset) (model, error)
 }
 
-type containerLORA struct {
-	version uint32
-}
-
-func (c *containerLORA) Name() string {
-	return "ggla"
-}
-
-func (c *containerLORA) Decode(rso *readSeekOffset) (model, error) {
-	var version uint32
-	binary.Read(rso, binary.LittleEndian, &version)
-
-	switch version {
-	case 1:
-	default:
-		return nil, errors.New("invalid version")
-	}
-
-	c.version = version
-
-	// remaining file contents aren't decoded
-	rso.Seek(0, io.SeekEnd)
-
-	return nil, nil
-}
-
 const (
 	// Magic constant for `ggml` files (unversioned).
 	FILE_MAGIC_GGML = 0x67676d6c
@@ -161,7 +135,7 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	case FILE_MAGIC_GGML, FILE_MAGIC_GGMF, FILE_MAGIC_GGJT:
 		return nil, ErrUnsupportedFormat
 	case FILE_MAGIC_GGLA:
-		c = &containerLORA{}
+		c = &ContainerGGLA{}
 	case FILE_MAGIC_GGUF_LE:
 		c = &ContainerGGUF{ByteOrder: binary.LittleEndian}
 	case FILE_MAGIC_GGUF_BE:
@@ -171,7 +145,9 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	}
 
 	model, err := c.Decode(&ro)
-	if err != nil {
+	if errors.Is(err, io.EOF) {
+		// noop
+	} else if err != nil {
 		return nil, err
 	}
 
