@@ -18,6 +18,7 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
+	"golang.org/x/sync/errgroup"
 )
 
 var blobUploadManager sync.Map
@@ -136,17 +137,14 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 	}
 	defer b.file.Close()
 
-	var limit int64 = 2
-	g, inner := NewLimitGroup(ctx, numUploadParts, limit)
-	go watchDelta(inner, g, &b.Completed, limit)
-
+	g, inner := errgroup.WithContext(ctx)
+	g.SetLimit(numUploadParts)
 	for i := range b.Parts {
 		part := &b.Parts[i]
 		select {
 		case <-inner.Done():
-			break
 		case requestURL := <-b.nextURL:
-			g.Go(inner, func() error {
+			g.Go(func() error {
 				var err error
 				for try := 0; try < maxRetries; try++ {
 					err = b.uploadPart(inner, http.MethodPatch, requestURL, part, opts)
