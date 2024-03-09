@@ -11,7 +11,7 @@ set -o pipefail
 REPO=$(dirname $0)/../
 export OLLAMA_MODELS=${REPO}/test_data/models
 REGISTRY_SCHEME=https
-REGISTRY=registry.ollama.ai
+REGISTRY=ollama.com
 TEST_MODELS=("library/orca-mini:latest" "library/llava:7b")
 ACCEPT_HEADER="Accept: application/vnd.docker.distribution.manifest.v2+json"
 

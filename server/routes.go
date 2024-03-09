@@ -807,7 +807,7 @@ func ListModelsHandler(c *gin.Context) {
 			path, tag := filepath.Split(path)
 			model := strings.Trim(strings.TrimPrefix(path, manifestsPath), string(os.PathSeparator))
 			modelPath := strings.Join([]string{model, tag}, ":")
-			canonicalModelPath := strings.ReplaceAll(modelPath, string(os.PathSeparator), "/")
+			canonicalModelPath := filepath.ToSlash(modelPath)
 
 			resp, err := modelResponse(canonicalModelPath)
 			if err != nil {
@@ -1006,6 +1006,13 @@ func Serve(ln net.Listener) error {
 		}
 
 		if err := PruneDirectory(manifestsPath); err != nil {
+			return err
+		}
+	}
+
+	// migrate registry.ollama.ai to ollama.com
+	if err := migrateRegistryDomain(); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
