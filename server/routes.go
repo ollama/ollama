@@ -905,8 +905,29 @@ var defaultAllowOrigins = []string{
 	"0.0.0.0",
 }
 
+func isLocalIP(ip netip.Addr) bool {
+	if interfaces, err := net.Interfaces(); err == nil {
+		for _, iface := range interfaces {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, a := range addrs {
+				if parsed, _, err := net.ParseCIDR(a.String()); err == nil {
+					if parsed.String() == ip.String() {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 func allowedHost(host string) bool {
-	if host == "" || host == "localhost" || host == "0.0.0.0" {
+	if host == "" || host == "localhost" {
 		return true
 	}
 
@@ -927,24 +948,6 @@ func allowedHost(host string) bool {
 		}
 	}
 
-	// check if the host is a local IP address
-	if interfaces, err := net.Interfaces(); err == nil {
-		for _, iface := range interfaces {
-			addrs, err := iface.Addrs()
-			if err != nil {
-				continue
-			}
-
-			for _, a := range addrs {
-				if ip, _, err := net.ParseCIDR(a.String()); err == nil {
-					if host == ip.String() {
-						return true
-					}
-				}
-			}
-		}
-	}
-
 	return false
 }
 
@@ -955,8 +958,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 			return
 		}
 
-		addr, err := netip.ParseAddrPort(addr.String())
-		if err == nil && !addr.Addr().IsLoopback() {
+		if addr, err := netip.ParseAddrPort(addr.String()); err == nil && !addr.Addr().IsLoopback() {
 			c.Next()
 			return
 		}
@@ -967,7 +969,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 		}
 
 		if addr, err := netip.ParseAddr(host); err == nil {
-			if addr.IsLoopback() || addr.IsPrivate() {
+			if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || isLocalIP(addr) {
 				c.Next()
 				return
 			}
