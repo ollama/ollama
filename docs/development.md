@@ -135,3 +135,10 @@ go build .
 In addition to the common Windows development tools described above, install CUDA **AFTER** you install MSVC.
 
 - [NVIDIA CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
+
+
+#### Windows ROCm (AMD Radeon)
+
+In addition to the common Windows development tools described above, install AMDs HIP package **AFTER** you install MSVC
+
+- [AMD HIP](https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html)
