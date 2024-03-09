@@ -906,7 +906,7 @@ var defaultAllowOrigins = []string{
 }
 
 func allowedHost(host string) bool {
-	if host == "" || host == "localhost" {
+	if host == "" || host == "localhost" || host == "0.0.0.0" {
 		return true
 	}
 
@@ -920,18 +920,14 @@ func allowedHost(host string) bool {
 		"internal",
 	}
 
+	// check if the host is a local TLD
 	for _, tld := range tlds {
 		if strings.HasSuffix(host, "."+tld) {
 			return true
 		}
 	}
 
-	return false
-}
-
-func ips() []string {
-	var ips []string
-
+	// check if the host is a local IP address
 	if interfaces, err := net.Interfaces(); err == nil {
 		for _, iface := range interfaces {
 			addrs, err := iface.Addrs()
@@ -941,13 +937,15 @@ func ips() []string {
 
 			for _, a := range addrs {
 				if ip, _, err := net.ParseCIDR(a.String()); err == nil {
-					ips = append(ips, ip.String())
+					if host == ip.String() {
+						return true
+					}
 				}
 			}
 		}
 	}
 
-	return ips
+	return false
 }
 
 func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
@@ -969,7 +967,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 		}
 
 		if addr, err := netip.ParseAddr(host); err == nil {
-			if addr.IsLoopback() || addr.IsPrivate() || slices.Contains(ips(), host) || addr.String() == "0.0.0.0" {
+			if addr.IsLoopback() || addr.IsPrivate() {
 				c.Next()
 				return
 			}
