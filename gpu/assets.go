@@ -32,10 +32,10 @@ func Cleanup() {
 	lock.Lock()
 	defer lock.Unlock()
 	if payloadsDir != "" {
-		slog.Debug("cleaning up payloads dir " + payloadsDir)
+		slog.Debug("cleaning up", "dir", payloadsDir)
 		err := os.RemoveAll(payloadsDir)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("failed to cleanup tmp dir: %s", err))
+			slog.Warn("failed to clean up", "dir", payloadsDir, "err", err)
 		}
 	}
 }
