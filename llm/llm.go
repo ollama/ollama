@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"slices"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
@@ -17,6 +18,10 @@ type LLM interface {
 	Encode(context.Context, string) ([]int, error)
 	Decode(context.Context, []int) (string, error)
 	Close()
+}
+
+var cpuOnlyFamilies = []string{
+	"mamba",
 }
 
 func New(model string, adapters, projectors []string, opts api.Options) (LLM, error) {
@@ -48,12 +53,17 @@ func New(model string, adapters, projectors []string, opts api.Options) (LLM, er
 	size := ggml.Size
 
 	// fp16 k,v matrices require = n_ctx * n_layer * n_embd / n_head * n_head_kv * 2 bytes each * 2 key and value
-	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.NumLayers()) * int64(ggml.NumEmbed()) * int64(ggml.NumHeadKv()) / int64(ggml.NumHead())
+	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.NumLayers()) * int64(ggml.NumEmbed()) * int64(ggml.NumHeadKv()) / int64(max(ggml.NumHead(), 1))
 
 	// this amount is the overhead + tensors in memory
 	// TODO: get this from the llama.cpp's graph calculations instead of
 	// estimating it's 1/6 * kv_cache_size * num_gqa
 	graph := int64(ggml.NumGQA()) * kv / 6
+
+	// certain model architectures don't support gpu inference yet
+	if slices.Contains(cpuOnlyFamilies, ggml.ModelFamily()) {
+		opts.NumGPU = 0
+	}
 
 	info := gpu.GetGPUInfo()
 	switch runtime.GOOS {
@@ -63,9 +73,7 @@ func New(model string, adapters, projectors []string, opts api.Options) (LLM, er
 		}
 
 		if size+kv+graph > vram {
-			slog.Info("not enough vram available, falling back to CPU only")
-			info.Library = "cpu"
-			info.Variant = gpu.GetCPUVariant()
+			slog.Info("not enough vram available, setting num_gpu=0")
 			opts.NumGPU = 0
 			break
 		}
