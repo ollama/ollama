@@ -125,7 +125,7 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
       return;
     }
 
-    llama->initialize();
+    llama->init();
   } catch (std::exception &e) {
     err->id = -1;
     snprintf(err->msg, err->msg_len, "exception %s", e.what());

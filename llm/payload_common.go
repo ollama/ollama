@@ -108,20 +108,8 @@ func nativeInit() error {
 	if err != nil {
 		return err
 	}
-	slog.Info(fmt.Sprintf("Extracting dynamic libraries to %s ...", payloadsDir))
 
-	if runtime.GOOS == "darwin" {
-		err := extractPayloadFiles(payloadsDir, "llama.cpp/ggml-metal.metal")
-		if err != nil {
-			if err == payloadMissing {
-				// TODO perhaps consider this a hard failure on arm macs?
-				slog.Info("ggml-meta.metal payload missing")
-				return nil
-			}
-			return err
-		}
-		os.Setenv("GGML_METAL_PATH_RESOURCES", payloadsDir)
-	}
+	slog.Info(fmt.Sprintf("Extracting dynamic libraries to %s ...", payloadsDir))
 
 	libs, err := extractDynamicLibs(payloadsDir, "llama.cpp/build/*/*/*/lib/*")
 	if err != nil {
@@ -209,44 +197,6 @@ func extractDynamicLibs(payloadsDir, glob string) ([]string, error) {
 		})
 	}
 	return libs, g.Wait()
-}
-
-func extractPayloadFiles(payloadsDir, glob string) error {
-	files, err := fs.Glob(libEmbed, glob)
-	if err != nil || len(files) == 0 {
-		return payloadMissing
-	}
-
-	for _, file := range files {
-		srcFile, err := libEmbed.Open(file)
-		if err != nil {
-			return fmt.Errorf("read payload %s: %v", file, err)
-		}
-		defer srcFile.Close()
-		if err := os.MkdirAll(payloadsDir, 0o755); err != nil {
-			return fmt.Errorf("create payload lib dir %s: %v", payloadsDir, err)
-		}
-		src := io.Reader(srcFile)
-		filename := file
-		if strings.HasSuffix(file, ".gz") {
-			src, err = gzip.NewReader(src)
-			if err != nil {
-				return fmt.Errorf("decompress payload %s: %v", file, err)
-			}
-			filename = strings.TrimSuffix(filename, ".gz")
-		}
-
-		destFile := filepath.Join(payloadsDir, filepath.Base(filename))
-		destFp, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-		if err != nil {
-			return fmt.Errorf("write payload %s: %v", file, err)
-		}
-		defer destFp.Close()
-		if _, err := io.Copy(destFp, src); err != nil {
-			return fmt.Errorf("copy payload %s: %v", file, err)
-		}
-	}
-	return nil
 }
 
 func verifyDriverAccess() error {

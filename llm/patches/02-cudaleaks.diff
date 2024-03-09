@@ -1,10 +1,10 @@
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index f255ad76..5b83acb1 100644
+index b14cca61..02bfd4b1 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
-@@ -28,6 +28,10 @@
- #include <thread>
+@@ -29,6 +29,10 @@
  #include <signal.h>
+ #include <memory>
  
 +#ifdef GGML_USE_CUBLAS
 +extern "C" GGML_CALL void ggml_free_cublas(void);
@@ -13,7 +13,7 @@ index f255ad76..5b83acb1 100644
  using json = nlohmann::json;
  
  bool server_verbose = false;
-@@ -648,6 +652,10 @@ struct server_context {
+@@ -664,6 +668,10 @@ struct server_context {
              llama_free_model(model);
              model = nullptr;
          }
@@ -24,7 +24,7 @@ index f255ad76..5b83acb1 100644
      }
  
      bool load_model(const gpt_params & params_) {
-@@ -3339,6 +3347,7 @@ int main(int argc, char ** argv) {
+@@ -3499,6 +3507,7 @@ int main(int argc, char ** argv) {
      sigemptyset (&sigint_action.sa_mask);
      sigint_action.sa_flags = 0;
      sigaction(SIGINT, &sigint_action, NULL);
@@ -33,10 +33,10 @@ index f255ad76..5b83acb1 100644
      auto console_ctrl_handler = +[](DWORD ctrl_type) -> BOOL {
          return (ctrl_type == CTRL_C_EVENT) ? (signal_handler(SIGINT), true) : false;
 diff --git a/ggml-cuda.cu b/ggml-cuda.cu
-index 72bcec8c..50a45e3d 100644
+index c207ff87..945708a4 100644
 --- a/ggml-cuda.cu
 +++ b/ggml-cuda.cu
-@@ -43,6 +43,7 @@
+@@ -46,6 +46,7 @@
  #define __shfl_xor_sync(mask, var, laneMask, width) __shfl_xor(var, laneMask, width)
  #define cublasComputeType_t hipblasDatatype_t //deprecated, new hipblasComputeType_t not in 5.6
  #define cublasCreate hipblasCreate
@@ -44,7 +44,7 @@ index 72bcec8c..50a45e3d 100644
  #define cublasGemmEx hipblasGemmEx
  #define cublasGemmBatchedEx hipblasGemmBatchedEx
  #define cublasGemmStridedBatchedEx hipblasGemmStridedBatchedEx
-@@ -8751,10 +8752,10 @@ GGML_CALL bool ggml_cublas_loaded(void) {
+@@ -8014,10 +8015,10 @@ GGML_CALL bool ggml_cublas_loaded(void) {
      return g_cublas_loaded;
  }
  
@@ -58,7 +58,7 @@ index 72bcec8c..50a45e3d 100644
  
  #ifdef __HIP_PLATFORM_AMD__
          // Workaround for a rocBLAS bug when using multiple graphics cards:
-@@ -8764,7 +8765,7 @@ GGML_CALL void ggml_init_cublas() {
+@@ -8027,7 +8028,7 @@ GGML_CALL void ggml_init_cublas() {
  #endif
  
          if (cudaGetDeviceCount(&g_device_count) != cudaSuccess) {
@@ -67,7 +67,7 @@ index 72bcec8c..50a45e3d 100644
              g_cublas_loaded = false;
              fprintf(stderr, "%s: no " GGML_CUDA_NAME " devices found, " GGML_CUDA_NAME " will be disabled\n", __func__);
              return;
-@@ -8835,7 +8836,7 @@ GGML_CALL void ggml_init_cublas() {
+@@ -8098,7 +8099,7 @@ GGML_CALL void ggml_init_cublas() {
          // configure logging to stdout
          // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
  
@@ -76,10 +76,11 @@ index 72bcec8c..50a45e3d 100644
          g_cublas_loaded = true;
      }
  }
-@@ -12490,3 +12491,22 @@ GGML_CALL int ggml_backend_cuda_reg_devices() {
+@@ -11753,3 +11754,23 @@ GGML_CALL int ggml_backend_cuda_reg_devices() {
      }
      return device_count;
  }
++
 +
 +extern "C" GGML_CALL void ggml_free_cublas(void);
 +GGML_CALL void ggml_free_cublas(void) {
