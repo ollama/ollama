@@ -1,0 +1,84 @@
+---
+name: ollama
+base: core22
+version: '0.1'  # rewritten by adopt-info & `snapcraftctl set-version` below
+summary: Get up and running with large language models locally.
+description: |
+  Run Llama 2, Code Llama, and other models. Customize and create your own.
+adopt-info: ollama
+grade: stable
+confinement: strict
+license: MIT
+architectures:
+  - build-on: [amd64]
+    build-for: [amd64]
+  - build-on: [arm64]
+    build-for: [arm64]
+
+package-repositories:
+  - type: apt
+    formats: [deb]
+    path: /
+    key-id: EB693B3035CD5710E231E123A4B469963BF863CC
+    url: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64
+
+apps:
+  ollama:
+    command: bin/snap_launcher.sh
+    plugs:
+      - home
+      - removable-media
+      - network
+      - network-bind
+      - opengl  # grants also CUDA based GPU access
+  listener:
+    command: bin/snap_launcher.sh serve
+    daemon: simple
+    install-mode: enable
+    restart-condition: on-failure
+    plugs:
+      - home
+      - removable-media
+      - network
+      - network-bind
+      - opengl
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+parts:
+  launcher:
+    plugin: dump
+    source: ./snap/local
+    organize:
+      snap_launcher.sh: bin/snap_launcher.sh
+  ollama:
+    plugin: go
+    source: https://github.com/ollama/ollama.git
+    source-type: git
+    source-tag: v0.1.28
+    # build packages only because ollama build copies in cudnn, cublas
+    build-packages:
+      - git
+      - gcc
+      - cmake
+      - sed
+      - libcudnn8
+      - libcublas-12-3
+      - libcudnn8-dev
+      - libcublas-dev-12-3
+      - cuda-cudart-dev-12-3
+      - cuda-driver-dev-12-3
+      - tensorrt-libs
+      - tensorrt-dev
+      - cuda-toolkit-12-3
+      - nvidia-cuda-dev
+    build-snaps:
+      - go/stable
+    override-pull: |
+      craftctl default
+      last_committed_tag="$(git describe --tags --abbrev=0)"
+      last_committed_tag_ver="$(echo ${last_committed_tag} | sed 's/v//')"
+      craftctl set version="$(git describe --tags | sed 's/v//')"
+    override-build: |
+      go generate ./...
+      craftctl default
