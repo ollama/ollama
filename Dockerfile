@@ -46,7 +46,7 @@ RUN mkdir /tmp/scratch && \
     done && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd /tmp/scratch/ && tar xf - ) && \
     mkdir -p /go/src/github.com/jmorganca/ollama/dist/deps/ && \
-    (cd /tmp/scratch/ && tar czvf /go/src/github.com/jmorganca/ollama/dist/deps/rocm-amd64-deps.tgz . )
+    (cd /tmp/scratch/ && tar czvf /go/src/github.com/jmorganca/ollama/dist/deps/ollama-linux-amd64-rocm.tgz . )
 
 
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
