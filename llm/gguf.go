@@ -94,7 +94,7 @@ type Tensor struct {
 	Offset uint64
 
 	// shape is the number of elements in each dimension
-	Shape [4]uint64
+	Shape []uint64
 
 	FileName      string
 	OffsetPadding uint64
@@ -156,7 +156,11 @@ func (t Tensor) TypeSize() uint64 {
 }
 
 func (t Tensor) Parameters() uint64 {
-	return t.Shape[0] * t.Shape[1] * t.Shape[2] * t.Shape[3]
+	var count uint64 = 1
+	for _, n := range t.Shape {
+		count *= n
+	}
+	return count
 }
 
 func (t Tensor) Size() uint64 {
@@ -703,7 +707,7 @@ func (llm *GGUFModel) Decode(rso *readSeekOffset) error {
 			Name:   name,
 			Kind:   llm.readU32(rso),
 			Offset: llm.readU64(rso),
-			Shape:  shape,
+			Shape:  shape[:],
 		}
 
 		llm.Tensors = append(llm.Tensors, tensor)
