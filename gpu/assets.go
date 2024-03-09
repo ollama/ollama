@@ -7,34 +7,37 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/jmorganca/ollama/version"
+	"sync"
 )
 
-func AssetsDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+var (
+	lock        sync.Mutex
+	payloadsDir = ""
+)
+
+func PayloadsDir() (string, error) {
+	lock.Lock()
+	defer lock.Unlock()
+	if payloadsDir == "" {
+		tmpDir, err := os.MkdirTemp("", "ollama")
+		if err != nil {
+			return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+		}
+		payloadsDir = tmpDir
 	}
-	baseDir := filepath.Join(home, ".ollama", "assets")
-	libDirs, err := os.ReadDir(baseDir)
-	if err == nil {
-		for _, d := range libDirs {
-			if d.Name() == version.Version {
-				continue
-			}
-			// Special case the rocm dependencies, which are handled by the installer
-			if d.Name() == "rocm" {
-				continue
-			}
-			slog.Debug("stale lib detected, cleaning up " + d.Name())
-			err = os.RemoveAll(filepath.Join(baseDir, d.Name()))
-			if err != nil {
-				slog.Warn(fmt.Sprintf("unable to clean up stale library %s: %s", filepath.Join(baseDir, d.Name()), err))
-			}
+	return payloadsDir, nil
+}
+
+func Cleanup() {
+	lock.Lock()
+	defer lock.Unlock()
+	if payloadsDir != "" {
+		slog.Debug("cleaning up payloads dir " + payloadsDir)
+		err := os.RemoveAll(payloadsDir)
+		if err != nil {
+			slog.Warn(fmt.Sprintf("failed to cleanup tmp dir: %s", err))
 		}
 	}
-	return filepath.Join(baseDir, version.Version), nil
 }
 
 func UpdatePath(dir string) {

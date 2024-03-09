@@ -11,14 +11,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/jmorganca/ollama/version"
 )
 
 // Discovery logic for AMD/ROCm GPUs
 
 const (
-	curlMsg               = "curl -fsSL https://github.com/ollama/ollama/releases/download/v%s/rocm-amd64-deps.tgz | tar -zxf - -C %s"
 	DriverVersionFile     = "/sys/module/amdgpu/version"
 	AMDNodesSysfsDir      = "/sys/class/kfd/kfd/topology/nodes/"
 	GPUPropertiesFileGlob = AMDNodesSysfsDir + "*/properties"
@@ -278,22 +275,22 @@ func setupLink(source, target string) error {
 func AMDValidateLibDir() (string, error) {
 	// We rely on the rpath compiled into our library to find rocm
 	// so we establish a symlink to wherever we find it on the system
-	// to $AssetsDir/rocm
+	// to <payloads>/rocm
+	payloadsDir, err := PayloadsDir()
+	if err != nil {
+		return "", err
+	}
 
 	// If we already have a rocm dependency wired, nothing more to do
-	assetsDir, err := AssetsDir()
-	if err != nil {
-		return "", fmt.Errorf("unable to lookup lib dir: %w", err)
-	}
-	// Versioned directory
-	rocmTargetDir := filepath.Join(assetsDir, "rocm")
+	rocmTargetDir := filepath.Join(payloadsDir, "rocm")
 	if rocmLibUsable(rocmTargetDir) {
 		return rocmTargetDir, nil
 	}
-	// Parent dir (unversioned)
-	commonRocmDir := filepath.Join(filepath.Dir(assetsDir), "rocm")
-	if rocmLibUsable(commonRocmDir) {
-		return rocmTargetDir, setupLink(commonRocmDir, rocmTargetDir)
+
+	// Well known ollama installer path
+	installedRocmDir := "/usr/share/ollama/lib/rocm"
+	if rocmLibUsable(installedRocmDir) {
+		return rocmTargetDir, setupLink(installedRocmDir, rocmTargetDir)
 	}
 
 	// Prefer explicit HIP env var
@@ -322,14 +319,9 @@ func AMDValidateLibDir() (string, error) {
 	if rocmLibUsable("/opt/rocm/lib") {
 		return rocmTargetDir, setupLink("/opt/rocm/lib", rocmTargetDir)
 	}
-	err = os.MkdirAll(rocmTargetDir, 0755)
-	if err != nil {
-		return "", fmt.Errorf("failed to create empty rocm dir %s %w", rocmTargetDir, err)
-	}
 
-	// If we still haven't found a usable rocm, the user will have to download it on their own
-	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or run the following")
-	slog.Warn(fmt.Sprintf(curlMsg, version.Version, rocmTargetDir))
+	// If we still haven't found a usable rocm, the user will have to install it on their own
+	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or follow manual install instructions at https://github.com/ollama/ollama/blob/main/docs/linux.md#manual-install")
 	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
 }
 

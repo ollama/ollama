@@ -72,6 +72,11 @@ Verify that the drivers are installed by running the following command, which sh
 nvidia-smi
 ```
 
+### Install ROCm (optional - for Radeon GPUs)
+[Download and Install](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/tutorial/quick-start.html)
+
+Make sure to install ROCm v6
+
 ### Start Ollama
 
 Start Ollama using `systemd`:
