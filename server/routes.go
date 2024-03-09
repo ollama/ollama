@@ -915,9 +915,9 @@ func allowedHost(host string) bool {
 	}
 
 	var tlds = []string{
-		".localhost",
-		".local",
-		".internal",
+		"localhost",
+		"local",
+		"internal",
 	}
 
 	for _, tld := range tlds {
@@ -929,6 +929,27 @@ func allowedHost(host string) bool {
 	return false
 }
 
+func ips() []string {
+	var ips []string
+
+	if interfaces, err := net.Interfaces(); err == nil {
+		for _, iface := range interfaces {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, a := range addrs {
+				if ip, _, err := net.ParseCIDR(a.String()); err == nil {
+					ips = append(ips, ip.String())
+				}
+			}
+		}
+	}
+
+	return ips
+}
+
 func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if addr == nil {
@@ -936,17 +957,8 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 			return
 		}
 
-		if !netip.MustParseAddrPort(addr.String()).Addr().IsLoopback() {
-			c.Next()
-			return
-		}
-
-		if addrPort, _ := netip.ParseAddrPort(c.Request.Host); addrPort.Addr().IsLoopback() {
-			c.Next()
-			return
-		}
-
-		if addr, _ := netip.ParseAddr(c.Request.Host); addr.IsLoopback() {
+		addr, err := netip.ParseAddrPort(addr.String())
+		if err == nil && !addr.Addr().IsLoopback() {
 			c.Next()
 			return
 		}
@@ -954,6 +966,13 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 		host, _, err := net.SplitHostPort(c.Request.Host)
 		if err != nil {
 			host = c.Request.Host
+		}
+
+		if addr, err := netip.ParseAddr(host); err == nil {
+			if addr.IsLoopback() || addr.IsPrivate() || slices.Contains(ips(), host) || addr.String() == "0.0.0.0" {
+				c.Next()
+				return
+			}
 		}
 
 		if allowedHost(host) {
