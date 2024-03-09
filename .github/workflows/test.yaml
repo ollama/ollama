@@ -2,17 +2,22 @@ name: test
 
 on:
   pull_request:
+    paths:
+      - '**/*'
+      - '!docs/**'
+      - '!examples/**'
+      - '!README.md'
 
 jobs:
   generate:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-2019]
         arch: [amd64, arm64]
         exclude:
           - os: ubuntu-latest
             arch: arm64
-          - os: windows-latest
+          - os: windows-2019
             arch: arm64
     runs-on: ${{ matrix.os }}
     env:
@@ -21,10 +26,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
       - run: go get ./...
+      - run: |
+          $gopath=(get-command go).source | split-path -parent
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$env:PATH"
+          go generate -x ./...
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        name: "Windows Go Generate"
       - run: go generate -x ./...
+        if: ${{ ! startsWith(matrix.os, 'windows-') }}
+        name: "Unix Go Generate"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
@@ -46,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
       - run: go get ./...
       - run: |
@@ -62,7 +78,6 @@ jobs:
     strategy:
       matrix:
         rocm-version:
-          - '5.7.1'
           - '6.0'
     runs-on: linux
     container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
@@ -76,7 +91,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
       - run: go get ./...
       - run: |
@@ -91,26 +106,26 @@ jobs:
   lint:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-2019]
         arch: [amd64, arm64]
         exclude:
           - os: ubuntu-latest
             arch: arm64
-          - os: windows-latest
+          - os: windows-2019
             arch: arm64
           - os: macos-latest
             arch: amd64
     runs-on: ${{ matrix.os }}
     env:
       GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: "1"
+      CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: false
       - run: |
           mkdir -p llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/
@@ -130,24 +145,24 @@ jobs:
     needs: generate
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-2019]
         arch: [amd64]
         exclude:
           - os: ubuntu-latest
             arch: arm64
-          - os: windows-latest
+          - os: windows-2019
             arch: arm64
     runs-on: ${{ matrix.os }}
     env:
       GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: "1"
+      CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
       - run: go get
       - uses: actions/download-artifact@v4

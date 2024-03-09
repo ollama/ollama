@@ -21,12 +21,6 @@ import (
 	"github.com/jmorganca/ollama/version"
 )
 
-func setupServer(t *testing.T) (*Server, error) {
-	t.Helper()
-
-	return NewServer()
-}
-
 func Test_Routes(t *testing.T) {
 	type testCase struct {
 		Name     string
@@ -207,9 +201,7 @@ func Test_Routes(t *testing.T) {
 		},
 	}
 
-	s, err := setupServer(t)
-	assert.Nil(t, err)
-
+	s := Server{}
 	router := s.GenerateRoutes()
 
 	httpSrv := httptest.NewServer(router)

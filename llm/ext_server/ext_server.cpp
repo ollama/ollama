@@ -26,7 +26,7 @@
 #endif // GGML_USE_CUBLAS
 
 // Expose the llama server as a callable extern "C" API
-llama_server_context *llama = NULL;
+server_context *llama = NULL;
 std::thread ext_server_thread;
 bool shutting_down = false;
 std::atomic_int recv_counter;
@@ -57,7 +57,7 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
   err->id = 0;
   err->msg[0] = '\0';
   try {
-    llama = new llama_server_context;
+    llama = new server_context;
     gpt_params params;
     params.n_ctx = sparams->n_ctx;
     params.n_batch = sparams->n_batch;
@@ -144,13 +144,13 @@ void llama_server_start() {
       LOG_TEE("llama server main loop starting\n");
       ggml_time_init();
       llama->queue_tasks.on_new_task(std::bind(
-        &llama_server_context::process_single_task, llama, std::placeholders::_1));
+        &server_context::process_single_task, llama, std::placeholders::_1));
       llama->queue_tasks.on_finish_multitask(std::bind(
-        &llama_server_context::on_finish_multitask, llama, std::placeholders::_1));
+        &server_context::on_finish_multitask, llama, std::placeholders::_1));
       llama->queue_tasks.on_run_slots(std::bind(
-        &llama_server_context::update_slots, llama));
+        &server_context::update_slots, llama));
       llama->queue_results.on_multitask_update(std::bind(
-          &llama_server_queue::update_multitask,
+          &server_queue::update_multitask,
           &llama->queue_tasks,
           std::placeholders::_1,
           std::placeholders::_2,
@@ -198,7 +198,7 @@ void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
     json data = json::parse(json_req);
     resp->id = llama->queue_tasks.get_new_id();
     llama->queue_results.add_waiting_task_id(resp->id);
-    llama->request_completion(resp->id, data, false, false, -1);
+    llama->request_completion(resp->id, -1, data, false, false);
   } catch (std::exception &e) {
     snprintf(resp->msg, resp->msg_len, "exception %s", e.what());
   } catch (...) {
@@ -216,9 +216,9 @@ void llama_server_completion_next_result(const int task_id,
   std::string result_json;
   try {
     atomicRecv ar(recv_counter);
-    task_result result = llama->queue_results.recv(task_id);
+    server_task_result result = llama->queue_results.recv(task_id);
     result_json =
-        result.result_json.dump(-1, ' ', false, json::error_handler_t::replace);
+        result.data.dump(-1, ' ', false, json::error_handler_t::replace);
     resp->id = result.id;
     resp->stop = result.stop;
     resp->error = result.error;
@@ -363,10 +363,10 @@ void llama_server_embedding(const char *json_req, char **json_resp,
     }
     const int task_id = llama->queue_tasks.get_new_id();
     llama->queue_results.add_waiting_task_id(task_id);
-    llama->request_completion(task_id, {{"prompt", prompt}, {"n_predict", 0}}, false, true, -1);
+    llama->request_completion(task_id, -1, {{"prompt", prompt}, {"n_predict", 0}}, false, true);
     atomicRecv ar(recv_counter);
-    task_result result = llama->queue_results.recv(task_id);
-    std::string result_json = result.result_json.dump();
+    server_task_result result = llama->queue_results.recv(task_id);
+    std::string result_json = result.data.dump();
     const std::string::size_type size = result_json.size() + 1;
     *json_resp = new char[size];
     snprintf(*json_resp, size, "%s", result_json.c_str());

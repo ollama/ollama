@@ -276,8 +276,11 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [NextJS Web Interface for Ollama](https://github.com/jakobhoeg/nextjs-ollama-llm-ui)
 - [Msty](https://msty.app)
 - [Chatbox](https://github.com/Bin-Huang/Chatbox)
+- [WinForm Ollama Copilot](https://github.com/tgraupmann/WinForm_Ollama_Copilot)
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) with [Get Started Doc](https://docs.nextchat.dev/models/ollama)
 - [Alpaca WebUI](https://github.com/mmo80/alpaca-webui)
+- [Odin Runes](https://github.com/leonid20000/OdinRunes)
+- [LLM-X: Progressive Web App](https://github.com/mrdjohnson/llm-x)
 
 ### Terminal
 
@@ -340,6 +343,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Continue](https://github.com/continuedev/continue)
 - [Obsidian Ollama plugin](https://github.com/hinterdupfinger/obsidian-ollama)
 - [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
+- [NotesOllama](https://github.com/andersrex/notesollama) (Apple Notes Ollama plugin)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram)
