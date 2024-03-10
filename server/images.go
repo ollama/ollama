@@ -422,8 +422,10 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 		CREATE:
 			for {
 				fn(api.ProgressResponse{Status: "creating model layer"})
+				if _, err := bin.Seek(offset, io.SeekStart); err != nil {
+					return err
+				}
 
-				bin.Seek(offset, io.SeekStart)
 				ggml, err := llm.DecodeGGML(bin)
 				if err != nil {
 					switch {
@@ -670,7 +672,7 @@ func convertSafetensors(name, fn string) (string, error) {
 		}
 	}
 
-	t, err := convert.GetSafeTensors(tempDir)
+	t, err := convert.GetSafeTensors(tempDir, params)
 	if err != nil {
 		return "", err
 	}

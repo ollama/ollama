@@ -213,7 +213,10 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	if _, err := io.Copy(hash, bin); err != nil {
 		return "", err
 	}
-	bin.Seek(0, io.SeekStart)
+
+	if _, err := bin.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
 
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
