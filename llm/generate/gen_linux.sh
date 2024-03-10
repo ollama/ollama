@@ -191,6 +191,10 @@ if [ -d "${ROCM_PATH}" ]; then
     # Record the ROCM dependencies
     rm -f "${BUILD_DIR}/lib/deps.txt"
     touch "${BUILD_DIR}/lib/deps.txt"
+
+    # having the execstack bit set on the HIP runtime sometimes causes `ldd` to error
+    execstack -c "${ROCM_PATH}/lib/libamdhip64.so*"
+
     for dep in $(ldd "${BUILD_DIR}/lib/libext_server.so" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu -e libtinfo ); do
         echo "${dep}" >> "${BUILD_DIR}/lib/deps.txt"
     done
