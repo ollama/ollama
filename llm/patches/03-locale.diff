@@ -4,7 +4,7 @@ index b19616e8..519b9602 100644
 +++ b/llama.cpp
 @@ -9938,7 +9938,7 @@ struct llm_tokenizer_wpm {
      }
-
+ 
      uint32_t to_lower(uint32_t code) {
 -        static const std::locale locale("en_US.UTF-8");
 +        static const std::locale locale("");
