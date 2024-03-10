@@ -423,8 +423,10 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 		CREATE:
 			for {
 				fn(api.ProgressResponse{Status: "creating model layer"})
+				if _, err := bin.Seek(offset, io.SeekStart); err != nil {
+					return err
+				}
 
-				bin.Seek(offset, io.SeekStart)
 				ggml, err := llm.DecodeGGML(bin)
 				if err != nil {
 					slog.Error(fmt.Sprintf("error decoding gguf file: %q", err))
@@ -675,7 +677,7 @@ func convertSafetensors(name, path string, fn func(resp api.ProgressResponse)) (
 	}
 
 	fn(api.ProgressResponse{Status: "processing safetensors"})
-	t, err := convert.GetSafeTensors(tempDir)
+	t, err := convert.GetSafeTensors(tempDir, params)
 	if err != nil {
 		return "", err
 	}
