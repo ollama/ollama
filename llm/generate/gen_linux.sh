@@ -194,6 +194,12 @@ if [ -d "${ROCM_PATH}" ]; then
     for dep in $(ldd "${BUILD_DIR}/lib/libext_server.so" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu -e libtinfo ); do
         echo "${dep}" >> "${BUILD_DIR}/lib/deps.txt"
     done
+    # bomb out if for some reason we didn't get a few deps
+    if [ $(cat "${BUILD_DIR}/lib/deps.txt" | wc -l ) -lt 8 ] ; then
+        cat "${BUILD_DIR}/lib/deps.txt"
+        echo "ERROR: deps file short"
+        exit 1
+    fi
     compress_libs
 fi
 
