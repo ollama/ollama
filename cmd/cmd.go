@@ -900,8 +900,7 @@ func NewCLI() *cobra.Command {
 	cobra.EnableCommandSorting = false
 
 	if runtime.GOOS == "windows" {
-		// Enable colorful ANSI escape code in Windows terminal (disabled by default)
-		console.ConsoleFromFile(os.Stdout) //nolint:errcheck
+		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
 	rootCmd := &cobra.Command{
