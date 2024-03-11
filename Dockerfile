@@ -92,7 +92,7 @@ COPY --from=rocm-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/b
 COPY --from=rocm-build-amd64 /go/src/github.com/jmorganca/ollama/dist/deps/ ./dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
-RUN go build .
+RUN go build -trimpath .
 
 # Intermediate stage used for ./scripts/build_linux.sh
 FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
@@ -103,7 +103,7 @@ COPY . .
 COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
 ARG GOFLAGS
 ARG CGO_CFLAGS
-RUN go build .
+RUN go build -trimpath .
 
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
