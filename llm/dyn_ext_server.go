@@ -149,7 +149,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 
 	slog.Info("Initializing llama server")
 	slog.Debug(fmt.Sprintf("server params: %+v", sparams))
-	initResp := newExtServerResp(128)
+	initResp := newExtServerResp(512)
 	defer freeExtServerResp(initResp)
 	C.dyn_llama_server_init(llm.s, &sparams, &initResp)
 	if initResp.id < 0 {

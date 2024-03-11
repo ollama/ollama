@@ -114,16 +114,12 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     llama_backend_init();
     llama_numa_init(params.numa);
 
-    // load the model
-    if (!llama->load_model(params)) {
-      // TODO - consider modifying the logging logic or patching load_model so
-      // we can capture more detailed error messages and pass them back to the
-      // caller for better UX
-      err->id = -1;
-      snprintf(err->msg, err->msg_len, "error loading model %s",
-               params.model.c_str());
-      return;
-    }
+  if (!llama->load_model(params)) { 
+    // an error occured that was not thrown
+    err->id = -1;
+    snprintf(err->msg, err->msg_len, "error loading model %s", params.model.c_str());
+    return;
+  }
 
     llama->initialize();
   } catch (std::exception &e) {
