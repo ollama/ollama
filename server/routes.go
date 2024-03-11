@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -35,7 +36,7 @@ import (
 var mode string = gin.DebugMode
 
 type Server struct {
-	WorkDir string
+	addr net.Addr
 }
 
 func init() {
@@ -66,8 +67,6 @@ var defaultSessionDuration = 5 * time.Minute
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
 func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
-	workDir := c.GetString("workDir")
-
 	needLoad := loaded.runner == nil || // is there a model loaded?
 		loaded.ModelPath != model.ModelPath || // has the base model changed?
 		!reflect.DeepEqual(loaded.AdapterPaths, model.AdapterPaths) || // have the adapters changed?
@@ -82,7 +81,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			loaded.Options = nil
 		}
 
-		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
+		llmRunner, err := llm.New(model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
@@ -906,15 +905,83 @@ var defaultAllowOrigins = []string{
 	"0.0.0.0",
 }
 
-func NewServer() (*Server, error) {
-	workDir, err := os.MkdirTemp("", "ollama")
-	if err != nil {
-		return nil, err
+func isLocalIP(ip netip.Addr) bool {
+	if interfaces, err := net.Interfaces(); err == nil {
+		for _, iface := range interfaces {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, a := range addrs {
+				if parsed, _, err := net.ParseCIDR(a.String()); err == nil {
+					if parsed.String() == ip.String() {
+						return true
+					}
+				}
+			}
+		}
 	}
 
-	return &Server{
-		WorkDir: workDir,
-	}, nil
+	return false
+}
+
+func allowedHost(host string) bool {
+	if host == "" || host == "localhost" {
+		return true
+	}
+
+	if hostname, err := os.Hostname(); err == nil && host == hostname {
+		return true
+	}
+
+	var tlds = []string{
+		"localhost",
+		"local",
+		"internal",
+	}
+
+	// check if the host is a local TLD
+	for _, tld := range tlds {
+		if strings.HasSuffix(host, "."+tld) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if addr == nil {
+			c.Next()
+			return
+		}
+
+		if addr, err := netip.ParseAddrPort(addr.String()); err == nil && !addr.Addr().IsLoopback() {
+			c.Next()
+			return
+		}
+
+		host, _, err := net.SplitHostPort(c.Request.Host)
+		if err != nil {
+			host = c.Request.Host
+		}
+
+		if addr, err := netip.ParseAddr(host); err == nil {
+			if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || isLocalIP(addr) {
+				c.Next()
+				return
+			}
+		}
+
+		if allowedHost(host) {
+			c.Next()
+			return
+		}
+
+		c.AbortWithStatus(http.StatusForbidden)
+	}
 }
 
 func (s *Server) GenerateRoutes() http.Handler {
@@ -940,10 +1007,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r := gin.Default()
 	r.Use(
 		cors.New(config),
-		func(c *gin.Context) {
-			c.Set("workDir", s.WorkDir)
-			c.Next()
-		},
+		allowedHostsMiddleware(s.addr),
 	)
 
 	r.POST("/api/pull", PullModelHandler)
@@ -1012,10 +1076,7 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	s, err := NewServer()
-	if err != nil {
-		return err
-	}
+	s := &Server{addr: ln.Addr()}
 	r := s.GenerateRoutes()
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
@@ -1031,11 +1092,11 @@ func Serve(ln net.Listener) error {
 		if loaded.runner != nil {
 			loaded.runner.Close()
 		}
-		os.RemoveAll(s.WorkDir)
+		gpu.Cleanup()
 		os.Exit(0)
 	}()
 
-	if err := llm.Init(s.WorkDir); err != nil {
+	if err := llm.Init(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
 	if runtime.GOOS == "linux" { // TODO - windows too

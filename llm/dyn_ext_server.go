@@ -28,13 +28,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/gpu"
 )
 
 type dynExtServer struct {
@@ -72,7 +72,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 		slog.Info("concurrent llm servers not yet supported, waiting for prior server to complete")
 		mutex.Lock()
 	}
-	updatePath(filepath.Dir(library))
+	gpu.UpdatePath(filepath.Dir(library))
 	libPath := C.CString(library)
 	defer C.free(unsafe.Pointer(libPath))
 	resp := newExtServerResp(512)
@@ -148,6 +148,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	}
 
 	slog.Info("Initializing llama server")
+	slog.Debug(fmt.Sprintf("server params: %+v", sparams))
 	initResp := newExtServerResp(128)
 	defer freeExtServerResp(initResp)
 	C.dyn_llama_server_init(llm.s, &sparams, &initResp)
@@ -364,26 +365,4 @@ func (llm *dynExtServer) Embedding(ctx context.Context, input string) ([]float64
 func (llm *dynExtServer) Close() {
 	C.dyn_llama_server_stop(llm.s)
 	mutex.Unlock()
-}
-
-func updatePath(dir string) {
-	if runtime.GOOS == "windows" {
-		tmpDir := filepath.Dir(dir)
-		pathComponents := strings.Split(os.Getenv("PATH"), ";")
-		i := 0
-		for _, comp := range pathComponents {
-			if strings.EqualFold(comp, dir) {
-				return
-			}
-			// Remove any other prior paths to our temp dir
-			if !strings.HasPrefix(strings.ToLower(comp), strings.ToLower(tmpDir)) {
-				pathComponents[i] = comp
-				i++
-			}
-		}
-		newPath := strings.Join(append([]string{dir}, pathComponents...), ";")
-		slog.Info(fmt.Sprintf("Updating PATH to %s", newPath))
-		os.Setenv("PATH", newPath)
-	}
-	// linux and darwin rely on rpath
 }

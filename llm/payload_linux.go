@@ -4,5 +4,5 @@ import (
 	"embed"
 )
 
-//go:embed llama.cpp/build/linux/*/*/lib/*.so*
+//go:embed llama.cpp/build/linux/*/*/lib/*
 var libEmbed embed.FS

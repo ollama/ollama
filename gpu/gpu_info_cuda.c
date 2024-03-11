@@ -124,31 +124,31 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
       // When in verbose mode, report more information about
       // the card we discover, but don't fail on error
       ret = (*h.nvmlDeviceGetName)(device, buf, buflen);
-      if (ret != RSMI_STATUS_SUCCESS) {
+      if (ret != NVML_SUCCESS) {
         LOG(h.verbose, "nvmlDeviceGetName failed: %d\n", ret);
       } else {
         LOG(h.verbose, "[%d] CUDA device name: %s\n", i, buf);
       }
       ret = (*h.nvmlDeviceGetBoardPartNumber)(device, buf, buflen);
-      if (ret != RSMI_STATUS_SUCCESS) {
+      if (ret != NVML_SUCCESS) {
         LOG(h.verbose, "nvmlDeviceGetBoardPartNumber failed: %d\n", ret);
       } else {
         LOG(h.verbose, "[%d] CUDA part number: %s\n", i, buf);
       }
       ret = (*h.nvmlDeviceGetSerial)(device, buf, buflen);
-      if (ret != RSMI_STATUS_SUCCESS) {
+      if (ret != NVML_SUCCESS) {
         LOG(h.verbose, "nvmlDeviceGetSerial failed: %d\n", ret);
       } else {
         LOG(h.verbose, "[%d] CUDA S/N: %s\n", i, buf);
       }
       ret = (*h.nvmlDeviceGetVbiosVersion)(device, buf, buflen);
-      if (ret != RSMI_STATUS_SUCCESS) {
+      if (ret != NVML_SUCCESS) {
         LOG(h.verbose, "nvmlDeviceGetVbiosVersion failed: %d\n", ret);
       } else {
         LOG(h.verbose, "[%d] CUDA vbios version: %s\n", i, buf);
       }
       ret = (*h.nvmlDeviceGetBrand)(device, &brand);
-      if (ret != RSMI_STATUS_SUCCESS) {
+      if (ret != NVML_SUCCESS) {
         LOG(h.verbose, "nvmlDeviceGetBrand failed: %d\n", ret);
       } else {
         LOG(h.verbose, "[%d] CUDA brand: %d\n", i, brand);

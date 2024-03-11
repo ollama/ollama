@@ -4,7 +4,7 @@ Welcome to the Ollama Windows preview.
 
 No more WSL required!
 
-Ollama now runs as a native Windows application, including NVIDIA GPU support.
+Ollama now runs as a native Windows application, including NVIDIA and AMD Radeon GPU support.
 After installing Ollama Windows Preview, Ollama will run in the background and
 the `ollama` command line is available in `cmd`, `powershell` or your favorite
 terminal application. As usual the Ollama [api](./api.md) will be served on
@@ -21,6 +21,7 @@ Logs will often be helpful in dianosing the problem (see
 
 * Windows 10 or newer, Home or Pro
 * NVIDIA 452.39 or newer Drivers if you have an NVIDIA card
+* AMD Radeon Driver https://www.amd.com/en/support if you have a Radeon card
 
 ## API Access
 
