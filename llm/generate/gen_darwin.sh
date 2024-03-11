@@ -18,19 +18,6 @@ sign() {
     fi
 }
 
-# bundle_metal bundles ggml-common.h and ggml-metal.metal into a single file
-bundle_metal() {
-    grep -v '#include "ggml-common.h"' "${LLAMACPP_DIR}/ggml-metal.metal" | grep -v '#pragma once' > "${LLAMACPP_DIR}/ggml-metal.metal.temp"
-    echo '#define GGML_COMMON_IMPL_METAL' > "${LLAMACPP_DIR}/ggml-metal.metal"
-    cat "${LLAMACPP_DIR}/ggml-common.h" | grep -v '#pragma once' >> "${LLAMACPP_DIR}/ggml-metal.metal"
-    cat  "${LLAMACPP_DIR}/ggml-metal.metal.temp" >> "${LLAMACPP_DIR}/ggml-metal.metal"
-    rm "${LLAMACPP_DIR}/ggml-metal.metal.temp"
-}
-
-cleanup_metal() {
-    (cd ${LLAMACPP_DIR} && git checkout ggml-metal.metal)
-}
-
 COMMON_DARWIN_DEFS="-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_SYSTEM_NAME=Darwin"
 
 case "${GOARCH}" in
@@ -76,11 +63,9 @@ case "${GOARCH}" in
     CMAKE_DEFS="${COMMON_DARWIN_DEFS} -DLLAMA_METAL_EMBED_LIBRARY=on -DLLAMA_ACCELERATE=on -DCMAKE_SYSTEM_PROCESSOR=${ARCH} -DCMAKE_OSX_ARCHITECTURES=${ARCH} -DLLAMA_METAL=on ${CMAKE_DEFS}"
     BUILD_DIR="${LLAMACPP_DIR}/build/darwin/${ARCH}/metal"
     EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders"
-    bundle_metal
     build
     sign ${LLAMACPP_DIR}/build/darwin/${ARCH}/metal/lib/libext_server.dylib
     compress_libs
-    cleanup_metal
     ;;
 *)
     echo "GOARCH must be set"
