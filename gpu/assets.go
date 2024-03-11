@@ -23,7 +23,9 @@ func PayloadsDir() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to generate tmp dir: %w", err)
 		}
-		payloadsDir = tmpDir
+		// We create a distinct subdirectory for payloads within the tmpdir
+		// This will typically look like /tmp/ollama3208993108/runners on linux
+		payloadsDir = filepath.Join(tmpDir, "runners")
 	}
 	return payloadsDir, nil
 }
@@ -32,10 +34,12 @@ func Cleanup() {
 	lock.Lock()
 	defer lock.Unlock()
 	if payloadsDir != "" {
-		slog.Debug("cleaning up", "dir", payloadsDir)
-		err := os.RemoveAll(payloadsDir)
+		// We want to fully clean up the tmpdir parent of the payloads dir
+		tmpDir := filepath.Clean(filepath.Join(payloadsDir, ".."))
+		slog.Debug("cleaning up", "dir", tmpDir)
+		err := os.RemoveAll(tmpDir)
 		if err != nil {
-			slog.Warn("failed to clean up", "dir", payloadsDir, "err", err)
+			slog.Warn("failed to clean up", "dir", tmpDir, "err", err)
 		}
 	}
 }

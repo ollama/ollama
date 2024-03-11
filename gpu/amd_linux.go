@@ -282,7 +282,7 @@ func AMDValidateLibDir() (string, error) {
 	}
 
 	// If we already have a rocm dependency wired, nothing more to do
-	rocmTargetDir := filepath.Join(payloadsDir, "rocm")
+	rocmTargetDir := filepath.Clean(filepath.Join(payloadsDir, "..", "rocm"))
 	if rocmLibUsable(rocmTargetDir) {
 		return rocmTargetDir, nil
 	}
