@@ -16,3 +16,9 @@ type GpuInfo struct {
 
 	// TODO add other useful attributes about the card here for discovery information
 }
+
+type Version struct {
+	Major uint
+	Minor uint
+	Patch uint
+}

@@ -25,8 +25,9 @@ func SetRawMode(fd int) (*Termios, error) {
 	return termios, setTermios(fd, &newTermios)
 }
 
-func UnsetRawMode(fd int, termios *Termios) error {
-	return setTermios(fd, termios)
+func UnsetRawMode(fd int, termios any) error {
+	t := termios.(*Termios)
+	return setTermios(fd, t)
 }
 
 // IsTerminal returns true if the given file descriptor is a terminal.

@@ -32,6 +32,8 @@ func (p *Prompt) placeholder() string {
 
 type Terminal struct {
 	outchan chan rune
+	rawmode bool
+	termios any
 }
 
 type Instance struct {
@@ -60,6 +62,16 @@ func New(prompt Prompt) (*Instance, error) {
 }
 
 func (i *Instance) Readline() (string, error) {
+	if !i.Terminal.rawmode {
+		fd := int(syscall.Stdin)
+		termios, err := SetRawMode(fd)
+		if err != nil {
+			return "", err
+		}
+		i.Terminal.rawmode = true
+		i.Terminal.termios = termios
+	}
+
 	prompt := i.Prompt.prompt()
 	if i.Pasting {
 		// force alt prompt when pasting
@@ -67,13 +79,12 @@ func (i *Instance) Readline() (string, error) {
 	}
 	fmt.Print(prompt)
 
-	fd := int(syscall.Stdin)
-	termios, err := SetRawMode(fd)
-	if err != nil {
-		return "", err
-	}
-	// nolint: errcheck
-	defer UnsetRawMode(fd, termios)
+	defer func() {
+		fd := int(syscall.Stdin)
+		// nolint: errcheck
+		UnsetRawMode(fd, i.Terminal.termios)
+		i.Terminal.rawmode = false
+	}()
 
 	buf, _ := NewBuffer(i.Prompt)
 
@@ -205,7 +216,8 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
-			return handleCharCtrlZ(fd, termios)
+			fd := int(syscall.Stdin)
+			return handleCharCtrlZ(fd, i.Terminal.termios)
 		case CharEnter:
 			output := buf.String()
 			if output != "" {
@@ -236,8 +248,16 @@ func (i *Instance) HistoryDisable() {
 }
 
 func NewTerminal() (*Terminal, error) {
+	fd := int(syscall.Stdin)
+	termios, err := SetRawMode(fd)
+	if err != nil {
+		return nil, err
+	}
+
 	t := &Terminal{
 		outchan: make(chan rune),
+		rawmode: true,
+		termios: termios,
 	}
 
 	go t.ioloop()

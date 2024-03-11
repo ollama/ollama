@@ -21,7 +21,6 @@ amdGPUs() {
         return
     fi
     GPU_LIST=(
-        "gfx803"
         "gfx900"
         "gfx906:xnack-"
         "gfx908:xnack-"
@@ -128,6 +127,11 @@ if [ -z "${CUDA_LIB_DIR}" ] && [ -d /opt/cuda/targets/x86_64-linux/lib ]; then
     CUDA_LIB_DIR=/opt/cuda/targets/x86_64-linux/lib
 fi
 
+# Allow override in case libcudart is in the wrong place
+if [ -z "${CUDART_LIB_DIR}" ]; then
+    CUDART_LIB_DIR="${CUDA_LIB_DIR}"
+fi
+
 if [ -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
@@ -151,6 +155,8 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
             cp "${CUDA_LIB_DIR}/${DEP}" "${BUILD_DIR}/lib/"
         elif [ -e "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" ]; then
             cp "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" "${BUILD_DIR}/lib/"
+        elif [ -e "${CUDART_LIB_DIR}/${lib}" ]; then
+            cp -d ${CUDART_LIB_DIR}/${lib}* "${BUILD_DIR}/lib/"
         else
             cp -d "${CUDA_LIB_DIR}/${lib}*" "${BUILD_DIR}/lib/"
         fi
@@ -173,17 +179,27 @@ fi
 
 if [ -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
-    if [ -f ${ROCM_PATH}/lib/librocm_smi64.so.? ]; then
-        ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocm_smi64.so.? | cut -f3 -d. || true)
+    if [ -f ${ROCM_PATH}/lib/librocblas.so.*.*.????? ]; then
+        ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocblas.so.*.*.????? | cut -f5 -d. || true)
     fi
     init_vars
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/rocm${ROCM_VARIANT}"
-    EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,${ROCM_PATH}/lib,-rpath,/opt/amdgpu/lib/x86_64-linux-gnu/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
+    EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,\$ORIGIN/../../rocm/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
     build
 
-    # Note: the ROCM libs and runtime library files are too large to embed, so we depend on
-    #       them being present at runtime on the host
+    # Record the ROCM dependencies
+    rm -f "${BUILD_DIR}/lib/deps.txt"
+    touch "${BUILD_DIR}/lib/deps.txt"
+    for dep in $(ldd "${BUILD_DIR}/lib/libext_server.so" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu -e libtinfo ); do
+        echo "${dep}" >> "${BUILD_DIR}/lib/deps.txt"
+    done
+    # bomb out if for some reason we didn't get a few deps
+    if [ $(cat "${BUILD_DIR}/lib/deps.txt" | wc -l ) -lt 8 ] ; then
+        cat "${BUILD_DIR}/lib/deps.txt"
+        echo "ERROR: deps file short"
+        exit 1
+    fi
     compress_libs
 fi
 

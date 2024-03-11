@@ -85,7 +85,7 @@ func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
 	return n, nil
 }
 
-func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
+func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
 	partFilePaths, err := filepath.Glob(b.Name + "-partial-*")
 	if err != nil {
 		return err
@@ -137,11 +137,11 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *R
 	return nil
 }
 
-func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) {
+func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *registryOptions) {
 	b.err = b.run(ctx, requestURL, opts)
 }
 
-func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
+func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
 	defer blobDownloadManager.Delete(b.Digest)
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
@@ -210,7 +210,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 	return nil
 }
 
-func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *RegistryOptions) error {
+func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *registryOptions) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		headers := make(http.Header)
@@ -334,7 +334,7 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 type downloadOpts struct {
 	mp      ModelPath
 	digest  string
-	regOpts *RegistryOptions
+	regOpts *registryOptions
 	fn      func(api.ProgressResponse)
 }
 
