@@ -255,9 +255,10 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 					break out
 				}
 
-				if strings.TrimSpace(p.Content) == lastToken {
+				switch {
+				case strings.TrimSpace(p.Content) == lastToken:
 					tokenRepeat++
-				} else {
+				default:
 					lastToken = strings.TrimSpace(p.Content)
 					tokenRepeat = 0
 				}
