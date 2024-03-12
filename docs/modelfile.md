@@ -131,7 +131,7 @@ The `PARAMETER` instruction defines a parameter that can be set when the model i
 PARAMETER <parameter> <parametervalue>
 ```
 
-### Valid Parameters and Values
+#### Valid Parameters and Values
 
 | Parameter      | Description                                                                                                                                                                                                                                             | Value Type | Example Usage        |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------- |
@@ -201,7 +201,22 @@ LICENSE """
 
 ### MESSAGE
 
-The `MESSAGE` instruction allows you to specify a message history for the model to use when responding:
+The `MESSAGE` instruction allows you to specify a message history for the model to use when responding. Use multiple iterations of the MESSAGE command to build up a conversation which will guide the model to answer in a similar way.
+
+```modelfile
+MESSAGE <role> <message>
+```
+
+#### Valid roles
+
+| Role      | Description                                                  |
+| --------- | ------------------------------------------------------------ |
+| system    | Alternate way of providing the SYSTEM message for the model. |
+| user      | An example message of what the user could have asked.        |
+| assistant | An example message of how the model should respond.          |
+
+
+#### Example conversation
 
 ```modelfile
 MESSAGE user Is Toronto in Canada?
@@ -211,6 +226,7 @@ MESSAGE assistant no
 MESSAGE user Is Ontario in Canada?
 MESSAGE assistant yes
 ```
+
 
 ## Notes
 
