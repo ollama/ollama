@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"slices"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
@@ -19,7 +20,11 @@ type LLM interface {
 	Close()
 }
 
-func New(workDir, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+var cpuOnlyFamilies = []string{
+	"mamba",
+}
+
+func New(model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -48,12 +53,17 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 	size := ggml.Size
 
 	// fp16 k,v matrices require = n_ctx * n_layer * n_embd / n_head * n_head_kv * 2 bytes each * 2 key and value
-	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.NumLayers()) * int64(ggml.NumEmbed()) * int64(ggml.NumHeadKv()) / int64(ggml.NumHead())
+	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.NumLayers()) * int64(ggml.NumEmbed()) * int64(ggml.NumHeadKv()) / int64(max(ggml.NumHead(), 1))
 
 	// this amount is the overhead + tensors in memory
 	// TODO: get this from the llama.cpp's graph calculations instead of
 	// estimating it's 1/6 * kv_cache_size * num_gqa
 	graph := int64(ggml.NumGQA()) * kv / 6
+
+	// certain model architectures don't support gpu inference yet
+	if slices.Contains(cpuOnlyFamilies, ggml.ModelFamily()) {
+		opts.NumGPU = 0
+	}
 
 	info := gpu.GetGPUInfo()
 	switch runtime.GOOS {
@@ -63,9 +73,7 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 		}
 
 		if size+kv+graph > vram {
-			slog.Info("not enough vram available, falling back to CPU only")
-			info.Library = "cpu"
-			info.Variant = gpu.GetCPUVariant()
+			slog.Info("not enough vram available, setting num_gpu=0")
 			opts.NumGPU = 0
 			break
 		}
@@ -124,8 +132,8 @@ func New(workDir, model string, adapters, projectors []string, opts api.Options)
 }
 
 // Give any native cgo implementations an opportunity to initialize
-func Init(workdir string) error {
-	return nativeInit(workdir)
+func Init() error {
+	return nativeInit()
 }
 
 func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
@@ -140,6 +148,16 @@ func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []stri
 		} else {
 			slog.Info(fmt.Sprintf("Loading OLLAMA_LLM_LIBRARY=%s", demandLib))
 			dynLibs = []string{libPath}
+		}
+	}
+
+	// We stage into a temp directory, and if we've been idle for a while, it may have been reaped
+	_, err := os.Stat(dynLibs[0])
+	if err != nil {
+		slog.Info(fmt.Sprintf("%s has disappeared, reloading libraries", dynLibs[0]))
+		err = nativeInit()
+		if err != nil {
+			return nil, err
 		}
 	}
 
