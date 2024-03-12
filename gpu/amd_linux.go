@@ -24,6 +24,9 @@ const (
 	GPUTotalMemoryFileGlob = "mem_banks/*/properties" // size_in_bytes line
 	GPUUsedMemoryFileGlob  = "mem_banks/*/used_memory"
 	RocmStandardLocation   = "/opt/rocm/lib"
+
+	// TODO find a better way to detect iGPU instead of minimum memory
+	IGPUMemLimit = 1024 * 1024 * 1024 // 512G is what they typically report, so anything less than 1G must be iGPU
 )
 
 var (
@@ -146,8 +149,8 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 	resp.memInfo.DeviceCount = 0
 	resp.memInfo.TotalMemory = 0
 	resp.memInfo.FreeMemory = 0
+	slog.Debug("discovering VRAM for amdgpu devices")
 	if len(ids) == 0 {
-		slog.Debug("discovering all amdgpu devices")
 		entries, err := os.ReadDir(AMDNodesSysfsDir)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("failed to read amdgpu sysfs %s - %s", AMDNodesSysfsDir, err))
@@ -165,7 +168,7 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 			ids = append(ids, id)
 		}
 	}
-	slog.Debug(fmt.Sprintf("discovering amdgpu devices %v", ids))
+	slog.Debug(fmt.Sprintf("amdgpu devices %v", ids))
 
 	for _, id := range ids {
 		if _, skipped := skip[id]; skipped {
@@ -173,7 +176,8 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 		}
 		totalMemory := uint64(0)
 		usedMemory := uint64(0)
-		propGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(id), GPUTotalMemoryFileGlob)
+		// Adjust for sysfs vs HIP ids
+		propGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(id+1), GPUTotalMemoryFileGlob)
 		propFiles, err := filepath.Glob(propGlob)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("error looking up total GPU memory: %s %s", propGlob, err))
@@ -205,6 +209,13 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 			}
 		}
 		if totalMemory == 0 {
+			slog.Warn(fmt.Sprintf("amdgpu [%d] reports zero total memory, skipping", id))
+			skip[id] = struct{}{}
+			continue
+		}
+		if totalMemory < IGPUMemLimit {
+			slog.Info(fmt.Sprintf("amdgpu [%d] appears to be an iGPU with %dM reported total memory, skipping", id, totalMemory/1024/1024))
+			skip[id] = struct{}{}
 			continue
 		}
 		usedGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(id), GPUUsedMemoryFileGlob)
@@ -232,8 +243,8 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 			}
 			usedMemory += used
 		}
-		slog.Info(fmt.Sprintf("[%d] amdgpu totalMemory %d", id, totalMemory))
-		slog.Info(fmt.Sprintf("[%d] amdgpu freeMemory  %d", id, (totalMemory - usedMemory)))
+		slog.Info(fmt.Sprintf("[%d] amdgpu totalMemory %dM", id, totalMemory/1024/1024))
+		slog.Info(fmt.Sprintf("[%d] amdgpu freeMemory  %dM", id, (totalMemory-usedMemory)/1024/1024))
 		resp.memInfo.DeviceCount++
 		resp.memInfo.TotalMemory += totalMemory
 		resp.memInfo.FreeMemory += (totalMemory - usedMemory)
@@ -358,6 +369,8 @@ func AMDDriverVersion() (string, error) {
 }
 
 func AMDGFXVersions() map[int]Version {
+	// The amdgpu driver always exposes the host CPU as node 0, but we have to skip that and subtract one
+	// from the other IDs to get alignment with the HIP libraries expectations (zero is the first GPU, not the CPU)
 	res := map[int]Version{}
 	matches, _ := filepath.Glob(GPUPropertiesFileGlob)
 	for _, match := range matches {
@@ -373,17 +386,20 @@ func AMDGFXVersions() map[int]Version {
 			continue
 		}
 
+		if i == 0 {
+			// Skipping the CPU
+			continue
+		}
+		// Align with HIP IDs (zero is first GPU, not CPU)
+		i -= 1
+
 		scanner := bufio.NewScanner(fp)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if strings.HasPrefix(line, "gfx_target_version") {
 				ver := strings.Fields(line)
 				if len(ver) != 2 || len(ver[1]) < 5 {
-
-					if ver[1] == "0" {
-						// Silently skip the CPU
-						continue
-					} else {
+					if ver[1] != "0" {
 						slog.Debug("malformed " + line)
 					}
 					res[i] = Version{
