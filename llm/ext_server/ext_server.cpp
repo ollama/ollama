@@ -115,7 +115,7 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     llama_numa_init(params.numa);
 
   if (!llama->load_model(params)) { 
-    // an error occured that was not thrown
+    // an error occurred that was not thrown
     err->id = -1;
     snprintf(err->msg, err->msg_len, "error loading model %s", params.model.c_str());
     return;
