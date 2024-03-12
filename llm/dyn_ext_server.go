@@ -198,6 +198,9 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 
 	if predict.Format == "json" {
 		request["grammar"] = jsonGrammar
+		if !strings.Contains(strings.ToLower(predict.Prompt), "json") {
+			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+		}
 	}
 
 	retryDelay := 100 * time.Microsecond
