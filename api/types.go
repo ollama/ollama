@@ -42,6 +42,7 @@ type GenerateRequest struct {
 	Stream    *bool       `json:"stream,omitempty"`
 	Raw       bool        `json:"raw,omitempty"`
 	Format    string      `json:"format"`
+	Grammar   string      `json:"grammar"`
 	KeepAlive *Duration   `json:"keep_alive,omitempty"`
 	Images    []ImageData `json:"images,omitempty"`
 
@@ -53,6 +54,7 @@ type ChatRequest struct {
 	Messages  []Message `json:"messages"`
 	Stream    *bool     `json:"stream,omitempty"`
 	Format    string    `json:"format"`
+	Grammar   string    `json:"grammar"`
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`

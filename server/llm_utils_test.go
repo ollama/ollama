@@ -59,7 +59,7 @@ func OneShotPromptResponse(t *testing.T, ctx context.Context, req api.GenerateRe
 
 	predictReq := llm.PredictOpts{
 		Prompt: prompt,
-		Format: req.Format,
+		Grammar: req.Grammar,
 		Images: req.Images,
 	}
 	err = runner.Predict(ctx, predictReq, cb)
