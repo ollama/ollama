@@ -2770,7 +2770,7 @@ inline void signal_handler(int signal) {
     shutdown_handler(signal);
 }
 
-int main(int argc, char **argv)
+int _main(int argc, char **argv)
 {
 #if SERVER_VERBOSE != 1
     log_disable();

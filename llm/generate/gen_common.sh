@@ -61,8 +61,8 @@ git_module_setup() {
 
 apply_patches() {
     # Wire up our CMakefile
-    if ! grep ollama ${LLAMACPP_DIR}/examples/server/CMakeLists.txt; then
-        echo 'include (../../../ext_server/CMakeLists.txt) # ollama' >>${LLAMACPP_DIR}/examples/server/CMakeLists.txt
+    if ! grep ollama ${LLAMACPP_DIR}/CMakeLists.txt; then
+        echo 'add_subdirectory(../ext_server ext_server) # ollama' >>${LLAMACPP_DIR}/CMakeLists.txt
     fi
 
     if [ -n "$(ls -A ../patches/*.diff)" ]; then
@@ -76,19 +76,16 @@ apply_patches() {
             (cd ${LLAMACPP_DIR} && git apply ${patch})
         done
     fi
-
-    # Avoid duplicate main symbols when we link into the cgo binary
-    sed -e 's/int main(/int __main(/g' <${LLAMACPP_DIR}/examples/server/server.cpp >${LLAMACPP_DIR}/examples/server/server.cpp.tmp &&
-        mv ${LLAMACPP_DIR}/examples/server/server.cpp.tmp ${LLAMACPP_DIR}/examples/server/server.cpp
 }
 
 build() {
     cmake -S ${LLAMACPP_DIR} -B ${BUILD_DIR} ${CMAKE_DEFS}
     cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8
     mkdir -p ${BUILD_DIR}/lib/
+    ls ${BUILD_DIR}
     g++ -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.${LIB_EXT} \
         ${GCC_ARCH} \
-        ${WHOLE_ARCHIVE} ${BUILD_DIR}/examples/server/libext_server.a ${NO_WHOLE_ARCHIVE} \
+        ${WHOLE_ARCHIVE} ${BUILD_DIR}/ext_server/libext_server.a ${NO_WHOLE_ARCHIVE} \
         ${BUILD_DIR}/common/libcommon.a \
         ${BUILD_DIR}/libllama.a \
         -Wl,-rpath,\$ORIGIN \
@@ -113,7 +110,7 @@ compress_libs() {
 
 # Keep the local tree clean after we're done with the build
 cleanup() {
-    (cd ${LLAMACPP_DIR}/examples/server/ && git checkout CMakeLists.txt server.cpp)
+    (cd ${LLAMACPP_DIR}/ && git checkout CMakeLists.txt)
 
     if [ -n "$(ls -A ../patches/*.diff)" ]; then
         for patch in ../patches/*.diff; do

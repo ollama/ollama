@@ -82,8 +82,8 @@ function git_module_setup {
 
 function apply_patches {
     # Wire up our CMakefile
-    if (!(Select-String -Path "${script:llamacppDir}/examples/server/CMakeLists.txt" -Pattern 'ollama')) {
-        Add-Content -Path "${script:llamacppDir}/examples/server/CMakeLists.txt" -Value 'include (../../../ext_server/CMakeLists.txt) # ollama'
+    if (!(Select-String -Path "${script:llamacppDir}/CMakeLists.txt" -Pattern 'ollama')) {
+        Add-Content -Path "${script:llamacppDir}/CMakeLists.txt" -Value 'add_subdirectory(../ext_server ext_server) # ollama'
     }
 
     # Apply temporary patches until fix is upstream
@@ -107,11 +107,6 @@ function apply_patches {
         Set-Location -Path ${script:llamacppDir}
         git apply $patch.FullName
     }
-
-    # Avoid duplicate main symbols when we link into the cgo binary
-    $content = Get-Content -Path "${script:llamacppDir}/examples/server/server.cpp"
-    $content = $content -replace 'int main\(', 'int __main('
-    Set-Content -Path "${script:llamacppDir}/examples/server/server.cpp" -Value $content
 }
 
 function build {
@@ -173,8 +168,8 @@ function cleanup {
             git checkout $file
         }
     }
-    Set-Location "${script:llamacppDir}/examples/server"
-    git checkout CMakeLists.txt server.cpp
+    Set-Location "${script:llamacppDir}/"
+    git checkout CMakeLists.txt
 
 }
 
