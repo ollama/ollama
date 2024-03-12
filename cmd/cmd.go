@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -14,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -22,9 +22,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/containerd/console"
+
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
 	"github.com/jmorganca/ollama/api"
@@ -85,22 +88,82 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = filepath.Join(filepath.Dir(filename), path)
 			}
 
-			bin, err := os.Open(path)
+			fi, err := os.Stat(path)
 			if errors.Is(err, os.ErrNotExist) && c.Name == "model" {
 				continue
 			} else if err != nil {
 				return err
 			}
-			defer bin.Close()
 
-			hash := sha256.New()
-			if _, err := io.Copy(hash, bin); err != nil {
-				return err
+			// TODO make this work w/ adapters
+			if fi.IsDir() {
+				tf, err := os.CreateTemp("", "ollama-tf")
+				if err != nil {
+					return err
+				}
+				defer os.RemoveAll(tf.Name())
+
+				zf := zip.NewWriter(tf)
+
+				files, err := filepath.Glob(filepath.Join(path, "model-*.safetensors"))
+				if err != nil {
+					return err
+				}
+
+				if len(files) == 0 {
+					return fmt.Errorf("no safetensors files were found in '%s'", path)
+				}
+
+				// add the safetensor config file + tokenizer
+				files = append(files, filepath.Join(path, "config.json"))
+				files = append(files, filepath.Join(path, "added_tokens.json"))
+				files = append(files, filepath.Join(path, "tokenizer.model"))
+
+				for _, fn := range files {
+					f, err := os.Open(fn)
+					if os.IsNotExist(err) && strings.HasSuffix(fn, "added_tokens.json") {
+						continue
+					} else if err != nil {
+						return err
+					}
+
+					fi, err := f.Stat()
+					if err != nil {
+						return err
+					}
+
+					h, err := zip.FileInfoHeader(fi)
+					if err != nil {
+						return err
+					}
+
+					h.Name = filepath.Base(fn)
+					h.Method = zip.Store
+
+					w, err := zf.CreateHeader(h)
+					if err != nil {
+						return err
+					}
+
+					_, err = io.Copy(w, f)
+					if err != nil {
+						return err
+					}
+
+				}
+
+				if err := zf.Close(); err != nil {
+					return err
+				}
+
+				if err := tf.Close(); err != nil {
+					return err
+				}
+				path = tf.Name()
 			}
-			bin.Seek(0, io.SeekStart)
 
-			digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
-			if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
+			digest, err := createBlob(cmd, client, path)
+			if err != nil {
 				return err
 			}
 
@@ -139,6 +202,26 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, error) {
+	bin, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer bin.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, bin); err != nil {
+		return "", err
+	}
+	bin.Seek(0, io.SeekStart)
+
+	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
+	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
+		return "", err
+	}
+	return digest, nil
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -146,19 +229,68 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	name := args[0]
+
 	// check if the model exists on the server
-	_, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+	show, err := client.Show(cmd.Context(), &api.ShowRequest{Name: name})
 	var statusError api.StatusError
 	switch {
 	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
 		if err := PullHandler(cmd, []string{name}); err != nil {
 			return err
 		}
+
+		show, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+		if err != nil {
+			return err
+		}
 	case err != nil:
 		return err
 	}
 
-	return RunGenerate(cmd, args)
+	interactive := true
+
+	opts := runOptions{
+		Model:       args[0],
+		WordWrap:    os.Getenv("TERM") == "xterm-256color",
+		Options:     map[string]interface{}{},
+		MultiModal:  slices.Contains(show.Details.Families, "clip"),
+		ParentModel: show.Details.ParentModel,
+	}
+
+	format, err := cmd.Flags().GetString("format")
+	if err != nil {
+		return err
+	}
+	opts.Format = format
+
+	prompts := args[1:]
+	// prepend stdin to the prompt if provided
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		in, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+
+		prompts = append([]string{string(in)}, prompts...)
+		opts.WordWrap = false
+		interactive = false
+	}
+	opts.Prompt = strings.Join(prompts, " ")
+	if len(prompts) > 0 {
+		interactive = false
+	}
+
+	nowrap, err := cmd.Flags().GetBool("nowordwrap")
+	if err != nil {
+		return err
+	}
+	opts.WordWrap = !nowrap
+
+	if !interactive {
+		return generate(cmd, opts)
+	}
+
+	return generateInteractive(cmd, opts)
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -410,51 +542,6 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func RunGenerate(cmd *cobra.Command, args []string) error {
-	interactive := true
-
-	opts := runOptions{
-		Model:    args[0],
-		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]interface{}{},
-	}
-
-	format, err := cmd.Flags().GetString("format")
-	if err != nil {
-		return err
-	}
-	opts.Format = format
-
-	prompts := args[1:]
-	// prepend stdin to the prompt if provided
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		in, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return err
-		}
-
-		prompts = append([]string{string(in)}, prompts...)
-		opts.WordWrap = false
-		interactive = false
-	}
-	opts.Prompt = strings.Join(prompts, " ")
-	if len(prompts) > 0 {
-		interactive = false
-	}
-
-	nowrap, err := cmd.Flags().GetBool("nowordwrap")
-	if err != nil {
-		return err
-	}
-	opts.WordWrap = !nowrap
-
-	if !interactive {
-		return generate(cmd, opts)
-	}
-
-	return generateInteractive(cmd, opts)
-}
-
 type generateContextKey string
 
 type runOptions struct {
@@ -630,10 +717,18 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		return nil
 	}
 
+	if opts.MultiModal {
+		opts.Prompt, opts.Images, err = extractFileData(opts.Prompt)
+		if err != nil {
+			return err
+		}
+	}
+
 	request := api.GenerateRequest{
 		Model:    opts.Model,
 		Prompt:   opts.Prompt,
 		Context:  generateContext,
+		Images:   opts.Images,
 		Format:   opts.Format,
 		System:   opts.System,
 		Template: opts.Template,
@@ -672,7 +767,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, err := net.SplitHostPort(os.Getenv("OLLAMA_HOST"))
+	host, port, err := net.SplitHostPort(strings.Trim(os.Getenv("OLLAMA_HOST"), "\"'"))
 	if err != nil {
 		host, port = "127.0.0.1", "11434"
 		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
@@ -704,59 +799,42 @@ func initializeKeypair() error {
 	_, err = os.Stat(privKeyPath)
 	if os.IsNotExist(err) {
 		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
-		_, privKey, err := ed25519.GenerateKey(rand.Reader)
+		cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return err
 		}
 
-		privKeyBytes, err := format.OpenSSHPrivateKey(privKey, "")
+		privateKeyBytes, err := ssh.MarshalPrivateKey(cryptoPrivateKey, "")
 		if err != nil {
 			return err
 		}
 
-		err = os.MkdirAll(filepath.Dir(privKeyPath), 0o755)
-		if err != nil {
+		if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
 			return fmt.Errorf("could not create directory %w", err)
 		}
 
-		err = os.WriteFile(privKeyPath, pem.EncodeToMemory(privKeyBytes), 0o600)
+		if err := os.WriteFile(privKeyPath, pem.EncodeToMemory(privateKeyBytes), 0o600); err != nil {
+			return err
+		}
+
+		sshPublicKey, err := ssh.NewPublicKey(cryptoPublicKey)
 		if err != nil {
 			return err
 		}
 
-		sshPrivateKey, err := ssh.NewSignerFromKey(privKey)
-		if err != nil {
+		publicKeyBytes := ssh.MarshalAuthorizedKey(sshPublicKey)
+
+		if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o644); err != nil {
 			return err
 		}
 
-		pubKeyData := ssh.MarshalAuthorizedKey(sshPrivateKey.PublicKey())
-
-		err = os.WriteFile(pubKeyPath, pubKeyData, 0o644)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("Your new public key is: \n\n%s\n", string(pubKeyData))
+		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
 	}
 	return nil
 }
 
-func startMacApp(ctx context.Context, client *api.Client) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	link, err := os.Readlink(exe)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(link, "Ollama.app") {
-		return fmt.Errorf("could not find ollama app")
-	}
-	path := strings.Split(link, "Ollama.app")
-	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
-		return err
-	}
+//nolint:unused
+func waitForServer(ctx context.Context, client *api.Client) error {
 	// wait for the server to start
 	timeout := time.After(5 * time.Second)
 	tick := time.Tick(500 * time.Millisecond)
@@ -770,6 +848,7 @@ func startMacApp(ctx context.Context, client *api.Client) error {
 			}
 		}
 	}
+
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
@@ -778,15 +857,11 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if err := client.Heartbeat(cmd.Context()); err != nil {
-		if !strings.Contains(err.Error(), "connection refused") {
+		if !strings.Contains(err.Error(), " refused") {
 			return err
 		}
-		if runtime.GOOS == "darwin" {
-			if err := startMacApp(cmd.Context(), client); err != nil {
-				return fmt.Errorf("could not connect to ollama app, is it running?")
-			}
-		} else {
-			return fmt.Errorf("could not connect to ollama server, run 'ollama serve' to start it")
+		if err := startApp(cmd.Context(), client); err != nil {
+			return fmt.Errorf("could not connect to ollama app, is it running?")
 		}
 	}
 	return nil
@@ -812,9 +887,22 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
+func appendHostEnvDocs(cmd *cobra.Command) {
+	const hostEnvDocs = `
+Environment Variables:
+      OLLAMA_HOST        The host:port or base URL of the Ollama server (e.g. http://localhost:11434)
+`
+	cmd.SetUsageTemplate(cmd.UsageTemplate() + hostEnvDocs)
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
+
+	if runtime.GOOS == "windows" {
+		// Enable colorful ANSI escape code in Windows terminal (disabled by default)
+		console.ConsoleFromFile(os.Stdout) //nolint:errcheck
+	}
 
 	rootCmd := &cobra.Command{
 		Use:           "ollama",
@@ -872,7 +960,6 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
-
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
@@ -880,6 +967,13 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
+	serveCmd.SetUsageTemplate(serveCmd.UsageTemplate() + `
+Environment Variables:
+
+    OLLAMA_HOST       The host:port to bind to (default "127.0.0.1:11434")
+    OLLAMA_ORIGINS    A comma separated list of allowed origins.
+    OLLAMA_MODELS     The path to the models directory (default is "~/.ollama/models")
+`)
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
@@ -908,7 +1002,6 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
-
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE TARGET",
 		Short:   "Copy a model",
@@ -923,6 +1016,19 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    DeleteHandler,
+	}
+
+	for _, cmd := range []*cobra.Command{
+		createCmd,
+		showCmd,
+		runCmd,
+		pullCmd,
+		pushCmd,
+		listCmd,
+		copyCmd,
+		deleteCmd,
+	} {
+		appendHostEnvDocs(cmd)
 	}
 
 	rootCmd.AddCommand(

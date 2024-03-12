@@ -1,4 +1,4 @@
-# common logic accross linux and darwin
+# common logic across linux and darwin
 
 init_vars() {
     case "${GOARCH}" in
@@ -65,15 +65,17 @@ apply_patches() {
         echo 'include (../../../ext_server/CMakeLists.txt) # ollama' >>${LLAMACPP_DIR}/examples/server/CMakeLists.txt
     fi
 
-    # apply temporary patches until fix is upstream
-    for patch in ../patches/*.diff; do
-        for file in $(grep "^+++ " ${patch} | cut -f2 -d' ' | cut -f2- -d/); do
-            (cd ${LLAMACPP_DIR}; git checkout ${file})
+    if [ -n "$(ls -A ../patches/*.diff)" ]; then
+        # apply temporary patches until fix is upstream
+        for patch in ../patches/*.diff; do
+            for file in $(grep "^+++ " ${patch} | cut -f2 -d' ' | cut -f2- -d/); do
+                (cd ${LLAMACPP_DIR}; git checkout ${file})
+            done
         done
-    done
-    for patch in ../patches/*.diff; do
-        (cd ${LLAMACPP_DIR} && git apply ${patch})
-    done
+        for patch in ../patches/*.diff; do
+            (cd ${LLAMACPP_DIR} && git apply ${patch})
+        done
+    fi
 
     # Avoid duplicate main symbols when we link into the cgo binary
     sed -e 's/int main(/int __main(/g' <${LLAMACPP_DIR}/examples/server/server.cpp >${LLAMACPP_DIR}/examples/server/server.cpp.tmp &&
@@ -99,7 +101,7 @@ compress_libs() {
     pids=""
     rm -rf ${BUILD_DIR}/lib/*.${LIB_EXT}*.gz
     for lib in ${BUILD_DIR}/lib/*.${LIB_EXT}* ; do
-        gzip --best -f ${lib} &
+        gzip -n --best -f ${lib} &
         pids+=" $!"
     done
     echo 
@@ -112,4 +114,12 @@ compress_libs() {
 # Keep the local tree clean after we're done with the build
 cleanup() {
     (cd ${LLAMACPP_DIR}/examples/server/ && git checkout CMakeLists.txt server.cpp)
+
+    if [ -n "$(ls -A ../patches/*.diff)" ]; then
+        for patch in ../patches/*.diff; do
+            for file in $(grep "^+++ " ${patch} | cut -f2 -d' ' | cut -f2- -d/); do
+                (cd ${LLAMACPP_DIR}; git checkout ${file})
+            done
+        done
+    fi
 }
