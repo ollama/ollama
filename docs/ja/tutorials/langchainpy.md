@@ -4,13 +4,13 @@
 
 > 申し訳ありませんが、私は大規模な言語モデルであり、現実に存在しない個人や家族に関する情報は提供できません。ネレウスは実在の人物やキャラクターではなく、そのため家族や他の個人的な詳細はありません。混乱を招いた場合は申し訳ありません。他にお手伝いできることはありますか？
 
-これは典型的な検閲された回答のようですが、llama2-uncensoredでもまずまずの回答が得られます:
+これは典型的な検閲された回答のようですが、llama2-uncensored でもまずまずの回答が得られます:
 
 > ネレウスはピュロスの伝説的な王であり、アルゴナウタイの一人であるネストールの父でした。彼の母は海のニンフ、クリュメネで、父は海の神ネプチューンでした。
 
-それでは、**LangChain**をOllamaと連携させ、Pythonを使用して実際の文書、ホメロスの『オデュッセイア』に質問する方法を考えてみましょう。
+それでは、**LangChain** を Ollama と連携させ、Python を使用して実際の文書、ホメロスの『オデュッセイア』に質問する方法を考えてみましょう。
 
-まず、**Ollama**を使用して**Llama2**モデルから回答を取得できる簡単な質問をしてみましょう。まず、**LangChain**パッケージをインストールする必要があります：
+まず、**Ollama** を使用して **Llama2** モデルから回答を取得できる簡単な質問をしてみましょう。まず、**LangChain** パッケージをインストールする必要があります：
 
 `pip install langchain`
 
@@ -23,9 +23,9 @@ model="llama2")
 print(ollama("なぜ空は青いのか"))
 ```
 
-モデルとOllamaの基本URLを定義していることに注意してください。
+モデルと Ollama の基本 URL を定義していることに注意してください。
 
-さて、質問を行うためのドキュメントをロードしてみましょう。私はホメロスの『オデュッセイア』を読み込みますが、これはProject Gutenbergで見つけることができます。**LangChain**の一部である**WebBaseLoader**が必要です。また、私のマシンではこれを動作させるために**bs4**もインストールする必要がありました。したがって、`pip install bs4`を実行してください。
+さて、質問を行うためのドキュメントをロードしてみましょう。私はホメロスの『オデュッセイア』を読み込みますが、これは Project Gutenberg で見つけることができます。**LangChain** の一部である**WebBaseLoader** が必要です。また、私のマシンではこれを動作させるために **bs4** もインストールする必要がありました。したがって、`pip install bs4`を実行してください。
 
 ```python
 from langchain.document_loaders import WebBaseLoader
@@ -42,12 +42,12 @@ text_splitter=RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
 all_splits = text_splitter.split_documents(data)
 ```
 
-分割はされていますが、関連する断片を見つけてからそれらをモデルに提出する必要があります。これを行うために、埋め込みを作成し、それらをベクトルデータベースに保存します。この例では、ベクトルデータベースとしてChromaDBを使用します。`pip install GPT4All chromadb` を実行してください。
+分割されていますが、関連する分割を見つけて、それらをモデルに送信する必要があります。これを行うには、埋め込みを作成してそれらをベクトルデータベースに保存します。この例では、ベクトルデータベースとして ChromaDB を使用します。埋め込みモデルをインスタンス化するために、Ollama を直接使用できます。`pip install chromadb`
 
 ```python
 from langchain.embeddings import OllamaEmbeddings
 from langchain.vectorstores import Chroma
-oembed = OllamaEmbeddings(base_url="http://localhost:11434", model="llama2")
+oembed = OllamaEmbeddings(base_url="http://localhost:11434", model="nomic-embed-text")
 vectorstore = Chroma.from_documents(documents=all_splits, embedding=oembed)
 ```
 
@@ -66,7 +66,7 @@ len(docs)
 ```python
 from langchain.chains import RetrievalQA
 qachain=RetrievalQA.from_chain_type(ollama, retriever=vectorstore.as_retriever())
-qachain({"query": question})
+qachain.invoke({"query": question})
 ```
 
 このチェーンから受け取った回答は以下の通りです：

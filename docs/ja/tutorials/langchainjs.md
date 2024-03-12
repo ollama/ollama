@@ -1,10 +1,10 @@
 # Using LangChain with Ollama using JavaScript
 
-このチュートリアルでは、LangChainとOllamaを使用してJavaScriptを学び、少し新しい情報を得ることを目指します。2023年8月にマウイで発生した一連の山火事について学びます。その時点より前にトレーニングされたLLMは、トレーニングデータにそれよりも新しい情報が含まれていないため、これについて知ることはできません。したがって、[山火事に関するWikipediaの記事](https://en.wikipedia.org/wiki/2023_Hawaii_wildfires)を見つけ、その内容について質問してみましょう。
+このチュートリアルでは、LangChain と Ollama を使用して JavaScript を学び、少し新しい情報を得ることを目指します。2023年8月にマウイで発生した一連の山火事について学びます。その時点より前にトレーニングされたLLMは、トレーニングデータにそれよりも新しい情報が含まれていないため、これについて知ることはできません。したがって、[山火事に関するWikipediaの記事](https://en.wikipedia.org/wiki/2023_Hawaii_wildfires)を見つけ、その内容について質問してみましょう。
 
-始めるために、単純な質問をモデルに尋ねるために **LangChain** を使ってみましょう。これをJavaScriptで行うためには、**LangChain** をインストールする必要があります：
+始めるために、単純な質問をモデルに尋ねるために **LangChain** を使ってみましょう。これを JavaScript で行うためには、**LangChain** をインストールする必要があります：
 
-さて、JavaScriptを構築し始めることができます：
+さて、JavaScript を構築し始めることができます：
 
 ```javascript
 import { Ollama } from "langchain/llms/ollama";
@@ -19,7 +19,7 @@ const answer = await ollama.call(`why is the sky blue?`);
 console.log(answer);
 ```
 
-これにより、ターミナルで `ollama run llama2 "why is the sky blue"` を実行したのと同じ結果が得られます。ただし、質問を尋ねるためにウェブからドキュメントを読み込みたいです。**Cheerio**はウェブページを取り込むための優れたライブラリで、**LangChain** では **CheerioWebBaseLoader** で使用されています。そのため、**Cheerio** をインストールしてアプリのその部分を構築しましょう。
+これにより、ターミナルで `ollama run llama2 "why is the sky blue"` を実行したのと同じ結果が得られます。ただし、質問を尋ねるためにウェブからドキュメントを読み込みたいです。**Cheerio** はウェブページを取り込むための優れたライブラリで、**LangChain** では **CheerioWebBaseLoader** で使用されています。そのため、**Cheerio** をインストールしてアプリのその部分を構築しましょう。
 
 ```bash
 npm install cheerio 

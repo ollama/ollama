@@ -25,7 +25,7 @@
 
 ### ストリーミング応答
 
-特定のエンドポイントでは、JSONオブジェクトとして応答をストリーミングでき、オプションで非ストリーミングの応答を返すこともできます。
+特定のエンドポイントでは、JSON オブジェクトとして応答をストリーミングでき、オプションで非ストリーミングの応答を返すこともできます。
 
 ## 完了を生成する
 
@@ -39,7 +39,7 @@ POST /api/generate
 
 - `model`: （必須）[モデル名](#モデル名)
 - `prompt`: 応答を生成するためのプロンプト
-- `images`: （オプション）Base64エンコードされた画像のリスト（`llava`などのマルチモーダルモデル用）
+- `images`: （オプション）Base64 エンコードされた画像のリスト（`llava` などのマルチモーダルモデル用）
 
 高度なパラメータ（オプション）:
 
@@ -49,13 +49,15 @@ POST /api/generate
 - `template`: 使用するプロンプトテンプレート（`Modelfile` で定義されたものを上書きする）
 - `context`: `/generate` への前回のリクエストから返されるコンテキストパラメーター。これは短い対話的なメモリを維持するために使用できます
 - `stream`: `false` の場合、応答はオブジェクトのストリームではなく、単一の応答オブジェクトとして返されます
-- `raw`: `true` の場合、プロンプトには書式設定が適用されません。APIへのリクエストで完全なテンプレート化されたプロンプトを指定する場合は、`raw`
+- `raw`: `true` の場合、プロンプトに書式設定を適用しません。API へのリクエストで完全なテンプレート化されたプロンプトを指定する場合は、`raw` パラメータを使用することができます。
+- `keep_alive`: リクエスト後にモデルがメモリにロードされたままでいる時間を制御します（デフォルト： `5m`）。
 
-#### JSONモード
 
-`format` パラメーターを `json` に設定して JSON モードを有効にします。これにより、応答が有効な JSON オブジェクトとして構造化されます。以下にJSONモードの[例](#generate-request-json-mode) を参照してください。
+#### JSON モード
 
-> 注意: `prompt` でモデルにJSONを使用するように指示することが重要です。それ以外の場合、モデルは大量の空白を生成する可能性があります。
+`format` パラメータを `json` に設定することで、JSON モードを有効にできます。これにより、レスポンスが有効な JSON オブジェクトとして構造化されます。以下は JSON モードの[例](#request-json-mode)です。
+
+> 注意: `prompt` でモデルに JSON を使用するように指示することが重要です。それ以外の場合、モデルは大量の空白を生成する可能性があります。
 
 ### 例
 
@@ -72,7 +74,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ##### レスポンス
 
-JSONオブジェクトのストリームが返されます:
+JSON オブジェクトのストリームが返されます:
 
 ```json
 {
@@ -128,7 +130,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ##### レスポンス
 
-`stream` が `false` に設定されている場合、応答は単一のJSONオブジェクトになります:
+`stream` が `false` に設定されている場合、応答は単一の JSON オブジェクトになります:
 
 ```json
 {
@@ -146,9 +148,11 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-#### リクエスト（JSONモード）
+<div id="request-json-mode">
+<h4>リクエスト（JSON モード）</h4>
+</div>
 
-> `format` が `json` に設定されている場合、出力は常に整形されたJSONオブジェクトになります。モデルにもJSONで応答するように指示することが重要です。
+> `format` が `json` に設定されている場合、出力は常に整形された JSON オブジェクトになります。モデルにも JSON で応答するように指示することが重要です。
 
 ##### リクエスト
 
@@ -179,7 +183,7 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
-`response` の値は、次のようなJSONを含む文字列になります:
+`response` の値は、次のような JSON を含む文字列になります:
 
 ```json
 {
@@ -200,7 +204,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### リクエスト（画像付き）
 
-`llava` や `bakllava` などのマルチモーダルモデルに画像を提出するには、Base64エンコードされた `images` のリストを提供してください:
+`llava` や `bakllava` などのマルチモーダルモデルに画像を提出するには、Base64 エンコードされた `images` のリストを提供してください:
 
 #### リクエスト
 
@@ -233,7 +237,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### リクエスト (Raw モード)Request (Raw Mode)
 
-In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
+場合によっては、テンプレートシステムをバイパスして完全なプロンプトを提供したい場合があります。その場合、`raw` パラメーターを使用してテンプレート処理を無効にすることができます。また、raw モードではコンテキストが返されないことに注意してください。
 
 ##### リクエスト
 
@@ -243,6 +247,23 @@ curl http://localhost:11434/api/generate -d '{
   "prompt": "[INST] why is the sky blue? [/INST]",
   "raw": true,
   "stream": false
+}'
+```
+
+#### リクエスト（再現可能な出力）
+
+再現可能な出力を得るために、`temperature` を 0 に設定し、`seed` を数字に設定します。
+
+##### リクエスト
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "mistral",
+  "prompt": "Why is the sky blue?",
+  "options": {
+    "seed": 123,
+    "temperature": 0
+  }
 }'
 ```
 
@@ -265,7 +286,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### リクエストの生成（オプションあり）
 
-モデルの設定をModelfileではなく実行時にカスタムオプションで設定したい場合は、`options` パラメータを使用できます。この例ではすべての利用可能なオプションを設定していますが、個々のオプションを任意に設定し、上書きしたくないものは省略できます。
+モデルの設定を Modelfile ではなく実行時にカスタムオプションで設定したい場合は、`options` パラメータを使用できます。この例ではすべての利用可能なオプションを設定していますが、個々のオプションを任意に設定し、上書きしたくないものは省略できます。
 
 ##### リクエスト
 
@@ -331,7 +352,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### モデルの読み込み
 
-If an empty prompt is provided, the model will be loaded into memory.
+空のプロンプトが提供されると、モデルがメモリに読み込まれます。
 
 ##### リクエスト
 
@@ -343,7 +364,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ##### レスポンス
 
-単一のJSONオブジェクトが返されます:
+単一の JSON オブジェクトが返されます:
 
 ```json
 {
@@ -377,8 +398,9 @@ POST /api/chat
 
 - `format`: 応答を返す形式。現在唯一受け入れられている値は `json` です
 - `options`: [Modelfile](./modelfile.md#有効なパラメータと値)のドキュメントにリストされている追加のモデルパラメーター（`temperature`など）
-- `template`: 使用するプロンプトテンプレート（`Modelfile`で定義されたものを上書きする）
-- `stream`: `false`の場合、応答はオブジェクトのストリームではなく、単一の応答オブジェクトとして返されます
+- `template`: 使用するプロンプトテンプレート（`Modelfile` で定義されたものを上書きする）
+- `stream`: `false` の場合、応答はオブジェクトのストリームではなく、単一の応答オブジェクトとして返されます
+- `keep_alive`: リクエスト後にモデルがメモリにロードされたままになる時間を制御します（デフォルト： `5m`）
 
 ### 例
 
@@ -402,7 +424,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ##### レスポンス
 
-JSONオブジェクトのストリームが返されます:
+JSON オブジェクトのストリームが返されます:
 
 ```json
 {
@@ -472,7 +494,7 @@ curl http://localhost:11434/api/chat -d '{
 
 #### チャットリクエスト（履歴あり）
 
-Send a chat message with a conversation history. You can use this same approach to start the conversation using multi-shot or chain-of-thought prompting.
+会話履歴を持つチャットメッセージを送信してください。この方法は、multi-shot や chain-of-thought プロンプトを使用して会話を開始する際にも同じように利用できます。
 
 ##### リクエスト
 
@@ -498,7 +520,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ##### レスポンス
 
-JSONオブジェクトのストリームが返されます:
+JSON オブジェクトのストリームが返されます:
 
 ```json
 {
@@ -542,7 +564,7 @@ curl http://localhost:11434/api/chat -d '{
       "role": "user",
       "content": "what is in this image?",
       "images": ["iVBORw0KGgoAAAANSUhEUgAAAG0AAABmCAYAAADBPx+VAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAA3VSURBVHgB7Z27r0zdG8fX743i1bi1ikMoFMQloXRpKFFIqI7LH4BEQ+NWIkjQuSWCRIEoULk0gsK1kCBI0IhrQVT7tz/7zZo888yz1r7MnDl7z5xvsjkzs2fP3uu71nNfa7lkAsm7d++Sffv2JbNmzUqcc8m0adOSzZs3Z+/XES4ZckAWJEGWPiCxjsQNLWmQsWjRIpMseaxcuTKpG/7HP27I8P79e7dq1ars/yL4/v27S0ejqwv+cUOGEGGpKHR37tzJCEpHV9tnT58+dXXCJDdECBE2Ojrqjh071hpNECjx4cMHVycM1Uhbv359B2F79+51586daxN/+pyRkRFXKyRDAqxEp4yMlDDzXG1NPnnyJKkThoK0VFd1ELZu3TrzXKxKfW7dMBQ6bcuWLW2v0VlHjx41z717927ba22U9APcw7Nnz1oGEPeL3m3p2mTAYYnFmMOMXybPPXv2bNIPpFZr1NHn4HMw0KRBjg9NuRw95s8PEcz/6DZELQd/09C9QGq5RsmSRybqkwHGjh07OsJSsYYm3ijPpyHzoiacg35MLdDSIS/O1yM778jOTwYUkKNHWUzUWaOsylE00MyI0fcnOwIdjvtNdW/HZwNLGg+sR1kMepSNJXmIwxBZiG8tDTpEZzKg0GItNsosY8USkxDhD0Rinuiko2gfL/RbiD2LZAjU9zKQJj8RDR0vJBR1/Phx9+PHj9Z7REF4nTZkxzX4LCXHrV271qXkBAPGfP/atWvu/PnzHe4C97F48eIsRLZ9+3a3f/9+87dwP1JxaF7/3r17ba+5l4EcaVo0lj3SBq5kGTJSQmLWMjgYNei2GPT1MuMqGTDEFHzeQSP2wi/jGnkmPJ/nhccs44jvDAxpVcxnq0F6eT8h4ni/iIWpR5lPyA6ETkNXoSukvpJAD3AsXLiwpZs49+fPn5ke4j10TqYvegSfn0OnafC+Tv9ooA/JPkgQysqQNBzagXY55nO/oa1F7qvIPWkRL12WRpMWUvpVDYmxAPehxWSe8ZEXL20sadYIozfmNch4QJPAfeJgW3rNsnzphBKNJM2KKODo1rVOMRYik5ETy3ix4qWNI81qAAirizgMIc+yhTytx0JWZuNI03qsrgWlGtwjoS9XwgUhWGyhUaRZZQNNIEwCiXD16tXcAHUs79co0vSD8rrJCIW98pzvxpAWyyo3HYwqS0+H0BjStClcZJT5coMm6D2LOF8TolGJtK9fvyZpyiC5ePFi9nc/oJU4eiEP0jVoAnHa9wyJycITMP78+eMeP37sXrx44d6+fdt6f82aNdkx1pg9e3Zb5W+RSRE+n+VjksQWifvVaTKFhn5O8my63K8Qabdv33b379/PiAP//vuvW7BggZszZ072/+TJk91YgkafPn166zXB1rQHFvouAWHq9z3SEevSUerqCn2/dDCeta2jxYbr69evk4MHDyY7d+7MjhMnTiTPnz9Pfv/+nfQT2ggpO2dMF8cghuoM7Ygj5iWCqRlGFml0QC/ftGmTmzt3rmsaKDsgBSPh0/8yPeLLBihLkOKJc0jp8H8vUzcxIA1k6QJ/c78tWEyj5P3o4u9+jywNPdJi5rAH9x0KHcl4Hg570eQp3+vHXGyrmEeigzQsQsjavXt38ujRo44LQuDDhw+TW7duRS1HGgMxhNXHgflaNTOsHyKvHK5Ijo2jbFjJBQK9YwFd6RVMzfgRBmEfP37suBBm/p49e1qjEP2mwTViNRo0VJWH1deMXcNK08uUjVUu7s/zRaL+oLNxz1bpANco4npUgX4G2eFbpDFyQoQxojBCpEGSytmOH8qrH5Q9vuzD6ofQylkCUmh8DBAr+q8JCyVNtWQIidKQE9wNtLSQnS4jDSsxNHogzFuQBw4cyM61UKVsjfr3ooBkPSqqQHesUPWVtzi9/vQi1T+rJj7WiTz4Pt/l3LxUkr5P2VYZaZ4URpsE+st/dujQoaBBYokbrz/8TJNQYLSonrPS9kUaSkPeZyj1AWSj+d+VBoy1pIWVNed8P0Ll/ee5HdGRhrHhR5GGN0r4LGZBaj8oFDJitBTJzIZgFcmU0Y8ytWMZMzJOaXUSrUs5RxKnrxmbb5YXO9VGUhtpXldhEUogFr3IzIsvlpmdosVcGVGXFWp2oU9kLFL3dEkSz6NHEY1sjSRdIuDFWEhd8KxFqsRi1uM/nz9/zpxnwlESONdg6dKlbsaMGS4EHFHtjFIDHwKOo46l4TxSuxgDzi+rE2jg+BaFruOX4HXa0Nnf1lwAPufZeF8/r6zD97WK2qFnGjBxTw5qNGPxT+5T/r7/7RawFC3j4vTp09koCxkeHjqbHJqArmH5UrFKKksnxrK7FuRIs8STfBZv+luugXZ2pR/pP9Ois4z+TiMzUUkUjD0iEi1fzX8GmXyuxUBRcaUfykV0YZnlJGKQpOiGB76x5GeWkWWJc3mOrK6S7xdND+W5N6XyaRgtWJFe13GkaZnKOsYqGdOVVVbGupsyA/l7emTLHi7vwTdirNEt0qxnzAvBFcnQF16xh/TMpUuXHDowhlA9vQVraQhkudRdzOnK+04ZSP3DUhVSP61YsaLtd/ks7ZgtPcXqPqEafHkdqa84X6aCeL7YWlv6edGFHb+ZFICPlljHhg0bKuk0CSvVznWsotRu433alNdFrqG45ejoaPCaUkWERpLXjzFL2Rpllp7PJU2a/v7Ab8N05/9t27Z16KUqoFGsxnI9EosS2niSYg9SpU6B4JgTrvVW1flt1sT+0ADIJU2maXzcUTraGCRaL1Wp9rUMk16PMom8QhruxzvZIegJjFU7LLCePfS8uaQdPny4jTTL0dbee5mYokQsXTIWNY46kuMbnt8Kmec+LGWtOVIl9cT1rCB0V8WqkjAsRwta93TbwNYoGKsUSChN44lgBNCoHLHzquYKrU6qZ8lolCIN0Rh6cP0Q3U6I6IXILYOQI513hJaSKAorFpuHXJNfVlpRtmYBk1Su1obZr5dnKAO+L10Hrj3WZW+E3qh6IszE37F6EB+68mGpvKm4eb9bFrlzrok7fvr0Kfv727dvWRmdVTJHw0qiiCUSZ6wCK+7XL/AcsgNyL74DQQ730sv78Su7+t/A36MdY0sW5o40ahslXr58aZ5HtZB8GH64m9EmMZ7FpYw4T6QnrZfgenrhFxaSiSGXtPnz57e9TkNZLvTjeqhr734CNtrK41L40sUQckmj1lGKQ0rC37x544r8eNXRpnVE3ZZY7zXo8NomiO0ZUCj2uHz58rbXoZ6gc0uA+F6ZeKS/jhRDUq8MKrTho9fEkihMmhxtBI1DxKFY9XLpVcSkfoi8JGnToZO5sU5aiDQIW716ddt7ZLYtMQlhECdBGXZZMWldY5BHm5xgAroWj4C0hbYkSc/jBmggIrXJWlZM6pSETsEPGqZOndr2uuuR5rF169a2HoHPdurUKZM4CO1WTPqaDaAd+GFGKdIQkxAn9RuEWcTRyN2KSUgiSgF5aWzPTeA/lN5rZubMmR2bE4SIC4nJoltgAV/dVefZm72AtctUCJU2CMJ327hxY9t7EHbkyJFseq+EJSY16RPo3Dkq1kkr7+q0bNmyDuLQcZBEPYmHVdOBiJyIlrRDq41YPWfXOxUysi5fvtyaj+2BpcnsUV/oSoEMOk2CQGlr4ckhBwaetBhjCwH0ZHtJROPJkyc7UjcYLDjmrH7ADTEBXFfOYmB0k9oYBOjJ8b4aOYSe7QkKcYhFlq3QYLQhSidNmtS2RATwy8YOM3EQJsUjKiaWZ+vZToUQgzhkHXudb/PW5YMHD9yZM2faPsMwoc7RciYJXbGuBqJ1UIGKKLv915jsvgtJxCZDubdXr165mzdvtr1Hz5LONA8jrUwKPqsmVesKa49S3Q4WxmRPUEYdTjgiUcfUwLx589ySJUva3oMkP6IYddq6HMS4o55xBJBUeRjzfa4Zdeg56QZ43LhxoyPo7Lf1kNt7oO8wWAbNwaYjIv5lhyS7kRf96dvm5Jah8vfvX3flyhX35cuX6HfzFHOToS1H4BenCaHvO8pr8iDuwoUL7tevX+b5ZdbBair0xkFIlFDlW4ZknEClsp/TzXyAKVOmmHWFVSbDNw1l1+4f90U6IY/q4V27dpnE9bJ+v87QEydjqx/UamVVPRG+mwkNTYN+9tjkwzEx+atCm/X9WvWtDtAb68Wy9LXa1UmvCDDIpPkyOQ5ZwSzJ4jMrvFcr0rSjOUh+GcT4LSg5ugkW1Io0/SCDQBojh0hPlaJdah+tkVYrnTZowP8iq1F1TgMBBauufyB33x1v+NWFYmT5KmppgHC+NkAgbmRkpD3yn9QIseXymoTQFGQmIOKTxiZIWpvAatenVqRVXf2nTrAWMsPnKrMZHz6bJq5jvce6QK8J1cQNgKxlJapMPdZSR64/UivS9NztpkVEdKcrs5alhhWP9NeqlfWopzhZScI6QxseegZRGeg5a8C3Re1Mfl1ScP36ddcUaMuv24iOJtz7sbUjTS4qBvKmstYJoUauiuD3k5qhyr7QdUHMeCgLa1Ear9NquemdXgmum4fvJ6w1lqsuDhNrg1qSpleJK7K3TF0Q2jSd94uSZ60kK1e3qyVpQK6PVWXp2/FC3mp6jBhKKOiY2h3gtUV64TWM6wDETRPLDfSakXmH3w8g9Jlug8ZtTt4kVF0kLUYYmCCtD/DrQ5YhMGbA9L3ucdjh0y8kOHW5gU/VEEmJTcL4Pz/f7mgoAbYkAAAAAElFTkSuQmCC"]
-    },
+    }
   ]
 }'
 ```
@@ -568,21 +590,63 @@ curl http://localhost:11434/api/chat -d '{
 }
 ```
 
+#### チャットリクエスト（再現可能な出力）
+
+##### リクエスト
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "options": {
+    "seed": 101,
+    "temperature": 0
+  }
+}'
+```
+
+##### レスポンス
+
+```json
+{
+  "model": "registry.ollama.ai/library/llama2:latest",
+  "created_at": "2023-12-12T14:13:43.416799Z",
+  "message": {
+    "role": "assistant",
+    "content": "Hello! How are you today?"
+  },
+  "done": true,
+  "total_duration": 5191566416,
+  "load_duration": 2154458,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 383809000,
+  "eval_count": 298,
+  "eval_duration": 4799921000
+}
+```
+
 ## モデルを作成する
 
 ```shell
 POST /api/create
 ```
 
-[`Modelfile`](./modelfile.md)からモデルを作成します。`modelfile`を単に`path`を設定するのではなく、Modelfileの内容に設定することをお勧めします。これはリモート作成のための要件です。リモートモデルの作成は、[Create a Blob](#create-a-blob)を使用してサーバーに対して`FROM`や`ADAPTER`などのファイルブロブ、フィールドを明示的に作成する必要があり、応答で示されたパスに対して値を使用します。
+[`Modelfile`](./modelfile.md) を使ってモデルを作成する場合、`path` を設定するだけではなく、Modelfile の内容自体を `modelfile` フィールドに設定することを推奨します。これは、リモートでのモデル作成が必要な場合に必須です。
+
+リモートでモデルを作成する際には、`FROM` や `ADAPTER` など、ファイルブロブ (file blobs) を含む全てのフィールドについても、[Create a Blob](#create-a-blob) API を使ってサーバーに明示的に作成し、レスポンスで返却されたパスを Modelfile に設定する必要があります。
 
 
 ### パラメーター
 
 - `name`: 作成するモデルの名前
-- `modelfile` （オプション）: Modelfileの内容
+- `modelfile` （オプション）: Modelfile の内容
 - `stream`: （オプション）: `false` の場合、応答はオブジェクトのストリームではなく、単一の応答オブジェクトとして返されます
-- `path` （オプション）: Modelfileへのパス
+- `path` （オプション）: Modelfile へのパス
 
 ### 例
 
@@ -601,7 +665,7 @@ curl http://localhost:11434/api/create -d '{
 
 ##### レスポンス
 
-JSONオブジェクトのストリーム。最終的なJSONオブジェクトには `"status": "success"` が表示されることに注意してください。
+JSON オブジェクトのストリーム。最終的な JSON オブジェクトには `"status": "success"` が表示されることに注意してください。
 
 ```json
 {"status":"reading model metadata"}
@@ -617,13 +681,13 @@ JSONオブジェクトのストリーム。最終的なJSONオブジェクトに
 {"status":"success"}
 ```
 
-### Blobの存在を確認
+### Blob の存在を確認
 
 ```shell
 HEAD /api/blobs/:digest
 ```
 
-`FROM`または`ADAPTER`フィールドに使用されるファイルブロブがサーバー上に存在することを確認します。これはOllama.aiではなく、あなたのOllamaサーバーを確認しています。
+`FROM` または `ADAPTER` フィールドに使用されるファイルブロブがサーバー上に存在することを確認します。これは Ollama.ai ではなく、あなたの Ollama サーバーを確認しています。
 
 
 #### クエリパラメータ
@@ -640,7 +704,7 @@ curl -I http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931
 
 ##### レスポンス
 
-ブロブが存在する場合は200 OKを返し、存在しない場合は404 Not Foundを返します。
+ブロブが存在する場合は 200 OK を返し、存在しない場合は 404 Not Found を返します。
 
 ### Create a Blob
 
@@ -653,7 +717,7 @@ POST /api/blobs/:digest
 
 #### クエリパラメータ
 
-- `digest`: ファイルの予想されるSHA256ダイジェスト
+- `digest`: ファイルの予想される SHA256 ダイジェスト
 
 #### 例
 
@@ -665,7 +729,7 @@ curl -T model.bin -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf08
 
 ##### レスポンス
 
-ブロブが成功製作された場合は201 Createdを返し、使用されたダイジェストが予想外の場合は400 Bad Requestを返します。
+ブロブが成功製作された場合は 201 Created を返し、使用されたダイジェストが予想外の場合は 400 Bad Request を返します。
 
 ## ローカルモデルの一覧表示
 
@@ -685,7 +749,7 @@ curl http://localhost:11434/api/tags
 
 #### レスポンス
 
-単一のJSONオブジェクトが返されます。
+単一の JSON オブジェクトが返されます。
 
 ```json
 {
@@ -780,7 +844,7 @@ curl http://localhost:11434/api/copy -d '{
 
 #### レスポンス
 
-成功した場合は200 OKを返し、ソースモデルが存在しない場合は404 Not Foundを返します。
+成功した場合は 200 OK を返し、ソースモデルが存在しない場合は 404 Not Found を返します。
 
 ## モデルの削除
 
@@ -806,7 +870,7 @@ curl -X DELETE http://localhost:11434/api/delete -d '{
 
 #### レスポンス
 
-成功した場合は200 OKを返し、削除されるモデルが存在しない場合は404 Not Foundを返します。
+成功した場合は 200 OK を返し、削除されるモデルが存在しない場合は 404 Not Found を返します。
 
 ## モデルのプル
 
@@ -814,13 +878,13 @@ curl -X DELETE http://localhost:11434/api/delete -d '{
 POST /api/pull
 ```
 
-Ollamaライブラリからモデルをダウンロードします。キャンセルされたプルは中断した場所から再開され、複数の呼び出しは同じダウンロード進捗を共有します。
+Ollama ライブラリからモデルをダウンロードします。キャンセルされたプルは中断した場所から再開され、複数の呼び出しは同じダウンロード進捗を共有します。
 
 ### パラメーター
 
 - `name`: プルするモデルの名前
 - `insecure`: (オプション) ライブラリへの安全でない接続を許可します。開発中に自分のライブラリからプルする場合にのみ使用してください
-- `stream`: (オプション) `false`の場合、レスポンスはオブジェクトのストリームではなく、単一のレスポンスオブジェクトとして返されます
+- `stream`: (オプション) `false` の場合、レスポンスはオブジェクトのストリームではなく、単一のレスポンスオブジェクトとして返されます
 
 ### 例
 
@@ -834,7 +898,7 @@ curl http://localhost:11434/api/pull -d '{
 
 #### レスポンス
 
-`stream`が指定されていないか、または`true`に設定されている場合、JSONオブジェクトのストリームが返されます:
+`stream`が指定されていないか、または `true` に設定されている場合、JSON オブジェクトのストリームが返されます:
 
 最初のオブジェクトはマニフェストです:
 
@@ -844,7 +908,7 @@ curl http://localhost:11434/api/pull -d '{
 }
 ```
 
-その後、一連のダウンロードの応答があります。ダウンロードが完了するまで、`completed`キーは含まれないかもしれません。ダウンロードするファイルの数は、マニフェストで指定されたレイヤーの数に依存します。
+その後、一連のダウンロードの応答があります。ダウンロードが完了するまで、`completed` キーは含まれないかもしれません。ダウンロードするファイルの数は、マニフェストで指定されたレイヤーの数に依存します。
 
 ```json
 {
@@ -871,7 +935,7 @@ curl http://localhost:11434/api/pull -d '{
     "status": "success"
 }
 ```
-`stream`が`false`に設定されている場合、応答は単一のJSONオブジェクトです:
+`stream` が `false` に設定されている場合、応答は単一の JSON オブジェクトです:
 
 ```json
 {
@@ -889,7 +953,7 @@ POST /api/push
 
 ### パラメーター
 
-- `name`: `<namespace>/<model>:<tag>`の形式でプッシュするモデルの名前
+- `name`: `<namespace>/<model>:<tag>` の形式でプッシュするモデルの名前
 - `insecure`: （オプション）ライブラリへの安全でない接続を許可します。開発中にライブラリにプッシュする場合のみ使用してください
 - `stream`: （オプション）`false` の場合、レスポンスは単一のレスポンスオブジェクトとして返されます。オブジェクトのストリームではありません
 
@@ -905,7 +969,7 @@ curl http://localhost:11434/api/push -d '{
 
 #### レスポンス
 
-`stream` が指定されていないか、または `true` に設定されている場合、JSONオブジェクトのストリームが返されます:
+`stream` が指定されていないか、または `true` に設定されている場合、JSON オブジェクトのストリームが返されます:
 
 ```json
 { "status": "retrieving manifest" }
@@ -938,7 +1002,7 @@ curl http://localhost:11434/api/push -d '{
 {"status":"success"}
 ```
 
-`stream`が`false`に設定されている場合、応答は単一のJSONオブジェクトとなります:
+`stream` が `false` に設定されている場合、応答は単一の JSON オブジェクトとなります:
 
 ```json
 { "status": "success" }
@@ -960,6 +1024,7 @@ POST /api/embeddings
 高度なパラメータ:
 
 - `options`: `Modelfile` の[ドキュメント](./modelfile.md#有効なパラメータと値)にリストされている `temperature` などの追加のモデルパラメータ
+- `keep_alive`：リクエスト後にモデルがメモリにロードされたままとどまる時間を制御します（デフォルト：`5m`）
 
 ### 例
 
@@ -967,7 +1032,7 @@ POST /api/embeddings
 
 ```shell
 curl http://localhost:11434/api/embeddings -d '{
-  "model": "llama2",
+  "model": "all-minilm",
   "prompt": "Here is an article about llamas..."
 }'
 ```

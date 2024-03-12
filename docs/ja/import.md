@@ -1,25 +1,25 @@
 # Import a model
 
-このガイドでは、GGUF、PyTorch、またはSafetensorsモデルのインポート手順について説明します。
+このガイドでは、GGUF、PyTorch、または Safetensors モデルのインポート手順について説明します。
 
 ## インポート（GGUF）
 
-### ステップ1：`Modelfile`を作成します
+### Step 1：`Modelfile` を作成します
 
-`Modelfile`を作成して始めましょう。このファイルは、モデルの設計図であり、重み、パラメータ、プロンプトテンプレートなどが指定されています。
+`Modelfile` を作成して始めましょう。このファイルは、モデルの設計図であり、重み、パラメータ、プロンプトテンプレートなどが指定されています。
 
 ```
 FROM ./mistral-7b-v0.1.Q4_0.gguf
 ```
 
-（オプション）多くのチャットモデルは、正しく回答するためにプロンプトテンプレートが必要です。`Modelfile`内の`TEMPLATE`指示でデフォルトのプロンプトテンプレートを指定できます:
+（オプション）多くのチャットモデルは、正しく回答するためにプロンプトテンプレートが必要です。`Modelfile` 内の `TEMPLATE` 指示でデフォルトのプロンプトテンプレートを指定できます:
 
 ```
-FROM ./q4_0.bin
+FROM ./mistral-7b-v0.1.Q4_0.gguf
 TEMPLATE "[INST] {{ .Prompt }} [/INST]"
 ```
 
-### ステップ2：Ollamaモデルを作成します。
+### Step 2：Ollama モデルを作成します。
 
 最後に、あなたの `Modelfile` からモデルを作成してください:
 
@@ -27,9 +27,9 @@ TEMPLATE "[INST] {{ .Prompt }} [/INST]"
 ollama create example -f Modelfile
 ```
 
-### ステップ3：モデルを実行します。
+### Step 3：モデルを実行します。
 
-次に、`ollama run`でモデルをテストします。
+次に、`ollama run` でモデルをテストします。
 
 ```
 ollama run example "あなたのお気に入りの調味料は何ですか？"
@@ -37,58 +37,73 @@ ollama run example "あなたのお気に入りの調味料は何ですか？"
 
 ## インポート（PyTorch＆Safetensors）
 
-### サポートされているモデル
+> PyTorch および Safetensors からのインポートは、GGUF からのインポートよりも時間がかかります。これをより簡単にする改善策は進行中です。
 
-Ollamaは一連のモデルアーキテクチャをサポートしており、今後もサポートが拡充される予定です:
+### Step 1：セットアップ
 
-- Llama & Mistral
-- Falcon & RW
-- BigCode
+まず、`ollama/ollama` リポジトリをクローンします：
 
-モデルのアーキテクチャを確認するには、HuggingFaceリポジトリ内の`config.json`ファイルをチェックしてください。`architectures`のエントリーの下に（例：`LlamaForCausalLM`）が表示されるはずです。
+```
+git clone git@github.com:ollama/ollama.git ollama
+cd ollama
+```
 
-### Step 1: HuggingFaceリポジトリをクローンする（オプション）
+次に、`llama.cpp` サブモジュールを取得します：
 
-もしモデルが現在HuggingFaceリポジトリにホストされている場合、まずそのリポジトリをクローンして生のモデルをダウンロードしてください。
+```shell
+git submodule init
+git submodule update llm/llama.cpp
+```
+
+次に、Python の依存関係をインストールします：
+
+```
+python3 -m venv llm/llama.cpp/.venv
+source llm/llama.cpp/.venv/bin/activate
+pip install -r llm/llama.cpp/requirements.txt
+```
+
+その後、 `quantize` ツールをビルドします：
+
+```
+make -C llm/llama.cpp quantize
+```
+
+### Step 2：HuggingFace リポジトリのクローン（オプション）
+
+もしモデルが現在 HuggingFace リポジトリにホストされている場合、まずそのリポジトリをクローンして生のモデルをダウンロードしてください。
+
+[Git LFS](https://docs.github.com/ja/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) をインストールし、正常にインストールされていることを確認した後、モデルのリポジトリをクローンしてください。
 
 ```
 git lfs install
-git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
-cd Mistral-7B-Instruct-v0.1
+git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 model
 ```
 
-### Step 2: `.bin` ファイルに変換および量子化（オプション、PyTorchおよびSafetensors用）
+### Step 3：モデルの変換
 
-もしモデルがPyTorchやSafetensors形式の場合、[Dockerイメージ](https://hub.docker.com/r/ollama/quantize)が利用可能で、モデルを変換および量子化するための必要なツールが含まれています。
-
-まず、[Docker](https://www.docker.com/get-started/)をインストールしてください。
-
-次に、モデルを変換および量子化するために、以下を実行してください:
+> 注：一部のモデルアーキテクチャでは、特定の変換スクリプトを使用する必要があります。たとえば、Qwen モデルの場合は、`convert.py`の代わりに `convert-hf-to-gguf.py` を実行する必要があります。
 
 ```
-docker run --rm -v .:/model ollama/quantize -q q4_0 /model
-```
-これにより、ディレクトリに2つのファイルが出力されます：
-
-- `f16.bin`: GGUFに変換されたモデル
-- `q4_0.bin`: 4ビットの量子化に変換されたモデル（Ollamaはこのファイルを使用してOllamaモデルを作成します）
-
-### Step 3: `Modelfile`の作成
-
-次に、あなたのモデルに対する`Modelfile`を作成してください:
-
-```
-FROM ./q4_0.bin
+python llm/llama.cpp/convert.py ./model --outtype f16 --outfile converted.bin
 ```
 
-（オプション）多くのチャットモデルは、正しく回答するためにはプロンプトのテンプレートが必要です。`Modelfile`内の`TEMPLATE`指示でデフォルトのプロンプトテンプレートを指定できます:
+### Step 4：モデルの量子化
 
 ```
-FROM ./q4_0.bin
+llm/llama.cpp/quantize converted.bin quantized.bin q4_0
+```
+
+### Step 5: `Modelfile` の作成
+
+次に、あなたのモデルに対する `Modelfile` を作成してください:
+
+```
+FROM quantized.bin
 TEMPLATE "[INST] {{ .Prompt }} [/INST]"
 ```
 
-### Step 4: Ollamaモデルを作成します
+### Step 6: Ollama モデルを作成します
 
 最後に、`Modelfile` からモデルを作成します:
 
@@ -96,7 +111,7 @@ TEMPLATE "[INST] {{ .Prompt }} [/INST]"
 ollama create example -f Modelfile
 ```
 
-### Step 5: モデルを実行する
+### Step 7: モデルを実行する
 
 次に、`ollama run` コマンドを使ってモデルをテストします:
 
@@ -108,9 +123,12 @@ ollama run example "What is your favourite condiment?"
 
 モデルの公開はアーリーアルファ段階にあります。他の人と共有するためにモデルを公開したい場合は、以下の手順に従ってください：
 
-1. [アカウント](https://ollama.ai/signup)を作成してください。
-2. `cat ~/.ollama/id_ed25519.pub` を実行して、Ollamaの公開鍵を表示します。これをクリップボードにコピーします。
-3. あなたの公開鍵を[Ollamaのアカウント](https://ollama.ai/settings/keys)に追加します。
+1. [アカウント](https://ollama.com/signup)を作成します。
+2. Ollama の公開鍵をコピーします：
+    - macOS：`cat ~/.ollama/id_ed25519.pub`
+    - Windows：`type %USERPROFILE%\.ollama\id_ed25519.pub`
+    - Linux：`cat /usr/share/ollama/.ollama/id_ed25519.pub`
+3. あなたの公開鍵を [Ollamaアカウント](https://ollama.com/settings/keys) に追加します。
 
 次に、モデルをあなたのユーザー名の名前空間にコピーしてください:
 
@@ -124,11 +142,11 @@ ollama cp example <your username>/example
 ollama push <your username>/example
 ```
 
-公開後、あなたのモデルは `https://ollama.ai/<あなたのユーザー名>/example` で利用可能になります。
+公開後、あなたのモデルは `https://ollama.com/<あなたのユーザー名>/example` で利用可能になります。
 
 ## 量子化リファレンス
 
-量子化オプションは以下の通りです（最高から最も低い量子化レベルまで）。注意：Falconなど一部のアーキテクチャはK quantsをサポートしていません。
+量子化オプションは以下の通りです（最高から最も低い量子化レベルまで）。注意：Falcon など一部のアーキテクチャは K quants をサポートしていません。
 
 - `q2_K`
 - `q3_K`
@@ -149,46 +167,3 @@ ollama push <your username>/example
 - `q8_0`
 - `f16`
 
-## モデルの手動変換と量子化
-
-### 事前に必要
-
-まず、`llama.cpp` レポジトリを別のディレクトリにマシンにクローンしてください：
-
-```
-git clone https://github.com/ggerganov/llama.cpp.git
-cd llama.cpp
-```
-
-次に、Pythonの依存関係をインストールしてください:
-
-```
-pip install -r requirements.txt
-```
-
-最後に、`quantize` ツールをビルドしてください:
-
-```
-make quantize
-```
-
-### モデルを変換する
-
-あなたのモデルのアーキテクチャに対応した変換スクリプトを実行してください:
-
-```shell
-# LlamaForCausalLM または MistralForCausalLM
-python convert.py <path to model directory>
-
-# FalconForCausalLM
-python convert-falcon-hf-to-gguf.py <path to model directory>
-
-# GPTBigCodeForCausalLM
-python convert-starcoder-hf-to-gguf.py <path to model directory>
-```
-
-### モデルを量子化する
-
-```
-quantize <path to model dir>/ggml-model-f32.bin <path to model dir>/q4_0.bin q4_0
-```

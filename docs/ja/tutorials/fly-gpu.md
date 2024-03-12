@@ -1,6 +1,6 @@
 # Running Ollama on Fly.io GPU Instances
 
-Ollamaは、[Fly.io GPUインスタンス](https://fly.io/docs/gpus/gpu-quickstart/)上でほとんどまたはまったく設定なしで実行できます。まだGPUへのアクセス権がない場合は、[アクセスを申請](https://fly.io/gpu/)してウェイトリストに登録する必要があります。承認されると、開始手順が記載されたメールが届きます。
+Ollama は、[Fly.io GPUインスタンス](https://fly.io/docs/gpus/gpu-quickstart/)上でほとんどまたはまったく設定なしで実行できます。まだ GPU へのアクセス権がない場合は、[アクセスを申請](https://fly.io/gpu/)してウェイトリストに登録する必要があります。承認されると、開始手順が記載されたメールが届きます。
 
 新しいアプリを作成するには、`fly apps create` を使用します:
 
@@ -73,7 +73,7 @@ $ ollama run openchat:7b-v3.5-fp16
 自家製のチョコレートチップクッキーをお楽しみください！
 ```
 
-これをこのように設定すると、使用が終わると自動的にオフになります。その後、再度アクセスすると、自動的にオンになります。これは、使用していないときにGPUインスタンスの費用を節約する素晴らしい方法です。Ollamaインスタンスに対する永続的なウェイクオンユース接続が必要な場合は、[WireGuardを使用したFlyネットワークへの接続を設定](https://fly.io/docs/reference/private-networking/#discovering-apps-through-dns-on-a-wireguard-connection)できます。その後、Ollamaインスタンスには `http://your-app-name.flycast` でアクセスできます。
+これをこのように設定すると、使用が終わると自動的にオフになります。その後、再度アクセスすると、自動的にオンになります。これは、使用していないときに GPU インスタンスの費用を節約する素晴らしい方法です。Ollama インスタンスに対する永続的なウェイクオンユース接続が必要な場合は、[WireGuardを使用したFlyネットワークへの接続を設定](https://fly.io/docs/reference/private-networking/#discovering-apps-through-dns-on-a-wireguard-connection)できます。その後、Ollama インスタンスには `http://your-app-name.flycast` でアクセスできます。
 
 以上で完了です！
 

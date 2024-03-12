@@ -1,25 +1,21 @@
 # ドキュメンテーション
 
-始めるには、プロジェクトの **[クイックスタート](../README_ja.md#クイックスタート)** を参照してください。
+### はじめに
+* [クイックスタート](../../README_ja.md#クイックスタート)
+* [例](../../examples)
+* GGUF、Pytorch、Safetensors からのモデルの[インポート](./import.md)
+* [Linux ドキュメント](./linux.md)
+* [Windows ドキュメント](./windows.md)
+* [Docker ドキュメント](https://hub.docker.com/r/ollama/ollama)
 
-Ollamaは、AIモデルをあなたのハードウェアで実行するためのツールです。多くのユーザーは、Ollamaと連携するためにコマンドラインインターフェース（CLI）を選択します。CLIで使用できるすべてのコマンドについて詳しくは、**[メイン Readme](../README_ja.md)** を参照してください。
+### 参照
 
-RESTful APIは、Python、JavaScript、Typescript、Go、Rustなど、任意の言語を使用して利用できます。APIの使用方法について詳しくは、**[APIドキュメント](./api.md)** を参照してください。
+* [API リファレンス](./api.md)
+* [モデルファイルリファレンス](./modelfile.md)
+* [OpenAI の互換性](./openai.md)
 
-新しいモデルを作成するか、ライブラリにすでに存在するモデルを変更するには、Modelfileを使用します。Modelfileの構文について詳しくは、**[Modelfileドキュメント](./modelfile.md)** を参照してください。
+### リソース
 
-Hugging Faceや類似のサイトから見つかるソースモデルの重みを使用してモデルをインポートするには、**[Import ドキュメント](./import.md)** を参照してください。
-
-Linuxへのインストールは、ほとんどの場合、Ollama.aiのスクリプトを使用することで簡単です。インストールの詳細や、CUDAドライバについての詳細については、**[Linux ドキュメント](./linux.md)** を参照してください。
-
-多くのユーザーは、公式のDockerイメージを使用する柔軟性が好まれています。OllamaとDockerを使用する方法についての詳細は、**[Docker ドキュメント](https://hub.docker.com/r/ollama/ollama)** をご参照ください。
-
-LinuxやMacへのインストールは簡単ですが、多くのユーザーは独自にOllamaをビルドすることを選択するかもしれません。これを行うには、**[開発ドキュメント](./development.md)** を参照してください。
-
-Ollamaに問題が発生した場合、解決の出発点はログです。ログに関する詳細な情報は、**[トラブルシューティングガイド](./troubleshooting.md)** で確認できます。
-
-最後に、他のどこにも当てはまらないすべての質問に対しては、**[FAQ（よくある質問）](./faq.md)** があります。
-
-[チュートリアル](./tutorials.md) は、タスクに文書を適用する方法を示します。
-
-Ollamaの使用に関する動作するコードの例については、[Examples（例）](../examples)を参照してください。
+* [トラブルシューティングガイド](./troubleshooting.md)
+* [よくある質問](./faq.md)
+* [開発ガイド](./development.md)
