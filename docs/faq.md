@@ -193,3 +193,13 @@ To unload the model and free up memory use:
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": 0}'
 ```
+
+## Controlling which GPUs to use
+
+By default, on Linux and Windows, Ollama will attempt to use Nvidia GPUs, or
+Radeon GPUs, and will use all the GPUs it can find. You can limit which GPUs
+will be utilized by setting the environment variable `CUDA_VISIBLE_DEVICES` for
+NVIDIA cards, or `HIP_VISIBLE_DEVICES` for Radeon GPUs to a comma delimited list
+of GPU IDs.  You can see the list of devices with GPU tools such as `nvidia-smi` or
+`rocminfo`. You can set to an invalid GPU ID (e.g., "-1") to bypass the GPU and
+fallback to CPU.

@@ -1,5 +1,5 @@
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index 2b2f4a0f..afac49af 100644
+index 8fe5e0b1..3e82acb9 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
 @@ -997,13 +997,15 @@ struct llama_server_context
