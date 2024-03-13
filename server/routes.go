@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -207,7 +208,7 @@ func GenerateHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}
@@ -384,6 +385,23 @@ func GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+func getDefaultSessionDuration() time.Duration {
+	if t, exists := os.LookupEnv("OLLAMA_KEEP_ALIVE"); exists {
+		d, err := time.ParseDuration(t)
+		if err != nil {
+			return defaultSessionDuration
+		}
+
+		if d < 0 {
+			return time.Duration(math.MaxInt64)
+		}
+
+		return d
+	}
+
+	return defaultSessionDuration
+}
+
 func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -427,7 +445,7 @@ func EmbeddingsHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}
@@ -1228,7 +1246,7 @@ func ChatHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}
