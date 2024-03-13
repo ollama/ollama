@@ -79,6 +79,95 @@ trap install_success EXIT
 
 # Everything from this point onwards is optional.
 
+status "Setting up Bash autocomplete for ollama..."
+BASH_COMPLETION_DIR="/etc/bash_completion.d"
+BASH_COMPLETION_SCRIPT="$BASH_COMPLETION_DIR/ollama_autocomplete"
+if [ -d "$BASH_COMPLETION_DIR" ]; then
+    if $SUDO [ -w "$BASH_COMPLETION_DIR" ]; then
+        status "Bash completion is available. Installing autocomplete script..."
+        $SUDO tee "$BASH_COMPLETION_SCRIPT" >/dev/null <<'EOF'
+#!/usr/bin/env bash
+
+__ollama_autocomplete() {
+    local current previous commands all_commands models
+
+    COMPREPLY=()
+    current="${COMP_WORDS[COMP_CWORD]}"
+    previous="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Top-level commands for 'ollama'.
+    commands=(
+        'serve'
+        'create'
+        'show'
+        'run'
+        'pull'
+        'push'
+        'list'
+        'ls'
+        'cp'
+        'rm'
+        'help'
+    )
+    all_commands="${commands[*]}"
+
+    # Provide completions based on context.
+    if (( COMP_CWORD == 1 )); then
+        # Suggest commands and top-level flags if 'ollama' is the first word.
+        COMPREPLY=( $(compgen -W "${all_commands} -h --help -v --version" -- "${current}") )
+    elif (( COMP_CWORD > 1 )); then
+        # Second-level completions for specific commands without the global -h, --help, -v, --version flags.
+        case "${previous}" in
+            'serve' | 'start')
+                COMPREPLY=( $(compgen -W "-h --help" -- "${current}") )
+                ;;
+            'create')
+                COMPREPLY=( $(compgen -W "-f --file -h --help" -- "${current}") )
+                ;;
+            'show')
+                COMPREPLY=( $(compgen -W "-h --help --license --modelfile --parameters --system --template" -- "${current}") )
+                ;;
+            'run')
+                # Dynamically generate suggestions for 'ollama run' from 'ollama ls' or 'ollama list'.
+                lineNumber=0
+                while IFS= read -r line; do
+                ((lineNumber++))
+                # Skip the first line
+                if [ "$lineNumber" -eq 1 ]; then
+                continue
+                fi
+                    models+=("$(echo "${line}" | awk '{print $1}' | sed 's/:latest$//')")
+                done < <(ollama list 2>/dev/null || ollama ls 2>/dev/null)
+                COMPREPLY=( $(compgen -W "${models[*]}" -- "${current}") )
+                ;;
+            'pull' | 'push')
+                COMPREPLY=( $(compgen -W "-h --help --insecure" -- "${current}") )
+                ;;
+            'list' | 'ls')
+                COMPREPLY=( $(compgen -W "-h --help" -- "${current}") )
+                ;;
+            'cp')
+                COMPREPLY=( $(compgen -W "-h --help" -- "${current}") )
+                ;;
+            'rm')
+                COMPREPLY=( $(compgen -W "-h --help" -- "${current}") )
+                ;;
+        esac
+    fi
+}
+
+# Register the autocomplete function for the 'ollama' command.
+complete -F __ollama_autocomplete ollama
+EOF
+        $SUDO chmod 644 "$BASH_COMPLETION_SCRIPT"
+        status "Bash autocomplete script for 'ollama' has been installed."
+    else
+        warning "Bash completion directory exists but is not writable. Skipping autocomplete script installation."
+    fi
+else
+    warning "Bash completion is not installed or 'bash_completion.d' directory does not exist. Skipping autocomplete script installation."
+fi
+
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
