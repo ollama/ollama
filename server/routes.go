@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -387,15 +388,24 @@ func GenerateHandler(c *gin.Context) {
 
 func getDefaultSessionDuration() time.Duration {
 	if t, exists := os.LookupEnv("OLLAMA_KEEP_ALIVE"); exists {
-		d, err := time.ParseDuration(t)
+		v, err := strconv.Atoi(t)
 		if err != nil {
-			return defaultSessionDuration
+			d, err := time.ParseDuration(t)
+			if err != nil {
+				return defaultSessionDuration
+			}
+
+			if d < 0 {
+				return time.Duration(math.MaxInt64)
+			}
+
+			return d
 		}
 
+		d := time.Duration(v) * time.Second
 		if d < 0 {
 			return time.Duration(math.MaxInt64)
 		}
-
 		return d
 	}
 
