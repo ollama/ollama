@@ -196,7 +196,13 @@ func extractDynamicLibs(payloadsDir, glob string) ([]string, error) {
 			return nil
 		})
 	}
-	return libs, g.Wait()
+	err = g.Wait()
+	if err != nil {
+		// If we fail to extract, the payload dir is unusable, so cleanup whatever we extracted
+		gpu.Cleanup()
+		return nil, err
+	}
+	return libs, nil
 }
 
 func verifyDriverAccess() error {
