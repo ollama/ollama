@@ -95,6 +95,10 @@ This table shows some example GPUs that map to these LLVM targets:
 | gfx1101 | Radeon PRO W7700 |
 | gfx1102 | Radeon RX 7600 |
 
+Full list of supported GPUs and theirs LLVM targets:
+- [Windows](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html#windows-supported-gpus)
+- [Linux](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html#supported-gpus)
+
 AMD is working on enhancing ROCm v6 to broaden support for families of GPUs in a
 future release which should increase support for more GPUs.
 
