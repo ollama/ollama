@@ -42,6 +42,20 @@ type dynExtServer struct {
 	options api.Options
 }
 
+const (
+	SERVER_RESP_SUCCESS        = 0
+	SERVER_RESP_MINOR_ERROR    = -1
+	SERVER_RESP_TERMINAL_ERROR = -2
+)
+
+type ServerDead struct {
+	msg string
+}
+
+func (e *ServerDead) Error() string {
+	return e.msg
+}
+
 // Note: current implementation does not support concurrent instantiations
 var mutex sync.Mutex
 
@@ -61,6 +75,10 @@ func freeExtServerResp(resp C.ext_server_resp_t) {
 }
 
 func extServerResponseToErr(resp C.ext_server_resp_t) error {
+	if resp.id == SERVER_RESP_TERMINAL_ERROR {
+		slog.Debug("XXX detected terminal server error")
+		return &ServerDead{msg: C.GoString(resp.msg)}
+	}
 	return fmt.Errorf(C.GoString(resp.msg))
 }
 

@@ -266,6 +266,10 @@ func GenerateHandler(c *gin.Context) {
 			prev, err := loaded.runner.Decode(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				if _, dead := err.(*llm.ServerDead); dead {
+					loaded.runner.Close()
+					loaded.runner = nil
+				}
 				return
 			}
 
@@ -323,6 +327,10 @@ func GenerateHandler(c *gin.Context) {
 					tokens, err := loaded.runner.Encode(c.Request.Context(), p)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
+						if _, dead := err.(*llm.ServerDead); dead {
+							loaded.runner.Close()
+							loaded.runner = nil
+						}
 						return
 					}
 
@@ -350,6 +358,10 @@ func GenerateHandler(c *gin.Context) {
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
+			if _, dead := err.(*llm.ServerDead); dead {
+				loaded.runner.Close()
+				loaded.runner = nil
+			}
 		}
 	}()
 
@@ -447,6 +459,10 @@ func EmbeddingsHandler(c *gin.Context) {
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
+		if _, dead := err.(*llm.ServerDead); dead {
+			loaded.runner.Close()
+			loaded.runner = nil
+		}
 		return
 	}
 
@@ -1162,7 +1178,12 @@ func streamResponse(c *gin.Context, ch chan any) {
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
 func chatPrompt(ctx context.Context, template string, messages []api.Message, numCtx int) (string, error) {
 	encode := func(s string) ([]int, error) {
-		return loaded.runner.Encode(ctx, s)
+		resp, err := loaded.runner.Encode(ctx, s)
+		if _, dead := err.(*llm.ServerDead); dead {
+			loaded.runner.Close()
+			loaded.runner = nil
+		}
+		return resp, err
 	}
 
 	prompt, err := ChatPrompt(template, messages, numCtx, encode)
@@ -1327,6 +1348,10 @@ func ChatHandler(c *gin.Context) {
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
+			if _, dead := err.(*llm.ServerDead); dead {
+				loaded.runner.Close()
+				loaded.runner = nil
+			}
 		}
 	}()
 

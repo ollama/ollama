@@ -20,6 +20,10 @@ typedef struct ext_server_resp {
   char *msg;
 } ext_server_resp_t;
 
+#define SERVER_RESP_SUCCESS 0
+#define SERVER_RESP_MINOR_ERROR -1
+#define SERVER_RESP_TERMINAL_ERROR -2
+
 // Allocated and freed by caller
 typedef struct ext_server_lora_adapter {
   char *adapter;

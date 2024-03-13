@@ -31,6 +31,11 @@ std::thread ext_server_thread;
 bool shutting_down = false;
 std::atomic_int recv_counter;
 
+// If an exception is raised by the main loop the server is no longer
+// viable, and this buffer holds the exception message that was raised
+const size_t terminal_error_len = 512;
+volatile char terminal_error[terminal_error_len];
+
 // RAII wrapper for tracking in-flight recv calls
 class atomicRecv {
   public:
@@ -46,6 +51,7 @@ class atomicRecv {
  
 void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
   recv_counter = 0;
+  memset((void *)&terminal_error[0], 0, terminal_error_len);
   assert(err != NULL && sparams != NULL);
   log_set_target(stderr);
   if (!sparams->verbose_logging) {
@@ -54,7 +60,7 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
   }
 
   LOG_TEE("system info: %s\n", llama_print_system_info());
-  err->id = 0;
+  err->id = SERVER_RESP_SUCCESS;
   err->msg[0] = '\0';
   try {
     llama = new llama_server_context;
@@ -105,7 +111,7 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     int id;
     cudaError_t cudaErr = cudaGetDevice(&id);
     if (cudaErr != cudaSuccess) {
-      err->id = -1;
+      err->id = SERVER_RESP_TERMINAL_ERROR;
       snprintf(err->msg, err->msg_len, "Unable to init GPU: %s", cudaGetErrorString(cudaErr));
       return;
     }
@@ -116,17 +122,17 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
 
   if (!llama->load_model(params)) { 
     // an error occurred that was not thrown
-    err->id = -1;
+    err->id = SERVER_RESP_TERMINAL_ERROR;
     snprintf(err->msg, err->msg_len, "error loading model %s", params.model.c_str());
     return;
   }
 
     llama->initialize();
   } catch (std::exception &e) {
-    err->id = -1;
+    err->id = SERVER_RESP_TERMINAL_ERROR;
     snprintf(err->msg, err->msg_len, "exception %s", e.what());
   } catch (...) {
-    err->id = -1;
+    err->id = SERVER_RESP_TERMINAL_ERROR;
     snprintf(err->msg, err->msg_len,
              "Unknown exception initializing llama server");
   }
@@ -155,8 +161,10 @@ void llama_server_start() {
       llama->queue_tasks.start_loop();
     } catch (std::exception &e) {
       LOG_TEE("caught exception in llama server main loop: %s\n", e.what());
+      snprintf((char *)&terminal_error[0], terminal_error_len, "llm server terminating: %s", e.what());
     } catch (...) {
       LOG_TEE("caught unknown exception in llama server main loop\n");
+      snprintf((char *)&terminal_error[0], terminal_error_len, "llm server terminating: caught unknown exception");
     }
     LOG_TEE("\nllama server shutting down\n");
     llama_backend_free();
@@ -185,8 +193,13 @@ void llama_server_stop() {
 
 void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
   assert(llama != NULL && json_req != NULL && resp != NULL);
-  resp->id = -1;
+  resp->id = SERVER_RESP_MINOR_ERROR;
   resp->msg[0] = '\0';
+  if (terminal_error[0] != '\0') {
+    resp->id = SERVER_RESP_TERMINAL_ERROR;
+    snprintf(resp->msg, resp->msg_len, "%s", terminal_error);
+    return;
+  }
   try {
     if (shutting_down) {
       throw std::runtime_error("server shutting down");
@@ -194,6 +207,7 @@ void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
     json data = json::parse(json_req);
     resp->id = llama->queue_tasks.get_new_id();
     llama->queue_results.add_waiting_task_id(resp->id);
+    // TODO - could this potential race with a terminal error?
     llama->request_completion(resp->id, data, false, false, -1);
   } catch (std::exception &e) {
     snprintf(resp->msg, resp->msg_len, "exception %s", e.what());
@@ -205,12 +219,13 @@ void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
 void llama_server_completion_next_result(const int task_id,
                                          ext_server_task_result_t *resp) {
   assert(llama != NULL && resp != NULL);
-  resp->id = -1;
+  resp->id = SERVER_RESP_MINOR_ERROR;
   resp->stop = false;
   resp->error = false;
   resp->json_resp = NULL;
   std::string result_json;
   try {
+    // TODO consider handling terminal_error scenarios
     atomicRecv ar(recv_counter);
     task_result result = llama->queue_results.recv(task_id);
     result_json =
@@ -236,12 +251,12 @@ void llama_server_completion_next_result(const int task_id,
     }
   } catch (std::exception &e) {
     resp->error = true;
-    resp->id = -1;
+    resp->id = SERVER_RESP_MINOR_ERROR;
     result_json = "{\"error\":\"exception " + std::string(e.what()) + "\"}";
     LOG_TEE("llama server completion exception %s\n", e.what());
   } catch (...) {
     resp->error = true;
-    resp->id = -1;
+    resp->id = SERVER_RESP_MINOR_ERROR;
     result_json = "{\"error\":\"Unknown exception during completion\"}";
     LOG_TEE("llama server completion unknown exception\n");
   }
@@ -261,14 +276,19 @@ void llama_server_completion_cancel(const int task_id, ext_server_resp_t *err) {
   assert(llama != NULL && err != NULL);
   err->id = 0;
   err->msg[0] = '\0';
+  if (terminal_error[0] != '\0') {
+    err->id = SERVER_RESP_TERMINAL_ERROR;
+    snprintf(err->msg, err->msg_len, "%s", terminal_error);
+    return;
+  }
   try {
     llama->request_cancel(task_id);
     llama->queue_results.remove_waiting_task_id(task_id);
   } catch (std::exception &e) {
-    err->id = -1;
+    err->id = SERVER_RESP_MINOR_ERROR;
     snprintf(err->msg, err->msg_len, "exception %s", e.what());
   } catch (...) {
-    err->id = -1;
+    err->id = SERVER_RESP_MINOR_ERROR;
     snprintf(err->msg, err->msg_len,
              "Unknown exception completion cancel in llama server");
   }
@@ -280,6 +300,11 @@ void llama_server_tokenize(const char *json_req, char **json_resp,
   *json_resp = NULL;
   err->id = 0;
   err->msg[0] = '\0';
+  if (terminal_error[0] != '\0') {
+    err->id = SERVER_RESP_TERMINAL_ERROR;
+    snprintf(err->msg, err->msg_len, "%s", terminal_error);
+    return;
+  }
   try {
     if (shutting_down) {
       throw std::runtime_error("server shutting down");
@@ -295,10 +320,10 @@ void llama_server_tokenize(const char *json_req, char **json_resp,
     *json_resp = new char[size];
     snprintf(*json_resp, size, "%s", result_json.c_str());
   } catch (std::exception &e) {
-    err->id = -1;
+    err->id = SERVER_RESP_MINOR_ERROR;
     snprintf(err->msg, err->msg_len, "exception %s", e.what());
   } catch (...) {
-    err->id = -1;
+    err->id = SERVER_RESP_MINOR_ERROR;
     snprintf(err->msg, err->msg_len, "Unknown exception during tokenize");
   }
 }
@@ -316,6 +341,11 @@ void llama_server_detokenize(const char *json_req, char **json_resp,
   *json_resp = NULL;
   err->id = 0;
   err->msg[0] = '\0';
+  if (terminal_error[0] != '\0') {
+    err->id = SERVER_RESP_TERMINAL_ERROR;
+    snprintf(err->msg, err->msg_len, "%s", terminal_error);
+    return;
+  }
   try {
     if (shutting_down) {
       throw std::runtime_error("server shutting down");
@@ -332,10 +362,10 @@ void llama_server_detokenize(const char *json_req, char **json_resp,
     *json_resp = new char[size];
     snprintf(*json_resp, size, "%s", result_json.c_str());
   } catch (std::exception &e) {
-    err->id = -1;
+    err->id = SERVER_RESP_MINOR_ERROR;
     snprintf(err->msg, err->msg_len, "exception %s", e.what());
   } catch (...) {
-    err->id = -1;
+    err->id = SERVER_RESP_MINOR_ERROR;
     snprintf(err->msg, err->msg_len, "Unknown exception during detokenize");
   }
 }
@@ -346,6 +376,11 @@ void llama_server_embedding(const char *json_req, char **json_resp,
   *json_resp = NULL;
   err->id = 0;
   err->msg[0] = '\0';
+  if (terminal_error[0] != '\0') {
+    err->id = SERVER_RESP_TERMINAL_ERROR;
+    snprintf(err->msg, err->msg_len, "%s", terminal_error);
+    return;
+  }
   try {
     if (shutting_down) {
       throw std::runtime_error("server shutting down");
@@ -359,6 +394,7 @@ void llama_server_embedding(const char *json_req, char **json_resp,
     }
     const int task_id = llama->queue_tasks.get_new_id();
     llama->queue_results.add_waiting_task_id(task_id);
+    // TODO - could this potential race with a terminal error?
     llama->request_completion(task_id, {{"prompt", prompt}, {"n_predict", 0}}, false, true, -1);
     atomicRecv ar(recv_counter);
     task_result result = llama->queue_results.recv(task_id);
@@ -368,10 +404,10 @@ void llama_server_embedding(const char *json_req, char **json_resp,
     snprintf(*json_resp, size, "%s", result_json.c_str());
     llama->queue_results.remove_waiting_task_id(task_id);
   } catch (std::exception &e) {
-    err->id = -1;
+    err->id = SERVER_RESP_MINOR_ERROR;
     snprintf(err->msg, err->msg_len, "exception %s", e.what());
   } catch (...) {
-    err->id = -1;
+    err->id = SERVER_RESP_MINOR_ERROR;
     snprintf(err->msg, err->msg_len, "Unknown exception during embedding");
   }
 }
