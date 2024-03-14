@@ -1,5 +1,5 @@
 name: Bug report
-description: File a bug report. If you need help, please join our [Discord server](https://discord.com/invite/ollama).
+description: File a bug report. If you need help, please join our Discord server.
 labels: [needs-triage, bug]
 body:
   - type: markdown
