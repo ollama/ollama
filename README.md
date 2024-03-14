@@ -280,6 +280,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) with [Get Started Doc](https://docs.nextchat.dev/models/ollama)
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
 - [LLM-X: Progressive Web App](https://github.com/mrdjohnson/llm-x)
+- [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
 
 ### Terminal
 
