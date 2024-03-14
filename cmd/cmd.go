@@ -249,10 +249,20 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	interactive := true
 
+	parametersFromFlags, err := cmd.Flags().GetStringToString("parameters")
+	if err != nil {
+		return err
+	}
+	parametersToFormat := make(map[string][]string)
+	for key, value := range parametersFromFlags {
+		parametersToFormat[key] = []string{value}
+	}
+	parameters, err := api.FormatParams(parametersToFormat)
+
 	opts := runOptions{
 		Model:       args[0],
 		WordWrap:    os.Getenv("TERM") == "xterm-256color",
-		Options:     map[string]interface{}{},
+		Options:     parameters,
 		MultiModal:  slices.Contains(show.Details.Families, "clip"),
 		ParentModel: show.Details.ParentModel,
 	}
@@ -960,6 +970,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().StringToStringP("parameters", "p", map[string]string{}, "Parameters to pass to the model. Example: -p num_ctx=32768 -p temperature=0")
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
