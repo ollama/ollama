@@ -52,11 +52,11 @@ body:
     id: ollama-version
     attributes:
       label: Ollama version
-      description: What Ollama version are you using?
+      description: What Ollama version are you using? (`ollama --version`)
       placeholder: e.g., 1.14.4
     validations:
       required: false
-  - type: GPU
+  - type: dropdown
     id: gpu
     attributes:
       label: GPU
@@ -70,7 +70,14 @@ body:
         - Other
     validations:
       required: false
-  - type: CPU
+  - type: textarea
+    id: gpu-info
+    attributes:
+      label: GPU info
+      description: What GPU info do you have? (`nvidia-smi`, `rocminfo`, `system_profiler SPDisplaysDataType`, etc.)
+    validations:
+      required: false
+  - type: dropdown
     id: cpu
     attributes:
       label: CPU
