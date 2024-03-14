@@ -796,7 +796,7 @@ func PruneLayers() error {
 	for _, blob := range blobs {
 		name := blob.Name()
 		name = strings.ReplaceAll(name, "-", ":")
-		if strings.HasPrefix(name, "sha256-") {
+		if strings.HasPrefix(name, "sha256:") {
 			deleteMap[name] = struct{}{}
 		}
 	}
