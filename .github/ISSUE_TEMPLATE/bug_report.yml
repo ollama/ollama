@@ -1,0 +1,108 @@
+name: Bug report
+description: File a bug report. If you need help, contact support instead
+labels: [needs-triage, bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check if your bug is [already filed](https://github.com/ollama/ollama/issues) before filing a new one.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What is the issue?
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: what-was-expected
+    attributes:
+      label: What did you expect to see?
+      description: What did you expect to see/happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What are the steps you took that hit this issue?
+    validations:
+      required: false
+  - type: textarea
+    id: changes
+    attributes:
+      label: Are there any recent changes that introduced the issue?
+      description: If so, what are those changes?
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      description: What OS are you using? You may select more than one.
+      multiple: true
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - iOS
+        - Android
+        - Synology
+        - Other
+    validations:
+      required: false
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: What OS version are you using?
+      placeholder: e.g., Debian 11.0, macOS Big Sur 11.6, Synology DSM 7
+    validations:
+      required: false
+  - type: input
+    id: ollama-version
+    attributes:
+      label: Ollama version
+      description: What Ollama version are you using?
+      placeholder: e.g., 1.14.4
+    validations:
+      required: false
+  - type: Hardware
+    id: hardware
+    attributes:
+      label: CPU/GPU
+      description: What OS are you using? You may select more than one.
+      multiple: true
+      options:
+        - Nvidia
+        - AMD
+        - Intel
+        - Other
+    validations:
+      required: false
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: What OS version are you using?
+      placeholder: e.g., Debian 11.0, macOS Big Sur 11.6, Synology DSM 7
+    validations:
+      required: false
+  - type: input
+    id: ollama-version
+    attributes:
+      label: Ollama version
+      description: What Ollama version are you using?
+      placeholder: e.g., 1.14.4
+    validations:
+      required: false
+  - type: textarea
+    id: other-software
+    attributes:
+      label: Other software
+      description: What other software are you using that might be related to this issue?
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report!
