@@ -10,8 +10,8 @@ mkdir -p dist
 for TARGETARCH in arm64 amd64; do
     rm -rf llm/llama.cpp/build
     GOOS=darwin GOARCH=$TARGETARCH go generate ./...
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -o dist/ollama-darwin-$TARGETARCH
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -cover -o dist/ollama-darwin-$TARGETARCH-cov
+    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
+    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
 done
 
 lipo -create -output dist/ollama dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
