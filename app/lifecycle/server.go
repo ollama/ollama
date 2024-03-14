@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -83,6 +84,28 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 		io.Copy(logFile, stderr) //nolint:errcheck
 	}()
 
+	// Re-wire context done behavior to attempt a graceful shutdown of the server
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			cmd.Process.Signal(os.Interrupt) //nolint:errcheck
+			tick := time.NewTicker(10 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				select {
+				case <-tick.C:
+					// OS agnostic "is it still running"
+					if proc, err := os.FindProcess(int(cmd.Process.Pid)); err != nil || errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+						return nil //nolint:nilerr
+					}
+				case <-time.After(5 * time.Second):
+					slog.Warn("graceful server shutdown timeout, killing", "pid", cmd.Process.Pid)
+					cmd.Process.Kill() //nolint:errcheck
+				}
+			}
+		}
+		return nil
+	}
+
 	// run the command and wait for it to finish
 	if err := cmd.Start(); err != nil {
 		return done, fmt.Errorf("failed to start server %w", err)
@@ -105,7 +128,7 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 
 			select {
 			case <-ctx.Done():
-				slog.Debug(fmt.Sprintf("server shutdown with exit code %d", code))
+				slog.Info(fmt.Sprintf("server shutdown with exit code %d", code))
 				done <- code
 				return
 			default:

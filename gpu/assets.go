@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 var (
@@ -84,7 +85,12 @@ func Cleanup() {
 		slog.Debug("cleaning up", "dir", tmpDir)
 		err := os.RemoveAll(tmpDir)
 		if err != nil {
-			slog.Warn("failed to clean up", "dir", tmpDir, "err", err)
+			// On windows, if we remove too quickly the llama.dll may still be in-use and fail to remove
+			time.Sleep(1000 * time.Millisecond)
+			err = os.RemoveAll(tmpDir)
+			if err != nil {
+				slog.Warn("failed to clean up", "dir", tmpDir, "err", err)
+			}
 		}
 	}
 }
