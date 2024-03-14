@@ -12,34 +12,40 @@ import (
 
 func TestFixBlobs(t *testing.T) {
 	cases := []struct {
-		path string
-		want string
+		path []string
+		want []string
 	}{
-		{path: "sha256:1234", want: "sha256-1234"},
-		{path: "sha259:5678", want: "sha259:5678"},
-		{path: "sha256:abcd", want: "sha256-abcd"},
-		{path: "x/y/sha256:abcd", want: "x/y/sha256-abcd"},
-		{path: "x:y/sha256:abcd", want: "x:y/sha256-abcd"},
+		{path: []string{"sha256:1234"}, want: []string{"sha256-1234"}},
+		{path: []string{"sha259:5678"}, want: []string{"sha259:5678"}},
+		{path: []string{"sha256:abcd"}, want: []string{"sha256-abcd"}},
+		{path: []string{"x/y/sha256:abcd"}, want: []string{"x/y/sha256-abcd"}},
+		{path: []string{"x:y/sha256:abcd"}, want: []string{"x:y/sha256-abcd"}},
+		{path: []string{"x:y/sha256:abcd"}, want: []string{"x:y/sha256-abcd"}},
+		{path: []string{"x:y/sha256:abcd", "sha256:1234"}, want: []string{"x:y/sha256-abcd", "sha256-1234"}},
+		{path: []string{"x:y/sha256:abcd", "sha256-1234"}, want: []string{"x:y/sha256-abcd", "sha256-1234"}},
 	}
 
-	for _, c := range cases {
-		t.Run(c.path, func(t *testing.T) {
-			if strings.Contains(c.path, ":") && runtime.GOOS == "windows" {
+	for _, tt := range cases {
+		t.Run(strings.Join(tt.path, "|"), func(t *testing.T) {
+			hasColon := slices.ContainsFunc(tt.path, func(s string) bool { return strings.Contains(s, ":") })
+			if hasColon && runtime.GOOS == "windows" {
 				t.Skip("skipping test on windows")
 			}
 
 			rootDir := t.TempDir()
-			fullPath := filepath.Join(rootDir, c.path)
-			fullDir, _ := filepath.Split(fullPath)
+			for _, path := range tt.path {
+				fullPath := filepath.Join(rootDir, path)
+				fullDir, _ := filepath.Split(fullPath)
 
-			t.Logf("creating dir %s", fullDir)
-			if err := os.MkdirAll(fullDir, 0o755); err != nil {
-				t.Fatal(err)
-			}
+				t.Logf("creating dir %s", fullDir)
+				if err := os.MkdirAll(fullDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
 
-			t.Logf("writing file %s", fullPath)
-			if err := os.WriteFile(fullPath, nil, 0o644); err != nil {
-				t.Fatal(err)
+				t.Logf("writing file %s", fullPath)
+				if err := os.WriteFile(fullPath, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			if err := fixBlobs(rootDir); err != nil {
@@ -47,9 +53,11 @@ func TestFixBlobs(t *testing.T) {
 			}
 
 			got := slurpFiles(os.DirFS(rootDir))
-			want := []string{c.want}
-			if !slices.Equal(got, want) {
-				t.Fatalf("got = %v, want %v", got, want)
+
+			slices.Sort(tt.want)
+			slices.Sort(got)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("got = %v, want %v", got, tt.want)
 			}
 		})
 	}
