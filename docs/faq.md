@@ -17,10 +17,10 @@ Review the [Troubleshooting](./troubleshooting.md) docs for more about using log
 ## Is my GPU compatible with Ollama?
 
 ### Nvidia
-Ollama supports Nvidia GPUs with compute capability 3.5 to 8.6.
+Ollama supports Nvidia GPUs with compute capability 5.0 to 8.6.
 
-Check this table to see if your card is supported:
-[https://en.wikipedia.org/wiki/CUDA#GPUs_supported](https://en.wikipedia.org/wiki/CUDA#GPUs_supported)
+Check you compute compatibility to see if your card is supported:
+[(https://developer.nvidia.com/cuda-gpus)https://en.wikipedia.org/wiki/CUDA#GPUs_supported]((https://developer.nvidia.com/cuda-gpus)https://en.wikipedia.org/wiki/CUDA#GPUs_supported)
 
 ### AMD
 See [the troubleshooting doc](./troubleshooting.md#amd-radeon-gpu-support) for currently known supported AMD Radeon GPUs.
