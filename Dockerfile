@@ -1,5 +1,6 @@
 ARG GOLANG_VERSION=1.22.1
 ARG CMAKE_VERSION=3.22.1
+# this CUDA_VERSION corresponds with the one specified in docs/faq.md
 ARG CUDA_VERSION=11.3.1
 ARG ROCM_VERSION=6.0
 

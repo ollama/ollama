@@ -14,6 +14,20 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 Review the [Troubleshooting](./troubleshooting.md) docs for more about using logs.
 
+## Is my GPU compatible with Ollama?
+
+### Nvidia
+Ollama supports Nvidia GPUs with compute capability 3.5 to 8.6.
+
+Check this table to see if your card is supported:
+[https://en.wikipedia.org/wiki/CUDA#GPUs_supported](https://en.wikipedia.org/wiki/CUDA#GPUs_supported)
+
+### AMD
+See [the troubleshooting doc](./troubleshooting.md#amd-radeon-gpu-support) for currently known supported AMD Radeon GPUs.
+
+### Metal (Apple GPUs)
+Yes.
+
 ## How can I specify the context window size?
 
 By default, Ollama uses a context window size of 2048 tokens.
