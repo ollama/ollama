@@ -100,6 +100,8 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 		return
 	}
 
+	updateLibPath(libDir)
+
 	gfxOverride := os.Getenv("HSA_OVERRIDE_GFX_VERSION")
 	if gfxOverride == "" {
 		supported, err := GetSupportedGFX(libDir)
@@ -141,6 +143,21 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 	if len(skip) > 0 {
 		amdSetVisibleDevices(ids, skip)
 	}
+}
+
+func updateLibPath(libDir string) {
+	ldPaths := []string{}
+	if val, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+		ldPaths = strings.Split(val, ":")
+	}
+	for _, d := range ldPaths {
+		if d == libDir {
+			return
+		}
+	}
+	val := strings.Join(append(ldPaths, libDir), ":")
+	slog.Debug("updated lib path", "LD_LIBRARY_PATH", val)
+	os.Setenv("LD_LIBRARY_PATH", val)
 }
 
 // Walk the sysfs nodes for the available GPUs and gather information from them

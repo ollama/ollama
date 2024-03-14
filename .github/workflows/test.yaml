@@ -56,10 +56,12 @@ jobs:
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
+          $gccpath=(get-command gcc).source | split-path -parent
           & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
           cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
+          $env:PATH="$gopath;$gccpath;$env:PATH"
+          echo $env:PATH
           go generate -x ./...
         if: ${{ startsWith(matrix.os, 'windows-') }}
         name: "Windows Go Generate"
@@ -69,7 +71,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
-          path: llm/llama.cpp/build/**/lib/*
+          path: |
+            llm/build/**/bin/*
+            llm/build/**/*.a
   generate-cuda:
     needs: [changes]
     if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
@@ -100,7 +104,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cuda-${{ matrix.cuda-version }}-libraries
-          path: llm/llama.cpp/build/**/lib/*
+          path: llm/build/**/bin/*
   generate-rocm:
     needs: [changes]
     if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
@@ -131,7 +135,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rocm-${{ matrix.rocm-version }}-libraries
-          path: llm/llama.cpp/build/**/lib/*
+          path: llm/build/**/lib/*
 
   # ROCm generation step
   generate-windows-rocm:
@@ -244,17 +248,17 @@ jobs:
           esac >>$GITHUB_ENV
         shell: bash
       - run: |
-          mkdir -p llm/llama.cpp/build/linux/$ARCH/stub/lib/
-          touch llm/llama.cpp/build/linux/$ARCH/stub/lib/stub.so
+          mkdir -p llm/build/linux/$ARCH/stub/bin/
+          touch llm/build/linux/$ARCH/stub/bin/stub.so
         if: ${{ startsWith(matrix.os, 'ubuntu-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/darwin/$ARCH/stub/lib/
-          touch llm/llama.cpp/build/darwin/$ARCH/stub/lib/stub.dylib
-          touch llm/llama.cpp/ggml-metal.metal
+          mkdir -p llm/build/darwin/$ARCH/stub/bin/
+          touch llm/build/darwin/$ARCH/stub/bin/stub.dylib
+          touch llm/ggml-metal.metal
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/windows/$ARCH/stub/stub/lib/
-          touch llm/llama.cpp/build/windows/$ARCH/stub/stub/lib/stub.dll
+          mkdir -p llm/build/windows/$ARCH/stub/stub/bin/
+          touch llm/build/windows/$ARCH/stub/stub/bin/stub.dll
         if: ${{ startsWith(matrix.os, 'windows-') }}
       - uses: golangci/golangci-lint-action@v3
   test:
@@ -271,6 +275,7 @@ jobs:
     env:
       GOARCH: ${{ matrix.arch }}
       CGO_ENABLED: '1'
+      OLLAMA_CPU_TARGET: "static"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -287,18 +292,19 @@ jobs:
           esac >>$GITHUB_ENV
         shell: bash
       - run: |
-          mkdir -p llm/llama.cpp/build/linux/$ARCH/stub/lib/
-          touch llm/llama.cpp/build/linux/$ARCH/stub/lib/stub.so
+          mkdir -p llm/build/linux/$ARCH/stub/bin/
+          touch llm//build/linux/$ARCH/stub/bin/stub.so
         if: ${{ startsWith(matrix.os, 'ubuntu-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/darwin/$ARCH/stub/lib/
-          touch llm/llama.cpp/build/darwin/$ARCH/stub/lib/stub.dylib
-          touch llm/llama.cpp/ggml-metal.metal
+          mkdir -p llm/build/darwin/$ARCH/stub/bin/
+          touch llm/build/darwin/$ARCH/stub/bin/stub.dylib
+          touch llm/ggml-metal.metal
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/windows/$ARCH/stub/stub/lib/
-          touch llm/llama.cpp/build/windows/$ARCH/stub/stub/lib/stub.dll
+          mkdir -p llm/build/windows/$ARCH/stub/stub/bin/
+          touch llm/build/windows/$ARCH/stub/stub/bin/stub.dll
         if: ${{ startsWith(matrix.os, 'windows-') }}
+      - run: go generate ./...
       - run: go build
       - run: go test -v ./...
       - uses: actions/upload-artifact@v4

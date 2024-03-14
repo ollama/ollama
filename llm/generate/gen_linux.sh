@@ -57,16 +57,31 @@ init_vars
 git_module_setup
 apply_patches
 
+
+init_vars
 if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
+
+    if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "static" ]; then
+        # Static build for linking into the Go binary
+        init_vars
+        CMAKE_TARGETS="--target llama --target ggml"
+        CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DLLAMA_NATIVE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+        BUILD_DIR="../build/linux/${ARCH}_static"
+        echo "Building static library"
+        build
+    fi
+
+
     # Users building from source can tune the exact flags we pass to cmake for configuring
     # llama.cpp, and we'll build only 1 CPU variant in that case as the default.
     if [ -n "${OLLAMA_CUSTOM_CPU_DEFS}" ]; then
+        init_vars
         echo "OLLAMA_CUSTOM_CPU_DEFS=\"${OLLAMA_CUSTOM_CPU_DEFS}\""
         CMAKE_DEFS="${OLLAMA_CUSTOM_CPU_DEFS} -DCMAKE_POSITION_INDEPENDENT_CODE=on ${CMAKE_DEFS}"
-        BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu"
+        BUILD_DIR="../build/linux/${ARCH}/cpu"
         echo "Building custom CPU"
         build
-        compress_libs
+        compress
     else
         # Darwin Rosetta x86 emulation does NOT support AVX, AVX2, AVX512
         # -DLLAMA_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
@@ -83,11 +98,12 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
             #
             # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
             #
+            init_vars
             CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu"
+            BUILD_DIR="../build/linux/${ARCH}/cpu"
             echo "Building LCD CPU"
             build
-            compress_libs
+            compress
         fi
 
         if [ "${ARCH}" == "x86_64" ]; then
@@ -101,10 +117,10 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 #
                 init_vars
                 CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-                BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx"
+                BUILD_DIR="../build/linux/${ARCH}/cpu_avx"
                 echo "Building AVX CPU"
                 build
-                compress_libs
+                compress
             fi
 
             if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx2" ]; then
@@ -114,10 +130,10 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 #
                 init_vars
                 CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
-                BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx2"
+                BUILD_DIR="../build/linux/${ARCH}/cpu_avx2"
                 echo "Building AVX2 CPU"
                 build
-                compress_libs
+                compress
             fi
         fi
     fi
@@ -157,7 +173,7 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
         ARM64_DEFS="-DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_CUDA_F16=off"
     fi
     CMAKE_DEFS="-DLLAMA_CUBLAS=on -DLLAMA_CUDA_FORCE_MMQ=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS}"
-    BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cuda${CUDA_VARIANT}"
+    BUILD_DIR="../build/linux/${ARCH}/cuda${CUDA_VARIANT}"
     EXTRA_LIBS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
     build
 
@@ -165,20 +181,20 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
     #
     # TODO - in the future we may shift to packaging these separately and conditionally
     #        downloading them in the install script.
-    DEPS="$(ldd ${BUILD_DIR}/lib/libext_server.so )"
+    DEPS="$(ldd ${BUILD_DIR}/bin/ollama_llama_server )"
     for lib in libcudart.so libcublas.so libcublasLt.so ; do
         DEP=$(echo "${DEPS}" | grep ${lib} | cut -f1 -d' ' | xargs || true)
         if [ -n "${DEP}" -a -e "${CUDA_LIB_DIR}/${DEP}" ]; then
-            cp "${CUDA_LIB_DIR}/${DEP}" "${BUILD_DIR}/lib/"
+            cp "${CUDA_LIB_DIR}/${DEP}" "${BUILD_DIR}/bin/"
         elif [ -e "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" ]; then
-            cp "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" "${BUILD_DIR}/lib/"
+            cp "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" "${BUILD_DIR}/bin/"
         elif [ -e "${CUDART_LIB_DIR}/${lib}" ]; then
-            cp -d ${CUDART_LIB_DIR}/${lib}* "${BUILD_DIR}/lib/"
+            cp -d ${CUDART_LIB_DIR}/${lib}* "${BUILD_DIR}/bin/"
         else
-            cp -d "${CUDA_LIB_DIR}/${lib}*" "${BUILD_DIR}/lib/"
+            cp -d "${CUDA_LIB_DIR}/${lib}*" "${BUILD_DIR}/bin/"
         fi
     done
-    compress_libs
+    compress
 
 fi
 
@@ -201,23 +217,24 @@ if [ -d "${ROCM_PATH}" ]; then
     fi
     init_vars
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
-    BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/rocm${ROCM_VARIANT}"
+    BUILD_DIR="../build/linux/${ARCH}/rocm${ROCM_VARIANT}"
     EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,\$ORIGIN/../../rocm/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
     build
 
     # Record the ROCM dependencies
-    rm -f "${BUILD_DIR}/lib/deps.txt"
-    touch "${BUILD_DIR}/lib/deps.txt"
-    for dep in $(ldd "${BUILD_DIR}/lib/libext_server.so" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu -e libtinfo ); do
-        echo "${dep}" >> "${BUILD_DIR}/lib/deps.txt"
+    rm -f "${BUILD_DIR}/bin/deps.txt"
+    touch "${BUILD_DIR}/bin/deps.txt"
+    for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu -e libtinfo ); do
+        echo "${dep}" >> "${BUILD_DIR}/bin/deps.txt"
     done
     # bomb out if for some reason we didn't get a few deps
-    if [ $(cat "${BUILD_DIR}/lib/deps.txt" | wc -l ) -lt 8 ] ; then
-        cat "${BUILD_DIR}/lib/deps.txt"
+    if [ $(cat "${BUILD_DIR}/bin/deps.txt" | wc -l ) -lt 8 ] ; then
+        cat "${BUILD_DIR}/bin/deps.txt"
         echo "ERROR: deps file short"
         exit 1
     fi
-    compress_libs
+    compress
 fi
 
 cleanup
+echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"
