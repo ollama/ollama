@@ -1,6 +1,7 @@
 #include "dyn_ext_server.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef __linux__
@@ -11,16 +12,24 @@
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
 #elif _WIN32
 #include <windows.h>
-#define LOAD_LIBRARY(lib, flags) LoadLibrary(lib)
+#define LOAD_LIBRARY(lib, flags) ({ \
+    int _len = MultiByteToWideChar(CP_UTF8, 0, (lib), -1, NULL, 0); \
+    wchar_t* _wLibPath = (wchar_t*)malloc(_len * sizeof(wchar_t)); \
+    MultiByteToWideChar(CP_UTF8, 0, (lib), -1, _wLibPath, _len); \
+    HMODULE _mod = LoadLibraryW(_wLibPath); \
+    free(_wLibPath); \
+    _mod; \
+})
 #define LOAD_SYMBOL(handle, sym) GetProcAddress(handle, sym)
 #define UNLOAD_LIBRARY(handle) FreeLibrary(handle)
-#define LOAD_ERR() ({\
-  LPSTR messageBuffer = NULL; \
-  size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, \
-                                 NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL); \
-  char *resp = strdup(messageBuffer); \
-  LocalFree(messageBuffer); \
-  resp; \
+#define LOAD_ERR() ({ \
+    LPWSTR messageBuffer = NULL; \
+    size_t size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, \
+                                 NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&messageBuffer, 0, NULL); \
+    char* resp = (char*)malloc(512); /* Assuming 512 is enough; consider dynamic sizing based on 'size' */ \
+    WideCharToMultiByte(CP_UTF8, 0, messageBuffer, -1, resp, 512, NULL, NULL); \
+    LocalFree(messageBuffer); \
+    resp; \
 })
 #else
 #include <dlfcn.h>
