@@ -263,6 +263,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.Format = format
 
+	system, err := cmd.Flags().GetString("system")
+	if err != nil {
+		return err
+	}
+	opts.System = system
+
 	prompts := args[1:]
 	// prepend stdin to the prompt if provided
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
@@ -960,6 +966,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().StringP("system", "s", "", "Set the system prompt")
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
