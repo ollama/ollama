@@ -15,6 +15,7 @@ func TestFixBlobs(t *testing.T) {
 		path []string
 		want []string
 	}{
+		{path: []string{"sha256-1234"}, want: []string{"sha256-1234"}},
 		{path: []string{"sha256:1234"}, want: []string{"sha256-1234"}},
 		{path: []string{"sha259:5678"}, want: []string{"sha259:5678"}},
 		{path: []string{"sha256:abcd"}, want: []string{"sha256-abcd"}},
