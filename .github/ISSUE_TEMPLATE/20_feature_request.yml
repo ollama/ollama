@@ -1,6 +1,5 @@
 name: Feature request
 description: Propose a new feature
-title: ""
 labels: [needs-triage, fr]
 body:
   - type: markdown
