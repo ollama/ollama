@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 var (
@@ -18,8 +19,24 @@ var (
 func PayloadsDir() (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
+
 	if payloadsDir == "" {
-		tmpDir, err := os.MkdirTemp("", "ollama")
+		defaultTempDir := os.TempDir()
+		var tmpDir string
+		var err error
+
+		// Check if default system temp directory is mounted with 'noexec' option
+		// If it is, create ollama temp directory in pam_systemd mounter user directory
+		if isNoExec(defaultTempDir) {
+			uid := os.Getuid()
+			runUserDir := fmt.Sprintf("/run/user/%d", uid)
+			if _, err := os.Stat(runUserDir); os.IsNotExist(err) {
+				return "", fmt.Errorf("run user directory %s does not exist: %w", runUserDir, err)
+			}
+			tmpDir, err = os.MkdirTemp(runUserDir, "ollama")
+		} else {
+			tmpDir, err = os.MkdirTemp("", "ollama")
+		}
 		if err != nil {
 			return "", fmt.Errorf("failed to generate tmp dir: %w", err)
 		}
@@ -28,6 +45,15 @@ func PayloadsDir() (string, error) {
 		payloadsDir = filepath.Join(tmpDir, "runners")
 	}
 	return payloadsDir, nil
+}
+
+func isNoExec(path string) bool {
+	var statfs syscall.Statfs_t
+	err := syscall.Statfs(path, &statfs)
+	if err != nil {
+		return false
+	}
+	return statfs.Flags&syscall.MS_NOEXEC != 0
 }
 
 func Cleanup() {
