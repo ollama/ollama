@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -150,10 +149,7 @@ func GetBlobsPath(digest string) (string, error) {
 		return "", err
 	}
 
-	if runtime.GOOS == "windows" {
-		digest = strings.ReplaceAll(digest, ":", "-")
-	}
-
+	digest = strings.ReplaceAll(digest, ":", "-")
 	path := filepath.Join(dir, "blobs", digest)
 	dirPath := filepath.Dir(path)
 	if digest == "" {
