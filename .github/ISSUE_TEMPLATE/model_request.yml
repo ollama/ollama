@@ -1,7 +1,7 @@
 name: Model request
 description: Request a new model for the library
 title: "MR: "
-labels: [needs-triage, mr]
+labels: [mr]
 body:
   - type: markdown
     attributes:
@@ -12,8 +12,8 @@ body:
     id: problem
     attributes:
       label: What model would you like?
-      description: Please provide a link to th model.
+      description: Please provide a link to the model.
   - type: markdown
     attributes:
       value: |
-        Thanks for filing a feature request!
+        Thanks for filing a Model request!

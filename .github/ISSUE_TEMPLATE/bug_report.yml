@@ -1,5 +1,5 @@
 name: Bug report
-description: File a bug report. If you need help, contact support instead
+description: File a bug report. If you need help, please join our [Discord server](https://discord.com/invite/ollama).
 labels: [needs-triage, bug]
 body:
   - type: markdown
@@ -43,19 +43,9 @@ body:
       options:
         - Linux
         - macOS
-        - Windows
-        - iOS
-        - Android
-        - Synology
+        - Windows (Native)
+        - Windows (WSL)
         - Other
-    validations:
-      required: false
-  - type: input
-    id: os-version
-    attributes:
-      label: OS version
-      description: What OS version are you using?
-      placeholder: e.g., Debian 11.0, macOS Big Sur 11.6, Synology DSM 7
     validations:
       required: false
   - type: input
@@ -66,16 +56,30 @@ body:
       placeholder: e.g., 1.14.4
     validations:
       required: false
-  - type: Hardware
-    id: hardware
+  - type: GPU
+    id: gpu
     attributes:
-      label: CPU/GPU
-      description: What OS are you using? You may select more than one.
+      label: GPU
+      description: What GPU, if any, are you using? You may select more than one.
       multiple: true
       options:
         - Nvidia
         - AMD
         - Intel
+        - Apple
+        - Other
+    validations:
+      required: false
+  - type: CPU
+    id: cpu
+    attributes:
+      label: CPU
+      description: What CPU are you using? You may select more than one.
+      multiple: true
+      options:
+        - Intel
+        - AMD
+        - Apple
         - Other
     validations:
       required: false
@@ -85,14 +89,6 @@ body:
       label: OS version
       description: What OS version are you using?
       placeholder: e.g., Debian 11.0, macOS Big Sur 11.6, Synology DSM 7
-    validations:
-      required: false
-  - type: input
-    id: ollama-version
-    attributes:
-      label: Ollama version
-      description: What Ollama version are you using?
-      placeholder: e.g., 1.14.4
     validations:
       required: false
   - type: textarea
