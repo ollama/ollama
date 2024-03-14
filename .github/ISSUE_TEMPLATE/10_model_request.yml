@@ -1,6 +1,6 @@
 name: Model request
 description: Request a new model for the library
-title: "MR: "
+title: ""
 labels: [mr]
 body:
   - type: markdown
