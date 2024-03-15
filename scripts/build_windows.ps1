@@ -13,7 +13,21 @@ function checkEnv() {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
-    $script:NVIDIA_DIR=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\")[0]
+    # Try to find the CUDA dir
+    if ($null -eq $env:NVIDIA_DIR) {
+        $d=(get-command -ea 'silentlycontinue' nvcc).path
+        if ($d -ne $null) {
+            $script:NVIDIA_DIR=($d| split-path -parent)
+        } else {
+            $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
+            if ($cudaList.length > 0) {
+                $script:NVIDIA_DIR=$cudaList[0]
+            }
+        }
+    } else {
+        $script:NVIDIA_DIR=$env:NVIDIA_DIR
+    }
+    
     $script:INNO_SETUP_DIR=(get-item "C:\Program Files*\Inno Setup*\")[0]
 
     $script:DEPS_DIR="${script:SRC_DIR}\dist\windeps"
@@ -28,20 +42,23 @@ function checkEnv() {
     } else {
         $script:VERSION=$env:VERSION
     }
-    $pattern = "(\d+[.]\d+[.]\d+)-(\d+)-"
+    $pattern = "(\d+[.]\d+[.]\d+).*"
     if ($script:VERSION -match $pattern) {
-        $script:PKG_VERSION=$matches[1] + "." + $matches[2]
+        $script:PKG_VERSION=$matches[1]
     } else {
-        $script:PKG_VERSION=$script:VERSION
+        $script:PKG_VERSION="0.0.0"
     }
     write-host "Building Ollama $script:VERSION with package version $script:PKG_VERSION"
 
-    # Check for signing key
+    # Note: Windows Kits 10 signtool crashes with GCP's plugin
+    if ($null -eq $env:SIGN_TOOL) {
+        ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
+    } else {
+        ${script:SignTool}=${env:SIGN_TOOL}
+    }
     if ("${env:KEY_CONTAINER}") {
         ${script:OLLAMA_CERT}=$(resolve-path "${script:SRC_DIR}\ollama_inc.crt")
         Write-host "Code signing enabled"
-        # Note: 10 Windows Kit signtool crashes with GCP's plugin
-        ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
     } else {
         write-host "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
     }
@@ -51,8 +68,12 @@ function checkEnv() {
 
 function buildOllama() {
     write-host "Building ollama CLI"
-    & go generate ./...
-    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
+        & go generate ./...
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+    } else {
+        write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
+    }
     & go build -trimpath -ldflags "-s -w -X=github.com/jmorganca/ollama/version.Version=$script:VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {
