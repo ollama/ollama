@@ -8,7 +8,7 @@ services:
     container_name: ollama
     image: ollama/ollama
     healthcheck:
-      test: ["CMD-SHELL", "/usr/bin/bash -c 'cat < /dev/null > /dev/tcp/localhost/${OLLAMA_PORT:-11434} || exit 1'"]
+      test: ["CMD-SHELL", "/usr/bin/bash -c 'cat < /dev/null > /dev/tcp/localhost/11434 || exit 1'"]
       interval: 10s
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
