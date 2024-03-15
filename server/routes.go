@@ -1362,6 +1362,15 @@ func ChatHandler(c *gin.Context) {
 			Options: opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
+			if errors.Is(err, llm.ErrPredictTimeout) {
+				// the loaded runner may be unresponsive, stop it now
+				if loaded.runner != nil {
+					loaded.runner.Close()
+				}
+				loaded.runner = nil
+				loaded.Model = nil
+				loaded.Options = nil
+			}
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
