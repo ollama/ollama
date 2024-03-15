@@ -67,7 +67,7 @@ You can see what features your CPU has with the following.
 cat /proc/cpuinfo| grep flags  | head -1
 ```
 
-## Installing older versions on Linux
+## Installing older or pre-release versions on Linux
 
 If you run into problems on Linux and want to install an older version, or you'd
 like to try out a pre-release before it's officially released, you can tell the
