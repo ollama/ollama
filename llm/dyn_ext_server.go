@@ -35,7 +35,6 @@ import (
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
-	"golang.org/x/exp/slog"
 )
 
 type dynExtServer struct {
