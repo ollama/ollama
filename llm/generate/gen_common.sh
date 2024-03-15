@@ -1,4 +1,4 @@
-# common logic accross linux and darwin
+# common logic across linux and darwin
 
 init_vars() {
     case "${GOARCH}" in
@@ -101,7 +101,7 @@ compress_libs() {
     pids=""
     rm -rf ${BUILD_DIR}/lib/*.${LIB_EXT}*.gz
     for lib in ${BUILD_DIR}/lib/*.${LIB_EXT}* ; do
-        gzip --best -f ${lib} &
+        gzip -n --best -f ${lib} &
         pids+=" $!"
     done
     echo 

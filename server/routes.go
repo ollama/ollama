@@ -8,13 +8,16 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,7 +38,7 @@ import (
 var mode string = gin.DebugMode
 
 type Server struct {
-	WorkDir string
+	addr net.Addr
 }
 
 func init() {
@@ -66,8 +69,6 @@ var defaultSessionDuration = 5 * time.Minute
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
 func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
-	workDir := c.GetString("workDir")
-
 	needLoad := loaded.runner == nil || // is there a model loaded?
 		loaded.ModelPath != model.ModelPath || // has the base model changed?
 		!reflect.DeepEqual(loaded.AdapterPaths, model.AdapterPaths) || // have the adapters changed?
@@ -82,7 +83,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			loaded.Options = nil
 		}
 
-		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
+		llmRunner, err := llm.New(model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
@@ -208,7 +209,7 @@ func GenerateHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}
@@ -250,6 +251,19 @@ func GenerateHandler(c *gin.Context) {
 		slog.Debug("generate handler", "system", req.System)
 
 		var sb strings.Builder
+		for i := range req.Images {
+			fmt.Fprintf(&sb, "[img-%d] ", i)
+		}
+
+		sb.WriteString(req.Prompt)
+
+		p, err := Prompt(req.Template, req.System, sb.String(), "", true)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		sb.Reset()
 		if req.Context != nil {
 			prev, err := loaded.runner.Decode(c.Request.Context(), req.Context)
 			if err != nil {
@@ -258,18 +272,6 @@ func GenerateHandler(c *gin.Context) {
 			}
 
 			sb.WriteString(prev)
-		}
-
-		// write image tags
-		// TODO: limit the number of images to fit in the context similar to the chat endpoint
-		for i := range req.Images {
-			req.Prompt += fmt.Sprintf(" [img-%d]", i)
-		}
-
-		p, err := Prompt(req.Template, req.System, req.Prompt, "", true)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
 		}
 
 		sb.WriteString(p)
@@ -384,7 +386,33 @@ func GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func EmbeddingHandler(c *gin.Context) {
+func getDefaultSessionDuration() time.Duration {
+	if t, exists := os.LookupEnv("OLLAMA_KEEP_ALIVE"); exists {
+		v, err := strconv.Atoi(t)
+		if err != nil {
+			d, err := time.ParseDuration(t)
+			if err != nil {
+				return defaultSessionDuration
+			}
+
+			if d < 0 {
+				return time.Duration(math.MaxInt64)
+			}
+
+			return d
+		}
+
+		d := time.Duration(v) * time.Second
+		if d < 0 {
+			return time.Duration(math.MaxInt64)
+		}
+		return d
+	}
+
+	return defaultSessionDuration
+}
+
+func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
 
@@ -427,7 +455,7 @@ func EmbeddingHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}
@@ -437,8 +465,9 @@ func EmbeddingHandler(c *gin.Context) {
 		return
 	}
 
-	if !loaded.Options.EmbeddingOnly {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "embedding option must be set to true"})
+	// an empty request loads the model
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
@@ -904,15 +933,83 @@ var defaultAllowOrigins = []string{
 	"0.0.0.0",
 }
 
-func NewServer() (*Server, error) {
-	workDir, err := os.MkdirTemp("", "ollama")
-	if err != nil {
-		return nil, err
+func isLocalIP(ip netip.Addr) bool {
+	if interfaces, err := net.Interfaces(); err == nil {
+		for _, iface := range interfaces {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, a := range addrs {
+				if parsed, _, err := net.ParseCIDR(a.String()); err == nil {
+					if parsed.String() == ip.String() {
+						return true
+					}
+				}
+			}
+		}
 	}
 
-	return &Server{
-		WorkDir: workDir,
-	}, nil
+	return false
+}
+
+func allowedHost(host string) bool {
+	if host == "" || host == "localhost" {
+		return true
+	}
+
+	if hostname, err := os.Hostname(); err == nil && host == hostname {
+		return true
+	}
+
+	var tlds = []string{
+		"localhost",
+		"local",
+		"internal",
+	}
+
+	// check if the host is a local TLD
+	for _, tld := range tlds {
+		if strings.HasSuffix(host, "."+tld) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if addr == nil {
+			c.Next()
+			return
+		}
+
+		if addr, err := netip.ParseAddrPort(addr.String()); err == nil && !addr.Addr().IsLoopback() {
+			c.Next()
+			return
+		}
+
+		host, _, err := net.SplitHostPort(c.Request.Host)
+		if err != nil {
+			host = c.Request.Host
+		}
+
+		if addr, err := netip.ParseAddr(host); err == nil {
+			if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || isLocalIP(addr) {
+				c.Next()
+				return
+			}
+		}
+
+		if allowedHost(host) {
+			c.Next()
+			return
+		}
+
+		c.AbortWithStatus(http.StatusForbidden)
+	}
 }
 
 func (s *Server) GenerateRoutes() http.Handler {
@@ -938,16 +1035,13 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r := gin.Default()
 	r.Use(
 		cors.New(config),
-		func(c *gin.Context) {
-			c.Set("workDir", s.WorkDir)
-			c.Next()
-		},
+		allowedHostsMiddleware(s.addr),
 	)
 
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/chat", ChatHandler)
-	r.POST("/api/embeddings", EmbeddingHandler)
+	r.POST("/api/embeddings", EmbeddingsHandler)
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)
@@ -994,6 +1088,14 @@ func Serve(ln net.Listener) error {
 
 	slog.SetDefault(slog.New(handler))
 
+	blobsDir, err := GetBlobsPath("")
+	if err != nil {
+		return err
+	}
+	if err := fixBlobs(blobsDir); err != nil {
+		return err
+	}
+
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
@@ -1010,10 +1112,7 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	s, err := NewServer()
-	if err != nil {
-		return err
-	}
+	s := &Server{addr: ln.Addr()}
 	r := s.GenerateRoutes()
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
@@ -1029,11 +1128,11 @@ func Serve(ln net.Listener) error {
 		if loaded.runner != nil {
 			loaded.runner.Close()
 		}
-		os.RemoveAll(s.WorkDir)
+		gpu.Cleanup()
 		os.Exit(0)
 	}()
 
-	if err := llm.Init(s.WorkDir); err != nil {
+	if err := llm.Init(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
 	if runtime.GOOS == "linux" { // TODO - windows too
@@ -1165,7 +1264,7 @@ func ChatHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}

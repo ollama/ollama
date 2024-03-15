@@ -86,6 +86,11 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to read body response: %s", err))
 	}
+
+	if resp.StatusCode != 200 {
+		slog.Info(fmt.Sprintf("check update error %d - %.96s", resp.StatusCode, string(body)))
+		return false, updateResp
+	}
 	err = json.Unmarshal(body, &updateResp)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("malformed response checking for update: %s", err))
