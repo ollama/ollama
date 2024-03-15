@@ -16,17 +16,7 @@ Review the [Troubleshooting](./troubleshooting.md) docs for more about using log
 
 ## Is my GPU compatible with Ollama?
 
-### Nvidia
-Ollama supports Nvidia GPUs with compute capability 5.0 to 8.6.
-
-Check you compute compatibility to see if your card is supported:
-[(https://developer.nvidia.com/cuda-gpus)https://en.wikipedia.org/wiki/CUDA#GPUs_supported]((https://developer.nvidia.com/cuda-gpus)https://en.wikipedia.org/wiki/CUDA#GPUs_supported)
-
-### AMD
-See [the troubleshooting doc](./troubleshooting.md#amd-radeon-gpu-support) for currently known supported AMD Radeon GPUs.
-
-### Metal (Apple GPUs)
-Yes.
+Please refer to the [GPU docs](./gpu.md).
 
 ## How can I specify the context window size?
 
