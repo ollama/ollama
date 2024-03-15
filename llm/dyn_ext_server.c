@@ -52,15 +52,6 @@ char* LoadErrorWindows(void) {
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
 #endif
 
-HMODULE LoadLibraryWindows(const char* lib) {
-  int _len = MultiByteToWideChar(CP_UTF8, 0, (lib), -1, NULL, 0);
-    wchar_t* _wLibPath = (wchar_t*)malloc(_len * sizeof(wchar_t));
-    MultiByteToWideChar(CP_UTF8, 0, (lib), -1, _wLibPath, _len);
-    HMODULE _mod = LoadLibraryW(_wLibPath);
-    free(_wLibPath);
-    _mod;
-}
-
 void dyn_init(const char *libPath, struct dynamic_llama_server *s,
                        ext_server_resp_t *err) {
   int i = 0;
