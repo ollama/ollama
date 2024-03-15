@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -540,7 +541,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 			b, err := io.ReadFull(dataFile, data)
 			remaining -= uint64(b)
 
-			if err == io.EOF || remaining <= 0 {
+			if errors.Is(err, io.EOF) || remaining <= 0 {
 				finished = true
 			} else if err != nil {
 				return err

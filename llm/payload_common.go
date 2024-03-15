@@ -113,7 +113,7 @@ func nativeInit() error {
 
 	libs, err := extractDynamicLibs(payloadsDir, "llama.cpp/build/*/*/*/lib/*")
 	if err != nil {
-		if err == payloadMissing {
+		if errors.Is(err, payloadMissing) {
 			slog.Info(fmt.Sprintf("%s", payloadMissing))
 			return nil
 		}
