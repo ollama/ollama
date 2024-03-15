@@ -101,11 +101,12 @@ future release which should increase support for more GPUs.
 Reach out on [Discord](https://discord.gg/ollama) or file an
 [issue](https://github.com/ollama/ollama/issues) for additional help.
 
-## Installing older versions on Linux
+## Installing older or pre-release versions on Linux
 
-If you run into problems on Linux and want to install an older version you can tell the install script
-which version to install.
+If you run into problems on Linux and want to install an older version, or you'd
+like to try out a pre-release before it's officially released, you can tell the
+install script which version to install.
 
 ```sh
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.27" sh
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.29" sh
 ```
