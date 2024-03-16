@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,7 +22,9 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
+	"github.com/conduitio/bwlimit"
 	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
@@ -32,10 +35,11 @@ import (
 )
 
 type registryOptions struct {
-	Insecure bool
-	Username string
-	Password string
-	Token    string
+	Insecure  bool
+	Username  string
+	Password  string
+	Token     string
+	Bandwidth int
 }
 
 type Model struct {
@@ -1171,6 +1175,19 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
+	}
+
+	if regOpts != nil {
+		if regOpts.Bandwidth > 0 {
+			bandwidth := bwlimit.Byte(regOpts.Bandwidth)
+
+			dialer := bwlimit.NewDialer(&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}, bandwidth, bandwidth)
+
+			http.DefaultTransport.(*http.Transport).DialContext = dialer.DialContext
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), body)
