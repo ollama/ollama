@@ -2,7 +2,6 @@
 #include "llama.h"
 #include "grammar-parser.h"
 #include "utils.hpp"
-#include "oai.hpp"
 
 #include "../llava/clip.h"
 #include "../llava/llava.h"
@@ -17,12 +16,6 @@
 #define CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH 1048576
 #include "httplib.h"
 #include "json.hpp"
-
-// auto generated files (update with ./deps.sh)
-#include "index.html.hpp"
-#include "index.js.hpp"
-#include "completion.js.hpp"
-#include "json-schema-to-grammar.mjs.hpp"
 
 #include <cstddef>
 #include <thread>
@@ -128,9 +121,6 @@ struct server_slot {
     bool stopped_eos = false;
     bool stopped_word = false;
     bool stopped_limit = false;
-
-    bool oaicompat = false;
-    std::string oaicompat_model;
 
     std::string stopping_word;
 
@@ -542,14 +532,6 @@ struct llama_server_context
     bool launch_slot_with_data(server_slot* &slot, json data) {
         slot_params default_params;
         llama_sampling_params default_sparams;
-
-        if (data.count("__oaicompat") != 0) {
-            slot->oaicompat = true;
-            slot->oaicompat_model = json_value(data, "model", std::string(DEFAULT_OAICOMPAT_MODEL));
-        } else {
-            slot->oaicompat = false;
-            slot->oaicompat_model = "";
-        }
 
         slot->params.stream             = json_value(data, "stream",            false);
         slot->params.cache_prompt       = json_value(data, "cache_prompt",      false);
@@ -1148,12 +1130,6 @@ struct llama_server_context
             res.result_json["completion_probabilities"] = probs_vector_to_json(ctx, probs_output);
         }
 
-        if (slot.oaicompat)
-        {
-            res.result_json["oaicompat_token_ctr"] = slot.n_decoded;
-            res.result_json["model"] = slot.oaicompat_model;
-        }
-
         queue_results.send(res);
     }
 
@@ -1199,12 +1175,6 @@ struct llama_server_context
                                     slot.generated_token_probs.end());
             }
             res.result_json["completion_probabilities"] = probs_vector_to_json(ctx, probs);
-        }
-
-        if (slot.oaicompat)
-        {
-            res.result_json["oaicompat_token_ctr"] = slot.n_decoded;
-            res.result_json["model"] = slot.oaicompat_model;
         }
 
         queue_results.send(res);
@@ -3075,41 +3045,9 @@ int _main(int argc, char **argv)
     // this is only called if no index.html is found in the public --path
     svr.Get("/", [](const httplib::Request &, httplib::Response &res)
             {
-                res.set_content(reinterpret_cast<const char*>(&index_html), index_html_len, "text/html; charset=utf-8");
-                return false;
-            });
-
-    // this is only called if no index.js is found in the public --path
-    svr.Get("/index.js", [](const httplib::Request &, httplib::Response &res)
-            {
-                res.set_content(reinterpret_cast<const char *>(&index_js), index_js_len, "text/javascript; charset=utf-8");
-                return false;
-            });
-
-    // this is only called if no index.html is found in the public --path
-    svr.Get("/completion.js", [](const httplib::Request &, httplib::Response &res)
-            {
-                res.set_content(reinterpret_cast<const char*>(&completion_js), completion_js_len, "application/javascript; charset=utf-8");
-                return false;
-            });
-
-    // this is only called if no index.html is found in the public --path
-    svr.Get("/json-schema-to-grammar.mjs", [](const httplib::Request &, httplib::Response &res)
-            {
-                res.set_content(reinterpret_cast<const char*>(&json_schema_to_grammar_mjs), json_schema_to_grammar_mjs_len, "application/javascript; charset=utf-8");
-                return false;
-            });
-
-    svr.Get("/props", [&llama](const httplib::Request & req, httplib::Response &res)
-            {
-                res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
-                json data = {
-                    { "user_name",      llama.name_user.c_str() },
-                    { "assistant_name", llama.name_assistant.c_str() },
-                    { "default_generation_settings", llama.default_generation_settings_for_props },
-                    { "total_slots",    llama.params.n_parallel }
-                };
-                res.set_content(data.dump(), "application/json; charset=utf-8");
+                res.set_content("server running", "text/plain; charset=utf-8");
+                res.status = 200; // Unauthorized
+                return true;
             });
 
     svr.Post("/completion", [&llama, &validate_api_key](const httplib::Request &req, httplib::Response &res)
@@ -3189,180 +3127,6 @@ int _main(int argc, char **argv)
                 }
             });
 
-    svr.Get("/v1/models", [&params, &model_meta](const httplib::Request& req, httplib::Response& res)
-            {
-                res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
-                std::time_t t = std::time(0);
-
-                json models = {
-                    {"object", "list"},
-                    {"data", {
-                        {
-                            {"id",       params.model_alias},
-                            {"object",   "model"},
-                            {"created",  t},
-                            {"owned_by", "llamacpp"},
-                            {"meta",     model_meta}
-                        },
-                    }}
-                };
-
-                res.set_content(models.dump(), "application/json; charset=utf-8");
-            });
-
-    const auto chat_completions = [&llama, &validate_api_key, &sparams](const httplib::Request &req, httplib::Response &res)
-    {
-        res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
-        if (!validate_api_key(req, res)) {
-            return;
-        }
-        json data = oaicompat_completion_params_parse(llama.model, json::parse(req.body), sparams.chat_template);
-
-        const int task_id = llama.queue_tasks.get_new_id();
-        llama.queue_results.add_waiting_task_id(task_id);
-        llama.request_completion(task_id, data, false, false, -1);
-
-        if (!json_value(data, "stream", false)) {
-            std::string completion_text;
-            task_result result = llama.queue_results.recv(task_id);
-
-            if (!result.error && result.stop) {
-                json oaicompat_result = format_final_response_oaicompat(data, result);
-
-                res.set_content(oaicompat_result.dump(-1, ' ', false,
-                                    json::error_handler_t::replace),
-                                    "application/json; charset=utf-8");
-            } else {
-                res.status = 500;
-                res.set_content(result.result_json["content"], "text/plain; charset=utf-8");
-            }
-            llama.queue_results.remove_waiting_task_id(task_id);
-        } else {
-            const auto chunked_content_provider = [task_id, &llama](size_t, httplib::DataSink &sink) {
-                while (true) {
-                    task_result llama_result = llama.queue_results.recv(task_id);
-                    if (!llama_result.error) {
-                        std::vector<json> result_array = format_partial_response_oaicompat( llama_result);
-
-                        for (auto it = result_array.begin(); it != result_array.end(); ++it)
-                        {
-                            if (!it->empty()) {
-                                const std::string str =
-                                    "data: " +
-                                    it->dump(-1, ' ', false, json::error_handler_t::replace) +
-                                    "\n\n";
-                                LOG_VERBOSE("data stream", {{"to_send", str}});
-                                if (!sink.write(str.c_str(), str.size())) {
-                                    llama.queue_results.remove_waiting_task_id(task_id);
-                                    return false;
-                                }
-                            }
-                        }
-                        if (llama_result.stop) {
-                            break;
-                        }
-                    } else {
-                        const std::string str =
-                            "error: " +
-                            llama_result.result_json.dump(-1, ' ', false,
-                                    json::error_handler_t::replace) +
-                            "\n\n";
-                        LOG_VERBOSE("data stream", {{"to_send", str}});
-                        if (!sink.write(str.c_str(), str.size())) {
-                            llama.queue_results.remove_waiting_task_id(task_id);
-                            return false;
-                        }
-                        break;
-                    }
-                }
-                sink.done();
-                llama.queue_results.remove_waiting_task_id(task_id);
-                return true;
-            };
-
-            auto on_complete = [task_id, &llama](bool) {
-                // cancel request
-                llama.request_cancel(task_id);
-                llama.queue_results.remove_waiting_task_id(task_id);
-            };
-
-            res.set_chunked_content_provider("text/event-stream", chunked_content_provider, on_complete);
-        }
-    };
-
-    svr.Post("/chat/completions", chat_completions);
-    svr.Post("/v1/chat/completions", chat_completions);
-
-    svr.Post("/infill", [&llama, &validate_api_key](const httplib::Request &req, httplib::Response &res)
-            {
-                res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
-                if (!validate_api_key(req, res)) {
-                    return;
-                }
-                json data = json::parse(req.body);
-                const int task_id = llama.queue_tasks.get_new_id();
-                llama.queue_results.add_waiting_task_id(task_id);
-                llama.request_completion(task_id, data, true, false, -1);
-                if (!json_value(data, "stream", false)) {
-                    std::string completion_text;
-                    task_result result = llama.queue_results.recv(task_id);
-                    if (!result.error && result.stop)
-                    {
-                        res.set_content(result.result_json.dump(-1, ' ', false, json::error_handler_t::replace), "application/json; charset=utf-8");
-                    }
-                    else
-                    {
-                        res.status = 404;
-                        res.set_content(result.result_json["content"], "text/plain; charset=utf-8");
-                    }
-                    llama.queue_results.remove_waiting_task_id(task_id);
-                } else {
-                    const auto chunked_content_provider = [task_id, &llama](size_t, httplib::DataSink & sink) {
-                        while (true)
-                        {
-                            task_result result = llama.queue_results.recv(task_id);
-                            if (!result.error) {
-                                const std::string str =
-                                "data: " +
-                                result.result_json.dump(-1, ' ', false, json::error_handler_t::replace) +
-                                "\n\n";
-                                LOG_VERBOSE("data stream", {
-                                    { "to_send", str }
-                                });
-                                if (!sink.write(str.c_str(), str.size()))
-                                {
-                                    llama.queue_results.remove_waiting_task_id(task_id);
-                                    return false;
-                                }
-                                if (result.stop)
-                                {
-                                    break;
-                                }
-                            }
-                            else
-                            {
-                                break;
-                            }
-                        }
-
-                        llama.queue_results.remove_waiting_task_id(task_id);
-                        sink.done();
-                        return true;
-                    };
-
-                    auto on_complete = [task_id, &llama] (bool)
-                    {
-                        // cancel
-                        llama.request_cancel(task_id);
-                    };
-
-                    res.set_chunked_content_provider("text/event-stream", chunked_content_provider, on_complete);
-                }
-            });
-
-    svr.Options(R"(/.*)", [](const httplib::Request &, httplib::Response &res)
-                { return res.set_content("", "application/json; charset=utf-8"); });
-
     svr.Post("/tokenize", [&llama](const httplib::Request &req, httplib::Response &res)
             {
                 res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
@@ -3425,66 +3189,6 @@ int _main(int argc, char **argv)
 
                 // send the result
                 return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
-            });
-
-    svr.Post("/v1/embeddings", [&llama](const httplib::Request &req, httplib::Response &res)
-            {
-                res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
-                const json body = json::parse(req.body);
-
-                json prompt;
-                if (body.count("input") != 0)
-                {
-                    prompt = body["input"];
-                    // batch
-                    if(prompt.is_array()) {
-                        json data = json::array();
-                        int i = 0;
-                        for (const json &elem : prompt) {
-                            const int task_id = llama.queue_tasks.get_new_id();
-                            llama.queue_results.add_waiting_task_id(task_id);
-                            llama.request_completion(task_id, { {"prompt", elem}, { "n_predict", 0} }, false, true, -1);
-
-                            // get the result
-                            task_result result = llama.queue_results.recv(task_id);
-                            llama.queue_results.remove_waiting_task_id(task_id);
-
-                            json embedding = json{
-                                {"embedding", json_value(result.result_json, "embedding", json::array())},
-                                {"index", i++},
-                                {"object", "embedding"}
-                            };
-                            data.push_back(embedding);
-                        }
-                        json result = format_embeddings_response_oaicompat(body, data);
-                        return res.set_content(result.dump(), "application/json; charset=utf-8");
-                    }
-                }
-                else
-                {
-                    prompt = "";
-                }
-
-                // create and queue the task
-                const int task_id = llama.queue_tasks.get_new_id();
-                llama.queue_results.add_waiting_task_id(task_id);
-                llama.request_completion(task_id, { {"prompt", prompt}, { "n_predict", 0}}, false, true, -1);
-
-                // get the result
-                task_result result = llama.queue_results.recv(task_id);
-                llama.queue_results.remove_waiting_task_id(task_id);
-
-                json data = json::array({json{
-                        {"embedding", json_value(result.result_json, "embedding", json::array())},
-                        {"index", 0},
-                        {"object", "embedding"}
-                    }}
-                );
-
-                json root = format_embeddings_response_oaicompat(body, data);
-
-                // send the result
-                return res.set_content(root.dump(), "application/json; charset=utf-8");
             });
 
     // GG: if I put the main loop inside a thread, it crashes on the first request when build in Debug!?
