@@ -137,6 +137,12 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 	}
 	defer b.file.Close()
 
+	if opts != nil {
+		if opts.Bandwidth > 0 {
+			opts.Bandwidth = opts.Bandwidth / len(b.Parts)
+		}
+	}
+
 	g, inner := errgroup.WithContext(ctx)
 	g.SetLimit(numUploadParts)
 	for i := range b.Parts {
