@@ -110,6 +110,13 @@ go build .
 
 If you have Docker available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
 
+### Docker Build
+
+If you want to build a docker image, you can use the provided Dockerfile with `./scripts/build_docker.sh`.  This will build a docker image with the build dependencies and the resulting binary in `/bin/ollama`.  You can then run the image in CPU-based with `docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+` to run the binary.
+
+More details on the docker build can be found in the [Dockerfile](../Dockerfile), and the usage of the image can be found in the [Ollama Docker image](https://hub.docker.com/r/ollama/ollama).
+
 ### Windows
 
 Note: The windows build for Ollama is still under development.
