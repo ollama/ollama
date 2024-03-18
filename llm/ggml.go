@@ -5,11 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 type GGML struct {
 	container
 	model
+}
+
+func (ggml *GGML) LayerSize(prefix string) (n int64) {
+	for _, t := range ggml.Tensors() {
+		if strings.HasPrefix(t.Name, prefix) {
+			n += int64(t.size())
+		}
+	}
+
+	return
 }
 
 const (
