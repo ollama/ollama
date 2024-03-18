@@ -97,7 +97,7 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 
 ## How can I use Ollama with a proxy server?
 
-Ollama runs an HTTP server and can be exposed using a proxy server such as Nginx. To do so, configure the proxy to forward requests and optionally set required headers if not exposing Ollama on the network (see the previous question). For example, with Nginx:
+Ollama runs an HTTP server and can be exposed using a proxy server such as Nginx. To do so, configure the proxy to forward requests and optionally set required headers (if not exposing Ollama on the network). For example, with Nginx:
 
 ```
 server {
