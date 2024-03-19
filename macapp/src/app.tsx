@@ -32,7 +32,7 @@ export default function () {
             <div className='mx-auto text-center'>
               <h1 className='mb-6 mt-4 text-2xl tracking-tight text-gray-900'>Welcome to Ollama</h1>
               <p className='mx-auto w-[65%] text-sm text-gray-400'>
-                {stepParam} Let's get you up and running with your own large language models.
+                Let's get you up and running with your own large language models.
               </p>
               <button
                 onClick={() => setStep(Step.CLI)}
