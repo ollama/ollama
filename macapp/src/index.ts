@@ -57,7 +57,7 @@ app.on('ready', async () => {
   await init()
 })
 
-function firstRunWindow() {
+function firstRunWindow(isInstalled: boolean) {
   // Create the browser window.
   welcomeWindow = new BrowserWindow({
     width: 400,
@@ -75,7 +75,11 @@ function firstRunWindow() {
 
   require('@electron/remote/main').enable(welcomeWindow.webContents)
 
-  welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
+  let url = MAIN_WINDOW_WEBPACK_ENTRY
+  if (isInstalled) {
+    url += '?step=2' // set the window to the finish screen
+  }
+  welcomeWindow.loadURL(url);
   welcomeWindow.on('ready-to-show', () => welcomeWindow.show())
   welcomeWindow.on('closed', () => {
     if (process.platform === 'darwin') {
@@ -263,7 +267,7 @@ async function init() {
 
   // This is the first run or the CLI is no longer installed
   app.setLoginItemSettings({ openAtLogin: true })
-  firstRunWindow()
+  firstRunWindow(isInstalled)
 }
 
 // Quit when all windows are closed, except on macOS. There, it's common

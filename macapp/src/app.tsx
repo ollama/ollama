@@ -16,7 +16,10 @@ enum Step {
 }
 
 export default function () {
-  const [step, setStep] = useState<Step>(Step.WELCOME)
+  const urlParams = new URLSearchParams(window.location.search);
+  const stepParam = urlParams.get('step');
+  const initialStep = stepParam ? Number(stepParam) : Step.WELCOME;
+  const [step, setStep] = useState<Step>(initialStep);
   const [commandCopied, setCommandCopied] = useState<boolean>(false)
 
   const command = 'ollama run llama2'
@@ -29,7 +32,7 @@ export default function () {
             <div className='mx-auto text-center'>
               <h1 className='mb-6 mt-4 text-2xl tracking-tight text-gray-900'>Welcome to Ollama</h1>
               <p className='mx-auto w-[65%] text-sm text-gray-400'>
-                Let's get you up and running with your own large language models.
+                {stepParam} Let's get you up and running with your own large language models.
               </p>
               <button
                 onClick={() => setStep(Step.CLI)}
