@@ -218,12 +218,14 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			return err
 		}
 
-		shape := [4]uint64{1, 1, 1, 1}
+		var shape []uint64
 		for i := 0; uint32(i) < dims; i++ {
-			shape[i], err = readGGUF[uint64](llm, rs)
+			dim, err := readGGUF[uint64](llm, rs)
 			if err != nil {
 				return err
 			}
+
+			shape = append(shape, dim)
 		}
 
 		kind, err := readGGUF[uint32](llm, rs)
@@ -240,7 +242,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			Name:   name,
 			Kind:   kind,
 			Offset: offset,
-			Shape:  shape[:],
+			Shape:  shape,
 		}
 
 		llm.Tensors = append(llm.Tensors, tensor)
@@ -543,7 +545,7 @@ var ggufKVOrder = map[string][]string{
 	},
 }
 
-func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
+func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []*Tensor) error {
 	switch llm.Version {
 	case 3:
 		llm.V3.NumTensor = uint64(len(tensors))
@@ -626,6 +628,7 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 		}
 	}
 
+	var tensorOffset uint64
 	for _, tensor := range tensors {
 		if err := binary.Write(ws, llm.ByteOrder, uint64(len(tensor.Name))); err != nil {
 			return err
@@ -644,19 +647,25 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 			return err
 		}
 
+		shape := make([]uint64, dims)
 		for i := 0; i < dims; i++ {
-			if err := binary.Write(ws, llm.ByteOrder, uint64(tensor.Shape[dims-1-i])); err != nil {
+			shape[i] = tensor.Shape[dims-1-i]
+			if err := binary.Write(ws, llm.ByteOrder, shape[i]); err != nil {
 				return err
 			}
 		}
+
+		tensor.Shape = shape
 
 		if err := binary.Write(ws, llm.ByteOrder, tensor.Kind); err != nil {
 			return err
 		}
 
-		if err := binary.Write(ws, llm.ByteOrder, tensor.Offset); err != nil {
+		if err := binary.Write(ws, llm.ByteOrder, tensorOffset); err != nil {
 			return err
 		}
+
+		tensorOffset += uint64(tensor.size())
 	}
 
 	offset, err := ws.Seek(0, io.SeekCurrent)
