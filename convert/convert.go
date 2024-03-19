@@ -33,6 +33,8 @@ type Params struct {
 	RopeFreqBase     float64  `json:"rope_theta"`
 	BoSTokenID       int      `json:"bos_token_id"`
 	EoSTokenID       int      `json:"eos_token_id"`
+	HeadDimension    int      `json:"head_dim"`
+	PaddingTokenID   int      `json:"pad_token_id"`
 }
 
 type MetaData struct {
@@ -196,6 +198,14 @@ func LoadTokens(dirpath string) (*Vocab, error) {
 		v.Tokens = append(v.Tokens, p.GetPiece())
 		v.Scores = append(v.Scores, p.GetScore())
 		t := p.GetType()
+		switch t {
+		case sentencepiece.ModelProto_SentencePiece_UNKNOWN:
+		case sentencepiece.ModelProto_SentencePiece_CONTROL:
+		case sentencepiece.ModelProto_SentencePiece_UNUSED:
+		case sentencepiece.ModelProto_SentencePiece_BYTE:
+		default:
+			t = sentencepiece.ModelProto_SentencePiece_NORMAL
+		}
 		v.Types = append(v.Types, int32(t))
 	}
 
@@ -284,19 +294,53 @@ func WriteGGUF(name string, tensors []llm.Tensor, params *Params, vocab *Vocab) 
 		ByteOrder: binary.LittleEndian,
 	}
 
+	var arch string
+	switch len(params.Architectures) {
+	case 0:
+		return "", fmt.Errorf("No architecture specified to convert")
+	case 1:
+		switch params.Architectures[0] {
+		case "MistralForCausalLM":
+			arch = "llama"
+		case "GemmaForCausalLM":
+			arch = "gemma"
+		default:
+			return "", fmt.Errorf("Models based on '%s' are not yet supported", params.Architectures[0])
+		}
+	default:
+		return "", fmt.Errorf("Multimodal models are not yet supported")
+	}
+
 	m := llm.NewGGUFModel(&c)
 	m.Tensors = tensors
-	m.KV["general.architecture"] = "llama"
+
+	m.KV["general.architecture"] = arch
 	m.KV["general.name"] = name
-	m.KV["llama.context_length"] = uint32(params.ContextSize)
-	m.KV["llama.embedding_length"] = uint32(params.HiddenSize)
-	m.KV["llama.block_count"] = uint32(params.HiddenLayers)
-	m.KV["llama.feed_forward_length"] = uint32(params.IntermediateSize)
-	m.KV["llama.rope.dimension_count"] = uint32(128)
-	m.KV["llama.attention.head_count"] = uint32(params.AttentionHeads)
-	m.KV["llama.attention.head_count_kv"] = uint32(params.KeyValHeads)
-	m.KV["llama.attention.layer_norm_rms_epsilon"] = float32(params.NormEPS)
-	m.KV["llama.rope.freq_base"] = float32(params.RopeFreqBase)
+
+	switch arch {
+	case "llama":
+		m.KV["llama.context_length"] = uint32(params.ContextSize)
+		m.KV["llama.embedding_length"] = uint32(params.HiddenSize)
+		m.KV["llama.block_count"] = uint32(params.HiddenLayers)
+		m.KV["llama.feed_forward_length"] = uint32(params.IntermediateSize)
+		m.KV["llama.rope.dimension_count"] = uint32(params.HiddenSize / params.AttentionHeads)
+		slog.Debug(fmt.Sprintf("rope dim count = %d", m.KV["llama.rope.dimension_count"]))
+		m.KV["llama.attention.head_count"] = uint32(params.AttentionHeads)
+		m.KV["llama.attention.head_count_kv"] = uint32(params.KeyValHeads)
+		m.KV["llama.attention.layer_norm_rms_epsilon"] = float32(params.NormEPS)
+		m.KV["llama.rope.freq_base"] = float32(params.RopeFreqBase)
+	case "gemma":
+		m.KV["gemma.context_length"] = uint32(params.ContextSize)
+		m.KV["gemma.embedding_length"] = uint32(params.HiddenSize)
+		m.KV["gemma.block_count"] = uint32(params.HiddenLayers)
+		m.KV["gemma.feed_forward_length"] = uint32(params.IntermediateSize)
+		m.KV["gemma.attention.head_count"] = uint32(params.AttentionHeads)
+		m.KV["gemma.attention.head_count_kv"] = uint32(params.KeyValHeads)
+		m.KV["gemma.attention.layer_norm_rms_epsilon"] = float32(params.NormEPS)
+		m.KV["gemma.attention.key_length"] = uint32(params.HeadDimension)
+		m.KV["gemma.attention.value_length"] = uint32(params.HeadDimension)
+	}
+
 	m.KV["general.file_type"] = uint32(1)
 	m.KV["tokenizer.ggml.model"] = "llama"
 
@@ -306,7 +350,15 @@ func WriteGGUF(name string, tensors []llm.Tensor, params *Params, vocab *Vocab) 
 
 	m.KV["tokenizer.ggml.bos_token_id"] = uint32(params.BoSTokenID)
 	m.KV["tokenizer.ggml.eos_token_id"] = uint32(params.EoSTokenID)
-	m.KV["tokenizer.ggml.unknown_token_id"] = uint32(0)
+
+	switch arch {
+	case "llama":
+		m.KV["tokenizer.ggml.unknown_token_id"] = uint32(0)
+	case "gemma":
+		m.KV["tokenizer.ggml.padding_token_id"] = uint32(params.PaddingTokenID)
+		m.KV["tokenizer.ggml.unknown_token_id"] = uint32(3)
+	}
+
 	m.KV["tokenizer.ggml.add_bos_token"] = true
 	m.KV["tokenizer.ggml.add_eos_token"] = false
 

@@ -336,6 +336,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			if ggufName != "" {
 				pathName = ggufName
+				slog.Debug(fmt.Sprintf("new image layer path: %s", pathName))
 				defer os.RemoveAll(ggufName)
 			}
 
@@ -426,6 +427,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 				bin.Seek(offset, io.SeekStart)
 				ggml, err := llm.DecodeGGML(bin)
 				if err != nil {
+					slog.Error(fmt.Sprintf("error decoding gguf file: %q", err))
 					switch {
 					case errors.Is(err, io.EOF):
 						break CREATE
@@ -662,6 +664,7 @@ func convertSafetensors(name, fn string) (string, error) {
 
 	SupportedArchs := []string{
 		"MistralForCausalLM",
+		"GemmaForCausalLM",
 	}
 
 	for _, arch := range params.Architectures {

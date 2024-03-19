@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/d4l3k/go-bfloat16"
 	"github.com/pdevine/tensor"
@@ -168,6 +169,29 @@ func (t Tensor) Size() uint64 {
 	return t.Parameters() * t.TypeSize() / t.BlockSize()
 }
 
+func (t Tensor) AddOnes(data []float32) ([]float32, error) {
+	n := tensor.New(tensor.WithShape(int(t.Shape[0])), tensor.WithBacking(data))
+	ones := tensor.Ones(tensor.Float32, int(t.Shape[0]))
+
+	var err error
+	n, err = n.Add(ones)
+	if err != nil {
+		return []float32{}, err
+	}
+
+	newN, err := native.SelectF32(n, 0)
+	if err != nil {
+		return []float32{}, err
+	}
+
+	var fullTensor []float32
+	for _, v := range newN {
+		fullTensor = append(fullTensor, v...)
+	}
+
+	return fullTensor, nil
+}
+
 func (t Tensor) Repack(data []uint16, heads int) ([]uint16, error) {
 	n := tensor.New(tensor.WithShape(int(t.Shape[0]), int(t.Shape[1])), tensor.WithBacking(data))
 	origShape := n.Shape().Clone()
@@ -270,6 +294,15 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 		"llama.attention.head_count_kv",
 		"llama.attention.layer_norm_rms_epsilon",
 		"llama.rope.freq_base",
+		"gemma.context_length",
+		"gemma.embedding_length",
+		"gemma.block_count",
+		"gemma.feed_forward_length",
+		"gemma.attention.head_count",
+		"gemma.attention.head_count_kv",
+		"gemma.attention.layer_norm_rms_epsilon",
+		"gemma.attention.key_length",
+		"gemma.attention.value_length",
 		"general.file_type",
 		"tokenizer.ggml.model",
 		"tokenizer.ggml.tokens",
@@ -278,6 +311,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 		"tokenizer.ggml.bos_token_id",
 		"tokenizer.ggml.eos_token_id",
 		"tokenizer.ggml.unknown_token_id",
+		"tokenizer.ggml.padding_token_id",
 		"tokenizer.ggml.add_bos_token",
 		"tokenizer.ggml.add_eos_token",
 		"tokenizer.chat_template",
@@ -476,62 +510,99 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 
 		dataFile.Seek(int64(t.OffsetPadding+t.FileOffsets[0]), 0)
 
+		arch := llm.KV["general.architecture"].(string)
+
 		pattern := `^blk\.[0-9]+\.attn_(?P<layer>q|k)\.weight$`
 		re, err := regexp.Compile(pattern)
 		if err != nil {
 			return err
 		}
 
-		matches := re.FindAllStringSubmatch(t.Name, -1)
-		if len(matches) > 0 {
-			layerSize := t.FileOffsets[1] - t.FileOffsets[0]
+		switch arch {
+		case "mistral":
+			matches := re.FindAllStringSubmatch(t.Name, -1)
+			if len(matches) > 0 {
+				layerSize := t.FileOffsets[1] - t.FileOffsets[0]
 
-			var err error
-			tData := make([]uint16, layerSize/2)
-			if err = binary.Read(dataFile, llm.ByteOrder, tData); err != nil {
-				return err
-			}
-
-			layerType := matches[0][re.SubexpIndex("layer")]
-			var heads uint32
-			switch layerType {
-			case "q":
-				heads = llm.KV["llama.attention.head_count"].(uint32)
-			case "k":
-				heads = llm.KV["llama.attention.head_count_kv"].(uint32)
-				if heads == 0 {
-					heads = llm.KV["llama.attention.head_count"].(uint32)
+				var err error
+				tData := make([]uint16, layerSize/2)
+				if err = binary.Read(dataFile, llm.ByteOrder, tData); err != nil {
+					return err
 				}
+
+				layerType := matches[0][re.SubexpIndex("layer")]
+				var heads uint32
+				switch layerType {
+				case "q":
+					heads = llm.KV[arch+".attention.head_count"].(uint32)
+				case "k":
+					heads = llm.KV[arch+".attention.head_count_kv"].(uint32)
+					if heads == 0 {
+						heads = llm.KV[arch+".attention.head_count"].(uint32)
+					}
+				}
+
+				tData, err = t.Repack(tData, int(heads))
+				if err != nil {
+					return err
+				}
+
+				var buf []byte
+				for _, n := range tData {
+					buf = binary.LittleEndian.AppendUint16(buf, n)
+				}
+
+				tempBuf := make([]uint16, len(tData))
+				tDataF32 := bfloat16.DecodeFloat32(buf)
+				for cnt, v := range tDataF32 {
+					tDataF16 := float16.Fromfloat32(v)
+					tempBuf[cnt] = uint16(tDataF16)
+				}
+
+				if err = binary.Write(f, llm.ByteOrder, tempBuf); err != nil {
+					return err
+				}
+
+				if err := llm.writePadding(f, 32); err != nil {
+					return err
+				}
+				continue
 			}
 
-			tData, err = t.Repack(tData, int(heads))
-			if err != nil {
-				return err
-			}
+		case "gemma":
+			if strings.HasSuffix(t.Name, "norm.weight") {
+				slog.Debug(fmt.Sprintf("converting '%s'", t.Name))
 
-			var buf []byte
-			for _, n := range tData {
-				buf = binary.LittleEndian.AppendUint16(buf, n)
-			}
+				data := make([]byte, t.FileOffsets[1]-t.FileOffsets[0])
 
-			tempBuf := make([]uint16, len(tData))
-			tDataF32 := bfloat16.DecodeFloat32(buf)
-			for cnt, v := range tDataF32 {
-				tDataF16 := float16.Fromfloat32(v)
-				tempBuf[cnt] = uint16(tDataF16)
-			}
+				_, err = io.ReadFull(dataFile, data)
+				if err != nil {
+					return err
+				}
 
-			if err = binary.Write(f, llm.ByteOrder, tempBuf); err != nil {
-				return err
-			}
+				tDataF32 := bfloat16.DecodeFloat32(data)
 
-			if err := llm.writePadding(f, 32); err != nil {
-				return err
+				var err error
+				tDataF32, err = t.AddOnes(tDataF32)
+				if err != nil {
+					return err
+				}
+
+				if err := binary.Write(f, llm.ByteOrder, tDataF32); err != nil {
+					return err
+				}
+
+				continue
 			}
-			continue
 		}
 
 		remaining := t.FileOffsets[1] - t.FileOffsets[0]
+
+		offset, err := f.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+		slog.Debug(fmt.Sprintf("Writing layer %s - offset %d", t.Name, offset))
 
 		bufSize := uint64(10240)
 		var finished bool
@@ -588,6 +659,7 @@ func (llm *GGUFModel) writePadding(f *os.File, align int64) error {
 	}
 	padding := ((offset + align - 1) / align) * align
 	buf := make([]byte, padding-offset)
+	slog.Debug(fmt.Sprintf("padding = %d offset = %d buf = %d", padding, offset, padding-offset))
 	if err := binary.Write(f, llm.ByteOrder, buf); err != nil {
 		return err
 	}
@@ -639,6 +711,7 @@ func (llm *GGUFModel) Decode(rs io.ReadSeeker) error {
 	for i := 0; uint64(i) < llm.NumKV(); i++ {
 		k, err := llm.readString(rs)
 		if err != nil {
+			slog.Error(fmt.Sprintf("couldn't readString: %q", err))
 			return err
 		}
 
@@ -671,6 +744,7 @@ func (llm *GGUFModel) Decode(rs io.ReadSeeker) error {
 		case GGUFTypeString:
 			s, err := llm.readString(rs)
 			if err != nil {
+				slog.Error(fmt.Sprintf("couldn't readString kv: %q", err))
 				return err
 			}
 
@@ -678,11 +752,13 @@ func (llm *GGUFModel) Decode(rs io.ReadSeeker) error {
 		case GGUFTypeArray:
 			a, err := llm.readArray(rs)
 			if err != nil {
+				slog.Error(fmt.Sprintf("couldn't readArray: %q", err))
 				return err
 			}
 
 			v = a
 		default:
+			slog.Error(fmt.Sprintf("invalid type %d", vtype))
 			return fmt.Errorf("invalid type: %d", vtype)
 		}
 
@@ -693,6 +769,7 @@ func (llm *GGUFModel) Decode(rs io.ReadSeeker) error {
 	for i := 0; uint64(i) < llm.NumTensor(); i++ {
 		name, err := llm.readString(rs)
 		if err != nil {
+			slog.Error(fmt.Sprintf("couldn't readString tensor", err))
 			return err
 		}
 
