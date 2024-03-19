@@ -321,7 +321,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			pathName := realpath(modelFileDir, c.Args)
 
-			ggufName, err := convertSafetensors(name, pathName)
+			ggufName, err := convertSafetensors(name, pathName, fn)
 			if err != nil {
 				var pathErr *fs.PathError
 				switch {
@@ -623,8 +623,8 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	return nil
 }
 
-func convertSafetensors(name, fn string) (string, error) {
-	r, err := zip.OpenReader(fn)
+func convertSafetensors(name, path string, fn func(resp api.ProgressResponse)) (string, error) {
+	r, err := zip.OpenReader(path)
 	if err != nil {
 		return "", err
 	}
@@ -636,6 +636,7 @@ func convertSafetensors(name, fn string) (string, error) {
 	}
 	defer os.RemoveAll(tempDir)
 
+	fn(api.ProgressResponse{Status: "unpacking model metadata"})
 	for _, f := range r.File {
 		fpath := filepath.Join(tempDir, f.Name)
 		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
@@ -673,6 +674,7 @@ func convertSafetensors(name, fn string) (string, error) {
 		}
 	}
 
+	fn(api.ProgressResponse{Status: "processing safetensors"})
 	t, err := convert.GetSafeTensors(tempDir)
 	if err != nil {
 		return "", err
@@ -683,12 +685,13 @@ func convertSafetensors(name, fn string) (string, error) {
 		return "", err
 	}
 
-	fn, err = convert.WriteGGUF(name, t, params, vocab)
+	fn(api.ProgressResponse{Status: "converting model"})
+	path, err = convert.WriteGGUF(name, t, params, vocab)
 	if err != nil {
 		return "", err
 	}
 
-	return fn, nil
+	return path, nil
 }
 
 func CopyModel(src, dest string) error {
