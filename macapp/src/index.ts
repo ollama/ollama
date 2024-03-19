@@ -256,7 +256,7 @@ async function init() {
 
   server()
 
-  if (store.get('first-time-run1') && isInstalled) {
+  if (store.get('first-time-run') && isInstalled) {
     if (process.platform === 'darwin') {
       app.dock.hide()
     }
