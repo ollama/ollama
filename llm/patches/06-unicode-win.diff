@@ -1,0 +1,48 @@
+diff --git a/ggml.c b/ggml.c
+index 92b17ee6..771830f8 100644
+--- a/ggml.c
++++ b/ggml.c
+@@ -21,6 +21,7 @@
+ #include <stdio.h>
+ #include <float.h>
+ #include <limits.h>
++#include <locale.h>
+ #include <stdarg.h>
+ #include <signal.h>
+ #if defined(__gnu_linux__)
+@@ -42,7 +43,7 @@
+ #endif
+ 
+ #if defined(_WIN32)
+-
++#include <wchar.h>
+ #include <windows.h>
+ 
+ typedef volatile LONG atomic_int;
+@@ -20283,7 +20284,25 @@ struct gguf_context * gguf_init_empty(void) {
+ }
+ 
+ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_params params) {
+-    FILE * file = fopen(fname, "rb");
++#ifdef _WIN32
++    char* oldLocale = setlocale(LC_ALL, "");
++    size_t size = mbstowcs(NULL, fname, 0) + 1;
++    wchar_t *wfname = malloc(size * sizeof(wchar_t));
++    if (!wfname) {
++        setlocale(LC_ALL, oldLocale);
++        return NULL;
++    }
++    if (mbstowcs(wfname, fname, size) == (size_t)-1) {
++        free(wfname);
++        setlocale(LC_ALL, oldLocale);
++        return NULL;
++    }
++    FILE * file = _wfopen(wfname, L"rb");
++    free(wfname);
++    setlocale(LC_ALL, oldLocale);
++#else
++     FILE * file = fopen(fname, "rb");
++#endif  
+     if (!file) {
+         return NULL;
+     }
