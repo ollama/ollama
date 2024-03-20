@@ -5,118 +5,39 @@ Ollama supports Nvidia GPUs with compute capability 5.0+.
 Check your compute compatibility to see if your card is supported:
 [https://developer.nvidia.com/cuda-gpus](https://developer.nvidia.com/cuda-gpus)
 
-| GPU Name                | Compute Capability |
-|-------------------------|--------------------|
-| GeForce RTX 4090        | 8.9                |
-| GeForce RTX 4080        | 8.9                |
-| GeForce RTX 4070 Ti     | 8.9                |
-| GeForce RTX 4060 Ti     | 8.9                |
-| GeForce RTX 3090 Ti     | 8.6                |
-| GeForce RTX 3090        | 8.6                |
-| GeForce RTX 3080 Ti     | 8.6                |
-| GeForce RTX 3080        | 8.6                |
-| GeForce RTX 3070 Ti     | 8.6                |
-| GeForce RTX 3070        | 8.6                |
-| GeForce RTX 3060 Ti     | 8.6                |
-| GeForce RTX 3060        | 8.6                |
-| GeForce GTX 1650 Ti     | 7.5                |
-| NVIDIA TITAN RTX        | 7.5                |
-| GeForce RTX 2080 Ti     | 7.5                |
-| GeForce RTX 2080        | 7.5                |
-| GeForce RTX 2070        | 7.5                |
-| GeForce RTX 2060        | 7.5                |
-| NVIDIA TITAN V          | 7.0                |
-| NVIDIA TITAN Xp         | 6.1                |
-| NVIDIA TITAN X          | 6.1                |
-| GeForce GTX 1080 Ti     | 6.1                |
-| GeForce GTX 1080        | 6.1                |
-| GeForce GTX 1070 Ti     | 6.1                |
-| GeForce GTX 1070        | 6.1                |
-| GeForce GTX 1060        | 6.1                |
-| GeForce GTX 1050        | 6.1                |
-| GeForce GTX TITAN X     | 5.2                |
-| GeForce GTX 980 Ti      | 5.2                |
-| GeForce GTX 980         | 5.2                |
-| GeForce GTX 970         | 5.2                |
-| GeForce GTX 960         | 5.2                |
-| GeForce GTX 950         | 5.2                |
-| GeForce GTX 750 Ti      | 5.0                |
-| GeForce GTX 750         | 5.0                |
-| NVIDIA NVS 810          | 5.0                |
-| NVIDIA H100             | 9.0                |
-| NVIDIA L4               | 8.9                |
-| NVIDIA L40              | 8.9                |
-| RTX 6000                | 8.9                |
-| NVIDIA A100             | 8.0                |
-| NVIDIA A40              | 8.6                |
-| NVIDIA A30              | 8.0                |
-| NVIDIA A10              | 8.6                |
-| NVIDIA A16              | 8.6                |
-| NVIDIA A2               | 8.6                |
-| RTX A6000               | 8.6                |
-| RTX A5000               | 8.6                |
-| RTX A4000               | 8.6                |
-| RTX A3000               | 8.6                |
-| RTX A2000               | 8.6                |
-| NVIDIA T4               | 7.5                |
-| RTX 5000                | 7.5                |
-| RTX 4000                | 7.5                |
-| RTX 3000                | 7.5                |
-| T2000                   | 7.5                |
-| T1200                   | 7.5                |
-| T1000                   | 7.5                |
-| T600                    | 7.5                |
-| T500                    | 7.5                |
-| Quadro RTX 8000         | 7.5                |
-| Quadro RTX 6000         | 7.5                |
-| Quadro RTX 5000         | 7.5                |
-| Quadro RTX 4000         | 7.5                |
-| NVIDIA V100             | 7.0                |
-| Quadro GV100            | 7.0                |
-| Tesla P100              | 6.0                |
-| Quadro GP100            | 6.0                |
-| Tesla P40               | 6.1                |
-| Tesla P4                | 6.1                |
-| Quadro P6000            | 6.1                |
-| Quadro P5200            | 6.1                |
-| Quadro P4200            | 6.1                |
-| Quadro P3200            | 6.1                |
-| Quadro P5000            | 6.1                |
-| Quadro P4000            | 6.1                |
-| Quadro P3000            | 6.1                |
-| Quadro P2200            | 6.1                |
-| Quadro P2000            | 6.1                |
-| Quadro P1000            | 6.1                |
-| Quadro P620             | 6.1                |
-| Quadro P600             | 6.1                |
-| Quadro P500             | 6.1                |
-| Quadro P520             | 6.1                |
-| Tesla M60               | 5.2                |
-| Tesla M40               | 5.2                |
-| Quadro M6000 24GB       | 5.2                |
-| Quadro M6000            | 5.2                |
-| Quadro M5000            | 5.2                |
-| Quadro M5500M           | 5.2                |
-| Quadro M4000            | 5.2                |
-| Quadro M2200            | 5.2                |
-| Quadro M2000            | 5.2                |
-| Quadro M620             | 5.2                |
-| Quadro K2200            | 5.0                |
-| Quadro K1200            | 5.0                |
-| Quadro K620             | 5.0                |
-| Quadro M1200            | 5.0                |
-| Quadro M520             | 5.0                |
-| Quadro M5000M           | 5.0                |
-| Quadro M4000M           | 5.0                |
-| Quadro M3000M           | 5.0                |
-| Quadro M2000M           | 5.0                |
-| Quadro M1000M           | 5.0                |
-| Quadro K620M            | 5.0                |
-| Quadro M600M            | 5.0                |
-| Quadro M500M            | 5.0                |
+| Compute Capability | Family              | Cards                                                                                                       |
+| ------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 9.0                | NVIDIA              | `H100`                                                                                                      |
+| 8.9                | GeForce RTX 40xx    | `RTX 4090` `RTX 4080` `RTX 4070 Ti` `RTX 4060 Ti`                                                           |
+|                    | NVIDIA Professional | `L4` `L40` `RTX 6000`                                                                                       |
+| 8.6                | GeForce RTX 30xx    | `RTX 3090 Ti` `RTX 3090` `RTX 3080 Ti` `RTX 3080` `RTX 3070 Ti` `RTX 3070` `RTX 3060 Ti` `RTX 3060`         |
+|                    | NVIDIA Professional | `A40` `RTX A6000` `RTX A5000` `RTX A4000` `RTX A3000` `RTX A2000` `A10` `A16` `A2`                          |
+| 8.0                | NVIDIA              | `A100` `A30`                                                                                                |
+| 7.5                | GeForce GTX/RTX     | `GTX 1650 Ti` `TITAN RTX` `RTX 2080 Ti` `RTX 2080` `RTX 2070` `RTX 2060`                                    |
+|                    | NVIDIA Professional | `T4` `RTX 5000` `RTX 4000` `RTX 3000` `T2000` `T1200` `T1000` `T600` `T500`                                 |
+|                    | Quadro              | `RTX 8000` `RTX 6000` `RTX 5000` `RTX 4000`                                                                 |
+| 7.0                | NVIDIA              | `TITAN V` `V100` `Quadro GV100`                                                                             |
+| 6.1                | NVIDIA TITAN        | `TITAN Xp` `TITAN X`                                                                                        |
+|                    | GeForce GTX         | `GTX 1080 Ti` `GTX 1080` `GTX 1070 Ti` `GTX 1070` `GTX 1060` `GTX 1050`                                     |
+|                    | Quadro              | `P6000` `P5200` `P4200` `P3200` `P5000` `P4000` `P3000` `P2200` `P2000` `P1000` `P620` `P600` `P500` `P520` |
+|                    | Tesla               | `P40` `P4`                                                                                                  |
+| 6.0                | NVIDIA              | `Tesla P100` `Quadro GP100`                                                                                 |
+| 5.2                | GeForce GTX         | `GTX TITAN X` `GTX 980 Ti` `GTX 980` `GTX 970` `GTX 960` `GTX 950`                                          |
+|                    | Quadro              | `M6000 24GB` `M6000` `M5000` `M5500M` `M4000` `M2200` `M2000` `M620`                                        |
+|                    | Tesla               | `M60` `M40`                                                                                                 |
+| 5.0                | GeForce GTX         | `GTX 750 Ti` `GTX 750` `NVS 810`                                                                            |
+|                    | Quadro              | `K2200` `K1200` `K620` `M1200` `M520` `M5000M` `M4000M` `M3000M` `M2000M` `M1000M` `K620M` `M600M` `M500M`  |
+
 
 ## AMD Radeon
+Ollama supports the following AMD GPUs:
+| Family         | Cards and accelerators                                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64` `Vega 56`    |
+| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `VII` `SSG` |
+| AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60` `MI50`                                                               |
 
+### Overrides
 Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In
 some cases you can force the system to try to use a similar LLVM target that is
 close.  For example The Radeon RX 5400 is `gfx1034` (also known as 10.3.4)
