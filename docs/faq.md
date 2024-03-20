@@ -118,6 +118,14 @@ Ollama can be accessed using a range of tools for tunneling tools. For example w
 ngrok http 11434 --host-header="localhost:11434"
 ```
 
+## How can I use Ollama with Cloudflare Tunnel?
+
+To use Ollama with Cloudflare Tunnel, use the `--url` and `--http-host-header` flags:
+
+```
+cloudflared tunnel --url http://localhost:11434 --http-host-header="localhost:11434"
+```
+
 ## How can I allow additional web origins to access Ollama?
 
 Ollama allows cross-origin requests from `127.0.0.1` and `0.0.0.0` by default. Additional origins can be configured with `OLLAMA_ORIGINS`.
