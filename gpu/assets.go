@@ -1,13 +1,16 @@
 package gpu
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 var (
@@ -19,15 +22,57 @@ func PayloadsDir() (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	if payloadsDir == "" {
+		cleanupTmpDirs()
 		tmpDir, err := os.MkdirTemp("", "ollama")
 		if err != nil {
 			return "", fmt.Errorf("failed to generate tmp dir: %w", err)
 		}
+
+		// Track our pid so we can clean up orphaned tmpdirs
+		pidFilePath := filepath.Join(tmpDir, "ollama.pid")
+		pidFile, err := os.OpenFile(pidFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+		if err != nil {
+			return "", err
+		}
+		if _, err := pidFile.Write([]byte(fmt.Sprint(os.Getpid()))); err != nil {
+			return "", err
+		}
+
 		// We create a distinct subdirectory for payloads within the tmpdir
 		// This will typically look like /tmp/ollama3208993108/runners on linux
 		payloadsDir = filepath.Join(tmpDir, "runners")
 	}
 	return payloadsDir, nil
+}
+
+// Best effort to clean up prior tmpdirs
+func cleanupTmpDirs() {
+	dirs, err := filepath.Glob(filepath.Join(os.TempDir(), "ollama*"))
+	if err != nil {
+		return
+	}
+	for _, d := range dirs {
+		info, err := os.Stat(d)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(d, "ollama.pid"))
+		if err == nil {
+			pid, err := strconv.Atoi(string(raw))
+			if err == nil {
+				if proc, err := os.FindProcess(int(pid)); err == nil && !errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+					// Another running ollama, ignore this tmpdir
+					continue
+				}
+			}
+		} else {
+			slog.Debug("failed to open ollama.pid", "path", d, "error", err)
+		}
+		err = os.RemoveAll(d)
+		if err != nil {
+			slog.Debug(fmt.Sprintf("unable to cleanup stale tmpdir %s: %s", d, err))
+		}
+	}
 }
 
 func Cleanup() {
