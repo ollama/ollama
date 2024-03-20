@@ -519,7 +519,7 @@ func (llm *GGUFModel) Encode(f *os.File) error {
 		}
 
 		switch arch {
-		case "mistral":
+		case "llama":
 			matches := re.FindAllStringSubmatch(t.Name, -1)
 			if len(matches) > 0 {
 				layerSize := t.FileOffsets[1] - t.FileOffsets[0]
