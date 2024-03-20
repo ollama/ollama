@@ -1,15 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/exp/slices"
@@ -660,4 +663,77 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	return buf, nil
+}
+
+func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.StopAndClear()
+
+	spinner := progress.NewSpinner("")
+	p.Add("", spinner)
+
+	cancelCtx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	var state *displayResponseState = &displayResponseState{}
+	var latest api.ChatResponse
+	var fullResponse strings.Builder
+	var role string
+
+	fn := func(response api.ChatResponse) error {
+		p.StopAndClear()
+
+		latest = response
+
+		role = response.Message.Role
+		content := response.Message.Content
+		fullResponse.WriteString(content)
+
+		displayResponse(content, opts.WordWrap, state)
+
+		return nil
+	}
+
+	req := &api.ChatRequest{
+		Model:    opts.Model,
+		Messages: opts.Messages,
+		Format:   opts.Format,
+		Options:  opts.Options,
+	}
+
+	if err := client.Chat(cancelCtx, req, fn); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if len(opts.Messages) > 0 {
+		fmt.Println()
+		fmt.Println()
+	}
+
+	verbose, err := cmd.Flags().GetBool("verbose")
+	if err != nil {
+		return nil, err
+	}
+
+	if verbose {
+		latest.Summary()
+	}
+
+	return &api.Message{Role: role, Content: fullResponse.String()}, nil
 }
