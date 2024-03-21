@@ -14,6 +14,10 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 Review the [Troubleshooting](./troubleshooting.md) docs for more about using logs.
 
+## Is my GPU compatible with Ollama?
+
+Please refer to the [GPU docs](./gpu.md).
+
 ## How can I specify the context window size?
 
 By default, Ollama uses a context window size of 2048 tokens.
