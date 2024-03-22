@@ -8,7 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -21,15 +22,16 @@ func PayloadsDir() (string, error) {
 	defer lock.Unlock()
 
 	if payloadsDir == "" {
-		defaultTempDir := os.TempDir()
+		defaultSystemTempDir := os.TempDir()
 		var tmpDir string
 		var err error
 
 		// Check if default system temp directory is mounted with 'noexec' option
 		// If it is, create ollama temp directory in pam_systemd mounter user directory
-		if isNoExec(defaultTempDir) {
+		if isNoExec(defaultSystemTempDir) {
 			uid := os.Getuid()
 			runUserDir := fmt.Sprintf("/run/user/%d", uid)
+			slog.Info(fmt.Sprintf("/tmp is mounted with 'noexec' flag; caching instead to  %s", runUserDir))
 			if _, err := os.Stat(runUserDir); os.IsNotExist(err) {
 				return "", fmt.Errorf("run user directory %s does not exist: %w", runUserDir, err)
 			}
@@ -48,12 +50,12 @@ func PayloadsDir() (string, error) {
 }
 
 func isNoExec(path string) bool {
-	var statfs syscall.Statfs_t
-	err := syscall.Statfs(path, &statfs)
+	var statfs unix.Statfs_t
+	err := unix.Statfs(path, &statfs)
 	if err != nil {
 		return false
 	}
-	return statfs.Flags&syscall.MS_NOEXEC != 0
+	return statfs.Flags&unix.MS_NOEXEC != 0
 }
 
 func Cleanup() {
