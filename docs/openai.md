@@ -78,7 +78,7 @@ curl http://localhost:11434/v1/chat/completions \
 - [x] JSON mode
 - [x] Reproducible outputs
 - [ ] Vision
-- [ ] Function calling
+- [x] Function calling
 - [ ] Logprobs
 
 #### Supported request fields
