@@ -2,3 +2,8 @@
 	path = llm/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp.git
 	shallow = true
+[submodule "neural_speed"]
+	path = llm/neural_speed
+        branch=main
+	url = https://github.com/intel/neural-speed.git
+	shallow = true

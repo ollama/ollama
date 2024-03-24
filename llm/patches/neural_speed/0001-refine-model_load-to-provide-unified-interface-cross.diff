@@ -1,0 +1,529 @@
+From 17994c09e15680226fb473207cf89625cba6ca06 Mon Sep 17 00:00:00 2001
+From: "Tian, Feng" <feng.tian@intel.com>
+Date: Tue, 2 Apr 2024 12:07:14 +0000
+Subject: [PATCH 1/2] refine model_load to provide unified interface cross
+ models
+
+---
+ neural_speed/convert/convert-hf-to-gguf.py    |  2 +
+ neural_speed/models/baichuan/baichuan.cpp     |  2 +-
+ .../models/baichuan/baichuan_utils.cpp        |  2 +-
+ neural_speed/models/bloom/bloom.cpp           |  2 +-
+ neural_speed/models/bloom/bloom_utils.cpp     |  2 +-
+ neural_speed/models/chatglm/chatglm.cpp       |  2 +-
+ neural_speed/models/chatglm/chatglm2.cpp      |  6 +--
+ .../models/chatglm/chatglm2_utils.cpp         |  2 +-
+ neural_speed/models/chatglm/chatglm_utils.cpp |  2 +-
+ neural_speed/models/falcon/falcon.cpp         |  2 +-
+ neural_speed/models/falcon/falcon_utils.cpp   |  2 +-
+ neural_speed/models/gemma/gemma.cpp           |  2 +-
+ neural_speed/models/gemma/gemma_utils.cpp     |  2 +-
+ neural_speed/models/gptj/gptj.cpp             |  2 +-
+ neural_speed/models/gptj/gptj_utils.cpp       |  2 +-
+ neural_speed/models/gptneox/gptneox.cpp       |  2 +-
+ neural_speed/models/gptneox/gptneox_utils.cpp |  2 +-
+ neural_speed/models/llama/llama.cpp           |  2 +-
+ neural_speed/models/llama/llama_utils.cpp     |  2 +-
+ .../models/model_utils/model_utils.cpp        | 52 ++++++++++++++++++-
+ neural_speed/models/mpt/mpt.cpp               |  2 +-
+ neural_speed/models/mpt/mpt_utils.cpp         |  2 +-
+ neural_speed/models/opt/opt.cpp               |  2 +-
+ neural_speed/models/opt/opt_utils.cpp         |  2 +-
+ neural_speed/models/phi/phi.cpp               |  2 +-
+ neural_speed/models/phi/phi_utils.cpp         |  2 +-
+ neural_speed/models/qwen/qwen.cpp             |  2 +-
+ neural_speed/models/qwen/qwen_utils.cpp       |  2 +-
+ neural_speed/models/stablelm/stablelm.cpp     |  4 +-
+ .../models/stablelm/stablelm_utils.cpp        |  2 +-
+ neural_speed/models/starcoder/starcoder.cpp   |  2 +-
+ .../models/starcoder/starcoder_utils.cpp      |  2 +-
+ 32 files changed, 86 insertions(+), 34 deletions(-)
+
+diff --git a/neural_speed/convert/convert-hf-to-gguf.py b/neural_speed/convert/convert-hf-to-gguf.py
+index b583ee9c..39ade9c2 100755
+--- a/neural_speed/convert/convert-hf-to-gguf.py
++++ b/neural_speed/convert/convert-hf-to-gguf.py
+@@ -375,6 +375,8 @@ class Model:
+             return gguf.MODEL_ARCH.QWEN2
+         if arch == "MixtralForCausalLM":
+             return gguf.MODEL_ARCH.LLAMA
++        if arch == "LlamaForCausalLM":
++            return gguf.MODEL_ARCH.LLAMA
+         if arch == "GPT2LMHeadModel":
+             return gguf.MODEL_ARCH.GPT2
+         if arch == "PhiForCausalLM":
+diff --git a/neural_speed/models/baichuan/baichuan.cpp b/neural_speed/models/baichuan/baichuan.cpp
+index 38bb2ae0..ae038df3 100644
+--- a/neural_speed/models/baichuan/baichuan.cpp
++++ b/neural_speed/models/baichuan/baichuan.cpp
+@@ -372,7 +372,7 @@ static bool baichuan_model_eval_internal(model_context* ctx, const model_input*
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int baichuan_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!baichuan_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/baichuan/baichuan_utils.cpp b/neural_speed/models/baichuan/baichuan_utils.cpp
+index 9318e258..91fa7684 100644
+--- a/neural_speed/models/baichuan/baichuan_utils.cpp
++++ b/neural_speed/models/baichuan/baichuan_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void baichuan_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<BAICHUAN> ms(new BAICHUAN());
+diff --git a/neural_speed/models/bloom/bloom.cpp b/neural_speed/models/bloom/bloom.cpp
+index fd2362b4..32d246f1 100644
+--- a/neural_speed/models/bloom/bloom.cpp
++++ b/neural_speed/models/bloom/bloom.cpp
+@@ -311,7 +311,7 @@ static bool bloom_model_eval_internal(model_context* ctx, const model_input* inp
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int bloom_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!bloom_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/bloom/bloom_utils.cpp b/neural_speed/models/bloom/bloom_utils.cpp
+index 4f57767b..6cf2a97e 100644
+--- a/neural_speed/models/bloom/bloom_utils.cpp
++++ b/neural_speed/models/bloom/bloom_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void bloom_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<BLOOM> ms(new BLOOM());
+diff --git a/neural_speed/models/chatglm/chatglm.cpp b/neural_speed/models/chatglm/chatglm.cpp
+index 79b7bf52..940cb7d6 100644
+--- a/neural_speed/models/chatglm/chatglm.cpp
++++ b/neural_speed/models/chatglm/chatglm.cpp
+@@ -342,7 +342,7 @@ static bool chatglm_model_eval_internal(model_context* ctx, const model_input* i
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int chatglm_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!chatglm_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/chatglm/chatglm2.cpp b/neural_speed/models/chatglm/chatglm2.cpp
+index ede87eb6..39af4c23 100644
+--- a/neural_speed/models/chatglm/chatglm2.cpp
++++ b/neural_speed/models/chatglm/chatglm2.cpp
+@@ -46,7 +46,7 @@
+ //   - n_threads: number of threads to use
+ //
+ 
+-static bool chatglm_model_eval_internal(model_context* ctx, const model_input* inputs, const int n_input,
++static bool chatglm2_model_eval_internal(model_context* ctx, const model_input* inputs, const int n_input,
+                                         const int n_threads) {
+   const int64_t t_start_us = ne_time_us();
+   model_context& lctx = *ctx;
+@@ -396,8 +396,8 @@ static bool chatglm_model_eval_internal(model_context* ctx, const model_input* i
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+-  if (!chatglm_model_eval_internal(ctx, inputs, n_input, n_threads)) {
++int chatglm2_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++  if (!chatglm2_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+   }
+diff --git a/neural_speed/models/chatglm/chatglm2_utils.cpp b/neural_speed/models/chatglm/chatglm2_utils.cpp
+index b2202b06..c568720f 100644
+--- a/neural_speed/models/chatglm/chatglm2_utils.cpp
++++ b/neural_speed/models/chatglm/chatglm2_utils.cpp
+@@ -40,7 +40,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void chatglm2_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   model_context& lctx = *ctx;
+diff --git a/neural_speed/models/chatglm/chatglm_utils.cpp b/neural_speed/models/chatglm/chatglm_utils.cpp
+index 665498ce..2119bd68 100644
+--- a/neural_speed/models/chatglm/chatglm_utils.cpp
++++ b/neural_speed/models/chatglm/chatglm_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void chatglm_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<CHATGLM> ms(new CHATGLM());
+diff --git a/neural_speed/models/falcon/falcon.cpp b/neural_speed/models/falcon/falcon.cpp
+index de9304fb..b377a840 100644
+--- a/neural_speed/models/falcon/falcon.cpp
++++ b/neural_speed/models/falcon/falcon.cpp
+@@ -373,7 +373,7 @@ static bool falcon_model_eval_internal(model_context* ctx, const model_input* in
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int falcon_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!falcon_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/falcon/falcon_utils.cpp b/neural_speed/models/falcon/falcon_utils.cpp
+index ea27d794..941c00c1 100644
+--- a/neural_speed/models/falcon/falcon_utils.cpp
++++ b/neural_speed/models/falcon/falcon_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void falcon_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<FALCON> ms(new FALCON());
+diff --git a/neural_speed/models/gemma/gemma.cpp b/neural_speed/models/gemma/gemma.cpp
+index 1bd069e1..d53c77d3 100644
+--- a/neural_speed/models/gemma/gemma.cpp
++++ b/neural_speed/models/gemma/gemma.cpp
+@@ -399,7 +399,7 @@ static bool gemma_model_eval_internal(model_context* ctx, const model_input* inp
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int gemma_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!gemma_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/gemma/gemma_utils.cpp b/neural_speed/models/gemma/gemma_utils.cpp
+index 6df76608..a9e9e60f 100644
+--- a/neural_speed/models/gemma/gemma_utils.cpp
++++ b/neural_speed/models/gemma/gemma_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void gemma_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<Gemma> ms(new Gemma());
+diff --git a/neural_speed/models/gptj/gptj.cpp b/neural_speed/models/gptj/gptj.cpp
+index b8554124..3d6bdb1d 100644
+--- a/neural_speed/models/gptj/gptj.cpp
++++ b/neural_speed/models/gptj/gptj.cpp
+@@ -641,7 +641,7 @@ static bool gptj_model_eval_internal(model_context* ctx, const model_input* inpu
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int gptj_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!gptj_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/gptj/gptj_utils.cpp b/neural_speed/models/gptj/gptj_utils.cpp
+index 004a5b42..db017ae7 100644
+--- a/neural_speed/models/gptj/gptj_utils.cpp
++++ b/neural_speed/models/gptj/gptj_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void gptj_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<GPTJ> ms(new GPTJ());
+diff --git a/neural_speed/models/gptneox/gptneox.cpp b/neural_speed/models/gptneox/gptneox.cpp
+index fb566e7b..a232d043 100644
+--- a/neural_speed/models/gptneox/gptneox.cpp
++++ b/neural_speed/models/gptneox/gptneox.cpp
+@@ -419,7 +419,7 @@ static bool gptneox_model_eval_internal(model_context* ctx, const model_input* i
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int gptneox_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!gptneox_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/gptneox/gptneox_utils.cpp b/neural_speed/models/gptneox/gptneox_utils.cpp
+index 7a7f0c96..e830f160 100644
+--- a/neural_speed/models/gptneox/gptneox_utils.cpp
++++ b/neural_speed/models/gptneox/gptneox_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void gptneox_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<GPTNEOX> ms(new GPTNEOX());
+diff --git a/neural_speed/models/llama/llama.cpp b/neural_speed/models/llama/llama.cpp
+index 3caf93d0..8042d914 100644
+--- a/neural_speed/models/llama/llama.cpp
++++ b/neural_speed/models/llama/llama.cpp
+@@ -675,7 +675,7 @@ static bool llama_model_eval_internal(model_context* ctx, const model_input* inp
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int llama_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!llama_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/llama/llama_utils.cpp b/neural_speed/models/llama/llama_utils.cpp
+index 6685dacd..05e679cf 100644
+--- a/neural_speed/models/llama/llama_utils.cpp
++++ b/neural_speed/models/llama/llama_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void llama_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<Llama> ms(new Llama());
+diff --git a/neural_speed/models/model_utils/model_utils.cpp b/neural_speed/models/model_utils/model_utils.cpp
+index 824abd1c..9e2e1321 100644
+--- a/neural_speed/models/model_utils/model_utils.cpp
++++ b/neural_speed/models/model_utils/model_utils.cpp
+@@ -224,8 +224,58 @@ static bool model_load(const std::string& fname, model_archs arch, model_context
+   try {
+     lctx.t_start_us = ne_time_us();
+     lctx.model.arch = arch;
+-    model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++    switch (arch): {
++      case MODEL_LLAMA:
++        llama_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
+                         progress_callback_user_data);
++      case MODEL_GPTJ:
++        gptj_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_MPT:
++        mpt_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_GPTNEOX:
++        gptneox_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_STARCODER:
++        starcoder_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_FALCON:
++        falcon_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_OPT:
++        opt_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_BLOOM:
++        bloom_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_BAICHUAN:
++        baichuan_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_CHATGLM:
++        chatglm_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_CHATGLM2:
++        chatglm2_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_CHATGLM3:
++        chatglm2_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_QWEN:
++        qwen_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_PHI:
++        phi2_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_GEMMA:
++        gemma_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      case MODEL_STABLELM:
++        stablelm_model_load_internal(fname, arch, &lctx, n_gpu_layers, use_mmap, use_mlock, vocab_only, progress_callback,
++                        progress_callback_user_data);
++      default: 
++          assert(false);
++    }
+     lctx.t_load_us = ne_time_us() - lctx.t_start_us;
+     return true;
+   } catch (const std::string& err) {
+diff --git a/neural_speed/models/mpt/mpt.cpp b/neural_speed/models/mpt/mpt.cpp
+index 2731ce33..610c46f3 100644
+--- a/neural_speed/models/mpt/mpt.cpp
++++ b/neural_speed/models/mpt/mpt.cpp
+@@ -356,7 +356,7 @@ static bool mpt_model_eval_internal(model_context* ctx, const model_input* input
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int mpt_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!mpt_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/mpt/mpt_utils.cpp b/neural_speed/models/mpt/mpt_utils.cpp
+index ba6e3fbe..d11d25b6 100644
+--- a/neural_speed/models/mpt/mpt_utils.cpp
++++ b/neural_speed/models/mpt/mpt_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void mpt_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<MPT> ms(new MPT());
+diff --git a/neural_speed/models/opt/opt.cpp b/neural_speed/models/opt/opt.cpp
+index 64d7980f..289698fb 100644
+--- a/neural_speed/models/opt/opt.cpp
++++ b/neural_speed/models/opt/opt.cpp
+@@ -373,7 +373,7 @@ static bool opt_model_eval_internal(model_context* ctx, const model_input* input
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int opt_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!opt_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/opt/opt_utils.cpp b/neural_speed/models/opt/opt_utils.cpp
+index 2641bcb5..227c88cf 100644
+--- a/neural_speed/models/opt/opt_utils.cpp
++++ b/neural_speed/models/opt/opt_utils.cpp
+@@ -38,7 +38,7 @@
+ #include "models/model_utils/quant_utils.h"
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void opt_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<OPT> ms(new OPT());
+diff --git a/neural_speed/models/phi/phi.cpp b/neural_speed/models/phi/phi.cpp
+index a177bc11..df485f1f 100644
+--- a/neural_speed/models/phi/phi.cpp
++++ b/neural_speed/models/phi/phi.cpp
+@@ -393,7 +393,7 @@ static bool phi2_model_eval_internal(model_context* ctx, const model_input* inpu
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int phi2_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!phi2_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/phi/phi_utils.cpp b/neural_speed/models/phi/phi_utils.cpp
+index 018318db..22089790 100644
+--- a/neural_speed/models/phi/phi_utils.cpp
++++ b/neural_speed/models/phi/phi_utils.cpp
+@@ -38,7 +38,7 @@
+ #include "models/model_utils/quant_utils.h"
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void phi2_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<phi> ms(new phi());
+diff --git a/neural_speed/models/qwen/qwen.cpp b/neural_speed/models/qwen/qwen.cpp
+index 44ba2267..bff36f2a 100644
+--- a/neural_speed/models/qwen/qwen.cpp
++++ b/neural_speed/models/qwen/qwen.cpp
+@@ -423,7 +423,7 @@ static bool qwen_model_eval_internal(model_context* ctx, const model_input* inpu
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int qwen_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!qwen_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/qwen/qwen_utils.cpp b/neural_speed/models/qwen/qwen_utils.cpp
+index 4dd25cec..ae3b1c37 100644
+--- a/neural_speed/models/qwen/qwen_utils.cpp
++++ b/neural_speed/models/qwen/qwen_utils.cpp
+@@ -239,7 +239,7 @@ class qwen_quant_layer : public quant_layer_base {
+ };
+ REGISTER_QUANT_LAYER_CLASS(qwen);
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void qwen_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<QWEN> ms(new QWEN());
+diff --git a/neural_speed/models/stablelm/stablelm.cpp b/neural_speed/models/stablelm/stablelm.cpp
+index 4b0dc993..80037391 100644
+--- a/neural_speed/models/stablelm/stablelm.cpp
++++ b/neural_speed/models/stablelm/stablelm.cpp
+@@ -411,7 +411,7 @@ static bool stablelm_model_eval_internal(model_context* ctx, const model_input*
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int stablelm_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!stablelm_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+@@ -425,4 +425,4 @@ int model_eval(struct model_context* ctx, const model_input* inputs, const int n
+   }
+ 
+   return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/neural_speed/models/stablelm/stablelm_utils.cpp b/neural_speed/models/stablelm/stablelm_utils.cpp
+index e1287799..a8b97c9d 100644
+--- a/neural_speed/models/stablelm/stablelm_utils.cpp
++++ b/neural_speed/models/stablelm/stablelm_utils.cpp
+@@ -38,7 +38,7 @@
+ #include "models/model_utils/quant_utils.h"
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void stablelm_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<stablelm> ms(new stablelm());
+diff --git a/neural_speed/models/starcoder/starcoder.cpp b/neural_speed/models/starcoder/starcoder.cpp
+index 113d762e..6c8d0930 100644
+--- a/neural_speed/models/starcoder/starcoder.cpp
++++ b/neural_speed/models/starcoder/starcoder.cpp
+@@ -444,7 +444,7 @@ static bool starcoder_model_eval_internal(model_context* ctx, const model_input*
+   return true;
+ }
+ 
+-int model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
++int starcoder_model_eval(struct model_context* ctx, const model_input* inputs, const int n_input, int n_threads) {
+   if (!starcoder_model_eval_internal(ctx, inputs, n_input, n_threads)) {
+     fprintf(stderr, "%s: failed to eval\n", __func__);
+     return 1;
+diff --git a/neural_speed/models/starcoder/starcoder_utils.cpp b/neural_speed/models/starcoder/starcoder_utils.cpp
+index 6d8d142f..e89a2827 100644
+--- a/neural_speed/models/starcoder/starcoder_utils.cpp
++++ b/neural_speed/models/starcoder/starcoder_utils.cpp
+@@ -39,7 +39,7 @@
+ #include "models/model_utils/util.h"
+ #include "models/models.h"
+ 
+-void model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
++void starcoder_model_load_internal(const std::string& fname, model_archs arch, model_context* ctx, int n_gpu_layers,
+                          bool use_mmap, bool use_mlock, bool vocab_only, model_progress_callback progress_callback,
+                          void* progress_callback_user_data) {
+   std::unique_ptr<STARCODER> ms(new STARCODER());
+-- 
+2.17.1
+

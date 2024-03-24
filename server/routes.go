@@ -1217,6 +1217,7 @@ func ChatHandler(c *gin.Context) {
 
 	var req api.ChatRequest
 	err := c.ShouldBindJSON(&req)
+        fmt.Printf("%+v\n", req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})

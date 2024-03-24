@@ -114,6 +114,16 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
             echo "Building AVX2 CPU"
             build
             compress_libs
+
+            #
+            # Use NeuralSpeed to boost up the performance on Intel Skylake and above
+            #
+            COMMON_CPU_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DNS_NATIVE=off"
+            CMAKE_DEFS="${COMMON_CPU_DEFS} -DNS_AVX=off -DNS_AVX2=on -DNS_AVX512=off -DNS_FMA=off -DNS_F16C=off"
+            BUILD_DIR="${NEURAL_SPEED_DIR}/build/linux/${ARCH}/cpu_avx2"
+            echo "Building AVX2 CPU"
+            build neural_speed
+            compress_libs
         fi
     fi
 else

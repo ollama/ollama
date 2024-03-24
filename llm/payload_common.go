@@ -90,7 +90,7 @@ func getDynLibs(gpuInfo gpu.GpuInfo) []string {
 	if len(dynLibs) == 0 {
 		dynLibs = []string{availableDynLibs["cpu"]}
 	}
-	slog.Debug(fmt.Sprintf("ordered list of LLM libraries to try %v", dynLibs))
+	slog.Info(fmt.Sprintf("ordered list of LLM libraries to try %v", dynLibs))
 	return dynLibs
 }
 
@@ -109,7 +109,7 @@ func nativeInit() error {
 		return err
 	}
 
-	slog.Info(fmt.Sprintf("Extracting dynamic libraries to %s ...", payloadsDir))
+	slog.Info(fmt.Sprintf("Extracting dynamic libraries to!!!!! %s ...", payloadsDir))
 
 	libs, err := extractDynamicLibs(payloadsDir, "llama.cpp/build/*/*/*/lib/*")
 	if err != nil {
@@ -123,6 +123,21 @@ func nativeInit() error {
 		// The last dir component is the variant name
 		variant := filepath.Base(filepath.Dir(lib))
 		availableDynLibs[variant] = lib
+	}
+
+        // Use neural_speed cpu implementation if exists
+	nslibs, err := extractDynamicLibs(payloadsDir, "neural_speed/build/*/*/*/lib/*")
+	if err != nil {
+		if errors.Is(err, payloadMissing) {
+			slog.Info(fmt.Sprintf("%s", payloadMissing))
+			return nil
+		}
+		return err
+	}
+	for _, lib := range nslibs {
+		// The last dir component is the variant name
+		variant := filepath.Base(filepath.Dir(lib))
+		availableDynLibs["ns" + variant] = lib
 	}
 
 	if err := verifyDriverAccess(); err != nil {
@@ -159,7 +174,7 @@ func extractDynamicLibs(payloadsDir, glob string) ([]string, error) {
 
 		file := file
 		g.Go(func() error {
-			// llama.cpp/build/$OS/$GOARCH/$VARIANT/lib/$LIBRARY
+			// llama.cpp/build/$OS/$ARCH/$VARIANT/lib/$LIBRARY
 			// Include the variant in the path to avoid conflicts between multiple server libs
 			targetDir := filepath.Join(payloadsDir, pathComps[pathComponentCount-3])
 			srcFile, err := libEmbed.Open(file)
