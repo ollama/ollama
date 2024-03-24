@@ -29,6 +29,21 @@ Check your compute compatibility to see if your card is supported:
 |                    | Quadro              | `K2200` `K1200` `K620` `M1200` `M520` `M5000M` `M4000M` `M3000M` `M2000M` `M1000M` `K620M` `M600M` `M500M`  |
 
 
+### GPU Selection
+
+If you have multiple NVIDIA GPUs in your system and want to limit Ollama to use
+a subset, you can set `CUDA_VISIBLE_DEVICES` to a comma separated list of GPUs.
+Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
+You can discover the UUID of your GPUs by running `nvidia-smi -L` If you want to
+ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
+
+### Laptop Suspend Resume
+
+On linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
+your NVIDIA GPU, and fallback to running on the CPU.  You can workaround this
+driver bug by reloading the NVIDIA UVM driver with `sudo rmmod nvidia_uvm &&
+sudo modprobe nvidia_uvm`
+
 ## AMD Radeon
 Ollama supports the following AMD GPUs:
 | Family         | Cards and accelerators                                                                                                               |
@@ -69,6 +84,19 @@ future release which should increase support for more GPUs.
 
 Reach out on [Discord](https://discord.gg/ollama) or file an
 [issue](https://github.com/ollama/ollama/issues) for additional help.
+
+### GPU Selection
+
+If you have multiple AMD GPUs in your system and want to limit Ollama to use a
+subset, you can set `HIP_VISIBLE_DEVICES` to a comma separated list of GPUs.
+You can see the list of devices with `rocminfo`.  If you want to ignore the GPUs
+and force CPU usage, use an invalid GPU ID (e.g., "-1")
+
+### Container Permission
+
+In some Linux distributions, SELinux can prevent containers from
+accessing the AMD GPU devices.  On the host system you can run 
+`sudo setsebool container_use_devices=1` to allow containers to use devices.
 
 ### Metal (Apple GPUs)
 Ollama supports GPU acceleration on Apple devices via the Metal API.
