@@ -279,6 +279,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Chatbox](https://github.com/Bin-Huang/Chatbox)
 - [WinForm Ollama Copilot](https://github.com/tgraupmann/WinForm_Ollama_Copilot)
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) with [Get Started Doc](https://docs.nextchat.dev/models/ollama)
+- [OllamaGUI](https://github.com/enoch1118/ollamaGUI)
 - [OpenAOE](https://github.com/InternLM/OpenAOE)
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
 - [LLM-X: Progressive Web App](https://github.com/mrdjohnson/llm-x)
