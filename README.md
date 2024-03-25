@@ -282,7 +282,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
 - [LLM-X: Progressive Web App](https://github.com/mrdjohnson/llm-x)
 
-
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
