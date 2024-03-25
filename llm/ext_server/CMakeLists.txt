@@ -1,15 +1,11 @@
-# Ollama specific CMakefile to include in llama.cpp/examples/server
 
 set(TARGET ext_server)
 option(LLAMA_SERVER_VERBOSE "Build verbose logging option for Server" ON)
 if (WIN32)
-    add_library(${TARGET} SHARED ../../../ext_server/ext_server.cpp ../../llama.cpp)
+    add_library(${TARGET} SHARED ext_server.cpp ../llama.cpp/llama.cpp)
 else()
-    add_library(${TARGET} STATIC ../../../ext_server/ext_server.cpp ../../llama.cpp)
+    add_library(${TARGET} STATIC ext_server.cpp ../llama.cpp/llama.cpp)
 endif()
-target_include_directories(${TARGET} PRIVATE ../../common)
-target_include_directories(${TARGET} PRIVATE ../..)
-target_include_directories(${TARGET} PRIVATE ../../..)
 target_compile_features(${TARGET} PRIVATE cxx_std_11)
 target_compile_definitions(${TARGET} PUBLIC LLAMA_SERVER_LIBRARY=1)
 target_link_libraries(${TARGET} PRIVATE ggml llava common )

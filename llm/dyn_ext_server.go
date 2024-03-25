@@ -64,9 +64,6 @@ func extServerResponseToErr(resp C.ext_server_resp_t) error {
 	return fmt.Errorf(C.GoString(resp.msg))
 }
 
-// Note: current implementation does not support concurrent instantiations
-var llm *dynExtServer
-
 func newDynExtServer(library, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	if !mutex.TryLock() {
 		slog.Info("concurrent llm servers not yet supported, waiting for prior server to complete")
@@ -83,7 +80,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 		mutex.Unlock()
 		return nil, fmt.Errorf("Unable to load dynamic library: %s", C.GoString(resp.msg))
 	}
-	llm = &dynExtServer{
+	llm := dynExtServer{
 		s:       srv,
 		options: opts,
 	}
@@ -149,7 +146,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 
 	slog.Info("Initializing llama server")
 	slog.Debug(fmt.Sprintf("server params: %+v", sparams))
-	initResp := newExtServerResp(128)
+	initResp := newExtServerResp(512)
 	defer freeExtServerResp(initResp)
 	C.dyn_llama_server_init(llm.s, &sparams, &initResp)
 	if initResp.id < 0 {
@@ -161,7 +158,7 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 
 	slog.Info("Starting llama main loop")
 	C.dyn_llama_server_start(llm.s)
-	return llm, nil
+	return &llm, nil
 }
 
 func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn func(PredictResult)) error {
@@ -198,6 +195,9 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 
 	if predict.Format == "json" {
 		request["grammar"] = jsonGrammar
+		if !strings.Contains(strings.ToLower(predict.Prompt), "json") {
+			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+		}
 	}
 
 	retryDelay := 100 * time.Microsecond
@@ -225,17 +225,14 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		}
 
 		retryNeeded := false
+		// keep track of the last token generated, this is used to abort if the model starts looping
+		var lastToken string
+		var tokenRepeat int
 	out:
 		for {
 			select {
 			case <-ctx.Done():
-				// This handles the request cancellation
-				C.dyn_llama_server_completion_cancel(llm.s, resp.id, &resp)
-				if resp.id < 0 {
-					return extServerResponseToErr(resp)
-				} else {
-					return nil
-				}
+				return cancelCompletion(llm, resp)
 			default:
 				var result C.ext_server_task_result_t
 				C.dyn_llama_server_completion_next_result(llm.s, resp.id, &result)
@@ -256,6 +253,20 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 					retryNeeded = true
 					// task will already be canceled
 					break out
+				}
+
+				switch {
+				case strings.TrimSpace(p.Content) == lastToken:
+					tokenRepeat++
+				default:
+					lastToken = strings.TrimSpace(p.Content)
+					tokenRepeat = 0
+				}
+
+				// 30 picked as an arbitrary max token repeat limit, modify as needed
+				if tokenRepeat > 30 {
+					slog.Debug("prediction aborted, token repeat limit reached")
+					return cancelCompletion(llm, resp)
 				}
 
 				if p.Content != "" {
@@ -283,6 +294,15 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 
 	// should never reach here ideally
 	return fmt.Errorf("max retries exceeded")
+}
+
+func cancelCompletion(llm *dynExtServer, resp C.ext_server_resp_t) error {
+	C.dyn_llama_server_completion_cancel(llm.s, resp.id, &resp)
+	if resp.id < 0 {
+		return extServerResponseToErr(resp)
+	} else {
+		return nil
+	}
 }
 
 func (llm *dynExtServer) Encode(ctx context.Context, prompt string) ([]int, error) {

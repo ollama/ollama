@@ -900,8 +900,7 @@ func NewCLI() *cobra.Command {
 	cobra.EnableCommandSorting = false
 
 	if runtime.GOOS == "windows" {
-		// Enable colorful ANSI escape code in Windows terminal (disabled by default)
-		console.ConsoleFromFile(os.Stdout) //nolint:errcheck
+		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
 	rootCmd := &cobra.Command{
@@ -970,9 +969,10 @@ func NewCLI() *cobra.Command {
 	serveCmd.SetUsageTemplate(serveCmd.UsageTemplate() + `
 Environment Variables:
 
-    OLLAMA_HOST       The host:port to bind to (default "127.0.0.1:11434")
-    OLLAMA_ORIGINS    A comma separated list of allowed origins.
-    OLLAMA_MODELS     The path to the models directory (default is "~/.ollama/models")
+    OLLAMA_HOST         The host:port to bind to (default "127.0.0.1:11434")
+    OLLAMA_ORIGINS      A comma separated list of allowed origins.
+    OLLAMA_MODELS       The path to the models directory (default is "~/.ollama/models")
+    OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default is "5m")
 `)
 
 	pullCmd := &cobra.Command{

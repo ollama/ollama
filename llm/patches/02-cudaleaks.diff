@@ -1,9 +1,9 @@
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index f255ad76..5b83acb1 100644
+index 8fe5e0b1..53bf39c1 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
-@@ -28,6 +28,10 @@
- #include <thread>
+@@ -31,6 +31,10 @@
+ #include <atomic>
  #include <signal.h>
  
 +#ifdef GGML_USE_CUBLAS
@@ -12,8 +12,8 @@ index f255ad76..5b83acb1 100644
 +
  using json = nlohmann::json;
  
- bool server_verbose = false;
-@@ -648,6 +652,10 @@ struct server_context {
+ struct server_params {
+@@ -363,6 +367,10 @@ struct llama_server_context
              llama_free_model(model);
              model = nullptr;
          }
@@ -23,8 +23,8 @@ index f255ad76..5b83acb1 100644
 +#endif
      }
  
-     bool load_model(const gpt_params & params_) {
-@@ -3339,6 +3347,7 @@ int main(int argc, char ** argv) {
+     bool load_model(const gpt_params &params_)
+@@ -3543,6 +3551,7 @@ int main(int argc, char **argv)
      sigemptyset (&sigint_action.sa_mask);
      sigint_action.sa_flags = 0;
      sigaction(SIGINT, &sigint_action, NULL);
@@ -33,7 +33,7 @@ index f255ad76..5b83acb1 100644
      auto console_ctrl_handler = +[](DWORD ctrl_type) -> BOOL {
          return (ctrl_type == CTRL_C_EVENT) ? (signal_handler(SIGINT), true) : false;
 diff --git a/ggml-cuda.cu b/ggml-cuda.cu
-index 72bcec8c..50a45e3d 100644
+index 72bcec8c..6c934e8c 100644
 --- a/ggml-cuda.cu
 +++ b/ggml-cuda.cu
 @@ -43,6 +43,7 @@
@@ -76,10 +76,11 @@ index 72bcec8c..50a45e3d 100644
          g_cublas_loaded = true;
      }
  }
-@@ -12490,3 +12491,22 @@ GGML_CALL int ggml_backend_cuda_reg_devices() {
+@@ -12490,3 +12491,23 @@ GGML_CALL int ggml_backend_cuda_reg_devices() {
      }
      return device_count;
  }
++
 +
 +extern "C" GGML_CALL void ggml_free_cublas(void);
 +GGML_CALL void ggml_free_cublas(void) {
@@ -99,6 +100,7 @@ index 72bcec8c..50a45e3d 100644
 +
 +    g_cublas_initialized = false;
 +}
+\ No newline at end of file
 diff --git a/ggml-cuda.h b/ggml-cuda.h
 index b1ebd61d..6dd58ddf 100644
 --- a/ggml-cuda.h

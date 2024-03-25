@@ -26,6 +26,9 @@ amdGPUs() {
         "gfx908:xnack-"
         "gfx90a:xnack+"
         "gfx90a:xnack-"
+        "gfx940"
+        "gfx941"
+        "gfx942"
         "gfx1010"
         "gfx1012"
         "gfx1030"
@@ -185,7 +188,7 @@ if [ -d "${ROCM_PATH}" ]; then
     init_vars
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/rocm${ROCM_VARIANT}"
-    EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,\$ORIGIN/../rocm/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
+    EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,\$ORIGIN/../../rocm/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
     build
 
     # Record the ROCM dependencies
@@ -194,6 +197,12 @@ if [ -d "${ROCM_PATH}" ]; then
     for dep in $(ldd "${BUILD_DIR}/lib/libext_server.so" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu -e libtinfo ); do
         echo "${dep}" >> "${BUILD_DIR}/lib/deps.txt"
     done
+    # bomb out if for some reason we didn't get a few deps
+    if [ $(cat "${BUILD_DIR}/lib/deps.txt" | wc -l ) -lt 8 ] ; then
+        cat "${BUILD_DIR}/lib/deps.txt"
+        echo "ERROR: deps file short"
+        exit 1
+    fi
     compress_libs
 fi
 

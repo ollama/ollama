@@ -1,5 +1,6 @@
 ARG GOLANG_VERSION=1.22.1
 ARG CMAKE_VERSION=3.22.1
+# this CUDA_VERSION corresponds with the one specified in docs/gpu.md
 ARG CUDA_VERSION=11.3.1
 ARG ROCM_VERSION=6.0
 
@@ -46,7 +47,7 @@ RUN mkdir /tmp/scratch && \
     done && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd /tmp/scratch/ && tar xf - ) && \
     mkdir -p /go/src/github.com/jmorganca/ollama/dist/deps/ && \
-    (cd /tmp/scratch/ && tar czvf /go/src/github.com/jmorganca/ollama/dist/deps/rocm-amd64-deps.tgz . )
+    (cd /tmp/scratch/ && tar czvf /go/src/github.com/jmorganca/ollama/dist/deps/ollama-linux-amd64-rocm.tgz . )
 
 
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
@@ -92,7 +93,7 @@ COPY --from=rocm-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/b
 COPY --from=rocm-build-amd64 /go/src/github.com/jmorganca/ollama/dist/deps/ ./dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
-RUN go build .
+RUN go build -trimpath .
 
 # Intermediate stage used for ./scripts/build_linux.sh
 FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
@@ -101,9 +102,10 @@ ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
 COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+RUN mkdir -p /go/src/github.com/jmorganca/ollama/dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
-RUN go build .
+RUN go build -trimpath .
 
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64

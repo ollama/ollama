@@ -40,19 +40,17 @@ func amdSetVisibleDevices(ids []int, skip map[int]interface{}) {
 	// TODO - does sort order matter?
 	devices := []string{}
 	for i := range ids {
-		slog.Debug(fmt.Sprintf("i=%d", i))
 		if _, skipped := skip[i]; skipped {
-			slog.Debug("skipped")
 			continue
 		}
 		devices = append(devices, strconv.Itoa(i))
 	}
-	slog.Debug(fmt.Sprintf("devices=%v", devices))
 
 	val := strings.Join(devices, ",")
 	err := os.Setenv("HIP_VISIBLE_DEVICES", val)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to set env: %s", err))
+	} else {
+		slog.Info("Setting HIP_VISIBLE_DEVICES=" + val)
 	}
-	slog.Debug("HIP_VISIBLE_DEVICES=" + val)
 }
