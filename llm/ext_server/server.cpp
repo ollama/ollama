@@ -343,6 +343,12 @@ struct llama_server_context
 
     ~llama_server_context()
     {
+        if (clp_ctx)
+        {
+            LOG_INFO("freeing clip model", {});
+            clip_free(clp_ctx);
+            clp_ctx = nullptr;
+        }
         if (ctx)
         {
             llama_free(ctx);
