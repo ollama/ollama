@@ -41,7 +41,7 @@ typedef struct ext_server_params {
   int32_t main_gpu;      // the GPU that is used for scratch and small tensors
   bool use_mlock;        // force system to keep model in RAM
   bool use_mmap;         // use mmap if possible
-  bool numa;             // attempt optimizations that help on some NUMA systems
+  int numa;              // attempt optimizations that help on some NUMA systems
   bool embedding;        // get only sentence embedding
   ext_server_lora_adapter_t *lora_adapters;
   char *mmproj;

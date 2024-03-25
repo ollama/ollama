@@ -17,7 +17,7 @@ Prerequisites:
 
 Here are the steps:
 
-- Install Ollama via standard Linux command (ignore the 404 error): `curl https://ollama.ai/install.sh | sh`
+- Install Ollama via standard Linux command (ignore the 404 error): `curl https://ollama.com/install.sh | sh`
 - Stop the Ollama service: `sudo systemctl stop ollama`
 - Start Ollama serve in a tmux session called ollama_jetson and reference the CUDA libraries path: `tmux has-session -t ollama_jetson 2>/dev/null || tmux new-session -d -s ollama_jetson 
 'LD_LIBRARY_PATH=/usr/local/cuda/lib64 ollama serve'`

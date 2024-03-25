@@ -31,6 +31,11 @@ const (
 	fileTypeQ5_K_S
 	fileTypeQ5_K_M
 	fileTypeQ6_K
+	fileTypeIQ2_XXS
+	fileTypeIQ2_XS
+	fileTypeQ2_K_S
+	fileTypeQ3_K_XS
+	fileTypeIQ3_XXS
 )
 
 func fileType(fileType uint32) string {
@@ -69,6 +74,16 @@ func fileType(fileType uint32) string {
 		return "Q5_K_M"
 	case fileTypeQ6_K:
 		return "Q6_K"
+	case fileTypeIQ2_XXS:
+		return "IQ2_XXS"
+	case fileTypeIQ2_XS:
+		return "IQ2_XS"
+	case fileTypeQ2_K_S:
+		return "Q2_K_S"
+	case fileTypeQ3_K_XS:
+		return "Q3_K_XS"
+	case fileTypeIQ3_XXS:
+		return "IQ3_XXS"
 	default:
 		return "unknown"
 	}
@@ -88,33 +103,7 @@ type model interface {
 
 type container interface {
 	Name() string
-	Decode(*readSeekOffset) (model, error)
-}
-
-type containerLORA struct {
-	version uint32
-}
-
-func (c *containerLORA) Name() string {
-	return "ggla"
-}
-
-func (c *containerLORA) Decode(rso *readSeekOffset) (model, error) {
-	var version uint32
-	binary.Read(rso, binary.LittleEndian, &version)
-
-	switch version {
-	case 1:
-	default:
-		return nil, errors.New("invalid version")
-	}
-
-	c.version = version
-
-	// remaining file contents aren't decoded
-	rso.Seek(0, io.SeekEnd)
-
-	return nil, nil
+	Decode(io.ReadSeeker) (model, error)
 }
 
 const (
@@ -133,11 +122,9 @@ const (
 
 var ErrUnsupportedFormat = errors.New("unsupported model format")
 
-func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
-	ro := readSeekOffset{ReadSeeker: r}
-
+func DecodeGGML(rs io.ReadSeeker) (*GGML, error) {
 	var magic uint32
-	if err := binary.Read(&ro, binary.LittleEndian, &magic); err != nil {
+	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, err
 	}
 
@@ -146,16 +133,23 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	case FILE_MAGIC_GGML, FILE_MAGIC_GGMF, FILE_MAGIC_GGJT:
 		return nil, ErrUnsupportedFormat
 	case FILE_MAGIC_GGLA:
-		c = &containerLORA{}
+		c = &ContainerGGLA{}
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{bo: binary.LittleEndian}
+		c = &ContainerGGUF{ByteOrder: binary.LittleEndian}
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{bo: binary.BigEndian}
+		c = &ContainerGGUF{ByteOrder: binary.BigEndian}
 	default:
 		return nil, errors.New("invalid file magic")
 	}
 
-	model, err := c.Decode(&ro)
+	model, err := c.Decode(rs)
+	if errors.Is(err, io.EOF) {
+		// noop
+	} else if err != nil {
+		return nil, err
+	}
+
+	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return nil, err
 	}
@@ -164,27 +158,6 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	return &GGML{
 		container: c,
 		model:     model,
-		Size:      ro.offset,
+		Size:      offset,
 	}, nil
-}
-
-type readSeekOffset struct {
-	io.ReadSeeker
-	offset int64
-}
-
-func (rso *readSeekOffset) Seek(offset int64, whence int) (int64, error) {
-	offset, err := rso.ReadSeeker.Seek(offset, whence)
-	if err != nil {
-		return 0, err
-	}
-
-	rso.offset = offset
-	return offset, nil
-}
-
-func (rso *readSeekOffset) Read(p []byte) (int, error) {
-	n, err := rso.ReadSeeker.Read(p)
-	rso.offset += int64(n)
-	return n, err
 }

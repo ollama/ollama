@@ -10,8 +10,8 @@ mkdir -p dist
 for TARGETARCH in arm64 amd64; do
     rm -rf llm/llama.cpp/build
     GOOS=darwin GOARCH=$TARGETARCH go generate ./...
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -o dist/ollama-darwin-$TARGETARCH
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -cover -o dist/ollama-darwin-$TARGETARCH-cov
+    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
+    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
 done
 
 lipo -create -output dist/ollama dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
@@ -24,13 +24,13 @@ fi
 chmod +x dist/ollama
 
 # build and optionally sign the mac app
-npm install --prefix app
+npm install --prefix macapp
 if [ -n "$APPLE_IDENTITY" ]; then
-    npm run --prefix app make:sign
+    npm run --prefix macapp make:sign
 else 
-    npm run --prefix app make
+    npm run --prefix macapp make
 fi
-cp app/out/make/zip/darwin/universal/Ollama-darwin-universal-$VERSION.zip dist/Ollama-darwin.zip
+cp macapp/out/make/zip/darwin/universal/Ollama-darwin-universal-$VERSION.zip dist/Ollama-darwin.zip
 
 # sign the binary and rename it
 if [ -n "$APPLE_IDENTITY" ]; then
