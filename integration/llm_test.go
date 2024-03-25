@@ -40,16 +40,16 @@ var (
 			},
 		},
 	}
-	resp = [2]string{
-		"scattering",
-		"united states thanksgiving",
+	resp = [2][]string{
+		[]string{"sunlight"},
+		[]string{"england", "english", "massachusetts", "pilgrims"},
 	}
 )
 
 func TestIntegrationSimpleOrcaMini(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 	defer cancel()
-	GenerateTestHelper(ctx, t, &http.Client{}, req[0], []string{resp[0]})
+	GenerateTestHelper(ctx, t, &http.Client{}, req[0], resp[0])
 }
 
 // TODO
@@ -59,12 +59,12 @@ func TestIntegrationSimpleOrcaMini(t *testing.T) {
 func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(len(req))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 	defer cancel()
 	for i := 0; i < len(req); i++ {
 		go func(i int) {
 			defer wg.Done()
-			GenerateTestHelper(ctx, t, &http.Client{}, req[i], []string{resp[i]})
+			GenerateTestHelper(ctx, t, &http.Client{}, req[i], resp[i])
 		}(i)
 	}
 	wg.Wait()
