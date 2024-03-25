@@ -1,10 +1,6 @@
 # Ollama App
 
-## Linux
-
-TODO
-
-## MacOS
+## macOS
 
 TODO
 

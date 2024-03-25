@@ -27,7 +27,7 @@ function checkEnv() {
     } else {
         $script:NVIDIA_DIR=$env:NVIDIA_DIR
     }
-    
+
     $script:INNO_SETUP_DIR=(get-item "C:\Program Files*\Inno Setup*\")[0]
 
     $script:DEPS_DIR="${script:SRC_DIR}\dist\windows-amd64"
@@ -70,7 +70,7 @@ function buildOllama() {
     write-host "Building ollama CLI"
     if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
         & go generate ./...
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }
@@ -88,8 +88,8 @@ function buildOllama() {
 function buildApp() {
     write-host "Building Ollama App"
     cd "${script:SRC_DIR}\app"
-    & windres -l 0 -o ollama.syso ollama.rc
-    & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
+    & windres -l 0 -o ollama.syso windows\ollama.rc
+    & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/jmorganca/ollama/version.Version=$script:VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
@@ -110,7 +110,7 @@ function gatherDependencies() {
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DEPS_DIR}\"
 
 
-    cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
+    cp "${script:SRC_DIR}\app\windows\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
     if ("${env:KEY_CONTAINER}") {
         write-host "about to sign"
         foreach ($file in (get-childitem "${script:DEPS_DIR}/cu*.dll") + @("${script:SRC_DIR}\dist\ollama_welcome.ps1")){
@@ -127,9 +127,9 @@ function buildInstaller() {
     cd "${script:SRC_DIR}\app"
     $env:PKG_VERSION=$script:PKG_VERSION
     if ("${env:KEY_CONTAINER}") {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\ollama.iss
+        & "${script:INNO_SETUP_DIR}\ISCC.exe" /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\windows\ollama.iss
     } else {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" .\ollama.iss
+        & "${script:INNO_SETUP_DIR}\ISCC.exe" .\windows\ollama.iss
     }
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }

@@ -2,11 +2,15 @@ package main
 
 // Compile with the following to get rid of the cmd pop up on windows
 // go build -ldflags="-H windowsgui" .
-
-import (
-	"github.com/ollama/ollama/app/lifecycle"
+var (
+	AppName       string
+	CLIName       string
+	AppDir        string
+	AppDataDir    string
+	AppLogFile    string
+	ServerLogFile string
 )
 
 func main() {
-	lifecycle.Run()
+	run()
 }

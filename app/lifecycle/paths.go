@@ -70,10 +70,5 @@ func init() {
 			}
 		}
 
-	} else if runtime.GOOS == "darwin" {
-		// TODO
-		AppName += ".app"
-		// } else if runtime.GOOS == "linux" {
-		// TODO
 	}
 }

@@ -11,26 +11,37 @@ for TARGETARCH in arm64 amd64; do
     rm -rf llm/llama.cpp/build
     GOOS=darwin GOARCH=$TARGETARCH go generate ./...
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
+    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -C app -trimpath -o ../dist/ollama-app-darwin-$TARGETARCH
 done
 
 lipo -create -output dist/ollama dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
-rm -f dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
+lipo -create -output dist/ollama-app dist/ollama-app-darwin-arm64 dist/ollama-app-darwin-amd64
+rm -f dist/ollama-darwin-* dist/ollama-app-darwin-*
+
+# create the mac app
+rm -rf dist/Ollama.app
+cp -R app/darwin/Ollama.app dist/
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" dist/Ollama.app/Contents/Info.plist
+mkdir -p dist/Ollama.app/Contents/MacOS
+mv dist/ollama-app dist/Ollama.app/Contents/MacOS/Ollama
+cp dist/ollama dist/Ollama.app/Contents/Resources/ollama
+
+# sign and notarize the app
 if [ -n "$APPLE_IDENTITY" ]; then
-    codesign --deep --force --options=runtime --sign "$APPLE_IDENTITY" --timestamp dist/ollama
+    codesign -f --timestamp --options=runtime --sign "$APPLE_IDENTITY" --identifier ai.ollama.ollama dist/Ollama.app/Contents/MacOS/Ollama
+    codesign -f --timestamp --options=runtime --sign "$APPLE_IDENTITY" --identifier ai.ollama.ollama dist/Ollama.app/Contents/Resources/ollama
+    codesign -f --timestamp --options=runtime --sign "$APPLE_IDENTITY" --identifier ai.ollama.ollama dist/Ollama.app
+    ditto -c -k --keepParent dist/Ollama.app dist/Ollama-darwin.zip
+    rm -rf dist/Ollama.app
+    xcrun notarytool submit dist/Ollama-darwin.zip --wait --timeout 10m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
+    unzip dist/Ollama-darwin.zip -d dist
+    rm -f dist/Ollama-darwin.zip
+    xcrun stapler staple "dist/Ollama.app"
+    ditto -c -k --keepParent dist/Ollama.app dist/Ollama-darwin.zip
+    rm -rf dist/Ollama.app
 else
     echo "Skipping code signing - set APPLE_IDENTITY"
 fi
-chmod +x dist/ollama
-
-# build and optionally sign the mac app
-npm install --prefix macapp
-if [ -n "$APPLE_IDENTITY" ]; then
-    npm run --prefix macapp make:sign
-else 
-    npm run --prefix macapp make
-fi
-cp macapp/out/make/zip/darwin/universal/Ollama-darwin-universal-$VERSION.zip dist/Ollama-darwin.zip
 
 # sign the binary and rename it
 if [ -n "$APPLE_IDENTITY" ]; then
