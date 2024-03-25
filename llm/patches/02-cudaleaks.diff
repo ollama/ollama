@@ -1,10 +1,10 @@
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index 8fe5e0b1..53bf39c1 100644
+index 895d608f..f5873daa 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
-@@ -31,6 +31,10 @@
- #include <atomic>
+@@ -29,6 +29,10 @@
  #include <signal.h>
+ #include <memory>
  
 +#ifdef GGML_USE_CUBLAS
 +extern "C" GGML_CALL void ggml_free_cublas(void);
@@ -12,8 +12,8 @@ index 8fe5e0b1..53bf39c1 100644
 +
  using json = nlohmann::json;
  
- struct server_params {
-@@ -363,6 +367,10 @@ struct llama_server_context
+ bool server_verbose = false;
+@@ -664,6 +664,10 @@ struct server_context {
              llama_free_model(model);
              model = nullptr;
          }
@@ -23,7 +23,7 @@ index 8fe5e0b1..53bf39c1 100644
 +#endif
      }
  
-     bool load_model(const gpt_params &params_)
+     bool load_model(const gpt_params & params_) {
 @@ -3543,6 +3551,7 @@ int main(int argc, char **argv)
      sigemptyset (&sigint_action.sa_mask);
      sigint_action.sa_flags = 0;

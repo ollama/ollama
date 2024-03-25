@@ -24,22 +24,18 @@ index ef9e4ba7..b4ddfe6b 100644
  }
  
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index 8fe5e0b1..f927336b 100644
+index 895d608f..f9231d91 100644
 --- a/examples/server/server.cpp
 +++ b/examples/server/server.cpp
-@@ -353,6 +353,12 @@ struct llama_server_context
+@@ -655,6 +659,11 @@ struct server_context {
+     server_metrics metrics;
  
-     ~llama_server_context()
-     {
-+        if (clp_ctx)
-+        {
+     ~server_context() {
++        if (clp_ctx) {
 +            LOG_INFO("freeing clip model", {});
 +            clip_free(clp_ctx);
 +            clp_ctx = nullptr;
 +        }
-         if (ctx)
-         {
+         if (ctx) {
              llama_free(ctx);
--- 
-2.43.2
-
+             ctx = nullptr;
