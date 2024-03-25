@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -46,7 +45,8 @@ func ParseModelPath(name string) ModelPath {
 		name = after
 	}
 
-	parts := strings.Split(name, string(os.PathSeparator))
+	name = strings.ReplaceAll(name, string(os.PathSeparator), "/")
+	parts := strings.Split(name, "/")
 	switch len(parts) {
 	case 3:
 		mp.Registry = parts[0]
@@ -149,10 +149,7 @@ func GetBlobsPath(digest string) (string, error) {
 		return "", err
 	}
 
-	if runtime.GOOS == "windows" {
-		digest = strings.ReplaceAll(digest, ":", "-")
-	}
-
+	digest = strings.ReplaceAll(digest, ":", "-")
 	path := filepath.Join(dir, "blobs", digest)
 	dirPath := filepath.Dir(path)
 	if digest == "" {

@@ -1,6 +1,6 @@
 package readline
 
-func handleCharCtrlZ(fd int, state *State) (string, error) {
+func handleCharCtrlZ(fd int, state any) (string, error) {
 	// not supported
 	return "", nil
 }

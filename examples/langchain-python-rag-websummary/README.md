@@ -1,6 +1,6 @@
 # LangChain Web Summarization
 
-This example summarizes the website, [https://ollama.ai/blog/run-llama2-uncensored-locally](https://ollama.ai/blog/run-llama2-uncensored-locally)
+This example summarizes the website, [https://ollama.com/blog/run-llama2-uncensored-locally](https://ollama.com/blog/run-llama2-uncensored-locally)
 
 ## Running the Example
 
