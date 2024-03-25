@@ -29,8 +29,8 @@ type handles struct {
 var gpuMutex sync.Mutex
 var gpuHandles *handles = nil
 
-// With our current CUDA compile flags, older than 5.0 will not work properly
-var CudaComputeMin = [2]C.int{5, 0}
+// With our current CUDA compile flags, older than 3.5 will not work properly
+var CudaComputeMin = [2]C.int{3, 5}
 
 // Possible locations for the nvidia-ml library
 var CudaLinuxGlobs = []string{
