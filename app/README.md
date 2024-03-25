@@ -1,21 +1,22 @@
-# Desktop
+# Ollama App
 
-This app builds upon Ollama to provide a desktop experience for running models.
+## Linux
 
-## Developing
+TODO
 
-First, build the `ollama` binary:
+## MacOS
+
+TODO
+
+## Windows
+
+If you want to build the installer, youll need to install
+- https://jrsoftware.org/isinfo.php
+
+
+In the top directory of this repo, run the following powershell script
+to build the ollama CLI, ollama app, and ollama installer.
 
 ```
-cd ..
-go build .
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
 ```
-
-Then run the desktop app with `npm start`:
-
-```
-cd app
-npm install
-npm start
-```
-

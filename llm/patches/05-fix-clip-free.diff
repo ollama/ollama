@@ -1,0 +1,45 @@
+From 9192432daf90b1bfec75577434a99b4ea70d54c8 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Thu, 14 Mar 2024 12:09:50 -0700
+Subject: [PATCH] fix clip free
+
+---
+ examples/llava/clip.cpp    | 4 ++++
+ examples/server/server.cpp | 6 ++++++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
+index ef9e4ba7..b4ddfe6b 100644
+--- a/examples/llava/clip.cpp
++++ b/examples/llava/clip.cpp
+@@ -1673,6 +1673,10 @@ void clip_free(clip_ctx * ctx) {
+     ggml_free(ctx->ctx_data);
+     gguf_free(ctx->ctx_gguf);
+ 
++    ggml_backend_buffer_free(ctx->params_buffer);
++    ggml_backend_buffer_free(ctx->compute_buffer);
++    ggml_backend_free(ctx->backend);
++    ggml_gallocr_free(ctx->compute_alloc);
+     delete ctx;
+ }
+ 
+diff --git a/examples/server/server.cpp b/examples/server/server.cpp
+index 8fe5e0b1..f927336b 100644
+--- a/examples/server/server.cpp
++++ b/examples/server/server.cpp
+@@ -353,6 +353,12 @@ struct llama_server_context
+ 
+     ~llama_server_context()
+     {
++        if (clp_ctx)
++        {
++            LOG_INFO("freeing clip model", {});
++            clip_free(clp_ctx);
++            clp_ctx = nullptr;
++        }
+         if (ctx)
+         {
+             llama_free(ctx);
+-- 
+2.43.2
+
