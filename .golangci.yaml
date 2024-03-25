@@ -24,4 +24,4 @@ linters-settings:
       - (*os.File).Seek
       - (*bufio.Writer).WriteString
       - (*github.com/spf13/pflag.FlagSet).Set
-      - (*github.com/jmorganca/ollama/llm.readSeekOffset).Seek
+      - (*github.com/ollama/ollama/llm.readSeekOffset).Seek

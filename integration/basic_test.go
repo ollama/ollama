@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmorganca/ollama/api"
+	"github.com/ollama/ollama/api"
 )
 
 func TestOrcaMiniBlueSky(t *testing.T) {

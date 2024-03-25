@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmorganca/ollama/api"
+	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/require"
 )
 
