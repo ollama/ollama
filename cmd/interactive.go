@@ -70,6 +70,20 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 					fmt.Println()
 				}
 			}
+		} else {
+			// add welcome message to the interactive for details about the model
+			// TODO: doesn't work because not in the same package
+			// 	mp := ModelPath{
+			// 	ProtocolScheme: DefaultProtocolScheme,
+			// 	Registry:       DefaultRegistry,
+			// 	Namespace:      DefaultNamespace,
+			// 	Repository:     "",
+			// 	Tag:            DefaultTag,
+			// }
+			//mp := ParseModelPath(opts.Model)
+			//fmt.Printf("Model %s", mp.Namespace)
+			fmt.Printf("Welcome to the interactive mode. %s", opts.Model)
+			fmt.Println()
 		}
 		return nil
 	})
