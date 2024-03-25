@@ -303,6 +303,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [cmdh](https://github.com/pgibler/cmdh)
 - [tenere](https://github.com/pythops/tenere)
 - [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
+- [typechat-cli](https://github.com/anaisbetts/typechat-cli)
 - [ShellOracle](https://github.com/djcopley/ShellOracle)
 - [tlm](https://github.com/yusufcanb/tlm)
 
