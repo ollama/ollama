@@ -67,40 +67,6 @@ You can see what features your CPU has with the following.
 cat /proc/cpuinfo| grep flags  | head -1
 ```
 
-## AMD Radeon GPU Support
-
-Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In
-some cases you can force the system to try to use a similar LLVM target that is
-close.  For example The Radeon RX 5400 is `gfx1034` (also known as 10.3.4)
-however, ROCm does not currently support this target. The closest support is
-`gfx1030`.  You can use the environment variable `HSA_OVERRIDE_GFX_VERSION` with
-`x.y.z` syntax.  So for example, to force the system to run on the RX 5400, you
-would set `HSA_OVERRIDE_GFX_VERSION="10.3.0"` as an environment variable for the
-server.  If you have an unsupported AMD GPU you can experiment using the list of
-supported types below.
-
-At this time, the known supported GPU types are the following LLVM Targets.
-This table shows some example GPUs that map to these LLVM targets:
-| **LLVM Target** | **An Example GPU** |
-|-----------------|---------------------|
-| gfx900 | Radeon RX Vega 56 |
-| gfx906 | Radeon Instinct MI50 |
-| gfx908 | Radeon Instinct MI100 |
-| gfx90a | Radeon Instinct MI210 |
-| gfx940 | Radeon Instinct MI300 |
-| gfx941 | |
-| gfx942 | |
-| gfx1030 | Radeon PRO V620 |
-| gfx1100 | Radeon PRO W7900 |
-| gfx1101 | Radeon PRO W7700 |
-| gfx1102 | Radeon RX 7600 |
-
-AMD is working on enhancing ROCm v6 to broaden support for families of GPUs in a
-future release which should increase support for more GPUs.
-
-Reach out on [Discord](https://discord.gg/ollama) or file an
-[issue](https://github.com/ollama/ollama/issues) for additional help.
-
 ## Installing older or pre-release versions on Linux
 
 If you run into problems on Linux and want to install an older version, or you'd
