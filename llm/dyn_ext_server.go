@@ -4,7 +4,7 @@ package llm
 #cgo CFLAGS: -I${SRCDIR}/ext_server -I${SRCDIR}/llama.cpp -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp/examples/server
 #cgo CFLAGS: -DNDEBUG -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo CFLAGS: -Wmissing-noreturn -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
-#cgo CPPFLAGS: -Ofast -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
+#cgo CPPFLAGS: -Ofast -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations
 #cgo darwin CFLAGS: -D_DARWIN_C_SOURCE
 #cgo darwin CPPFLAGS:  -DGGML_USE_ACCELERATE
 #cgo darwin CPPFLAGS: -DGGML_USE_METAL -DGGML_METAL_NDEBUG
@@ -25,16 +25,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/gpu"
 )
 
 type dynExtServer struct {
@@ -64,18 +64,15 @@ func extServerResponseToErr(resp C.ext_server_resp_t) error {
 	return fmt.Errorf(C.GoString(resp.msg))
 }
 
-// Note: current implementation does not support concurrent instantiations
-var llm *dynExtServer
-
 func newDynExtServer(library, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
 	if !mutex.TryLock() {
-		log.Printf("concurrent llm servers not yet supported, waiting for prior server to complete")
+		slog.Info("concurrent llm servers not yet supported, waiting for prior server to complete")
 		mutex.Lock()
 	}
-	updatePath(filepath.Dir(library))
+	gpu.UpdatePath(filepath.Dir(library))
 	libPath := C.CString(library)
 	defer C.free(unsafe.Pointer(libPath))
-	resp := newExtServerResp(128)
+	resp := newExtServerResp(512)
 	defer freeExtServerResp(resp)
 	var srv C.struct_dynamic_llama_server
 	C.dyn_init(libPath, &srv, &resp)
@@ -83,11 +80,11 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 		mutex.Unlock()
 		return nil, fmt.Errorf("Unable to load dynamic library: %s", C.GoString(resp.msg))
 	}
-	llm = &dynExtServer{
+	llm := dynExtServer{
 		s:       srv,
 		options: opts,
 	}
-	log.Printf("Loading Dynamic llm server: %s", library)
+	slog.Info(fmt.Sprintf("Loading Dynamic llm server: %s", library))
 
 	var sparams C.ext_server_params_t
 	sparams.model = C.CString(model)
@@ -106,7 +103,12 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	sparams.memory_f16 = C.bool(opts.F16KV)
 	sparams.use_mlock = C.bool(opts.UseMLock)
 	sparams.use_mmap = C.bool(opts.UseMMap)
-	sparams.numa = C.bool(opts.UseNUMA)
+
+	if opts.UseNUMA {
+		sparams.numa = C.int(1)
+	} else {
+		sparams.numa = C.int(0)
+	}
 
 	sparams.lora_adapters = nil
 	for i := 0; i < len(adapters); i++ {
@@ -136,29 +138,36 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 
 	sparams.n_threads = C.uint(opts.NumThread)
 
-	log.Printf("Initializing llama server")
-	initResp := newExtServerResp(128)
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		sparams.verbose_logging = C.bool(true)
+	} else {
+		sparams.verbose_logging = C.bool(false)
+	}
+
+	slog.Info("Initializing llama server")
+	slog.Debug(fmt.Sprintf("server params: %+v", sparams))
+	initResp := newExtServerResp(512)
 	defer freeExtServerResp(initResp)
 	C.dyn_llama_server_init(llm.s, &sparams, &initResp)
 	if initResp.id < 0 {
-		return nil, extServerResponseToErr(initResp)
+		mutex.Unlock()
+		err := extServerResponseToErr(initResp)
+		slog.Debug(fmt.Sprintf("failure during initialization: %s", err))
+		return nil, err
 	}
 
-	log.Printf("Starting llama main loop")
+	slog.Info("Starting llama main loop")
 	C.dyn_llama_server_start(llm.s)
-	return llm, nil
+	return &llm, nil
 }
 
 func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn func(PredictResult)) error {
 	resp := newExtServerResp(128)
 	defer freeExtServerResp(resp)
-	var imageData []ImageData
+
 	if len(predict.Images) > 0 {
-		for cnt, i := range predict.Images {
-			imageData = append(imageData, ImageData{Data: i, ID: cnt})
-		}
+		slog.Info(fmt.Sprintf("loaded %d images", len(predict.Images)))
 	}
-	log.Printf("loaded %d images", len(imageData))
 
 	request := map[string]any{
 		"prompt":            predict.Prompt,
@@ -180,12 +189,15 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"penalize_nl":       predict.Options.PenalizeNewline,
 		"seed":              predict.Options.Seed,
 		"stop":              predict.Options.Stop,
-		"image_data":        imageData,
+		"image_data":        predict.Images,
 		"cache_prompt":      true,
 	}
 
 	if predict.Format == "json" {
 		request["grammar"] = jsonGrammar
+		if !strings.Contains(strings.ToLower(predict.Prompt), "json") {
+			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+		}
 	}
 
 	retryDelay := 100 * time.Microsecond
@@ -213,17 +225,14 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		}
 
 		retryNeeded := false
+		// keep track of the last token generated, this is used to abort if the model starts looping
+		var lastToken string
+		var tokenRepeat int
 	out:
 		for {
 			select {
 			case <-ctx.Done():
-				// This handles the request cancellation
-				C.dyn_llama_server_completion_cancel(llm.s, resp.id, &resp)
-				if resp.id < 0 {
-					return extServerResponseToErr(resp)
-				} else {
-					return nil
-				}
+				return cancelCompletion(llm, resp)
 			default:
 				var result C.ext_server_task_result_t
 				C.dyn_llama_server_completion_next_result(llm.s, resp.id, &result)
@@ -246,13 +255,27 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 					break out
 				}
 
+				switch {
+				case strings.TrimSpace(p.Content) == lastToken:
+					tokenRepeat++
+				default:
+					lastToken = strings.TrimSpace(p.Content)
+					tokenRepeat = 0
+				}
+
+				// 30 picked as an arbitrary max token repeat limit, modify as needed
+				if tokenRepeat > 30 {
+					slog.Debug("prediction aborted, token repeat limit reached")
+					return cancelCompletion(llm, resp)
+				}
+
 				if p.Content != "" {
 					fn(PredictResult{
 						Content: p.Content,
 					})
 				}
 
-				if p.Stop {
+				if p.Stop || bool(result.stop) {
 					fn(PredictResult{
 						Done:               true,
 						PromptEvalCount:    p.Timings.PromptN,
@@ -271,6 +294,15 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 
 	// should never reach here ideally
 	return fmt.Errorf("max retries exceeded")
+}
+
+func cancelCompletion(llm *dynExtServer, resp C.ext_server_resp_t) error {
+	C.dyn_llama_server_completion_cancel(llm.s, resp.id, &resp)
+	if resp.id < 0 {
+		return extServerResponseToErr(resp)
+	} else {
+		return nil
+	}
 }
 
 func (llm *dynExtServer) Encode(ctx context.Context, prompt string) ([]int, error) {
@@ -353,35 +385,4 @@ func (llm *dynExtServer) Embedding(ctx context.Context, input string) ([]float64
 func (llm *dynExtServer) Close() {
 	C.dyn_llama_server_stop(llm.s)
 	mutex.Unlock()
-}
-
-func updatePath(dir string) {
-	if runtime.GOOS == "windows" {
-		tmpDir := filepath.Dir(dir)
-		pathComponents := strings.Split(os.Getenv("PATH"), ";")
-		i := 0
-		for _, comp := range pathComponents {
-			if strings.EqualFold(comp, dir) {
-				return
-			}
-			// Remove any other prior paths to our temp dir
-			if !strings.HasPrefix(strings.ToLower(comp), strings.ToLower(tmpDir)) {
-				pathComponents[i] = comp
-				i++
-			}
-		}
-		newPath := strings.Join(append([]string{dir}, pathComponents...), ";")
-		log.Printf("Updating PATH to %s", newPath)
-		os.Setenv("PATH", newPath)
-	} else {
-		pathComponents := strings.Split(os.Getenv("LD_LIBRARY_PATH"), ":")
-		for _, comp := range pathComponents {
-			if comp == dir {
-				return
-			}
-		}
-		newPath := strings.Join(append([]string{dir}, pathComponents...), ":")
-		log.Printf("Updating LD_LIBRARY_PATH to %s", newPath)
-		os.Setenv("LD_LIBRARY_PATH", newPath)
-	}
 }

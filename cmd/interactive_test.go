@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"testing"
+	"text/template"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jmorganca/ollama/api"
 )
 
 func TestExtractFilenames(t *testing.T) {
@@ -48,4 +52,65 @@ d:\path with\spaces\seven.svg inbetween7 c:\users\jdoe\eight.png inbetween8
 	assert.Contains(t, res[8], "d:")
 	assert.Contains(t, res[9], "ten.svg")
 	assert.Contains(t, res[9], "E:")
+}
+
+func TestModelfileBuilder(t *testing.T) {
+	opts := runOptions{
+		Model:    "hork",
+		System:   "You are part horse and part shark, but all hork. Do horklike things",
+		Template: "This is a template.",
+		Messages: []api.Message{
+			{Role: "user", Content: "Hey there hork!"},
+			{Role: "assistant", Content: "Yes it is true, I am half horse, half shark."},
+		},
+		Options: map[string]interface{}{},
+	}
+
+	opts.Options["temperature"] = 0.9
+	opts.Options["seed"] = 42
+	opts.Options["penalize_newline"] = false
+	opts.Options["stop"] = []string{"hi", "there"}
+
+	mf := buildModelfile(opts)
+	expectedModelfile := `FROM {{.Model}}
+SYSTEM """{{.System}}"""
+TEMPLATE """{{.Template}}"""
+PARAMETER penalize_newline false
+PARAMETER seed 42
+PARAMETER stop [hi there]
+PARAMETER temperature 0.9
+
+MESSAGE user """Hey there hork!"""
+MESSAGE assistant """Yes it is true, I am half horse, half shark."""
+`
+
+	tmpl, err := template.New("").Parse(expectedModelfile)
+	assert.Nil(t, err)
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, opts)
+	assert.Nil(t, err)
+	assert.Equal(t, buf.String(), mf)
+
+	opts.ParentModel = "horseshark"
+	mf = buildModelfile(opts)
+	expectedModelfile = `FROM {{.ParentModel}}
+SYSTEM """{{.System}}"""
+TEMPLATE """{{.Template}}"""
+PARAMETER penalize_newline false
+PARAMETER seed 42
+PARAMETER stop [hi there]
+PARAMETER temperature 0.9
+
+MESSAGE user """Hey there hork!"""
+MESSAGE assistant """Yes it is true, I am half horse, half shark."""
+`
+
+	tmpl, err = template.New("").Parse(expectedModelfile)
+	assert.Nil(t, err)
+
+	var parentBuf bytes.Buffer
+	err = tmpl.Execute(&parentBuf, opts)
+	assert.Nil(t, err)
+	assert.Equal(t, parentBuf.String(), mf)
 }

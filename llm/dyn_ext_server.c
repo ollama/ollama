@@ -5,7 +5,7 @@
 
 #ifdef __linux__
 #include <dlfcn.h>
-#define LOAD_LIBRARY(lib, flags) dlopen(lib, flags | RTLD_DEEPBIND)
+#define LOAD_LIBRARY(lib, flags) dlopen(lib, flags)
 #define LOAD_SYMBOL(handle, sym) dlsym(handle, sym)
 #define LOAD_ERR() strdup(dlerror())
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
@@ -14,17 +14,14 @@
 #define LOAD_LIBRARY(lib, flags) LoadLibrary(lib)
 #define LOAD_SYMBOL(handle, sym) GetProcAddress(handle, sym)
 #define UNLOAD_LIBRARY(handle) FreeLibrary(handle)
-inline char *LOAD_ERR() {
-  LPSTR messageBuffer = NULL;
-  size_t size = FormatMessageA(
-      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-          FORMAT_MESSAGE_IGNORE_INSERTS,
-      NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-      (LPSTR)&messageBuffer, 0, NULL);
-  char *resp = strdup(messageBuffer);
-  LocalFree(messageBuffer);
-  return resp;
-}
+#define LOAD_ERR() ({\
+  LPSTR messageBuffer = NULL; \
+  size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, \
+                                 NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL); \
+  char *resp = strdup(messageBuffer); \
+  LocalFree(messageBuffer); \
+  resp; \
+})
 #else
 #include <dlfcn.h>
 #define LOAD_LIBRARY(lib, flags) dlopen(lib, flags)
@@ -58,8 +55,8 @@ void dyn_init(const char *libPath, struct dynamic_llama_server *s,
       {"", NULL},
   };
 
-  printf("loading %s library\n", libPath);
-  s->handle = LOAD_LIBRARY(libPath, RTLD_NOW);
+  printf("loading library %s\n", libPath);
+  s->handle = LOAD_LIBRARY(libPath, RTLD_LOCAL|RTLD_NOW);
   if (!s->handle) {
     err->id = -1;
     char *msg = LOAD_ERR();

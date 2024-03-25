@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,10 +25,12 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/gpu"
 	"github.com/jmorganca/ollama/llm"
+	"github.com/jmorganca/ollama/openai"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
 )
@@ -34,7 +38,7 @@ import (
 var mode string = gin.DebugMode
 
 type Server struct {
-	WorkDir string
+	addr net.Addr
 }
 
 func init() {
@@ -65,8 +69,6 @@ var defaultSessionDuration = 5 * time.Minute
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
 func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
-	workDir := c.GetString("workDir")
-
 	needLoad := loaded.runner == nil || // is there a model loaded?
 		loaded.ModelPath != model.ModelPath || // has the base model changed?
 		!reflect.DeepEqual(loaded.AdapterPaths, model.AdapterPaths) || // have the adapters changed?
@@ -74,14 +76,14 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 
 	if needLoad {
 		if loaded.runner != nil {
-			log.Println("changing loaded model")
+			slog.Info("changing loaded model")
 			loaded.runner.Close()
 			loaded.runner = nil
 			loaded.Model = nil
 			loaded.Options = nil
 		}
 
-		llmRunner, err := llm.New(workDir, model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
+		llmRunner, err := llm.New(model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
@@ -136,6 +138,12 @@ func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options
 	return opts, nil
 }
 
+func isSupportedImageType(image []byte) bool {
+	contentType := http.DetectContentType(image)
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
+	return slices.Contains(allowedTypes, contentType)
+}
+
 func GenerateHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -166,6 +174,13 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	for _, img := range req.Images {
+		if !isSupportedImageType(img) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unsupported image format"})
+			return
+		}
+	}
+
 	model, err := GetModel(req.Model)
 	if err != nil {
 		var pErr *fs.PathError
@@ -174,6 +189,11 @@ func GenerateHandler(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if model.IsEmbedding() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "embedding models do not support generate"})
 		return
 	}
 
@@ -187,13 +207,21 @@ func GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	sessionDuration := defaultSessionDuration
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = getDefaultSessionDuration()
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// an empty request loads the model
+	// note: for a short while template was used in lieu
+	// of `raw` mode so we need to check for it too
 	if req.Prompt == "" && req.Template == "" && req.System == "" {
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			CreatedAt: time.Now().UTC(),
@@ -206,42 +234,52 @@ func GenerateHandler(c *gin.Context) {
 	checkpointLoaded := time.Now()
 
 	var prompt string
-	var promptVars PromptVars
 	switch {
 	case req.Raw:
 		prompt = req.Prompt
 	case req.Prompt != "":
-		if req.Template != "" {
-			// override the default model template
-			model.Template = req.Template
+		if req.Template == "" {
+			req.Template = model.Template
 		}
 
-		var rebuild strings.Builder
+		if req.System == "" {
+			req.System = model.System
+		}
+
+		slog.Debug("generate handler", "prompt", req.Prompt)
+		slog.Debug("generate handler", "template", req.Template)
+		slog.Debug("generate handler", "system", req.System)
+
+		var sb strings.Builder
+		for i := range req.Images {
+			fmt.Fprintf(&sb, "[img-%d] ", i)
+		}
+
+		sb.WriteString(req.Prompt)
+
+		p, err := Prompt(req.Template, req.System, sb.String(), "", true)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		sb.Reset()
 		if req.Context != nil {
-			// TODO: context is deprecated, at some point the context logic within this conditional should be removed
-			prevCtx, err := loaded.runner.Decode(c.Request.Context(), req.Context)
+			prev, err := loaded.runner.Decode(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
 
-			// Remove leading spaces from prevCtx if present
-			prevCtx = strings.TrimPrefix(prevCtx, " ")
-			rebuild.WriteString(prevCtx)
+			sb.WriteString(prev)
 		}
-		promptVars = PromptVars{
-			System: req.System,
-			Prompt: req.Prompt,
-			First:  len(req.Context) == 0,
-		}
-		p, err := model.PreResponsePrompt(promptVars)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		rebuild.WriteString(p)
-		prompt = rebuild.String()
+
+		sb.WriteString(p)
+
+		prompt = sb.String()
 	}
+
+	slog.Debug("generate handler", "prompt", prompt)
 
 	ch := make(chan any)
 	var generated strings.Builder
@@ -277,30 +315,39 @@ func GenerateHandler(c *gin.Context) {
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
 				if !req.Raw {
-					// append the generated text to the history and template it if needed
-					promptVars.Response = generated.String()
-					result, err := model.PostResponseTemplate(promptVars)
+					p, err := Prompt(req.Template, req.System, req.Prompt, generated.String(), false)
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+						return
+					}
+
+					// TODO (jmorganca): encode() should not strip special tokens
+					tokens, err := loaded.runner.Encode(c.Request.Context(), p)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
-					embd, err := loaded.runner.Encode(c.Request.Context(), prompt+result)
-					if err != nil {
-						ch <- gin.H{"error": err.Error()}
-						return
-					}
-					resp.Context = embd
+
+					resp.Context = append(req.Context, tokens...)
 				}
 			}
 
 			ch <- resp
 		}
 
+		var images []llm.ImageData
+		for i := range req.Images {
+			images = append(images, llm.ImageData{
+				ID:   i,
+				Data: req.Images[i],
+			})
+		}
+
 		// Start prediction
 		predictReq := llm.PredictOpts{
 			Prompt:  prompt,
 			Format:  req.Format,
-			Images:  req.Images,
+			Images:  images,
 			Options: opts,
 		}
 		if err := loaded.runner.Predict(c.Request.Context(), predictReq, fn); err != nil {
@@ -339,7 +386,33 @@ func GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func EmbeddingHandler(c *gin.Context) {
+func getDefaultSessionDuration() time.Duration {
+	if t, exists := os.LookupEnv("OLLAMA_KEEP_ALIVE"); exists {
+		v, err := strconv.Atoi(t)
+		if err != nil {
+			d, err := time.ParseDuration(t)
+			if err != nil {
+				return defaultSessionDuration
+			}
+
+			if d < 0 {
+				return time.Duration(math.MaxInt64)
+			}
+
+			return d
+		}
+
+		d := time.Duration(v) * time.Second
+		if d < 0 {
+			return time.Duration(math.MaxInt64)
+		}
+		return d
+	}
+
+	return defaultSessionDuration
+}
+
+func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
 
@@ -379,20 +452,28 @@ func EmbeddingHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	sessionDuration := defaultSessionDuration
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = getDefaultSessionDuration()
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	if !loaded.Options.EmbeddingOnly {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "embedding option must be set to true"})
+	// an empty request loads the model
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
 	embedding, err := loaded.runner.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
-		log.Printf("embedding generation failed: %v", err)
+		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
 	}
@@ -415,8 +496,13 @@ func PullModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else if req.Name != "" {
+		model = req.Name
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
@@ -427,14 +513,14 @@ func PullModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &RegistryOptions{
+		regOpts := &registryOptions{
 			Insecure: req.Insecure,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := PullModel(ctx, req.Name, regOpts, fn); err != nil {
+		if err := PullModel(ctx, model, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -459,8 +545,13 @@ func PushModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else if req.Name != "" {
+		model = req.Name
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
@@ -471,14 +562,14 @@ func PushModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &RegistryOptions{
+		regOpts := &registryOptions{
 			Insecure: req.Insecure,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := PushModel(ctx, req.Name, regOpts, fn); err != nil {
+		if err := PushModel(ctx, model, regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -503,12 +594,17 @@ func CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else if req.Name != "" {
+		model = req.Name
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	if err := ParseModelPath(req.Name).Validate(); err != nil {
+	if err := ParseModelPath(model).Validate(); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -546,7 +642,7 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, req.Name, filepath.Dir(req.Path), commands, fn); err != nil {
+		if err := CreateModel(ctx, model, filepath.Dir(req.Path), commands, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -571,14 +667,19 @@ func DeleteModelHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Name == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else if req.Name != "" {
+		model = req.Name
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	if err := DeleteModel(req.Name); err != nil {
+	if err := DeleteModel(model); err != nil {
 		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Name)})
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", model)})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
@@ -611,21 +712,19 @@ func ShowModelHandler(c *gin.Context) {
 		return
 	}
 
-	switch {
-	case req.Model == "" && req.Name == "":
+	if req.Model != "" {
+		// noop
+	} else if req.Name != "" {
+		req.Model = req.Name
+	} else {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
-	case req.Model != "" && req.Name != "":
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "both model and name are set"})
-		return
-	case req.Model == "" && req.Name != "":
-		req.Model = req.Name
 	}
 
 	resp, err := GetModelInfo(req)
 	if err != nil {
 		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Name)})
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
@@ -642,6 +741,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	modelDetails := api.ModelDetails{
+		ParentModel:       model.ParentModel,
 		Format:            model.Config.ModelFormat,
 		Family:            model.Config.ModelFamily,
 		Families:          model.Config.ModelFamilies,
@@ -657,38 +757,29 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		model.Template = req.Template
 	}
 
+	msgs := make([]api.Message, 0)
+	for _, msg := range model.Messages {
+		msgs = append(msgs, api.Message{Role: msg.Role, Content: msg.Content})
+	}
+
 	resp := &api.ShowResponse{
 		License:  strings.Join(model.License, "\n"),
 		System:   model.System,
 		Template: model.Template,
 		Details:  modelDetails,
+		Messages: msgs,
 	}
 
 	var params []string
 	cs := 30
 	for k, v := range model.Options {
 		switch val := v.(type) {
-		case string:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, val))
-		case int:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(val)))
-		case float64:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(val, 'f', 0, 64)))
-		case bool:
-			params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(val)))
 		case []interface{}:
 			for _, nv := range val {
-				switch nval := nv.(type) {
-				case string:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, nval))
-				case int:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.Itoa(nval)))
-				case float64:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatFloat(nval, 'f', 0, 64)))
-				case bool:
-					params = append(params, fmt.Sprintf("%-*s %s", cs, k, strconv.FormatBool(nval)))
-				}
+				params = append(params, fmt.Sprintf("%-*s %#v", cs, k, nv))
 			}
+		default:
+			params = append(params, fmt.Sprintf("%-*s %#v", cs, k, v))
 		}
 	}
 	resp.Parameters = strings.Join(params, "\n")
@@ -732,6 +823,7 @@ func ListModelsHandler(c *gin.Context) {
 		}
 
 		return api.ModelResponse{
+			Model:   model.ShortName,
 			Name:    model.ShortName,
 			Size:    model.Size,
 			Digest:  model.Digest,
@@ -748,7 +840,7 @@ func ListModelsHandler(c *gin.Context) {
 
 			resp, err := modelResponse(canonicalModelPath)
 			if err != nil {
-				log.Printf("skipping file: %s", canonicalModelPath)
+				slog.Info(fmt.Sprintf("skipping file: %s", canonicalModelPath))
 				// nolint: nilerr
 				return nil
 			}
@@ -841,15 +933,83 @@ var defaultAllowOrigins = []string{
 	"0.0.0.0",
 }
 
-func NewServer() (*Server, error) {
-	workDir, err := os.MkdirTemp("", "ollama")
-	if err != nil {
-		return nil, err
+func isLocalIP(ip netip.Addr) bool {
+	if interfaces, err := net.Interfaces(); err == nil {
+		for _, iface := range interfaces {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, a := range addrs {
+				if parsed, _, err := net.ParseCIDR(a.String()); err == nil {
+					if parsed.String() == ip.String() {
+						return true
+					}
+				}
+			}
+		}
 	}
 
-	return &Server{
-		WorkDir: workDir,
-	}, nil
+	return false
+}
+
+func allowedHost(host string) bool {
+	if host == "" || host == "localhost" {
+		return true
+	}
+
+	if hostname, err := os.Hostname(); err == nil && host == hostname {
+		return true
+	}
+
+	var tlds = []string{
+		"localhost",
+		"local",
+		"internal",
+	}
+
+	// check if the host is a local TLD
+	for _, tld := range tlds {
+		if strings.HasSuffix(host, "."+tld) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if addr == nil {
+			c.Next()
+			return
+		}
+
+		if addr, err := netip.ParseAddrPort(addr.String()); err == nil && !addr.Addr().IsLoopback() {
+			c.Next()
+			return
+		}
+
+		host, _, err := net.SplitHostPort(c.Request.Host)
+		if err != nil {
+			host = c.Request.Host
+		}
+
+		if addr, err := netip.ParseAddr(host); err == nil {
+			if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || isLocalIP(addr) {
+				c.Next()
+				return
+			}
+		}
+
+		if allowedHost(host) {
+			c.Next()
+			return
+		}
+
+		c.AbortWithStatus(http.StatusForbidden)
+	}
 }
 
 func (s *Server) GenerateRoutes() http.Handler {
@@ -875,16 +1035,13 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r := gin.Default()
 	r.Use(
 		cors.New(config),
-		func(c *gin.Context) {
-			c.Set("workDir", s.WorkDir)
-			c.Next()
-		},
+		allowedHostsMiddleware(s.addr),
 	)
 
 	r.POST("/api/pull", PullModelHandler)
 	r.POST("/api/generate", GenerateHandler)
 	r.POST("/api/chat", ChatHandler)
-	r.POST("/api/embeddings", EmbeddingHandler)
+	r.POST("/api/embeddings", EmbeddingsHandler)
 	r.POST("/api/create", CreateModelHandler)
 	r.POST("/api/push", PushModelHandler)
 	r.POST("/api/copy", CopyModelHandler)
@@ -892,6 +1049,9 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/show", ShowModelHandler)
 	r.POST("/api/blobs/:digest", CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", HeadBlobHandler)
+
+	// Compatibility endpoints
+	r.POST("/v1/chat/completions", openai.Middleware(), ChatHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
@@ -908,6 +1068,34 @@ func (s *Server) GenerateRoutes() http.Handler {
 }
 
 func Serve(ln net.Listener) error {
+	level := slog.LevelInfo
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		level = slog.LevelDebug
+	}
+
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level:     level,
+		AddSource: true,
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.SourceKey {
+				source := attr.Value.Any().(*slog.Source)
+				source.File = filepath.Base(source.File)
+			}
+
+			return attr
+		},
+	})
+
+	slog.SetDefault(slog.New(handler))
+
+	blobsDir, err := GetBlobsPath("")
+	if err != nil {
+		return err
+	}
+	if err := fixBlobs(blobsDir); err != nil {
+		return err
+	}
+
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
@@ -924,13 +1112,10 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	s, err := NewServer()
-	if err != nil {
-		return err
-	}
+	s := &Server{addr: ln.Addr()}
 	r := s.GenerateRoutes()
 
-	log.Printf("Listening on %s (version %s)", ln.Addr(), version.Version)
+	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
 		Handler: r,
 	}
@@ -943,17 +1128,17 @@ func Serve(ln net.Listener) error {
 		if loaded.runner != nil {
 			loaded.runner.Close()
 		}
-		os.RemoveAll(s.WorkDir)
+		gpu.Cleanup()
 		os.Exit(0)
 	}()
 
-	if err := llm.Init(s.WorkDir); err != nil {
+	if err := llm.Init(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
 	if runtime.GOOS == "linux" { // TODO - windows too
 		// check compatibility to log warnings
 		if _, err := gpu.CheckVRAM(); err != nil {
-			log.Print(err.Error())
+			slog.Info(err.Error())
 		}
 	}
 
@@ -995,19 +1180,33 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 		bts, err := json.Marshal(val)
 		if err != nil {
-			log.Printf("streamResponse: json.Marshal failed with %s", err)
+			slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
 			return false
 		}
 
 		// Delineate chunks with new-line delimiter
 		bts = append(bts, '\n')
 		if _, err := w.Write(bts); err != nil {
-			log.Printf("streamResponse: w.Write failed with %s", err)
+			slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
 			return false
 		}
 
 		return true
 	})
+}
+
+// ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
+func chatPrompt(ctx context.Context, template string, messages []api.Message, numCtx int) (string, error) {
+	encode := func(s string) ([]int, error) {
+		return loaded.runner.Encode(ctx, s)
+	}
+
+	prompt, err := ChatPrompt(template, messages, numCtx, encode)
+	if err != nil {
+		return "", err
+	}
+
+	return prompt, nil
 }
 
 func ChatHandler(c *gin.Context) {
@@ -1048,6 +1247,11 @@ func ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if model.IsEmbedding() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "embedding models do not support chat"})
+		return
+	}
+
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
 		if errors.Is(err, api.ErrInvalidOpts) {
@@ -1057,25 +1261,67 @@ func ChatHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	sessionDuration := defaultSessionDuration
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = getDefaultSessionDuration()
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
 	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// an empty request loads the model
-	if len(req.Messages) == 0 {
-		c.JSON(http.StatusOK, api.ChatResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true, Message: api.Message{Role: "assistant"}})
-		return
-	}
-
 	checkpointLoaded := time.Now()
 
-	prompt, images, err := model.ChatPrompt(req.Messages)
+	// if the first message is not a system message, then add the model's default system message
+	if len(req.Messages) > 0 && req.Messages[0].Role != "system" {
+		req.Messages = append([]api.Message{
+			{
+				Role:    "system",
+				Content: model.System,
+			},
+		}, req.Messages...)
+	}
+
+	prompt, err := chatPrompt(c.Request.Context(), model.Template, req.Messages, opts.NumCtx)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// an empty request loads the model
+	if len(req.Messages) == 0 || prompt == "" {
+		resp := api.ChatResponse{
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true,
+			Message:   api.Message{Role: "assistant"},
+		}
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+
+	// only send images that are in the prompt
+	var i int
+	var images []llm.ImageData
+	for _, m := range req.Messages {
+		for _, img := range m.Images {
+			if !isSupportedImageType(img) {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unsupported image format"})
+				return
+			}
+
+			if strings.Contains(prompt, fmt.Sprintf("[img-%d]", i)) {
+				images = append(images, llm.ImageData{Data: img, ID: i})
+			}
+			i += 1
+		}
+	}
+
+	slog.Debug("chat handler", "prompt", prompt, "images", len(images))
 
 	ch := make(chan any)
 

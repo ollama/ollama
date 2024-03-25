@@ -34,24 +34,26 @@ func (e StatusError) Error() string {
 type ImageData []byte
 
 type GenerateRequest struct {
-	Model    string      `json:"model"`
-	Prompt   string      `json:"prompt"`
-	System   string      `json:"system"`
-	Template string      `json:"template"`
-	Context  []int       `json:"context,omitempty"`
-	Stream   *bool       `json:"stream,omitempty"`
-	Raw      bool        `json:"raw,omitempty"`
-	Format   string      `json:"format"`
-	Images   []ImageData `json:"images,omitempty"`
+	Model     string      `json:"model"`
+	Prompt    string      `json:"prompt"`
+	System    string      `json:"system"`
+	Template  string      `json:"template"`
+	Context   []int       `json:"context,omitempty"`
+	Stream    *bool       `json:"stream,omitempty"`
+	Raw       bool        `json:"raw,omitempty"`
+	Format    string      `json:"format"`
+	KeepAlive *Duration   `json:"keep_alive,omitempty"`
+	Images    []ImageData `json:"images,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
 
 type ChatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   *bool     `json:"stream,omitempty"`
-	Format   string    `json:"format"`
+	Model     string    `json:"model"`
+	Messages  []Message `json:"messages"`
+	Stream    *bool     `json:"stream,omitempty"`
+	Format    string    `json:"format"`
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -81,7 +83,7 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specfied in GenerateRequest, if you add a new option here add it to the API docs also
+// Options specified in GenerateRequest, if you add a new option here add it to the API docs also
 type Options struct {
 	Runner
 
@@ -119,15 +121,15 @@ type Runner struct {
 	VocabOnly          bool    `json:"vocab_only,omitempty"`
 	UseMMap            bool    `json:"use_mmap,omitempty"`
 	UseMLock           bool    `json:"use_mlock,omitempty"`
-	EmbeddingOnly      bool    `json:"embedding_only,omitempty"`
 	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 	NumThread          int     `json:"num_thread,omitempty"`
 }
 
 type EmbeddingRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+	Model     string    `json:"model"`
+	Prompt    string    `json:"prompt"`
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -137,23 +139,31 @@ type EmbeddingResponse struct {
 }
 
 type CreateRequest struct {
-	Name      string `json:"name"`
+	Model     string `json:"model"`
 	Path      string `json:"path"`
 	Modelfile string `json:"modelfile"`
 	Stream    *bool  `json:"stream,omitempty"`
+
+	// Name is deprecated, see Model
+	Name string `json:"name"`
 }
 
 type DeleteRequest struct {
+	Model string `json:"model"`
+
+	// Name is deprecated, see Model
 	Name string `json:"name"`
 }
 
 type ShowRequest struct {
-	Name     string `json:"name"`
 	Model    string `json:"model"`
 	System   string `json:"system"`
 	Template string `json:"template"`
 
 	Options map[string]interface{} `json:"options"`
+
+	// Name is deprecated, see Model
+	Name string `json:"name"`
 }
 
 type ShowResponse struct {
@@ -163,6 +173,7 @@ type ShowResponse struct {
 	Template   string       `json:"template,omitempty"`
 	System     string       `json:"system,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
+	Messages   []Message    `json:"messages,omitempty"`
 }
 
 type CopyRequest struct {
@@ -171,11 +182,14 @@ type CopyRequest struct {
 }
 
 type PullRequest struct {
-	Name     string `json:"name"`
+	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
+
+	// Name is deprecated, see Model
+	Name string `json:"name"`
 }
 
 type ProgressResponse struct {
@@ -186,11 +200,14 @@ type ProgressResponse struct {
 }
 
 type PushRequest struct {
-	Name     string `json:"name"`
+	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
+
+	// Name is deprecated, see Model
+	Name string `json:"name"`
 }
 
 type ListResponse struct {
@@ -199,6 +216,7 @@ type ListResponse struct {
 
 type ModelResponse struct {
 	Name       string       `json:"name"`
+	Model      string       `json:"model"`
 	ModifiedAt time.Time    `json:"modified_at"`
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
@@ -221,6 +239,7 @@ type GenerateResponse struct {
 }
 
 type ModelDetails struct {
+	ParentModel       string   `json:"parent_model"`
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
 	Families          []string `json:"families"`
@@ -375,7 +394,6 @@ func DefaultOptions() Options {
 			UseMLock:           false,
 			UseMMap:            true,
 			UseNUMA:            false,
-			EmbeddingOnly:      true,
 		},
 	}
 }
@@ -395,14 +413,17 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	switch t := v.(type) {
 	case float64:
 		if t < 0 {
-			t = math.MaxFloat64
+			d.Duration = time.Duration(math.MaxInt64)
+		} else {
+			d.Duration = time.Duration(t * float64(time.Second))
 		}
-
-		d.Duration = time.Duration(t)
 	case string:
 		d.Duration, err = time.ParseDuration(t)
 		if err != nil {
 			return err
+		}
+		if d.Duration < 0 {
+			d.Duration = time.Duration(math.MaxInt64)
 		}
 	}
 
