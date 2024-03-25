@@ -2,20 +2,23 @@
 
 This example is a basic "hello world" of using LangChain with Ollama.
 
-## Setup
+## Running the Example
 
-```
-pip install -r requirements.txt
-```
+1. Ensure you have the `llama2` model installed:
 
-## Run
+   ```bash
+   ollama pull llama2
+   ```
 
-```
-python main.py
-```
+2. Install the Python Requirements.
 
-Running this example will print the response for "hello":
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-```
-Hello! It's nice to meet you. hopefully you are having a great day! Is there something I can help you with or would you like to chat?
-```
+3. Run the example:
+
+   ```bash
+   python main.py
+   ```
+  

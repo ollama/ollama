@@ -2,10 +2,11 @@ import { Ollama } from 'ollama-node';
 
 const mentorCount = 3;
 const ollama = new Ollama();
+type Mentor = { ns: string, char: string };
 
-function getMentors(): string[] {
-  const mentors = ['Gary Vaynerchuk', 'Kanye West', 'Martha Stewart', 'Neil deGrasse Tyson', 'Owen Wilson', 'Ronald Reagan', 'Donald Trump', 'Barack Obama', 'Jeff Bezos'];
-  const chosenMentors: string[] = [];
+function getMentors(): Mentor[] {
+  const mentors = [{ ns: 'mattw', char: 'Gary Vaynerchuk' }, { ns: 'mattw', char: 'Kanye West'}, {ns: 'mattw', char: 'Martha Stewart'}, {ns: 'mattw', char: 'Neil deGrasse Tyson'}, {ns: 'mattw', char: 'Owen Wilson'}, {ns: 'mattw', char: 'Ronald Reagan'}, {ns: 'mattw', char: 'Donald Trump'}, {ns: 'mattw', char: 'Barack Obama'}, {ns: 'mattw', char: 'Jeff Bezos'}];
+  const chosenMentors: Mentor[] = [];
   for (let i = 0; i < mentorCount; i++) {
     const mentor = mentors[Math.floor(Math.random() * mentors.length)];
     chosenMentors.push(mentor);
@@ -14,12 +15,12 @@ function getMentors(): string[] {
   return chosenMentors;
 }
 
-function getMentorFileName(mentor: string): string {
-  const model = mentor.toLowerCase().replace(/\s/g, '');
-  return `mattw/${model}`;
+function getMentorFileName(mentor: Mentor): string {
+  const model = mentor.char.toLowerCase().replace(/\s/g, '');
+  return `${mentor.ns}/${model}`;
 }
 
-async function getSystemPrompt(mentor: string, isLast: boolean, question: string): Promise<string> {
+async function getSystemPrompt(mentor: Mentor, isLast: boolean, question: string): Promise<string> {
   ollama.setModel(getMentorFileName(mentor));
   const info = await ollama.showModelInfo()
   let SystemPrompt = info.system || '';
@@ -43,8 +44,8 @@ async function main() {
     ollama.setModel(getMentorFileName(mentor));
     ollama.setSystemPrompt(SystemPrompt);
     let output = '';
-    process.stdout.write(`\n${mentor}: `);
-    for await (const chunk of ollama.streamingGenerate(theConversation + `Continue the conversation as if you were ${mentor} on the question "${question}".`)) {
+    process.stdout.write(`\n${mentor.char}: `);
+    for await (const chunk of ollama.streamingGenerate(theConversation + `Continue the conversation as if you were ${mentor.char} on the question "${question}".`)) {
       if (chunk.response) {
         output += chunk.response;
         process.stdout.write(chunk.response);
@@ -52,7 +53,7 @@ async function main() {
         process.stdout.write('\n');
       }
     }
-    theConversation += `${mentor}: ${output}\n\n`
+    theConversation += `${mentor.char}: ${output}\n\n`
   }
 }
 

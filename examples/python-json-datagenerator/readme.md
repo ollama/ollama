@@ -4,6 +4,32 @@
 
 There are two python scripts in this example. `randomaddresses.py` generates random addresses from different countries. `predefinedschema.py` sets a template for the model to fill in.
 
+## Running the Example
+
+1. Ensure you have the `llama2` model installed:
+
+   ```bash
+   ollama pull llama2
+   ```
+
+2. Install the Python Requirements.
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Run the Random Addresses example:
+
+   ```bash
+   python randomaddresses.py
+   ```
+
+4. Run the Predefined Schema example:
+
+   ```bash
+   python predefinedschema.py
+   ```
+
 ## Review the Code
 
 Both programs are basically the same, with a different prompt for each, demonstrating two different ideas. The key part of getting JSON out of a model is to state in the prompt or system prompt that it should respond using JSON, and specifying the `format` as `json` in the data body.

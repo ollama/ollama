@@ -21,7 +21,7 @@ import (
 
 type Client struct {
 	base *url.URL
-	http http.Client
+	http *http.Client
 }
 
 func checkError(resp *http.Response, body []byte) error {
@@ -66,30 +66,13 @@ func ClientFromEnvironment() (*Client, error) {
 		}
 	}
 
-	client := Client{
+	return &Client{
 		base: &url.URL{
 			Scheme: scheme,
 			Host:   net.JoinHostPort(host, port),
 		},
-	}
-
-	mockRequest, err := http.NewRequest(http.MethodHead, client.base.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	proxyURL, err := http.ProxyFromEnvironment(mockRequest)
-	if err != nil {
-		return nil, err
-	}
-
-	client.http = http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-	}
-
-	return &client, nil
+		http: http.DefaultClient,
+	}, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
@@ -308,6 +291,13 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
+	var resp EmbeddingResponse
+	if err := c.do(ctx, http.MethodPost, "/api/embeddings", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {

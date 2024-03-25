@@ -14,9 +14,22 @@ This example goes through a series of steps:
 
 This example lets you pick from a few different topic areas, then summarize the most recent x articles for that topic. It then creates chunks of sentences from each article and then generates embeddings for each of those chunks.
 
-You can run the example like this:
+## Running the Example
 
-```bash
-pip install -r requirements.txt
-python summ.py
-```
+1. Ensure you have the `mistral-openorca` model installed:
+
+   ```bash
+   ollama pull mistral-openorca
+   ```
+
+2. Install the Python Requirements.
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Run the example:
+
+   ```bash
+   python summ.py
+   ```

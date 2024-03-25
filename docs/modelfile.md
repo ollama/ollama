@@ -1,6 +1,6 @@
 # Ollama Model File
 
-> Note: this `Modelfile` syntax is in development
+> Note: `Modelfile` syntax is in development
 
 A model file is the blueprint to create and share models with Ollama.
 
@@ -19,6 +19,7 @@ A model file is the blueprint to create and share models with Ollama.
   - [SYSTEM](#system)
   - [ADAPTER](#adapter)
   - [LICENSE](#license)
+  - [MESSAGE](#message)
 - [Notes](#notes)
 
 ## Format
@@ -38,6 +39,7 @@ INSTRUCTION arguments
 | [`SYSTEM`](#system)                 | Specifies the system message that will be set in the template. |
 | [`ADAPTER`](#adapter)               | Defines the (Q)LoRA adapters to apply to the model.            |
 | [`LICENSE`](#license)               | Specifies the legal license.                                   |
+| [`MESSAGE`](#message)               | Specify message history.                                       |
 
 ## Examples
 
@@ -65,17 +67,17 @@ To use this:
 
 More examples are available in the [examples directory](../examples).
 
-### `Modelfile`s in [ollama.ai/library][1]
+### `Modelfile`s in [ollama.com/library][1]
 
-There are two ways to view `Modelfile`s underlying the models in [ollama.ai/library][1]:
+There are two ways to view `Modelfile`s underlying the models in [ollama.com/library][1]:
 
 - Option 1: view a details page from a model's tags page:
-  1.  Go to a particular model's tags (e.g. https://ollama.ai/library/llama2/tags)
-  2.  Click on a tag (e.g. https://ollama.ai/library/llama2:13b)
+  1.  Go to a particular model's tags (e.g. https://ollama.com/library/llama2/tags)
+  2.  Click on a tag (e.g. https://ollama.com/library/llama2:13b)
   3.  Scroll down to "Layers"
       - Note: if the [`FROM` instruction](#from-required) is not present,
         it means the model was created from a local file
-- Option 2: use `ollama show` to print the `Modelfile` like so:
+- Option 2: use `ollama show` to print the `Modelfile` for any local models like so:
 
   ```bash
   > ollama show --modelfile llama2:13b
@@ -84,7 +86,7 @@ There are two ways to view `Modelfile`s underlying the models in [ollama.ai/libr
   # FROM llama2:13b
 
   FROM /root/.ollama/models/blobs/sha256:123abc
-  TEMPLATE """[INST] {{ if and .First .System }}<<SYS>>{{ .System }}<</SYS>>
+  TEMPLATE """[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>>
 
   {{ end }}{{ .Prompt }} [/INST] """
   SYSTEM """"""
@@ -129,7 +131,7 @@ The `PARAMETER` instruction defines a parameter that can be set when the model i
 PARAMETER <parameter> <parametervalue>
 ```
 
-### Valid Parameters and Values
+#### Valid Parameters and Values
 
 | Parameter      | Description                                                                                                                                                                                                                                             | Value Type | Example Usage        |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------- |
@@ -152,30 +154,23 @@ PARAMETER <parameter> <parametervalue>
 
 ### TEMPLATE
 
-`TEMPLATE` of the full prompt template to be passed into the model. It may include (optionally) a system message and a user's prompt. This is used to create a full custom prompt, and syntax may be model specific. You can usually find the template for a given model in the readme for that model.
+`TEMPLATE` of the full prompt template to be passed into the model. It may include (optionally) a system message, a user's message and the response from the model. Note: syntax may be model specific. Templates use Go [template syntax](https://pkg.go.dev/text/template).
 
 #### Template Variables
 
-| Variable        | Description                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------- |
-| `{{ .System }}` | The system message used to specify custom behavior, this must also be set in the Modelfile as an instruction. |
-| `{{ .Prompt }}` | The incoming prompt, this is not specified in the model file and will be set based on input.                  |
-| `{{ .First }}`  | A boolean value used to render specific template information for the first generation of a session.           |
+| Variable          | Description                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------- |
+| `{{ .System }}`   | The system message used to specify custom behavior.                                           |
+| `{{ .Prompt }}`   | The user prompt message.                                                                      |
+| `{{ .Response }}` | The response from the model. When generating a response, text after this variable is omitted. |
 
-```modelfile
-TEMPLATE """
-{{- if .First }}
-### System:
-{{ .System }}
-{{- end }}
-
-### User:
-{{ .Prompt }}
-
-### Response:
+```
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
 """
-
-SYSTEM """<system message>"""
 ```
 
 ### SYSTEM
@@ -188,7 +183,7 @@ SYSTEM """<system message>"""
 
 ### ADAPTER
 
-The `ADAPTER` instruction specifies the LoRA adapter to apply to the base model. The value of this instruction should be an absolute path or a path relative to the Modelfile and the file must be in a GGML file format. The adapter should be tuned from the base model otherwise the behaviour is undefined.
+The `ADAPTER` instruction is an optional instruction that specifies any LoRA adapter that should apply to the base model. The value of this instruction should be an absolute path or a path relative to the Modelfile and the file must be in a GGML file format. The adapter should be tuned from the base model otherwise the behaviour is undefined.
 
 ```modelfile
 ADAPTER ./ollama-lora.bin
@@ -204,9 +199,38 @@ LICENSE """
 """
 ```
 
+### MESSAGE
+
+The `MESSAGE` instruction allows you to specify a message history for the model to use when responding. Use multiple iterations of the MESSAGE command to build up a conversation which will guide the model to answer in a similar way.
+
+```modelfile
+MESSAGE <role> <message>
+```
+
+#### Valid roles
+
+| Role      | Description                                                  |
+| --------- | ------------------------------------------------------------ |
+| system    | Alternate way of providing the SYSTEM message for the model. |
+| user      | An example message of what the user could have asked.        |
+| assistant | An example message of how the model should respond.          |
+
+
+#### Example conversation
+
+```modelfile
+MESSAGE user Is Toronto in Canada?
+MESSAGE assistant yes
+MESSAGE user Is Sacramento in Canada?
+MESSAGE assistant no
+MESSAGE user Is Ontario in Canada?
+MESSAGE assistant yes
+```
+
+
 ## Notes
 
-- the **`Modelfile` is not case sensitive**. In the examples, we use uppercase for instructions to make it easier to distinguish it from arguments.
-- Instructions can be in any order. In the examples, we start with FROM instruction to keep it easily readable.
+- the **`Modelfile` is not case sensitive**. In the examples, uppercase instructions are used to make it easier to distinguish it from arguments.
+- Instructions can be in any order. In the examples, the `FROM` instruction is first to keep it easily readable.
 
-[1]: https://ollama.ai/library
+[1]: https://ollama.com/library

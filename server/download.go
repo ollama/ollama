@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -24,6 +24,11 @@ import (
 	"github.com/jmorganca/ollama/api"
 	"github.com/jmorganca/ollama/format"
 )
+
+const maxRetries = 6
+
+var errMaxRetriesExceeded = errors.New("max retries exceeded")
+var errPartStalled = errors.New("part stalled")
 
 var blobDownloadManager sync.Map
 
@@ -44,10 +49,11 @@ type blobDownload struct {
 }
 
 type blobDownloadPart struct {
-	N         int
-	Offset    int64
-	Size      int64
-	Completed int64
+	N           int
+	Offset      int64
+	Size        int64
+	Completed   int64
+	lastUpdated time.Time
 
 	*blobDownload `json:"-"`
 }
@@ -72,7 +78,14 @@ func (p *blobDownloadPart) StopsAt() int64 {
 	return p.Offset + p.Size
 }
 
-func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
+func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
+	n = len(b)
+	p.blobDownload.Completed.Add(int64(n))
+	p.lastUpdated = time.Now()
+	return n, nil
+}
+
+func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
 	partFilePaths, err := filepath.Glob(b.Name + "-partial-*")
 	if err != nil {
 		return err
@@ -98,7 +111,7 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *R
 
 		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
-		var size = b.Total / numDownloadParts
+		size := b.Total / numDownloadParts
 		switch {
 		case size < minDownloadPartSize:
 			size = minDownloadPartSize
@@ -120,25 +133,25 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *R
 		}
 	}
 
-	log.Printf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size))
+	slog.Info(fmt.Sprintf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
 	return nil
 }
 
-func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) {
+func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *registryOptions) {
 	b.err = b.run(ctx, requestURL, opts)
 }
 
-func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
+func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
 	defer blobDownloadManager.Delete(b.Digest)
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
-	file, err := os.OpenFile(b.Name+"-partial", os.O_CREATE|os.O_RDWR, 0644)
+	file, err := os.OpenFile(b.Name+"-partial", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	file.Truncate(b.Total)
+	_ = file.Truncate(b.Total)
 
 	g, inner := errgroup.WithContext(ctx)
 	g.SetLimit(numDownloadParts)
@@ -157,9 +170,12 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
 					// return immediately if the context is canceled or the device is out of space
 					return err
+				case errors.Is(err, errPartStalled):
+					try--
+					continue
 				case err != nil:
 					sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-					log.Printf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep)
+					slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
 					time.Sleep(sleep)
 					continue
 				default:
@@ -194,29 +210,55 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *Regis
 	return nil
 }
 
-func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *RegistryOptions) error {
-	headers := make(http.Header)
-	headers.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
-	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, opts)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *registryOptions) error {
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		headers := make(http.Header)
+		headers.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
+		resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, opts)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
 
-	n, err := io.Copy(w, io.TeeReader(resp.Body, b))
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		// rollback progress
-		b.Completed.Add(-n)
-		return err
-	}
+		n, err := io.Copy(w, io.TeeReader(resp.Body, part))
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			// rollback progress
+			b.Completed.Add(-n)
+			return err
+		}
 
-	part.Completed += n
-	if err := b.writePart(part.Name(), part); err != nil {
-		return err
-	}
+		part.Completed += n
+		if err := b.writePart(part.Name(), part); err != nil {
+			return err
+		}
 
-	// return nil or context.Canceled or UnexpectedEOF (resumable)
-	return err
+		// return nil or context.Canceled or UnexpectedEOF (resumable)
+		return err
+	})
+
+	g.Go(func() error {
+		ticker := time.NewTicker(time.Second)
+		for {
+			select {
+			case <-ticker.C:
+				if part.Completed >= part.Size {
+					return nil
+				}
+
+				if !part.lastUpdated.IsZero() && time.Since(part.lastUpdated) > 5*time.Second {
+					slog.Info(fmt.Sprintf("%s part %d stalled; retrying", b.Digest[7:19], part.N))
+					// reset last updated
+					part.lastUpdated = time.Time{}
+					return errPartStalled
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	})
+
+	return g.Wait()
 }
 
 func (b *blobDownload) newPart(offset, size int64) error {
@@ -246,19 +288,13 @@ func (b *blobDownload) readPart(partName string) (*blobDownloadPart, error) {
 }
 
 func (b *blobDownload) writePart(partName string, part *blobDownloadPart) error {
-	partFile, err := os.OpenFile(partName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+	partFile, err := os.OpenFile(partName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
 	defer partFile.Close()
 
 	return json.NewEncoder(partFile).Encode(part)
-}
-
-func (b *blobDownload) Write(p []byte) (n int, err error) {
-	n = len(p)
-	b.Completed.Add(int64(n))
-	return n, nil
 }
 
 func (b *blobDownload) acquire() {
@@ -279,19 +315,18 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 	for {
 		select {
 		case <-ticker.C:
+			fn(api.ProgressResponse{
+				Status:    fmt.Sprintf("pulling %s", b.Digest[7:19]),
+				Digest:    b.Digest,
+				Total:     b.Total,
+				Completed: b.Completed.Load(),
+			})
+
+			if b.done || b.err != nil {
+				return b.err
+			}
 		case <-ctx.Done():
 			return ctx.Err()
-		}
-
-		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("pulling %s", b.Digest[7:19]),
-			Digest:    b.Digest,
-			Total:     b.Total,
-			Completed: b.Completed.Load(),
-		})
-
-		if b.done || b.err != nil {
-			return b.err
 		}
 	}
 }
@@ -299,13 +334,9 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 type downloadOpts struct {
 	mp      ModelPath
 	digest  string
-	regOpts *RegistryOptions
+	regOpts *registryOptions
 	fn      func(api.ProgressResponse)
 }
-
-const maxRetries = 6
-
-var errMaxRetriesExceeded = errors.New("max retries exceeded")
 
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
 func downloadBlob(ctx context.Context, opts downloadOpts) error {
@@ -340,6 +371,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 			return err
 		}
 
+		// nolint: contextcheck
 		go download.Run(context.Background(), requestURL, opts.regOpts)
 	}
 
