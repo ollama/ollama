@@ -262,6 +262,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
+- [Saddle](https://github.com/jikkuatwork/saddle)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
@@ -281,6 +282,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
 - [LLM-X: Progressive Web App](https://github.com/mrdjohnson/llm-x)
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
+- [Ollama Basic Chat: Uses HyperDiv Reactive UI] (https://github.com/rapidarchitect/ollama_basic_chat)
+- [Ollama-chats RPG: (https://github.com/drazdra/ollama-chats)]
 
 ### Terminal
 
@@ -297,6 +300,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [tenere](https://github.com/pythops/tenere)
 - [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
 - [ShellOracle](https://github.com/djcopley/ShellOracle)
+- [tlm](https://github.com/yusufcanb/tlm)
 
 ### Database
 
@@ -313,7 +317,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
 - [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
-- [LangChain4j](https://github.com/langchain4j/langchain4j/tree/main/langchain4j-ollama)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 - [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
@@ -330,6 +333,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for R - rollama](https://github.com/JBGruber/rollama)
 - [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
 - [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
+- [Testcontainers](https://testcontainers.com/modules/ollama/)
 
 ### Mobile
 

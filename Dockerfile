@@ -1,5 +1,6 @@
 ARG GOLANG_VERSION=1.22.1
 ARG CMAKE_VERSION=3.22.1
+# this CUDA_VERSION corresponds with the one specified in docs/gpu.md
 ARG CUDA_VERSION=11.3.1
 ARG ROCM_VERSION=6.0
 
@@ -101,6 +102,7 @@ ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/jmorganca/ollama
 COPY . .
 COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+RUN mkdir -p /go/src/github.com/jmorganca/ollama/dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN go build -trimpath .
