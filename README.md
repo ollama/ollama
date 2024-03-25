@@ -296,6 +296,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
 - [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
+- [ollero.nvim](https://github.com/marco-souza/ollero.nvim)
 - [ollama-chat.nvim](https://github.com/gerazov/ollama-chat.nvim)
 - [ogpt.nvim](https://github.com/huynle/ogpt.nvim)
 - [gptel Emacs client](https://github.com/karthink/gptel)
