@@ -1088,6 +1088,14 @@ func Serve(ln net.Listener) error {
 
 	slog.SetDefault(slog.New(handler))
 
+	blobsDir, err := GetBlobsPath("")
+	if err != nil {
+		return err
+	}
+	if err := fixBlobs(blobsDir); err != nil {
+		return err
+	}
+
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {

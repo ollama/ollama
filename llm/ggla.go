@@ -15,8 +15,8 @@ func (c *ContainerGGLA) Name() string {
 	return "ggla"
 }
 
-func (c *ContainerGGLA) Decode(rso *readSeekOffset) (model, error) {
-	binary.Read(rso, binary.LittleEndian, &c.version)
+func (c *ContainerGGLA) Decode(rs io.ReadSeeker) (model, error) {
+	binary.Read(rs, binary.LittleEndian, &c.version)
 
 	switch c.version {
 	case 1:
@@ -25,7 +25,7 @@ func (c *ContainerGGLA) Decode(rso *readSeekOffset) (model, error) {
 	}
 
 	model := newModelGGLA(c)
-	err := model.decode(rso)
+	err := model.decode(rs)
 	return model, err
 }
 
@@ -43,39 +43,39 @@ func newModelGGLA(container *ContainerGGLA) *ModelGGLA {
 	}
 }
 
-func (m *ModelGGLA) decode(rso *readSeekOffset) error {
+func (m *ModelGGLA) decode(rs io.ReadSeeker) error {
 	var r uint32
-	if err := binary.Read(rso, binary.LittleEndian, &r); err != nil {
+	if err := binary.Read(rs, binary.LittleEndian, &r); err != nil {
 		return err
 	}
 	m.kv["r"] = r
 
 	var alpha uint32
-	if err := binary.Read(rso, binary.LittleEndian, &alpha); err != nil {
+	if err := binary.Read(rs, binary.LittleEndian, &alpha); err != nil {
 		return err
 	}
 	m.kv["alpha"] = alpha
 
 	for {
 		var dims uint32
-		if err := binary.Read(rso, binary.LittleEndian, &dims); err != nil {
+		if err := binary.Read(rs, binary.LittleEndian, &dims); err != nil {
 			return err
 		}
 
 		var namesize uint32
-		if err := binary.Read(rso, binary.LittleEndian, &namesize); err != nil {
+		if err := binary.Read(rs, binary.LittleEndian, &namesize); err != nil {
 			return err
 		}
 
 		var t Tensor
-		if err := binary.Read(rso, binary.LittleEndian, &t.Kind); err != nil {
+		if err := binary.Read(rs, binary.LittleEndian, &t.Kind); err != nil {
 			return err
 		}
 
 		t.Shape = make([]uint64, dims)
 		for i := 0; uint32(i) < dims; i++ {
 			var shape32 uint32
-			if err := binary.Read(rso, binary.LittleEndian, &shape32); err != nil {
+			if err := binary.Read(rs, binary.LittleEndian, &shape32); err != nil {
 				return err
 			}
 
@@ -87,19 +87,29 @@ func (m *ModelGGLA) decode(rso *readSeekOffset) error {
 		slices.Reverse(t.Shape)
 
 		name := make([]byte, namesize)
-		if err := binary.Read(rso, binary.LittleEndian, &name); err != nil {
+		if err := binary.Read(rs, binary.LittleEndian, &name); err != nil {
 			return err
 		}
 
 		t.Name = string(name)
 
-		if _, err := rso.Seek((rso.offset+31)&-32, io.SeekStart); err != nil {
+		offset, err := rs.Seek(0, io.SeekCurrent)
+		if err != nil {
 			return err
 		}
 
-		t.Offset = uint64(rso.offset)
+		if _, err := rs.Seek((offset+31)&-32, io.SeekStart); err != nil {
+			return err
+		}
 
-		if _, err := rso.Seek(int64(t.Size()), io.SeekCurrent); err != nil {
+		offset, err = rs.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+
+		t.Offset = uint64(offset)
+
+		if _, err := rs.Seek(int64(t.Size()), io.SeekCurrent); err != nil {
 			return err
 		}
 
