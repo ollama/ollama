@@ -20,7 +20,11 @@ func SetRawMode(fd int) (*State, error) {
 	if err := windows.GetConsoleMode(windows.Handle(fd), &st); err != nil {
 		return nil, err
 	}
+
+	// this enables raw mode by turning off various flags in the console mode: https://pkg.go.dev/golang.org/x/sys/windows#pkg-constants
 	raw := st &^ (windows.ENABLE_ECHO_INPUT | windows.ENABLE_PROCESSED_INPUT | windows.ENABLE_LINE_INPUT | windows.ENABLE_PROCESSED_OUTPUT)
+
+	// turn on ENABLE_VIRTUAL_TERMINAL_INPUT to enable escape sequences
 	raw |= windows.ENABLE_VIRTUAL_TERMINAL_INPUT
 	if err := windows.SetConsoleMode(windows.Handle(fd), raw); err != nil {
 		return nil, err
