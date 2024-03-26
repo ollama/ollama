@@ -287,8 +287,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
 - [LLM-X: Progressive Web App](https://github.com/mrdjohnson/llm-x)
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
-- [Ollama Basic Chat: Uses HyperDiv Reactive UI] (https://github.com/rapidarchitect/ollama_basic_chat)
-- [Ollama-chats RPG: (https://github.com/drazdra/ollama-chats)]
+- [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
+- [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
 
 ### Terminal
 
