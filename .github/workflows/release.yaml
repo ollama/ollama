@@ -419,7 +419,7 @@ jobs:
       - build-windows
       - build-linux-amd64
       - build-linux-arm64
-    runs-on: ubuntu-latest
+    runs-on: linux
     environment: release
     permissions:
       contents: write
