@@ -20,11 +20,11 @@ WORKDIR /go/src/github.com/jmorganca/ollama/llm/generate
 ARG CGO_CFLAGS
 RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
-FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION-devel-centos7 AS cuda-build-arm64
+FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION-devel-rockylinux8 AS cuda-build-arm64
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
-ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/jmorganca/ollama/
 WORKDIR /go/src/github.com/jmorganca/ollama/llm/generate
 ARG CGO_CFLAGS
