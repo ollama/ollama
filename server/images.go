@@ -682,7 +682,7 @@ func convertSafetensors(name, path string, fn func(resp api.ProgressResponse)) (
 		return "", err
 	}
 
-	vocab, err := convert.LoadTokens(tempDir)
+	vocab, err := convert.LoadTokens(tempDir, params)
 	if err != nil {
 		return "", err
 	}

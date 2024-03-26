@@ -196,7 +196,7 @@ type Vocab struct {
 	Types  []int32
 }
 
-func LoadTokens(dirpath string) (*Vocab, error) {
+func LoadTokens(dirpath string, params *Params) (*Vocab, error) {
 	slog.Info(fmt.Sprintf("reading vocab from %s", filepath.Join(dirpath, "tokenizer.model")))
 	in, err := os.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
 	if err != nil {
@@ -275,6 +275,16 @@ func LoadTokens(dirpath string) (*Vocab, error) {
 		v.Types = append(v.Types, int32(llm.GGUFTokenUserDefined))
 	}
 	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
+
+	if params.VocabSize > len(v.Tokens) {
+		missingTokens := params.VocabSize - len(v.Tokens)
+		slog.Warn(fmt.Sprintf("vocab is missing %d tokens", missingTokens))
+		for cnt := 0; cnt < missingTokens; cnt++ {
+			v.Tokens = append(v.Tokens, fmt.Sprintf("<dummy%05d>", cnt+1))
+			v.Scores = append(v.Scores, -1)
+			v.Types = append(v.Types, int32(llm.GGUFTokenUserDefined))
+		}
+	}
 
 	return v, nil
 }
