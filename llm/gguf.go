@@ -15,7 +15,7 @@ import (
 	"github.com/pdevine/tensor/native"
 	"github.com/x448/float16"
 
-	"github.com/jmorganca/ollama/format"
+	"github.com/ollama/ollama/format"
 )
 
 type ContainerGGUF struct {

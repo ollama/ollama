@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jmorganca/ollama/api"
+	"github.com/ollama/ollama/api"
 )
 
 const jsonGrammar = `

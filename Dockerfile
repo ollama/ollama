@@ -15,8 +15,8 @@ ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/jmorganca/ollama/
-WORKDIR /go/src/github.com/jmorganca/ollama/llm/generate
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
@@ -25,8 +25,8 @@ ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/jmorganca/ollama/
-WORKDIR /go/src/github.com/jmorganca/ollama/llm/generate
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
@@ -36,18 +36,18 @@ COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 ENV LIBRARY_PATH /opt/amdgpu/lib64
-COPY --from=llm-code / /go/src/github.com/jmorganca/ollama/
-WORKDIR /go/src/github.com/jmorganca/ollama/llm/generate
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG AMDGPU_TARGETS
 RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 RUN mkdir /tmp/scratch && \
-    for dep in $(cat /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/x86_64/rocm*/lib/deps.txt) ; do \
+    for dep in $(cat /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/x86_64/rocm*/lib/deps.txt) ; do \
         cp ${dep} /tmp/scratch/ || exit 1 ; \
     done && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd /tmp/scratch/ && tar xf - ) && \
-    mkdir -p /go/src/github.com/jmorganca/ollama/dist/deps/ && \
-    (cd /tmp/scratch/ && tar czvf /go/src/github.com/jmorganca/ollama/dist/deps/ollama-linux-amd64-rocm.tgz . )
+    mkdir -p /go/src/github.com/ollama/ollama/dist/deps/ && \
+    (cd /tmp/scratch/ && tar czvf /go/src/github.com/ollama/ollama/dist/deps/ollama-linux-amd64-rocm.tgz . )
 
 
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
@@ -56,10 +56,10 @@ ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/jmorganca/ollama/
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 ARG OLLAMA_CUSTOM_CPU_DEFS
 ARG CGO_CFLAGS
-WORKDIR /go/src/github.com/jmorganca/ollama/llm/generate
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu-build-amd64
 RUN OLLAMA_CPU_TARGET="cpu" sh gen_linux.sh
@@ -74,8 +74,8 @@ ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/jmorganca/ollama/
-WORKDIR /go/src/github.com/jmorganca/ollama/llm/generate
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 # Note, we only build the "base" CPU variant on arm since avx/avx2 are x86 features
 ARG OLLAMA_CUSTOM_CPU_DEFS
 ARG CGO_CFLAGS
@@ -84,13 +84,13 @@ RUN OLLAMA_CPU_TARGET="cpu" sh gen_linux.sh
 # Intermediate stage used for ./scripts/build_linux.sh
 FROM --platform=linux/amd64 cpu-build-amd64 AS build-amd64
 ENV CGO_ENABLED 1
-WORKDIR /go/src/github.com/jmorganca/ollama
+WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=cpu_avx-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-COPY --from=cpu_avx2-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-COPY --from=cuda-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-COPY --from=rocm-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-COPY --from=rocm-build-amd64 /go/src/github.com/jmorganca/ollama/dist/deps/ ./dist/deps/
+COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+COPY --from=cuda-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/deps/ ./dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN go build -trimpath .
@@ -99,10 +99,10 @@ RUN go build -trimpath .
 FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
 ENV CGO_ENABLED 1
 ARG GOLANG_VERSION
-WORKDIR /go/src/github.com/jmorganca/ollama
+WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=cuda-build-arm64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-RUN mkdir -p /go/src/github.com/jmorganca/ollama/dist/deps/
+COPY --from=cuda-build-arm64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+RUN mkdir -p /go/src/github.com/ollama/ollama/dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN go build -trimpath .
@@ -110,15 +110,15 @@ RUN go build -trimpath .
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
 RUN apt-get update && apt-get install -y ca-certificates
-COPY --from=build-amd64 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
+COPY --from=build-amd64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 FROM --platform=linux/arm64 ubuntu:22.04 as runtime-arm64
 RUN apt-get update && apt-get install -y ca-certificates
-COPY --from=build-arm64 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
+COPY --from=build-arm64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 
 # Radeon images are much larger so we keep it distinct from the CPU/CUDA image
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete as runtime-rocm
 RUN update-pciids
-COPY --from=build-amd64 /go/src/github.com/jmorganca/ollama/ollama /bin/ollama
+COPY --from=build-amd64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 EXPOSE 11434
 ENV OLLAMA_HOST 0.0.0.0
 

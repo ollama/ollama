@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/app/lifecycle"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/stretchr/testify/assert"
 )
 
