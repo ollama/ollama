@@ -153,17 +153,23 @@ jobs:
           go-version: '1.22'
           cache: false
       - run: |
-          mkdir -p llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/
-          touch llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/stub.so
+          case ${{ matrix.arch }} in
+            amd64) echo ARCH=x86_64 ;;
+            arm64) echo ARCH=arm64 ;;
+          esac >>$GITHUB_ENV
+        shell: bash
+      - run: |
+          mkdir -p llm/llama.cpp/build/linux/$ARCH/stub/lib/
+          touch llm/llama.cpp/build/linux/$ARCH/stub/lib/stub.so
         if: ${{ startsWith(matrix.os, 'ubuntu-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/
-          touch llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/stub.dylib
+          mkdir -p llm/llama.cpp/build/darwin/$ARCH/stub/lib/
+          touch llm/llama.cpp/build/darwin/$ARCH/stub/lib/stub.dylib
           touch llm/llama.cpp/ggml-metal.metal
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/
-          touch llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/stub.dll
+          mkdir -p llm/llama.cpp/build/windows/$ARCH/stub/lib/
+          touch llm/llama.cpp/build/windows/$ARCH/stub/lib/stub.dll
         if: ${{ startsWith(matrix.os, 'windows-') }}
       - uses: golangci/golangci-lint-action@v3
   test:
@@ -190,17 +196,23 @@ jobs:
           cache: true
       - run: go get
       - run: |
-          mkdir -p llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/
-          touch llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/stub.so
+          case ${{ matrix.arch }} in
+            amd64) echo ARCH=x86_64 ;;
+            arm64) echo ARCH=arm64 ;;
+          esac >>$GITHUB_ENV
+        shell: bash
+      - run: |
+          mkdir -p llm/llama.cpp/build/linux/$ARCH/stub/lib/
+          touch llm/llama.cpp/build/linux/$ARCH/stub/lib/stub.so
         if: ${{ startsWith(matrix.os, 'ubuntu-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/
-          touch llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/stub.dylib
+          mkdir -p llm/llama.cpp/build/darwin/$ARCH/stub/lib/
+          touch llm/llama.cpp/build/darwin/$ARCH/stub/lib/stub.dylib
           touch llm/llama.cpp/ggml-metal.metal
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/
-          touch llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/stub.dll
+          mkdir -p llm/llama.cpp/build/windows/$ARCH/stub/lib/
+          touch llm/llama.cpp/build/windows/$ARCH/stub/lib/stub.dll
         if: ${{ startsWith(matrix.os, 'windows-') }}
       - run: go build
       - run: go test -v ./...
