@@ -168,8 +168,8 @@ jobs:
           touch llm/llama.cpp/ggml-metal.metal
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/windows/$ARCH/stub/lib/
-          touch llm/llama.cpp/build/windows/$ARCH/stub/lib/stub.dll
+          mkdir -p llm/llama.cpp/build/windows/$ARCH/stub/stub/lib/
+          touch llm/llama.cpp/build/windows/$ARCH/stub/stub/lib/stub.dll
         if: ${{ startsWith(matrix.os, 'windows-') }}
       - uses: golangci/golangci-lint-action@v3
   test:
@@ -211,8 +211,8 @@ jobs:
           touch llm/llama.cpp/ggml-metal.metal
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - run: |
-          mkdir -p llm/llama.cpp/build/windows/$ARCH/stub/lib/
-          touch llm/llama.cpp/build/windows/$ARCH/stub/lib/stub.dll
+          mkdir -p llm/llama.cpp/build/windows/$ARCH/stub/stub/lib/
+          touch llm/llama.cpp/build/windows/$ARCH/stub/stub/lib/stub.dll
         if: ${{ startsWith(matrix.os, 'windows-') }}
       - run: go build
       - run: go test -v ./...
