@@ -9,6 +9,24 @@ on:
       - '!README.md'
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
+      GENERATE_ROCM: ${{ steps.changes.outputs.GENERATE_ROCM }}
+    steps:
+      - id: changes
+        run: |
+          changed() {
+            git diff-tree -r --no-commit-id --name-only $GITHUB_BASE_REF $GITHUB_HEAD_REF \
+              | xargs python3 -c "import sys; print(any([x.startswith('$1') for x in sys.argv[1:]]))"
+          }
+
+          {
+            echo GENERATE_CUDA=$(changed llm)
+            echo GENERATE_ROCM=$(changed llm)
+          } >>$GITHUB_OUTPUT
+
   generate:
     strategy:
       matrix:
@@ -46,6 +64,8 @@ jobs:
           name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
           path: llm/llama.cpp/build/**/lib/*
   generate-cuda:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
     strategy:
       matrix:
         cuda-version:
@@ -75,6 +95,8 @@ jobs:
           name: cuda-${{ matrix.cuda-version }}-libraries
           path: llm/llama.cpp/build/**/lib/*
   generate-rocm:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
     strategy:
       matrix:
         rocm-version:
