@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/gpu"
@@ -24,7 +24,7 @@ var cpuOnlyFamilies = []string{
 	"mamba",
 }
 
-func New(model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+func New(model string, adapters, projectors []string, opts *api.Options) (LLM, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -50,84 +50,80 @@ func New(model string, adapters, projectors []string, opts api.Options) (LLM, er
 	}
 
 	vram, _ := gpu.CheckVRAM()
-	size := ggml.Size
+	info := gpu.GetGPUInfo()
 
-	// fp16 k,v matrices require = n_ctx * n_layer * n_embd / n_head * n_head_kv * 2 bytes each * 2 key and value
-	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.KV().BlockCount()) * int64(ggml.KV().EmbeddingLength()) * int64(ggml.KV().HeadCountKV()) / int64(ggml.KV().HeadCount())
+	mem := int64(396 * 1024 * 1024)
+	for _, projector := range projectors {
+		mem += projectorMemoryRequirements(projector)
+	}
+
+	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
+	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.KV().BlockCount()) * int64(ggml.KV().EmbeddingLength()) / int64(ggml.KV().HeadCount()) * int64(ggml.KV().HeadCountKV())
 
 	// this amount is the overhead + tensors in memory
 	// TODO: get this from the llama.cpp's graph calculations instead of
 	// estimating it's 1/6 * kv_cache_size * num_gqa
 	graph := int64(ggml.KV().GQA()) * kv / 6
+	mem += graph
 
-	if slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture()) {
+	if mem > vram {
 		opts.NumGPU = 0
 	}
 
-	info := gpu.GetGPUInfo()
-	switch runtime.GOOS {
-	case "darwin":
-		if opts.NumGPU == 0 {
-			break
+	if opts.NumGPU < 0 && info.Library != "cpu" {
+		for opts.NumGPU = 0; opts.NumGPU < int(ggml.KV().BlockCount()) && vram > mem; opts.NumGPU++ {
+			layer := ggml.LayerSize(fmt.Sprintf("blk.%d.", opts.NumGPU))
+			layerKV := kv / int64(ggml.KV().BlockCount())
+			if vram <= mem+layer+layerKV {
+				break
+			}
+
+			mem += layer + layerKV
 		}
 
-		if size+kv+graph > vram {
-			slog.Info("not enough vram available, setting num_gpu=0")
-			opts.NumGPU = 0
-			break
+		// only offload output tensors if the repeating tensors have been offloaded
+		if layer := ggml.LayerSize("output."); opts.NumGPU >= int(ggml.KV().BlockCount()) && vram > mem+layer {
+			opts.NumGPU++
+			mem += layer
 		}
 
-		// TODO: implement layer splitting on macOS
-		opts.NumGPU = 999
-	default:
-		if info.Library == "cpu" {
-			slog.Info("GPU not available, falling back to CPU")
-			opts.NumGPU = 0
-			break
-		}
-
-		// don't use GPU at all if no layers are loaded
-		if opts.NumGPU == 0 {
-			info.Library = "cpu"
-			info.Variant = gpu.GetCPUVariant()
-			break
-		}
-
-		// user-defined GPU count
-		if opts.NumGPU != -1 {
-			break
-		}
-
-		// the "main" GPU needs the most memory and determines the limit
-		// of how many layers can be loaded. It needs to fit:
-		// 1. the full compute graph allocation for all devices (graph)
-		// 2. the proportional kv cache for all devices (kv * % layers)
-		// 3. the proportional model (size * % layers / # devices)
-		// This estimates the number of layers
-		maxlayers := int64(ggml.KV().BlockCount()) + 1
-		devices := int64(info.DeviceCount)
-		avg := vram / devices
-		layers := maxlayers * (avg - graph) / (kv + size/devices)
-		if layers > maxlayers {
-			layers = maxlayers
-		}
-
-		// 1 + 2 must fit on the main gpu
-		min := graph + kv*layers/maxlayers
-		if layers <= 0 || min > avg {
-			slog.Info("not enough vram available, falling back to CPU only")
-			info.Library = "cpu"
-			info.Variant = gpu.GetCPUVariant()
-			opts.NumGPU = 0
-			break
-		}
-
-		opts.NumGPU = int(layers)
+		opts.VRAMUsed = mem
+		opts.VRAMTotal = vram
 	}
 
-	opts.RopeFrequencyBase = 0.0
-	opts.RopeFrequencyScale = 0.0
+	if opts.NumGPU == 0 || slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture()) {
+		info.Library = "cpu"
+	}
+
+	slog.Info("llm", "model", model, "adapters", adapters, "projectors", projectors, "opts", opts, "info", info)
+	slog.Info("mem", "mem", mem, "vram", vram, "kv", kv, "graph", graph, "layers", opts.NumGPU)
 	return newLlmServer(info, model, adapters, projectors, opts)
+}
+
+func projectorMemoryRequirements(filename string) int64 {
+	file, err := os.Open(filename)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	ggml, err := DecodeGGML(file)
+	if err != nil {
+		return 0
+	}
+
+	prefixes := make(map[string]struct{})
+	for _, layer := range ggml.Tensors() {
+		parts := strings.Split(layer.Name, ".")
+		prefixes[strings.Join(parts[:2], ".")] = struct{}{}
+	}
+
+	var ask int64
+	for prefix := range prefixes {
+		ask += ggml.LayerSize(prefix)
+	}
+
+	return ask
 }
 
 // Give any native cgo implementations an opportunity to initialize
@@ -135,7 +131,7 @@ func Init() error {
 	return nativeInit()
 }
 
-func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+func newLlmServer(gpuInfo gpu.GpuInfo, model string, adapters, projectors []string, opts *api.Options) (LLM, error) {
 	dynLibs := getDynLibs(gpuInfo)
 
 	// Check to see if the user has requested a specific library instead of auto-detecting

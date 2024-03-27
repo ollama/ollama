@@ -239,20 +239,7 @@ func CheckVRAM() (int64, error) {
 	}
 	gpuInfo := GetGPUInfo()
 	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
-		// leave 10% or 1024MiB of VRAM free per GPU to handle unaccounted for overhead
-		overhead := gpuInfo.FreeMemory / 10
-		gpus := uint64(gpuInfo.DeviceCount)
-		if overhead < gpus*1024*1024*1024 {
-			overhead = gpus * 1024 * 1024 * 1024
-		}
-		// Assigning full reported free memory for Tegras due to OS controlled caching.
-		if CudaTegra != "" {
-			// Setting overhead for non-Tegra devices
-			overhead = 0
-		}
-		avail := int64(gpuInfo.FreeMemory - overhead)
-		slog.Debug(fmt.Sprintf("%s detected %d devices with %dM available memory", gpuInfo.Library, gpuInfo.DeviceCount, avail/1024/1024))
-		return avail, nil
+		return int64(gpuInfo.FreeMemory), nil
 	}
 
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation

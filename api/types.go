@@ -81,6 +81,10 @@ type Metrics struct {
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+
+	Layers    int `json:"layers,omitempty"`
+	VRAMTotal int64 `json:"vram_total,omitempty"`
+	VRAMUsed  int64 `json:"vram_used,omitempty"`
 }
 
 // Options specified in GenerateRequest, if you add a new option here add it to the API docs also
@@ -124,6 +128,10 @@ type Runner struct {
 	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 	NumThread          int     `json:"num_thread,omitempty"`
+
+	// VRAMTotal and VRAMUsed are set by the server
+	VRAMTotal int64
+	VRAMUsed  int64
 }
 
 type EmbeddingRequest struct {
