@@ -126,7 +126,7 @@ func StartServer(ctx context.Context, ollamaHost string) error {
 }
 
 func PullIfMissing(ctx context.Context, client *http.Client, scheme, testEndpoint, modelName string) error {
-	slog.Debug("checking status of model", "model", modelName)
+	slog.Info("checking status of model", "model", modelName)
 	showReq := &api.ShowRequest{Name: modelName}
 	requestJSON, err := json.Marshal(showReq)
 	if err != nil {
@@ -174,36 +174,51 @@ func PullIfMissing(ctx context.Context, client *http.Client, scheme, testEndpoin
 	return nil
 }
 
+var serverProcMutex sync.Mutex
+
 func GenerateTestHelper(ctx context.Context, t *testing.T, client *http.Client, genReq api.GenerateRequest, anyResp []string) {
+
+	// TODO maybe stuff in an init routine?
+	lifecycle.InitLogging()
+
 	requestJSON, err := json.Marshal(genReq)
 	if err != nil {
 		t.Fatalf("Error serializing request: %v", err)
 	}
 	defer func() {
-		if t.Failed() && os.Getenv("OLLAMA_TEST_EXISTING") == "" {
-			// TODO
-			fp, err := os.Open(lifecycle.ServerLogFile)
-			if err != nil {
-				slog.Error("failed to open server log", "logfile", lifecycle.ServerLogFile, "error", err)
-				return
+		if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
+			defer serverProcMutex.Unlock()
+			if t.Failed() {
+				fp, err := os.Open(lifecycle.ServerLogFile)
+				if err != nil {
+					slog.Error("failed to open server log", "logfile", lifecycle.ServerLogFile, "error", err)
+					return
+				}
+				data, err := io.ReadAll(fp)
+				if err != nil {
+					slog.Error("failed to read server log", "logfile", lifecycle.ServerLogFile, "error", err)
+					return
+				}
+				slog.Warn("SERVER LOG FOLLOWS")
+				os.Stderr.Write(data)
+				slog.Warn("END OF SERVER")
 			}
-			data, err := io.ReadAll(fp)
-			if err != nil {
-				slog.Error("failed to read server log", "logfile", lifecycle.ServerLogFile, "error", err)
-				return
+			err = os.Remove(lifecycle.ServerLogFile)
+			if err != nil && !os.IsNotExist(err) {
+				slog.Warn("failed to cleanup", "logfile", lifecycle.ServerLogFile, "error", err)
 			}
-			slog.Warn("SERVER LOG FOLLOWS")
-			os.Stderr.Write(data)
-			slog.Warn("END OF SERVER")
-		}
-		err = os.Remove(lifecycle.ServerLogFile)
-		if err != nil && !os.IsNotExist(err) {
-			slog.Warn("failed to cleanup", "logfile", lifecycle.ServerLogFile, "error", err)
 		}
 	}()
 	scheme, testEndpoint := GetTestEndpoint()
 
 	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
+		serverProcMutex.Lock()
+		fp, err := os.CreateTemp("", "ollama-server-*.log")
+		if err != nil {
+			t.Fatalf("failed to generate log file: %s", err)
+		}
+		lifecycle.ServerLogFile = fp.Name()
+		fp.Close()
 		assert.NoError(t, StartServer(ctx, testEndpoint))
 	}
 
