@@ -71,10 +71,9 @@ More examples are available in the [examples directory](../examples).
 
 There are two ways to view `Modelfile`s underlying the models in [ollama.com/library][1]:
 
-- Option 1: view a details page from a model's tags page:
-  1.  Go to a particular model's tags (e.g. https://ollama.com/library/llama2/tags)
-  2.  Click on a tag (e.g. https://ollama.com/library/llama2:13b)
-  3.  Scroll down to "Layers"
+- Option 1: view a model page:
+  1.  Go to a particular model page (e.g. https://ollama.com/library/llama2)
+  2.  There is a table listing all the layers in the model.
       - Note: if the [`FROM` instruction](#from-required) is not present,
         it means the model was created from a local file
 - Option 2: use `ollama show` to print the `Modelfile` for any local models like so:
@@ -215,7 +214,6 @@ MESSAGE <role> <message>
 | user      | An example message of what the user could have asked.        |
 | assistant | An example message of how the model should respond.          |
 
-
 #### Example conversation
 
 ```modelfile
@@ -226,7 +224,6 @@ MESSAGE assistant no
 MESSAGE user Is Ontario in Canada?
 MESSAGE assistant yes
 ```
-
 
 ## Notes
 
