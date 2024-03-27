@@ -23,11 +23,14 @@ jobs:
           }
 
           {
-            echo GENERATE_CUDA=$(changed llm)
-            echo GENERATE_ROCM=$(changed llm)
+            echo GENERATE=$(changed llm/)
+            echo GENERATE_CUDA=$(changed llm/)
+            echo GENERATE_ROCM=$(changed llm/)
           } >>$GITHUB_OUTPUT
 
   generate:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.GENERATE == 'True' }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2019]
@@ -164,7 +167,6 @@ jobs:
         if: ${{ startsWith(matrix.os, 'windows-') }}
       - uses: golangci/golangci-lint-action@v3
   test:
-    needs: generate
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2019]
@@ -187,10 +189,19 @@ jobs:
           go-version: '1.22'
           cache: true
       - run: go get
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
-          path: llm/llama.cpp/build
+      - run: |
+          mkdir -p llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/linux/${{ matrix.arch }}/stub/lib/stub.so
+        if: ${{ startsWith(matrix.os, 'ubuntu-') }}
+      - run: |
+          mkdir -p llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/darwin/${{ matrix.arch }}/stub/lib/stub.dylib
+          touch llm/llama.cpp/ggml-metal.metal
+        if: ${{ startsWith(matrix.os, 'macos-') }}
+      - run: |
+          mkdir -p llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/
+          touch llm/llama.cpp/build/windows/${{ matrix.arch }}/stub/lib/stub.dll
+        if: ${{ startsWith(matrix.os, 'windows-') }}
       - run: go build
       - run: go test -v ./...
       - uses: actions/upload-artifact@v4
