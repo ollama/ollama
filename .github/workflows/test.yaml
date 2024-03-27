@@ -15,10 +15,13 @@ jobs:
       GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
       GENERATE_ROCM: ${{ steps.changes.outputs.GENERATE_ROCM }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: changes
         run: |
           changed() {
-            git diff-tree -r --no-commit-id --name-only $GITHUB_BASE_REF $GITHUB_HEAD_REF \
+            git diff-tree -r --no-commit-id --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} \
               | xargs python3 -c "import sys; print(any([x.startswith('$1') for x in sys.argv[1:]]))"
           }
 
