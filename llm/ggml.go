@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -90,28 +91,82 @@ func fileType(fileType uint32) string {
 }
 
 type model interface {
-	ModelFamily() string
-	ModelType() string
-	FileType() string
-	NumLayers() uint32
-	NumGQA() uint32
-	NumEmbed() uint32
-	NumHead() uint32
-	NumHeadKv() uint32
-	NumCtx() uint32
+	KV() KV
+	Tensors() []*Tensor
 }
 
 type KV map[string]any
 
+func (kv KV) u64(key string) uint64 {
+	switch v := kv[key].(type) {
+	case uint64:
+		return v
+	case uint32:
+		return uint64(v)
+	case float64:
+		return uint64(v)
+	default:
+		return 0
+	}
+}
+
+func (kv KV) Architecture() string {
+	if s, ok := kv["general.architecture"].(string); ok {
+		return s
+	}
+
+	return "unknown"
+}
+
+func (kv KV) ParameterCount() uint64 {
+	return kv.u64("general.parameter_count")
+}
+
+func (kv KV) FileType() string {
+	if u64 := kv.u64("general.file_type"); u64 > 0 {
+		return fileType(uint32(u64))
+	}
+
+	return "unknown"
+}
+
+func (kv KV) BlockCount() uint64 {
+	return kv.u64(fmt.Sprintf("%s.block_count", kv.Architecture()))
+}
+
+func (kv KV) HeadCount() uint64 {
+	return kv.u64(fmt.Sprintf("%s.attention.head_count", kv.Architecture()))
+}
+
+func (kv KV) HeadCountKV() uint64 {
+	return kv.u64(fmt.Sprintf("%s.attention.head_count_kv", kv.Architecture()))
+}
+
+func (kv KV) GQA() uint64 {
+	if headCountKV := kv.HeadCountKV(); headCountKV > 0 {
+		return kv.HeadCount() / headCountKV
+	}
+
+	return 0
+}
+
+func (kv KV) EmbeddingLength() uint64 {
+	return kv.u64(fmt.Sprintf("%s.embedding_length", kv.Architecture()))
+}
+
+func (kv KV) ContextLength() uint64 {
+	return kv.u64(fmt.Sprintf("%s.context_length", kv.Architecture()))
+}
+
 type Tensor struct {
-	Name   string
-	Kind   uint32
-	Offset uint64
+	Name   string `json:"name"`
+	Kind   uint32 `json:"kind"`
+	Offset uint64 `json:"-"`
 
 	// Shape is the number of elements in each dimension
-	Shape []uint64
+	Shape []uint64 `json:"shape"`
 
-	io.WriterTo
+	io.WriterTo `json:"-"`
 }
 
 func (t Tensor) blockSize() uint64 {

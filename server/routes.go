@@ -742,11 +742,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	modelDetails := api.ModelDetails{
 		ParentModel:       model.ParentModel,
-		Format:            model.Config.ModelFormat,
-		Family:            model.Config.ModelFamily,
-		Families:          model.Config.ModelFamilies,
-		ParameterSize:     model.Config.ModelType,
-		QuantizationLevel: model.Config.FileType,
+		Families:          model.Families(),
+		ParameterSize:     model.Type(),
+		QuantizationLevel: model.FileType(),
 	}
 
 	if req.System != "" {
@@ -815,11 +813,9 @@ func ListModelsHandler(c *gin.Context) {
 		}
 
 		modelDetails := api.ModelDetails{
-			Format:            model.Config.ModelFormat,
-			Family:            model.Config.ModelFamily,
-			Families:          model.Config.ModelFamilies,
-			ParameterSize:     model.Config.ModelType,
-			QuantizationLevel: model.Config.FileType,
+			Families:          model.Families(),
+			ParameterSize:     model.Type(),
+			QuantizationLevel: model.FileType(),
 		}
 
 		return api.ModelResponse{

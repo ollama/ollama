@@ -40,9 +40,9 @@ func New(model string, adapters, projectors []string, opts api.Options) (LLM, er
 		return nil, err
 	}
 
-	if opts.NumCtx > int(ggml.NumCtx()) {
-		slog.Warn(fmt.Sprintf("requested context length is greater than model's max context length (%d > %d), using %d instead", opts.NumCtx, ggml.NumCtx(), ggml.NumCtx()))
-		opts.NumCtx = int(ggml.NumCtx())
+	if opts.NumCtx > int(ggml.KV().ContextLength()) {
+		slog.Warn("requested context length is greater than model max context length", "requested", opts.NumCtx, "model", ggml.KV().ContextLength())
+		opts.NumCtx = int(ggml.KV().ContextLength())
 	}
 
 	if opts.NumCtx < 4 {
@@ -53,15 +53,14 @@ func New(model string, adapters, projectors []string, opts api.Options) (LLM, er
 	size := ggml.Size
 
 	// fp16 k,v matrices require = n_ctx * n_layer * n_embd / n_head * n_head_kv * 2 bytes each * 2 key and value
-	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.NumLayers()) * int64(ggml.NumEmbed()) * int64(ggml.NumHeadKv()) / int64(max(ggml.NumHead(), 1))
+	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.KV().BlockCount()) * int64(ggml.KV().EmbeddingLength()) * int64(ggml.KV().HeadCountKV()) / int64(ggml.KV().HeadCount())
 
 	// this amount is the overhead + tensors in memory
 	// TODO: get this from the llama.cpp's graph calculations instead of
 	// estimating it's 1/6 * kv_cache_size * num_gqa
-	graph := int64(ggml.NumGQA()) * kv / 6
+	graph := int64(ggml.KV().GQA()) * kv / 6
 
-	// certain model architectures don't support gpu inference yet
-	if slices.Contains(cpuOnlyFamilies, ggml.ModelFamily()) {
+	if slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture()) {
 		opts.NumGPU = 0
 	}
 
@@ -105,7 +104,7 @@ func New(model string, adapters, projectors []string, opts api.Options) (LLM, er
 		// 2. the proportional kv cache for all devices (kv * % layers)
 		// 3. the proportional model (size * % layers / # devices)
 		// This estimates the number of layers
-		maxlayers := int64(ggml.NumLayers()) + 1
+		maxlayers := int64(ggml.KV().BlockCount()) + 1
 		devices := int64(info.DeviceCount)
 		avg := vram / devices
 		layers := maxlayers * (avg - graph) / (kv + size/devices)

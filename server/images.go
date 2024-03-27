@@ -26,6 +26,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/version"
@@ -53,10 +54,66 @@ type Model struct {
 	Size           int64
 	Options        map[string]interface{}
 	Messages       []Message
+
+	kvs map[string]llm.KV
 }
 
 func (m *Model) IsEmbedding() bool {
-	return slices.Contains(m.Config.ModelFamilies, "bert") || slices.Contains(m.Config.ModelFamilies, "nomic-bert")
+	for _, family := range m.Families() {
+		switch family {
+		case "bert", "nomic-bert":
+			return true
+		}
+	}
+
+	return false
+}
+
+func (m *Model) Families() []string {
+	var modelFamilies []string
+	for _, kv := range m.kvs {
+		modelFamilies = append(modelFamilies, kv.Architecture())
+	}
+
+	if len(modelFamilies) != 0 {
+		return modelFamilies
+	}
+
+	return m.Config.ModelFamilies
+}
+
+// Type is the parameter count as a human readable string, e.g. 1B, 3B, 7B
+func (m *Model) Type() string {
+	var parameters uint64
+	for digest, kv := range m.kvs {
+		if digest == filepath.Base(m.ModelPath) {
+			parameters = kv.ParameterCount()
+			break
+		}
+	}
+
+	if parameters > 0 {
+		return format.HumanNumber(parameters)
+	}
+
+	return m.Config.ModelType
+}
+
+// FileType is the model's quantization type, e.g. F16, F32, q4_0, q5_K_M
+func (m *Model) FileType() string {
+	var filetype string
+	for digest, kv := range m.kvs {
+		if digest == filepath.Base(m.ModelPath) {
+			filetype = kv.FileType()
+			break
+		}
+	}
+
+	if filetype != "" {
+		return filetype
+	}
+
+	return m.Config.FileType
 }
 
 type Message struct {
@@ -72,8 +129,6 @@ type ManifestV2 struct {
 }
 
 type ConfigV2 struct {
-	ModelFormat   string   `json:"model_format"`
-	ModelFamily   string   `json:"model_family"`
 	ModelFamilies []string `json:"model_families"`
 	ModelType     string   `json:"model_type"`
 	FileType      string   `json:"file_type"`
@@ -82,36 +137,6 @@ type ConfigV2 struct {
 	Architecture string `json:"architecture"`
 	OS           string `json:"os"`
 	RootFS       RootFS `json:"rootfs"`
-}
-
-func (c *ConfigV2) SetModelFormat(format string) {
-	if c.ModelFormat == "" {
-		c.ModelFormat = format
-	}
-}
-
-func (c *ConfigV2) SetModelFamily(families ...string) {
-	for _, family := range families {
-		if c.ModelFamily == "" {
-			c.ModelFamily = family
-		}
-
-		if !slices.Contains(c.ModelFamilies, family) {
-			c.ModelFamilies = append(c.ModelFamilies, family)
-		}
-	}
-}
-
-func (c *ConfigV2) SetModelType(modelType string) {
-	if c.ModelType == "" {
-		c.ModelType = modelType
-	}
-}
-
-func (c *ConfigV2) SetFileType(fileType string) {
-	if c.FileType == "" {
-		c.FileType = fileType
-	}
 }
 
 type RootFS struct {
@@ -169,6 +194,7 @@ func GetModel(name string) (*Model, error) {
 		Template:  "{{ .Prompt }}",
 		License:   []string{},
 		Size:      manifest.GetTotalSize(),
+		kvs:       make(map[string]llm.KV),
 	}
 
 	filename, err := GetBlobsPath(manifest.Config.Digest)
@@ -196,6 +222,24 @@ func GetModel(name string) (*Model, error) {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
 			model.ParentModel = layer.From
+		case "application/vnd.ollama.image.model+json", "application/vnd.ollama.image.projector+json", "application/vnd.ollama.image.adapter+json":
+			file, err := os.Open(filename)
+			if err != nil {
+				return nil, err
+			}
+			defer file.Close()
+
+			var metadata struct {
+				Digest string `json:"digest"`
+				KV  llm.KV `json:"kv"`
+				// omit tensors
+			}
+
+			if err = json.NewDecoder(file).Decode(&metadata); err != nil {
+				return nil, err
+			}
+
+			model.kvs[metadata.Digest] = metadata.KV
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -377,16 +421,6 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 					return err
 				}
 
-				// if the model is still not in gguf format, error out
-				if fromConfig.ModelFormat != "gguf" {
-					return fmt.Errorf("%s is not in gguf format, this base model is not compatible with this version of ollama", c.Args)
-				}
-
-				config.SetModelFormat(fromConfig.ModelFormat)
-				config.SetModelFamily(append(fromConfig.ModelFamilies, fromConfig.ModelFamily)...)
-				config.SetModelType(fromConfig.ModelType)
-				config.SetFileType(fromConfig.FileType)
-
 				for _, layer := range manifest.Layers {
 					deleteMap[layer.Digest] = struct{}{}
 					if layer.MediaType == "application/vnd.ollama.image.params" {
@@ -440,18 +474,30 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 					}
 				}
 
-				config.SetModelFormat(ggml.Name())
-				config.SetModelFamily(ggml.ModelFamily())
-				config.SetModelType(ggml.ModelType())
-				config.SetFileType(ggml.FileType())
-
-				mediatype := mediatype
-				if ggml.ModelFamily() == "clip" {
+				if ggml.KV().Architecture() == "clip" {
 					mediatype = "application/vnd.ollama.image.projector"
 				}
 
 				sr := io.NewSectionReader(bin, offset, ggml.Size)
 				layer, err := NewLayer(sr, mediatype)
+				if err != nil {
+					return err
+				}
+
+				layers.Add(layer)
+
+				modelJSON := map[string]any{
+					"digest":  layer.Digest,
+					"kv":      ggml.KV(),
+					"tensors": ggml.Tensors(),
+				}
+
+				var b bytes.Buffer
+				if err := json.NewEncoder(&b).Encode(modelJSON); err != nil {
+					return err
+				}
+
+				layer, err = NewLayer(&b, fmt.Sprintf("%s+json", mediatype))
 				if err != nil {
 					return err
 				}
@@ -484,6 +530,24 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			sr := io.NewSectionReader(bin, 0, ggml.Size)
 			layer, err := NewLayer(sr, mediatype)
+			if err != nil {
+				return err
+			}
+
+			layers.Add(layer)
+
+			adapterJSON := map[string]any{
+				"digest":  layer.Digest,
+				"kv":      ggml.KV(),
+				"tensors": ggml.Tensors(),
+			}
+
+			var b bytes.Buffer
+			if err := json.NewEncoder(&b).Encode(adapterJSON); err != nil {
+				return err
+			}
+
+			layer, err = NewLayer(&b, fmt.Sprintf("%s+json", mediatype))
 			if err != nil {
 				return err
 			}
@@ -551,13 +615,6 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 		for k, v := range fromParams {
 			if _, ok := formattedParams[k]; !ok {
 				formattedParams[k] = v
-			}
-		}
-
-		// xxx - can this be removed?
-		if config.ModelType == "65B" {
-			if gqa, ok := formattedParams["gqa"].(int); ok && gqa == 8 {
-				config.ModelType = "70B"
 			}
 		}
 
