@@ -24,5 +24,5 @@ func TestOrcaMiniBlueSky(t *testing.T) {
 			"seed":        123,
 		},
 	}
-	GenerateTestHelper(ctx, t, &http.Client{}, req, []string{"rayleigh"})
+	GenerateTestHelper(ctx, t, &http.Client{}, req, []string{"rayleigh", "scattering"})
 }

@@ -61,6 +61,8 @@ ARG OLLAMA_CUSTOM_CPU_DEFS
 ARG CGO_CFLAGS
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
+FROM --platform=linux/amd64 cpu-builder-amd64 AS static-build-amd64
+RUN OLLAMA_CPU_TARGET="static" sh gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu-build-amd64
 RUN OLLAMA_CPU_TARGET="cpu" sh gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx-build-amd64
@@ -68,28 +70,33 @@ RUN OLLAMA_CPU_TARGET="cpu_avx" sh gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx2-build-amd64
 RUN OLLAMA_CPU_TARGET="cpu_avx2" sh gen_linux.sh
 
-FROM --platform=linux/arm64 centos:7 AS cpu-build-arm64
+FROM --platform=linux/arm64 centos:7 AS cpu-builder-arm64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-# Note, we only build the "base" CPU variant on arm since avx/avx2 are x86 features
 ARG OLLAMA_CUSTOM_CPU_DEFS
 ARG CGO_CFLAGS
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
+
+FROM --platform=linux/arm64 cpu-builder-arm64 AS static-build-arm64
+RUN OLLAMA_CPU_TARGET="static" sh gen_linux.sh
+FROM --platform=linux/arm64 cpu-builder-arm64 AS cpu-build-arm64
 RUN OLLAMA_CPU_TARGET="cpu" sh gen_linux.sh
+
 
 # Intermediate stage used for ./scripts/build_linux.sh
 FROM --platform=linux/amd64 cpu-build-amd64 AS build-amd64
 ENV CGO_ENABLED 1
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-COPY --from=cuda-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+COPY --from=static-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cuda-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/deps/ ./dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
@@ -101,8 +108,8 @@ ENV CGO_ENABLED 1
 ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=cuda-build-arm64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-RUN mkdir -p /go/src/github.com/ollama/ollama/dist/deps/
+COPY --from=static-build-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cuda-build-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN go build -trimpath .

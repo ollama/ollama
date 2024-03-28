@@ -1007,12 +1007,14 @@ struct llama_server_context
                 slot.n_sent_text += result.text_to_send.size();
                 // add the token to slot queue and cache
             }
-            slot.add_token_string(result);
+
             if (slot.params.stream)
             {
                 send_partial_response(slot, result);
             }
         }
+
+        slot.add_token_string(result);
 
         if (incomplete)
         {
@@ -2768,7 +2770,7 @@ inline void signal_handler(int signal) {
     shutdown_handler(signal);
 }
 
-int _main(int argc, char **argv)
+int main(int argc, char **argv)
 {
 #if SERVER_VERBOSE != 1
     log_disable();

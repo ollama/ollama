@@ -1,3 +1,3 @@
 package generate
 
-//go:generate sh ./gen_darwin.sh
+//go:generate bash ./gen_darwin.sh
