@@ -67,8 +67,10 @@ var loaded struct {
 
 var defaultSessionDuration = 5 * time.Minute
 
-// load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
 func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
+	loaded.mu.Lock()
+	defer loaded.mu.Unlock()
+
 	needLoad := loaded.runner == nil || // is there a model loaded?
 		loaded.ModelPath != model.ModelPath || // has the base model changed?
 		!reflect.DeepEqual(loaded.AdapterPaths, model.AdapterPaths) || // have the adapters changed?
@@ -145,9 +147,6 @@ func isSupportedImageType(image []byte) bool {
 }
 
 func GenerateHandler(c *gin.Context) {
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
-
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
 	err := c.ShouldBindJSON(&req)
