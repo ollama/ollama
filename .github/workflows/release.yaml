@@ -213,24 +213,31 @@ jobs:
         with:
           go-version: '1.22'
           cache: true
-      # TODO - consider replacing this action with a ps1 snippet to install
-      # This actions seems to fail sometimes with "no tools in cache" but a re-run of the failed job clears it
-      # https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
       - name: "Install CUDA"
-        uses: Jimver/cuda-toolkit@v0.2.14
-        id: cuda-toolkit
-        with:
-          cuda: '11.3.1'      
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading CUDA Installer"
+          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe" -OutFile "${env:RUNNER_TEMP}\cuda-install.exe"
+          write-host "Installing CUDA"
+          Start-Process "${env:RUNNER_TEMP}\cuda-install.exe" -ArgumentList '-s' -NoNewWindow -Wait
+          write-host "Completed CUDA"
+          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
+          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
+          echo "$cudaPath\bin" >> $env:GITHUB_PATH
+          echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
       - name: "Verify CUDA"
         run: nvcc -V
       - run: go get ./...
       - name: go generate
         run: |
           $gopath=(get-command go).source | split-path -parent
+          $cudabin=(get-command nvcc).source | split-path
           & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
           cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
+          $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           go generate -x ./...
       - name: "gather cuda dependencies"
