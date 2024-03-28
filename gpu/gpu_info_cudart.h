@@ -7,6 +7,7 @@
 typedef enum cudartReturn_enum {
   CUDART_SUCCESS = 0,
   CUDART_UNSUPPORTED = 1,
+  CUDA_ERROR_INSUFFICIENT_DRIVER = 35,
   // Other values omitted for now...
 } cudartReturn_t;
 
