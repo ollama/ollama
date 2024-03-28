@@ -48,3 +48,50 @@ func TestKeepAliveParsingFromJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestDurationMarshalUnmarshal(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    time.Duration
+		expected time.Duration
+	}{
+		{
+			"negative duration",
+			time.Duration(-1),
+			time.Duration(math.MaxInt64),
+		},
+		{
+			"positive duration",
+			time.Duration(42 * time.Second),
+			time.Duration(42 * time.Second),
+		},
+		{
+			"another positive duration",
+			time.Duration(42 * time.Minute),
+			time.Duration(42 * time.Minute),
+		},
+		{
+			"zero duration",
+			time.Duration(0),
+			time.Duration(0),
+		},
+		{
+			"max duration",
+			time.Duration(math.MaxInt64),
+			time.Duration(math.MaxInt64),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b, err := json.Marshal(Duration{test.input})
+			require.NoError(t, err)
+
+			var d Duration
+			err = json.Unmarshal(b, &d)
+			require.NoError(t, err)
+
+			assert.Equal(t, test.expected, d.Duration, "input %v, marshalled %v, got %v", test.input, string(b), d.Duration)
+		})
+	}
+}
