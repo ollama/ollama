@@ -199,11 +199,7 @@ func GenerateHandler(c *gin.Context) {
 
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
-		if errors.Is(err, api.ErrInvalidOpts) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -445,11 +441,7 @@ func EmbeddingsHandler(c *gin.Context) {
 
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
-		if errors.Is(err, api.ErrInvalidOpts) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -1254,11 +1246,7 @@ func ChatHandler(c *gin.Context) {
 
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
-		if errors.Is(err, api.ErrInvalidOpts) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
