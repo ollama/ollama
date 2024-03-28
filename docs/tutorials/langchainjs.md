@@ -5,13 +5,13 @@ In this tutorial, we are going to use JavaScript with LangChain and Ollama to le
 To get started, let's just use **LangChain** to ask a simple question to a model. To do this with JavaScript, we need to install **LangChain**:
 
 ```bash
-npm install langchain
+npm install @langchain/community
 ```
 
 Now we can start building out our JavaScript:
 
 ```javascript
-import { Ollama } from "langchain/llms/ollama";
+import { Ollama } from "@langchain/community/llms/ollama";
 
 const ollama = new Ollama({
   baseUrl: "http://localhost:11434",
