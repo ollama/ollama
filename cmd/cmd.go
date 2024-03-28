@@ -387,6 +387,26 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, name := range args {
+
+		var option string
+
+		fmt.Printf("Confirm the removal of %s [N,y]: ", name)
+		if _, err := fmt.Scanf("%s", &option); err != nil {
+
+			return err
+
+		}
+
+		if option != "N" && option != "n" && option != "y" {
+
+			return errors.New("received invalid option")
+
+		} else if option == "N" || option == "n" {
+
+			continue
+
+		}
+
 		req := api.DeleteRequest{Name: name}
 		if err := client.Delete(cmd.Context(), &req); err != nil {
 			return err
