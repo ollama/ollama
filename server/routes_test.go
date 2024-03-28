@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,13 +32,22 @@ func Test_Routes(t *testing.T) {
 	}
 
 	createTestFile := func(t *testing.T, name string) string {
+		t.Helper()
+
 		f, err := os.CreateTemp(t.TempDir(), name)
 		assert.Nil(t, err)
 		defer f.Close()
 
-		_, err = f.Write([]byte("GGUF"))
+		err = binary.Write(f, binary.LittleEndian, []byte("GGUF"))
 		assert.Nil(t, err)
-		_, err = f.Write([]byte{0x2, 0})
+
+		err = binary.Write(f, binary.LittleEndian, uint32(3))
+		assert.Nil(t, err)
+
+		err = binary.Write(f, binary.LittleEndian, uint64(0))
+		assert.Nil(t, err)
+
+		err = binary.Write(f, binary.LittleEndian, uint64(0))
 		assert.Nil(t, err)
 
 		return f.Name()
