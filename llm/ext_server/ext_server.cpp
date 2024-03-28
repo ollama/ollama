@@ -77,7 +77,59 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     }
 
     params.n_gpu_layers = sparams->n_gpu_layers;
+
+    // This is taken dirrectly from server.cpp::server_params_parse().
+#ifdef GGML_USE_CUBLAS
+
+    // Parse split_mode, falling back to "layer" as default.
+    if (sparams->split_mode != NULL) {
+      std::string arg = sparams->split_mode;
+      if (arg == "none")
+      {
+        params.split_mode = LLAMA_SPLIT_NONE;
+      }
+      else if (arg == "row")
+      {
+        params.split_mode = LLAMA_SPLIT_ROW;
+      }
+      else
+      {
+        params.split_mode = LLAMA_SPLIT_LAYER;
+      }
+    }
+
+    // Parse tensor_split, falling back to 0.0f as default.
+    if (sparams->tensor_split != NULL) {
+      std::string arg = sparams->tensor_split;
+      
+      // split string by , and /
+      const std::regex regex{R"([,/]+)"};
+      std::sregex_token_iterator it{arg.begin(), arg.end(), regex, -1};
+      std::vector<std::string> split_arg{it, {}};
+      GGML_ASSERT(split_arg.size() <= LLAMA_MAX_DEVICES);
+
+      for (size_t i_device = 0; i_device < LLAMA_MAX_DEVICES; ++i_device)
+      {
+        if (i_device < split_arg.size())
+        {
+          // This avoids "Error: exception stof" for blank/unparsable floats.
+          try {
+            params.tensor_split[i_device] = std::stof(split_arg[i_device]);
+          }
+          catch (...) {
+            params.tensor_split[i_device] = 0.0f;
+          }
+        }
+        else
+        {
+          params.tensor_split[i_device] = 0.0f;
+        }
+      }
+    }
+#endif
+
     params.main_gpu = sparams->main_gpu;
+    
     params.use_mlock = sparams->use_mlock;
     params.use_mmap = sparams->use_mmap;
     params.numa = (ggml_numa_strategy)sparams->numa;
