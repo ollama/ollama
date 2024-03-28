@@ -174,6 +174,7 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 		"stream":            true,
 		"n_predict":         predict.Options.NumPredict,
 		"n_keep":            predict.Options.NumKeep,
+		"n_probs":           predict.Options.NProbs,
 		"temperature":       predict.Options.Temperature,
 		"top_k":             predict.Options.TopK,
 		"top_p":             predict.Options.TopP,
@@ -271,7 +272,8 @@ func (llm *dynExtServer) Predict(ctx context.Context, predict PredictOpts, fn fu
 
 				if p.Content != "" {
 					fn(PredictResult{
-						Content: p.Content,
+						Content:                 p.Content,
+						CompletionProbabilities: p.CompletionProbabilities,
 					})
 				}
 
