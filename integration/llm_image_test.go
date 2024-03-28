@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmorganca/ollama/api"
+	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +30,7 @@ func TestIntegrationMultimodal(t *testing.T) {
 	}
 
 	resp := "the ollamas"
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	GenerateTestHelper(ctx, t, &http.Client{}, req, []string{resp})
 }

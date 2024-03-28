@@ -11,11 +11,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/jmorganca/ollama/gpu"
+	"github.com/ollama/ollama/gpu"
 )
 
 // Libraries names may contain an optional variant separated by '_'
@@ -147,9 +148,10 @@ func extractDynamicLibs(payloadsDir, glob string) ([]string, error) {
 	if err != nil || len(files) == 0 {
 		return nil, payloadMissing
 	}
-	libs := []string{}
 
-	g := new(errgroup.Group)
+	var mu sync.Mutex
+	var libs []string
+	var g errgroup.Group
 	for _, file := range files {
 		pathComps := strings.Split(file, "/")
 		if len(pathComps) != pathComponentCount {
@@ -182,7 +184,9 @@ func extractDynamicLibs(payloadsDir, glob string) ([]string, error) {
 
 			destFile := filepath.Join(targetDir, filepath.Base(filename))
 			if strings.Contains(destFile, "server") {
+				mu.Lock()
 				libs = append(libs, destFile)
+				mu.Unlock()
 			}
 
 			destFp, err := os.OpenFile(destFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)

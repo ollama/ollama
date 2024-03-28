@@ -27,12 +27,6 @@ function amdGPUs {
 }
 
 function init_vars {
-    # Verify the environment is a Developer Shell for MSVC 2019
-    write-host $env:VSINSTALLDIR
-    if (($env:VSINSTALLDIR -eq $null)) {
-        Write-Error "`r`nBUILD ERROR - YOUR DEVELOPMENT ENVIRONMENT IS NOT SET UP CORRECTLY`r`nTo build Ollama you must run from an MSVC Developer Shell`r`nSee .\docs\development.md for instructions to set up your dev environment"
-        exit 1
-    }
     $script:SRC_DIR = $(resolve-path "..\..\")
     $script:llamacppDir = "../llama.cpp"
     $script:cmakeDefs = @(
@@ -261,7 +255,7 @@ if ($null -ne $env:HIP_PATH) {
         )
 
     # Make sure the ROCm binary dir is first in the path
-    $env:PATH="$env:HIP_PATH\bin;$env:VSINSTALLDIR\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja;$env:PATH"
+    $env:PATH="$env:HIP_PATH\bin;$env:PATH"
 
     # We have to clobber the LIB var from the developer shell for clang to work properly
     $env:LIB=""

@@ -33,8 +33,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/gpu"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/gpu"
 )
 
 type dynExtServer struct {

@@ -1,10 +1,10 @@
 #ifndef __APPLE__  // TODO - maybe consider nvidia support on intel macs?
 
-#include "gpu_info_cuda.h"
-
 #include <string.h>
 
-void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
+#include "gpu_info_nvml.h"
+
+void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
   nvmlReturn_t ret;
   resp->err = NULL;
   const int buflen = 256;
@@ -30,20 +30,20 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
       {NULL, NULL},
   };
 
-  resp->ch.handle = LOAD_LIBRARY(cuda_lib_path, RTLD_LAZY);
+  resp->ch.handle = LOAD_LIBRARY(nvml_lib_path, RTLD_LAZY);
   if (!resp->ch.handle) {
     char *msg = LOAD_ERR();
-    LOG(resp->ch.verbose, "library %s load err: %s\n", cuda_lib_path, msg);
+    LOG(resp->ch.verbose, "library %s load err: %s\n", nvml_lib_path, msg);
     snprintf(buf, buflen,
              "Unable to load %s library to query for Nvidia GPUs: %s",
-             cuda_lib_path, msg);
+             nvml_lib_path, msg);
     free(msg);
     resp->err = strdup(buf);
     return;
   }
 
   // TODO once we've squashed the remaining corner cases remove this log
-  LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", cuda_lib_path);
+  LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", nvml_lib_path);
   
   for (i = 0; l[i].s != NULL; i++) {
     // TODO once we've squashed the remaining corner cases remove this log
@@ -82,7 +82,7 @@ void cuda_init(char *cuda_lib_path, cuda_init_resp_t *resp) {
   }
 }
 
-void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
+void nvml_check_vram(nvml_handle_t h, mem_info_t *resp) {
   resp->err = NULL;
   nvmlDevice_t device;
   nvmlMemory_t memInfo = {0};
@@ -92,7 +92,7 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
   int i;
 
   if (h.handle == NULL) {
-    resp->err = strdup("nvml handle sn't initialized");
+    resp->err = strdup("nvml handle isn't initialized");
     return;
   }
 
@@ -155,15 +155,15 @@ void cuda_check_vram(cuda_handle_t h, mem_info_t *resp) {
       }
     }
 
-    LOG(h.verbose, "[%d] CUDA totalMem %llu\n", i, memInfo.total);
-    LOG(h.verbose, "[%d] CUDA usedMem %llu\n", i, memInfo.used);
+    LOG(h.verbose, "[%d] CUDA totalMem %ld\n", i, memInfo.total);
+    LOG(h.verbose, "[%d] CUDA freeMem %ld\n", i, memInfo.free);
 
     resp->total += memInfo.total;
     resp->free += memInfo.free;
   }
 }
 
-void cuda_compute_capability(cuda_handle_t h, cuda_compute_capability_t *resp) {
+void nvml_compute_capability(nvml_handle_t h, nvml_compute_capability_t *resp) {
   resp->err = NULL;
   resp->major = 0;
   resp->minor = 0;

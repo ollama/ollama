@@ -90,30 +90,35 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
             compress_libs
         fi
 
-        if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx" ]; then
+        if [ "${ARCH}" == "x86_64" ]; then
             #
-            # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
-            # Approximately 400% faster than LCD on same CPU
+            # ARM chips in M1/M2/M3-based MACs and NVidia Tegra devices do not currently support avx extensions.
             #
-            init_vars
-            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx"
-            echo "Building AVX CPU"
-            build
-            compress_libs
-        fi
+            if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx" ]; then
+                #
+                # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
+                # Approximately 400% faster than LCD on same CPU
+                #
+                init_vars
+                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+                BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx"
+                echo "Building AVX CPU"
+                build
+                compress_libs
+            fi
 
-        if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx2" ]; then
-            #
-            # ~2013 CPU Dynamic library
-            # Approximately 10% faster than AVX on same CPU
-            #
-            init_vars
-            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
-            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx2"
-            echo "Building AVX2 CPU"
-            build
-            compress_libs
+            if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx2" ]; then
+                #
+                # ~2013 CPU Dynamic library
+                # Approximately 10% faster than AVX on same CPU
+                #
+                init_vars
+                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
+                BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx2"
+                echo "Building AVX2 CPU"
+                build
+                compress_libs
+            fi
         fi
     fi
 else
@@ -142,12 +147,21 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
     if [ -n "${CUDA_MAJOR}" ]; then
         CUDA_VARIANT=_v${CUDA_MAJOR}
     fi
-    CMAKE_DEFS="-DLLAMA_CUBLAS=on -DLLAMA_CUDA_FORCE_MMQ=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
+    if [ "${ARCH}" == "arm64" ]; then
+        echo "ARM CPU detected - disabling unsupported AVX instructions"
+        
+        # ARM-based CPUs such as M1 and Tegra do not support AVX extensions.
+        #
+        # CUDA compute < 6.0 lacks proper FP16 support on ARM. 
+        # Disabling has minimal performance effect while maintaining compatibility. 
+        ARM64_DEFS="-DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_CUDA_F16=off"
+    fi
+    CMAKE_DEFS="-DLLAMA_CUBLAS=on -DLLAMA_CUDA_FORCE_MMQ=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS}"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cuda${CUDA_VARIANT}"
     EXTRA_LIBS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
     build
 
-    # Cary the CUDA libs as payloads to help reduce dependency burden on users
+    # Carry the CUDA libs as payloads to help reduce dependency burden on users
     #
     # TODO - in the future we may shift to packaging these separately and conditionally
     #        downloading them in the install script.
