@@ -1,4 +1,6 @@
 // openai package provides middleware for partial compatibility with the OpenAI REST API
+// https://platform.openai.com/docs/api-reference
+
 package openai
 
 import (
@@ -23,6 +25,18 @@ type Error struct {
 
 type ErrorResponse struct {
 	Error Error `json:"error"`
+}
+
+type Model struct {
+	Object  string `json:"object"`
+	Id      string `json:"id"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+type ModelResponse struct {
+	Object string  `json:"object"`
+	Data   []Model `json:"data"`
 }
 
 type Message struct {
@@ -287,7 +301,7 @@ func (w *writer) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
-func Middleware() gin.HandlerFunc {
+func CompletionMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req ChatCompletionRequest
 		err := c.ShouldBindJSON(&req)
