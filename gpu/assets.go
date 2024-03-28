@@ -22,11 +22,20 @@ var (
 func PayloadsDir() (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
+	var err error
 	if payloadsDir == "" {
 		cleanupTmpDirs()
-		tmpDir, err := os.MkdirTemp("", "ollama")
-		if err != nil {
-			return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+		tmpDir := os.Getenv("OLLAMA_TMPDIR")
+		if tmpDir == "" {
+			tmpDir, err = os.MkdirTemp("", "ollama")
+			if err != nil {
+				return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+			}
+		} else {
+			err = os.MkdirAll(tmpDir, 0755)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate tmp dir %s: %w", tmpDir, err)
+			}
 		}
 
 		// Track our pid so we can clean up orphaned tmpdirs
