@@ -40,6 +40,13 @@ func checkError(resp *http.Response, body []byte) error {
 	return apiError
 }
 
+func NewClient(baseURL *url.URL, httpClient *http.Client) *Client {
+	return &Client{
+		base: baseURL,
+		http: httpClient,
+	}
+}
+
 func ClientFromEnvironment() (*Client, error) {
 	defaultPort := "11434"
 
@@ -66,13 +73,13 @@ func ClientFromEnvironment() (*Client, error) {
 		}
 	}
 
-	return &Client{
-		base: &url.URL{
+	return NewClient(
+		&url.URL{
 			Scheme: scheme,
 			Host:   net.JoinHostPort(host, port),
 		},
-		http: http.DefaultClient,
-	}, nil
+		http.DefaultClient,
+	), nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
@@ -292,6 +299,7 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
 	var resp EmbeddingResponse
 	if err := c.do(ctx, http.MethodPost, "/api/embeddings", req, &resp); err != nil {
