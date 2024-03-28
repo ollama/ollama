@@ -153,6 +153,12 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 	_ = file.Truncate(b.Total)
 
+	if opts != nil {
+		if opts.Bandwidth > 0 {
+			opts.Bandwidth = opts.Bandwidth / len(b.Parts)
+		}
+	}
+
 	g, inner := errgroup.WithContext(ctx)
 	g.SetLimit(numDownloadParts)
 	for i := range b.Parts {

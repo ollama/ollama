@@ -182,11 +182,12 @@ type CopyRequest struct {
 }
 
 type PullRequest struct {
-	Model    string `json:"model"`
-	Insecure bool   `json:"insecure,omitempty"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Stream   *bool  `json:"stream,omitempty"`
+	Model     string `json:"model"`
+	Insecure  bool   `json:"insecure,omitempty"`
+	Bandwidth string `json:"bandwidth,omitempty"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	Stream    *bool  `json:"stream,omitempty"`
 
 	// Name is deprecated, see Model
 	Name string `json:"name"`
@@ -200,11 +201,12 @@ type ProgressResponse struct {
 }
 
 type PushRequest struct {
-	Model    string `json:"model"`
-	Insecure bool   `json:"insecure,omitempty"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Stream   *bool  `json:"stream,omitempty"`
+	Model     string `json:"model"`
+	Insecure  bool   `json:"insecure,omitempty"`
+	Bandwidth string `json:"bandwidth,omitempty"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	Stream    *bool  `json:"stream,omitempty"`
 
 	// Name is deprecated, see Model
 	Name string `json:"name"`
