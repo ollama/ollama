@@ -11,17 +11,39 @@
 #define UNLOAD_LIBRARY(handle) dlclose(handle)
 #elif _WIN32
 #include <windows.h>
-#define LOAD_LIBRARY(lib, flags) LoadLibrary(lib)
+#include <stdlib.h>
+
+HMODULE LoadLibraryWindows(const char* lib) {
+    int len = MultiByteToWideChar(CP_UTF8, 0, lib, -1, NULL, 0);
+    wchar_t* wLibPath = (wchar_t*)malloc(len * sizeof(wchar_t));
+    MultiByteToWideChar(CP_UTF8, 0, lib, -1, wLibPath, len);
+    HMODULE mod = LoadLibraryW(wLibPath);
+    free(wLibPath);
+    return mod;
+}
+
+char* LoadErrorWindows(void) {
+    LPWSTR messageBuffer = NULL;
+    DWORD size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&messageBuffer, 0, NULL);
+    if (size == 0) {
+        return strdup("");
+    }
+    
+    // convert the wide character string to a character string
+    int requiredSize = WideCharToMultiByte(CP_UTF8, 0, messageBuffer, -1, NULL, 0, NULL, NULL);
+    char* errorMessage = (char*)malloc(requiredSize);
+    WideCharToMultiByte(CP_UTF8, 0, messageBuffer, -1, errorMessage, requiredSize, NULL, NULL);
+    
+    LocalFree(messageBuffer);
+    return errorMessage;
+}
+
+#define LOAD_LIBRARY(lib, flags) LoadLibraryWindows(lib)
 #define LOAD_SYMBOL(handle, sym) GetProcAddress(handle, sym)
 #define UNLOAD_LIBRARY(handle) FreeLibrary(handle)
-#define LOAD_ERR() ({\
-  LPSTR messageBuffer = NULL; \
-  size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, \
-                                 NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL); \
-  char *resp = strdup(messageBuffer); \
-  LocalFree(messageBuffer); \
-  resp; \
-})
+#define LOAD_ERR() LoadErrorWindows()
+
 #else
 #include <dlfcn.h>
 #define LOAD_LIBRARY(lib, flags) dlopen(lib, flags)
