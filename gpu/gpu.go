@@ -196,6 +196,13 @@ func GetGPUInfo() GpuInfo {
 		if resp.Library != "" {
 			return resp
 		}
+	} else if VulkanDetected() {
+	    slog.Info("Vulkan Detected!")
+	    resp.Library = "vulkan"
+		resp.DeviceCount = uint32(1)
+		resp.FreeMemory = uint64(3*1024*1024*1024)
+		resp.TotalMemory = uint64(3*1024*1024*1024)
+		return resp
 	}
 	if resp.Library == "" {
 		C.cpu_check_ram(&memInfo)
@@ -238,7 +245,7 @@ func CheckVRAM() (int64, error) {
 		return avail, nil
 	}
 	gpuInfo := GetGPUInfo()
-	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
+	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm" || gpuInfo.Library == "vulkan") {
 		// leave 10% or 1024MiB of VRAM free per GPU to handle unaccounted for overhead
 		overhead := gpuInfo.FreeMemory / 10
 		gpus := uint64(gpuInfo.DeviceCount)
