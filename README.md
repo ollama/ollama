@@ -12,6 +12,11 @@ Get up and running with large language models locally.
 
 [Download](https://ollama.com/download/Ollama-darwin.zip)
 
+or install via [Homebrew](https://brew.sh/)
+```
+brew install ollama
+```
+
 ### Windows preview
 
 [Download](https://ollama.com/download/OllamaSetup.exe)
