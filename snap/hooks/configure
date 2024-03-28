@@ -1,0 +1,4 @@
+#!/bin/bash
+set -e
+snapctl stop "$SNAP_INSTANCE_NAME"
+snapctl start "$SNAP_INSTANCE_NAME"
