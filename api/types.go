@@ -125,17 +125,43 @@ type Runner struct {
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 	NumThread          int     `json:"num_thread,omitempty"`
 }
+type EmbeddingInput struct {
+	Prompt  string
+	Prompts []string
+}
+
+func (e *EmbeddingInput) UnmarshalJSON(b []byte) error {
+	fmt.Printf("Unmarshal")
+	if err := json.Unmarshal(b, &e.Prompt); err == nil {
+		return nil
+	}
+	if err := json.Unmarshal(b, &e.Prompts); err == nil {
+		return nil
+	}
+	return fmt.Errorf("EmbeddingInput must be a string or an array of strings")
+}
+
+func (e *EmbeddingInput) MarshalJSON() ([]byte, error) {
+	if e.Prompt != "" {
+		return json.Marshal(e.Prompt)
+	}
+	if e.Prompts != nil {
+		return json.Marshal(e.Prompts)
+	}
+	return nil, fmt.Errorf("EmbeddingInput has no data")
+}
 
 type EmbeddingRequest struct {
-	Model     string    `json:"model"`
-	Prompt    string    `json:"prompt"`
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	Model     string          `json:"model"`
+	Prompt    *EmbeddingInput `json:"prompt"`
+	KeepAlive *Duration       `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
 
 type EmbeddingResponse struct {
-	Embedding []float64 `json:"embedding"`
+	Embedding  []float64   `json:"embedding,omitempty"`
+	Embeddings [][]float64 `json:"embeddings,omitempty"`
 }
 
 type CreateRequest struct {

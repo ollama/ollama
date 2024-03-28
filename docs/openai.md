@@ -27,6 +27,11 @@ chat_completion = client.chat.completions.create(
     ],
     model='llama2',
 )
+
+embeddings = client.embeddings.create(
+  model="llama2",
+  input=["The food was delicious and the waiter...","Say this is a test"]
+)
 ```
 
 ### OpenAI JavaScript library
@@ -45,6 +50,13 @@ const chatCompletion = await openai.chat.completions.create({
   messages: [{ role: 'user', content: 'Say this is a test' }],
   model: 'llama2',
 })
+
+const embedding = await openai.embeddings.create({
+  model: "llama2",
+  input: "The quick brown fox jumped over the lazy dog",
+});
+
+console.log(embedding);
 ```
 
 ### `curl`
@@ -65,6 +77,15 @@ curl http://localhost:11434/v1/chat/completions \
             }
         ]
     }'
+```
+
+```
+curl https://api.openai.com/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "The food was delicious and the waiter...",
+    "model": "llama2"
+  }'
 ```
 
 ## Endpoints
@@ -139,3 +160,27 @@ curl http://localhost:11434/v1/chat/completions \
         ]
     }'
 ```
+
+## Endpoints
+
+### `/v1/embeddings`
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `input`
+- [ ] `encoding_format`
+
+#### Notes
+
+- Setting `seed` will always set `temperature` to `0`
+- `usage.prompt_tokens` will be 0
+
+## Models
+
+Before using a model, pull it locally `ollama pull`:
+
+```shell
+ollama pull llama2
+```
+

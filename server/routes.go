@@ -415,8 +415,8 @@ func getDefaultSessionDuration() time.Duration {
 func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
-
 	var req api.EmbeddingRequest
+	fmt.Printf("req.Input: %v\n", c.Request.Body)
 	err := c.ShouldBindJSON(&req)
 	switch {
 	case errors.Is(err, io.EOF):
@@ -426,6 +426,7 @@ func EmbeddingsHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	slog.Info("Got this far")
 
 	if req.Model == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
@@ -466,20 +467,34 @@ func EmbeddingsHandler(c *gin.Context) {
 	}
 
 	// an empty request loads the model
-	if req.Prompt == "" {
+	if req.Prompt.Prompt == "" && req.Prompt.Prompts == nil {
 		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
-	embedding, err := loaded.runner.Embedding(c.Request.Context(), req.Prompt)
-	if err != nil {
-		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
-		return
+	var embedding []float64
+	var embeddings [][]float64
+	if req.Prompt.Prompt != "" {
+		embedding, err = loaded.runner.Embedding(c.Request.Context(), req.Prompt.Prompt)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
+			return
+		}
+	} else {
+		embeddings = make([][]float64, 0)
+		for _, p := range req.Prompt.Prompts {
+			membedding, err := loaded.runner.Embedding(c.Request.Context(), p)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
+				return
+			}
+			embeddings = append(embeddings, membedding)
+		}
 	}
 
 	resp := api.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding:  embedding,
+		Embeddings: embeddings,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -1052,6 +1067,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.Middleware(), ChatHandler)
+	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), EmbeddingsHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {

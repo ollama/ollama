@@ -85,6 +85,23 @@ type ChatCompletionChunk struct {
 	Choices           []ChunkChoice `json:"choices"`
 }
 
+type EmbeddingRequest struct {
+	Model          string             `json:"model"`
+	EncodingFormat string             `json:"encoding_format"` // float32 or base64
+	Input          api.EmbeddingInput `json:"input"`
+}
+type EmbeddingResponseData struct {
+	Object    string    `json:"object"`
+	Embedding []float64 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+type EmbeddingResponse struct {
+	Object string                   `json:"object"`
+	Data   []*EmbeddingResponseData `json:"data"`
+	Model  string                   `json:"model"`
+	Usage  Usage                    `json:"usage,omitempty"`
+}
+
 func NewError(code int, message string) ErrorResponse {
 	var etype string
 	switch code {
@@ -219,6 +236,8 @@ type writer struct {
 	stream bool
 	id     string
 	gin.ResponseWriter
+	embeddingsMode bool
+	Model          string
 }
 
 func (w *writer) writeError(code int, data []byte) (int, error) {
@@ -238,7 +257,34 @@ func (w *writer) writeError(code int, data []byte) (int, error) {
 }
 
 func (w *writer) writeResponse(data []byte) (int, error) {
+	//fmt.Printf("data: %v\n", string(data))
 	var chatResponse api.ChatResponse
+	var embeddingResponse EmbeddingResponse
+	var apiEmbeddingsResponse api.EmbeddingResponse
+	if w.embeddingsMode {
+		err := json.Unmarshal(data, &apiEmbeddingsResponse)
+		if err != nil {
+			return 0, err
+		}
+		embeddingResponse = EmbeddingResponse{
+			Object: "list",
+			Data:   make([]*EmbeddingResponseData, 0),
+			Model:  w.Model,
+		}
+		for i, emb := range apiEmbeddingsResponse.Embeddings {
+			embeddingResponse.Data = append(embeddingResponse.Data, &EmbeddingResponseData{
+				Object:    "embedding",
+				Embedding: emb,
+				Index:     i,
+			})
+		}
+		w.ResponseWriter.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w.ResponseWriter).Encode(embeddingResponse)
+		if err != nil {
+			return 0, err
+		}
+		return len(data), nil
+	}
 	err := json.Unmarshal(data, &chatResponse)
 	if err != nil {
 		return 0, err
@@ -313,10 +359,56 @@ func Middleware() gin.HandlerFunc {
 			ResponseWriter: c.Writer,
 			stream:         req.Stream,
 			id:             fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			embeddingsMode: false,
 		}
 
 		c.Writer = w
 
+		c.Next()
+	}
+}
+
+func embeddingFromAPI(input EmbeddingRequest) api.EmbeddingRequest {
+	options := make(map[string]interface{})
+	return api.EmbeddingRequest{
+		Model:   input.Model,
+		Prompt:  &input.Input,
+		Options: options,
+	}
+}
+
+func EmbeddingsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req EmbeddingRequest
+		err := c.ShouldBindJSON(&req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+		if req.Model == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+			return
+		}
+		if req.Input.Prompt == "" && req.Input.Prompts == nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "Prompt must be string or list of strings"))
+			return
+		}
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(embeddingFromAPI(req)); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+			return
+		}
+
+		c.Request.Body = io.NopCloser(&b)
+		w := &writer{
+			ResponseWriter: c.Writer,
+			stream:         false,
+			id:             fmt.Sprintf("embd-%d", rand.Intn(999)),
+			embeddingsMode: true,
+			Model:          req.Model,
+		}
+		c.Writer = w
 		c.Next()
 	}
 }
