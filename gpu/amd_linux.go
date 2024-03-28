@@ -345,6 +345,10 @@ func AMDValidateLibDir() (string, error) {
 	if rocmLibUsable("/opt/rocm/lib") {
 		return rocmTargetDir, setupLink("/opt/rocm/lib", rocmTargetDir)
 	}
+	// Fedora
+	if rocmLibUsable("/usr/lib64") {
+		return rocmTargetDir, setupLink("/usr/lib64", rocmTargetDir)
+	}
 
 	// If we still haven't found a usable rocm, the user will have to install it on their own
 	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or follow manual install instructions at https://github.com/ollama/ollama/blob/main/docs/linux.md#manual-install")
