@@ -3,11 +3,14 @@ package openai
 
 import (
 	"bytes"
+	crypto_rand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,9 +28,21 @@ type ErrorResponse struct {
 	Error Error `json:"error"`
 }
 
+type ToolFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolFunctionCall `json:"function"`
+}
+
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string     `json:"role"`
+	Content   string     `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls"`
 }
 
 type Choice struct {
@@ -53,17 +68,35 @@ type ResponseFormat struct {
 }
 
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Stream           bool            `json:"stream"`
-	MaxTokens        *int            `json:"max_tokens"`
-	Seed             *int            `json:"seed"`
-	Stop             any             `json:"stop"`
-	Temperature      *float64        `json:"temperature"`
-	FrequencyPenalty *float64        `json:"frequency_penalty"`
-	PresencePenalty  *float64        `json:"presence_penalty_penalty"`
-	TopP             *float64        `json:"top_p"`
-	ResponseFormat   *ResponseFormat `json:"response_format"`
+	Model            string               `json:"model"`
+	Messages         []Message            `json:"messages"`
+	Stream           bool                 `json:"stream"`
+	MaxTokens        *int                 `json:"max_tokens"`
+	Seed             *int                 `json:"seed"`
+	Stop             any                  `json:"stop"`
+	Temperature      *float64             `json:"temperature"`
+	FrequencyPenalty *float64             `json:"frequency_penalty"`
+	PresencePenalty  *float64             `json:"presence_penalty_penalty"`
+	TopP             *float64             `json:"top_p"`
+	ResponseFormat   *ResponseFormat      `json:"response_format"`
+	Tools            []ChatCompletionTool `json:"tools"`
+}
+
+type ChatCompletionTool struct {
+	Type     string         `json:"type"`
+	Function FunctionObject `json:"function"`
+}
+
+type FunctionObject struct {
+	Description string             `json:"description"`
+	Name        string             `json:"name"`
+	Parameters  FunctionParameters `json:"parameters"`
+}
+
+type FunctionParameters struct {
+	Type       string                 `json:"type"`
+	Properties map[string]interface{} `json:"properties"`
+	Required   []string               `json:"required"`
 }
 
 type ChatCompletion struct {
@@ -100,7 +133,7 @@ func NewError(code int, message string) ErrorResponse {
 }
 
 func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	return ChatCompletion{
+	return toChatCompletionWithFunctionCalls(ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
 		Created:           r.CreatedAt.Unix(),
@@ -123,7 +156,91 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			CompletionTokens: r.EvalCount,
 			TotalTokens:      r.PromptEvalCount + r.EvalCount,
 		},
+	})
+}
+
+type Hermes2ProToolCall struct {
+	Name      string                 `json:"name"`
+	Arguments map[string]interface{} `json:"arguments"`
+}
+
+func toChatCompletionWithFunctionCalls(openAi ChatCompletion) ChatCompletion {
+	if !strings.Contains(openAi.Choices[len(openAi.Choices)-1].Message.Content, "<tool_call>") {
+		return openAi
 	}
+
+	lastMessage := openAi.Choices[len(openAi.Choices)-1].Message
+
+	// Hardcode Hermes2Pro function calling prompt format
+	// See https://huggingface.co/NousResearch/Hermes-2-Pro-Mistral-7B-GGUF#prompt-format-for-function-calling
+
+	toolCalls := make([]ToolCall, 0)
+	for _, match := range strings.Split(lastMessage.Content, "<tool_call>") {
+		if !strings.Contains(match, "</tool_call>") {
+			continue
+		}
+
+		endIndex := strings.Index(match, "</tool_call>")
+		if endIndex != -1 {
+			match = match[:endIndex]
+		}
+
+		match = strings.TrimSpace(match)
+
+		var hermes2ProToolCall Hermes2ProToolCall
+		var err error
+		for attempt := 0; attempt < 30; attempt++ {
+			err = json.Unmarshal([]byte(match), &hermes2ProToolCall)
+
+			if err == nil {
+				break
+			}
+			match = match[:len(match)-1] // Remove the last character and try again
+		}
+
+		if err != nil {
+			continue
+		}
+
+		argumentsJson, _ := json.Marshal(hermes2ProToolCall.Arguments)
+
+		randomId, _ := randomCallId()
+
+		toolCall := ToolCall{
+			ID:       randomId,
+			Type:     "function",
+			Function: ToolFunctionCall{Name: hermes2ProToolCall.Name, Arguments: string(argumentsJson)},
+		}
+		toolCalls = append(toolCalls, toolCall)
+	}
+
+	// remove everything between <tool_call> and </tool_call> including the tags, in lastMessage.Content
+	regex := regexp.MustCompile(`(?s)\s*<tool_call>.*?</tool_call>\s*`)
+	lastMessage.Content = regex.ReplaceAllString(lastMessage.Content, "")
+
+	finishReason := "tool_calls"
+	openAi.Choices[len(openAi.Choices)-1].Message.Content = lastMessage.Content
+	openAi.Choices[len(openAi.Choices)-1].Message.ToolCalls = toolCalls
+	openAi.Choices[len(openAi.Choices)-1].FinishReason = &finishReason
+
+	return openAi
+}
+
+func randomCallId() (randomId string, err error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, 24)
+
+	if _, err := crypto_rand.Read(b); err != nil {
+		return "", err
+	}
+
+	for i := range b {
+		b[i] = charset[b[i]%byte(len(charset))]
+	}
+
+	randomId = "call_" + string(b)
+
+	return randomId, nil
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
@@ -150,6 +267,8 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 }
 
 func fromRequest(r ChatCompletionRequest) api.ChatRequest {
+	r = applyFunctionCalls(r)
+
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		messages = append(messages, api.Message{Role: msg.Role, Content: msg.Content})
@@ -213,6 +332,41 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 		Options:  options,
 		Stream:   &r.Stream,
 	}
+}
+
+func applyFunctionCalls(openAi ChatCompletionRequest) ChatCompletionRequest {
+	if len(openAi.Tools) == 0 {
+		return openAi
+	}
+
+	if openAi.Messages[0].Role != "system" {
+		openAi.Messages = append([]Message{{Role: "system", Content: ""}}, openAi.Messages...)
+	}
+
+	// Hardcode Hermes2Pro function calling prompt format
+	// See https://huggingface.co/NousResearch/Hermes-2-Pro-Mistral-7B-GGUF#prompt-format-for-function-calling
+
+	toolsJSON, _ := json.Marshal(openAi.Tools)
+	var sb strings.Builder
+	sb.WriteString("You are a function calling AI model.\n")
+	sb.WriteString("You are provided with function signatures within <tools></tools> XML tags.\n")
+	sb.WriteString("You may call one or more functions to assist with the user query.\n")
+	sb.WriteString("Don't make assumptions about what values to plug into functions.\n")
+	sb.WriteString("Here are the available tools:\n")
+	sb.WriteString("<tools>\n")
+	sb.WriteString(string(toolsJSON))
+	sb.WriteString("\n</tools>\n")
+	sb.WriteString("Use the following json schema for each tool call you will make:\n")
+	sb.WriteString(`{"type": "object", "properties": {"name": {"title": "Name", "type": "string"}, "arguments": {"title": "Arguments", "type": "object"}}, "required": ["arguments", "name"], "title": "FunctionCall"}`)
+	sb.WriteString("\nFor each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:\n")
+	sb.WriteString("<tool_call>\n")
+	sb.WriteString(`{"name": <function-name>, "arguments": <args-dict>}`)
+	sb.WriteString("\n</tool_call>.\n")
+	sb.WriteString("Only reply with <tool_call>...</tool_call>, no other content.\n")
+	sb.WriteString(openAi.Messages[0].Content)
+	openAi.Messages[0].Content = sb.String()
+
+	return openAi
 }
 
 type writer struct {
