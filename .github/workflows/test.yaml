@@ -131,6 +131,87 @@ jobs:
         with:
           name: rocm-${{ matrix.rocm-version }}-libraries
           path: llm/llama.cpp/build/**/lib/*
+
+  # ROCm generation step
+  generate-windows-rocm:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - name: "Install ROCm"
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading AMD HIP Installer"
+          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q4-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
+          write-host "Installing AMD HIP"
+          Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
+          write-host "Completed AMD HIP"
+      - name: "Verify ROCm"
+        run: |
+          & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
+      - run: go get ./...
+      - run: |
+          $gopath=(get-command go).source | split-path -parent
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$env:PATH"
+          $env:OLLAMA_SKIP_CPU_GENERATE="1"
+          $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
+          go generate -x ./...
+        name: go generate
+        env:
+          OLLAMA_SKIP_CPU_GENERATE: '1'
+      # TODO - do we need any artifacts?
+
+  # CUDA generation step
+  generate-windows-cuda:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - name: "Install CUDA"
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading CUDA Installer"
+          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe" -OutFile "${env:RUNNER_TEMP}\cuda-install.exe"
+          write-host "Installing CUDA"
+          Start-Process "${env:RUNNER_TEMP}\cuda-install.exe" -ArgumentList '-s' -NoNewWindow -Wait
+          write-host "Completed CUDA"
+          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
+          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
+          echo "$cudaPath\bin" >> $env:GITHUB_PATH
+          echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
+      - name: "Verify CUDA"
+        run: nvcc -V
+      - run: go get ./...
+      - name: go generate
+        run: |
+          $gopath=(get-command go).source | split-path -parent
+          $cudabin=(get-command nvcc).source | split-path
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$cudabin;$env:PATH"
+          $env:OLLAMA_SKIP_CPU_GENERATE="1"
+          go generate -x ./...
+        env:
+          OLLAMA_SKIP_CPU_GENERATE: '1'
+      # TODO - do we need any artifacts?
+
+
   lint:
     strategy:
       matrix:
