@@ -90,6 +90,27 @@ go build .
 
 ROCm requires elevated privileges to access the GPU at runtime. On most distros you can add your user account to the `render` group, or run as root.
 
+#### Linux oneAPI (Intel)
+
+_Your operating system distribution may already have packages for Intel oneAPI and Intel GPU driver. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
+
+Install [oneAPI](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit.html) development packages and [Intel GPU driver](https://dgpu-docs.intel.com/driver/installation.html) first, as well as `cmake` and `golang`.
+
+Typically the build scripts will auto-detect oneAPI, however, if your Linux distro
+or installation approach uses unusual paths, you can specify the location by
+specifying an environment variable `ONEAPI_ROOT` to the location of the shared
+libraries and the location of the icpx/icx compiler.
+
+```
+go generate ./...
+```
+
+Then build the binary:
+
+```
+go build .
+```
+
 #### Advanced CPU Settings
 
 By default, running `go generate ./...` will compile a few different variations

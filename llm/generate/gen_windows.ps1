@@ -234,6 +234,36 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     compress_libs
 }
 
+if ($null -ne $env:ONEAPI_ROOT) {
+    $script:ONEAPI_VERSION = icpx --version
+    $script:ONEAPI_VERSION = [regex]::Match($script:ONEAPI_VERSION, '(?<=oneAPI DPC\+\+/C\+\+ Compiler )(?<version>\d+\.\d+\.\d+)').Value
+    if ($null -ne $script:ONEAPI_VERSION) {
+        $script:ONEAPI_VARIANT="_v"+$script:ONEAPI_VERSION
+    }
+
+    init_vars
+    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/oneapi$script:ONEAPI_VARIANT"
+    $script:cmakeDefs += @(
+        "-G", "MinGW Makefiles", 
+        "-DLLAMA_SYCL=ON",
+        "-DCMAKE_C_COMPILER=icx",
+        "-DCMAKE_CXX_COMPILER=icx",
+        "-DCMAKE_BUILD_TYPE=Release"
+        )
+    
+
+    write-host "Building oneAPI"
+    build
+    # Ninja doesn't prefix with config name
+    ${script:config}=""
+    install
+    if ($null -ne $script:DUMPBIN) {
+        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+    }
+    sign
+    compress_libs
+}
+
 if ($null -ne $env:HIP_PATH) {
     $script:ROCM_VERSION=(get-item $env:HIP_PATH).Basename
     if ($null -ne $script:ROCM_VERSION) {
