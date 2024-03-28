@@ -18,7 +18,7 @@ const ollama = new Ollama({
   model: "llama2",
 });
 
-const answer = await ollama.call(`why is the sky blue?`);
+const answer = await ollama.invoke(`why is the sky blue?`);
 
 console.log(answer);
 ```
