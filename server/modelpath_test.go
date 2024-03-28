@@ -74,6 +74,17 @@ func TestParseModelPath(t *testing.T) {
 				Tag:            DefaultTag,
 			},
 		},
+		{
+			"path with more than three parts",
+			"https://example.com/ns/another-part/repo:tag",
+			ModelPath{
+				ProtocolScheme: "https",
+				Registry:       "example.com",
+				Namespace:      "ns",
+				Repository:     "another-part/repo",
+				Tag:            "tag",
+			},
+		},
 	}
 
 	for _, tc := range tests {
