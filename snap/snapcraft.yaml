@@ -55,7 +55,7 @@ parts:
     plugin: go
     source: https://github.com/ollama/ollama.git
     source-type: git
-    source-tag: v0.1.28
+    source-tag: v0.1.30
     # build packages only because ollama build copies in cudnn, cublas
     build-packages:
       - git
