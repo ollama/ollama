@@ -142,7 +142,9 @@ func (h *History) Save() error {
 	for cnt := 0; cnt < h.Size(); cnt++ {
 		v, _ := h.Buf.Get(cnt)
 		line, _ := v.([]rune)
-		buf.WriteString(string(line) + "\n")
+		if _, err := buf.WriteString(string(line) + "\n"); err != nil {
+			return err
+		}
 	}
 	buf.Flush()
 	f.Close()

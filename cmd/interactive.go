@@ -295,10 +295,14 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.WordWrap = false
 					fmt.Println("Set 'nowordwrap' mode.")
 				case "verbose":
-					cmd.Flags().Set("verbose", "true")
+					if err := cmd.Flags().Set("verbose", "true"); err != nil {
+						return err
+					}
 					fmt.Println("Set 'verbose' mode.")
 				case "quiet":
-					cmd.Flags().Set("verbose", "false")
+					if err := cmd.Flags().Set("verbose", "false"); err != nil {
+						return err
+					}
 					fmt.Println("Set 'quiet' mode.")
 				case "format":
 					if len(args) < 3 || args[2] != "json" {
