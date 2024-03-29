@@ -19,7 +19,7 @@ body:
       label: What did you expect to see?
       description: What did you expect to see/happen instead?
     validations:
-      required: true
+      required: false
   - type: textarea
     id: steps
     attributes:
