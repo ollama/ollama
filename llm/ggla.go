@@ -7,16 +7,18 @@ import (
 	"slices"
 )
 
-type ContainerGGLA struct {
+type containerGGLA struct {
 	version uint32
 }
 
-func (c *ContainerGGLA) Name() string {
+func (c *containerGGLA) Name() string {
 	return "ggla"
 }
 
-func (c *ContainerGGLA) Decode(rso *readSeekOffset) (model, error) {
-	binary.Read(rso, binary.LittleEndian, &c.version)
+func (c *containerGGLA) Decode(rs io.ReadSeeker) (model, error) {
+	if err := binary.Read(rs, binary.LittleEndian, &c.version); err != nil {
+		return nil, err
+	}
 
 	switch c.version {
 	case 1:
@@ -24,58 +26,58 @@ func (c *ContainerGGLA) Decode(rso *readSeekOffset) (model, error) {
 		return nil, errors.New("invalid version")
 	}
 
-	model := newModelGGLA(c)
-	err := model.decode(rso)
+	model := newGGLA(c)
+	err := model.decode(rs)
 	return model, err
 }
 
-type ModelGGLA struct {
-	*ContainerGGLA
+type ggla struct {
+	*containerGGLA
 
 	kv      KV
 	tensors []Tensor
 }
 
-func newModelGGLA(container *ContainerGGLA) *ModelGGLA {
-	return &ModelGGLA{
-		ContainerGGLA: container,
+func newGGLA(container *containerGGLA) *ggla {
+	return &ggla{
+		containerGGLA: container,
 		kv:            make(KV),
 	}
 }
 
-func (m *ModelGGLA) decode(rso *readSeekOffset) error {
+func (m *ggla) decode(rs io.ReadSeeker) error {
 	var r uint32
-	if err := binary.Read(rso, binary.LittleEndian, &r); err != nil {
+	if err := binary.Read(rs, binary.LittleEndian, &r); err != nil {
 		return err
 	}
 	m.kv["r"] = r
 
 	var alpha uint32
-	if err := binary.Read(rso, binary.LittleEndian, &alpha); err != nil {
+	if err := binary.Read(rs, binary.LittleEndian, &alpha); err != nil {
 		return err
 	}
 	m.kv["alpha"] = alpha
 
 	for {
 		var dims uint32
-		if err := binary.Read(rso, binary.LittleEndian, &dims); err != nil {
+		if err := binary.Read(rs, binary.LittleEndian, &dims); err != nil {
 			return err
 		}
 
 		var namesize uint32
-		if err := binary.Read(rso, binary.LittleEndian, &namesize); err != nil {
+		if err := binary.Read(rs, binary.LittleEndian, &namesize); err != nil {
 			return err
 		}
 
 		var t Tensor
-		if err := binary.Read(rso, binary.LittleEndian, &t.Kind); err != nil {
+		if err := binary.Read(rs, binary.LittleEndian, &t.Kind); err != nil {
 			return err
 		}
 
 		t.Shape = make([]uint64, dims)
 		for i := 0; uint32(i) < dims; i++ {
 			var shape32 uint32
-			if err := binary.Read(rso, binary.LittleEndian, &shape32); err != nil {
+			if err := binary.Read(rs, binary.LittleEndian, &shape32); err != nil {
 				return err
 			}
 
@@ -87,19 +89,29 @@ func (m *ModelGGLA) decode(rso *readSeekOffset) error {
 		slices.Reverse(t.Shape)
 
 		name := make([]byte, namesize)
-		if err := binary.Read(rso, binary.LittleEndian, &name); err != nil {
+		if err := binary.Read(rs, binary.LittleEndian, &name); err != nil {
 			return err
 		}
 
 		t.Name = string(name)
 
-		if _, err := rso.Seek((rso.offset+31)&-32, io.SeekStart); err != nil {
+		offset, err := rs.Seek(0, io.SeekCurrent)
+		if err != nil {
 			return err
 		}
 
-		t.Offset = uint64(rso.offset)
+		if _, err := rs.Seek((offset+31)&-32, io.SeekStart); err != nil {
+			return err
+		}
 
-		if _, err := rso.Seek(int64(t.Size()), io.SeekCurrent); err != nil {
+		offset, err = rs.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+
+		t.Offset = uint64(offset)
+
+		if _, err := rs.Seek(int64(t.size()), io.SeekCurrent); err != nil {
 			return err
 		}
 
@@ -107,46 +119,46 @@ func (m *ModelGGLA) decode(rso *readSeekOffset) error {
 	}
 }
 
-func (m *ModelGGLA) KV() KV {
+func (m *ggla) KV() KV {
 	return m.kv
 }
 
-func (m *ModelGGLA) Tensor() []Tensor {
+func (m *ggla) Tensor() []Tensor {
 	return m.tensors
 }
 
-func (*ModelGGLA) ModelFamily() string {
+func (*ggla) ModelFamily() string {
 	return "ggla"
 }
 
-func (*ModelGGLA) ModelType() string {
+func (*ggla) ModelType() string {
 	panic("not implemented")
 }
 
-func (*ModelGGLA) FileType() string {
+func (*ggla) FileType() string {
 	panic("not implemented")
 }
 
-func (*ModelGGLA) NumLayers() uint32 {
+func (*ggla) NumLayers() uint32 {
 	panic("not implemented")
 }
 
-func (*ModelGGLA) NumGQA() uint32 {
+func (*ggla) NumGQA() uint32 {
 	panic("not implemented")
 }
 
-func (*ModelGGLA) NumEmbed() uint32 {
+func (*ggla) NumEmbed() uint32 {
 	panic("not implemented")
 }
 
-func (*ModelGGLA) NumHead() uint32 {
+func (*ggla) NumHead() uint32 {
 	panic("not implemented")
 }
 
-func (*ModelGGLA) NumHeadKv() uint32 {
+func (*ggla) NumHeadKv() uint32 {
 	panic("not implemented")
 }
 
-func (*ModelGGLA) NumCtx() uint32 {
+func (*ggla) NumCtx() uint32 {
 	panic("not implemented")
 }

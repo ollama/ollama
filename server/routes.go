@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,12 +27,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/exp/slices"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/gpu"
-	"github.com/jmorganca/ollama/llm"
-	"github.com/jmorganca/ollama/openai"
-	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/version"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/version"
 )
 
 var mode string = gin.DebugMode
@@ -207,7 +209,7 @@ func GenerateHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}
@@ -384,6 +386,32 @@ func GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+func getDefaultSessionDuration() time.Duration {
+	if t, exists := os.LookupEnv("OLLAMA_KEEP_ALIVE"); exists {
+		v, err := strconv.Atoi(t)
+		if err != nil {
+			d, err := time.ParseDuration(t)
+			if err != nil {
+				return defaultSessionDuration
+			}
+
+			if d < 0 {
+				return time.Duration(math.MaxInt64)
+			}
+
+			return d
+		}
+
+		d := time.Duration(v) * time.Second
+		if d < 0 {
+			return time.Duration(math.MaxInt64)
+		}
+		return d
+	}
+
+	return defaultSessionDuration
+}
+
 func EmbeddingsHandler(c *gin.Context) {
 	loaded.mu.Lock()
 	defer loaded.mu.Unlock()
@@ -427,7 +455,7 @@ func EmbeddingsHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}
@@ -985,16 +1013,14 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 }
 
 func (s *Server) GenerateRoutes() http.Handler {
-	var origins []string
-	if o := os.Getenv("OLLAMA_ORIGINS"); o != "" {
-		origins = strings.Split(o, ",")
-	}
-
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
 
-	config.AllowOrigins = origins
+	if allowedOrigins := strings.Trim(os.Getenv("OLLAMA_ORIGINS"), "\"'"); allowedOrigins != "" {
+		config.AllowOrigins = strings.Split(allowedOrigins, ",")
+	}
+
 	for _, allowOrigin := range defaultAllowOrigins {
 		config.AllowOrigins = append(config.AllowOrigins,
 			fmt.Sprintf("http://%s", allowOrigin),
@@ -1059,6 +1085,14 @@ func Serve(ln net.Listener) error {
 	})
 
 	slog.SetDefault(slog.New(handler))
+
+	blobsDir, err := GetBlobsPath("")
+	if err != nil {
+		return err
+	}
+	if err := fixBlobs(blobsDir); err != nil {
+		return err
+	}
 
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
@@ -1228,7 +1262,7 @@ func ChatHandler(c *gin.Context) {
 
 	var sessionDuration time.Duration
 	if req.KeepAlive == nil {
-		sessionDuration = defaultSessionDuration
+		sessionDuration = getDefaultSessionDuration()
 	} else {
 		sessionDuration = req.KeepAlive.Duration
 	}

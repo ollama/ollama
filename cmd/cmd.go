@@ -30,12 +30,12 @@ import (
 	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/format"
-	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/progress"
-	"github.com/jmorganca/ollama/server"
-	"github.com/jmorganca/ollama/version"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/server"
+	"github.com/ollama/ollama/version"
 )
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
@@ -213,7 +213,10 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	if _, err := io.Copy(hash, bin); err != nil {
 		return "", err
 	}
-	bin.Seek(0, io.SeekStart)
+
+	if _, err := bin.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
 
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
@@ -900,8 +903,7 @@ func NewCLI() *cobra.Command {
 	cobra.EnableCommandSorting = false
 
 	if runtime.GOOS == "windows" {
-		// Enable colorful ANSI escape code in Windows terminal (disabled by default)
-		console.ConsoleFromFile(os.Stdout) //nolint:errcheck
+		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
 	rootCmd := &cobra.Command{
@@ -970,9 +972,10 @@ func NewCLI() *cobra.Command {
 	serveCmd.SetUsageTemplate(serveCmd.UsageTemplate() + `
 Environment Variables:
 
-    OLLAMA_HOST       The host:port to bind to (default "127.0.0.1:11434")
-    OLLAMA_ORIGINS    A comma separated list of allowed origins.
-    OLLAMA_MODELS     The path to the models directory (default is "~/.ollama/models")
+    OLLAMA_HOST         The host:port to bind to (default "127.0.0.1:11434")
+    OLLAMA_ORIGINS      A comma separated list of allowed origins.
+    OLLAMA_MODELS       The path to the models directory (default is "~/.ollama/models")
+    OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default is "5m")
 `)
 
 	pullCmd := &cobra.Command{

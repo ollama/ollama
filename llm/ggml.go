@@ -101,9 +101,88 @@ type model interface {
 	NumCtx() uint32
 }
 
+type KV map[string]any
+
+type Tensor struct {
+	Name   string
+	Kind   uint32
+	Offset uint64
+
+	// Shape is the number of elements in each dimension
+	Shape []uint64
+
+	io.WriterTo
+}
+
+func (t Tensor) blockSize() uint64 {
+	switch {
+	case t.Kind < 2:
+		return 1
+	case t.Kind < 10:
+		return 32
+	default:
+		return 256
+	}
+}
+
+func (t Tensor) typeSize() uint64 {
+	blockSize := t.blockSize()
+
+	switch t.Kind {
+	case 0: // FP32
+		return 4
+	case 1: // FP16
+		return 2
+	case 2: // Q4_0
+		return 2 + blockSize/2
+	case 3: // Q4_1
+		return 2 + 2 + blockSize/2
+	case 6: // Q5_0
+		return 2 + 4 + blockSize/2
+	case 7: // Q5_1
+		return 2 + 2 + 4 + blockSize/2
+	case 8: // Q8_0
+		return 2 + blockSize
+	case 9: // Q8_1
+		return 4 + 4 + blockSize
+	case 10: // Q2_K
+		return blockSize/16 + blockSize/4 + 2 + 2
+	case 11: // Q3_K
+		return blockSize/8 + blockSize/4 + 12 + 2
+	case 12: // Q4_K
+		return 2 + 2 + 12 + blockSize/2
+	case 13: // Q5_K
+		return 2 + 2 + 12 + blockSize/8 + blockSize/2
+	case 14: // Q6_K
+		return blockSize/2 + blockSize/4 + blockSize/16 + 2
+	case 15: // Q8_K
+		return 2 + blockSize + 2*blockSize/16
+	case 16: // IQ2_XXS
+		return 2 + 2*blockSize/8
+	case 17: // IQ2_XS
+		return 2 + 2*blockSize/8 + blockSize/32
+	case 18: // IQ3_XXS
+		return 2 + 3*blockSize/8
+	default:
+		return 0
+	}
+}
+
+func (t Tensor) parameters() uint64 {
+	var count uint64 = 1
+	for _, n := range t.Shape {
+		count *= n
+	}
+	return count
+}
+
+func (t Tensor) size() uint64 {
+	return t.parameters() * t.typeSize() / t.blockSize()
+}
+
 type container interface {
 	Name() string
-	Decode(*readSeekOffset) (model, error)
+	Decode(io.ReadSeeker) (model, error)
 }
 
 const (
@@ -122,11 +201,9 @@ const (
 
 var ErrUnsupportedFormat = errors.New("unsupported model format")
 
-func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
-	ro := readSeekOffset{ReadSeeker: r}
-
+func DecodeGGML(rs io.ReadSeeker) (*GGML, error) {
 	var magic uint32
-	if err := binary.Read(&ro, binary.LittleEndian, &magic); err != nil {
+	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, err
 	}
 
@@ -135,19 +212,24 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	case FILE_MAGIC_GGML, FILE_MAGIC_GGMF, FILE_MAGIC_GGJT:
 		return nil, ErrUnsupportedFormat
 	case FILE_MAGIC_GGLA:
-		c = &ContainerGGLA{}
+		c = &containerGGLA{}
 	case FILE_MAGIC_GGUF_LE:
-		c = &ContainerGGUF{ByteOrder: binary.LittleEndian}
+		c = &containerGGUF{ByteOrder: binary.LittleEndian}
 	case FILE_MAGIC_GGUF_BE:
-		c = &ContainerGGUF{ByteOrder: binary.BigEndian}
+		c = &containerGGUF{ByteOrder: binary.BigEndian}
 	default:
 		return nil, errors.New("invalid file magic")
 	}
 
-	model, err := c.Decode(&ro)
+	model, err := c.Decode(rs)
 	if errors.Is(err, io.EOF) {
 		// noop
 	} else if err != nil {
+		return nil, err
+	}
+
+	offset, err := rs.Seek(0, io.SeekCurrent)
+	if err != nil {
 		return nil, err
 	}
 
@@ -155,27 +237,6 @@ func DecodeGGML(r io.ReadSeeker) (*GGML, error) {
 	return &GGML{
 		container: c,
 		model:     model,
-		Size:      ro.offset,
+		Size:      offset,
 	}, nil
-}
-
-type readSeekOffset struct {
-	io.ReadSeeker
-	offset int64
-}
-
-func (rso *readSeekOffset) Seek(offset int64, whence int) (int64, error) {
-	offset, err := rso.ReadSeeker.Seek(offset, whence)
-	if err != nil {
-		return 0, err
-	}
-
-	rso.offset = offset
-	return offset, nil
-}
-
-func (rso *readSeekOffset) Read(p []byte) (int, error) {
-	n, err := rso.ReadSeeker.Read(p)
-	rso.offset += int64(n)
-	return n, err
 }

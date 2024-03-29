@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jmorganca/ollama/api"
+	"github.com/ollama/ollama/api"
 )
 
 func startApp(ctx context.Context, client *api.Client) error {
