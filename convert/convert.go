@@ -55,6 +55,12 @@ type MetaData struct {
 	Offsets []int  `mapstructure:"data_offsets"`
 }
 
+type ModelArch interface {
+	GetTensors() error
+	LoadVocab() error
+	WriteGGUF() (string, error)
+}
+
 func ReadSafeTensors(fn string, offset uint64, params *Params) ([]llm.Tensor, uint64, error) {
 	f, err := os.Open(fn)
 	if err != nil {
@@ -198,7 +204,7 @@ type Vocab struct {
 	Types  []int32
 }
 
-func LoadTokens(dirpath string, params *Params) (*Vocab, error) {
+func LoadSentencePieceTokens(dirpath string, vocabSize int) (*Vocab, error) {
 	slog.Info(fmt.Sprintf("reading vocab from %s", filepath.Join(dirpath, "tokenizer.model")))
 	in, err := os.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
 	if err != nil {
@@ -278,8 +284,8 @@ func LoadTokens(dirpath string, params *Params) (*Vocab, error) {
 	}
 	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
 
-	if params.VocabSize > len(v.Tokens) {
-		missingTokens := params.VocabSize - len(v.Tokens)
+	if vocabSize > len(v.Tokens) {
+		missingTokens := vocabSize - len(v.Tokens)
 		slog.Warn(fmt.Sprintf("vocab is missing %d tokens", missingTokens))
 		for cnt := 0; cnt < missingTokens; cnt++ {
 			v.Tokens = append(v.Tokens, fmt.Sprintf("<dummy%05d>", cnt+1))
@@ -550,72 +556,30 @@ func getArchFromParams(params *Params) (string, error) {
 	return arch, nil
 }
 
-func WriteGGUF(name string, tensors []llm.Tensor, params *Params, vocab *Vocab) (string, error) {
-	arch, err := getArchFromParams(params)
-	if err != nil {
-		return "", err
+func GetModelArchFromParams(name, dirPath string, params *Params) (ModelArch, error) {
+	switch len(params.Architectures) {
+	case 0:
+		return nil, fmt.Errorf("No architecture specified to convert")
+	case 1:
+		switch params.Architectures[0] {
+		case "MistralForCausalLM":
+			return &MistralModel{
+				Name:   name,
+				Path:   dirPath,
+				Params: params,
+			}, nil
+		case "GemmaForCausalLM":
+			return &GemmaModel{
+				Name:   name,
+				Path:   dirPath,
+				Params: params,
+			}, nil
+		default:
+			return nil, fmt.Errorf("Models based on '%s' are not yet supported", params.Architectures[0])
+		}
+	default:
+		return nil, fmt.Errorf("Multimodal models are not yet supported")
 	}
 
-	kv := llm.KV{
-		"general.architecture": arch,
-		"general.name":         name,
-	}
-
-	switch arch {
-	case "llama":
-		kv["llama.context_length"] = uint32(params.ContextSize)
-		kv["llama.embedding_length"] = uint32(params.HiddenSize)
-		kv["llama.block_count"] = uint32(params.HiddenLayers)
-		kv["llama.feed_forward_length"] = uint32(params.IntermediateSize)
-		kv["llama.rope.dimension_count"] = uint32(params.HiddenSize / params.AttentionHeads)
-		slog.Debug(fmt.Sprintf("rope dim count = %d", kv["llama.rope.dimension_count"]))
-		kv["llama.attention.head_count"] = uint32(params.AttentionHeads)
-		kv["llama.attention.head_count_kv"] = uint32(params.KeyValHeads)
-		kv["llama.attention.layer_norm_rms_epsilon"] = float32(params.NormEPS)
-		kv["llama.rope.freq_base"] = float32(params.RopeFreqBase)
-	case "gemma":
-		kv["gemma.context_length"] = uint32(params.ContextSize)
-		kv["gemma.embedding_length"] = uint32(params.HiddenSize)
-		kv["gemma.block_count"] = uint32(params.HiddenLayers)
-		kv["gemma.feed_forward_length"] = uint32(params.IntermediateSize)
-		kv["gemma.attention.head_count"] = uint32(params.AttentionHeads)
-		kv["gemma.attention.head_count_kv"] = uint32(params.KeyValHeads)
-		kv["gemma.attention.layer_norm_rms_epsilon"] = float32(params.NormEPS)
-		kv["gemma.attention.key_length"] = uint32(params.HeadDimension)
-		kv["gemma.attention.value_length"] = uint32(params.HeadDimension)
-	}
-
-	kv["general.file_type"] = uint32(1)
-	kv["tokenizer.ggml.model"] = "llama"
-
-	kv["tokenizer.ggml.tokens"] = vocab.Tokens
-	kv["tokenizer.ggml.scores"] = vocab.Scores
-	kv["tokenizer.ggml.token_type"] = vocab.Types
-
-	kv["tokenizer.ggml.bos_token_id"] = uint32(params.BoSTokenID)
-	kv["tokenizer.ggml.eos_token_id"] = uint32(params.EoSTokenID)
-
-	switch arch {
-	case "llama":
-		kv["tokenizer.ggml.unknown_token_id"] = uint32(0)
-	case "gemma":
-		kv["tokenizer.ggml.padding_token_id"] = uint32(params.PaddingTokenID)
-		kv["tokenizer.ggml.unknown_token_id"] = uint32(3)
-	}
-
-	kv["tokenizer.ggml.add_bos_token"] = true
-	kv["tokenizer.ggml.add_eos_token"] = false
-
-	f, err := os.CreateTemp("", "ollama-gguf")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	m := llm.NewGGUFV3(params.ByteOrder)
-	if err := m.Encode(f, kv, tensors); err != nil {
-		return "", err
-	}
-
-	return f.Name(), nil
+	return nil, fmt.Errorf("Unknown error")
 }
