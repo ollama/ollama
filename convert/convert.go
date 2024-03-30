@@ -341,6 +341,7 @@ type safetensorWriterTo struct {
 	filename string
 
 	start, end, padding uint64
+	handler func(w io.Writer, r safetensorWriterTo, f *os.File) error
 }
 
 func (r safetensorWriterTo) addOnes(data []float32) ([]float32, error) {
@@ -412,6 +413,11 @@ func (r safetensorWriterTo) WriteTo(w io.Writer) (n int64, err error) {
 
 	if _, err = f.Seek(int64(r.padding+r.start), 0); err != nil {
 		return 0, err
+	}
+
+	// use the handler if one is present
+	if r.handler != nil {
+		return 0, r.handler(w, r, f)
 	}
 
 	switch arch {
