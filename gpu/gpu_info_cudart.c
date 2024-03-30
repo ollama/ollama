@@ -191,4 +191,10 @@ void cudart_compute_capability(cudart_handle_t h, cudart_compute_capability_t *r
   }
 }
 
+void cudart_release(cudart_handle_t h) {
+  LOG(h.verbose, "releasing cudart library\n");
+  UNLOAD_LIBRARY(h.handle);
+  h.handle = NULL;
+}
+
 #endif  // __APPLE__

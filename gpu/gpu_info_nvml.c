@@ -211,4 +211,11 @@ void nvml_compute_capability(nvml_handle_t h, nvml_compute_capability_t *resp) {
     }
   }
 }
+
+void nvml_release(nvml_handle_t h) {
+  LOG(h.verbose, "releasing nvml library\n");
+  UNLOAD_LIBRARY(h.handle);
+  h.handle = NULL;
+}
+
 #endif  // __APPLE__
