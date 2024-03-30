@@ -91,6 +91,13 @@ func ClientFromEnvironment() (*Client, error) {
 	}, nil
 }
 
+func NewClient(base *url.URL, http *http.Client) *Client {
+	return &Client{
+		base: base,
+		http: http,
+	}
+}
+
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
 	var reqBody io.Reader
 	var data []byte

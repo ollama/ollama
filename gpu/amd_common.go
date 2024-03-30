@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
+	"runtime"
 	"strings"
 )
 
@@ -35,22 +35,64 @@ func GetSupportedGFX(libDir string) ([]string, error) {
 	return ret, nil
 }
 
-func amdSetVisibleDevices(ids []int, skip map[int]interface{}) {
-	// Set the visible devices if not already set
-	// TODO - does sort order matter?
-	devices := []string{}
-	for i := range ids {
-		if _, skipped := skip[i]; skipped {
+func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
+	ids := []string{}
+	for _, info := range gpuInfo {
+		if info.Library != "rocm" {
+			// TODO shouldn't happen if things are wired correctly...
+			slog.Debug("rocmGetVisibleDevicesEnv skipping over non-rocm device", "library", info.Library)
 			continue
 		}
-		devices = append(devices, strconv.Itoa(i))
+		ids = append(ids, info.ID)
+	}
+	return "HIP_VISIBLE_DEVICES", strings.Join(ids, ",")
+}
+
+func commonAMDValidateLibDir() (string, error) {
+	// We try to favor system paths first, so that we can wire up the subprocess to use
+	// the system version.  Only use our bundled version if the system version doesn't work
+	// This gives users a more recovery options if versions have subtle problems at runtime
+
+	// Prefer explicit HIP env var
+	hipPath := os.Getenv("HIP_PATH")
+	if hipPath != "" {
+		hipLibDir := filepath.Join(hipPath, "bin")
+		if rocmLibUsable(hipLibDir) {
+			slog.Debug("detected ROCM via HIP_PATH=" + hipPath)
+			return hipLibDir, nil
+		}
 	}
 
-	val := strings.Join(devices, ",")
-	err := os.Setenv("HIP_VISIBLE_DEVICES", val)
-	if err != nil {
-		slog.Warn(fmt.Sprintf("failed to set env: %s", err))
-	} else {
-		slog.Info("Setting HIP_VISIBLE_DEVICES=" + val)
+	// Scan the LD_LIBRARY_PATH or PATH
+	pathEnv := "LD_LIBRARY_PATH"
+	if runtime.GOOS == "windows" {
+		pathEnv = "PATH"
 	}
+
+	paths := os.Getenv(pathEnv)
+	for _, path := range filepath.SplitList(paths) {
+		d, err := filepath.Abs(path)
+		if err != nil {
+			continue
+		}
+		if rocmLibUsable(d) {
+			return d, nil
+		}
+	}
+
+	// Well known location(s)
+	if rocmLibUsable(RocmStandardLocation) {
+		return RocmStandardLocation, nil
+	}
+
+	// Installer payload location if we're running the installed binary
+	exe, err := os.Executable()
+	if err == nil {
+		rocmTargetDir := filepath.Join(filepath.Dir(exe), "rocm")
+		if rocmLibUsable(rocmTargetDir) {
+			slog.Debug("detected ROCM next to ollama executable " + rocmTargetDir)
+			return rocmTargetDir, nil
+		}
+	}
+	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
 }

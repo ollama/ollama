@@ -4,7 +4,6 @@ package integration
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
@@ -24,5 +23,5 @@ func TestOrcaMiniBlueSky(t *testing.T) {
 			"seed":        123,
 		},
 	}
-	GenerateTestHelper(ctx, t, &http.Client{}, req, []string{"rayleigh", "scattering"})
+	GenerateTestHelper(ctx, t, req, []string{"rayleigh", "scattering"})
 }
