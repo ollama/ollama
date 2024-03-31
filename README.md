@@ -67,6 +67,10 @@ Here are some example models that can be downloaded:
 
 > Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
+## Knowledge cutoff dates
+
+[Knowledge Cutoff for AI Models](https://gist.github.com/saket3199/9ed826eabe5896fca3cc3dc6d99cfa80)
+
 ## Customize a model
 
 ### Import from GGUF
