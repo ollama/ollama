@@ -104,3 +104,7 @@ func (s *Server) handlePush(_ http.ResponseWriter, r *http.Request) error {
 	return err
 
 }
+
+func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {
+	return oweb.ErrNotFound
+}

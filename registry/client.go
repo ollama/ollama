@@ -2,7 +2,6 @@ package registry
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 
@@ -10,15 +9,21 @@ import (
 )
 
 type Client struct {
-	BaseURL string
+	BaseURL    string
+	HTTPClient *http.Client
+}
+
+func (c *Client) oclient() *ollama.Client {
+	return (*ollama.Client)(c)
 }
 
 // Push pushes a manifest to the server.
 func (c *Client) Push(ctx context.Context, ref string, manifest []byte) ([]Requirement, error) {
 	// TODO(bmizerany): backoff
-	v, err := ollama.Do[PushResponse](ctx, "POST", c.BaseURL+"/v1/push/"+ref, struct {
-		Manifest json.RawMessage `json:"manifest"`
-	}{manifest})
+	v, err := ollama.Do[PushResponse](ctx, c.oclient(), "POST", "/v1/push", &PushRequest{
+		Ref:      ref,
+		Manifest: manifest,
+	})
 	if err != nil {
 		return nil, err
 	}

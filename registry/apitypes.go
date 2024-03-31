@@ -1,5 +1,7 @@
 package registry
 
+import "encoding/json"
+
 type Manifest struct {
 	Layers []Layer `json:"layers"`
 }
@@ -11,7 +13,8 @@ type Layer struct {
 }
 
 type PushRequest struct {
-	Manifest Manifest `json:"manifest"`
+	Ref      string `json:"ref"`
+	Manifest json.RawMessage
 }
 
 type Requirement struct {

@@ -2,6 +2,7 @@
 package registry
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -34,16 +35,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) error {
 	switch {
-	case strings.HasPrefix(r.URL.Path, "/v1/push/"):
+	case strings.HasPrefix(r.URL.Path, "/v1/push"):
 		return s.handlePush(w, r)
-	case strings.HasPrefix(r.URL.Path, "/v1/pull/"):
+	case strings.HasPrefix(r.URL.Path, "/v1/pull"):
 		return s.handlePull(w, r)
 	}
 	return oweb.ErrNotFound
 }
 
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
-	pr, err := oweb.DecodeUserJSON[PushRequest](r.Body)
+	pr, err := oweb.DecodeUserJSON[PushRequest]("", r.Body)
 	if err != nil {
 		return err
 	}
@@ -53,9 +54,14 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		Secure: false,
 	})
 
+	m, err := oweb.DecodeUserJSON[Manifest]("manifest", bytes.NewReader(pr.Manifest))
+	if err != nil {
+		return err
+	}
+
 	// TODO(bmizerany): parallelize
 	var requirements []Requirement
-	for _, l := range pr.Manifest.Layers {
+	for _, l := range m.Layers {
 		if l.Size == 0 {
 			continue
 		}

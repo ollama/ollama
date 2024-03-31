@@ -63,20 +63,21 @@ func Serve(h HandlerFunc, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func DecodeUserJSON[T any](r io.Reader) (*T, error) {
+func DecodeUserJSON[T any](field string, r io.Reader) (*T, error) {
 	v, err := DecodeJSON[T](r)
+	if err == nil {
+		return v, nil
+	}
+	var msg string
 	var e *json.SyntaxError
 	if errors.As(err, &e) {
-		return nil, &ollama.Error{Code: "invalid_json", Message: e.Error()}
+		msg = e.Error()
 	}
 	var se *json.UnmarshalTypeError
 	if errors.As(err, &se) {
-		return nil, &ollama.Error{
-			Code:    "invalid_json",
-			Message: fmt.Sprintf("%s (%q) is not a %s", se.Field, se.Value, se.Type),
-		}
+		msg = fmt.Sprintf("%s (%q) is not a %s", se.Field, se.Value, se.Type)
 	}
-	return v, err
+	return nil, Mistake("invalid_json", field, msg)
 }
 
 func DecodeJSON[T any](r io.Reader) (*T, error) {
