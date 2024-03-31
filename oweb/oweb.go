@@ -30,15 +30,7 @@ func Mistake(code, field, message string) error {
 	}
 }
 
-func Fault(code, message string) error {
-	return &ollama.Error{
-		Status:  500,
-		Code:    "fault",
-		Message: message,
-	}
-}
-
-// Convinience errors
+// Convenience errors
 var (
 	ErrNotFound         = &ollama.Error{Status: 404, Code: "not_found"}
 	ErrInternal         = &ollama.Error{Status: 500, Code: "internal_error"}
