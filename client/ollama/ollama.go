@@ -88,7 +88,7 @@ type Error struct {
 	// Message is a humage readable message that describes the error. It
 	// may change across versions of the API, so it should not be used for
 	// programmatic decisions.
-	Message string `json:"message"`
+	Message string `json:"message,omitempty"`
 
 	// Field is the field in the request that caused the error, if any.
 	Field string `json:"field,omitempty"`
