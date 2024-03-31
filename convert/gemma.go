@@ -1,7 +1,16 @@
 package convert
 
 import (
+	"encoding/binary"
+	"fmt"
+	"io"
+	"log/slog"
 	"os"
+	"strings"
+
+	"github.com/d4l3k/go-bfloat16"
+	"github.com/pdevine/tensor"
+	"github.com/pdevine/tensor/native"
 
 	"github.com/ollama/ollama/llm"
 )
@@ -14,12 +23,68 @@ type GemmaModel struct {
 	Tensors []llm.Tensor
 }
 
+func gemmaLayerHandler(w io.Writer, r safetensorWriterTo, f *os.File) error {
+	slog.Debug(fmt.Sprintf("converting '%s'", r.t.Name))
+
+	data := make([]byte, r.end-r.start)
+	if err := binary.Read(f, r.bo, data); err != nil {
+		return err
+	}
+
+	tDataF32 := bfloat16.DecodeFloat32(data)
+
+	var err error
+	tDataF32, err = addOnes(tDataF32, int(r.t.Shape[0]))
+	if err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, r.bo, tDataF32); err != nil {
+		return err
+	}
+	return nil
+}
+
+func addOnes(data []float32, vectorSize int) ([]float32, error) {
+	n := tensor.New(tensor.WithShape(vectorSize), tensor.WithBacking(data))
+	ones := tensor.Ones(tensor.Float32, vectorSize)
+
+	var err error
+	n, err = n.Add(ones)
+	if err != nil {
+		return []float32{}, err
+	}
+
+	newN, err := native.SelectF32(n, 0)
+	if err != nil {
+		return []float32{}, err
+	}
+
+	var fullTensor []float32
+	for _, v := range newN {
+		fullTensor = append(fullTensor, v...)
+	}
+
+	return fullTensor, nil
+}
+
 func (m *GemmaModel) GetTensors() error {
 	t, err := GetSafeTensors(m.Path, m.Params)
 	if err != nil {
 		return err
 	}
-	m.Tensors = t
+
+	m.Tensors = []llm.Tensor{}
+
+	for _, l := range t {
+		if strings.HasSuffix(l.Name, "norm.weight") {
+			wt := l.WriterTo.(safetensorWriterTo)
+			wt.handler = gemmaLayerHandler
+			l.WriterTo = wt
+		}
+		m.Tensors = append(m.Tensors, l)
+	}
+
 	return nil
 }
 
