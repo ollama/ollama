@@ -105,6 +105,9 @@ func (e *Error) Error() string {
 	return b.String()
 }
 
+// Do encodes in and sends it in a request to the Ollama server and decodes
+// the response into Res, or an error response (non-2xx) into an *Error, or
+// any error encounted decoding the response.
 func Do[Res any](ctx context.Context, c *Client, method, path string, in any) (*Res, error) {
 	var body bytes.Buffer
 	// TODO(bmizerany): pool and reuse this buffer AND the encoder
