@@ -77,10 +77,21 @@ func (c *Client) Run(ctx context.Context, ref string, messages []apitype.Message
 }
 
 type Error struct {
-	Status  int    `json:"status"`
-	Code    string `json:"code"`
+	// Status is the HTTP status code returned by the server.
+	Status int `json:"status"`
+
+	// Code specifies a machine readable code indicating the class of
+	// error this error is. See http://docs.ollama.com/errors for a full
+	// list of error codes.
+	Code string `json:"code"`
+
+	// Message is a humage readable message that describes the error. It
+	// may change across versions of the API, so it should not be used for
+	// programmatic decisions.
 	Message string `json:"message"`
-	Field   string `json:"field,omitempty"`
+
+	// Field is the field in the request that caused the error, if any.
+	Field string `json:"field,omitempty"`
 }
 
 func (e *Error) Error() string {
