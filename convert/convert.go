@@ -330,8 +330,6 @@ type safetensorWriterTo struct {
 
 	params      *Params
 	bo          ByteOrder
-	headCount   uint32
-	headCountKV uint32
 
 	filename string
 
