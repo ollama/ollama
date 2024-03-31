@@ -46,7 +46,7 @@ func (c *Client) Build(ctx context.Context, ref string, modelfile []byte, source
 
 // Push requests the remote Ollama service to push a model to the server.
 func (c *Client) Push(ctx context.Context, ref string) error {
-	_, err := Do[empty.Message](ctx, "POST", c.BaseURL+"/v1/push", apitype.PushRequest{Name: ref})
+	_, err := Do[empty.Message](ctx, c, "POST", "/v1/push", apitype.PushRequest{Name: ref})
 	return err
 }
 
@@ -92,12 +92,13 @@ func (e *Error) Error() string {
 	return b.String()
 }
 
-func Do[Res any](ctx context.Context, method, urlStr string, in any) (*Res, error) {
+func Do[Res any](ctx context.Context, c *Client, method, path string, in any) (*Res, error) {
 	var body bytes.Buffer
 	// TODO(bmizerany): pool and reuse this buffer AND the encoder
 	if err := encodeJSON(&body, in); err != nil {
 		return nil, err
 	}
+	urlStr := c.BaseURL + path
 	req, err := http.NewRequestWithContext(ctx, method, urlStr, &body)
 	if err != nil {
 		return nil, err
