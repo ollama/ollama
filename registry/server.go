@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"bllamo.com/client/ollama"
 	"bllamo.com/oweb"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -19,8 +20,8 @@ type Server struct{}
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := s.serveHTTP(w, r); err != nil {
-		log.Printf("error: %v", err)
-		var e *oweb.Error
+		log.Printf("error: %v", err) // TODO(bmizerany): take a slog.Logger
+		var e *ollama.Error
 		if !errors.As(err, &e) {
 			e = oweb.ErrInternal
 		}

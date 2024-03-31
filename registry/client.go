@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"bllamo.com/oweb"
+	"bllamo.com/client/ollama"
 )
 
 type Client struct {
@@ -16,7 +16,7 @@ type Client struct {
 // Push pushes a manifest to the server.
 func (c *Client) Push(ctx context.Context, ref string, manifest []byte) ([]Requirement, error) {
 	// TODO(bmizerany): backoff
-	v, err := oweb.Do[PushResponse](ctx, "POST", c.BaseURL+"/v1/push/"+ref, struct {
+	v, err := ollama.Do[PushResponse](ctx, "POST", c.BaseURL+"/v1/push/"+ref, struct {
 		Manifest json.RawMessage `json:"manifest"`
 	}{manifest})
 	if err != nil {
@@ -38,7 +38,7 @@ func PushLayer(ctx context.Context, dstURL string, size int64, file io.Reader) e
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		e := &oweb.Error{Status: res.StatusCode}
+		e := &ollama.Error{Status: res.StatusCode}
 		msg, err := io.ReadAll(res.Body)
 		if err != nil {
 			return err
