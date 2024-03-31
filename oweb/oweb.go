@@ -55,7 +55,8 @@ func Serve(h HandlerFunc, w http.ResponseWriter, r *http.Request) {
 		if !errors.As(err, &oe) {
 			oe = ErrInternal
 		}
-		w.WriteHeader(cmp.Or(oe.Status, 400))
+		oe.Status = cmp.Or(oe.Status, 400)
+		w.WriteHeader(oe.Status)
 		if err := EncodeJSON(w, oe); err != nil {
 			log.Printf("error encoding error: %v", err)
 		}

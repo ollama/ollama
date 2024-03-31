@@ -74,11 +74,10 @@ func (c *Client) Run(ctx context.Context, ref string, messages []apitype.Message
 }
 
 type Error struct {
-	Status  int    `json:"-"`
+	Status  int    `json:"status"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	Field   string `json:"field,omitempty"`
-	RawBody []byte `json:"-"`
 }
 
 func (e *Error) Error() string {
@@ -110,13 +109,10 @@ func Do[Res any](ctx context.Context, method, urlStr string, in any) (*Res, erro
 	defer res.Body.Close()
 
 	if res.StatusCode/100 != 2 {
-		var b bytes.Buffer
-		body := io.TeeReader(res.Body, &b)
-		e, err := decodeJSON[Error](body)
+		e, err := decodeJSON[Error](res.Body)
 		if err != nil {
 			return nil, err
 		}
-		e.RawBody = b.Bytes()
 		return nil, e
 	}
 
