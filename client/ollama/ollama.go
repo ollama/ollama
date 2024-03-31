@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"iter"
@@ -109,8 +110,11 @@ func Do[Res any](ctx context.Context, method, urlStr string, in any) (*Res, erro
 	defer res.Body.Close()
 
 	if res.StatusCode/100 != 2 {
-		e, err := decodeJSON[Error](res.Body)
+		var buf bytes.Buffer
+		body := io.TeeReader(res.Body, &buf)
+		e, err := decodeJSON[Error](body)
 		if err != nil {
+			err := fmt.Errorf("ollama: invalid error response from server (status %d): %q", res.StatusCode, buf.String())
 			return nil, err
 		}
 		return nil, e
