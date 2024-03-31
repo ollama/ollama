@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	"bllamo.com/build"
+	"bllamo.com/build/blob"
 	"bllamo.com/client/ollama"
 	"bllamo.com/oweb"
 	"bllamo.com/registry/apitype"
@@ -50,6 +52,11 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
+	ref := blob.ParseRef(pr.Ref)
+	if !ref.FullyQualified() {
+		return oweb.Mistake("invalid", "name", "must be fully qualified")
+	}
+
 	mc, err := minio.New("localhost:9000", &minio.Options{
 		Creds:  credentials.NewStaticV4("minioadmin", "minioadmin", ""),
 		Secure: false,
@@ -87,8 +94,14 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	// TODO(bmizerany): commit to db
-	// ref, _ := strings.CutPrefix(r.URL.Path, "/v1/push/")
+	if len(requirements) == 0 {
+		const cheatTODO = "registry.ollama.ai/library"
+		key := build.ManifestKey(cheatTODO, ref)
+		_, err := mc.PutObject(r.Context(), "test", key, bytes.NewReader(pr.Manifest), int64(len(pr.Manifest)), minio.PutObjectOptions{})
+		if err != nil {
+			return err
+		}
+	}
 
 	return oweb.EncodeJSON(w, &apitype.PushResponse{Requirements: requirements})
 }
