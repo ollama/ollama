@@ -36,6 +36,8 @@ var I_Acknowledge_This_API_Is_Under_Development bool
 type Client struct {
 	// BaseURL is the base URL of the Ollama API.
 	BaseURL string
+
+	HTTPClient *http.Client // The HTTP client to use. If nil, http.DefaultClient is used.
 }
 
 // Build requests the remote Ollama service to build a model. It uploads any
@@ -104,7 +106,8 @@ func Do[Res any](ctx context.Context, c *Client, method, path string, in any) (*
 		return nil, err
 	}
 
-	res, err := http.DefaultClient.Do(req)
+	hc := cmp.Or(c.HTTPClient, http.DefaultClient)
+	res, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
