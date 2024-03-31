@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"bllamo.com/client/ollama"
@@ -35,13 +34,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) error {
-	switch {
-	case strings.HasPrefix(r.URL.Path, "/v1/push"):
+	switch r.URL.Path {
+	case "/v1/push":
 		return s.handlePush(w, r)
-	case strings.HasPrefix(r.URL.Path, "/v1/pull"):
+	case "/v1/pull":
 		return s.handlePull(w, r)
+	default:
+		return oweb.ErrNotFound
 	}
-	return oweb.ErrNotFound
 }
 
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
