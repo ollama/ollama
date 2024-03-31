@@ -372,3 +372,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
+- [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
