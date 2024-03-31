@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"bllamo.com/client/ollama"
+	"bllamo.com/registry/apitype"
 )
 
 type Client struct {
@@ -18,9 +19,9 @@ func (c *Client) oclient() *ollama.Client {
 }
 
 // Push pushes a manifest to the server.
-func (c *Client) Push(ctx context.Context, ref string, manifest []byte) ([]Requirement, error) {
+func (c *Client) Push(ctx context.Context, ref string, manifest []byte) ([]apitype.Requirement, error) {
 	// TODO(bmizerany): backoff
-	v, err := ollama.Do[PushResponse](ctx, c.oclient(), "POST", "/v1/push", &PushRequest{
+	v, err := ollama.Do[apitype.PushResponse](ctx, c.oclient(), "POST", "/v1/push", &apitype.PushRequest{
 		Ref:      ref,
 		Manifest: manifest,
 	})

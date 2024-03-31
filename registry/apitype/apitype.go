@@ -1,4 +1,4 @@
-package registry
+package apitype
 
 import "encoding/json"
 

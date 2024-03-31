@@ -13,6 +13,7 @@ import (
 
 	"bllamo.com/client/ollama"
 	"bllamo.com/oweb"
+	"bllamo.com/registry/apitype"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
@@ -44,7 +45,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
-	pr, err := oweb.DecodeUserJSON[PushRequest]("", r.Body)
+	pr, err := oweb.DecodeUserJSON[apitype.PushRequest]("", r.Body)
 	if err != nil {
 		return err
 	}
@@ -54,13 +55,13 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		Secure: false,
 	})
 
-	m, err := oweb.DecodeUserJSON[Manifest]("manifest", bytes.NewReader(pr.Manifest))
+	m, err := oweb.DecodeUserJSON[apitype.Manifest]("manifest", bytes.NewReader(pr.Manifest))
 	if err != nil {
 		return err
 	}
 
 	// TODO(bmizerany): parallelize
-	var requirements []Requirement
+	var requirements []apitype.Requirement
 	for _, l := range m.Layers {
 		if l.Size == 0 {
 			continue
@@ -76,7 +77,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 			if err != nil {
 				return err
 			}
-			requirements = append(requirements, Requirement{
+			requirements = append(requirements, apitype.Requirement{
 				Digest: l.Digest,
 				Size:   l.Size,
 
@@ -89,7 +90,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	// TODO(bmizerany): commit to db
 	// ref, _ := strings.CutPrefix(r.URL.Path, "/v1/push/")
 
-	return oweb.EncodeJSON(w, &PushResponse{Requirements: requirements})
+	return oweb.EncodeJSON(w, &apitype.PushResponse{Requirements: requirements})
 }
 
 func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {

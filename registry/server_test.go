@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"bllamo.com/registry/apitype"
 	"github.com/kr/pretty"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -35,11 +36,11 @@ func TestPush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	diff.Test(t, t.Errorf, got, []Requirement{
+	diff.Test(t, t.Errorf, got, []apitype.Requirement{
 		{Digest: "sha256-1", Size: 1},
 		{Digest: "sha256-2", Size: 2},
 		{Digest: "sha256-3", Size: 3},
-	}, diff.ZeroFields[Requirement]("URL"))
+	}, diff.ZeroFields[apitype.Requirement]("URL"))
 
 	for _, r := range got {
 		body := strings.NewReader(strings.Repeat("x", int(r.Size)))
