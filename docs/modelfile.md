@@ -71,7 +71,7 @@ More examples are available in the [examples directory](../examples).
 
 There are two ways to view `Modelfile`s underlying the models in [ollama.com/library][1]:
 
-- Option 1: view a model's layer table:
+- Option 1: view a model's data:
   1.  Go to a particular model page (e.g. https://ollama.com/library/llama2)
   2.  There is a table that displays all the layers of the model.
 - Option 2: use `ollama show` to print the `Modelfile` for any local models like so:
