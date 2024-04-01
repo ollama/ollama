@@ -654,30 +654,22 @@ func convertSafetensors(name, path string, fn func(resp api.ProgressResponse)) (
 		return "", err
 	}
 
-	SupportedArchs := []string{
-		"MistralForCausalLM",
-		"GemmaForCausalLM",
-	}
-
-	for _, arch := range params.Architectures {
-		if !slices.Contains(SupportedArchs, arch) {
-			return "", fmt.Errorf("this safetensors model is not yet supported")
-		}
-	}
-
-	fn(api.ProgressResponse{Status: "processing safetensors"})
-	t, err := convert.GetSafeTensors(tempDir, params)
+	mArch, err := convert.GetModelArchFromParams(name, tempDir, params)
 	if err != nil {
 		return "", err
 	}
 
-	vocab, err := convert.LoadTokens(tempDir, params)
-	if err != nil {
+	fn(api.ProgressResponse{Status: "processing safetensors"})
+	if err := mArch.GetTensors(); err != nil {
+		return "", err
+	}
+
+	if err := mArch.LoadVocab(); err != nil {
 		return "", err
 	}
 
 	fn(api.ProgressResponse{Status: "converting model"})
-	path, err = convert.WriteGGUF(name, t, params, vocab)
+	path, err = mArch.WriteGGUF()
 	if err != nil {
 		return "", err
 	}
