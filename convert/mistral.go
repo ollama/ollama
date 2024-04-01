@@ -17,11 +17,7 @@ import (
 )
 
 type MistralModel struct {
-	Path    string
-	Name    string
-	Params  *Params
-	Vocab   *Vocab
-	Tensors []llm.Tensor
+	ModelData
 }
 
 func mistralLayerHandler(w io.Writer, r safetensorWriterTo, f *os.File) error {

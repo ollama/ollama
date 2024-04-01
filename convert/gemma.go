@@ -16,11 +16,7 @@ import (
 )
 
 type GemmaModel struct {
-	Path    string
-	Name    string
-	Params  *Params
-	Vocab   *Vocab
-	Tensors []llm.Tensor
+	ModelData
 }
 
 func gemmaLayerHandler(w io.Writer, r safetensorWriterTo, f *os.File) error {

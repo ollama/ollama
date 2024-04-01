@@ -58,6 +58,14 @@ type ModelArch interface {
 	WriteGGUF() (string, error)
 }
 
+type ModelData struct {
+	Path    string
+	Name    string
+	Params  *Params
+	Vocab   *Vocab
+	Tensors []llm.Tensor
+}
+
 func ReadSafeTensors(fn string, offset uint64, params *Params) ([]llm.Tensor, uint64, error) {
 	f, err := os.Open(fn)
 	if err != nil {
@@ -403,15 +411,19 @@ func GetModelArchFromParams(name, dirPath string, params *Params) (ModelArch, er
 		switch params.Architectures[0] {
 		case "MistralForCausalLM":
 			return &MistralModel{
-				Name:   name,
-				Path:   dirPath,
-				Params: params,
+				ModelData{
+					Name:   name,
+					Path:   dirPath,
+					Params: params,
+				},
 			}, nil
 		case "GemmaForCausalLM":
 			return &GemmaModel{
-				Name:   name,
-				Path:   dirPath,
-				Params: params,
+				ModelData{
+					Name:   name,
+					Path:   dirPath,
+					Params: params,
+				},
 			}, nil
 		default:
 			return nil, fmt.Errorf("Models based on '%s' are not yet supported", params.Architectures[0])
