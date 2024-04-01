@@ -12,24 +12,24 @@ func TestParseRef(t *testing.T) {
 		in   string
 		want Ref
 	}{
-		{"mistral:latest", Ref{"mistral", "latest", ""}},
-		{"mistral", Ref{"mistral", "latest", ""}},
-		{"mistral:30B", Ref{"mistral", "30B", ""}},
-		{"mistral:7b", Ref{"mistral", "7b", ""}},
-		{"mistral:7b+Q4_0", Ref{"mistral", "7b", "Q4_0"}},
-		{"mistral+KQED", Ref{"mistral", "latest", "KQED"}},
-		{"mistral.x-3:7b+Q4_0", Ref{"mistral.x-3", "7b", "Q4_0"}},
+		{"mistral:latest", Ref{"registry.ollama.ai", "mistral", "latest", ""}},
+		{"mistral", Ref{"registry.ollama.ai", "mistral", "latest", ""}},
+		{"mistral:30B", Ref{"registry.ollama.ai", "mistral", "30B", ""}},
+		{"mistral:7b", Ref{"registry.ollama.ai", "mistral", "7b", ""}},
+		{"mistral:7b+Q4_0", Ref{"registry.ollama.ai", "mistral", "7b", "Q4_0"}},
+		{"mistral+KQED", Ref{"registry.ollama.ai", "mistral", "latest", "KQED"}},
+		{"mistral.x-3:7b+Q4_0", Ref{"registry.ollama.ai", "mistral.x-3", "7b", "Q4_0"}},
 
 		// lowecase build
-		{"mistral:7b+q4_0", Ref{"mistral", "7b", "Q4_0"}},
+		{"mistral:7b+q4_0", Ref{"registry.ollama.ai", "mistral", "7b", "Q4_0"}},
 
 		// Invalid
-		{"mistral:7b+Q4_0:latest", Ref{"", "", ""}},
-		{"mi tral", Ref{"", "", ""}},
-		{"llama2:+", Ref{"", "", ""}},
+		{"mistral:7b+Q4_0:latest", Ref{"", "", "", ""}},
+		{"mi tral", Ref{"", "", "", ""}},
+		{"llama2:+", Ref{"", "", "", ""}},
 
 		// too long
-		{refTooLong, Ref{"", "", ""}},
+		{refTooLong, Ref{"", "", "", ""}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
@@ -48,11 +48,11 @@ func TestRefFull(t *testing.T) {
 		wantFull  string
 	}{
 		{"", "", ""},
-		{"mistral:7b+x", "mistral:7b", "mistral:7b+X"},
-		{"mistral:7b+Q4_0", "mistral:7b", "mistral:7b+Q4_0"},
-		{"mistral:latest", "mistral:latest", "mistral:latest+!(MISSING BUILD)"},
-		{"mistral", "mistral:latest", "mistral:latest+!(MISSING BUILD)"},
-		{"mistral:30b", "mistral:30b", "mistral:30b+!(MISSING BUILD)"},
+		{"mistral:7b+x", "registry.ollama.ai/mistral:7b", "registry.ollama.ai/mistral:7b+X"},
+		{"mistral:7b+Q4_0", "registry.ollama.ai/mistral:7b", "registry.ollama.ai/mistral:7b+Q4_0"},
+		{"mistral:latest", "registry.ollama.ai/mistral:latest", "registry.ollama.ai/mistral:latest+!(MISSING BUILD)"},
+		{"mistral", "registry.ollama.ai/mistral:latest", "registry.ollama.ai/mistral:latest+!(MISSING BUILD)"},
+		{"mistral:30b", "registry.ollama.ai/mistral:30b", "registry.ollama.ai/mistral:30b+!(MISSING BUILD)"},
 	}
 
 	for _, tt := range cases {

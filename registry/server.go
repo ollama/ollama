@@ -1,4 +1,4 @@
-// Package implements an Ollama registry client and server
+// Package implements an Ollama registry client and server package registry
 package registry
 
 import (
@@ -8,9 +8,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
+	"path"
 	"time"
 
-	"bllamo.com/build"
 	"bllamo.com/build/blob"
 	"bllamo.com/client/ollama"
 	"bllamo.com/oweb"
@@ -18,6 +19,13 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
+
+// TODO(bmizerany): move all env things to package envkobs?
+var defaultLibrary = cmp.Or(os.Getenv("OLLAMA_REGISTRY"), "registry.ollama.ai/library")
+
+func DefaultLibrary() string {
+	return defaultLibrary
+}
 
 type Server struct{}
 
@@ -80,7 +88,8 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		}
 		if !pushed {
 			const expires = 1 * time.Hour
-			signedURL, err := mc.PresignedPutObject(r.Context(), "test", l.Digest, expires)
+			key := path.Join("blobs", l.Digest)
+			signedURL, err := mc.PresignedPutObject(r.Context(), "test", key, expires)
 			if err != nil {
 				return err
 			}
@@ -95,9 +104,10 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if len(requirements) == 0 {
-		const cheatTODO = "registry.ollama.ai/library"
-		key := build.ManifestKey(cheatTODO, ref)
-		_, err := mc.PutObject(r.Context(), "test", key, bytes.NewReader(pr.Manifest), int64(len(pr.Manifest)), minio.PutObjectOptions{})
+		// Commit the manifest
+		body := bytes.NewReader(pr.Manifest)
+		path := path.Join("manifests", ref.Path())
+		_, err := mc.PutObject(r.Context(), "test", path, body, int64(len(pr.Manifest)), minio.PutObjectOptions{})
 		if err != nil {
 			return err
 		}
@@ -122,7 +132,8 @@ func (s *Server) statObject(ctx context.Context, digest string) (pushed bool, er
 	}
 
 	// HEAD the object
-	_, err = mc.StatObject(ctx, "test", digest, minio.StatObjectOptions{})
+	path := path.Join("blobs", digest)
+	_, err = mc.StatObject(ctx, "test", path, minio.StatObjectOptions{})
 	if err != nil {
 		if isNoSuchKey(err) {
 			err = nil

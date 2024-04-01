@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 
 	"bllamo.com/build/blob"
 	"bllamo.com/build/internal/blobstore"
@@ -21,10 +20,6 @@ var (
 	ErrNoSuchBlob             = errors.New("no such blob")
 	ErrNotFound               = errors.New("not found")
 )
-
-func ManifestKey(domain string, ref blob.Ref) string {
-	return path.Join("manifests", domain, ref.Name(), ref.Tag(), ref.Build())
-}
 
 type mediaType string
 

@@ -2,6 +2,8 @@ package blob
 
 import (
 	"cmp"
+	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -11,26 +13,31 @@ import (
 //
 // Users or Ref must check Valid before using it.
 type Ref struct {
-	name  string
-	tag   string
-	build string
+	domain string
+	name   string
+	tag    string
+	build  string
 }
 
 // WithBuild returns a copy of r with the provided build. If the provided
 // build is empty, it returns the short, unqualified copy of r.
 func (r Ref) WithBuild(build string) Ref {
 	if build == "" {
-		return Ref{r.name, r.tag, ""}
+		return Ref{r.domain, r.name, r.tag, ""}
 	}
 	if !isValidPart(build) {
 		return Ref{}
 	}
-	return makeRef(r.name, r.tag, build)
+	return makeRef(r.domain, r.name, r.tag, build)
 }
 
 // String returns the fully qualified ref string.
 func (r Ref) String() string {
 	var b strings.Builder
+	if r.domain != "" {
+		b.WriteString(r.domain)
+		b.WriteString("/")
+	}
 	b.WriteString(r.name)
 	if r.tag != "" {
 		b.WriteString(":")
@@ -49,7 +56,7 @@ func (r Ref) Full() string {
 	if !r.Valid() {
 		return ""
 	}
-	return makeRef(r.name, r.tag, cmp.Or(r.build, "!(MISSING BUILD)")).String()
+	return makeRef(r.domain, r.name, r.tag, cmp.Or(r.build, "!(MISSING BUILD)")).String()
 }
 
 // Short returns the short ref string which does not include the build.
@@ -65,9 +72,18 @@ func (r Ref) FullyQualified() bool {
 	return r.name != "" && r.tag != "" && r.build != ""
 }
 
-func (r Ref) Name() string  { return r.name }
-func (r Ref) Tag() string   { return r.tag }
-func (r Ref) Build() string { return r.build }
+func (r Ref) Path() string {
+	return path.Join(r.domain, r.name, r.tag, r.build)
+}
+
+func (r Ref) Filepath() string {
+	return filepath.Join(r.domain, r.name, r.tag, r.build)
+}
+
+func (r Ref) Domain() string { return r.domain }
+func (r Ref) Name() string   { return r.name }
+func (r Ref) Tag() string    { return r.tag }
+func (r Ref) Build() string  { return r.build }
 
 // ParseRef parses a ref string into a Ref. A ref string is a name, an
 // optional tag, and an optional build, separated by colons and pluses.
@@ -107,12 +123,14 @@ func ParseRef(s string) Ref {
 	if expectBuild && !isValidPart(build) {
 		return Ref{}
 	}
-	return makeRef(name, tag, build)
+
+	const TODO = "registry.ollama.ai"
+	return makeRef(TODO, name, tag, build)
 }
 
 // makeRef makes a ref, skipping validation.
-func makeRef(name, tag, build string) Ref {
-	return Ref{name, cmp.Or(tag, "latest"), strings.ToUpper(build)}
+func makeRef(domain, name, tag, build string) Ref {
+	return Ref{domain, name, cmp.Or(tag, "latest"), strings.ToUpper(build)}
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]

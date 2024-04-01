@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"os/exec"
 	"strings"
@@ -57,6 +58,50 @@ func TestPush(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("unexpected requirements: % #v", pretty.Formatter(got))
 	}
+
+	mc, err := minio.New("localhost:9000", &minio.Options{
+		Creds:  credentials.NewStaticV4("minioadmin", "minioadmin", ""),
+		Secure: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	keys := mc.ListObjects(context.Background(), "test", minio.ListObjectsOptions{
+		Recursive: true,
+	})
+	for k := range keys {
+		paths = append(paths, k.Key)
+	}
+
+	t.Logf("paths: %v", paths)
+
+	diff.Test(t, t.Errorf, paths, []string{
+		"blobs/sha256-1",
+		"blobs/sha256-2",
+		"blobs/sha256-3",
+		"manifests/registry.ollama.ai/x/latest/Y",
+	})
+
+	obj, err := mc.GetObject(context.Background(), "test", "manifests/registry.ollama.ai/x/latest/Y", minio.GetObjectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Close()
+
+	var gotM apitype.Manifest
+	if err := json.NewDecoder(obj).Decode(&gotM); err != nil {
+		t.Fatal(err)
+	}
+
+	diff.Test(t, t.Errorf, gotM, apitype.Manifest{
+		Layers: []apitype.Layer{
+			{Digest: "sha256-1", Size: 1},
+			{Digest: "sha256-2", Size: 2},
+			{Digest: "sha256-3", Size: 3},
+		},
+	})
 }
 
 func startMinio(t *testing.T) {

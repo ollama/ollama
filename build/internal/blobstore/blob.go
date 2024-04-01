@@ -1,7 +1,3 @@
-// Copyright 2017 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 // Package blobstore implements a blob store.
 package blobstore
 
@@ -228,8 +224,7 @@ func (s *Store) refFileName(ref blob.Ref) (string, error) {
 	if !ref.FullyQualified() {
 		return "", fmt.Errorf("ref not fully qualified: %q", ref)
 	}
-	const cheatTODO = "registry.ollama.ai/library"
-	return filepath.Join(s.dir, "manifests", cheatTODO, ref.Name(), ref.Tag(), ref.Build()), nil
+	return filepath.Join(s.dir, "manifests", ref.Domain(), ref.Name(), ref.Tag(), ref.Build()), nil
 }
 
 // Get looks up the blob ID in the store,
