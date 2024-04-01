@@ -259,6 +259,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
 - [LibreChat](https://github.com/danny-avila/LibreChat)
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
