@@ -328,8 +328,8 @@ func GetTensorName(n string) (string, error) {
 type safetensorWriterTo struct {
 	t *llm.Tensor
 
-	params      *Params
-	bo          ByteOrder
+	params *Params
+	bo     ByteOrder
 
 	filename string
 
@@ -416,8 +416,6 @@ func GetModelArchFromParams(name, dirPath string, params *Params) (ModelArch, er
 		default:
 			return nil, fmt.Errorf("Models based on '%s' are not yet supported", params.Architectures[0])
 		}
-	default:
-		return nil, fmt.Errorf("Multimodal models are not yet supported")
 	}
 
 	return nil, fmt.Errorf("Unknown error")
