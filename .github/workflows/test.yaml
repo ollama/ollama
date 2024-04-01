@@ -12,6 +12,7 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
+      GENERATE: ${{ steps.changes.outputs.GENERATE }}
       GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
       GENERATE_ROCM: ${{ steps.changes.outputs.GENERATE_ROCM }}
     steps:
