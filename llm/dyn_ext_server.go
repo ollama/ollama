@@ -39,7 +39,7 @@ import (
 
 type dynExtServer struct {
 	s       C.struct_dynamic_llama_server
-	options api.Options
+	options *api.Options
 }
 
 // Note: current implementation does not support concurrent instantiations
@@ -64,7 +64,7 @@ func extServerResponseToErr(resp C.ext_server_resp_t) error {
 	return fmt.Errorf(C.GoString(resp.msg))
 }
 
-func newDynExtServer(library, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
+func newDynExtServer(library, model string, adapters, projectors []string, opts *api.Options) (LLM, error) {
 	if !mutex.TryLock() {
 		slog.Info("concurrent llm servers not yet supported, waiting for prior server to complete")
 		mutex.Lock()

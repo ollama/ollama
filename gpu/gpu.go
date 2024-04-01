@@ -20,12 +20,19 @@ import (
 	"strings"
 	"sync"
 	"unsafe"
+
+	"github.com/ollama/ollama/format"
 )
 
 type handles struct {
 	nvml   *C.nvml_handle_t
 	cudart *C.cudart_handle_t
 }
+
+const (
+	cudaMinimumMemory = 377 * format.MebiByte
+	rocmMinimumMemory = 377 * format.MebiByte
+)
 
 var gpuMutex sync.Mutex
 var gpuHandles *handles = nil
@@ -168,6 +175,7 @@ func GetGPUInfo() GpuInfo {
 			} else if cc.major > CudaComputeMin[0] || (cc.major == CudaComputeMin[0] && cc.minor >= CudaComputeMin[1]) {
 				slog.Info(fmt.Sprintf("[nvidia-ml] NVML CUDA Compute Capability detected: %d.%d", cc.major, cc.minor))
 				resp.Library = "cuda"
+				resp.MinimumMemory = cudaMinimumMemory
 			} else {
 				slog.Info(fmt.Sprintf("[nvidia-ml] CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
 			}
@@ -187,6 +195,7 @@ func GetGPUInfo() GpuInfo {
 			} else if cc.major > CudaComputeMin[0] || (cc.major == CudaComputeMin[0] && cc.minor >= CudaComputeMin[1]) {
 				slog.Info(fmt.Sprintf("[cudart] CUDART CUDA Compute Capability detected: %d.%d", cc.major, cc.minor))
 				resp.Library = "cuda"
+				resp.MinimumMemory = cudaMinimumMemory
 			} else {
 				slog.Info(fmt.Sprintf("[cudart] CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
 			}
@@ -194,6 +203,7 @@ func GetGPUInfo() GpuInfo {
 	} else {
 		AMDGetGPUInfo(&resp)
 		if resp.Library != "" {
+			resp.MinimumMemory = rocmMinimumMemory
 			return resp
 		}
 	}
@@ -239,20 +249,7 @@ func CheckVRAM() (int64, error) {
 	}
 	gpuInfo := GetGPUInfo()
 	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
-		// leave 10% or 1024MiB of VRAM free per GPU to handle unaccounted for overhead
-		overhead := gpuInfo.FreeMemory / 10
-		gpus := uint64(gpuInfo.DeviceCount)
-		if overhead < gpus*1024*1024*1024 {
-			overhead = gpus * 1024 * 1024 * 1024
-		}
-		// Assigning full reported free memory for Tegras due to OS controlled caching.
-		if CudaTegra != "" {
-			// Setting overhead for non-Tegra devices
-			overhead = 0
-		}
-		avail := int64(gpuInfo.FreeMemory - overhead)
-		slog.Debug(fmt.Sprintf("%s detected %d devices with %dM available memory", gpuInfo.Library, gpuInfo.DeviceCount, avail/1024/1024))
-		return avail, nil
+		return int64(gpuInfo.FreeMemory), nil
 	}
 
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation
