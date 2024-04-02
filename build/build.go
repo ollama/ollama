@@ -113,21 +113,13 @@ func (s *Server) LayerFile(digest string) (string, error) {
 }
 
 func (s *Server) ManifestData(ref string) ([]byte, error) {
-	br, err := parseCompleteRef(ref)
-	if err != nil {
-		return nil, err
-	}
-	data, _, err := s.resolve(br)
+	data, _, err := s.resolve(blob.ParseRef(ref))
 	return data, err
 }
 
 // WeightFile returns the absolute path to the weights file for the given model ref.
 func (s *Server) WeightsFile(ref string) (string, error) {
-	br, err := parseCompleteRef(ref)
-	if err != nil {
-		return "", err
-	}
-	m, err := s.getManifest(br)
+	m, err := s.getManifest(blob.ParseRef(ref))
 	if err != nil {
 		return "", err
 	}
@@ -167,11 +159,7 @@ func (s *Server) resolve(ref blob.Ref) (data []byte, path string, err error) {
 }
 
 func (s *Server) SetManifestData(ref string, data []byte) error {
-	br, err := parseCompleteRef(ref)
-	if err != nil {
-		return err
-	}
-	return s.setManifestData(br, data)
+	return s.setManifestData(blob.ParseRef(ref), data)
 }
 
 // Set sets the data for the given ref.
@@ -219,12 +207,4 @@ func (s *Server) getManifest(ref blob.Ref) (manifestJSON, error) {
 		return manifestJSON{}, &fs.PathError{Op: "unmarshal", Path: path, Err: err}
 	}
 	return m, nil
-}
-
-func parseCompleteRef(ref string) (blob.Ref, error) {
-	br := blob.ParseRef(ref)
-	if !br.Complete() {
-		return blob.Ref{}, fmt.Errorf("%w: %q", ErrIncompleteRef, ref)
-	}
-	return br, nil
 }
