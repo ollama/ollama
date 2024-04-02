@@ -33,14 +33,14 @@ type LlamaServer struct {
 	cmd     *exec.Cmd
 	done    chan error // Channel to signal when the process exits
 	status  *StatusWriter
-	options *api.Options
+	options api.Options
 }
 
 var cpuOnlyFamilies = []string{
 	"mamba",
 }
 
-func NewLlamaServer(model string, adapters, projectors []string, opts *api.Options) (*LlamaServer, error) {
+func NewLlamaServer(model string, adapters, projectors []string, opts api.Options) (*LlamaServer, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
