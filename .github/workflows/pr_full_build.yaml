@@ -1,0 +1,493 @@
+name: pr_full_build
+
+env:
+  ROCM_WINDOWS_URL: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
+  MSYS2_URL: https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe
+
+on:
+  pull_request:
+
+jobs:
+  check-label:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      labeled: ${{ steps.check.outputs.labeled }}
+    steps:
+      - id: check
+        run: |
+          gh api --jq '.labels.[].name' /repos/ollama/ollama/pulls/${{ github.event.number }} | \
+            grep "pr full build" > /dev/null && echo "labeled=1" >> $GITHUB_OUTPUT
+
+  # Full build of the Mac assets
+  build-darwin:
+    needs: check-label
+    if: ${{ needs.check-label.outputs.labeled == 1 }}
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set Version
+        shell: bash
+        run: |
+          echo "VERSION=0.0.0-${GITHUB_REF_NAME%%/merge}" >> $GITHUB_ENV
+          echo "RELEASE_VERSION=0.0.0-${GITHUB_REF_NAME%%/merge}" >> $GITHUB_ENV
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build Darwin
+        env:
+          SDKROOT: /Applications/Xcode_14.1.0.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+          DEVELOPER_DIR: /Applications/Xcode_14.1.0.app/Contents/Developer
+        run: |
+          ./scripts/build_darwin.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-darwin
+          path: |
+            dist/Ollama-darwin.zip
+            dist/ollama-darwin
+
+
+  # Windows builds take a long time to both install the dependencies and build, so parallelize
+  # CPU generation step
+  generate-windows-cpu:
+    needs: check-label
+    if: ${{ needs.check-label.outputs.labeled == 1 }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set make jobs default
+        run: |
+          echo "MAKEFLAGS=--jobs=$((Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set Version
+        shell: bash
+        run: echo "VERSION=0.0.0-${GITHUB_REF_NAME%%/merge}" >> $GITHUB_ENV
+      - name: Add msys paths
+        run: |
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: |
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
+          make
+        name: make
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generate-windows-cpu
+          path: |
+            build/**/*
+            dist/windows-amd64/**
+
+  # ROCm generation step
+  generate-windows-rocm:
+    needs: check-label
+    if: ${{ needs.check-label.outputs.labeled == 1 }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set make jobs default
+        run: |
+          echo "MAKEFLAGS=--jobs=$((Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set Version
+        shell: bash
+        run: echo "VERSION=0.0.0-${GITHUB_REF_NAME%%/merge}" >> $GITHUB_ENV
+      - name: Add msys paths
+        run: |
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # ROCM installation steps
+      - name: 'Cache ROCm installer'
+        id: cache-rocm
+        uses: actions/cache@v4
+        with:
+          path: rocm-install.exe
+          key: ${{ env.ROCM_WINDOWS_URL }}
+      - name: 'Conditionally Download ROCm'
+        if: steps.cache-rocm.outputs.cache-hit != 'true'
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "${env:ROCM_WINDOWS_URL}" -OutFile "rocm-install.exe"
+      - name: 'Install ROCm'
+        run: |
+          Start-Process "rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
+      - name: 'Verify ROCm'
+        run: |
+          & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
+          echo "HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path | select -first 1)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: make rocm runner
+        run: |
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
+          make -C llama print-HIP_PATH print-HIP_LIB_DIR
+          make rocm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generate-windows-rocm
+          path: |
+            build/**/*
+            dist/windows-amd64/**
+
+  # CUDA generation step
+  generate-windows-cuda:
+    needs: check-label
+    if: ${{ needs.check-label.outputs.labeled == 1 }}
+    runs-on: windows
+    strategy:
+      matrix:
+        cuda:
+          - version: "11.3"
+            url: https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
+          - version: "12.4"
+            url: https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_551.61_windows.exe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set make jobs default
+        run: |
+          echo "MAKEFLAGS=--jobs=$((Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set Version
+        shell: bash
+        run: echo "VERSION=0.0.0-${GITHUB_REF_NAME%%/merge}" >> $GITHUB_ENV
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # CUDA installation steps
+      - name: 'Cache CUDA installer'
+        id: cache-cuda
+        uses: actions/cache@v4
+        with:
+          path: cuda-install.exe
+          key: ${{ matrix.cuda.url }}
+      - name: 'Conditionally Download CUDA'
+        if: steps.cache-cuda.outputs.cache-hit != 'true'
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "${{ matrix.cuda.url }}" -OutFile "cuda-install.exe"
+      - name: 'Install CUDA'
+        run: |
+          $subpackages = @("cudart", "nvcc", "cublas", "cublas_dev") | foreach-object {"${_}_${{ matrix.cuda.version }}"}
+          Start-Process "cuda-install.exe" -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+      - name: 'Verify CUDA'
+        run: |
+          & (resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0] --version
+          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
+          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
+          echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "CUDA_PATH=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "CUDA_PATH_V${cudaVer}=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: make cuda runner
+        run: |
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
+          make cuda_v$(($env:CUDA_PATH | split-path -leaf) -replace 'v(\d+).*', '$1')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generate-windows-cuda-${{ matrix.cuda.version }}
+          path: |
+            build/**/*
+            dist/windows-amd64/**
+
+  # windows arm64 generate, go build, and zip file (no installer)
+  # Output of this build is aggregated into the final x86 build
+  # for a unified windows installer
+  windows-arm64:
+    needs: check-label
+    if: ${{ needs.check-label.outputs.labeled == 1 }}
+    runs-on: windows-arm64
+    steps:
+      # The current Windows arm64 beta image has effectively zero dev tools installed...
+      - name: Install git and gzip
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          choco install -y --no-progress git gzip
+          echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      # pacman is buggy on win arm64, so we avoid using it, but rely on the binary artifacts
+      # we download the sfx (7zip bundle) which isn't fully set up, but the binaries we need to build work
+      - name: Install msys2 x64
+        run: |
+          $url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-base-x86_64-20240727.sfx.exe"
+          write-host "Downloading MSYS2"
+          Invoke-WebRequest -Uri "$url" -outfile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @(
+              '-y', '-oC:\'
+              ) -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      # since pacman isn't reliable, we just download the tar file and extract directly
+      - name: Downloading and extracting msys2 make tar file
+        run: |
+          $url="https://mirror.msys2.org/msys/x86_64/make-4.4.1-2-x86_64.pkg.tar.zst"
+          write-host "Downloading make"
+          Invoke-WebRequest -Uri "$url" -outfile c:\msys64\make.tar.zst
+          cd c:\msys64; tar -xf make.tar.zst
+          rm c:\msys64\make.tar.zst
+      - name: Verify Make works properly
+        run: |
+          echo $env:PATH
+          make --version
+      - name: Install Visual Studio 2022
+        run: |
+          $components = @(
+            "Microsoft.VisualStudio.Component.CoreEditor",
+            "Microsoft.VisualStudio.Workload.CoreEditor",
+            "Microsoft.VisualStudio.Component.Roslyn.Compiler",
+            "Microsoft.Component.MSBuild",
+            "Microsoft.VisualStudio.Component.TextTemplating",
+            "Microsoft.VisualStudio.Component.Debugger.JustInTime",
+            "Microsoft.VisualStudio.Component.VC.CoreIde",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+            "Microsoft.VisualStudio.Component.VC.Tools.ARM64EC",
+            "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+            "Microsoft.VisualStudio.Component.VC.ATL",
+            "Microsoft.VisualStudio.Component.VC.ATL.ARM64",
+            "Microsoft.VisualStudio.Component.Graphics",
+            "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
+            "Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Core",
+            "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit",
+            "Microsoft.VisualStudio.Component.CppBuildInsights",
+            "Microsoft.VisualStudio.Component.VC.DiagnosticTools",
+            "Microsoft.VisualStudio.ComponentGroup.WebToolsExtensions.CMake",
+            "Microsoft.VisualStudio.Component.VC.CMake.Project",
+            "Microsoft.VisualStudio.Component.VC.ASAN",
+            "Microsoft.VisualStudio.Component.Vcpkg",
+            "Microsoft.VisualStudio.Workload.NativeDesktop"
+          )
+          $config = @{
+                "version" = "1.0"
+                "components"  = $components
+                "extensions"  = @()
+            }
+          $configPath = "${env:RUNNER_TEMP}\vsconfig"
+          $config | ConvertTo-Json | Out-File -FilePath $configPath
+          $bootstrapperFilePath = "${env:RUNNER_TEMP}\vs_community.exe"
+          write-host "Downloading Visual Studio 2022"
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_community.exe" -outfile $bootstrapperFilePath
+          $bootstrapperArgumentList = ('/c', $bootstrapperFilePath, '--config', $configPath, '--quiet', '--wait' )
+          write-host "Installing Visual Studio 2022"
+          $process = Start-Process -FilePath cmd.exe -ArgumentList $bootstrapperArgumentList -Wait -PassThru
+          $exitCode = $process.ExitCode
+          write-host $exitCode
+      # pacman in mingw/msys2 is ~broken on windows arm right now - hangs consistently during attempts to install
+      # so we'll use this alternative GCC binary
+      - name: Install llvm-mingw GCC
+        run: |
+          $gcc_url="https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip"
+          write-host "Downloading llvm-mingw"
+          Invoke-WebRequest -Uri "${gcc_url}" -OutFile "${env:RUNNER_TEMP}\gcc.zip"
+          write-host "Unpacking llvm-mingw"
+          expand-archive -path "${env:RUNNER_TEMP}\gcc.zip" -destinationpath "c:\"
+          mv c:\llvm-mingw-* c:\llvm-mingw
+          echo "c:\llvm-mingw\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Verify GCC
+        run: |
+          echo $env:PATH
+          gcc --version
+      - uses: actions/checkout@v4
+      - name: Set Version
+        run: |
+          $ver=${env:GITHUB_REF_NAME}.trim("/merge")
+          echo VERSION=0.0.0-$ver | Out-File -FilePath ${env:GITHUB_ENV} -Encoding utf8 -Append
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go get ./...
+      - run: |
+          $gopath=(get-command go).source | split-path -parent
+          $gccpath=(get-command gcc).source | split-path -parent
+          import-module 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -Arch arm64 -vsinstallpath 'C:\Program Files\Microsoft Visual Studio\2022\Community' -skipautomaticlocation
+          $env:PATH="$gopath;$gccpath;$env:PATH"
+          echo $env:PATH
+          $env:ARCH="arm64"
+          .\scripts\build_windows.ps1 buildOllama buildApp gatherDependencies distZip
+        name: 'Windows Build'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64
+          path: |
+            dist/windows-arm64/**
+            dist/windows-arm64-app.exe
+            dist/ollama-windows-arm64.zip
+
+  # Import the prior generation steps plus the full arm64 build, and build the final windows assets
+  build-windows:
+    runs-on: windows
+    needs:
+      - check-label
+      - generate-windows-cuda
+      - generate-windows-rocm
+      - generate-windows-cpu
+      - windows-arm64
+    if: ${{ needs.check-label.outputs.labeled == 1 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set Version
+        shell: bash
+        run: echo "VERSION=0.0.0-${GITHUB_REF_NAME%%/merge}" >> $GITHUB_ENV
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go get
+      - uses: actions/download-artifact@v4
+        with:
+          name: generate-windows-cpu
+      - uses: actions/download-artifact@v4
+        with:
+          name: generate-windows-cuda-11.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: generate-windows-cuda-12.4
+      - uses: actions/download-artifact@v4
+        with:
+          name: generate-windows-rocm
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-arm64
+          path: dist
+      - run: dir build
+      - run: |
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
+          $env:OLLAMA_SKIP_GENERATE="1"
+          $env:ARCH="amd64"
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
+          & .\scripts\build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: |
+            dist/OllamaSetup.exe
+            dist/ollama-windows-*.zip
+
+  # Linux x86 assets built using the container based build
+  build-linux-amd64:
+    needs: check-label
+    if: ${{ needs.check-label.outputs.labeled == 1 }}
+    runs-on: linux
+    env:
+      PLATFORM: linux/amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set Version
+        shell: bash
+        run: echo "VERSION=0.0.0-${GITHUB_REF_NAME%%/merge}" >> $GITHUB_ENV
+      - run: |
+          ./scripts/build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-amd64
+          path: |
+            dist/*linux*
+            !dist/*-cov
+
+  # Linux ARM assets built using the container based build
+  # (at present, docker isn't pre-installed on arm ubunutu images)
+  build-linux-arm64:
+    needs: check-label
+    if: ${{ needs.check-label.outputs.labeled == 1 }}
+    runs-on: linux-arm64
+    env:
+      PLATFORM: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set Version
+        shell: bash
+        run: echo "VERSION=0.0.0-${GITHUB_REF_NAME%%/merge}" >> $GITHUB_ENV
+      - name: 'Install Docker'
+        run: |
+          # Add Docker's official GPG key:
+          env
+          uname -a
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+          # Add the repository to Apt sources:
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo usermod -aG docker $USER
+          sudo apt-get install acl
+          sudo setfacl --modify user:$USER:rw /var/run/docker.sock
+      - run: |
+          ./scripts/build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-arm64
+          path: |
+            dist/*linux*
+            !dist/*-cov
