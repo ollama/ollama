@@ -51,6 +51,7 @@ typedef struct nvml_compute_capability {
 void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp);
 void nvml_check_vram(nvml_handle_t ch, mem_info_t *resp);
 void nvml_compute_capability(nvml_handle_t ch, nvml_compute_capability_t *cc);
+void nvml_release(nvml_handle_t ch);
 
 #endif  // __GPU_INFO_NVML_H__
 #endif  // __APPLE__

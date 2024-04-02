@@ -7,6 +7,7 @@
 typedef enum cudartReturn_enum {
   CUDART_SUCCESS = 0,
   CUDART_UNSUPPORTED = 1,
+  CUDA_ERROR_INSUFFICIENT_DRIVER = 35,
   // Other values omitted for now...
 } cudartReturn_t;
 
@@ -54,6 +55,7 @@ typedef struct cudart_compute_capability {
 void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp);
 void cudart_check_vram(cudart_handle_t ch, mem_info_t *resp);
 void cudart_compute_capability(cudart_handle_t th, cudart_compute_capability_t *cc);
+void cudart_release(cudart_handle_t ch);
 
 #endif  // __GPU_INFO_CUDART_H__
 #endif  // __APPLE__

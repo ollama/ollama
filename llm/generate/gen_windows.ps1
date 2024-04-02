@@ -33,7 +33,7 @@ function init_vars {
         "-DBUILD_SHARED_LIBS=on",
         "-DLLAMA_NATIVE=off"
         )
-    $script:cmakeTargets = @("ext_server")
+    $script:cmakeTargets = @("ollama_llama_server")
     $script:ARCH = "amd64" # arm not yet supported.
     if ($env:CGO_CFLAGS -contains "-g") {
         $script:cmakeDefs += @("-DCMAKE_VERBOSE_MAKEFILE=on", "-DLLAMA_SERVER_VERBOSE=on", "-DCMAKE_BUILD_TYPE=RelWithDebInfo")
@@ -97,16 +97,14 @@ function apply_patches {
         }
 
         # Checkout each file
-        Set-Location -Path ${script:llamacppDir}
         foreach ($file in $filePaths) {
-            git checkout $file
+            git -C "${script:llamacppDir}" checkout $file
         }
     }
 
     # Apply each patch
     foreach ($patch in $patches) {
-        Set-Location -Path ${script:llamacppDir}
-        git apply $patch.FullName
+        git -C "${script:llamacppDir}" apply $patch.FullName
     }
 }
 
@@ -115,41 +113,41 @@ function build {
     & cmake --version
     & cmake -S "${script:llamacppDir}" -B $script:buildDir $script:cmakeDefs
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    write-host "building with: cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ })"
+    write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ })"
     & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ })
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-}
-
-function install {
-    rm -ea 0 -recurse -force -path "${script:buildDir}/lib"
-    md "${script:buildDir}/lib" -ea 0 > $null
-    cp "${script:buildDir}/bin/${script:config}/ext_server.dll" "${script:buildDir}/lib"
-    cp "${script:buildDir}/bin/${script:config}/llama.dll" "${script:buildDir}/lib"
-    # Display the dll dependencies in the build log
-    if ($script:DUMPBIN -ne $null) {
-        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+    # Rearrange output to be consistent between different generators
+    if ($null -ne ${script:config} -And (test-path -path "${script:buildDir}/bin/${script:config}" ) ) {
+        mv -force "${script:buildDir}/bin/${script:config}/*" "${script:buildDir}/bin/"
+        remove-item "${script:buildDir}/bin/${script:config}"
     }
 }
 
 function sign {
     if ("${env:KEY_CONTAINER}") {
-        write-host "Signing ${script:buildDir}/lib/*.dll"
-        foreach ($file in (get-childitem "${script:buildDir}/lib/*.dll")){
-            & "${script:SignTool}" sign /v /debug /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
+        write-host "Signing ${script:buildDir}/bin/*.exe  ${script:buildDir}/bin/*.dll"
+        foreach ($file in @(get-childitem "${script:buildDir}/bin/*.exe") + @(get-childitem "${script:buildDir}/bin/*.dll")){
+            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
                 /csp "Google Cloud KMS Provider" /kc "${env:KEY_CONTAINER}" $file
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
 }
 
-function compress_libs {
+function compress {
     if ($script:GZIP -eq $null) {
         write-host "gzip not installed, not compressing files"
         return
     }
+    write-host "Compressing binaries..."
+    $binaries = dir "${script:buildDir}/bin/*.exe"
+    foreach ($file in $binaries) {
+        & "$script:GZIP" --best -f $file
+    }
+
     write-host "Compressing dlls..."
-    $libs = dir "${script:buildDir}/lib/*.dll"
-    foreach ($file in $libs) {
+    $binaries = dir "${script:buildDir}/bin/*.dll"
+    foreach ($file in $dlls) {
         & "$script:GZIP" --best -f $file
     }
 }
@@ -164,14 +162,11 @@ function cleanup {
         }
 
         # Checkout each file
-        Set-Location -Path ${script:llamacppDir}
         foreach ($file in $filePaths) {            
-            git checkout $file
+            git -C "${script:llamacppDir}" checkout $file
         }
+        git -C "${script:llamacppDir}" checkout CMakeLists.txt
     }
-    Set-Location "${script:llamacppDir}/"
-    git checkout CMakeLists.txt
-
 }
 
 init_vars
@@ -179,7 +174,6 @@ git_module_setup
 apply_patches
 
 # -DLLAMA_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
-# -DLLAMA_F16C -- 2012 Intel Ivy Bridge & AMD 2011 Bulldozer (No significant improvement over just AVX)
 # -DLLAMA_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
 # -DLLAMA_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
@@ -187,32 +181,46 @@ $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
 
 if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
 
+# GCC build for direct linking into the Go binary
+init_vars
+$script:cmakeTargets = @("llama", "ggml")
+$script:cmakeDefs = @(
+    "-G", "MinGW Makefiles"
+    "-DBUILD_SHARED_LIBS=off",
+    "-DLLAMA_NATIVE=off",
+    "-DLLAMA_AVX=off",
+    "-DLLAMA_AVX2=off",
+    "-DLLAMA_AVX512=off",
+    "-DLLAMA_F16C=off",
+    "-DLLAMA_FMA=off")
+$script:buildDir="../build/windows/${script:ARCH}_static"
+write-host "Building static library"
+build
+
+# remaining llama.cpp builds use MSVC 
     init_vars
     $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
+    $script:buildDir="../build/windows/${script:ARCH}/cpu"
     write-host "Building LCD CPU"
     build
-    install
     sign
-    compress_libs
+    compress
 
     init_vars
     $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
+    $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
     write-host "Building AVX CPU"
     build
-    install
     sign
-    compress_libs
+    compress
 
     init_vars
     $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
-    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
+    $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
     write-host "Building AVX2 CPU"
     build
-    install
     sign
-    compress_libs
+    compress
 } else {
     write-host "Skipping CPU generation step as requested"
 }
@@ -225,13 +233,11 @@ if ($null -ne $script:CUDA_LIB_DIR) {
         $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
     }
     init_vars
-    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
+    $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
     $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
-    write-host "Building CUDA"
     build
-    install
     sign
-    compress_libs
+    compress
 }
 
 if ($null -ne $env:HIP_PATH) {
@@ -241,7 +247,7 @@ if ($null -ne $env:HIP_PATH) {
     }
 
     init_vars
-    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
+    $script:buildDir="../build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
     $script:cmakeDefs += @(
         "-G", "Ninja", 
         "-DCMAKE_C_COMPILER=clang.exe",
@@ -264,13 +270,13 @@ if ($null -ne $env:HIP_PATH) {
     build
     # Ninja doesn't prefix with config name
     ${script:config}=""
-    install
     if ($null -ne $script:DUMPBIN) {
-        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/ollama_llama_server.exe" | select-string ".dll"
     }
     sign
-    compress_libs
+    compress
 }
 
+
 cleanup
-write-host "`ngo generate completed.  LLM runners: $(get-childitem -path ${script:SRC_DIR}\llm\llama.cpp\build\windows\${script:ARCH})"
+write-host "`ngo generate completed.  LLM runners: $(get-childitem -path ${script:SRC_DIR}\llm\build\windows\${script:ARCH})"

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 var (
@@ -21,11 +22,20 @@ var (
 func PayloadsDir() (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
+	var err error
 	if payloadsDir == "" {
 		cleanupTmpDirs()
-		tmpDir, err := os.MkdirTemp("", "ollama")
-		if err != nil {
-			return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+		tmpDir := os.Getenv("OLLAMA_TMPDIR")
+		if tmpDir == "" {
+			tmpDir, err = os.MkdirTemp("", "ollama")
+			if err != nil {
+				return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+			}
+		} else {
+			err = os.MkdirAll(tmpDir, 0755)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate tmp dir %s: %w", tmpDir, err)
+			}
 		}
 
 		// Track our pid so we can clean up orphaned tmpdirs
@@ -84,7 +94,12 @@ func Cleanup() {
 		slog.Debug("cleaning up", "dir", tmpDir)
 		err := os.RemoveAll(tmpDir)
 		if err != nil {
-			slog.Warn("failed to clean up", "dir", tmpDir, "err", err)
+			// On windows, if we remove too quickly the llama.dll may still be in-use and fail to remove
+			time.Sleep(1000 * time.Millisecond)
+			err = os.RemoveAll(tmpDir)
+			if err != nil {
+				slog.Warn("failed to clean up", "dir", tmpDir, "err", err)
+			}
 		}
 	}
 }

@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/version"
 )
@@ -211,7 +210,7 @@ func Test_Routes(t *testing.T) {
 		},
 	}
 
-	s := Server{}
+	s := &Server{}
 	router := s.GenerateRoutes()
 
 	httpSrv := httptest.NewServer(router)
@@ -241,28 +240,4 @@ func Test_Routes(t *testing.T) {
 		}
 
 	}
-}
-
-type MockLLM struct {
-	encoding []int
-}
-
-func (llm *MockLLM) Predict(ctx context.Context, pred llm.PredictOpts, fn func(llm.PredictResult)) error {
-	return nil
-}
-
-func (llm *MockLLM) Encode(ctx context.Context, prompt string) ([]int, error) {
-	return llm.encoding, nil
-}
-
-func (llm *MockLLM) Decode(ctx context.Context, tokens []int) (string, error) {
-	return "", nil
-}
-
-func (llm *MockLLM) Embedding(ctx context.Context, input string) ([]float64, error) {
-	return []float64{}, nil
-}
-
-func (llm *MockLLM) Close() {
-	// do nothing
 }
