@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"bllamo.com/build/blob"
 	"bllamo.com/build/internal/blobstore"
@@ -20,6 +21,7 @@ var (
 	ErrMissingFileType        = errors.New("missing 'general.file_type' key")
 	ErrNoSuchBlob             = errors.New("no such blob")
 	ErrNotFound               = errors.New("not found")
+	ErrUnknownRef             = errors.New("unknown ref")
 )
 
 type mediaType string
@@ -96,7 +98,7 @@ func (s *Server) Build(ref string, f model.File) error {
 	if err != nil {
 		return err
 	}
-	return s.st.Set(br.WithBuild(info.FileType.String()), data)
+	return s.Set(br.WithBuild(info.FileType.String()), data)
 }
 
 func (s *Server) LayerFile(digest string) (string, error) {
@@ -135,6 +137,55 @@ func (s *Server) WeightsFile(ref string) (string, error) {
 	return "", fmt.Errorf("missing weights layer for %q", ref)
 }
 
+// resolve returns the data for the given ref, if any.
+//
+// TODO: This should ideally return an ID, but the current on
+// disk layout is that the actual manifest is stored in the "ref" instead of
+// a pointer to a content-addressed blob. I (bmizerany) think we should
+// change the on-disk layout to store the manifest in a content-addressed
+// blob, and then have the ref point to that blob. This would simplify the
+// code, allow us to have integrity checks on the manifest, and clean up
+// this interface.
+func (s *Server) resolve(ref blob.Ref) (data []byte, path string, err error) {
+	path, err = s.refFileName(ref)
+	if err != nil {
+		return nil, "", err
+	}
+	data, err = os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, "", fmt.Errorf("%w: %q", ErrUnknownRef, ref)
+	}
+	if err != nil {
+		// do not wrap the error here, as it is likely an I/O error
+		// and we want to preserve the absraction since we may not
+		// be on disk later.
+		return nil, "", fmt.Errorf("manifest read error: %v", err)
+	}
+	return data, path, nil
+}
+
+// Set sets the data for the given ref.
+func (s *Server) Set(ref blob.Ref, data []byte) error {
+	path, err := s.refFileName(ref)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0666); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) refFileName(ref blob.Ref) (string, error) {
+	if !ref.Complete() {
+		return "", fmt.Errorf("ref not fully qualified: %q", ref)
+	}
+	return filepath.Join(s.st.Dir(), "manifests", filepath.Join(ref.Parts()...)), nil
+}
+
 type manifestJSON struct {
 	// Layers is the list of layers in the manifest.
 	Layers []layerJSON `json:"layers"`
@@ -161,8 +212,8 @@ func (s *Server) getManifest(ref blob.Ref) (manifestJSON, error) {
 }
 
 func (s *Server) getManifestData(ref blob.Ref) (data []byte, path string, err error) {
-	data, path, err = s.st.Resolve(ref)
-	if errors.Is(err, blobstore.ErrUnknownRef) {
+	data, path, err = s.resolve(ref)
+	if errors.Is(err, ErrUnknownRef) {
 		return nil, "", fmt.Errorf("%w: %q", ErrNotFound, ref)
 	}
 	return data, path, err

@@ -31,7 +31,6 @@ func TestStoreBasicBlob(t *testing.T) {
 
 	checkDir(t, dir, []string{
 		"blobs/",
-		"manifests/",
 	})
 
 	id, size, err := PutBytes(st, []byte("hello"))
@@ -49,7 +48,6 @@ func TestStoreBasicBlob(t *testing.T) {
 	checkDir(t, dir, []string{
 		"blobs/",
 		"blobs/" + blobNameHello,
-		"manifests/",
 	})
 
 	got, err := st.Get(id)
@@ -74,37 +72,6 @@ func TestStoreBasicBlob(t *testing.T) {
 
 	t.Logf("RESOLVING: %q", ref.Parts())
 
-	data, _, err := st.Resolve(ref)
-	if !errors.Is(err, ErrUnknownRef) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if data != nil {
-		t.Errorf("unexpected data: %q", data)
-	}
-
-	if err := st.Set(ref, []byte("{}")); err != nil {
-		t.Fatal(err)
-	}
-
-	data, _, err = st.Resolve(ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if g := string(data); g != "{}" {
-		t.Errorf("g = %q; want %q", g, "{}")
-	}
-
-	checkDir(t, dir, []string{
-		"blobs/",
-		"blobs/sha256-2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-		"manifests/",
-		"manifests/registry.ollama.ai/",
-		"manifests/registry.ollama.ai/library/",
-		"manifests/registry.ollama.ai/library/test/",
-		"manifests/registry.ollama.ai/library/test/latest/",
-		"manifests/registry.ollama.ai/library/test/latest/KQED",
-	})
 }
 
 // checkDir checks that the directory at dir contains the files in want. The

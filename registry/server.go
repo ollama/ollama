@@ -61,7 +61,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	ref := blob.ParseRef(pr.Ref)
-	if !ref.FullyQualified() {
+	if !ref.Complete() {
 		return oweb.Mistake("invalid", "name", "must be fully qualified")
 	}
 
@@ -106,7 +106,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	if len(requirements) == 0 {
 		// Commit the manifest
 		body := bytes.NewReader(pr.Manifest)
-		path := path.Join("manifests", ref.Path())
+		path := path.Join("manifests", path.Join(ref.Parts()...))
 		_, err := mc.PutObject(r.Context(), "test", path, body, int64(len(pr.Manifest)), minio.PutObjectOptions{})
 		if err != nil {
 			return err

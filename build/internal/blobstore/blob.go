@@ -13,13 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"bllamo.com/build/blob"
 	"bllamo.com/types/structs"
 )
 
 var (
-	ErrInvalidID  = errors.New("invalid ID")
-	ErrUnknownRef = errors.New("unknown ref")
+	ErrInvalidID = errors.New("invalid ID")
 )
 
 const HashSize = 32
@@ -100,18 +98,18 @@ func Open(dir string) (*Store, error) {
 	if !info.IsDir() {
 		return nil, &fs.PathError{Op: "open", Path: dir, Err: fmt.Errorf("not a directory")}
 	}
-
-	for _, sub := range []string{"blobs", "manifests"} {
-		if err := os.MkdirAll(filepath.Join(dir, sub), 0777); err != nil {
-			return nil, err
-		}
+	if err := os.MkdirAll(filepath.Join(dir, "blobs"), 0777); err != nil {
+		return nil, err
 	}
-
 	c := &Store{
 		dir: dir,
 		now: time.Now,
 	}
 	return c, nil
+}
+
+func (s *Store) Dir() string {
+	return s.dir
 }
 
 // fileName returns the name of the blob file corresponding to the given id.
@@ -183,52 +181,6 @@ func (s *Store) OutputFilename(id ID) string {
 	// TODO(bmizerany): touch as "used" for cache trimming. (see
 	// cache.go in cmd/go/internal/cache for the full reference implementation to go off of.
 	return file
-}
-
-// Resolve returns the data for the given ref, if any.
-//
-// TODO: This should ideally return an ID, but the current on
-// disk layout is that the actual manifest is stored in the "ref" instead of
-// a pointer to a content-addressed blob. I (bmizerany) think we should
-// change the on-disk layout to store the manifest in a content-addressed
-// blob, and then have the ref point to that blob. This would simplify the
-// code, allow us to have integrity checks on the manifest, and clean up
-// this interface.
-func (s *Store) Resolve(ref blob.Ref) (data []byte, path string, err error) {
-	path, err = s.refFileName(ref)
-	if err != nil {
-		return nil, "", err
-	}
-	data, err = os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, "", fmt.Errorf("%w: %q", ErrUnknownRef, ref)
-	}
-	if err != nil {
-		return nil, "", &entryNotFoundError{Err: err}
-	}
-	return data, path, nil
-}
-
-// Set sets the data for the given ref.
-func (s *Store) Set(ref blob.Ref, data []byte) error {
-	path, err := s.refFileName(ref)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, data, 0666); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *Store) refFileName(ref blob.Ref) (string, error) {
-	if !ref.Complete() {
-		return "", fmt.Errorf("ref not fully qualified: %q", ref)
-	}
-	return filepath.Join(s.dir, "manifests", filepath.Join(ref.Parts()...)), nil
 }
 
 // Get looks up the blob ID in the store,
