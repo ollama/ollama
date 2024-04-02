@@ -92,9 +92,14 @@ func (s *Server) Build(ref string, f model.File) error {
 		Size:      size,
 	})
 
+	data, err := json.Marshal(manifestJSON{Layers: layers})
+	if err != nil {
+		return err
+	}
+
 	return s.setManifestData(
 		br.WithBuild(info.FileType.String()),
-		Manifest{Layers: layers},
+		data,
 	)
 }
 
@@ -161,20 +166,16 @@ func (s *Server) resolve(ref blob.Ref) (data []byte, path string, err error) {
 	return data, path, nil
 }
 
-func (s *Server) SetManifestData(ref string, m Manifest) error {
+func (s *Server) SetManifestData(ref string, data []byte) error {
 	br, err := parseCompleteRef(ref)
 	if err != nil {
 		return err
 	}
-	return s.setManifestData(br, m)
+	return s.setManifestData(br, data)
 }
 
 // Set sets the data for the given ref.
-func (s *Server) setManifestData(br blob.Ref, m Manifest) error {
-	data, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
+func (s *Server) setManifestData(br blob.Ref, data []byte) error {
 	path, err := s.refFileName(br)
 	if err != nil {
 		return err
@@ -195,7 +196,7 @@ func (s *Server) refFileName(ref blob.Ref) (string, error) {
 	return filepath.Join(s.st.Dir(), "manifests", filepath.Join(ref.Parts()...)), nil
 }
 
-type Manifest struct {
+type manifestJSON struct {
 	// Layers is the list of layers in the manifest.
 	Layers []layerJSON `json:"layers"`
 }
@@ -208,14 +209,14 @@ type layerJSON struct {
 	Size      int64        `json:"size"`
 }
 
-func (s *Server) getManifest(ref blob.Ref) (Manifest, error) {
+func (s *Server) getManifest(ref blob.Ref) (manifestJSON, error) {
 	data, path, err := s.resolve(ref)
 	if err != nil {
-		return Manifest{}, err
+		return manifestJSON{}, err
 	}
-	var m Manifest
+	var m manifestJSON
 	if err := json.Unmarshal(data, &m); err != nil {
-		return Manifest{}, &fs.PathError{Op: "unmarshal", Path: path, Err: err}
+		return manifestJSON{}, &fs.PathError{Op: "unmarshal", Path: path, Err: err}
 	}
 	return m, nil
 }
