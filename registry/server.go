@@ -77,26 +77,31 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// TODO(bmizerany): parallelize
+	const chunkSizeTODO = 50 * 1024 * 1024
 	var requirements []apitype.Requirement
 	for _, l := range m.Layers {
 		if l.Size == 0 {
 			continue
 		}
 
+		// TODO(bmizerany): "global" throttle of rate of transfer
+
 		pushed, err := s.statObject(r.Context(), l.Digest)
 		if err != nil {
 			return err
 		}
 		if !pushed {
-			const expires = 1 * time.Hour
+			const expires = 15 * time.Minute
 			key := path.Join("blobs", l.Digest)
 			signedURL, err := s.mc().PresignedPutObject(r.Context(), "test", key, expires)
 			if err != nil {
 				return err
 			}
+
+			size := min(l.Size, chunkSizeTODO)
 			requirements = append(requirements, apitype.Requirement{
 				Digest: l.Digest,
-				Size:   l.Size,
+				Size:   size,
 
 				// TODO(bmizerany): use signed+temp urls
 				URL: signedURL.String(),

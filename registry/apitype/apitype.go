@@ -19,7 +19,8 @@ type PushRequest struct {
 
 type Requirement struct {
 	Digest string `json:"digest"`
-	Size   int64  `json:"size"`
+	Offset int64  `json:"offset"`
+	Size   int64  `json:"Size"`
 	URL    string `json:"url"`
 }
 
