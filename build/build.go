@@ -16,6 +16,7 @@ import (
 // Errors
 var (
 	ErrIncompleteRef          = errors.New("unqualified ref")
+	ErrBuildPresentInRef      = errors.New("build present in ref")
 	ErrUnsupportedModelFormat = errors.New("unsupported model format")
 	ErrMissingFileType        = errors.New("missing 'general.file_type' key")
 	ErrNotFound               = errors.New("not found")
@@ -53,8 +54,8 @@ func Open(dir string) (*Server, error) {
 
 func (s *Server) Build(ref string, f model.File) error {
 	br := blob.ParseRef(ref)
-	if !br.Complete() {
-		return fmt.Errorf("%w: %q", ErrIncompleteRef, br.Full())
+	if !br.CompleteWithoutBuild() {
+		return fmt.Errorf("%w: %q", ErrIncompleteRef, ref)
 	}
 
 	// 1. Resolve FROM
@@ -91,11 +92,10 @@ func (s *Server) Build(ref string, f model.File) error {
 		Size:      size,
 	})
 
-	data, err := json.Marshal(Manifest{Layers: layers})
-	if err != nil {
-		return err
-	}
-	return s.Set(br.WithBuild(info.FileType.String()), data)
+	return s.setManifestData(
+		br.WithBuild(info.FileType.String()),
+		Manifest{Layers: layers},
+	)
 }
 
 func (s *Server) LayerFile(digest string) (string, error) {
@@ -161,9 +161,21 @@ func (s *Server) resolve(ref blob.Ref) (data []byte, path string, err error) {
 	return data, path, nil
 }
 
+func (s *Server) SetManifestData(ref string, m Manifest) error {
+	br, err := parseCompleteRef(ref)
+	if err != nil {
+		return err
+	}
+	return s.setManifestData(br, m)
+}
+
 // Set sets the data for the given ref.
-func (s *Server) Set(ref blob.Ref, data []byte) error {
-	path, err := s.refFileName(ref)
+func (s *Server) setManifestData(br blob.Ref, m Manifest) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	path, err := s.refFileName(br)
 	if err != nil {
 		return err
 	}

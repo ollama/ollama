@@ -125,6 +125,10 @@ func (r Ref) Complete() bool {
 	return r.Valid() && !slices.Contains(r.Parts(), "")
 }
 
+func (r Ref) CompleteWithoutBuild() bool {
+	return r.Valid() && !slices.Contains(r.Parts()[:tag], "")
+}
+
 // Less returns true if r is less concrete than o; false otherwise.
 func (r Ref) Less(o Ref) bool {
 	rp := r.Parts()
