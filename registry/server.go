@@ -27,7 +27,13 @@ func DefaultLibrary() string {
 	return defaultLibrary
 }
 
-type Server struct{}
+type Server struct {
+	minioClient *minio.Client
+}
+
+func New(mc *minio.Client) *Server {
+	return &Server{minioClient: mc}
+}
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := s.serveHTTP(w, r); err != nil {
@@ -65,11 +71,6 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		return oweb.Mistake("invalid", "name", "must be fully qualified")
 	}
 
-	mc, err := minio.New("localhost:9000", &minio.Options{
-		Creds:  credentials.NewStaticV4("minioadmin", "minioadmin", ""),
-		Secure: false,
-	})
-
 	m, err := oweb.DecodeUserJSON[apitype.Manifest]("manifest", bytes.NewReader(pr.Manifest))
 	if err != nil {
 		return err
@@ -89,7 +90,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		if !pushed {
 			const expires = 1 * time.Hour
 			key := path.Join("blobs", l.Digest)
-			signedURL, err := mc.PresignedPutObject(r.Context(), "test", key, expires)
+			signedURL, err := s.mc().PresignedPutObject(r.Context(), "test", key, expires)
 			if err != nil {
 				return err
 			}
@@ -107,7 +108,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		// Commit the manifest
 		body := bytes.NewReader(pr.Manifest)
 		path := path.Join("manifests", path.Join(ref.Parts()...))
-		_, err := mc.PutObject(r.Context(), "test", path, body, int64(len(pr.Manifest)), minio.PutObjectOptions{})
+		_, err := s.mc().PutObject(r.Context(), "test", path, body, int64(len(pr.Manifest)), minio.PutObjectOptions{})
 		if err != nil {
 			return err
 		}
@@ -122,18 +123,9 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) statObject(ctx context.Context, digest string) (pushed bool, err error) {
-	// TODO(bmizerany): hold client on *Server (hack for now)
-	mc, err := minio.New("localhost:9000", &minio.Options{
-		Creds:  credentials.NewStaticV4("minioadmin", "minioadmin", ""),
-		Secure: false,
-	})
-	if err != nil {
-		return false, err
-	}
-
 	// HEAD the object
 	path := path.Join("blobs", digest)
-	_, err = mc.StatObject(ctx, "test", path, minio.StatObjectOptions{})
+	_, err = s.mc().StatObject(ctx, "test", path, minio.StatObjectOptions{})
 	if err != nil {
 		if isNoSuchKey(err) {
 			err = nil
@@ -146,4 +138,18 @@ func (s *Server) statObject(ctx context.Context, digest string) (pushed bool, er
 func isNoSuchKey(err error) bool {
 	var e minio.ErrorResponse
 	return errors.As(err, &e) && e.Code == "NoSuchKey"
+}
+
+func (s *Server) mc() *minio.Client {
+	if s.minioClient != nil {
+		return s.minioClient
+	}
+	mc, err := minio.New("localhost:9000", &minio.Options{
+		Creds:  credentials.NewStaticV4("minioadmin", "minioadmin", ""),
+		Secure: false,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return mc
 }
