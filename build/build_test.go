@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bllamo.com/build/blob"
 	"bllamo.com/encoding/gguf"
 	"bllamo.com/model"
 )
+
+const qualifiedRef = "x/y/z:latest+Q4_0"
 
 func TestServerBuildErrors(t *testing.T) {
 	dir := t.TempDir()
@@ -19,8 +20,15 @@ func TestServerBuildErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Run("unqualified ref", func(t *testing.T) {
+		err := s.Build("x", model.File{})
+		if !errors.Is(err, ErrRefUnqualified) {
+			t.Fatalf("Build() err = %v; want unqualified ref", err)
+		}
+	})
+
 	t.Run("FROM pragma missing", func(t *testing.T) {
-		err := s.Build("foo", model.File{})
+		err := s.Build(qualifiedRef, model.File{})
 		var e *model.Error
 		if !errors.As(err, &e) {
 			t.Fatalf("unexpected error: %v", err)
@@ -34,7 +42,7 @@ func TestServerBuildErrors(t *testing.T) {
 	})
 
 	t.Run("FROM file not found", func(t *testing.T) {
-		err := s.Build("x", model.File{From: "bar"})
+		err := s.Build(qualifiedRef, model.File{From: "bar"})
 		if !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("Build() err = %v; want file not found", err)
 		}
@@ -51,7 +59,7 @@ func TestServerBuildErrors(t *testing.T) {
 			"",
 		)
 
-		err := s.Build("x", model.File{From: w.fileName("gguf")})
+		err := s.Build(qualifiedRef, model.File{From: w.fileName("gguf")})
 		if !errors.Is(err, ErrMissingFileType) {
 			t.Fatalf("Build() err = %#v; want missing file type", err)
 		}
@@ -60,7 +68,7 @@ func TestServerBuildErrors(t *testing.T) {
 	t.Run("FROM obscure dir", func(t *testing.T) {
 		w := newWorkDir(t)
 		w.mkdirAll("unknown")
-		if err := s.Build("x", model.File{From: w.fileName("unknown")}); err != ErrUnsupportedModelFormat {
+		if err := s.Build(qualifiedRef, model.File{From: w.fileName("unknown")}); err != ErrUnsupportedModelFormat {
 			t.Fatalf("Build() err = %#v; want unsupported model type", err)
 		}
 	})
@@ -68,7 +76,7 @@ func TestServerBuildErrors(t *testing.T) {
 	t.Run("FROM unsupported model type", func(t *testing.T) {
 		w := newWorkDir(t)
 		from := w.write("unknown", "unknown content")
-		err := s.Build("x", model.File{From: from})
+		err := s.Build(qualifiedRef, model.File{From: from})
 		if !errors.Is(err, ErrUnsupportedModelFormat) {
 			t.Fatalf("Build() err = %#v; want unsupported model type", err)
 		}
@@ -96,7 +104,7 @@ func TestBuildBasicGGUF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Build("x", model.File{From: w.fileName("gguf")}); err != nil {
+	if err := s.Build(qualifiedRef, model.File{From: w.fileName("gguf")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,7 +113,12 @@ func TestBuildBasicGGUF(t *testing.T) {
 		return nil
 	})
 
-	path, err := s.WeightsFile(blob.ParseRef("x+Q4_0"))
+	_, err = s.WeightsFile("unknown/y/z:latest+Q4_0")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("WeightsFile() err = %v; want not found", err)
+	}
+
+	path, err := s.WeightsFile("x/y/z:latest+Q4_0")
 	if err != nil {
 		t.Fatal(err)
 	}

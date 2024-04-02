@@ -3,6 +3,8 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http/httptest"
 	"os/exec"
 	"strings"
@@ -32,7 +34,9 @@ func TestPush(t *testing.T) {
 		]
 	}`)
 
-	got, err := c.Push(context.Background(), "x+y", manifest)
+	const ref = "registry.ollama.ai/x/y:latest+Z"
+
+	got, err := c.Push(context.Background(), ref, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +48,13 @@ func TestPush(t *testing.T) {
 	}, diff.ZeroFields[apitype.Requirement]("URL"))
 
 	for _, r := range got {
-		body := strings.NewReader(strings.Repeat("x", int(r.Size)))
+		body := io.Reader(strings.NewReader(strings.Repeat("x", int(r.Size))))
 		if err := PushLayer(context.Background(), r.URL, r.Size, body); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	got, err = c.Push(context.Background(), "x+y", manifest)
+	got, err = c.Push(context.Background(), ref, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,10 +85,10 @@ func TestPush(t *testing.T) {
 		"blobs/sha256-1",
 		"blobs/sha256-2",
 		"blobs/sha256-3",
-		"manifests/registry.ollama.ai/x/latest/Y",
+		"manifests/registry.ollama.ai/x/y/latest/Z",
 	})
 
-	obj, err := mc.GetObject(context.Background(), "test", "manifests/registry.ollama.ai/x/latest/Y", minio.GetObjectOptions{})
+	obj, err := mc.GetObject(context.Background(), "test", "manifests/registry.ollama.ai/x/y/latest/Z", minio.GetObjectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +121,13 @@ func startMinio(t *testing.T) {
 	t.Cleanup(func() {
 		cmd.Process.Kill()
 		if err := cmd.Wait(); err != nil {
-			t.Log(err)
+			var e *exec.ExitError
+			if errors.As(err, &e) && e.Exited() {
+				t.Logf("minio stderr: %s", e.Stderr)
+				t.Logf("minio exit status: %v", e.ExitCode())
+				t.Logf("minio exited: %v", e.Exited())
+				t.Error(err)
+			}
 		}
 	})
 

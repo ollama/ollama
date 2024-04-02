@@ -70,14 +70,13 @@ func TestStoreBasicBlob(t *testing.T) {
 	}
 
 	// Check tags
-	ref := blob.ParseRef("test+KQED")
+	ref := blob.ParseRef("registry.ollama.ai/library/test:latest+KQED")
 
-	t.Logf("resolving %s", ref)
+	t.Logf("RESOLVING: %q", ref.Parts())
 
 	data, _, err := st.Resolve(ref)
-	var e *entryNotFoundError
-	if !errors.As(err, &e) {
-		t.Fatal(err)
+	if !errors.Is(err, ErrUnknownRef) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if data != nil {
 		t.Errorf("unexpected data: %q", data)
@@ -119,6 +118,7 @@ func checkDir(t testing.TB, dir string, want []string) {
 
 	var matches []string
 	for path, err := range walkDir(dir) {
+		t.Helper()
 		if err != nil {
 			t.Fatal(err)
 		}

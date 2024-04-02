@@ -18,7 +18,8 @@ import (
 )
 
 var (
-	ErrInvalidID = errors.New("invalid ID")
+	ErrInvalidID  = errors.New("invalid ID")
+	ErrUnknownRef = errors.New("unknown ref")
 )
 
 const HashSize = 32
@@ -199,6 +200,9 @@ func (s *Store) Resolve(ref blob.Ref) (data []byte, path string, err error) {
 		return nil, "", err
 	}
 	data, err = os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, "", fmt.Errorf("%w: %q", ErrUnknownRef, ref)
+	}
 	if err != nil {
 		return nil, "", &entryNotFoundError{Err: err}
 	}
@@ -221,10 +225,10 @@ func (s *Store) Set(ref blob.Ref, data []byte) error {
 }
 
 func (s *Store) refFileName(ref blob.Ref) (string, error) {
-	if !ref.FullyQualified() {
+	if !ref.Complete() {
 		return "", fmt.Errorf("ref not fully qualified: %q", ref)
 	}
-	return filepath.Join(s.dir, "manifests", ref.Domain(), ref.Name(), ref.Tag(), ref.Build()), nil
+	return filepath.Join(s.dir, "manifests", filepath.Join(ref.Parts()...)), nil
 }
 
 // Get looks up the blob ID in the store,

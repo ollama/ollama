@@ -14,7 +14,8 @@ import (
 
 // Errors
 var (
-	ErrInvalidRef             = errors.New("invalid ref")
+	ErrRefUnqualified         = errors.New("unqualified ref")
+	ErrRefBuildPresent        = errors.New("ref too long")
 	ErrUnsupportedModelFormat = errors.New("unsupported model format")
 	ErrMissingFileType        = errors.New("missing 'general.file_type' key")
 	ErrNoSuchBlob             = errors.New("no such blob")
@@ -53,14 +54,12 @@ func Open(dir string) (*Server, error) {
 
 func (s *Server) Build(ref string, f model.File) error {
 	br := blob.ParseRef(ref)
-	if !br.Valid() {
-		return invalidRef(ref)
+	if !br.Complete() {
+		return fmt.Errorf("%w: %q", ErrRefUnqualified, br.Full())
 	}
 
 	// 1. Resolve FROM
 	//   a. If it's a local file (gguf), hash it and add it to the store.
-	//   b. If it's a local dir (safetensor), convert to gguf and add to
-	//   store.
 	//   c. If it's a remote file (http), refuse.
 	// 2. Turn other pragmas into layers, and add them to the store.
 	// 3. Create a manifest from the layers.
@@ -109,17 +108,22 @@ func (s *Server) LayerFile(digest string) (string, error) {
 	return fileName, nil
 }
 
-func (s *Server) Manifest(ref blob.Ref) ([]byte, error) {
-	data, _, err := s.getManifestData(ref)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("%w: %q", ErrNotFound, ref)
+func (s *Server) Manifest(ref string) ([]byte, error) {
+	br, err := parseFullRef(ref)
+	if err != nil {
+		return nil, err
 	}
+	data, _, err := s.getManifestData(br)
 	return data, err
 }
 
 // WeightFile returns the absolute path to the weights file for the given model ref.
-func (s *Server) WeightsFile(ref blob.Ref) (string, error) {
-	m, err := s.getManifest(ref)
+func (s *Server) WeightsFile(ref string) (string, error) {
+	br, err := parseFullRef(ref)
+	if err != nil {
+		return "", err
+	}
+	m, err := s.getManifest(br)
 	if err != nil {
 		return "", err
 	}
@@ -157,9 +161,17 @@ func (s *Server) getManifest(ref blob.Ref) (manifestJSON, error) {
 }
 
 func (s *Server) getManifestData(ref blob.Ref) (data []byte, path string, err error) {
-	return s.st.Resolve(ref)
+	data, path, err = s.st.Resolve(ref)
+	if errors.Is(err, blobstore.ErrUnknownRef) {
+		return nil, "", fmt.Errorf("%w: %q", ErrNotFound, ref)
+	}
+	return data, path, err
 }
 
-func invalidRef(ref string) error {
-	return fmt.Errorf("%w: %q", ErrInvalidRef, ref)
+func parseFullRef(ref string) (blob.Ref, error) {
+	br := blob.ParseRef(ref)
+	if !br.Complete() {
+		return blob.Ref{}, fmt.Errorf("%w: %q", ErrRefUnqualified, ref)
+	}
+	return br, nil
 }

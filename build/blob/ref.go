@@ -2,9 +2,18 @@ package blob
 
 import (
 	"cmp"
-	"path"
-	"path/filepath"
+	"fmt"
+	"slices"
 	"strings"
+)
+
+// Levels of concreteness
+const (
+	domain = iota
+	namespace
+	name
+	tag
+	build
 )
 
 // Ref is an opaque reference to a blob.
@@ -13,22 +22,79 @@ import (
 //
 // Users or Ref must check Valid before using it.
 type Ref struct {
-	domain string
-	name   string
-	tag    string
-	build  string
+	domain    string
+	namespace string
+	name      string
+	tag       string
+	build     string
+}
+
+// WithDomain returns a copy of r with the provided domain. If the provided
+// domain is empty, it returns the short, unqualified copy of r.
+func (r Ref) WithDomain(s string) Ref {
+	return with(r, domain, s)
+}
+
+// WithNamespace returns a copy of r with the provided namespace. If the
+// provided namespace is empty, it returns the short, unqualified copy of r.
+func (r Ref) WithNamespace(s string) Ref {
+	return with(r, namespace, s)
+}
+
+func (r Ref) WithTag(s string) Ref {
+	return with(r, tag, s)
 }
 
 // WithBuild returns a copy of r with the provided build. If the provided
 // build is empty, it returns the short, unqualified copy of r.
-func (r Ref) WithBuild(build string) Ref {
-	if build == "" {
-		return Ref{r.domain, r.name, r.tag, ""}
-	}
-	if !isValidPart(build) {
+func (r Ref) WithBuild(s string) Ref {
+	return with(r, build, s)
+}
+
+func with(r Ref, part int, value string) Ref {
+	if value != "" && !isValidPart(value) {
 		return Ref{}
 	}
-	return makeRef(r.domain, r.name, r.tag, build)
+	switch part {
+	case domain:
+		r.domain = value
+	case namespace:
+		r.namespace = value
+	case name:
+		r.name = value
+	case tag:
+		r.tag = value
+	case build:
+		r.build = value
+	default:
+		panic(fmt.Sprintf("invalid completeness: %d", part))
+	}
+	return r
+}
+
+// Format returns a string representation of the ref with the given
+// concreteness. If a part is missing, it is replaced with a loud
+// placeholder.
+func (r Ref) Full() string {
+	r.domain = cmp.Or(r.domain, "!(MISSING DOMAIN)")
+	r.namespace = cmp.Or(r.namespace, "!(MISSING NAMESPACE)")
+	r.name = cmp.Or(r.name, "!(MISSING NAME)")
+	r.tag = cmp.Or(r.tag, "!(MISSING TAG)")
+	r.build = cmp.Or(r.build, "!(MISSING BUILD)")
+	return r.String()
+}
+
+func (r Ref) NameAndTag() string {
+	r.domain = ""
+	r.namespace = ""
+	r.build = ""
+	return r.String()
+}
+
+func (r Ref) NameTagAndBuild() string {
+	r.domain = ""
+	r.namespace = ""
+	return r.String()
 }
 
 // String returns the fully qualified ref string.
@@ -36,6 +102,10 @@ func (r Ref) String() string {
 	var b strings.Builder
 	if r.domain != "" {
 		b.WriteString(r.domain)
+		b.WriteString("/")
+	}
+	if r.namespace != "" {
+		b.WriteString(r.namespace)
 		b.WriteString("/")
 	}
 	b.WriteString(r.name)
@@ -50,40 +120,41 @@ func (r Ref) String() string {
 	return b.String()
 }
 
-// Full returns the fully qualified ref string, or a string indicating the
-// build is missing, or an empty string if the ref is invalid.
-func (r Ref) Full() string {
-	if !r.Valid() {
-		return ""
+// Complete returns true if the ref is valid and has no empty parts.
+func (r Ref) Complete() bool {
+	return r.Valid() && !slices.Contains(r.Parts(), "")
+}
+
+// Less returns true if r is less concrete than o; false otherwise.
+func (r Ref) Less(o Ref) bool {
+	rp := r.Parts()
+	op := o.Parts()
+	for i := range rp {
+		if rp[i] < op[i] {
+			return true
+		}
 	}
-	return makeRef(r.domain, r.name, r.tag, cmp.Or(r.build, "!(MISSING BUILD)")).String()
+	return false
 }
 
-// Short returns the short ref string which does not include the build.
-func (r Ref) Short() string {
-	return r.WithBuild("").String()
+// Parts returns the parts of the ref in order of concreteness.
+//
+// The length of the returned slice is always 5.
+func (r Ref) Parts() []string {
+	return []string{
+		domain:    r.domain,
+		namespace: r.namespace,
+		name:      r.name,
+		tag:       r.tag,
+		build:     r.build,
+	}
 }
 
-func (r Ref) Valid() bool {
-	return r.name != ""
-}
-
-func (r Ref) FullyQualified() bool {
-	return r.name != "" && r.tag != "" && r.build != ""
-}
-
-func (r Ref) Path() string {
-	return path.Join(r.domain, r.name, r.tag, r.build)
-}
-
-func (r Ref) Filepath() string {
-	return filepath.Join(r.domain, r.name, r.tag, r.build)
-}
-
-func (r Ref) Domain() string { return r.domain }
-func (r Ref) Name() string   { return r.name }
-func (r Ref) Tag() string    { return r.tag }
-func (r Ref) Build() string  { return r.build }
+func (r Ref) Domain() string    { return r.namespace }
+func (r Ref) Namespace() string { return r.namespace }
+func (r Ref) Name() string      { return r.name }
+func (r Ref) Tag() string       { return r.tag }
+func (r Ref) Build() string     { return r.build }
 
 // ParseRef parses a ref string into a Ref. A ref string is a name, an
 // optional tag, and an optional build, separated by colons and pluses.
@@ -112,25 +183,86 @@ func ParseRef(s string) Ref {
 		return Ref{}
 	}
 
-	nameAndTag, build, expectBuild := strings.Cut(s, "+")
-	name, tag, expectTag := strings.Cut(nameAndTag, ":")
-	if !isValidPart(name) {
-		return Ref{}
+	if strings.HasPrefix(s, "http://") {
+		s = s[len("http://"):]
 	}
-	if expectTag && !isValidPart(tag) {
-		return Ref{}
-	}
-	if expectBuild && !isValidPart(build) {
-		return Ref{}
+	if strings.HasPrefix(s, "https://") {
+		s = s[len("https://"):]
 	}
 
-	const TODO = "registry.ollama.ai"
-	return makeRef(TODO, name, tag, build)
+	var r Ref
+
+	state, j := build, len(s)
+	for i := len(s) - 1; i >= 0; i-- {
+		c := s[i]
+		switch c {
+		case '+':
+			switch state {
+			case build:
+				r.build = s[i+1 : j]
+				r.build = strings.ToUpper(r.build)
+				state, j = tag, i
+			default:
+				return Ref{}
+			}
+		case ':':
+			switch state {
+			case build, tag:
+				r.tag = s[i+1 : j]
+				state, j = name, i
+			default:
+				return Ref{}
+			}
+		case '/':
+			switch state {
+			case name, tag, build:
+				r.name = s[i+1 : j]
+				state, j = namespace, i
+			case namespace:
+				r.namespace = s[i+1 : j]
+				state, j = domain, i
+			default:
+				return Ref{}
+			}
+		}
+	}
+
+	// handle the first part based on final state
+	switch state {
+	case domain:
+		r.domain = s[:j]
+	case namespace:
+		r.namespace = s[:j]
+	default:
+		r.name = s[:j]
+	}
+
+	if !r.Valid() {
+		return Ref{}
+	}
+	return r
 }
 
-// makeRef makes a ref, skipping validation.
-func makeRef(domain, name, tag, build string) Ref {
-	return Ref{domain, name, cmp.Or(tag, "latest"), strings.ToUpper(build)}
+func (r Ref) Valid() bool {
+	// Name is required
+	if !isValidPart(r.name) {
+		return false
+	}
+
+	// Optional parts must be valid if present
+	if r.domain != "" && !isValidPart(r.domain) {
+		return false
+	}
+	if r.namespace != "" && !isValidPart(r.namespace) {
+		return false
+	}
+	if r.tag != "" && !isValidPart(r.tag) {
+		return false
+	}
+	if r.build != "" && !isValidPart(r.build) {
+		return false
+	}
+	return true
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]

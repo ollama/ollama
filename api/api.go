@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"bllamo.com/build"
-	"bllamo.com/build/blob"
 	"bllamo.com/client/ollama/apitype"
 	"bllamo.com/oweb"
 	"bllamo.com/registry"
@@ -56,12 +55,7 @@ func (s *Server) handlePush(_ http.ResponseWriter, r *http.Request) error {
 
 	const registryURLTODO = "http://localhost:8888"
 
-	ref := blob.ParseRef(params.Name)
-	if !ref.FullyQualified() {
-		return errUnqualifiedRef
-	}
-
-	man, err := s.Build.Manifest(ref)
+	man, err := s.Build.Manifest(params.Name)
 	if err != nil {
 		if errors.Is(err, build.ErrNotFound) {
 			return errRefNotFound
