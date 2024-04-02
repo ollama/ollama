@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 from langchain.chains import RetrievalQA
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
-from langchain.vectorstores import Chroma
-from langchain.llms import Ollama
+from langchain_community.vectorstores import Chroma
+from langchain_community.llms import Ollama
 import chromadb
 import os
 import argparse
@@ -30,7 +30,7 @@ def main():
     # activate/deactivate the streaming StdOut callback for LLMs
     callbacks = [] if args.mute_stream else [StreamingStdOutCallbackHandler()]
 
-    llm = Ollama(model=model, callbacks=callbacks)
+    llm = Ollama(base_url='http://localhost:11434', model=model, callbacks=callbacks)
 
     qa = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=retriever, return_source_documents= not args.hide_source)
     # Interactive questions and answers
