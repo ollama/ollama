@@ -77,8 +77,18 @@ func load(c *gin.Context, model *Model, opts *api.Options, sessionDuration time.
 		loaded.model != model.ModelPath || // has the base model changed?
 		!reflect.DeepEqual(loaded.adapters, model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(loaded.projectors, model.ProjectorPaths) || // have the adapters changed?
-		!reflect.DeepEqual(loaded.Options.Runner, opts.Runner) || // have the runner options changed?
 		loaded.llama.Ping(ctx) != nil
+
+	// have the runner options changed?
+	if loaded.llama != nil {
+		optsExisting := loaded.Options.Runner
+		if opts.Runner.NumGPU == -1 {
+			optsExisting.NumGPU = -1
+		}
+		if !reflect.DeepEqual(optsExisting, opts.Runner) {
+			needLoad = true
+		}
+	}
 
 	if needLoad {
 		if loaded.llama != nil {
