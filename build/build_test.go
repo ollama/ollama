@@ -22,7 +22,7 @@ func TestServerBuildErrors(t *testing.T) {
 
 	t.Run("unqualified ref", func(t *testing.T) {
 		err := s.Build("x", model.File{})
-		if !errors.Is(err, ErrRefUnqualified) {
+		if !errors.Is(err, ErrIncompleteRef) {
 			t.Fatalf("Build() err = %v; want unqualified ref", err)
 		}
 	})

@@ -55,7 +55,7 @@ func (s *Server) handlePush(_ http.ResponseWriter, r *http.Request) error {
 
 	const registryURLTODO = "http://localhost:8888"
 
-	man, err := s.Build.Manifest(params.Name)
+	man, err := s.Build.ManifestData(params.Name)
 	if err != nil {
 		if errors.Is(err, build.ErrNotFound) {
 			return errRefNotFound

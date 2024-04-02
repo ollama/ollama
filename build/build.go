@@ -15,13 +15,10 @@ import (
 
 // Errors
 var (
-	ErrRefUnqualified         = errors.New("unqualified ref")
-	ErrRefBuildPresent        = errors.New("ref too long")
+	ErrIncompleteRef          = errors.New("unqualified ref")
 	ErrUnsupportedModelFormat = errors.New("unsupported model format")
 	ErrMissingFileType        = errors.New("missing 'general.file_type' key")
-	ErrNoSuchBlob             = errors.New("no such blob")
 	ErrNotFound               = errors.New("not found")
-	ErrUnknownRef             = errors.New("unknown ref")
 )
 
 type mediaType string
@@ -57,7 +54,7 @@ func Open(dir string) (*Server, error) {
 func (s *Server) Build(ref string, f model.File) error {
 	br := blob.ParseRef(ref)
 	if !br.Complete() {
-		return fmt.Errorf("%w: %q", ErrRefUnqualified, br.Full())
+		return fmt.Errorf("%w: %q", ErrIncompleteRef, br.Full())
 	}
 
 	// 1. Resolve FROM
@@ -94,7 +91,7 @@ func (s *Server) Build(ref string, f model.File) error {
 		Size:      size,
 	})
 
-	data, err := json.Marshal(manifestJSON{Layers: layers})
+	data, err := json.Marshal(Manifest{Layers: layers})
 	if err != nil {
 		return err
 	}
@@ -105,23 +102,31 @@ func (s *Server) LayerFile(digest string) (string, error) {
 	fileName := s.st.OutputFilename(blobstore.ParseID(digest))
 	_, err := os.Stat(fileName)
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("%w: %q", ErrNoSuchBlob, digest)
+		return "", fmt.Errorf("%w: %q", ErrNotFound, digest)
 	}
 	return fileName, nil
 }
 
-func (s *Server) Manifest(ref string) ([]byte, error) {
-	br, err := parseFullRef(ref)
+func (s *Server) Manifest(ref string) (Manifest, error) {
+	br, err := parseCompleteRef(ref)
+	if err != nil {
+		return Manifest{}, err
+	}
+	return s.getManifest(br)
+}
+
+func (s *Server) ManifestData(ref string) ([]byte, error) {
+	br, err := parseCompleteRef(ref)
 	if err != nil {
 		return nil, err
 	}
-	data, _, err := s.getManifestData(br)
+	data, _, err := s.resolve(br)
 	return data, err
 }
 
 // WeightFile returns the absolute path to the weights file for the given model ref.
 func (s *Server) WeightsFile(ref string) (string, error) {
-	br, err := parseFullRef(ref)
+	br, err := parseCompleteRef(ref)
 	if err != nil {
 		return "", err
 	}
@@ -153,7 +158,7 @@ func (s *Server) resolve(ref blob.Ref) (data []byte, path string, err error) {
 	}
 	data, err = os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, "", fmt.Errorf("%w: %q", ErrUnknownRef, ref)
+		return nil, "", fmt.Errorf("%w: %q", ErrNotFound, ref)
 	}
 	if err != nil {
 		// do not wrap the error here, as it is likely an I/O error
@@ -186,7 +191,7 @@ func (s *Server) refFileName(ref blob.Ref) (string, error) {
 	return filepath.Join(s.st.Dir(), "manifests", filepath.Join(ref.Parts()...)), nil
 }
 
-type manifestJSON struct {
+type Manifest struct {
 	// Layers is the list of layers in the manifest.
 	Layers []layerJSON `json:"layers"`
 }
@@ -199,30 +204,22 @@ type layerJSON struct {
 	Size      int64        `json:"size"`
 }
 
-func (s *Server) getManifest(ref blob.Ref) (manifestJSON, error) {
-	data, path, err := s.getManifestData(ref)
+func (s *Server) getManifest(ref blob.Ref) (Manifest, error) {
+	data, path, err := s.resolve(ref)
 	if err != nil {
-		return manifestJSON{}, err
+		return Manifest{}, err
 	}
-	var m manifestJSON
+	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
-		return manifestJSON{}, &fs.PathError{Op: "unmarshal", Path: path, Err: err}
+		return Manifest{}, &fs.PathError{Op: "unmarshal", Path: path, Err: err}
 	}
 	return m, nil
 }
 
-func (s *Server) getManifestData(ref blob.Ref) (data []byte, path string, err error) {
-	data, path, err = s.resolve(ref)
-	if errors.Is(err, ErrUnknownRef) {
-		return nil, "", fmt.Errorf("%w: %q", ErrNotFound, ref)
-	}
-	return data, path, err
-}
-
-func parseFullRef(ref string) (blob.Ref, error) {
+func parseCompleteRef(ref string) (blob.Ref, error) {
 	br := blob.ParseRef(ref)
 	if !br.Complete() {
-		return blob.Ref{}, fmt.Errorf("%w: %q", ErrRefUnqualified, ref)
+		return blob.Ref{}, fmt.Errorf("%w: %q", ErrIncompleteRef, ref)
 	}
 	return br, nil
 }
