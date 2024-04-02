@@ -107,14 +107,6 @@ func (s *Server) LayerFile(digest string) (string, error) {
 	return fileName, nil
 }
 
-func (s *Server) Manifest(ref string) (Manifest, error) {
-	br, err := parseCompleteRef(ref)
-	if err != nil {
-		return Manifest{}, err
-	}
-	return s.getManifest(br)
-}
-
 func (s *Server) ManifestData(ref string) ([]byte, error) {
 	br, err := parseCompleteRef(ref)
 	if err != nil {
