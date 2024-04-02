@@ -260,7 +260,9 @@ jobs:
           mkdir -p llm/build/windows/$ARCH/stub/stub/bin/
           touch llm/build/windows/$ARCH/stub/stub/bin/stub.dll
         if: ${{ startsWith(matrix.os, 'windows-') }}
-      - uses: golangci/golangci-lint-action@v3
+      - uses: golangci/golangci-lint-action@v4
+        with:
+          args: --timeout 8m0s
   test:
     strategy:
       matrix:
