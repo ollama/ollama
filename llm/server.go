@@ -85,7 +85,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts *api.Optio
 	graph := int64(ggml.KV().GQA()) * kv / 6
 	usedMemory += graph
 
-	if usedMemory > availableMemory || slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture()) {
+	if (usedMemory > availableMemory || slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture())) && info.Library != "metal" {
 		info.Library = "cpu"
 	}
 
@@ -159,7 +159,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts *api.Optio
 		params = append(params, "--log-disable")
 	}
 
-	if opts.NumGPU > 0 {
+	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
 	}
 
