@@ -79,10 +79,11 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
 	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.KV().BlockCount()) * int64(ggml.KV().EmbeddingLength()) / int64(ggml.KV().HeadCount()) * int64(ggml.KV().HeadCountKV())
 
-	// this amount is the overhead + tensors in memory
-	// TODO: get this from the llama.cpp's graph calculations instead of
-	// estimating it's 1/6 * kv_cache_size * num_gqa
-	graph := int64(ggml.KV().GQA()) * kv / 6
+	graph, ok := ggml.GraphSize(opts.NumCtx, min(opts.NumCtx, opts.NumBatch))
+	if !ok {
+		graph = int64(ggml.KV().GQA()) * kv / 6
+	}
+
 	usedMemory += graph
 
 	if (usedMemory > availableMemory || slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture())) && info.Library != "metal" {
