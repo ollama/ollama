@@ -1,9 +1,17 @@
 # How to troubleshoot issues
 
-Sometimes Ollama may not perform as expected. One of the best ways to figure out what happened is to take a look at the logs. Find the logs on **Mac** by running the command:
+Sometimes Ollama may not perform as expected. One of the best ways to figure out what happened is to take a look at the logs. 
+
+On **Mac**, the logs can be found with this command:
 
 ```shell
 cat ~/.ollama/logs/server.log
+```
+
+or if you install and run Ollama via `brew services`:
+
+```shell
+cat $HOMEBREW_PREFIX/var/log/ollama.log
 ```
 
 On **Linux** systems with systemd, the logs can be found with this command:
