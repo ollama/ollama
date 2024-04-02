@@ -204,6 +204,9 @@ func ParseRef(s string) Ref {
 			switch state {
 			case build:
 				r.build = s[i+1 : j]
+				if r.build == "" {
+					return Ref{}
+				}
 				r.build = strings.ToUpper(r.build)
 				state, j = tag, i
 			default:
@@ -213,6 +216,9 @@ func ParseRef(s string) Ref {
 			switch state {
 			case build, tag:
 				r.tag = s[i+1 : j]
+				if r.tag == "" {
+					return Ref{}
+				}
 				state, j = name, i
 			default:
 				return Ref{}

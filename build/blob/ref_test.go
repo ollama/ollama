@@ -16,7 +16,7 @@ var testRefs = map[string]Ref{
 	"mistral+KQED":        {name: "mistral", build: "KQED"},
 	"mistral.x-3:7b+Q4_0": {name: "mistral.x-3", tag: "7b", build: "Q4_0"},
 	"mistral:7b+q4_0":     {name: "mistral", tag: "7b", build: "Q4_0"},
-	"llama2:+":            {name: "llama2"},
+	"llama2":              {name: "llama2"},
 
 	// invalid
 	"mistral:7b+Q4_0:latest": {},
@@ -38,6 +38,11 @@ func TestParseRef(t *testing.T) {
 			if got != want {
 				t.Errorf("ParseRef(%q) = %q; want %q", s, got, want)
 			}
+
+			// test round-trip
+			if ParseRef(got.String()) != got {
+				t.Errorf("String() = %q; want %q", got.String(), s)
+			}
 		})
 	}
 }
@@ -56,6 +61,7 @@ func TestRefFull(t *testing.T) {
 		{"example.com/x/mistral:latest+Q4_0", "example.com/x/mistral:latest+Q4_0"},
 
 		{"mistral:7b+x", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:7b+X"},
+		{"mistral:7b+q4_0", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:7b+Q4_0"},
 		{"mistral:7b+Q4_0", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:7b+Q4_0"},
 		{"mistral:latest", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:latest+!(MISSING BUILD)"},
 		{"mistral", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:!(MISSING TAG)+!(MISSING BUILD)"},
