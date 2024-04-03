@@ -6,7 +6,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -131,7 +130,6 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 			PartNumber: partNumber,
 			ETag:       etag,
 		})
-		fmt.Println("uploadID", uploadID, "partNumber", partNumber, "etag", etag)
 		completePartsByUploadID[uploadID] = cp
 	}
 

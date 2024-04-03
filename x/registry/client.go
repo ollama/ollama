@@ -4,9 +4,11 @@ import (
 	"cmp"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"bllamo.com/client/ollama"
 	"bllamo.com/registry/apitype"
@@ -40,23 +42,42 @@ func (c *Client) Push(ctx context.Context, ref string, manifest []byte, p *PushP
 	return v.Requirements, nil
 }
 
-func PushLayer(ctx context.Context, dstURL string, off, size int64, file io.ReaderAt) (etag string, err error) {
-	sr := io.NewSectionReader(file, off, size)
-	req, err := http.NewRequestWithContext(ctx, "PUT", dstURL, sr)
-	if err != nil {
-		return "", err
+func PushLayer(ctx context.Context, body io.ReaderAt, url string, off, n int64) (apitype.CompletePart, error) {
+	var zero apitype.CompletePart
+	if off < 0 {
+		return zero, errors.New("off must be >0")
 	}
-	req.ContentLength = size
+
+	file := io.NewSectionReader(body, off, n)
+	req, err := http.NewRequest("PUT", url, file)
+	if err != nil {
+		return zero, err
+	}
+	req.ContentLength = n
+
+	// TODO(bmizerany): take content type param
+	req.Header.Set("Content-Type", "text/plain")
+
+	if n >= 0 {
+		req.Header.Set("x-amz-copy-source-range", fmt.Sprintf("bytes=%d-%d", off, off+n-1))
+	}
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return zero, err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return "", parseS3Error(res)
+		e := parseS3Error(res)
+		return zero, fmt.Errorf("unexpected status code: %d; %w", res.StatusCode, e)
 	}
-	return res.Header.Get("ETag"), nil
+	etag := strings.Trim(res.Header.Get("ETag"), `"`)
+	cp := apitype.CompletePart{
+		URL:  url,
+		ETag: etag,
+		// TODO(bmizerany): checksum
+	}
+	return cp, nil
 }
 
 type s3Error struct {
