@@ -77,11 +77,11 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	}
 
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
-	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.KV().BlockCount()) * int64(ggml.KV().EmbeddingLength()) / int64(ggml.KV().HeadCount()) * int64(ggml.KV().HeadCountKV())
+	var kv uint64 = 2 * 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * ggml.KV().EmbeddingLength() / ggml.KV().HeadCount() * ggml.KV().HeadCountKV()
 
 	graph, ok := ggml.GraphSize(opts.NumCtx, min(opts.NumCtx, opts.NumBatch))
 	if !ok {
-		graph = int64(ggml.KV().GQA()) * kv / 6
+		graph = int64(ggml.KV().GQA()*kv) / 6
 	}
 
 	usedMemory += graph
@@ -92,9 +92,11 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 
 	requiredMemory := usedMemory
 
+	tensorLayers := ggml.Tensors().Layers()
+
 	var layers int
 	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
-		layerMemory := ggml.LayerSize(fmt.Sprintf("blk.%d.", i)) + kv/int64(ggml.KV().BlockCount())
+		layerMemory := int64(tensorLayers[fmt.Sprintf("%d", i)].size() + kv/ggml.KV().BlockCount())
 		requiredMemory += layerMemory
 
 		if availableMemory > usedMemory+layerMemory && (opts.NumGPU < 0 || layers < opts.NumGPU) {
@@ -103,7 +105,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		}
 	}
 
-	memOutputLayer := ggml.LayerSize("output.")
+	memOutputLayer := int64(tensorLayers["output"].size())
 	requiredMemory += memOutputLayer
 
 	// only offload output layer if all repeating layers are offloaded
@@ -118,7 +120,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		"required", format.HumanBytes2(requiredMemory),
 		"used", format.HumanBytes2(usedMemory),
 		"available", format.HumanBytes2(availableMemory),
-		"kv", format.HumanBytes2(kv),
+		"kv", format.HumanBytes2(int64(kv)),
 		"graph", format.HumanBytes2(graph),
 	)
 
@@ -294,18 +296,12 @@ func projectorMemoryRequirements(filename string) int64 {
 		return 0
 	}
 
-	prefixes := make(map[string]struct{})
-	for _, layer := range ggml.Tensors() {
-		parts := strings.Split(layer.Name, ".")
-		prefixes[strings.Join(parts[:2], ".")] = struct{}{}
+	var mem uint64
+	for _, layer := range ggml.Tensors().Layers() {
+		mem += layer.size()
 	}
 
-	var ask int64
-	for prefix := range prefixes {
-		ask += ggml.LayerSize(prefix)
-	}
-
-	return ask
+	return int64(mem)
 }
 
 type ServerStatus int
