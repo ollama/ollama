@@ -297,6 +297,8 @@ func availableAddr() string {
 	return l.Addr().String()
 }
 
+// tracing is "experimental" and may be removed in the future, I can't get it to
+// work consistently, but I'm leaving it in for now.
 func startMinio(t *testing.T, trace bool) *minio.Client {
 	t.Helper()
 
@@ -319,15 +321,15 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 					// died due to our signal
 					return
 				}
-				t.Errorf("%s stderr: %s", cmd.Path, e.Stderr)
-				t.Errorf("%s exit status: %v", cmd.Path, e.ExitCode())
-				t.Errorf("%s exited: %v", cmd.Path, e.Exited())
-				t.Errorf("%s stderr: %s", cmd.Path, e.Stderr)
+				t.Errorf("startMinio: %s stderr: %s", cmd.Path, e.Stderr)
+				t.Errorf("startMinio: %s exit status: %v", cmd.Path, e.ExitCode())
+				t.Errorf("startMinio: %s exited: %v", cmd.Path, e.Exited())
+				t.Errorf("startMinio: %s stderr: %s", cmd.Path, e.Stderr)
 			} else {
 				if errors.Is(err, context.Canceled) {
 					return
 				}
-				t.Errorf("%s exit error: %v", cmd.Path, err)
+				t.Errorf("startMinio: %s exit error: %v", cmd.Path, err)
 			}
 		}
 	}
@@ -349,7 +351,7 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 		return cmd.Process.Signal(syscall.SIGQUIT)
 	}
 	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("startMinio: %v", err)
 	}
 	t.Cleanup(func() {
 		cancel()
@@ -361,13 +363,13 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 		Secure: false,
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("startMinio: %v", err)
 	}
 
 	// wait for server to start with exponential backoff
 	for _, err := range backoff.Upto(ctx, 1*time.Second) {
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("startMinio: %v", err)
 		}
 		if mc.IsOnline() {
 			break
@@ -386,10 +388,10 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("startMinio: %v", err)
 		}
 		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
+			t.Fatalf("startMinio: %v", err)
 		}
 
 		doneLogging := make(chan struct{})
@@ -399,7 +401,7 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 
 			// Scan lines until the process exits.
 			for sc.Scan() {
-				t.Logf("mc trace: %s", sc.Text())
+				t.Logf("startMinio: mc trace: %s", sc.Text())
 			}
 			_ = sc.Err() // ignore (not important)
 		}()
@@ -414,7 +416,7 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 	}
 
 	if err := mc.MakeBucket(context.Background(), "test", minio.MakeBucketOptions{}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("startMinio: %v", err)
 	}
 	return mc
 }
