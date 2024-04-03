@@ -976,6 +976,7 @@ Environment Variables:
     OLLAMA_ORIGINS      A comma separated list of allowed origins.
     OLLAMA_MODELS       The path to the models directory (default is "~/.ollama/models")
     OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default is "5m")
+    OLLAMA_DEBUG        Set to 1 to enable additional debug logging
 `)
 
 	pullCmd := &cobra.Command{
