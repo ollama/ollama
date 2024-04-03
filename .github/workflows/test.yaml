@@ -64,10 +64,10 @@ jobs:
           echo $env:PATH
           go generate -x ./...
         if: ${{ startsWith(matrix.os, 'windows-') }}
-        name: "Windows Go Generate"
+        name: 'Windows Go Generate'
       - run: go generate -x ./...
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
-        name: "Unix Go Generate"
+        name: 'Unix Go Generate'
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
@@ -148,7 +148,7 @@ jobs:
         with:
           go-version: '1.22'
           cache: true
-      - name: "Install ROCm"
+      - name: 'Install ROCm'
         run: |
           $ErrorActionPreference = "Stop"
           write-host "downloading AMD HIP Installer"
@@ -156,7 +156,7 @@ jobs:
           write-host "Installing AMD HIP"
           Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
           write-host "Completed AMD HIP"
-      - name: "Verify ROCm"
+      - name: 'Verify ROCm'
         run: |
           & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
       - run: go get ./...
@@ -185,7 +185,7 @@ jobs:
         with:
           go-version: '1.22'
           cache: true
-      - name: "Install CUDA"
+      - name: 'Install CUDA'
         run: |
           $ErrorActionPreference = "Stop"
           write-host "downloading CUDA Installer"
@@ -199,7 +199,7 @@ jobs:
           echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
           echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
           echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
-      - name: "Verify CUDA"
+      - name: 'Verify CUDA'
         run: nvcc -V
       - run: go get ./...
       - name: go generate
@@ -215,7 +215,6 @@ jobs:
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       # TODO - do we need any artifacts?
-
 
   lint:
     strategy:
@@ -248,18 +247,18 @@ jobs:
           esac >>$GITHUB_ENV
         shell: bash
       - run: |
-          mkdir -p llm/build/linux/$ARCH/stub/bin/
-          touch llm/build/linux/$ARCH/stub/bin/stub.so
+          mkdir -p llm/build/linux/$ARCH/stub/bin
+          touch llm/build/linux/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'ubuntu-') }}
       - run: |
-          mkdir -p llm/build/darwin/$ARCH/stub/bin/
-          touch llm/build/darwin/$ARCH/stub/bin/stub.dylib
-          touch llm/ggml-metal.metal
+          mkdir -p llm/build/darwin/$ARCH/stub/bin
+          touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - run: |
-          mkdir -p llm/build/windows/$ARCH/stub/stub/bin/
-          touch llm/build/windows/$ARCH/stub/stub/bin/stub.dll
+          mkdir -p llm/build/windows/$ARCH/stub/bin
+          touch llm/build/windows/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'windows-') }}
+        shell: bash
       - uses: golangci/golangci-lint-action@v4
         with:
           args: --timeout 8m0s
@@ -277,7 +276,7 @@ jobs:
     env:
       GOARCH: ${{ matrix.arch }}
       CGO_ENABLED: '1'
-      OLLAMA_CPU_TARGET: "static"
+      OLLAMA_CPU_TARGET: 'static'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -294,18 +293,18 @@ jobs:
           esac >>$GITHUB_ENV
         shell: bash
       - run: |
-          mkdir -p llm/build/linux/$ARCH/stub/bin/
-          touch llm//build/linux/$ARCH/stub/bin/stub.so
+          mkdir -p llm/build/linux/$ARCH/stub/bin
+          touch llm/build/linux/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'ubuntu-') }}
       - run: |
-          mkdir -p llm/build/darwin/$ARCH/stub/bin/
-          touch llm/build/darwin/$ARCH/stub/bin/stub.dylib
-          touch llm/ggml-metal.metal
+          mkdir -p llm/build/darwin/$ARCH/stub/bin
+          touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - run: |
-          mkdir -p llm/build/windows/$ARCH/stub/stub/bin/
-          touch llm/build/windows/$ARCH/stub/stub/bin/stub.dll
+          mkdir -p llm/build/windows/$ARCH/stub/bin
+          touch llm/build/windows/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'windows-') }}
+        shell: bash
       - run: go generate ./...
       - run: go build
       - run: go test -v ./...
