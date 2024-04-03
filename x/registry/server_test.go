@@ -205,7 +205,7 @@ func pushLayer(body io.ReaderAt, url string, off, n int64) (apitype.CompletePart
 // is tricky and if we get it wrong in our server, we can refer back to this
 // as a "back to basics" test/reference.
 func TestBasicPresignS3MultipartReferenceDoNotDelete(t *testing.T) {
-	// t.Skip("skipping reference test; unskip when needed")
+	t.Skip("skipping reference test; unskip when needed")
 
 	mc := startMinio(t, true)
 	mcc := &minio.Core{Client: mc}
