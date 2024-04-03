@@ -35,3 +35,10 @@ func TestChunks(t *testing.T) {
 
 	diff.Test(t, t.Errorf, got, want)
 }
+
+func TestChunksBreak(t *testing.T) {
+	for _, _ = range Chunks(1, 1) {
+		return
+	}
+	t.Fatal("expected break")
+}

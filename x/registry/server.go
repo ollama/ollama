@@ -76,6 +76,7 @@ func (s *Server) uploadChunkSize() int64 {
 
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	const bucketTODO = "test"
+	const minimumMultipartSize = 5 * 1024 * 1024 // S3 spec
 
 	pr, err := oweb.DecodeUserJSON[apitype.PushRequest]("", r.Body)
 	if err != nil {
@@ -156,28 +157,43 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		}
 		if !pushed {
 			key := path.Join("blobs", l.Digest)
-			uploadID, err := mcc.NewMultipartUpload(r.Context(), bucketTODO, key, minio.PutObjectOptions{})
-			if err != nil {
-				return err
-			}
-			for partNumber, c := range upload.Chunks(l.Size, s.uploadChunkSize()) {
-				const timeToStartUpload = 15 * time.Minute
-
-				signedURL, err := s.mc().Presign(r.Context(), "PUT", bucketTODO, key, timeToStartUpload, url.Values{
-					"UploadId":      []string{uploadID},
-					"PartNumber":    []string{strconv.Itoa(partNumber)},
-					"ContentLength": []string{strconv.FormatInt(c.Size, 10)},
-				})
+			if l.Size < minimumMultipartSize {
+				// single part upload
+				signedURL, err := s.mc().PresignedPutObject(r.Context(), bucketTODO, key, 15*time.Minute)
 				if err != nil {
 					return err
 				}
-
 				requirements = append(requirements, apitype.Requirement{
 					Digest: l.Digest,
-					Offset: c.Offset,
-					Size:   c.Size,
+					Offset: 0,
+					Size:   l.Size,
 					URL:    signedURL.String(),
 				})
+			} else {
+				key := path.Join("blobs", l.Digest)
+				uploadID, err := mcc.NewMultipartUpload(r.Context(), bucketTODO, key, minio.PutObjectOptions{})
+				if err != nil {
+					return err
+				}
+				for partNumber, c := range upload.Chunks(l.Size, s.uploadChunkSize()) {
+					const timeToStartUpload = 15 * time.Minute
+
+					signedURL, err := s.mc().Presign(r.Context(), "PUT", bucketTODO, key, timeToStartUpload, url.Values{
+						"UploadId":      []string{uploadID},
+						"PartNumber":    []string{strconv.Itoa(partNumber)},
+						"ContentLength": []string{strconv.FormatInt(c.N, 10)},
+					})
+					if err != nil {
+						return err
+					}
+
+					requirements = append(requirements, apitype.Requirement{
+						Digest: l.Digest,
+						Offset: c.Offset,
+						Size:   c.N,
+						URL:    signedURL.String(),
+					})
+				}
 			}
 		}
 	}

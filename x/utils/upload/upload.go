@@ -8,7 +8,7 @@ import (
 
 type Chunk[I constraints.Integer] struct {
 	Offset I
-	Size   I
+	N      I
 }
 
 // Chunks yields a sequence of a part number and a Chunk. The Chunk is the offset
@@ -21,7 +21,9 @@ func Chunks[I constraints.Integer](size, chunkSize I) iter.Seq2[int, Chunk[I]] {
 		var n int
 		for off := I(0); off < size; off += chunkSize {
 			n++
-			yield(n, Chunk[I]{off, min(chunkSize, size-off)})
+			if !yield(n, Chunk[I]{off, min(chunkSize, size-off)}) {
+				return
+			}
 		}
 	}
 }
