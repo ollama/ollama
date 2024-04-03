@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -33,10 +34,9 @@ const abc = "abcdefghijklmnopqrstuvwxyz"
 
 func testPush(t *testing.T, chunkSize int64) {
 	t.Run(fmt.Sprintf("chunkSize=%d", chunkSize), func(t *testing.T) {
-		mc := startMinio(t, false)
+		mc := startMinio(t, true)
 
 		const MB = 1024 * 1024
-		const FiveMB = 5 * MB
 
 		// Upload two small layers and one large layer that will
 		// trigger a multipart upload.
@@ -52,7 +52,7 @@ func testPush(t *testing.T, chunkSize int64) {
 
 		hs := httptest.NewServer(&Server{
 			minioClient:     mc,
-			UploadChunkSize: chunkSize,
+			UploadChunkSize: 5 * MB,
 		})
 		t.Cleanup(hs.Close)
 		c := &Client{BaseURL: hs.URL}
@@ -324,6 +324,9 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 				t.Errorf("%s exited: %v", cmd.Path, e.Exited())
 				t.Errorf("%s stderr: %s", cmd.Path, e.Stderr)
 			} else {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
 				t.Errorf("%s exit error: %v", cmd.Path, err)
 			}
 		}
@@ -341,6 +344,10 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 	addr := availableAddr()
 	cmd := exec.CommandContext(ctx, "minio", "server", "--address", addr, dir)
 	cmd.Env = os.Environ()
+	cmd.WaitDelay = 3 * time.Second
+	cmd.Cancel = func() error {
+		return cmd.Process.Signal(syscall.SIGQUIT)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -372,6 +379,10 @@ func startMinio(t *testing.T, trace bool) *minio.Client {
 		cmd.Env = append(os.Environ(),
 			"MC_HOST_test=http://minioadmin:minioadmin@"+addr,
 		)
+		cmd.WaitDelay = 3 * time.Second
+		cmd.Cancel = func() error {
+			return cmd.Process.Signal(syscall.SIGQUIT)
+		}
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
