@@ -69,7 +69,7 @@ var loaded struct {
 var defaultSessionDuration = 5 * time.Minute
 
 // load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
-func load(c *gin.Context, model *Model, opts *api.Options, sessionDuration time.Duration) error {
+func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
 	ctx, cancel := context.WithTimeout(c, 10*time.Second)
 	defer cancel()
 
@@ -107,7 +107,7 @@ func load(c *gin.Context, model *Model, opts *api.Options, sessionDuration time.
 		loaded.adapters = model.AdapterPaths
 		loaded.projectors = model.ProjectorPaths
 		loaded.llama = llama
-		loaded.Options = opts
+		loaded.Options = &opts
 	}
 
 	if loaded.expireTimer == nil {
@@ -220,7 +220,7 @@ func GenerateHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, &opts, sessionDuration); err != nil {
+	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -465,7 +465,7 @@ func EmbeddingsHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, &opts, sessionDuration); err != nil {
+	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1272,7 +1272,7 @@ func ChatHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, &opts, sessionDuration); err != nil {
+	if err := load(c, model, opts, sessionDuration); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
