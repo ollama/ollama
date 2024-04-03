@@ -7,7 +7,7 @@ type Manifest struct {
 }
 
 type CompletePart struct {
-	URL  string `json:"url"` // contains PartNumber and UploadID from server
+	URL  string `json:"url"` // contains partNumber and uploadId from server
 	ETag string `json:"etag"`
 }
 

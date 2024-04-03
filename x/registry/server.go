@@ -109,11 +109,12 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		q := u.Query()
-		uploadID := q.Get("UploadId")
+		uploadID := q.Get("uploadId")
 		if uploadID == "" {
-			return oweb.Mistake("invalid", "url", "missing UploadId")
+			// not a part upload
+			continue
 		}
-		partNumber, err := strconv.Atoi(q.Get("PartNumber"))
+		partNumber, err := strconv.Atoi(q.Get("partNumber"))
 		if err != nil {
 			return oweb.Mistake("invalid", "url", "invalid or missing PartNumber")
 		}
@@ -165,12 +166,10 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 				}
 				requirements = append(requirements, apitype.Requirement{
 					Digest: l.Digest,
-					Offset: 0,
 					Size:   l.Size,
 					URL:    signedURL.String(),
 				})
 			} else {
-				key := path.Join("blobs", l.Digest)
 				uploadID, err := mcc.NewMultipartUpload(r.Context(), bucketTODO, key, minio.PutObjectOptions{})
 				if err != nil {
 					return err
@@ -179,9 +178,8 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 					const timeToStartUpload = 15 * time.Minute
 
 					signedURL, err := s.mc().Presign(r.Context(), "PUT", bucketTODO, key, timeToStartUpload, url.Values{
-						"UploadId":      []string{uploadID},
-						"PartNumber":    []string{strconv.Itoa(partNumber)},
-						"ContentLength": []string{strconv.FormatInt(c.N, 10)},
+						"uploadId":   []string{uploadID},
+						"partNumber": []string{strconv.Itoa(partNumber)},
 					})
 					if err != nil {
 						return err
