@@ -15,10 +15,6 @@ import (
 // TODO - this would ideally be in the llm package, but that would require some refactoring of interfaces in the server
 //        package to avoid circular dependencies
 
-// WARNING - these tests will fail on mac if you don't manually copy ggml-metal.metal to this dir (./server)
-//
-// TODO - Fix this ^^
-
 var (
 	stream = false
 	req    = [2]api.GenerateRequest{
