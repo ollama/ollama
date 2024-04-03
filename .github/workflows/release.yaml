@@ -99,7 +99,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cpu
-          path: llm/llama.cpp/build/**/lib/*
+          path: llm/build/**/lib/*
 
   # ROCm generation step
   generate-windows-rocm:
@@ -170,7 +170,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/llama.cpp/build/**/lib/*
+          path: llm/build/**/lib/*
       - uses: actions/upload-artifact@v4
         with:
           name: windows-rocm-deps
@@ -250,7 +250,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/llama.cpp/build/**/lib/*
+          path: llm/build/**/lib/*
       - uses: actions/upload-artifact@v4
         with:
           name: windows-cuda-deps
@@ -303,11 +303,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cpu
-          path: llm/llama.cpp/build
+          path: llm/build
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/llama.cpp/build
+          path: llm/build
       - uses: actions/download-artifact@v4
         with:
           name: windows-cuda-deps
@@ -319,8 +319,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/llama.cpp/build
-      - run: dir llm/llama.cpp/build
+          path: llm/build
+      - run: dir llm/build
       - run: |
           $gopath=(get-command go).source | split-path -parent
           & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
