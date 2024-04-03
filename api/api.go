@@ -10,6 +10,7 @@ import (
 	"bllamo.com/client/ollama/apitype"
 	"bllamo.com/oweb"
 	"bllamo.com/registry"
+	regtype "bllamo.com/registry/apitype"
 )
 
 // Common API Errors
@@ -64,11 +65,12 @@ func (s *Server) handlePush(_ http.ResponseWriter, r *http.Request) error {
 	}
 
 	c := registry.Client{BaseURL: registryURLTODO}
-	requirements, err := c.Push(r.Context(), params.Name, man)
+	requirements, err := c.Push(r.Context(), params.Name, man, nil)
 	if err != nil {
 		return err
 	}
 
+	var uploads []regtype.CompletePart
 	for _, rq := range requirements {
 		l, err := s.Build.LayerFile(rq.Digest)
 		if err != nil {
@@ -80,7 +82,15 @@ func (s *Server) handlePush(_ http.ResponseWriter, r *http.Request) error {
 				return err
 			}
 			defer f.Close()
-			return registry.PushLayer(r.Context(), rq.URL, rq.Size, f)
+			etag, err := registry.PushLayer(r.Context(), rq.URL, rq.Offset, rq.Size, f)
+			if err != nil {
+				return err
+			}
+			uploads = append(uploads, regtype.CompletePart{
+				URL:  rq.URL,
+				ETag: etag,
+			})
+			return nil
 		}()
 		if err != nil {
 			return err
@@ -88,7 +98,9 @@ func (s *Server) handlePush(_ http.ResponseWriter, r *http.Request) error {
 	}
 
 	// commit the manifest to the registry
-	requirements, err = c.Push(r.Context(), params.Name, man)
+	requirements, err = c.Push(r.Context(), params.Name, man, &registry.PushParams{
+		Uploaded: uploads,
+	})
 	if err != nil {
 		return err
 	}

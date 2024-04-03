@@ -6,6 +6,11 @@ type Manifest struct {
 	Layers []Layer `json:"layers"`
 }
 
+type CompletePart struct {
+	URL  string `json:"url"` // contains PartNumber and UploadID from server
+	ETag string `json:"etag"`
+}
+
 type Layer struct {
 	Digest    string `json:"digest"`
 	MediaType string `json:"mediaType"`
@@ -13,15 +18,25 @@ type Layer struct {
 }
 
 type PushRequest struct {
-	Ref      string `json:"ref"`
-	Manifest json.RawMessage
+	Ref      string          `json:"ref"`
+	Manifest json.RawMessage `json:"manifest"`
+
+	// Parts is a list of upload parts that the client upload in the previous
+	// push.
+	Uploaded []CompletePart `json:"part_uploads"`
 }
 
 type Requirement struct {
 	Digest string `json:"digest"`
 	Offset int64  `json:"offset"`
 	Size   int64  `json:"Size"`
-	URL    string `json:"url"`
+
+	// URL is the url to PUT the layer to.
+	//
+	// Clients must include it as the URL,  alond with the ETag in the
+	// response headers from the PUT request, in the next push request
+	// in the Uploaded field.
+	URL string `json:"url"`
 }
 
 type PushResponse struct {

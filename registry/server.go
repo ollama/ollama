@@ -6,8 +6,8 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -70,7 +70,13 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) error {
 	}
 }
 
+func (s *Server) uploadChunkSize() int64 {
+	return cmp.Or(s.UploadChunkSize, DefaultUploadChunkSize)
+}
+
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
+	const bucketTODO = "test"
+
 	pr, err := oweb.DecodeUserJSON[apitype.PushRequest]("", r.Body)
 	if err != nil {
 		return err
@@ -78,7 +84,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 
 	ref := blob.ParseRef(pr.Ref)
 	if !ref.Complete() {
-		return oweb.Mistake("invalid", "name", "must be fully qualified")
+		return oweb.Mistake("invalid", "name", "must be complete")
 	}
 
 	m, err := oweb.DecodeUserJSON[apitype.Manifest]("manifest", bytes.NewReader(pr.Manifest))
@@ -86,28 +92,80 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	// TODO(bmizerany): parallelize
+	mcc := &minio.Core{Client: s.mc()}
+	// TODO(bmizerany): complete uploads before stats for any with ETag
+
+	type completeParts struct {
+		key   string
+		parts []minio.CompletePart
+	}
+
+	completePartsByUploadID := make(map[string]completeParts)
+	for _, pu := range pr.Uploaded {
+		// parse the URL
+		u, err := url.Parse(pu.URL)
+		if err != nil {
+			return err
+		}
+		q := u.Query()
+		uploadID := q.Get("UploadId")
+		if uploadID == "" {
+			return oweb.Mistake("invalid", "url", "missing UploadId")
+		}
+		partNumber, err := strconv.Atoi(q.Get("PartNumber"))
+		if err != nil {
+			return oweb.Mistake("invalid", "url", "invalid or missing PartNumber")
+		}
+		etag := pu.ETag
+		if etag == "" {
+			return oweb.Mistake("invalid", "etag", "missing")
+		}
+		cp, ok := completePartsByUploadID[uploadID]
+		if !ok {
+			cp = completeParts{key: u.Path}
+			completePartsByUploadID[uploadID] = cp
+		}
+		cp.parts = append(cp.parts, minio.CompletePart{
+			PartNumber: partNumber,
+			ETag:       etag,
+		})
+		fmt.Println("uploadID", uploadID, "partNumber", partNumber, "etag", etag)
+		completePartsByUploadID[uploadID] = cp
+	}
+
+	for uploadID, cp := range completePartsByUploadID {
+		var zeroOpts minio.PutObjectOptions
+		_, err := mcc.CompleteMultipartUpload(r.Context(), bucketTODO, cp.key, uploadID, cp.parts, zeroOpts)
+		if err != nil {
+			// log and continue; put backpressure on the client
+			log.Printf("error completing upload: %v", err)
+		}
+	}
+
 	var requirements []apitype.Requirement
 	for _, l := range m.Layers {
+		// TODO(bmizerany): do in parallel
 		if l.Size == 0 {
 			continue
 		}
 
 		// TODO(bmizerany): "global" throttle of rate of transfer
-
 		pushed, err := s.statObject(r.Context(), l.Digest)
 		if err != nil {
 			return err
 		}
 		if !pushed {
-			uploadID := generateUploadID()
-			for n, c := range upload.Chunks(l.Size, cmp.Or(s.UploadChunkSize, DefaultUploadChunkSize)) {
-				const expires = 15 * time.Minute
+			key := path.Join("blobs", l.Digest)
+			uploadID, err := mcc.NewMultipartUpload(r.Context(), bucketTODO, key, minio.PutObjectOptions{})
+			if err != nil {
+				return err
+			}
+			for partNumber, c := range upload.Chunks(l.Size, s.uploadChunkSize()) {
+				const timeToStartUpload = 15 * time.Minute
 
-				key := path.Join("blobs", l.Digest)
-				signedURL, err := s.mc().Presign(r.Context(), "PUT", "test", key, expires, url.Values{
+				signedURL, err := s.mc().Presign(r.Context(), "PUT", bucketTODO, key, timeToStartUpload, url.Values{
 					"UploadId":      []string{uploadID},
-					"PartNumber":    []string{strconv.Itoa(n)},
+					"PartNumber":    []string{strconv.Itoa(partNumber)},
 					"ContentLength": []string{strconv.FormatInt(c.Size, 10)},
 				})
 				if err != nil {
@@ -118,9 +176,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 					Digest: l.Digest,
 					Offset: c.Offset,
 					Size:   c.Size,
-
-					// TODO(bmizerany): use signed+temp urls
-					URL: signedURL.String(),
+					URL:    signedURL.String(),
 				})
 			}
 		}
@@ -130,7 +186,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		// Commit the manifest
 		body := bytes.NewReader(pr.Manifest)
 		path := path.Join("manifests", path.Join(ref.Parts()...))
-		_, err := s.mc().PutObject(r.Context(), "test", path, body, int64(len(pr.Manifest)), minio.PutObjectOptions{})
+		_, err := s.mc().PutObject(r.Context(), bucketTODO, path, body, int64(len(pr.Manifest)), minio.PutObjectOptions{})
 		if err != nil {
 			return err
 		}
@@ -174,13 +230,4 @@ func (s *Server) mc() *minio.Client {
 		panic(err)
 	}
 	return mc
-}
-
-func generateUploadID() string {
-	const hex = "0123456789abcdef"
-	b := make([]byte, 32)
-	for i := range b {
-		b[i] = hex[rand.Intn(len(hex))]
-	}
-	return string(b)
 }
