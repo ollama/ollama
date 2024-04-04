@@ -17,6 +17,7 @@ var testRefs = map[string]Ref{
 	"llama2":              {name: "llama2"},
 
 	// invalid (includes fuzzing trophies)
+	"+":                      {},
 	"mistral:7b+Q4_0:latest": {},
 	"mi tral":                {},
 	"x/y/z/foo":              {},
