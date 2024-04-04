@@ -14,18 +14,18 @@ type NamePart int
 // Levels of concreteness
 const (
 	Invalid NamePart = iota
-	Registry
+	Host
 	Namespace
-	Nick
+	Model
 	Tag
 	Build
 )
 
 var kindNames = map[NamePart]string{
 	Invalid:   "Invalid",
-	Registry:  "Domain",
+	Host:      "Host",
 	Namespace: "Namespace",
-	Nick:      "Name",
+	Model:     "Name",
 	Tag:       "Tag",
 	Build:     "Build",
 }
@@ -36,9 +36,9 @@ var kindNames = map[NamePart]string{
 //
 // Users or Name must check Valid before using it.
 type Name struct {
-	domain    string
+	host      string
 	namespace string
-	nick      string
+	model     string
 	tag       string
 	build     string
 }
@@ -47,23 +47,23 @@ type Name struct {
 // concreteness. If a part is missing, it is replaced with a loud
 // placeholder.
 func (r Name) Full() string {
-	r.domain = cmp.Or(r.domain, "!(MISSING DOMAIN)")
+	r.host = cmp.Or(r.host, "!(MISSING DOMAIN)")
 	r.namespace = cmp.Or(r.namespace, "!(MISSING NAMESPACE)")
-	r.nick = cmp.Or(r.nick, "!(MISSING NAME)")
+	r.model = cmp.Or(r.model, "!(MISSING NAME)")
 	r.tag = cmp.Or(r.tag, "!(MISSING TAG)")
 	r.build = cmp.Or(r.build, "!(MISSING BUILD)")
 	return r.String()
 }
 
-func (r Name) NickAndTag() string {
-	r.domain = ""
+func (r Name) ModelAndTag() string {
+	r.host = ""
 	r.namespace = ""
 	r.build = ""
 	return r.String()
 }
 
-func (r Name) NickTagAndBuild() string {
-	r.domain = ""
+func (r Name) ModelTagAndBuild() string {
+	r.host = ""
 	r.namespace = ""
 	return r.String()
 }
@@ -71,15 +71,15 @@ func (r Name) NickTagAndBuild() string {
 // String returns the fully qualified ref string.
 func (r Name) String() string {
 	var b strings.Builder
-	if r.domain != "" {
-		b.WriteString(r.domain)
+	if r.host != "" {
+		b.WriteString(r.host)
 		b.WriteString("/")
 	}
 	if r.namespace != "" {
 		b.WriteString(r.namespace)
 		b.WriteString("/")
 	}
-	b.WriteString(r.nick)
+	b.WriteString(r.model)
 	if r.tag != "" {
 		b.WriteString(":")
 		b.WriteString(r.tag)
@@ -121,17 +121,17 @@ func (r Name) Less(o Name) bool {
 // The length of the returned slice is always 5.
 func (r Name) Parts() []string {
 	return []string{
-		r.domain,
+		r.host,
 		r.namespace,
-		r.nick,
+		r.model,
 		r.tag,
 		r.build,
 	}
 }
 
-func (r Name) Domain() string    { return r.namespace }
+func (r Name) Host() string      { return r.host }
 func (r Name) Namespace() string { return r.namespace }
-func (r Name) Nick() string      { return r.nick }
+func (r Name) Model() string     { return r.model }
 func (r Name) Tag() string       { return r.tag }
 func (r Name) Build() string     { return r.build }
 
@@ -155,12 +155,12 @@ func ParseName(s string) Name {
 	var r Name
 	for kind, part := range NameParts(s) {
 		switch kind {
-		case Registry:
-			r.domain = part
+		case Host:
+			r.host = part
 		case Namespace:
 			r.namespace = part
-		case Nick:
-			r.nick = part
+		case Model:
+			r.model = part
 		case Tag:
 			r.tag = part
 		case Build:
@@ -186,9 +186,9 @@ func ParseName(s string) Name {
 func Merge(dst, src Name) Name {
 	return Name{
 		// name is left untouched
-		nick: dst.nick,
+		model: dst.model,
 
-		domain:    cmp.Or(dst.domain, src.domain),
+		host:      cmp.Or(dst.host, src.host),
 		namespace: cmp.Or(dst.namespace, src.namespace),
 		tag:       cmp.Or(dst.tag, src.tag),
 		build:     cmp.Or(dst.build, src.build),
@@ -250,15 +250,15 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 					if !yieldValid(Tag, s[i+1:j]) {
 						return
 					}
-					state, j = Nick, i
+					state, j = Model, i
 				default:
 					yield(Invalid, "")
 					return
 				}
 			case '/':
 				switch state {
-				case Nick, Tag, Build:
-					if !yieldValid(Nick, s[i+1:j]) {
+				case Model, Tag, Build:
+					if !yieldValid(Model, s[i+1:j]) {
 						return
 					}
 					state, j = Namespace, i
@@ -266,7 +266,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 					if !yieldValid(Namespace, s[i+1:j]) {
 						return
 					}
-					state, j = Registry, i
+					state, j = Host, i
 				default:
 					yield(Invalid, "")
 					return
@@ -282,7 +282,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 		if state <= Namespace {
 			yieldValid(state, s[:j])
 		} else {
-			yieldValid(Nick, s[:j])
+			yieldValid(Model, s[:j])
 		}
 	}
 }
@@ -292,7 +292,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 func (r Name) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
-	return r.nick != ""
+	return r.model != ""
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
