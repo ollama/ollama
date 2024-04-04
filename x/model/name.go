@@ -65,7 +65,7 @@ type Name struct {
 var mapHashSeed = maphash.MakeSeed()
 
 // MapHash returns a case insensitive hash for use in maps and equality
-// checks. For a convienent way to compare names, use [EqualFold].
+// checks. For a convienent way to compare names, use [Name.EqualFold].
 func (r Name) MapHash() uint64 {
 	// correctly hash the parts with case insensitive comparison
 	var h maphash.Hash
