@@ -198,6 +198,11 @@ func ParseRef(s string) Ref {
 	return r
 }
 
+// Parts returns a sequence of the parts of a ref string from most specific
+// to least specific.
+//
+// It normalizes the input string by removing "http://" and "https://" only.
+// No other normalization is done.
 func Parts(s string) iter.Seq2[PartKind, string] {
 	return func(yield func(PartKind, string) bool) {
 		if strings.HasPrefix(s, "http://") {
@@ -224,8 +229,7 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 			case '+':
 				switch state {
 				case Build:
-					v := strings.ToUpper(s[i+1 : j])
-					if !yieldValid(Build, v) {
+					if !yieldValid(Build, s[i+1:j]) {
 						return
 					}
 					state, j = Tag, i
@@ -265,6 +269,7 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 		case Domain:
 			yieldValid(Domain, s[:j])
 		case Namespace:
+			println("namespace", s[:j])
 			yieldValid(Namespace, s[:j])
 		default:
 			yieldValid(Name, s[:j])

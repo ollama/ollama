@@ -24,9 +24,9 @@ var testRefs = map[string]Ref{
 	// invalid
 	"mistral:7b+Q4_0:latest": {},
 	"mi tral":                {},
-
-	// From fuzzing
-	"/0": {},
+	"x/y/z/foo":              {},
+	"/0":                     {},
+	"0/":                     {},
 }
 
 func TestRefParts(t *testing.T) {
