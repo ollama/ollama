@@ -10,11 +10,36 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 )
 
 const defaultPrivateKey = "id_ed25519"
+
+func keyPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(home, ".ollama", defaultPrivateKey), nil
+}
+
+func GetPublicKey() (string, error) {
+	keyPath, err := keyPath()
+	if err != nil {
+		return "", err
+	}
+
+	pubKey, err := os.ReadFile(keyPath + ".pub") // note: the .pub suffix is extremely important to not leak the private key
+	if err != nil {
+		slog.Info(fmt.Sprintf("Failed to load public key: %v", err))
+		return "", err
+	}
+
+	return strings.TrimSpace(string(pubKey)), nil
+}
 
 func NewNonce(r io.Reader, length int) (string, error) {
 	nonce := make([]byte, length)
@@ -26,12 +51,10 @@ func NewNonce(r io.Reader, length int) (string, error) {
 }
 
 func Sign(ctx context.Context, bts []byte) (string, error) {
-	home, err := os.UserHomeDir()
+	keyPath, err := keyPath()
 	if err != nil {
 		return "", err
 	}
-
-	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if err != nil {

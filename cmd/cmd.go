@@ -404,6 +404,12 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
+		if spinner != nil {
+			spinner.Stop()
+		}
+		if strings.Contains(err.Error(), "access denied") {
+			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
+		}
 		return err
 	}
 
