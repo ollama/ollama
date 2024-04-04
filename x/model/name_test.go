@@ -49,21 +49,21 @@ func TestNameParts(t *testing.T) {
 }
 
 func TestParseName(t *testing.T) {
-	for s, want := range testNames {
+	for baseName, want := range testNames {
 		for _, prefix := range []string{"", "https://", "http://"} {
 			// We should get the same results with or without the
 			// http(s) prefixes
-			s := prefix + s
+			s := prefix + baseName
 
 			t.Run(s, func(t *testing.T) {
 				got := ParseName(s)
-				if got != want {
+				if !got.EqualFold(want) {
 					t.Errorf("ParseName(%q) = %q; want %q", s, got, want)
 				}
 
 				// test round-trip
-				if ParseName(got.String()) != got {
-					t.Errorf("String() = %s; want %s", got.String(), s)
+				if !ParseName(got.String()).EqualFold(got) {
+					t.Errorf("String() = %s; want %s", got.String(), baseName)
 				}
 
 				if got.Valid() && got.Model() == "" {
@@ -190,7 +190,7 @@ func FuzzParseName(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		r0 := ParseName(s)
 		if !r0.Valid() {
-			if r0 != (Name{}) {
+			if !r0.EqualFold(Name{}) {
 				t.Errorf("expected invalid path to be zero value; got %#v", r0)
 			}
 			t.Skipf("invalid path: %q", s)
@@ -207,7 +207,7 @@ func FuzzParseName(f *testing.F) {
 		}
 
 		r1 := ParseName(r0.String())
-		if r0 != r1 {
+		if !r0.EqualFold(r1) {
 			t.Errorf("round-trip mismatch: %+v != %+v", r0, r1)
 		}
 

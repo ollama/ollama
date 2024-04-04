@@ -2,9 +2,12 @@ package model
 
 import (
 	"cmp"
+	"hash/maphash"
 	"iter"
 	"slices"
 	"strings"
+
+	"github.com/ollama/ollama/x/types/structs"
 )
 
 const MaxNameLength = 255
@@ -36,11 +39,34 @@ var kindNames = map[NamePart]string{
 //
 // Users or Name must check Valid before using it.
 type Name struct {
+	_ structs.Incomparable
+
 	host      string
 	namespace string
 	model     string
 	tag       string
 	build     string
+}
+
+var mapHashSeed = maphash.MakeSeed()
+
+// MapHash returns a case insensitive hash for use in maps and equality
+// checks. For a convienent way to compare names, use [EqualFold].
+func (r Name) MapHash() uint64 {
+	// correctly hash the parts with case insensitive comparison
+	var h maphash.Hash
+	h.SetSeed(mapHashSeed)
+	for _, part := range r.Parts() {
+		// downcase the part for hashing
+		for i := range part {
+			c := part[i]
+			if c >= 'A' && c <= 'Z' {
+				c = c - 'A' + 'a'
+			}
+			h.WriteByte(c)
+		}
+	}
+	return h.Sum64()
 }
 
 // Format returns a string representation of the ref with the given
@@ -134,6 +160,10 @@ func (r Name) Namespace() string { return r.namespace }
 func (r Name) Model() string     { return r.model }
 func (r Name) Tag() string       { return r.tag }
 func (r Name) Build() string     { return r.build }
+
+func (r Name) EqualFold(o Name) bool {
+	return r.MapHash() == o.MapHash()
+}
 
 // ParseName parses s into a Name. The input string must be a valid form of
 // a model name in the form:
