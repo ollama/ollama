@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"time"
 
-	"bllamo.com/build/blob"
 	"bllamo.com/client/ollama"
+	"bllamo.com/model"
 	"bllamo.com/oweb"
 	"bllamo.com/registry/apitype"
 	"bllamo.com/utils/upload"
@@ -82,9 +82,9 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	ref := blob.ParseRef(pr.Ref)
-	if !ref.Complete() {
-		return oweb.Invalid("name", pr.Ref, "must be complete")
+	mp := model.ParsePath(pr.Name)
+	if !mp.Complete() {
+		return oweb.Invalid("name", pr.Name, "must be complete")
 	}
 
 	m, err := oweb.DecodeUserJSON[apitype.Manifest]("manifest", bytes.NewReader(pr.Manifest))
@@ -205,7 +205,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	if len(requirements) == 0 {
 		// Commit the manifest
 		body := bytes.NewReader(pr.Manifest)
-		path := path.Join("manifests", path.Join(ref.Parts()...))
+		path := path.Join("manifests", path.Join(mp.Parts()...))
 		_, err := s.mc().PutObject(r.Context(), bucketTODO, path, body, int64(len(pr.Manifest)), minio.PutObjectOptions{})
 		if err != nil {
 			return err

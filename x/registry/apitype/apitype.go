@@ -18,7 +18,7 @@ type Layer struct {
 }
 
 type PushRequest struct {
-	Ref      string          `json:"ref"`
+	Name     string          `json:"ref"`
 	Manifest json.RawMessage `json:"manifest"`
 
 	// Parts is a list of upload parts that the client upload in the previous

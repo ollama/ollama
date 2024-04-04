@@ -1,4 +1,4 @@
-package blob
+package model
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-var testRefs = map[string]Ref{
+var testPaths = map[string]Path{
 	"mistral:latest":      {name: "mistral", tag: "latest"},
 	"mistral":             {name: "mistral"},
 	"mistral:30B":         {name: "mistral", tag: "30B"},
@@ -36,33 +36,33 @@ var testRefs = map[string]Ref{
 	"file:///etc/passwd:latest":   {},
 	"file:///etc/passwd:latest+u": {},
 
-	strings.Repeat("a", MaxRefLength):   {name: strings.Repeat("a", MaxRefLength)},
-	strings.Repeat("a", MaxRefLength+1): {},
+	strings.Repeat("a", MaxPathLength):   {name: strings.Repeat("a", MaxPathLength)},
+	strings.Repeat("a", MaxPathLength+1): {},
 }
 
-func TestRefParts(t *testing.T) {
+func TestPathParts(t *testing.T) {
 	const wantNumParts = 5
-	var ref Ref
-	if len(ref.Parts()) != wantNumParts {
-		t.Errorf("Parts() = %d; want %d", len(ref.Parts()), wantNumParts)
+	var p Path
+	if len(p.Parts()) != wantNumParts {
+		t.Errorf("Parts() = %d; want %d", len(p.Parts()), wantNumParts)
 	}
 }
 
-func TestParseRef(t *testing.T) {
-	for s, want := range testRefs {
+func TestParsePath(t *testing.T) {
+	for s, want := range testPaths {
 		for _, prefix := range []string{"", "https://", "http://"} {
 			// We should get the same results with or without the
 			// http(s) prefixes
 			s := prefix + s
 
 			t.Run(s, func(t *testing.T) {
-				got := ParseRef(s)
+				got := ParsePath(s)
 				if got != want {
-					t.Errorf("ParseRef(%q) = %q; want %q", s, got, want)
+					t.Errorf("ParsePath(%q) = %q; want %q", s, got, want)
 				}
 
 				// test round-trip
-				if ParseRef(got.String()) != got {
+				if ParsePath(got.String()) != got {
 					t.Errorf("String() = %s; want %s", got.String(), s)
 				}
 
@@ -76,7 +76,7 @@ func TestParseRef(t *testing.T) {
 	}
 }
 
-func TestRefComplete(t *testing.T) {
+func TestPathComplete(t *testing.T) {
 	cases := []struct {
 		in                   string
 		complete             bool
@@ -92,19 +92,19 @@ func TestRefComplete(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
-			ref := ParseRef(tt.in)
-			t.Logf("ParseRef(%q) = %#v", tt.in, ref)
-			if g := ref.Complete(); g != tt.complete {
+			p := ParsePath(tt.in)
+			t.Logf("ParsePath(%q) = %#v", tt.in, p)
+			if g := p.Complete(); g != tt.complete {
 				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.complete)
 			}
-			if g := ref.CompleteWithoutBuild(); g != tt.completeWithoutBuild {
+			if g := p.CompleteWithoutBuild(); g != tt.completeWithoutBuild {
 				t.Errorf("CompleteWithoutBuild(%q) = %v; want %v", tt.in, g, tt.completeWithoutBuild)
 			}
 		})
 	}
 }
 
-func TestRefStringVariants(t *testing.T) {
+func TestPathStringVariants(t *testing.T) {
 	cases := []struct {
 		in              string
 		nameAndTag      string
@@ -116,19 +116,19 @@ func TestRefStringVariants(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
-			ref := ParseRef(tt.in)
-			t.Logf("ParseRef(%q) = %#v", tt.in, ref)
-			if g := ref.NameAndTag(); g != tt.nameAndTag {
+			p := ParsePath(tt.in)
+			t.Logf("ParsePath(%q) = %#v", tt.in, p)
+			if g := p.NameAndTag(); g != tt.nameAndTag {
 				t.Errorf("NameAndTag(%q) = %q; want %q", tt.in, g, tt.nameAndTag)
 			}
-			if g := ref.NameTagAndBuild(); g != tt.nameTagAndBuild {
+			if g := p.NameTagAndBuild(); g != tt.nameTagAndBuild {
 				t.Errorf("NameTagAndBuild(%q) = %q; want %q", tt.in, g, tt.nameTagAndBuild)
 			}
 		})
 	}
 }
 
-func TestRefFull(t *testing.T) {
+func TestPathFull(t *testing.T) {
 	const empty = "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/!(MISSING NAME):!(MISSING TAG)+!(MISSING BUILD)"
 
 	cases := []struct {
@@ -151,53 +151,53 @@ func TestRefFull(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
-			ref := ParseRef(tt.in)
-			t.Logf("ParseRef(%q) = %#v", tt.in, ref)
-			if g := ref.Full(); g != tt.wantFull {
+			p := ParsePath(tt.in)
+			t.Logf("ParsePath(%q) = %#v", tt.in, p)
+			if g := p.Full(); g != tt.wantFull {
 				t.Errorf("Full(%q) = %q; want %q", tt.in, g, tt.wantFull)
 			}
 		})
 	}
 }
 
-func TestParseRefAllocs(t *testing.T) {
+func TestParsePathAllocs(t *testing.T) {
 	// test allocations
-	var r Ref
+	var r Path
 	allocs := testing.AllocsPerRun(1000, func() {
-		r = ParseRef("example.com/mistral:7b+Q4_0")
+		r = ParsePath("example.com/mistral:7b+Q4_0")
 	})
 	_ = r
 	if allocs > 0 {
-		t.Errorf("ParseRef allocs = %v; want 0", allocs)
+		t.Errorf("ParsePath allocs = %v; want 0", allocs)
 	}
 }
 
-func BenchmarkParseRef(b *testing.B) {
+func BenchmarkParsePath(b *testing.B) {
 	b.ReportAllocs()
 
-	var r Ref
+	var r Path
 	for i := 0; i < b.N; i++ {
-		r = ParseRef("example.com/mistral:7b+Q4_0")
+		r = ParsePath("example.com/mistral:7b+Q4_0")
 	}
 	_ = r
 }
 
-func FuzzParseRef(f *testing.F) {
+func FuzzParsePath(f *testing.F) {
 	f.Add("example.com/mistral:7b+Q4_0")
 	f.Add("example.com/mistral:7b+q4_0")
 	f.Add("example.com/mistral:7b+x")
 	f.Add("x/y/z:8n+I")
 	f.Fuzz(func(t *testing.T, s string) {
-		r0 := ParseRef(s)
+		r0 := ParsePath(s)
 		if !r0.Valid() {
-			if r0 != (Ref{}) {
-				t.Errorf("expected invalid ref to be zero value; got %#v", r0)
+			if r0 != (Path{}) {
+				t.Errorf("expected invalid path to be zero value; got %#v", r0)
 			}
-			t.Skipf("invalid ref: %q", s)
+			t.Skipf("invalid path: %q", s)
 		}
 
 		for _, p := range r0.Parts() {
-			if len(p) > MaxRefLength {
+			if len(p) > MaxPathLength {
 				t.Errorf("part too long: %q", p)
 			}
 		}
@@ -206,7 +206,7 @@ func FuzzParseRef(f *testing.F) {
 			t.Errorf("String() did not round-trip with case insensitivity: %q\ngot  = %q\nwant = %q", s, r0.String(), s)
 		}
 
-		r1 := ParseRef(r0.String())
+		r1 := ParsePath(r0.String())
 		if r0 != r1 {
 			t.Errorf("round-trip mismatch: %+v != %+v", r0, r1)
 		}
@@ -216,8 +216,8 @@ func FuzzParseRef(f *testing.F) {
 
 func ExampleMerge() {
 	r := Merge(
-		ParseRef("mistral"),
-		ParseRef("registry.ollama.com/XXXXX:latest+Q4_0"),
+		ParsePath("mistral"),
+		ParsePath("registry.ollama.com/XXXXX:latest+Q4_0"),
 	)
 	fmt.Println(r)
 

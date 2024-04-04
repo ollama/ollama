@@ -1,4 +1,4 @@
-package blob
+package model
 
 import (
 	"cmp"
@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const MaxRefLength = 255
+const MaxPathLength = 255
 
 type PartKind int
 
@@ -30,12 +30,12 @@ var kindNames = map[PartKind]string{
 	Build:     "Build",
 }
 
-// Ref is an opaque reference to a blob.
+// Path is an opaque reference to a model.
 //
 // It is comparable and can be used as a map key.
 //
-// Users or Ref must check Valid before using it.
-type Ref struct {
+// Users or Path must check Valid before using it.
+type Path struct {
 	domain    string
 	namespace string
 	name      string
@@ -46,7 +46,7 @@ type Ref struct {
 // Format returns a string representation of the ref with the given
 // concreteness. If a part is missing, it is replaced with a loud
 // placeholder.
-func (r Ref) Full() string {
+func (r Path) Full() string {
 	r.domain = cmp.Or(r.domain, "!(MISSING DOMAIN)")
 	r.namespace = cmp.Or(r.namespace, "!(MISSING NAMESPACE)")
 	r.name = cmp.Or(r.name, "!(MISSING NAME)")
@@ -55,21 +55,21 @@ func (r Ref) Full() string {
 	return r.String()
 }
 
-func (r Ref) NameAndTag() string {
+func (r Path) NameAndTag() string {
 	r.domain = ""
 	r.namespace = ""
 	r.build = ""
 	return r.String()
 }
 
-func (r Ref) NameTagAndBuild() string {
+func (r Path) NameTagAndBuild() string {
 	r.domain = ""
 	r.namespace = ""
 	return r.String()
 }
 
 // String returns the fully qualified ref string.
-func (r Ref) String() string {
+func (r Path) String() string {
 	var b strings.Builder
 	if r.domain != "" {
 		b.WriteString(r.domain)
@@ -93,19 +93,19 @@ func (r Ref) String() string {
 
 // Complete reports whether the ref is fully qualified. That is it has a
 // domain, namespace, name, tag, and build.
-func (r Ref) Complete() bool {
+func (r Path) Complete() bool {
 	return r.Valid() && !slices.Contains(r.Parts(), "")
 }
 
 // CompleteWithoutBuild reports whether the ref would be complete if it had a
 // valid build.
-func (r Ref) CompleteWithoutBuild() bool {
+func (r Path) CompleteWithoutBuild() bool {
 	r.build = "x"
 	return r.Valid() && r.Complete()
 }
 
 // Less returns true if r is less concrete than o; false otherwise.
-func (r Ref) Less(o Ref) bool {
+func (r Path) Less(o Path) bool {
 	rp := r.Parts()
 	op := o.Parts()
 	for i := range rp {
@@ -119,7 +119,7 @@ func (r Ref) Less(o Ref) bool {
 // Parts returns the parts of the ref in order of concreteness.
 //
 // The length of the returned slice is always 5.
-func (r Ref) Parts() []string {
+func (r Path) Parts() []string {
 	return []string{
 		r.domain,
 		r.namespace,
@@ -129,36 +129,30 @@ func (r Ref) Parts() []string {
 	}
 }
 
-func (r Ref) Domain() string    { return r.namespace }
-func (r Ref) Namespace() string { return r.namespace }
-func (r Ref) Name() string      { return r.name }
-func (r Ref) Tag() string       { return r.tag }
-func (r Ref) Build() string     { return r.build }
+func (r Path) Domain() string    { return r.namespace }
+func (r Path) Namespace() string { return r.namespace }
+func (r Path) Name() string      { return r.name }
+func (r Path) Tag() string       { return r.tag }
+func (r Path) Build() string     { return r.build }
 
-// ParseRef parses a ref string into a Ref. A ref string is a name, an
-// optional tag, and an optional build, separated by colons and pluses.
+// ParsePath parses a model path string into a Path.
 //
-// The name must be valid ascii [a-zA-Z0-9_].
-// The tag must be valid ascii [a-zA-Z0-9_].
-// The build must be valid ascii [a-zA-Z0-9_].
+// Examples of valid paths:
 //
-// It returns then zero value if the ref is invalid.
+//	"example.com/mistral:7b+x"
+//	"example.com/mistral:7b+Q4_0"
+//	"mistral:7b+x"
+//	"example.com/x/mistral:latest+Q4_0"
+//	"example.com/x/mistral:latest"
 //
-//	// Valid Examples:
-//	ParseRef("mistral:latest") returns ("mistral", "latest", "")
-//	ParseRef("mistral") returns ("mistral", "", "")
-//	ParseRef("mistral:30B") returns ("mistral", "30B", "")
-//	ParseRef("mistral:7b") returns ("mistral", "7b", "")
-//	ParseRef("mistral:7b+Q4_0") returns ("mistral", "7b", "Q4_0")
-//	ParseRef("mistral+KQED") returns ("mistral", "latest", "KQED")
-//	ParseRef(".x.:7b+Q4_0:latest") returns (".x.", "7b", "Q4_0")
-//	ParseRef("-grok-f.oo:7b+Q4_0") returns ("-grok-f.oo", "7b", "Q4_0")
+// Examples of invalid paths:
 //
-//	// Invalid Examples:
-//	ParseRef("m stral") returns ("", "", "") // zero
-//	ParseRef("... 129 chars ...") returns ("", "", "") // zero
-func ParseRef(s string) Ref {
-	var r Ref
+//	"example.com/mistral:7b+"
+//	"example.com/mistral:7b+Q4_0+"
+//	"x/y/z/z:8n+I"
+//	""
+func ParsePath(s string) Path {
+	var r Path
 	for kind, part := range Parts(s) {
 		switch kind {
 		case Domain:
@@ -172,11 +166,11 @@ func ParseRef(s string) Ref {
 		case Build:
 			r.build = strings.ToUpper(part)
 		case Invalid:
-			return Ref{}
+			return Path{}
 		}
 	}
 	if !r.Valid() {
-		return Ref{}
+		return Path{}
 	}
 	return r
 }
@@ -185,8 +179,8 @@ func ParseRef(s string) Ref {
 // The name is left untouched.
 //
 // Use this for merging a ref with a default ref.
-func Merge(a, b Ref) Ref {
-	return Ref{
+func Merge(a, b Path) Path {
+	return Path{
 		// name is left untouched
 		name: a.name,
 
@@ -211,7 +205,7 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 			s = s[len("https://"):]
 		}
 
-		if len(s) > MaxRefLength || len(s) == 0 {
+		if len(s) > MaxPathLength || len(s) == 0 {
 			return
 		}
 
@@ -282,7 +276,7 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 
 // Valid returns true if the ref has a valid name. To know if a ref is
 // "complete", use Complete.
-func (r Ref) Valid() bool {
+func (r Path) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
 	return r.name != ""
