@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 
@@ -167,8 +168,8 @@ func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
 	}
 	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
 
-	if vocabSize > len(v.Tokens) {
-		missingTokens := vocabSize - len(v.Tokens)
+	if params.VocabSize > len(v.Tokens) {
+		missingTokens := params.VocabSize - len(v.Tokens)
 		slog.Warn(fmt.Sprintf("vocab is missing %d tokens", missingTokens))
 		for cnt := 0; cnt < missingTokens; cnt++ {
 			v.Tokens = append(v.Tokens, fmt.Sprintf("<dummy%05d>", cnt+1))
