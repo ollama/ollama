@@ -101,9 +101,9 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	completePartsByUploadID := make(map[string]completeParts)
-	for _, pu := range pr.Uploaded {
+	for _, mcp := range pr.CompleteParts {
 		// parse the URL
-		u, err := url.Parse(pu.URL)
+		u, err := url.Parse(mcp.URL)
 		if err != nil {
 			return err
 		}
@@ -117,8 +117,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return oweb.Mistake("invalid", "url", "invalid or missing PartNumber")
 		}
-		etag := pu.ETag
-		if etag == "" {
+		if mcp.ETag == "" {
 			return oweb.Mistake("invalid", "etag", "missing")
 		}
 		cp, ok := completePartsByUploadID[uploadID]
@@ -128,7 +127,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		}
 		cp.parts = append(cp.parts, minio.CompletePart{
 			PartNumber: partNumber,
-			ETag:       etag,
+			ETag:       mcp.ETag,
 		})
 		completePartsByUploadID[uploadID] = cp
 	}

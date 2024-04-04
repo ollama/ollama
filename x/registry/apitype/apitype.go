@@ -23,7 +23,7 @@ type PushRequest struct {
 
 	// Parts is a list of upload parts that the client upload in the previous
 	// push.
-	Uploaded []CompletePart `json:"part_uploads"`
+	CompleteParts []CompletePart `json:"part_uploads"`
 }
 
 type Requirement struct {

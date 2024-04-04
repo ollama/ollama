@@ -24,7 +24,7 @@ func (c *Client) oclient() *ollama.Client {
 }
 
 type PushParams struct {
-	Uploaded []apitype.CompletePart
+	CompleteParts []apitype.CompletePart
 }
 
 // Push pushes a manifest to the server.
@@ -32,9 +32,9 @@ func (c *Client) Push(ctx context.Context, ref string, manifest []byte, p *PushP
 	p = cmp.Or(p, &PushParams{})
 	// TODO(bmizerany): backoff
 	v, err := ollama.Do[apitype.PushResponse](ctx, c.oclient(), "POST", "/v1/push", &apitype.PushRequest{
-		Ref:      ref,
-		Manifest: manifest,
-		Uploaded: p.Uploaded,
+		Ref:           ref,
+		Manifest:      manifest,
+		CompleteParts: p.CompleteParts,
 	})
 	if err != nil {
 		return nil, err

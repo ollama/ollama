@@ -99,7 +99,7 @@ func (s *Server) handlePush(_ http.ResponseWriter, r *http.Request) error {
 
 	// commit the manifest to the registry
 	requirements, err = c.Push(r.Context(), params.Name, man, &registry.PushParams{
-		Uploaded: uploads,
+		CompleteParts: uploads,
 	})
 	if err != nil {
 		return err
