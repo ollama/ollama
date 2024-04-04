@@ -11,7 +11,8 @@ type PartKind int
 
 // Levels of concreteness
 const (
-	Domain PartKind = iota
+	Invalid PartKind = iota
+	Domain
 	Namespace
 	Name
 	Tag
@@ -140,11 +141,11 @@ func (r Ref) Less(o Ref) bool {
 // The length of the returned slice is always 5.
 func (r Ref) Parts() []string {
 	return []string{
-		Domain:    r.domain,
-		Namespace: r.namespace,
-		Name:      r.name,
-		Tag:       r.tag,
-		Build:     r.build,
+		r.domain,
+		r.namespace,
+		r.name,
+		r.tag,
+		r.build,
 	}
 }
 
@@ -190,6 +191,8 @@ func ParseRef(s string) Ref {
 			r = r.WithTag(part)
 		case Build:
 			r = r.WithBuild(part)
+		case Invalid:
+			return Ref{}
 		}
 	}
 	if !r.Valid() {
@@ -213,6 +216,9 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 		}
 
 		if len(s) > 255 || len(s) == 0 {
+			return
+		}
+		if !isValidPart(string(s[0])) {
 			return
 		}
 
@@ -259,6 +265,7 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 					}
 					state, j = Domain, i
 				default:
+					yield(Invalid, "")
 					return
 				}
 			}
@@ -269,7 +276,6 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 		case Domain:
 			yieldValid(Domain, s[:j])
 		case Namespace:
-			println("namespace", s[:j])
 			yieldValid(Namespace, s[:j])
 		default:
 			yieldValid(Name, s[:j])
