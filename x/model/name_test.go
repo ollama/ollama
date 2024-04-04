@@ -224,3 +224,15 @@ func ExampleMerge() {
 	// Output:
 	// registry.ollama.com/mistral:latest+Q4_0
 }
+
+func ExampleName_MapHash() {
+	m := map[uint64]bool{}
+
+	m[ParseName("mistral:latest+q4").MapHash()] = true
+	m[ParseName("miSTRal:latest+Q4").MapHash()] = true
+	m[ParseName("mistral:LATest+Q4").MapHash()] = true
+
+	fmt.Println(len(m))
+	// Output:
+	// 1
+}
