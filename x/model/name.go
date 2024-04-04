@@ -33,11 +33,12 @@ var kindNames = map[NamePart]string{
 	Build:     "Build",
 }
 
-// Name is an opaque reference to a model.
+// Name is an opaque reference to a model. It holds the parts of a model,
+// casing preserved, and provides methods for comparing and manipulating
+// them in a case-insensitive manner.
 //
-// It is not comparable. To use as a map key, use [MapHash].
-//
-// Clients should use the [ParseName] function to create a Name from a string.
+// To create a Name, use [ParseName]. To compare two names, use
+// [Name.EqualFold]. To use a name as a key in a map, use [Name.MapHash].
 //
 // The parts of a Name are:
 //
@@ -47,11 +48,15 @@ var kindNames = map[NamePart]string{
 //   - Tag: the tag of the model (optional)
 //   - Build: the build of the model; usually the quantization or "file type" (optional)
 //
-// A call to [Name.Valid] will return true if the model has a valid non-empty model
-// part.
+// The parts can be obtained in their original form by calling [Name.Parts],
+// [Name.Host], [Name.Namespace], [Name.Model], [Name.Tag], and [Name.Build].
 //
-// A call to [Name.Complete] will return true if the model has a valid model part
-// and all of its other parts are also non-empty and valid.
+// To check if a Name has at minimum a valid model part, use [Name.Valid].
+//
+// To check if a Name is fully qualified, use [Name.Complete]. A fully
+// qualified name has all parts present.
+//
+// To update parts of a Name with defaults, use [Merge].
 type Name struct {
 	_ structs.Incomparable
 
@@ -60,6 +65,81 @@ type Name struct {
 	model     string
 	tag       string
 	build     string
+}
+
+// ParseName parses s into a Name. The input string must be a valid form of
+// a model name in the form:
+//
+//	<host>/<namespace>/<model>:<tag>+<build>
+//
+// The name part is required, all others are optional. If a part is missing,
+// it is left empty in the returned Name. If a part is invalid, the zero Ref
+// value is returned.
+//
+// The build part is normalized to uppercase.
+//
+// Examples of valid paths:
+//
+//	"example.com/mistral:7b+x"
+//	"example.com/mistral:7b+Q4_0"
+//	"mistral:7b+x"
+//	"example.com/x/mistral:latest+Q4_0"
+//	"example.com/x/mistral:latest"
+//
+// Examples of invalid paths:
+//
+//	"example.com/mistral:7b+"
+//	"example.com/mistral:7b+Q4_0+"
+//	"x/y/z/z:8n+I"
+//	""
+func ParseName(s string) Name {
+	var r Name
+	for kind, part := range NameParts(s) {
+		switch kind {
+		case Host:
+			r.host = part
+		case Namespace:
+			r.namespace = part
+		case Model:
+			r.model = part
+		case Tag:
+			r.tag = part
+		case Build:
+			r.build = strings.ToUpper(part)
+		case Invalid:
+			return Name{}
+		}
+	}
+	if !r.Valid() {
+		return Name{}
+	}
+	return r
+}
+
+// Merge performs a partial merge of src into dst. Only the non-name parts
+// are merged. The name part is always left untouched. Other parts are
+// merged if and only if they are missing in dst.
+//
+// Use this for merging a fully qualified ref with a partial ref, such as
+// when filling in a missing parts with defaults.
+//
+// The returned Name will only be valid if dst is valid.
+func Merge(dst, src Name) Name {
+	return Name{
+		// name is left untouched
+		model: dst.model,
+
+		host:      cmp.Or(dst.host, src.host),
+		namespace: cmp.Or(dst.namespace, src.namespace),
+		tag:       cmp.Or(dst.tag, src.tag),
+		build:     cmp.Or(dst.build, src.build),
+	}
+}
+
+// WithBuild returns a copy of r with the build set to the given string.
+func (r Name) WithBuild(build string) Name {
+	r.build = build
+	return r
 }
 
 var mapHashSeed = maphash.MakeSeed()
@@ -179,81 +259,6 @@ func (r Name) Build() string     { return r.build }
 // case.
 func (r Name) EqualFold(o Name) bool {
 	return r.MapHash() == o.MapHash()
-}
-
-// ParseName parses s into a Name. The input string must be a valid form of
-// a model name in the form:
-//
-//	<host>/<namespace>/<model>:<tag>+<build>
-//
-// The name part is required, all others are optional. If a part is missing,
-// it is left empty in the returned Name. If a part is invalid, the zero Ref
-// value is returned.
-//
-// The build part is normalized to uppercase.
-//
-// Examples of valid paths:
-//
-//	"example.com/mistral:7b+x"
-//	"example.com/mistral:7b+Q4_0"
-//	"mistral:7b+x"
-//	"example.com/x/mistral:latest+Q4_0"
-//	"example.com/x/mistral:latest"
-//
-// Examples of invalid paths:
-//
-//	"example.com/mistral:7b+"
-//	"example.com/mistral:7b+Q4_0+"
-//	"x/y/z/z:8n+I"
-//	""
-func ParseName(s string) Name {
-	var r Name
-	for kind, part := range NameParts(s) {
-		switch kind {
-		case Host:
-			r.host = part
-		case Namespace:
-			r.namespace = part
-		case Model:
-			r.model = part
-		case Tag:
-			r.tag = part
-		case Build:
-			r.build = strings.ToUpper(part)
-		case Invalid:
-			return Name{}
-		}
-	}
-	if !r.Valid() {
-		return Name{}
-	}
-	return r
-}
-
-// Merge performs a partial merge of src into dst. Only the non-name parts
-// are merged. The name part is always left untouched. Other parts are
-// merged if and only if they are missing in dst.
-//
-// Use this for merging a fully qualified ref with a partial ref, such as
-// when filling in a missing parts with defaults.
-//
-// The returned Name will only be valid if dst is valid.
-func Merge(dst, src Name) Name {
-	return Name{
-		// name is left untouched
-		model: dst.model,
-
-		host:      cmp.Or(dst.host, src.host),
-		namespace: cmp.Or(dst.namespace, src.namespace),
-		tag:       cmp.Or(dst.tag, src.tag),
-		build:     cmp.Or(dst.build, src.build),
-	}
-}
-
-// WithBuild returns a copy of r with the build set to the given string.
-func (r Name) WithBuild(build string) Name {
-	r.build = build
-	return r
 }
 
 // Parts returns a sequence of the parts of a ref string from most specific
