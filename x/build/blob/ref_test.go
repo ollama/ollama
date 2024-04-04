@@ -71,27 +71,51 @@ func TestParseRef(t *testing.T) {
 
 func TestRefComplete(t *testing.T) {
 	cases := []struct {
-		in   string
-		want bool
+		in                   string
+		complete             bool
+		completeWithoutBuild bool
 	}{
-		{"", false},
-		{"example.com/mistral:7b+x", false},
-		{"example.com/mistral:7b+Q4_0", false},
-		{"example.com/x/mistral:latest", false},
-		{"mistral:7b+x", false},
-
-		{"example.com/x/mistral:latest+Q4_0", true},
+		{"", false, false},
+		{"example.com/mistral:7b+x", false, false},
+		{"example.com/mistral:7b+Q4_0", false, false},
+		{"mistral:7b+x", false, false},
+		{"example.com/x/mistral:latest+Q4_0", true, true},
+		{"example.com/x/mistral:latest", false, true},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
 			ref := ParseRef(tt.in)
 			t.Logf("ParseRef(%q) = %#v", tt.in, ref)
-			if g := ref.Complete(); g != tt.want {
-				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.want)
+			if g := ref.Complete(); g != tt.complete {
+				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.complete)
 			}
-			if ref.Complete() != Complete(tt.in) {
-				t.Errorf("ParseRef(%s).Complete() != Complete(%s)", tt.in, tt.in)
+			if g := ref.CompleteWithoutBuild(); g != tt.completeWithoutBuild {
+				t.Errorf("CompleteWithoutBuild(%q) = %v; want %v", tt.in, g, tt.completeWithoutBuild)
+			}
+		})
+	}
+}
+
+func TestRefStringVariants(t *testing.T) {
+	cases := []struct {
+		in              string
+		nameAndTag      string
+		nameTagAndBuild string
+	}{
+		{"x/y/z:8n+I", "z:8n", "z:8n+I"},
+		{"x/y/z:8n", "z:8n", "z:8n"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			ref := ParseRef(tt.in)
+			t.Logf("ParseRef(%q) = %#v", tt.in, ref)
+			if g := ref.NameAndTag(); g != tt.nameAndTag {
+				t.Errorf("NameAndTag(%q) = %q; want %q", tt.in, g, tt.nameAndTag)
+			}
+			if g := ref.NameTagAndBuild(); g != tt.nameTagAndBuild {
+				t.Errorf("NameTagAndBuild(%q) = %q; want %q", tt.in, g, tt.nameTagAndBuild)
 			}
 		})
 	}
@@ -165,6 +189,12 @@ func FuzzParseRef(f *testing.F) {
 			t.Skipf("invalid ref: %q", s)
 		}
 
+		for _, p := range r0.Parts() {
+			if len(p) > MaxRefLength {
+				t.Errorf("part too long: %q", p)
+			}
+		}
+
 		if !strings.EqualFold(r0.String(), s) {
 			t.Errorf("String() did not round-trip with case insensitivity: %q\ngot  = %q\nwant = %q", s, r0.String(), s)
 		}
@@ -173,5 +203,6 @@ func FuzzParseRef(f *testing.F) {
 		if r0 != r1 {
 			t.Errorf("round-trip mismatch: %+v != %+v", r0, r1)
 		}
+
 	})
 }

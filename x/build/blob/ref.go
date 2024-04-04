@@ -126,13 +126,17 @@ func (r Ref) String() string {
 	return b.String()
 }
 
-// Complete returns true if the ref is valid and has no empty parts.
+// Complete reports whether the ref is fully qualified. That is it has a
+// domain, namespace, name, tag, and build.
 func (r Ref) Complete() bool {
 	return r.Valid() && !slices.Contains(r.Parts(), "")
 }
 
+// CompleteWithoutBuild reports whether the ref would be complete if it had a
+// valid build.
 func (r Ref) CompleteWithoutBuild() bool {
-	return r.Valid() && !slices.Contains(r.Parts()[:Tag], "")
+	r.build = "x"
+	return r.Valid() && r.Complete()
 }
 
 // Less returns true if r is less concrete than o; false otherwise.
