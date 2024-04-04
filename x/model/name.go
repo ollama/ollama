@@ -181,6 +181,8 @@ func ParseName(s string) Name {
 //
 // Use this for merging a fully qualified ref with a partial ref, such as
 // when filling in a missing parts with defaults.
+//
+// The returned Name will only be valid if dst is valid.
 func Merge(dst, src Name) Name {
 	return Name{
 		// name is left untouched
@@ -204,6 +206,9 @@ func (r Name) WithBuild(build string) Name {
 //
 // It normalizes the input string by removing "http://" and "https://" only.
 // No other normalization is done.
+//
+// As a special case, question marks are ignored so they may be used as
+// placeholders for missing parts in string literals.
 func NameParts(s string) iter.Seq2[NamePart, string] {
 	return func(yield func(NamePart, string) bool) {
 		if strings.HasPrefix(s, "http://") {
