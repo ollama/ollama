@@ -92,6 +92,12 @@ type Name struct {
 //	"example.com/mistral:7b+Q4_0+"
 //	"x/y/z/z:8n+I"
 //	""
+//
+// It returns the zero value if any part is invalid.
+//
+// As a rule of thumb, an valid name is one that can be round-tripped with
+// the [Name.String] method. That means ("x+") is invalid because
+// [Name.String] will not print a "+" if the build is empty.
 func ParseName(s string) Name {
 	var r Name
 	for kind, part := range NameParts(s) {
