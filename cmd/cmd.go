@@ -107,14 +107,18 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 				files := []string{}
 
-				for _, p := range []string{"model-*.safetensors", "consolidated.*.pth"} {
-					tfiles, err := filepath.Glob(filepath.Join(path, p))
+				tfiles, err := filepath.Glob(filepath.Join(path, "pytorch_model-*.bin"))
+				if err != nil {
+					return err
+				} else if len(tfiles) == 0 {
+					tfiles, err = filepath.Glob(filepath.Join(path, "model-*.safetensors"))
 					if err != nil {
 						return err
 					}
-					for _, f := range tfiles {
-						files = append(files, f)
-					}
+				}
+
+				for _, f := range tfiles {
+					files = append(files, f)
 				}
 
 				if len(files) == 0 {
@@ -132,7 +136,19 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 					// just skip whatever files aren't there
 					if os.IsNotExist(err) {
-						continue
+						if strings.HasSuffix(fn, "tokenizer.model") {
+							// try the parent dir before giving up
+							parentDir := filepath.Dir(path)
+							newFn := filepath.Join(parentDir, "tokenizer.model")
+							f, err = os.Open(newFn)
+							if os.IsNotExist(err) {
+								continue
+							} else if err != nil {
+								return err
+							}
+						} else {
+							continue
+						}
 					} else if err != nil {
 						return err
 					}

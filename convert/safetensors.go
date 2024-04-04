@@ -178,8 +178,13 @@ func (m *SafetensorFormat) GetParams(dirpath string) (*Params, error) {
 }
 
 func (m *SafetensorFormat) GetLayerName(n string) (string, error) {
+	directMap := map[string]string{
+		"model.embed_tokens.weight": "token_embd.weight",
+		"lm_head.weight":            "output.weight",
+		"model.norm.weight":         "output_norm.weight",
+	}
+
 	tMap := map[string]string{
-		"model.embed_tokens.weight":                           "token_embd.weight",
 		"model.layers.(\\d+).input_layernorm.weight":          "blk.$1.attn_norm.weight",
 		"model.layers.(\\d+).mlp.down_proj.weight":            "blk.$1.ffn_down.weight",
 		"model.layers.(\\d+).mlp.gate_proj.weight":            "blk.$1.ffn_gate.weight",
@@ -189,11 +194,9 @@ func (m *SafetensorFormat) GetLayerName(n string) (string, error) {
 		"model.layers.(\\d+).self_attn.o_proj.weight":         "blk.$1.attn_output.weight",
 		"model.layers.(\\d+).self_attn.q_proj.weight":         "blk.$1.attn_q.weight",
 		"model.layers.(\\d+).self_attn.v_proj.weight":         "blk.$1.attn_v.weight",
-		"lm_head.weight":    "output.weight",
-		"model.norm.weight": "output_norm.weight",
 	}
 
-	v, ok := tMap[n]
+	v, ok := directMap[n]
 	if ok {
 		return v, nil
 	}
@@ -257,7 +260,7 @@ func (r safetensorWriterTo) WriteTo(w io.Writer) (n int64, err error) {
 				tDataF16 := float16.Fromfloat32(v)
 				tempBuf[cnt] = uint16(tDataF16)
 			}
-			if err := binary.Write(w, binary.LittleEndian, tempBuf); err != nil {
+			if err := binary.Write(w, r.bo, tempBuf); err != nil {
 				return 0, err
 			}
 		}
