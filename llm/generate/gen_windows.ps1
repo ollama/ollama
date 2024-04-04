@@ -183,9 +183,17 @@ if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
 
 # GCC build for direct linking into the Go binary
 init_vars
+# cmake will silently fallback to msvc compilers if mingw isn't in the path, so detect and fail fast
+# as we need this to be compiled by gcc for golang to be able to link with itx
+write-host "Checking for MinGW..."
+# error action ensures we exit on failure
+get-command gcc
+get-command mingw32-make
 $script:cmakeTargets = @("llama", "ggml")
 $script:cmakeDefs = @(
     "-G", "MinGW Makefiles"
+    "-DCMAKE_C_COMPILER=gcc.exe",
+    "-DCMAKE_CXX_COMPILER=g++.exe",
     "-DBUILD_SHARED_LIBS=off",
     "-DLLAMA_NATIVE=off",
     "-DLLAMA_AVX=off",
