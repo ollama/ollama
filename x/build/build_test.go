@@ -29,7 +29,7 @@ func TestServerBuildErrors(t *testing.T) {
 
 	t.Run("FROM pragma missing", func(t *testing.T) {
 		err := s.Build(qualifiedRef, model.File{})
-		var e *model.Error
+		var e *model.FileError
 		if !errors.As(err, &e) {
 			t.Fatalf("unexpected error: %v", err)
 		}

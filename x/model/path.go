@@ -191,6 +191,12 @@ func Merge(a, b Path) Path {
 	}
 }
 
+// WithBuild returns a copy of r with the build set to the given string.
+func (r Path) WithBuild(build string) Path {
+	r.build = build
+	return r
+}
+
 // Parts returns a sequence of the parts of a ref string from most specific
 // to least specific.
 //

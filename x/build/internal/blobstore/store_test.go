@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"bllamo.com/build/blob"
+	"bllamo.com/model"
 	"kr.dev/diff"
 )
 
@@ -68,9 +68,9 @@ func TestStoreBasicBlob(t *testing.T) {
 	}
 
 	// Check tags
-	ref := blob.ParseRef("registry.ollama.ai/library/test:latest+KQED")
+	name := model.ParsePath("registry.ollama.ai/library/test:latest+KQED")
 
-	t.Logf("RESOLVING: %q", ref.Parts())
+	t.Logf("RESOLVING: %q", name.Parts())
 
 }
 

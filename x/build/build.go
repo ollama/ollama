@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"bllamo.com/build/blob"
 	"bllamo.com/build/internal/blobstore"
 	"bllamo.com/model"
 )
@@ -53,8 +52,8 @@ func Open(dir string) (*Server, error) {
 }
 
 func (s *Server) Build(ref string, f model.File) error {
-	br := blob.ParseRef(ref)
-	if !br.CompleteWithoutBuild() {
+	mp := model.ParsePath(ref)
+	if !mp.CompleteWithoutBuild() {
 		return fmt.Errorf("%w: %q", ErrIncompleteRef, ref)
 	}
 
@@ -67,7 +66,7 @@ func (s *Server) Build(ref string, f model.File) error {
 	// 5. Done.
 
 	if f.From == "" {
-		return &model.Error{Pragma: "FROM", Message: "missing"}
+		return &model.FileError{Pragma: "FROM", Message: "missing"}
 	}
 
 	var layers []layerJSON
@@ -98,7 +97,7 @@ func (s *Server) Build(ref string, f model.File) error {
 	}
 
 	return s.setManifestData(
-		br.WithBuild(info.FileType.String()),
+		mp.WithBuild(info.FileType.String()),
 		data,
 	)
 }
@@ -113,13 +112,13 @@ func (s *Server) LayerFile(digest string) (string, error) {
 }
 
 func (s *Server) ManifestData(ref string) ([]byte, error) {
-	data, _, err := s.resolve(blob.ParseRef(ref))
+	data, _, err := s.resolve(model.ParsePath(ref))
 	return data, err
 }
 
 // WeightFile returns the absolute path to the weights file for the given model ref.
 func (s *Server) WeightsFile(ref string) (string, error) {
-	m, err := s.getManifest(blob.ParseRef(ref))
+	m, err := s.getManifest(model.ParsePath(ref))
 	if err != nil {
 		return "", err
 	}
@@ -140,12 +139,12 @@ func (s *Server) WeightsFile(ref string) (string, error) {
 // blob, and then have the ref point to that blob. This would simplify the
 // code, allow us to have integrity checks on the manifest, and clean up
 // this interface.
-func (s *Server) resolve(ref blob.Ref) (data []byte, path string, err error) {
-	path, err = s.refFileName(ref)
+func (s *Server) resolve(ref model.Path) (data []byte, fileName string, err error) {
+	fileName, err = s.refFileName(ref)
 	if err != nil {
 		return nil, "", err
 	}
-	data, err = os.ReadFile(path)
+	data, err = os.ReadFile(fileName)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, "", fmt.Errorf("%w: %q", ErrNotFound, ref)
 	}
@@ -155,16 +154,16 @@ func (s *Server) resolve(ref blob.Ref) (data []byte, path string, err error) {
 		// be on disk later.
 		return nil, "", fmt.Errorf("manifest read error: %v", err)
 	}
-	return data, path, nil
+	return data, fileName, nil
 }
 
 func (s *Server) SetManifestData(ref string, data []byte) error {
-	return s.setManifestData(blob.ParseRef(ref), data)
+	return s.setManifestData(model.ParsePath(ref), data)
 }
 
 // Set sets the data for the given ref.
-func (s *Server) setManifestData(br blob.Ref, data []byte) error {
-	path, err := s.refFileName(br)
+func (s *Server) setManifestData(mp model.Path, data []byte) error {
+	path, err := s.refFileName(mp)
 	if err != nil {
 		return err
 	}
@@ -177,11 +176,11 @@ func (s *Server) setManifestData(br blob.Ref, data []byte) error {
 	return nil
 }
 
-func (s *Server) refFileName(ref blob.Ref) (string, error) {
-	if !ref.Complete() {
-		return "", fmt.Errorf("ref not fully qualified: %q", ref)
+func (s *Server) refFileName(mp model.Path) (string, error) {
+	if !mp.Complete() {
+		return "", fmt.Errorf("ref not fully qualified: %q", mp)
 	}
-	return filepath.Join(s.st.Dir(), "manifests", filepath.Join(ref.Parts()...)), nil
+	return filepath.Join(s.st.Dir(), "manifests", filepath.Join(mp.Parts()...)), nil
 }
 
 type manifestJSON struct {
@@ -197,7 +196,7 @@ type layerJSON struct {
 	Size      int64        `json:"size"`
 }
 
-func (s *Server) getManifest(ref blob.Ref) (manifestJSON, error) {
+func (s *Server) getManifest(ref model.Path) (manifestJSON, error) {
 	data, path, err := s.resolve(ref)
 	if err != nil {
 		return manifestJSON{}, err
