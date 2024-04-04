@@ -52,7 +52,7 @@ func Open(dir string) (*Server, error) {
 }
 
 func (s *Server) Build(ref string, f model.File) error {
-	mp := model.ParsePath(ref)
+	mp := model.ParseName(ref)
 	if !mp.CompleteWithoutBuild() {
 		return fmt.Errorf("%w: %q", ErrIncompleteRef, ref)
 	}
@@ -112,13 +112,13 @@ func (s *Server) LayerFile(digest string) (string, error) {
 }
 
 func (s *Server) ManifestData(ref string) ([]byte, error) {
-	data, _, err := s.resolve(model.ParsePath(ref))
+	data, _, err := s.resolve(model.ParseName(ref))
 	return data, err
 }
 
 // WeightFile returns the absolute path to the weights file for the given model ref.
 func (s *Server) WeightsFile(ref string) (string, error) {
-	m, err := s.getManifest(model.ParsePath(ref))
+	m, err := s.getManifest(model.ParseName(ref))
 	if err != nil {
 		return "", err
 	}
@@ -139,7 +139,7 @@ func (s *Server) WeightsFile(ref string) (string, error) {
 // blob, and then have the ref point to that blob. This would simplify the
 // code, allow us to have integrity checks on the manifest, and clean up
 // this interface.
-func (s *Server) resolve(ref model.Path) (data []byte, fileName string, err error) {
+func (s *Server) resolve(ref model.Name) (data []byte, fileName string, err error) {
 	fileName, err = s.refFileName(ref)
 	if err != nil {
 		return nil, "", err
@@ -158,11 +158,11 @@ func (s *Server) resolve(ref model.Path) (data []byte, fileName string, err erro
 }
 
 func (s *Server) SetManifestData(ref string, data []byte) error {
-	return s.setManifestData(model.ParsePath(ref), data)
+	return s.setManifestData(model.ParseName(ref), data)
 }
 
 // Set sets the data for the given ref.
-func (s *Server) setManifestData(mp model.Path, data []byte) error {
+func (s *Server) setManifestData(mp model.Name, data []byte) error {
 	path, err := s.refFileName(mp)
 	if err != nil {
 		return err
@@ -176,7 +176,7 @@ func (s *Server) setManifestData(mp model.Path, data []byte) error {
 	return nil
 }
 
-func (s *Server) refFileName(mp model.Path) (string, error) {
+func (s *Server) refFileName(mp model.Name) (string, error) {
 	if !mp.Complete() {
 		return "", fmt.Errorf("ref not fully qualified: %q", mp)
 	}
@@ -196,7 +196,7 @@ type layerJSON struct {
 	Size      int64        `json:"size"`
 }
 
-func (s *Server) getManifest(ref model.Path) (manifestJSON, error) {
+func (s *Server) getManifest(ref model.Name) (manifestJSON, error) {
 	data, path, err := s.resolve(ref)
 	if err != nil {
 		return manifestJSON{}, err

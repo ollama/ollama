@@ -20,7 +20,7 @@ type MessagePragma struct {
 
 type File struct {
 	// From is a required pragma that specifies the source of the model,
-	// either on disk, or by reference (see blob.ParseRef).
+	// either on disk, or by reference (see model.ParseName).
 	From string
 
 	// Optional

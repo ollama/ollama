@@ -82,7 +82,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	mp := model.ParsePath(pr.Name)
+	mp := model.ParseName(pr.Name)
 	if !mp.Complete() {
 		return oweb.Invalid("name", pr.Name, "must be complete")
 	}

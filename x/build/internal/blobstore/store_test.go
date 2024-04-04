@@ -68,7 +68,7 @@ func TestStoreBasicBlob(t *testing.T) {
 	}
 
 	// Check tags
-	name := model.ParsePath("registry.ollama.ai/library/test:latest+KQED")
+	name := model.ParseName("registry.ollama.ai/library/test:latest+KQED")
 
 	t.Logf("RESOLVING: %q", name.Parts())
 

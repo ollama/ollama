@@ -7,35 +7,35 @@ import (
 	"strings"
 )
 
-const MaxPathLength = 255
+const MaxNameLength = 255
 
-type PathPart int
+type NamePart int
 
 // Levels of concreteness
 const (
-	Invalid PathPart = iota
-	Domain
+	Invalid NamePart = iota
+	Registry
 	Namespace
-	Name
+	Short
 	Tag
 	Build
 )
 
-var kindNames = map[PathPart]string{
+var kindNames = map[NamePart]string{
 	Invalid:   "Invalid",
-	Domain:    "Domain",
+	Registry:  "Domain",
 	Namespace: "Namespace",
-	Name:      "Name",
+	Short:     "Name",
 	Tag:       "Tag",
 	Build:     "Build",
 }
 
-// Path is an opaque reference to a model.
+// Name is an opaque reference to a model.
 //
 // It is comparable and can be used as a map key.
 //
-// Users or Path must check Valid before using it.
-type Path struct {
+// Users or Name must check Valid before using it.
+type Name struct {
 	domain    string
 	namespace string
 	name      string
@@ -46,7 +46,7 @@ type Path struct {
 // Format returns a string representation of the ref with the given
 // concreteness. If a part is missing, it is replaced with a loud
 // placeholder.
-func (r Path) Full() string {
+func (r Name) Full() string {
 	r.domain = cmp.Or(r.domain, "!(MISSING DOMAIN)")
 	r.namespace = cmp.Or(r.namespace, "!(MISSING NAMESPACE)")
 	r.name = cmp.Or(r.name, "!(MISSING NAME)")
@@ -55,21 +55,21 @@ func (r Path) Full() string {
 	return r.String()
 }
 
-func (r Path) NameAndTag() string {
+func (r Name) ShortAndTag() string {
 	r.domain = ""
 	r.namespace = ""
 	r.build = ""
 	return r.String()
 }
 
-func (r Path) NameTagAndBuild() string {
+func (r Name) ShortTagAndBuild() string {
 	r.domain = ""
 	r.namespace = ""
 	return r.String()
 }
 
 // String returns the fully qualified ref string.
-func (r Path) String() string {
+func (r Name) String() string {
 	var b strings.Builder
 	if r.domain != "" {
 		b.WriteString(r.domain)
@@ -93,19 +93,19 @@ func (r Path) String() string {
 
 // Complete reports whether the ref is fully qualified. That is it has a
 // domain, namespace, name, tag, and build.
-func (r Path) Complete() bool {
+func (r Name) Complete() bool {
 	return r.Valid() && !slices.Contains(r.Parts(), "")
 }
 
 // CompleteWithoutBuild reports whether the ref would be complete if it had a
 // valid build.
-func (r Path) CompleteWithoutBuild() bool {
+func (r Name) CompleteWithoutBuild() bool {
 	r.build = "x"
 	return r.Valid() && r.Complete()
 }
 
 // Less returns true if r is less concrete than o; false otherwise.
-func (r Path) Less(o Path) bool {
+func (r Name) Less(o Name) bool {
 	rp := r.Parts()
 	op := o.Parts()
 	for i := range rp {
@@ -119,7 +119,7 @@ func (r Path) Less(o Path) bool {
 // Parts returns the parts of the ref in order of concreteness.
 //
 // The length of the returned slice is always 5.
-func (r Path) Parts() []string {
+func (r Name) Parts() []string {
 	return []string{
 		r.domain,
 		r.namespace,
@@ -129,13 +129,13 @@ func (r Path) Parts() []string {
 	}
 }
 
-func (r Path) Domain() string    { return r.namespace }
-func (r Path) Namespace() string { return r.namespace }
-func (r Path) Name() string      { return r.name }
-func (r Path) Tag() string       { return r.tag }
-func (r Path) Build() string     { return r.build }
+func (r Name) Domain() string    { return r.namespace }
+func (r Name) Namespace() string { return r.namespace }
+func (r Name) Name() string      { return r.name }
+func (r Name) Tag() string       { return r.tag }
+func (r Name) Build() string     { return r.build }
 
-// ParsePath parses a model path string into a Path.
+// ParseName parses a model path string into a Name.
 //
 // Examples of valid paths:
 //
@@ -151,26 +151,26 @@ func (r Path) Build() string     { return r.build }
 //	"example.com/mistral:7b+Q4_0+"
 //	"x/y/z/z:8n+I"
 //	""
-func ParsePath(s string) Path {
-	var r Path
-	for kind, part := range PathParts(s) {
+func ParseName(s string) Name {
+	var r Name
+	for kind, part := range NameParts(s) {
 		switch kind {
-		case Domain:
+		case Registry:
 			r.domain = part
 		case Namespace:
 			r.namespace = part
-		case Name:
+		case Short:
 			r.name = part
 		case Tag:
 			r.tag = part
 		case Build:
 			r.build = strings.ToUpper(part)
 		case Invalid:
-			return Path{}
+			return Name{}
 		}
 	}
 	if !r.Valid() {
-		return Path{}
+		return Name{}
 	}
 	return r
 }
@@ -179,8 +179,8 @@ func ParsePath(s string) Path {
 // The name is left untouched.
 //
 // Use this for merging a ref with a default ref.
-func Merge(a, b Path) Path {
-	return Path{
+func Merge(a, b Name) Name {
+	return Name{
 		// name is left untouched
 		name: a.name,
 
@@ -192,7 +192,7 @@ func Merge(a, b Path) Path {
 }
 
 // WithBuild returns a copy of r with the build set to the given string.
-func (r Path) WithBuild(build string) Path {
+func (r Name) WithBuild(build string) Name {
 	r.build = build
 	return r
 }
@@ -202,8 +202,8 @@ func (r Path) WithBuild(build string) Path {
 //
 // It normalizes the input string by removing "http://" and "https://" only.
 // No other normalization is done.
-func PathParts(s string) iter.Seq2[PathPart, string] {
-	return func(yield func(PathPart, string) bool) {
+func NameParts(s string) iter.Seq2[NamePart, string] {
+	return func(yield func(NamePart, string) bool) {
 		if strings.HasPrefix(s, "http://") {
 			s = s[len("http://"):]
 		}
@@ -211,11 +211,11 @@ func PathParts(s string) iter.Seq2[PathPart, string] {
 			s = s[len("https://"):]
 		}
 
-		if len(s) > MaxPathLength || len(s) == 0 {
+		if len(s) > MaxNameLength || len(s) == 0 {
 			return
 		}
 
-		yieldValid := func(kind PathPart, part string) bool {
+		yieldValid := func(kind NamePart, part string) bool {
 			if !isValidPart(part) {
 				yield(Invalid, "")
 				return false
@@ -243,15 +243,15 @@ func PathParts(s string) iter.Seq2[PathPart, string] {
 					if !yieldValid(Tag, s[i+1:j]) {
 						return
 					}
-					state, j = Name, i
+					state, j = Short, i
 				default:
 					yield(Invalid, "")
 					return
 				}
 			case '/':
 				switch state {
-				case Name, Tag, Build:
-					if !yieldValid(Name, s[i+1:j]) {
+				case Short, Tag, Build:
+					if !yieldValid(Short, s[i+1:j]) {
 						return
 					}
 					state, j = Namespace, i
@@ -259,7 +259,7 @@ func PathParts(s string) iter.Seq2[PathPart, string] {
 					if !yieldValid(Namespace, s[i+1:j]) {
 						return
 					}
-					state, j = Domain, i
+					state, j = Registry, i
 				default:
 					yield(Invalid, "")
 					return
@@ -275,14 +275,14 @@ func PathParts(s string) iter.Seq2[PathPart, string] {
 		if state <= Namespace {
 			yieldValid(state, s[:j])
 		} else {
-			yieldValid(Name, s[:j])
+			yieldValid(Short, s[:j])
 		}
 	}
 }
 
 // Valid returns true if the ref has a valid name. To know if a ref is
 // "complete", use Complete.
-func (r Path) Valid() bool {
+func (r Name) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
 	return r.name != ""
