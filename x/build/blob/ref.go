@@ -3,17 +3,20 @@ package blob
 import (
 	"cmp"
 	"fmt"
+	"iter"
 	"slices"
 	"strings"
 )
 
+type Kind int
+
 // Levels of concreteness
 const (
-	domain = iota
-	namespace
-	name
-	tag
-	build
+	Domain Kind = iota
+	Namespace
+	Name
+	Tag
+	Build
 )
 
 // Ref is an opaque reference to a blob.
@@ -32,42 +35,42 @@ type Ref struct {
 // WithDomain returns a copy of r with the provided domain. If the provided
 // domain is empty, it returns the short, unqualified copy of r.
 func (r Ref) WithDomain(s string) Ref {
-	return with(r, domain, s)
+	return with(r, Domain, s)
 }
 
 // WithNamespace returns a copy of r with the provided namespace. If the
 // provided namespace is empty, it returns the short, unqualified copy of r.
 func (r Ref) WithNamespace(s string) Ref {
-	return with(r, namespace, s)
+	return with(r, Namespace, s)
 }
 
 func (r Ref) WithTag(s string) Ref {
-	return with(r, tag, s)
+	return with(r, Tag, s)
 }
 
 // WithBuild returns a copy of r with the provided build. If the provided
 // build is empty, it returns the short, unqualified copy of r.
 func (r Ref) WithBuild(s string) Ref {
-	return with(r, build, s)
+	return with(r, Build, s)
 }
 
-func with(r Ref, part int, value string) Ref {
+func with(r Ref, kind Kind, value string) Ref {
 	if value != "" && !isValidPart(value) {
 		return Ref{}
 	}
-	switch part {
-	case domain:
+	switch kind {
+	case Domain:
 		r.domain = value
-	case namespace:
+	case Namespace:
 		r.namespace = value
-	case name:
+	case Name:
 		r.name = value
-	case tag:
+	case Tag:
 		r.tag = value
-	case build:
+	case Build:
 		r.build = value
 	default:
-		panic(fmt.Sprintf("invalid completeness: %d", part))
+		panic(fmt.Sprintf("invalid completeness: %d", kind))
 	}
 	return r
 }
@@ -126,7 +129,7 @@ func (r Ref) Complete() bool {
 }
 
 func (r Ref) CompleteWithoutBuild() bool {
-	return r.Valid() && !slices.Contains(r.Parts()[:tag], "")
+	return r.Valid() && !slices.Contains(r.Parts()[:Tag], "")
 }
 
 // Less returns true if r is less concrete than o; false otherwise.
@@ -146,11 +149,11 @@ func (r Ref) Less(o Ref) bool {
 // The length of the returned slice is always 5.
 func (r Ref) Parts() []string {
 	return []string{
-		domain:    r.domain,
-		namespace: r.namespace,
-		name:      r.name,
-		tag:       r.tag,
-		build:     r.build,
+		Domain:    r.domain,
+		Namespace: r.namespace,
+		Name:      r.name,
+		Tag:       r.tag,
+		Build:     r.build,
 	}
 }
 
@@ -183,74 +186,101 @@ func (r Ref) Build() string     { return r.build }
 //	ParseRef("m stral") returns ("", "", "") // zero
 //	ParseRef("... 129 chars ...") returns ("", "", "") // zero
 func ParseRef(s string) Ref {
-	if len(s) > 128 {
-		return Ref{}
-	}
-
-	if strings.HasPrefix(s, "http://") {
-		s = s[len("http://"):]
-	}
-	if strings.HasPrefix(s, "https://") {
-		s = s[len("https://"):]
-	}
-
 	var r Ref
-
-	state, j := build, len(s)
-	for i := len(s) - 1; i >= 0; i-- {
-		c := s[i]
-		switch c {
-		case '+':
-			switch state {
-			case build:
-				r.build = s[i+1 : j]
-				if r.build == "" {
-					return Ref{}
-				}
-				r.build = strings.ToUpper(r.build)
-				state, j = tag, i
-			default:
-				return Ref{}
-			}
-		case ':':
-			switch state {
-			case build, tag:
-				r.tag = s[i+1 : j]
-				if r.tag == "" {
-					return Ref{}
-				}
-				state, j = name, i
-			default:
-				return Ref{}
-			}
-		case '/':
-			switch state {
-			case name, tag, build:
-				r.name = s[i+1 : j]
-				state, j = namespace, i
-			case namespace:
-				r.namespace = s[i+1 : j]
-				state, j = domain, i
-			default:
-				return Ref{}
-			}
+	for kind, part := range Parts(s) {
+		switch kind {
+		case Domain:
+			r.domain = part
+		case Namespace:
+			r.namespace = part
+		case Name:
+			r.name = part
+		case Tag:
+			r.tag = part
+		case Build:
+			r.build = part
 		}
 	}
-
-	// handle the first part based on final state
-	switch state {
-	case domain:
-		r.domain = s[:j]
-	case namespace:
-		r.namespace = s[:j]
-	default:
-		r.name = s[:j]
-	}
-
 	if !r.Valid() {
 		return Ref{}
 	}
 	return r
+}
+
+func Parts(s string) iter.Seq2[Kind, string] {
+	return func(yield func(Kind, string) bool) {
+		if len(s) > 128 {
+			return
+		}
+
+		if strings.HasPrefix(s, "http://") {
+			s = s[len("http://"):]
+		}
+		if strings.HasPrefix(s, "https://") {
+			s = s[len("https://"):]
+		}
+
+		state, j := Build, len(s)
+		for i := len(s) - 1; i >= 0; i-- {
+			c := s[i]
+			switch c {
+			case '+':
+				switch state {
+				case Build:
+					v := s[i+1 : j]
+					if v == "" {
+						return
+					}
+					v = strings.ToUpper(v)
+					if !yield(Build, v) {
+						return
+					}
+					state, j = Tag, i
+				default:
+					return
+				}
+			case ':':
+				switch state {
+				case Build, Tag:
+					v := s[i+1 : j]
+					if v == "" {
+						return
+					}
+					if !yield(Tag, v) {
+						return
+					}
+					state, j = Name, i
+				default:
+					return
+				}
+			case '/':
+				switch state {
+				case Name, Tag, Build:
+					if !yield(Name, s[i+1:j]) {
+						return
+					}
+					state, j = Namespace, i
+				case Namespace:
+					if !yield(Namespace, s[i+1:j]) {
+						return
+					}
+					state, j = Domain, i
+				default:
+					return
+				}
+			}
+		}
+
+		// handle the first part based on final state
+		switch state {
+		case Domain:
+			yield(Domain, s[:j])
+		case Namespace:
+			yield(Namespace, s[:j])
+		default:
+			yield(Name, s[:j])
+		}
+	}
 }
 
 // Complete is the same as ParseRef(s).Complete().
