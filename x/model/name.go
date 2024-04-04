@@ -175,19 +175,21 @@ func ParseName(s string) Name {
 	return r
 }
 
-// Merge folds the domain, namespace, tag, and build of b into a if not set.
-// The name is left untouched.
+// Merge performs a partial merge of dst into src. Only the non-name parts
+// are merged. The name part is always left untouched. Other parts are
+// merged if and only if they are missing in dst.
 //
-// Use this for merging a ref with a default ref.
-func Merge(a, b Name) Name {
+// Use this for merging a fully qualified ref with a partial ref, such as
+// when filling in a missing parts with defaults.
+func Merge(dst, src Name) Name {
 	return Name{
 		// name is left untouched
-		nick: a.nick,
+		nick: dst.nick,
 
-		domain:    cmp.Or(a.domain, b.domain),
-		namespace: cmp.Or(a.namespace, b.namespace),
-		tag:       cmp.Or(a.tag, b.tag),
-		build:     cmp.Or(a.build, b.build),
+		domain:    cmp.Or(dst.domain, src.domain),
+		namespace: cmp.Or(dst.namespace, src.namespace),
+		tag:       cmp.Or(dst.tag, src.tag),
+		build:     cmp.Or(dst.build, src.build),
 	}
 }
 
