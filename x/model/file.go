@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-type ParameterPragma struct {
+type ParamPragma struct {
 	Key   string
 	Value string
 }
@@ -24,7 +24,7 @@ type File struct {
 	From string
 
 	// Optional
-	Params   []ParameterPragma
+	Params   []ParamPragma
 	Template string
 	System   string
 	Adapter  string
@@ -105,7 +105,7 @@ func ParseFile(r io.Reader) (File, error) {
 		case "FROM":
 			f.From = p.Arg(0)
 		case "PARAMETER":
-			f.Params = append(f.Params, ParameterPragma{
+			f.Params = append(f.Params, ParamPragma{
 				Key:   strings.ToLower(p.Arg(0)),
 				Value: p.Arg(1),
 			})
