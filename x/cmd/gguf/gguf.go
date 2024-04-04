@@ -13,7 +13,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"bllamo.com/encoding/gguf"
+	"github.com/ollama/ollama/x/encoding/gguf"
 )
 
 func main() {

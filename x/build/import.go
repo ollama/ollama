@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"bllamo.com/build/internal/blobstore"
-	"bllamo.com/encoding/gguf"
+	"github.com/ollama/ollama/x/build/internal/blobstore"
+	"github.com/ollama/ollama/x/encoding/gguf"
 )
 
 func importError(err error) (blobstore.ID, gguf.Info, int64, error) {

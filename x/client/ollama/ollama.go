@@ -13,8 +13,8 @@ import (
 	"os"
 	"strings"
 
-	"bllamo.com/client/ollama/apitype"
-	"bllamo.com/types/empty"
+	"github.com/ollama/ollama/x/client/ollama/apitype"
+	"github.com/ollama/ollama/x/types/empty"
 )
 
 // TODO(bmizerany): PROGRESS INDICATORS!!!!

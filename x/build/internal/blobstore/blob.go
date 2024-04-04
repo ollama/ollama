@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"bllamo.com/types/structs"
+	"github.com/ollama/ollama/x/types/structs"
 )
 
 var (

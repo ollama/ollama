@@ -22,10 +22,10 @@ import (
 	"net/http"
 	"os"
 
-	"bllamo.com/api"
-	"bllamo.com/build"
-	"bllamo.com/client/ollama"
-	"bllamo.com/registry"
+	"github.com/ollama/ollama/x/api"
+	"github.com/ollama/ollama/x/build"
+	"github.com/ollama/ollama/x/client/ollama"
+	"github.com/ollama/ollama/x/registry"
 )
 
 func main() {

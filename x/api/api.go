@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"os"
 
-	"bllamo.com/build"
-	"bllamo.com/client/ollama/apitype"
-	"bllamo.com/oweb"
-	"bllamo.com/registry"
-	regtype "bllamo.com/registry/apitype"
+	"github.com/ollama/ollama/x/build"
+	"github.com/ollama/ollama/x/client/ollama/apitype"
+	"github.com/ollama/ollama/x/oweb"
+	"github.com/ollama/ollama/x/registry"
+	regtype "github.com/ollama/ollama/x/registry"
 )
 
 // Common API Errors

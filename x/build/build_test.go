@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bllamo.com/encoding/gguf"
-	"bllamo.com/model"
+	"github.com/ollama/ollama/x/encoding/gguf"
+	"github.com/ollama/ollama/x/model"
 )
 
 const qualifiedRef = "x/y/z:latest+Q4_0"

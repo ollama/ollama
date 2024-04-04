@@ -9,7 +9,7 @@ import (
 	"log"
 	"net/http"
 
-	"bllamo.com/client/ollama"
+	"github.com/ollama/ollama/x/client/ollama"
 )
 
 func Missing(field string) error {

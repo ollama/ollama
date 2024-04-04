@@ -20,11 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"bllamo.com/registry/apitype"
-	"bllamo.com/utils/backoff"
-	"bllamo.com/utils/upload"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/ollama/ollama/x/registry/apitype"
+	"github.com/ollama/ollama/x/utils/backoff"
+	"github.com/ollama/ollama/x/utils/upload"
 	"kr.dev/diff"
 )
 

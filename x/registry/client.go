@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"bllamo.com/client/ollama"
-	"bllamo.com/registry/apitype"
+	"github.com/ollama/ollama/x/client/ollama"
+	"github.com/ollama/ollama/x/registry/apitype"
 )
 
 type Client struct {

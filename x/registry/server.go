@@ -14,13 +14,13 @@ import (
 	"strconv"
 	"time"
 
-	"bllamo.com/client/ollama"
-	"bllamo.com/model"
-	"bllamo.com/oweb"
-	"bllamo.com/registry/apitype"
-	"bllamo.com/utils/upload"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/ollama/ollama/x/client/ollama"
+	"github.com/ollama/ollama/x/model"
+	"github.com/ollama/ollama/x/oweb"
+	"github.com/ollama/ollama/x/registry/apitype"
+	"github.com/ollama/ollama/x/utils/upload"
 )
 
 // Defaults

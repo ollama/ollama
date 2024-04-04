@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"bllamo.com/types/structs"
+	"github.com/ollama/ollama/x/types/structs"
 )
 
 // TODO(bmizerany): determine  a more reasonable value for MaxDimensions.

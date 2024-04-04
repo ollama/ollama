@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"bllamo.com/model"
+	"github.com/ollama/ollama/x/model"
 	"kr.dev/diff"
 )
 

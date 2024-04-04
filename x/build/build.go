@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"bllamo.com/build/internal/blobstore"
-	"bllamo.com/model"
+	"github.com/ollama/ollama/x/build/internal/blobstore"
+	"github.com/ollama/ollama/x/model"
 )
 
 // Errors
