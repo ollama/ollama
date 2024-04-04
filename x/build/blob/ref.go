@@ -43,41 +43,6 @@ type Ref struct {
 	build     string
 }
 
-// WithDomain returns a copy of r with the provided domain. If the provided
-// domain is empty, it returns the short, unqualified copy of r.
-func (r Ref) WithDomain(s string) Ref {
-	r.domain = s
-	return r
-}
-
-// WithNamespace returns a copy of r with the provided namespace. If the
-// provided namespace is empty, it returns the short, unqualified copy of r.
-func (r Ref) WithNamespace(s string) Ref {
-	r.namespace = s
-	return r
-}
-
-// WithName returns a copy of r with the provided name. If the provided
-// name is empty, it returns the short, unqualified copy of r.
-func (r Ref) WithName(s string) Ref {
-	r.name = s
-	return r
-}
-
-func (r Ref) WithTag(s string) Ref {
-	r.tag = s
-	return r
-}
-
-// WithBuild returns a copy of r with the provided build. If the provided
-// build is empty, it returns the short, unqualified copy of r.
-//
-// The build is normalized to uppercase.
-func (r Ref) WithBuild(s string) Ref {
-	r.build = strings.ToUpper(s)
-	return r
-}
-
 // Format returns a string representation of the ref with the given
 // concreteness. If a part is missing, it is replaced with a loud
 // placeholder.
@@ -197,15 +162,15 @@ func ParseRef(s string) Ref {
 	for kind, part := range Parts(s) {
 		switch kind {
 		case Domain:
-			r = r.WithDomain(part)
+			r.domain = part
 		case Namespace:
-			r = r.WithNamespace(part)
+			r.namespace = part
 		case Name:
 			r.name = part
 		case Tag:
-			r = r.WithTag(part)
+			r.tag = part
 		case Build:
-			r = r.WithBuild(part)
+			r.build = strings.ToUpper(part)
 		case Invalid:
 			return Ref{}
 		}
@@ -214,6 +179,22 @@ func ParseRef(s string) Ref {
 		return Ref{}
 	}
 	return r
+}
+
+// Merge folds the domain, namespace, tag, and build of b into a if not set.
+// The name is left untouched.
+//
+// Use this for merging a ref with a default ref.
+func Merge(a, b Ref) Ref {
+	return Ref{
+		// name is left untouched
+		name: a.name,
+
+		domain:    cmp.Or(a.domain, b.domain),
+		namespace: cmp.Or(a.namespace, b.namespace),
+		tag:       cmp.Or(a.tag, b.tag),
+		build:     cmp.Or(a.build, b.build),
+	}
 }
 
 // Parts returns a sequence of the parts of a ref string from most specific

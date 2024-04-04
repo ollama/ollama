@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -211,4 +212,15 @@ func FuzzParseRef(f *testing.F) {
 		}
 
 	})
+}
+
+func ExampleMerge() {
+	r := Merge(
+		ParseRef("mistral"),
+		ParseRef("registry.ollama.com/XXXXX:latest+Q4_0"),
+	)
+	fmt.Println(r)
+
+	// Output:
+	// registry.ollama.com/mistral:latest+Q4_0
 }
