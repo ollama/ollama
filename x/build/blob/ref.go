@@ -220,19 +220,21 @@ func Parts(s string) iter.Seq2[Kind, string] {
 			s = s[len("https://"):]
 		}
 
+		emit := func(kind Kind, value string) bool {
+			if !isValidPart(value) {
+				return false
+			}
+			return yield(kind, value)
+		}
+
 		state, j := Build, len(s)
 		for i := len(s) - 1; i >= 0; i-- {
-			c := s[i]
-			switch c {
+			switch s[i] {
 			case '+':
 				switch state {
 				case Build:
-					v := s[i+1 : j]
-					if v == "" {
-						return
-					}
-					v = strings.ToUpper(v)
-					if !yield(Build, v) {
+					v := strings.ToUpper(s[i+1 : j])
+					if !emit(Build, v) {
 						return
 					}
 					state, j = Tag, i
@@ -242,12 +244,8 @@ func Parts(s string) iter.Seq2[Kind, string] {
 			case ':':
 				switch state {
 				case Build, Tag:
-					v := s[i+1 : j]
-					if v == "" {
-						return
-					}
-					if !yield(Tag, v) {
-						return
+					if emit(Tag, s[i+1:j]) {
+						state, j = Tag, i
 					}
 					state, j = Name, i
 				default:
@@ -256,12 +254,12 @@ func Parts(s string) iter.Seq2[Kind, string] {
 			case '/':
 				switch state {
 				case Name, Tag, Build:
-					if !yield(Name, s[i+1:j]) {
+					if !emit(Name, s[i+1:j]) {
 						return
 					}
 					state, j = Namespace, i
 				case Namespace:
-					if !yield(Namespace, s[i+1:j]) {
+					if !emit(Namespace, s[i+1:j]) {
 						return
 					}
 					state, j = Domain, i
