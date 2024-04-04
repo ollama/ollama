@@ -35,9 +35,23 @@ var kindNames = map[NamePart]string{
 
 // Name is an opaque reference to a model.
 //
-// It is comparable and can be used as a map key.
+// It is not comparable. To use as a map key, use [MapHash].
 //
-// Users or Name must check Valid before using it.
+// Clients should use the [ParseName] function to create a Name from a string.
+//
+// The parts of a Name are:
+//
+//   - Host: the domain of the model (optional)
+//   - Namespace: the namespace of the model (optional)
+//   - Model: the name of the model (required)
+//   - Tag: the tag of the model (optional)
+//   - Build: the build of the model; usually the quantization or "file type" (optional)
+//
+// A call to [Name.Valid] will return true if the model has a valid non-empty model
+// part.
+//
+// A call to [Name.Complete] will return true if the model has a valid model part
+// and all of its other parts are also non-empty and valid.
 type Name struct {
 	_ structs.Incomparable
 
