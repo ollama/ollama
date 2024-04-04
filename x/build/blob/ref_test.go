@@ -21,12 +21,19 @@ var testRefs = map[string]Ref{
 	"mistral:7b+q4_0":     {name: "mistral", tag: "7b", build: "Q4_0"},
 	"llama2":              {name: "llama2"},
 
-	// invalid
+	// invalid (includes fuzzing trophies)
 	"mistral:7b+Q4_0:latest": {},
 	"mi tral":                {},
 	"x/y/z/foo":              {},
 	"/0":                     {},
+	"0 /0":                   {},
+	"0 /":                    {},
 	"0/":                     {},
+	":":                      {},
+	":/0":                    {},
+	"+0/00000":               {},
+	"0+.\xf2\x80\xf6\x9d00000\xe5\x99\xe6\xd900\xd90\xa60\x91\xdc0\xff\xbf\x99\xe800\xb9\xdc\xd6\xc300\x970\xfb\xfd0\xe0\x8a\xe1\xad\xd40\x9700\xa80\x980\xdd0000\xb00\x91000\xfe0\x89\x9b\x90\x93\x9f0\xe60\xf7\x84\xb0\x87\xa5\xff0\xa000\x9a\x85\xf6\x85\xfe\xa9\xf9\xe9\xde00\xf4\xe0\x8f\x81\xad\xde00\xd700\xaa\xe000000\xb1\xee0\x91": {},
+	"0//0": {},
 }
 
 func TestRefParts(t *testing.T) {
@@ -47,7 +54,7 @@ func TestParseRef(t *testing.T) {
 
 			// test round-trip
 			if ParseRef(got.String()) != got {
-				t.Errorf("String() = %q; want %q", got.String(), s)
+				t.Errorf("String() = %s; want %s", got.String(), s)
 			}
 		})
 	}
@@ -125,7 +132,7 @@ func FuzzParseRef(f *testing.F) {
 
 		r1 := ParseRef(r0.String())
 		if r0 != r1 {
-			t.Errorf("round-trip mismatch: %q != %q", r0, r1)
+			t.Errorf("round-trip mismatch: %+v != %+v", r0, r1)
 		}
 	})
 }

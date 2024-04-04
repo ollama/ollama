@@ -19,6 +19,15 @@ const (
 	Build
 )
 
+var kindNames = map[PartKind]string{
+	Invalid:   "Invalid",
+	Domain:    "Domain",
+	Namespace: "Namespace",
+	Name:      "Name",
+	Tag:       "Tag",
+	Build:     "Build",
+}
+
 // Ref is an opaque reference to a blob.
 //
 // It is comparable and can be used as a map key.
@@ -219,12 +228,11 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 			return
 		}
 
-		yieldValid := func(kind PartKind, value string) bool {
-			if !isValidPart(value) {
-				yield(Invalid, "")
-				return false
+		yieldValid := func(kind PartKind, part string) bool {
+			if !isValidPart(part) {
+				return yield(Invalid, "")
 			}
-			return yield(kind, value)
+			return yield(kind, part)
 		}
 
 		state, j := Build, len(s)
@@ -238,16 +246,18 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 					}
 					state, j = Tag, i
 				default:
+					yield(Invalid, "")
 					return
 				}
 			case ':':
 				switch state {
 				case Build, Tag:
-					if yieldValid(Tag, s[i+1:j]) {
-						state, j = Tag, i
+					if !yieldValid(Tag, s[i+1:j]) {
+						return
 					}
 					state, j = Name, i
 				default:
+					yield(Invalid, "")
 					return
 				}
 			case '/':
@@ -262,23 +272,21 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 						return
 					}
 					state, j = Domain, i
-				case Domain:
-					// domain is not allowed to have slashes
+				default:
 					yield(Invalid, "")
 					return
-				default:
+				}
+			default:
+				if !isValidPart(s[i : i+1]) {
+					yield(Invalid, "")
 					return
 				}
 			}
 		}
 
-		// handle the first part based on final state
-		switch state {
-		case Domain:
-			yieldValid(Domain, s[:j])
-		case Namespace:
-			yieldValid(Namespace, s[:j])
-		default:
+		if state <= Namespace {
+			yieldValid(state, s[:j])
+		} else {
 			yieldValid(Name, s[:j])
 		}
 	}
