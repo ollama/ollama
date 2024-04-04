@@ -135,7 +135,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rocm-${{ matrix.rocm-version }}-libraries
-          path: llm/build/**/lib/*
+          path: llm/build/**/bin/*
 
   # ROCm generation step
   generate-windows-rocm:
