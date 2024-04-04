@@ -2,17 +2,16 @@ package blob
 
 import (
 	"cmp"
-	"fmt"
 	"iter"
 	"slices"
 	"strings"
 )
 
-type Kind int
+type PartKind int
 
 // Levels of concreteness
 const (
-	Domain Kind = iota
+	Domain PartKind = iota
 	Namespace
 	Name
 	Tag
@@ -35,43 +34,35 @@ type Ref struct {
 // WithDomain returns a copy of r with the provided domain. If the provided
 // domain is empty, it returns the short, unqualified copy of r.
 func (r Ref) WithDomain(s string) Ref {
-	return with(r, Domain, s)
+	r.domain = s
+	return r
 }
 
 // WithNamespace returns a copy of r with the provided namespace. If the
 // provided namespace is empty, it returns the short, unqualified copy of r.
 func (r Ref) WithNamespace(s string) Ref {
-	return with(r, Namespace, s)
+	r.namespace = s
+	return r
+}
+
+// WithName returns a copy of r with the provided name. If the provided
+// name is empty, it returns the short, unqualified copy of r.
+func (r Ref) WithName(s string) Ref {
+	r.name = s
+	return r
 }
 
 func (r Ref) WithTag(s string) Ref {
-	return with(r, Tag, s)
+	r.tag = s
+	return r
 }
 
 // WithBuild returns a copy of r with the provided build. If the provided
 // build is empty, it returns the short, unqualified copy of r.
+//
+// The build is normalized to uppercase.
 func (r Ref) WithBuild(s string) Ref {
-	return with(r, Build, s)
-}
-
-func with(r Ref, kind Kind, value string) Ref {
-	if value != "" && !isValidPart(value) {
-		return Ref{}
-	}
-	switch kind {
-	case Domain:
-		r.domain = value
-	case Namespace:
-		r.namespace = value
-	case Name:
-		r.name = value
-	case Tag:
-		r.tag = value
-	case Build:
-		r.build = value
-	default:
-		panic(fmt.Sprintf("invalid completeness: %d", kind))
-	}
+	r.build = strings.ToUpper(s)
 	return r
 }
 
@@ -190,15 +181,15 @@ func ParseRef(s string) Ref {
 	for kind, part := range Parts(s) {
 		switch kind {
 		case Domain:
-			r.domain = part
+			r = r.WithDomain(part)
 		case Namespace:
-			r.namespace = part
+			r = r.WithNamespace(part)
 		case Name:
 			r.name = part
 		case Tag:
-			r.tag = part
+			r = r.WithTag(part)
 		case Build:
-			r.build = part
+			r = r.WithBuild(part)
 		}
 	}
 	if !r.Valid() {
@@ -207,12 +198,8 @@ func ParseRef(s string) Ref {
 	return r
 }
 
-func Parts(s string) iter.Seq2[Kind, string] {
-	return func(yield func(Kind, string) bool) {
-		if len(s) > 128 {
-			return
-		}
-
+func Parts(s string) iter.Seq2[PartKind, string] {
+	return func(yield func(PartKind, string) bool) {
 		if strings.HasPrefix(s, "http://") {
 			s = s[len("http://"):]
 		}
@@ -220,7 +207,11 @@ func Parts(s string) iter.Seq2[Kind, string] {
 			s = s[len("https://"):]
 		}
 
-		emit := func(kind Kind, value string) bool {
+		if len(s) > 255 || len(s) == 0 {
+			return
+		}
+
+		yieldValid := func(kind PartKind, value string) bool {
 			if !isValidPart(value) {
 				return false
 			}
@@ -234,7 +225,7 @@ func Parts(s string) iter.Seq2[Kind, string] {
 				switch state {
 				case Build:
 					v := strings.ToUpper(s[i+1 : j])
-					if !emit(Build, v) {
+					if !yieldValid(Build, v) {
 						return
 					}
 					state, j = Tag, i
@@ -244,7 +235,7 @@ func Parts(s string) iter.Seq2[Kind, string] {
 			case ':':
 				switch state {
 				case Build, Tag:
-					if emit(Tag, s[i+1:j]) {
+					if yieldValid(Tag, s[i+1:j]) {
 						state, j = Tag, i
 					}
 					state, j = Name, i
@@ -254,12 +245,12 @@ func Parts(s string) iter.Seq2[Kind, string] {
 			case '/':
 				switch state {
 				case Name, Tag, Build:
-					if !emit(Name, s[i+1:j]) {
+					if !yieldValid(Name, s[i+1:j]) {
 						return
 					}
 					state, j = Namespace, i
 				case Namespace:
-					if !emit(Namespace, s[i+1:j]) {
+					if !yieldValid(Namespace, s[i+1:j]) {
 						return
 					}
 					state, j = Domain, i
@@ -272,11 +263,11 @@ func Parts(s string) iter.Seq2[Kind, string] {
 		// handle the first part based on final state
 		switch state {
 		case Domain:
-			yield(Domain, s[:j])
+			yieldValid(Domain, s[:j])
 		case Namespace:
-			yield(Namespace, s[:j])
+			yieldValid(Namespace, s[:j])
 		default:
-			yield(Name, s[:j])
+			yieldValid(Name, s[:j])
 		}
 	}
 }
@@ -316,7 +307,7 @@ func (r Ref) Valid() bool {
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
 func isValidPart(s string) bool {
-	if len(s) == 0 {
+	if s == "" {
 		return false
 	}
 	for _, c := range []byte(s) {

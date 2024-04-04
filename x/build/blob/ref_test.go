@@ -1,6 +1,9 @@
 package blob
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // test refs
 const (
@@ -21,6 +24,9 @@ var testRefs = map[string]Ref{
 	// invalid
 	"mistral:7b+Q4_0:latest": {},
 	"mi tral":                {},
+
+	// From fuzzing
+	"/0": {},
 }
 
 func TestRefParts(t *testing.T) {
@@ -90,9 +96,36 @@ func TestParseRefAllocs(t *testing.T) {
 }
 
 func BenchmarkParseRef(b *testing.B) {
+	b.ReportAllocs()
+
 	var r Ref
 	for i := 0; i < b.N; i++ {
 		r = ParseRef("example.com/mistral:7b+Q4_0")
 	}
 	_ = r
+}
+
+func FuzzParseRef(f *testing.F) {
+	f.Add("example.com/mistral:7b+Q4_0")
+	f.Add("example.com/mistral:7b+q4_0")
+	f.Add("example.com/mistral:7b+x")
+	f.Add("x/y/z:8n+I")
+	f.Fuzz(func(t *testing.T, s string) {
+		r0 := ParseRef(s)
+		if !r0.Valid() {
+			if r0 != (Ref{}) {
+				t.Errorf("expected invalid ref to be zero value; got %#v", r0)
+			}
+			t.Skipf("invalid ref: %q", s)
+		}
+
+		if !strings.EqualFold(r0.String(), s) {
+			t.Errorf("String() did not round-trip with case insensitivity: %q\ngot  = %q\nwant = %q", s, r0.String(), s)
+		}
+
+		r1 := ParseRef(r0.String())
+		if r0 != r1 {
+			t.Errorf("round-trip mismatch: %q != %q", r0, r1)
+		}
+	})
 }
