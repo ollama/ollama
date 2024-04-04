@@ -15,8 +15,8 @@ import (
 
 // Common API Errors
 var (
-	errUnqualifiedRef = oweb.Mistake("invalid", "name", "must be fully qualified")
-	errRefNotFound    = oweb.Mistake("not_found", "name", "no such model")
+	errUnqualifiedRef = oweb.Invalid("invalid", "name", "must be fully qualified")
+	errRefNotFound    = oweb.Invalid("not_found", "name", "no such model")
 )
 
 type Server struct {

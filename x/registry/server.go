@@ -84,7 +84,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 
 	ref := blob.ParseRef(pr.Ref)
 	if !ref.Complete() {
-		return oweb.Mistake("invalid", "name", "must be complete")
+		return oweb.Invalid("name", pr.Ref, "must be complete")
 	}
 
 	m, err := oweb.DecodeUserJSON[apitype.Manifest]("manifest", bytes.NewReader(pr.Manifest))
@@ -107,24 +107,30 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
+
 		q := u.Query()
+
+		// Check if this is a part upload, if not, skip
 		uploadID := q.Get("uploadId")
 		if uploadID == "" {
 			// not a part upload
 			continue
 		}
-		partNumber, err := strconv.Atoi(q.Get("partNumber"))
+
+		// PartNumber is required
+		queryPartNumber := q.Get("partNumber")
+		partNumber, err := strconv.Atoi(queryPartNumber)
 		if err != nil {
-			return oweb.Mistake("invalid", "url", "invalid or missing PartNumber")
+			return oweb.Invalid("partNumber", queryPartNumber, "invalid or missing PartNumber")
 		}
+
+		// ETag is required
 		if mcp.ETag == "" {
-			return oweb.Mistake("invalid", "etag", "missing")
+			return oweb.Missing("etag")
 		}
-		cp, ok := completePartsByUploadID[uploadID]
-		if !ok {
-			cp = completeParts{key: u.Path}
-			completePartsByUploadID[uploadID] = cp
-		}
+
+		cp := completePartsByUploadID[uploadID]
+		cp.key = u.Path
 		cp.parts = append(cp.parts, minio.CompletePart{
 			PartNumber: partNumber,
 			ETag:       mcp.ETag,
@@ -136,8 +142,11 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		var zeroOpts minio.PutObjectOptions
 		_, err := mcc.CompleteMultipartUpload(r.Context(), bucketTODO, cp.key, uploadID, cp.parts, zeroOpts)
 		if err != nil {
-			// log and continue; put backpressure on the client
-			log.Printf("error completing upload: %v", err)
+			var e minio.ErrorResponse
+			if errors.As(err, &e) && e.Code == "NoSuchUpload" {
+				return oweb.Invalid("uploadId", uploadID, "unknown uploadId")
+			}
+			return err
 		}
 	}
 

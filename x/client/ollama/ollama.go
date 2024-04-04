@@ -92,12 +92,23 @@ type Error struct {
 
 	// Field is the field in the request that caused the error, if any.
 	Field string `json:"field,omitempty"`
+
+	// Value is the value of the field that caused the error, if any.
+	Value string `json:"value,omitempty"`
 }
 
 func (e *Error) Error() string {
 	var b strings.Builder
 	b.WriteString("ollama: ")
 	b.WriteString(e.Code)
+	if e.Field != "" {
+		b.WriteString(" ")
+		b.WriteString(e.Field)
+	}
+	if e.Value != "" {
+		b.WriteString(": ")
+		b.WriteString(e.Value)
+	}
 	if e.Message != "" {
 		b.WriteString(": ")
 		b.WriteString(e.Message)

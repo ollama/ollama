@@ -28,6 +28,39 @@ import (
 	"kr.dev/diff"
 )
 
+// const ref = "registry.ollama.ai/x/y:latest+Z"
+// const manifest = `{
+// 	"layers": [
+// 		{"digest": "sha256-1", "size": 1},
+// 		{"digest": "sha256-2", "size": 2},
+// 		{"digest": "sha256-3", "size": 3}
+// 	]
+// }`
+
+// ts := newTestServer(t)
+// ts.pushNotOK(ref, `{}`, &ollama.Error{
+// 	Status:  400,
+// 	Code:    "invalid",
+// 	Message: "name must be fully qualified",
+// })
+
+// ts.push(ref, `{
+// 	"layers": [
+// 		{"digest": "sha256-1", "size": 1},
+// 		{"digest": "sha256-2", "size": 2},
+// 		{"digest": "sha256-3", "size": 3}
+// 	]
+// }`)
+
+type tWriter struct {
+	t *testing.T
+}
+
+func (w tWriter) Write(p []byte) (n int, err error) {
+	w.t.Logf("%s", p)
+	return len(p), nil
+}
+
 func TestPushBasic(t *testing.T) {
 	const MB = 1024 * 1024
 
@@ -41,6 +74,8 @@ func TestPushBasic(t *testing.T) {
 		}
 	}()
 
+	const ref = "registry.ollama.ai/x/y:latest+Z"
+
 	// Upload two small layers and one large layer that will
 	// trigger a multipart upload.
 	manifest := []byte(`{
@@ -49,9 +84,7 @@ func TestPushBasic(t *testing.T) {
 				{"digest": "sha256-2", "size": 2},
 				{"digest": "sha256-3", "size": 11000000}
 			]
-		}`)
-
-	const ref = "registry.ollama.ai/x/y:latest+Z"
+	}`)
 
 	hs := httptest.NewServer(&Server{
 		minioClient:     mc,

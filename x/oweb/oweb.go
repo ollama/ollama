@@ -21,12 +21,13 @@ func Missing(field string) error {
 	}
 }
 
-func Mistake(code, field, message string) error {
+func Invalid(field, value, format string, args ...any) error {
 	return &ollama.Error{
 		Status:  400,
-		Code:    code,
+		Code:    "invalid",
 		Field:   field,
-		Message: fmt.Sprintf("%s: %s", field, message),
+		Value:   value,
+		Message: fmt.Sprintf(format, args...),
 	}
 }
 
@@ -69,7 +70,7 @@ func DecodeUserJSON[T any](field string, r io.Reader) (*T, error) {
 	if errors.As(err, &se) {
 		msg = fmt.Sprintf("%s (%q) is not a %s", se.Field, se.Value, se.Type)
 	}
-	return nil, Mistake("invalid_json", field, msg)
+	return nil, Invalid("invalid_json", field, "", msg)
 }
 
 func DecodeJSON[T any](r io.Reader) (*T, error) {

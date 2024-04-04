@@ -253,6 +253,17 @@ func ParseRef(s string) Ref {
 	return r
 }
 
+// Complete is the same as ParseRef(s).Complete().
+//
+// Future versions may be faster than calling ParseRef(s).Complete(), so if
+// need to know if a ref is complete and don't need the ref, use this
+// function.
+func Complete(s string) bool {
+	// TODO(bmizerany): fast-path this with a quick scan withput
+	// allocating strings
+	return ParseRef(s).Complete()
+}
+
 func (r Ref) Valid() bool {
 	// Name is required
 	if !isValidPart(r.name) {
