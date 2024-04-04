@@ -9,11 +9,11 @@ import (
 
 const MaxPathLength = 255
 
-type PartKind int
+type PathPart int
 
 // Levels of concreteness
 const (
-	Invalid PartKind = iota
+	Invalid PathPart = iota
 	Domain
 	Namespace
 	Name
@@ -21,7 +21,7 @@ const (
 	Build
 )
 
-var kindNames = map[PartKind]string{
+var kindNames = map[PathPart]string{
 	Invalid:   "Invalid",
 	Domain:    "Domain",
 	Namespace: "Namespace",
@@ -153,7 +153,7 @@ func (r Path) Build() string     { return r.build }
 //	""
 func ParsePath(s string) Path {
 	var r Path
-	for kind, part := range Parts(s) {
+	for kind, part := range PathParts(s) {
 		switch kind {
 		case Domain:
 			r.domain = part
@@ -196,8 +196,8 @@ func Merge(a, b Path) Path {
 //
 // It normalizes the input string by removing "http://" and "https://" only.
 // No other normalization is done.
-func Parts(s string) iter.Seq2[PartKind, string] {
-	return func(yield func(PartKind, string) bool) {
+func PathParts(s string) iter.Seq2[PathPart, string] {
+	return func(yield func(PathPart, string) bool) {
 		if strings.HasPrefix(s, "http://") {
 			s = s[len("http://"):]
 		}
@@ -209,7 +209,7 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 			return
 		}
 
-		yieldValid := func(kind PartKind, part string) bool {
+		yieldValid := func(kind PathPart, part string) bool {
 			if !isValidPart(part) {
 				yield(Invalid, "")
 				return false

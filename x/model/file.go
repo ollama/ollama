@@ -1,3 +1,4 @@
+// Package model implements the Modelfile and Path formats.
 package model
 
 import (
@@ -7,12 +8,12 @@ import (
 	"strings"
 )
 
-type Param struct {
+type ParameterPragma struct {
 	Key   string
 	Value string
 }
 
-type Message struct {
+type MessagePragma struct {
 	Role    string
 	Content string
 }
@@ -23,24 +24,25 @@ type File struct {
 	From string
 
 	// Optional
-	Params   []Param
+	Params   []ParameterPragma
 	Template string
 	System   string
 	Adapter  string
-	Messages []Message
+	Messages []MessagePragma
 
 	License string
 }
 
-type Error struct {
+type FileError struct {
 	Pragma  string
 	Message string
 }
 
-func (e *Error) Error() string {
+func (e *FileError) Error() string {
 	return e.Pragma + ": " + e.Message
 }
 
+// Pragma represents a single pragma in a Modelfile.
 type Pragma struct {
 	// The pragma name
 	Name string
@@ -57,7 +59,7 @@ func (p Pragma) Arg(i int) string {
 	return p.Args[i]
 }
 
-func Pragmas(r io.Reader) iter.Seq2[Pragma, error] {
+func FilePragmas(r io.Reader) iter.Seq2[Pragma, error] {
 	return func(yield func(Pragma, error) bool) {
 		sc := bufio.NewScanner(r)
 		for sc.Scan() {
@@ -93,9 +95,9 @@ func Pragmas(r io.Reader) iter.Seq2[Pragma, error] {
 	}
 }
 
-func Decode(r io.Reader) (File, error) {
+func ParseFile(r io.Reader) (File, error) {
 	var f File
-	for p, err := range Pragmas(r) {
+	for p, err := range FilePragmas(r) {
 		if err != nil {
 			return File{}, err
 		}
@@ -103,7 +105,7 @@ func Decode(r io.Reader) (File, error) {
 		case "FROM":
 			f.From = p.Arg(0)
 		case "PARAMETER":
-			f.Params = append(f.Params, Param{
+			f.Params = append(f.Params, ParameterPragma{
 				Key:   strings.ToLower(p.Arg(0)),
 				Value: p.Arg(1),
 			})
@@ -114,7 +116,7 @@ func Decode(r io.Reader) (File, error) {
 		case "ADAPTER":
 			f.Adapter = p.Arg(0)
 		case "MESSAGE":
-			f.Messages = append(f.Messages, Message{
+			f.Messages = append(f.Messages, MessagePragma{
 				Role:    p.Arg(0),
 				Content: p.Arg(1),
 			})
