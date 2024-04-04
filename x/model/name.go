@@ -135,7 +135,16 @@ func (r Name) Model() string     { return r.model }
 func (r Name) Tag() string       { return r.tag }
 func (r Name) Build() string     { return r.build }
 
-// ParseName parses a model path string into a Name.
+// ParseName parses s into a Name. The input string must be a valid form of
+// a model name in the form:
+//
+//	<host>/<namespace>/<model>:<tag>+<build>
+//
+// The name part is required, all others are optional. If a part is missing,
+// it is left empty in the returned Name. If a part is invalid, the zero Ref
+// value is returned.
+//
+// The build part is normalized to uppercase.
 //
 // Examples of valid paths:
 //
@@ -175,7 +184,7 @@ func ParseName(s string) Name {
 	return r
 }
 
-// Merge performs a partial merge of dst into src. Only the non-name parts
+// Merge performs a partial merge of src into dst. Only the non-name parts
 // are merged. The name part is always left untouched. Other parts are
 // merged if and only if they are missing in dst.
 //
