@@ -8,7 +8,7 @@ on:
 jobs:
   # Full build of the Mac assets
   build-darwin:
-    runs-on: macos-latest
+    runs-on: macos-12
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -38,16 +38,17 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           APPLE_ID: ${{ vars.APPLE_ID }}
+          SDKROOT: /Applications/Xcode_13.4.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+          DEVELOPER_DIR: /Applications/Xcode_13.4.1.app/Contents/Developer
         run: |
           ./scripts/build_darwin.sh
-        
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist-darwin
           path: |
             dist/*arwin*
             !dist/*-cov
-
 
   # Windows builds take a long time to both install the dependencies and build, so parallelize
   # CPU generation step
@@ -140,7 +141,7 @@ jobs:
         with:
           go-version: '1.22'
           cache: true
-      - name: "Install ROCm"
+      - name: 'Install ROCm'
         run: |
           $ErrorActionPreference = "Stop"
           write-host "downloading AMD HIP Installer"
@@ -148,7 +149,7 @@ jobs:
           write-host "Installing AMD HIP"
           Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
           write-host "Completed AMD HIP"
-      - name: "Verify ROCm"
+      - name: 'Verify ROCm'
         run: |
           & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
       - run: go get ./...
@@ -162,7 +163,7 @@ jobs:
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
           go generate -x ./...
         name: go generate
-      - name: "gather rocm dependencies"
+      - name: 'gather rocm dependencies'
         run: |
           $HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
           md "dist\deps\bin\rocblas\library"
@@ -215,7 +216,7 @@ jobs:
         with:
           go-version: '1.22'
           cache: true
-      - name: "Install CUDA"
+      - name: 'Install CUDA'
         run: |
           $ErrorActionPreference = "Stop"
           write-host "downloading CUDA Installer"
@@ -229,7 +230,7 @@ jobs:
           echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
           echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
           echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
-      - name: "Verify CUDA"
+      - name: 'Verify CUDA'
         run: nvcc -V
       - run: go get ./...
       - name: go generate
@@ -242,7 +243,7 @@ jobs:
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           go generate -x ./...
-      - name: "gather cuda dependencies"
+      - name: 'gather cuda dependencies'
         run: |
           $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
           md "dist\deps"
@@ -338,14 +339,14 @@ jobs:
           name: dist-windows
           path: dist/*.exe
 
-  # Linux x86 assets built using the container based build 
+  # Linux x86 assets built using the container based build
   build-linux-amd64:
     environment: release
     runs-on: linux
     env:
-      OLLAMA_SKIP_MANIFEST_CREATE: "1"
+      OLLAMA_SKIP_MANIFEST_CREATE: '1'
       BUILD_ARCH: amd64
-      PUSH: "1"
+      PUSH: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -375,9 +376,9 @@ jobs:
     environment: release
     runs-on: linux-arm64
     env:
-      OLLAMA_SKIP_MANIFEST_CREATE: "1"
+      OLLAMA_SKIP_MANIFEST_CREATE: '1'
       BUILD_ARCH: arm64
-      PUSH: "1"
+      PUSH: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -385,7 +386,7 @@ jobs:
       - name: Set Version
         shell: bash
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - name: "Install Docker"
+      - name: 'Install Docker'
         run: |
           # Add Docker's official GPG key:
           env
@@ -422,7 +423,7 @@ jobs:
             !dist/*-cov
 
   # Aggregate all the assets and ship a release
-  release: 
+  release:
     needs:
       - build-darwin
       - build-windows
@@ -433,8 +434,8 @@ jobs:
     permissions:
       contents: write
     env:
-      OLLAMA_SKIP_IMAGE_BUILD: "1"
-      PUSH: "1"
+      OLLAMA_SKIP_IMAGE_BUILD: '1'
+      PUSH: '1'
     steps:
       - uses: actions/checkout@v4
       - name: Set Version
@@ -462,7 +463,7 @@ jobs:
         with:
           name: ${{ env.RELEASE_VERSION }}
           allowUpdates: true
-          artifacts: "dist/*"
+          artifacts: 'dist/*'
           draft: true
           prerelease: true
           omitBodyDuringUpdate: true
