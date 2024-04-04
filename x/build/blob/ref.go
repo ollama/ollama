@@ -218,12 +218,10 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 		if len(s) > 255 || len(s) == 0 {
 			return
 		}
-		if !isValidPart(string(s[0])) {
-			return
-		}
 
 		yieldValid := func(kind PartKind, value string) bool {
 			if !isValidPart(value) {
+				yield(Invalid, "")
 				return false
 			}
 			return yield(kind, value)
@@ -264,8 +262,11 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 						return
 					}
 					state, j = Domain, i
-				default:
+				case Domain:
+					// domain is not allowed to have slashes
 					yield(Invalid, "")
+					return
+				default:
 					return
 				}
 			}
