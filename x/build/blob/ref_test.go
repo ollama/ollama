@@ -64,6 +64,12 @@ func TestParseRef(t *testing.T) {
 				if ParseRef(got.String()) != got {
 					t.Errorf("String() = %s; want %s", got.String(), s)
 				}
+
+				if got.Valid() && got.Name() == "" {
+					t.Errorf("Valid() = true; Name() = %q; want non-empty name", got.Name())
+				} else if !got.Valid() && got.Name() != "" {
+					t.Errorf("Valid() = false; Name() = %q; want empty name", got.Name())
+				}
 			})
 		}
 	}

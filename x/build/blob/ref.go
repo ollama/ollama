@@ -299,17 +299,6 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 	}
 }
 
-// Complete is the same as ParseRef(s).Complete().
-//
-// Future versions may be faster than calling ParseRef(s).Complete(), so if
-// need to know if a ref is complete and don't need the ref, use this
-// function.
-func Complete(s string) bool {
-	// TODO(bmizerany): fast-path this with a quick scan withput
-	// allocating strings
-	return ParseRef(s).Complete()
-}
-
 // Valid returns true if the ref has a valid name. To know if a ref is
 // "complete", use Complete.
 func (r Ref) Valid() bool {
