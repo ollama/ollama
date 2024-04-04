@@ -105,23 +105,33 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 				zf := zip.NewWriter(tf)
 
-				files, err := filepath.Glob(filepath.Join(path, "model-*.safetensors"))
-				if err != nil {
-					return err
+				files := []string{}
+
+				for _, p := range []string{"model-*.safetensors", "consolidated.*.pth"} {
+					tfiles, err := filepath.Glob(filepath.Join(path, p))
+					if err != nil {
+						return err
+					}
+					for _, f := range tfiles {
+						files = append(files, f)
+					}
 				}
 
 				if len(files) == 0 {
-					return fmt.Errorf("no safetensors files were found in '%s'", path)
+					return fmt.Errorf("no models were found in '%s'", path)
 				}
 
-				// add the safetensor config file + tokenizer
+				// add the safetensor/torch config file + tokenizer
 				files = append(files, filepath.Join(path, "config.json"))
+				files = append(files, filepath.Join(path, "params.json"))
 				files = append(files, filepath.Join(path, "added_tokens.json"))
 				files = append(files, filepath.Join(path, "tokenizer.model"))
 
 				for _, fn := range files {
 					f, err := os.Open(fn)
-					if os.IsNotExist(err) && strings.HasSuffix(fn, "added_tokens.json") {
+
+					// just skip whatever files aren't there
+					if os.IsNotExist(err) {
 						continue
 					} else if err != nil {
 						return err

@@ -97,7 +97,7 @@ func repack(data []uint16, heads int, shape []uint64) ([]uint16, error) {
 }
 
 func (m *MistralModel) GetTensors() error {
-	t, err := GetSafeTensors(m.Path, m.Params)
+	t, err := m.Format.GetTensors(m.Path, m.Params)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (m *MistralModel) GetTensors() error {
 }
 
 func (m *MistralModel) LoadVocab() error {
-	v, err := LoadSentencePieceTokens(m.Path, m.Params.VocabSize)
+	v, err := LoadSentencePieceTokens(m.Path, m.Params)
 	if err != nil {
 		return err
 	}

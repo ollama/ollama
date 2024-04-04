@@ -19,7 +19,10 @@ require (
 	golang.org/x/sync v0.3.0
 )
 
-require github.com/pdevine/tensor v0.0.0-20240228013915-64ccaa8d9ca9
+require (
+	github.com/nlpodyssey/gopickle v0.3.0
+	github.com/pdevine/tensor v0.0.0-20240228013915-64ccaa8d9ca9
+)
 
 require (
 	github.com/apache/arrow/go/arrow v0.0.0-20201229220542-30ce2eb5d4dc // indirect
@@ -68,7 +71,7 @@ require (
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sys v0.13.0
 	golang.org/x/term v0.13.0
-	golang.org/x/text v0.13.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 	google.golang.org/protobuf v1.30.0
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
