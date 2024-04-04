@@ -16,7 +16,7 @@ const (
 	Invalid NamePart = iota
 	Registry
 	Namespace
-	Short
+	Nick
 	Tag
 	Build
 )
@@ -25,7 +25,7 @@ var kindNames = map[NamePart]string{
 	Invalid:   "Invalid",
 	Registry:  "Domain",
 	Namespace: "Namespace",
-	Short:     "Name",
+	Nick:      "Name",
 	Tag:       "Tag",
 	Build:     "Build",
 }
@@ -38,7 +38,7 @@ var kindNames = map[NamePart]string{
 type Name struct {
 	domain    string
 	namespace string
-	name      string
+	nick      string
 	tag       string
 	build     string
 }
@@ -49,20 +49,20 @@ type Name struct {
 func (r Name) Full() string {
 	r.domain = cmp.Or(r.domain, "!(MISSING DOMAIN)")
 	r.namespace = cmp.Or(r.namespace, "!(MISSING NAMESPACE)")
-	r.name = cmp.Or(r.name, "!(MISSING NAME)")
+	r.nick = cmp.Or(r.nick, "!(MISSING NAME)")
 	r.tag = cmp.Or(r.tag, "!(MISSING TAG)")
 	r.build = cmp.Or(r.build, "!(MISSING BUILD)")
 	return r.String()
 }
 
-func (r Name) ShortAndTag() string {
+func (r Name) NickAndTag() string {
 	r.domain = ""
 	r.namespace = ""
 	r.build = ""
 	return r.String()
 }
 
-func (r Name) ShortTagAndBuild() string {
+func (r Name) NickTagAndBuild() string {
 	r.domain = ""
 	r.namespace = ""
 	return r.String()
@@ -79,7 +79,7 @@ func (r Name) String() string {
 		b.WriteString(r.namespace)
 		b.WriteString("/")
 	}
-	b.WriteString(r.name)
+	b.WriteString(r.nick)
 	if r.tag != "" {
 		b.WriteString(":")
 		b.WriteString(r.tag)
@@ -123,7 +123,7 @@ func (r Name) Parts() []string {
 	return []string{
 		r.domain,
 		r.namespace,
-		r.name,
+		r.nick,
 		r.tag,
 		r.build,
 	}
@@ -131,7 +131,7 @@ func (r Name) Parts() []string {
 
 func (r Name) Domain() string    { return r.namespace }
 func (r Name) Namespace() string { return r.namespace }
-func (r Name) Name() string      { return r.name }
+func (r Name) Nick() string      { return r.nick }
 func (r Name) Tag() string       { return r.tag }
 func (r Name) Build() string     { return r.build }
 
@@ -159,8 +159,8 @@ func ParseName(s string) Name {
 			r.domain = part
 		case Namespace:
 			r.namespace = part
-		case Short:
-			r.name = part
+		case Nick:
+			r.nick = part
 		case Tag:
 			r.tag = part
 		case Build:
@@ -182,7 +182,7 @@ func ParseName(s string) Name {
 func Merge(a, b Name) Name {
 	return Name{
 		// name is left untouched
-		name: a.name,
+		nick: a.nick,
 
 		domain:    cmp.Or(a.domain, b.domain),
 		namespace: cmp.Or(a.namespace, b.namespace),
@@ -243,15 +243,15 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 					if !yieldValid(Tag, s[i+1:j]) {
 						return
 					}
-					state, j = Short, i
+					state, j = Nick, i
 				default:
 					yield(Invalid, "")
 					return
 				}
 			case '/':
 				switch state {
-				case Short, Tag, Build:
-					if !yieldValid(Short, s[i+1:j]) {
+				case Nick, Tag, Build:
+					if !yieldValid(Nick, s[i+1:j]) {
 						return
 					}
 					state, j = Namespace, i
@@ -275,17 +275,17 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 		if state <= Namespace {
 			yieldValid(state, s[:j])
 		} else {
-			yieldValid(Short, s[:j])
+			yieldValid(Nick, s[:j])
 		}
 	}
 }
 
-// Valid returns true if the ref has a valid name. To know if a ref is
+// Valid returns true if the ref has a valid nick. To know if a ref is
 // "complete", use Complete.
 func (r Name) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
-	return r.name != ""
+	return r.nick != ""
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]

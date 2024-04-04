@@ -7,15 +7,15 @@ import (
 )
 
 var testNames = map[string]Name{
-	"mistral:latest":      {name: "mistral", tag: "latest"},
-	"mistral":             {name: "mistral"},
-	"mistral:30B":         {name: "mistral", tag: "30B"},
-	"mistral:7b":          {name: "mistral", tag: "7b"},
-	"mistral:7b+Q4_0":     {name: "mistral", tag: "7b", build: "Q4_0"},
-	"mistral+KQED":        {name: "mistral", build: "KQED"},
-	"mistral.x-3:7b+Q4_0": {name: "mistral.x-3", tag: "7b", build: "Q4_0"},
-	"mistral:7b+q4_0":     {name: "mistral", tag: "7b", build: "Q4_0"},
-	"llama2":              {name: "llama2"},
+	"mistral:latest":      {nick: "mistral", tag: "latest"},
+	"mistral":             {nick: "mistral"},
+	"mistral:30B":         {nick: "mistral", tag: "30B"},
+	"mistral:7b":          {nick: "mistral", tag: "7b"},
+	"mistral:7b+Q4_0":     {nick: "mistral", tag: "7b", build: "Q4_0"},
+	"mistral+KQED":        {nick: "mistral", build: "KQED"},
+	"mistral.x-3:7b+Q4_0": {nick: "mistral.x-3", tag: "7b", build: "Q4_0"},
+	"mistral:7b+q4_0":     {nick: "mistral", tag: "7b", build: "Q4_0"},
+	"llama2":              {nick: "llama2"},
 
 	// invalid (includes fuzzing trophies)
 	"+":                      {},
@@ -36,7 +36,7 @@ var testNames = map[string]Name{
 	"file:///etc/passwd:latest":   {},
 	"file:///etc/passwd:latest+u": {},
 
-	strings.Repeat("a", MaxNameLength):   {name: strings.Repeat("a", MaxNameLength)},
+	strings.Repeat("a", MaxNameLength):   {nick: strings.Repeat("a", MaxNameLength)},
 	strings.Repeat("a", MaxNameLength+1): {},
 }
 
@@ -66,10 +66,10 @@ func TestParseName(t *testing.T) {
 					t.Errorf("String() = %s; want %s", got.String(), s)
 				}
 
-				if got.Valid() && got.Name() == "" {
-					t.Errorf("Valid() = true; Name() = %q; want non-empty name", got.Name())
-				} else if !got.Valid() && got.Name() != "" {
-					t.Errorf("Valid() = false; Name() = %q; want empty name", got.Name())
+				if got.Valid() && got.Nick() == "" {
+					t.Errorf("Valid() = true; Nick() = %q; want non-empty name", got.Nick())
+				} else if !got.Valid() && got.Nick() != "" {
+					t.Errorf("Valid() = false; Nick() = %q; want empty name", got.Nick())
 				}
 			})
 		}
@@ -118,11 +118,11 @@ func TestNameStringVariants(t *testing.T) {
 		t.Run(tt.in, func(t *testing.T) {
 			p := ParseName(tt.in)
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
-			if g := p.ShortAndTag(); g != tt.nameAndTag {
-				t.Errorf("ShortAndTag(%q) = %q; want %q", tt.in, g, tt.nameAndTag)
+			if g := p.NickAndTag(); g != tt.nameAndTag {
+				t.Errorf("NickAndTag(%q) = %q; want %q", tt.in, g, tt.nameAndTag)
 			}
-			if g := p.ShortTagAndBuild(); g != tt.nameTagAndBuild {
-				t.Errorf("ShortTagAndBuild(%q) = %q; want %q", tt.in, g, tt.nameTagAndBuild)
+			if g := p.NickTagAndBuild(); g != tt.nameTagAndBuild {
+				t.Errorf("NickTagAndBuild(%q) = %q; want %q", tt.in, g, tt.nameTagAndBuild)
 			}
 		})
 	}
