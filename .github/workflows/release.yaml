@@ -99,7 +99,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cpu
-          path: llm/build/**/lib/*
+          path: llm/build/**/bin/*
 
   # ROCm generation step
   generate-windows-rocm:
@@ -170,7 +170,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/build/**/lib/*
+          path: llm/build/**/bin/*
       - uses: actions/upload-artifact@v4
         with:
           name: windows-rocm-deps
@@ -250,7 +250,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/build/**/lib/*
+          path: llm/build/**/bin/*
       - uses: actions/upload-artifact@v4
         with:
           name: windows-cuda-deps
