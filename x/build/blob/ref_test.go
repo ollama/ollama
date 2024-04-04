@@ -78,3 +78,21 @@ func TestRefFull(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRefAllocs(t *testing.T) {
+	// test allocations
+	allocs := testing.AllocsPerRun(1000, func() {
+		ParseRef("example.com/mistral:7b+Q4_0")
+	})
+	if allocs > 0 {
+		t.Errorf("ParseRef allocs = %v; want 0", allocs)
+	}
+}
+
+func BenchmarkParseRef(b *testing.B) {
+	var r Ref
+	for i := 0; i < b.N; i++ {
+		r = ParseRef("example.com/mistral:7b+Q4_0")
+	}
+	_ = r
+}
