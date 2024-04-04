@@ -69,6 +69,34 @@ func TestParseRef(t *testing.T) {
 	}
 }
 
+func TestRefComplete(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"example.com/mistral:7b+x", false},
+		{"example.com/mistral:7b+Q4_0", false},
+		{"example.com/x/mistral:latest", false},
+		{"mistral:7b+x", false},
+
+		{"example.com/x/mistral:latest+Q4_0", true},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			ref := ParseRef(tt.in)
+			t.Logf("ParseRef(%q) = %#v", tt.in, ref)
+			if g := ref.Complete(); g != tt.want {
+				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.want)
+			}
+			if ref.Complete() != Complete(tt.in) {
+				t.Errorf("ParseRef(%s).Complete() != Complete(%s)", tt.in, tt.in)
+			}
+		})
+	}
+}
+
 func TestRefFull(t *testing.T) {
 	const empty = "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/!(MISSING NAME):!(MISSING TAG)+!(MISSING BUILD)"
 
