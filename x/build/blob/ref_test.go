@@ -33,7 +33,11 @@ var testRefs = map[string]Ref{
 	":/0":                    {},
 	"+0/00000":               {},
 	"0+.\xf2\x80\xf6\x9d00000\xe5\x99\xe6\xd900\xd90\xa60\x91\xdc0\xff\xbf\x99\xe800\xb9\xdc\xd6\xc300\x970\xfb\xfd0\xe0\x8a\xe1\xad\xd40\x9700\xa80\x980\xdd0000\xb00\x91000\xfe0\x89\x9b\x90\x93\x9f0\xe60\xf7\x84\xb0\x87\xa5\xff0\xa000\x9a\x85\xf6\x85\xfe\xa9\xf9\xe9\xde00\xf4\xe0\x8f\x81\xad\xde00\xd700\xaa\xe000000\xb1\xee0\x91": {},
-	"0//0": {},
+	"0//0":                        {},
+	"m+^^^":                       {},
+	"file:///etc/passwd":          {},
+	"file:///etc/passwd:latest":   {},
+	"file:///etc/passwd:latest+u": {},
 }
 
 func TestRefParts(t *testing.T) {
@@ -44,19 +48,25 @@ func TestRefParts(t *testing.T) {
 	}
 }
 
-func TestParseRef(t *testing.T) {
+func TestParseRefWithAndWithoutPrefixes(t *testing.T) {
 	for s, want := range testRefs {
-		t.Run(s, func(t *testing.T) {
-			got := ParseRef(s)
-			if got != want {
-				t.Errorf("ParseRef(%q) = %q; want %q", s, got, want)
-			}
+		for _, prefix := range []string{"", "https://", "http://"} {
+			// We should get the same results with or without the
+			// http(s) prefixes
+			s := prefix + s
 
-			// test round-trip
-			if ParseRef(got.String()) != got {
-				t.Errorf("String() = %s; want %s", got.String(), s)
-			}
-		})
+			t.Run(s, func(t *testing.T) {
+				got := ParseRef(s)
+				if got != want {
+					t.Errorf("ParseRef(%q) = %q; want %q", s, got, want)
+				}
+
+				// test round-trip
+				if ParseRef(got.String()) != got {
+					t.Errorf("String() = %s; want %s", got.String(), s)
+				}
+			})
+		}
 	}
 }
 

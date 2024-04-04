@@ -230,7 +230,8 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 
 		yieldValid := func(kind PartKind, part string) bool {
 			if !isValidPart(part) {
-				return yield(Invalid, "")
+				yield(Invalid, "")
+				return false
 			}
 			return yield(kind, part)
 		}
@@ -303,26 +304,12 @@ func Complete(s string) bool {
 	return ParseRef(s).Complete()
 }
 
+// Valid returns true if the ref has a valid name. To know if a ref is
+// "complete", use Complete.
 func (r Ref) Valid() bool {
-	// Name is required
-	if !isValidPart(r.name) {
-		return false
-	}
-
-	// Optional parts must be valid if present
-	if r.domain != "" && !isValidPart(r.domain) {
-		return false
-	}
-	if r.namespace != "" && !isValidPart(r.namespace) {
-		return false
-	}
-	if r.tag != "" && !isValidPart(r.tag) {
-		return false
-	}
-	if r.build != "" && !isValidPart(r.build) {
-		return false
-	}
-	return true
+	// Parts ensures we only have valid parts, so no need to validate
+	// them here, only check if we have a name or not.
+	return r.name != ""
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
