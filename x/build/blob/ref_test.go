@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// test refs
-const (
-	refTooLong = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-)
-
 var testRefs = map[string]Ref{
 	"mistral:latest":      {name: "mistral", tag: "latest"},
 	"mistral":             {name: "mistral"},
@@ -38,6 +33,9 @@ var testRefs = map[string]Ref{
 	"file:///etc/passwd":          {},
 	"file:///etc/passwd:latest":   {},
 	"file:///etc/passwd:latest+u": {},
+
+	strings.Repeat("a", MaxRefLength):   {name: strings.Repeat("a", MaxRefLength)},
+	strings.Repeat("a", MaxRefLength+1): {},
 }
 
 func TestRefParts(t *testing.T) {
@@ -48,7 +46,7 @@ func TestRefParts(t *testing.T) {
 	}
 }
 
-func TestParseRefWithAndWithoutPrefixes(t *testing.T) {
+func TestParseRef(t *testing.T) {
 	for s, want := range testRefs {
 		for _, prefix := range []string{"", "https://", "http://"} {
 			// We should get the same results with or without the
@@ -104,9 +102,11 @@ func TestRefFull(t *testing.T) {
 
 func TestParseRefAllocs(t *testing.T) {
 	// test allocations
+	var r Ref
 	allocs := testing.AllocsPerRun(1000, func() {
-		ParseRef("example.com/mistral:7b+Q4_0")
+		r = ParseRef("example.com/mistral:7b+Q4_0")
 	})
+	_ = r
 	if allocs > 0 {
 		t.Errorf("ParseRef allocs = %v; want 0", allocs)
 	}

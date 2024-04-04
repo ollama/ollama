@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const MaxRefLength = 255
+
 type PartKind int
 
 // Levels of concreteness
@@ -224,7 +226,7 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 			s = s[len("https://"):]
 		}
 
-		if len(s) > 255 || len(s) == 0 {
+		if len(s) > MaxRefLength || len(s) == 0 {
 			return
 		}
 
