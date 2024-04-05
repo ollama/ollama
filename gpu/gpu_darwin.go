@@ -17,7 +17,7 @@ import (
 )
 
 // CheckVRAM returns the free VRAM in bytes on Linux machines with NVIDIA GPUs
-func CheckVRAM() (int64, error) {
+func CheckVRAM() (uint64, error) {
 	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
 	if userLimit != "" {
 		avail, err := strconv.ParseInt(userLimit, 10, 64)
@@ -25,15 +25,14 @@ func CheckVRAM() (int64, error) {
 			return 0, fmt.Errorf("Invalid OLLAMA_MAX_VRAM setting %s: %s", userLimit, err)
 		}
 		slog.Info(fmt.Sprintf("user override OLLAMA_MAX_VRAM=%d", avail))
-		return avail, nil
+		return uint64(avail), nil
 	}
 
 	if runtime.GOARCH == "amd64" {
 		// gpu not supported, this may not be metal
 		return 0, nil
 	}
-	recommendedMaxVRAM := int64(C.getRecommendedMaxVRAM())
-	return recommendedMaxVRAM, nil
+	return uint64(C.getRecommendedMaxVRAM()), nil
 }
 
 func GetGPUInfo() GpuInfo {
