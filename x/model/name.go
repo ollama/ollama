@@ -56,7 +56,7 @@ var kindNames = map[NamePart]string{
 // To check if a Name is fully qualified, use [Name.Complete]. A fully
 // qualified name has all parts present.
 //
-// To update parts of a Name with defaults, use [Merge].
+// To update parts of a Name with defaults, use [Fill].
 type Name struct {
 	_ structs.Incomparable
 
@@ -122,19 +122,15 @@ func ParseName(s string) Name {
 	return r
 }
 
-// Merge performs a partial merge of src into dst. Only the non-name parts
-// are merged. The name part is always left untouched. Other parts are
-// merged if and only if they are missing in dst.
+// Fill fills in the missing parts of dst with the parts of src.
 //
 // Use this for merging a fully qualified ref with a partial ref, such as
 // when filling in a missing parts with defaults.
 //
 // The returned Name will only be valid if dst is valid.
-func Merge(dst, src Name) Name {
+func Fill(dst, src Name) Name {
 	return Name{
-		// name is left untouched
-		model: dst.model,
-
+		model:     cmp.Or(dst.model, src.model),
 		host:      cmp.Or(dst.host, src.host),
 		namespace: cmp.Or(dst.namespace, src.namespace),
 		tag:       cmp.Or(dst.tag, src.tag),
@@ -223,24 +219,10 @@ func (r Name) Complete() bool {
 	return r.Valid() && !slices.Contains(r.Parts(), "")
 }
 
-// CompleteWithoutBuild reports whether the ref would be complete if it had a
-// valid build.
-func (r Name) CompleteWithoutBuild() bool {
-	r.build = "x"
-	return r.Valid() && r.Complete()
-}
-
-// Less returns true if r is less concrete than o; false otherwise.
-func (r Name) Less(o Name) bool {
-	rp := r.Parts()
-	op := o.Parts()
-	for i := range rp {
-		if rp[i] < op[i] {
-			return true
-		}
-	}
-	return false
-}
+// TODO(bmizerany): Compare
+// TODO(bmizerany): MarshalText/UnmarshalText
+// TODO(bmizerany): LogValue
+// TODO(bmizerany): driver.Value? (MarshalText etc should be enough)
 
 // Parts returns the parts of the ref in order of concreteness.
 //
@@ -289,7 +271,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 		}
 
 		yieldValid := func(kind NamePart, part string) bool {
-			if !isValidPart(part) {
+			if !isValidPart(kind, part) {
 				yield(Invalid, "")
 				return false
 			}
@@ -338,7 +320,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 					return
 				}
 			default:
-				if !isValidPart(s[i : i+1]) {
+				if !isValidPart(state, s[i:i+1]) {
 					yield(Invalid, "")
 					return
 				}
@@ -362,20 +344,27 @@ func (r Name) Valid() bool {
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
-func isValidPart(s string) bool {
+func isValidPart(kind NamePart, s string) bool {
 	if s == "" {
 		return false
 	}
 	for _, c := range []byte(s) {
-		if c == '.' || c == '-' {
-			return true
-		}
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' {
-			continue
-		} else {
+		if !isValidByte(kind, c) {
 			return false
-
 		}
 	}
 	return true
+}
+
+func isValidByte(kind NamePart, c byte) bool {
+	if kind == Namespace && c == '.' {
+		return false
+	}
+	if c == '.' || c == '-' {
+		return true
+	}
+	if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' {
+		return true
+	}
+	return false
 }

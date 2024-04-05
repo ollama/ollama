@@ -92,7 +92,7 @@ func TestParseName(t *testing.T) {
 	}
 }
 
-func TestName(t *testing.T) {
+func TestComplete(t *testing.T) {
 	cases := []struct {
 		in                   string
 		complete             bool
@@ -112,9 +112,6 @@ func TestName(t *testing.T) {
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
 			if g := p.Complete(); g != tt.complete {
 				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.complete)
-			}
-			if g := p.CompleteWithoutBuild(); g != tt.completeWithoutBuild {
-				t.Errorf("CompleteWithoutBuild(%q) = %v; want %v", tt.in, g, tt.completeWithoutBuild)
 			}
 		})
 	}
@@ -229,16 +226,36 @@ func FuzzParseName(f *testing.F) {
 	})
 }
 
-func ExampleMerge() {
-	src := ParseName("registry.ollama.com/mistral:latest")
-	dst := ParseName("mistral")
-	r := Merge(dst, src)
-	fmt.Println("src:", src)
-	fmt.Println("dst:", dst)
+func TestFill(t *testing.T) {
+	cases := []struct {
+		dst  string
+		src  string
+		want string
+	}{
+		{"mistral", "o.com/library/PLACEHOLDER:latest+Q4_0", "o.com/library/mistral:latest+Q4_0"},
+		{"o.com/library/mistral", "PLACEHOLDER:latest+Q4_0", "o.com/library/mistral:latest+Q4_0"},
+		{"", "o.com/library/mistral:latest+Q4_0", "o.com/library/mistral:latest+Q4_0"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.dst, func(t *testing.T) {
+			r := Fill(ParseName(tt.dst), ParseName(tt.src))
+			if r.String() != tt.want {
+				t.Errorf("Fill(%q, %q) = %q; want %q", tt.dst, tt.src, r, tt.want)
+			}
+		})
+	}
+}
+
+func ExampleFill() {
+	r := Fill(
+		ParseName("mistral"),
+		ParseName("registry.ollama.com/library/PLACEHOLDER:latest+Q4_0"),
+	)
 	fmt.Println(r)
 
 	// Output:
-	// registry.ollama.com/mistral:latest+Q4_0
+	// registry.ollama.com/library/mistral:latest+Q4_0
 }
 
 func ExampleName_MapHash() {
