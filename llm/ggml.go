@@ -327,7 +327,7 @@ func (llm GGML) GraphSize(context, batch int) (int64, bool) {
 	}
 
 	switch llm.KV().Architecture() {
-	case "gemma":
+	case "gemma", "command-r":
 		return 4 * int64(batch) * int64(embeddingLength+uint64(vocabLength)), true
 	case "phi2":
 		return max(
