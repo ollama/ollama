@@ -647,7 +647,7 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, model, filepath.Dir(req.Path), commands, fn); err != nil {
+		if err := CreateModel(ctx, model, filepath.Dir(req.Path), req.Quantization, commands, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()

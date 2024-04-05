@@ -284,7 +284,7 @@ func realpath(mfDir, from string) string {
 	return abspath
 }
 
-func CreateModel(ctx context.Context, name, modelFileDir string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
+func CreateModel(ctx context.Context, name, modelFileDir, quantization string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
 	deleteMap := make(map[string]struct{})
 	if manifest, _, err := GetManifest(ParseModelPath(name)); err == nil {
 		for _, layer := range append(manifest.Layers, manifest.Config) {
@@ -337,8 +337,27 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			if ggufName != "" {
 				pathName = ggufName
-				slog.Debug(fmt.Sprintf("new image layer path: %s", pathName))
 				defer os.RemoveAll(ggufName)
+
+				if quantization != "" {
+					quantization = strings.ToUpper(quantization)
+					fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", "F16", quantization)})
+					tempfile, err := os.CreateTemp(filepath.Dir(ggufName), quantization)
+					if err != nil {
+						return err
+					}
+					defer os.RemoveAll(tempfile.Name())
+
+					if err := llm.Quantize(ggufName, tempfile.Name(), quantization); err != nil {
+						return err
+					}
+
+					if err := tempfile.Close(); err != nil {
+						return err
+					}
+
+					pathName = tempfile.Name()
+				}
 			}
 
 			bin, err := os.Open(pathName)
