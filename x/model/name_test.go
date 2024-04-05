@@ -7,26 +7,42 @@ import (
 )
 
 var testNames = map[string]Name{
-	"mistral:latest":      {model: "mistral", tag: "latest"},
-	"mistral":             {model: "mistral"},
-	"mistral:30B":         {model: "mistral", tag: "30B"},
-	"mistral:7b":          {model: "mistral", tag: "7b"},
-	"mistral:7b+Q4_0":     {model: "mistral", tag: "7b", build: "Q4_0"},
-	"mistral+KQED":        {model: "mistral", build: "KQED"},
-	"mistral.x-3:7b+Q4_0": {model: "mistral.x-3", tag: "7b", build: "Q4_0"},
-	"mistral:7b+q4_0":     {model: "mistral", tag: "7b", build: "Q4_0"},
-	"llama2":              {model: "llama2"},
+	"mistral:latest":                 {model: "mistral", tag: "latest"},
+	"mistral":                        {model: "mistral"},
+	"mistral:30B":                    {model: "mistral", tag: "30B"},
+	"mistral:7b":                     {model: "mistral", tag: "7b"},
+	"mistral:7b+Q4_0":                {model: "mistral", tag: "7b", build: "Q4_0"},
+	"mistral+KQED":                   {model: "mistral", build: "KQED"},
+	"mistral.x-3:7b+Q4_0":            {model: "mistral.x-3", tag: "7b", build: "Q4_0"},
+	"mistral:7b+q4_0":                {model: "mistral", tag: "7b", build: "Q4_0"},
+	"llama2":                         {model: "llama2"},
+	"user/model":                     {namespace: "user", model: "model"},
+	"example.com/ns/mistral:7b+Q4_0": {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "Q4_0"},
+	"example.com/ns/mistral:7b+x":    {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "X"},
 
 	// invalid (includes fuzzing trophies)
-	"+":                      {},
-	"mistral:7b+Q4_0:latest": {},
-	"mi tral":                {},
-	"x/y/z/foo":              {},
+	" / / : + ": {},
+	" / : + ":   {},
+	" : + ":     {},
+	" + ":       {},
+	" : ":       {},
+	" / ":       {},
+	" /":        {},
+	"/ ":        {},
+	"/":         {},
+	":":         {},
+	"+":         {},
+
+	// (".") in namepsace is not allowed
+	"invalid.com/7b+x": {},
+
+	"invalid:7b+Q4_0:latest": {},
+	"in valid":               {},
+	"invalid/y/z/foo":        {},
 	"/0":                     {},
 	"0 /0":                   {},
 	"0 /":                    {},
 	"0/":                     {},
-	":":                      {},
 	":/0":                    {},
 	"+0/00000":               {},
 	"0+.\xf2\x80\xf6\x9d00000\xe5\x99\xe6\xd900\xd90\xa60\x91\xdc0\xff\xbf\x99\xe800\xb9\xdc\xd6\xc300\x970\xfb\xfd0\xe0\x8a\xe1\xad\xd40\x9700\xa80\x980\xdd0000\xb00\x91000\xfe0\x89\x9b\x90\x93\x9f0\xe60\xf7\x84\xb0\x87\xa5\xff0\xa000\x9a\x85\xf6\x85\xfe\xa9\xf9\xe9\xde00\xf4\xe0\x8f\x81\xad\xde00\xd700\xaa\xe000000\xb1\xee0\x91": {},
@@ -83,11 +99,11 @@ func TestName(t *testing.T) {
 		completeWithoutBuild bool
 	}{
 		{"", false, false},
-		{"example.com/mistral:7b+x", false, false},
-		{"example.com/mistral:7b+Q4_0", false, false},
-		{"mistral:7b+x", false, false},
-		{"example.com/x/mistral:latest+Q4_0", true, true},
-		{"example.com/x/mistral:latest", false, true},
+		{"incomplete/mistral:7b+x", false, false},
+		{"incomplete/mistral:7b+Q4_0", false, false},
+		{"incomplete:7b+x", false, false},
+		{"complete.com/x/mistral:latest+Q4_0", true, true},
+		{"complete.com/x/mistral:latest", false, true},
 	}
 
 	for _, tt := range cases {
@@ -136,8 +152,8 @@ func TestNameFull(t *testing.T) {
 		wantFull string
 	}{
 		{"", empty},
-		{"example.com/mistral:7b+x", "!(MISSING DOMAIN)/example.com/mistral:7b+X"},
-		{"example.com/mistral:7b+Q4_0", "!(MISSING DOMAIN)/example.com/mistral:7b+Q4_0"},
+		{"ns/mistral:7b+x", "!(MISSING DOMAIN)/ns/mistral:7b+X"},
+		{"ns/mistral:7b+Q4_0", "!(MISSING DOMAIN)/ns/mistral:7b+Q4_0"},
 		{"example.com/x/mistral:latest", "example.com/x/mistral:latest+!(MISSING BUILD)"},
 		{"example.com/x/mistral:latest+Q4_0", "example.com/x/mistral:latest+Q4_0"},
 
@@ -210,15 +226,15 @@ func FuzzParseName(f *testing.F) {
 		if !r0.EqualFold(r1) {
 			t.Errorf("round-trip mismatch: %+v != %+v", r0, r1)
 		}
-
 	})
 }
 
 func ExampleMerge() {
-	r := Merge(
-		ParseName("mistral"),
-		ParseName("registry.ollama.com/XXXXX:latest+Q4_0"),
-	)
+	src := ParseName("registry.ollama.com/mistral:latest")
+	dst := ParseName("mistral")
+	r := Merge(dst, src)
+	fmt.Println("src:", src)
+	fmt.Println("dst:", dst)
 	fmt.Println(r)
 
 	// Output:
