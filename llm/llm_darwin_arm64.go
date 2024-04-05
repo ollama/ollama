@@ -4,5 +4,5 @@ import (
 	"embed"
 )
 
-//go:embed llama.cpp/build/windows/*/*/lib/*.dll*
+//go:embed build/darwin/arm64/*/bin/*
 var libEmbed embed.FS

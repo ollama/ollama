@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"strings"
 
 	"golang.org/x/exp/slices"
@@ -47,10 +46,7 @@ func NewLayer(r io.Reader, mediatype string) (*Layer, error) {
 		return nil, err
 	}
 
-	delimiter := ":"
-	if runtime.GOOS == "windows" {
-		delimiter = "-"
-	}
+	const delimiter = "-"
 
 	pattern := strings.Join([]string{"sha256", "*-partial"}, delimiter)
 	temp, err := os.CreateTemp(blobs, pattern)

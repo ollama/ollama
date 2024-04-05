@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -23,11 +24,12 @@ import (
 
 	"golang.org/x/exp/slices"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/convert"
-	"github.com/jmorganca/ollama/llm"
-	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/version"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/convert"
+	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/version"
 )
 
 type registryOptions struct {
@@ -320,11 +322,14 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			pathName := realpath(modelFileDir, c.Args)
 
-			ggufName, err := convertSafetensors(name, pathName)
+			ggufName, err := convertSafetensors(name, pathName, fn)
 			if err != nil {
+				var pathErr *fs.PathError
 				switch {
 				case errors.Is(err, zip.ErrFormat):
 					// it's not a safetensor archive
+				case errors.As(err, &pathErr):
+					// it's not a file on disk, could be a model reference
 				default:
 					return err
 				}
@@ -332,6 +337,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 			if ggufName != "" {
 				pathName = ggufName
+				slog.Debug(fmt.Sprintf("new image layer path: %s", pathName))
 				defer os.RemoveAll(ggufName)
 			}
 
@@ -415,34 +421,32 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			defer bin.Close()
 
 			var offset int64
-		CREATE:
 			for {
 				fn(api.ProgressResponse{Status: "creating model layer"})
+				if _, err := bin.Seek(offset, io.SeekStart); err != nil {
+					return err
+				}
 
-				bin.Seek(offset, io.SeekStart)
-				ggml, err := llm.DecodeGGML(bin)
-				if err != nil {
-					switch {
-					case errors.Is(err, io.EOF):
-						break CREATE
-					case errors.Is(err, llm.ErrUnsupportedFormat):
-						return fmt.Errorf("model binary specified in FROM field is not a valid gguf format model, %w", err)
-					default:
-						return err
-					}
+				ggml, size, err := llm.DecodeGGML(bin)
+				if errors.Is(err, io.EOF) {
+					break
+				} else if errors.Is(err, llm.ErrUnsupportedFormat) {
+					return fmt.Errorf("model binary specified in FROM field is not a valid gguf format model, %w", err)
+				} else if err != nil {
+					return err
 				}
 
 				config.SetModelFormat(ggml.Name())
-				config.SetModelFamily(ggml.ModelFamily())
-				config.SetModelType(ggml.ModelType())
-				config.SetFileType(ggml.FileType())
+				config.SetModelFamily(ggml.KV().Architecture())
+				config.SetModelType(format.HumanNumber(ggml.KV().ParameterCount()))
+				config.SetFileType(ggml.KV().FileType())
 
 				mediatype := mediatype
-				if ggml.ModelFamily() == "clip" {
+				if ggml.KV().Architecture() == "clip" {
 					mediatype = "application/vnd.ollama.image.projector"
 				}
 
-				sr := io.NewSectionReader(bin, offset, ggml.Size)
+				sr := io.NewSectionReader(bin, offset, size)
 				layer, err := NewLayer(sr, mediatype)
 				if err != nil {
 					return err
@@ -450,7 +454,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 
 				layers.Add(layer)
 
-				offset += ggml.Size
+				offset += size
 			}
 		case "adapter":
 			if strings.HasPrefix(c.Args, "@") {
@@ -469,7 +473,13 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 			defer bin.Close()
 
-			layer, err := NewLayer(bin, mediatype)
+			_, size, err := llm.DecodeGGML(bin)
+			if err != nil {
+				return err
+			}
+
+			sr := io.NewSectionReader(bin, 0, size)
+			layer, err := NewLayer(sr, mediatype)
 			if err != nil {
 				return err
 			}
@@ -540,13 +550,6 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 		}
 
-		// xxx - can this be removed?
-		if config.ModelType == "65B" {
-			if gqa, ok := formattedParams["gqa"].(int); ok && gqa == 8 {
-				config.ModelType = "70B"
-			}
-		}
-
 		var b bytes.Buffer
 		if err := json.NewEncoder(&b).Encode(formattedParams); err != nil {
 			return err
@@ -611,8 +614,8 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	return nil
 }
 
-func convertSafetensors(name, fn string) (string, error) {
-	r, err := zip.OpenReader(fn)
+func convertSafetensors(name, path string, fn func(resp api.ProgressResponse)) (string, error) {
+	r, err := zip.OpenReader(path)
 	if err != nil {
 		return "", err
 	}
@@ -624,6 +627,7 @@ func convertSafetensors(name, fn string) (string, error) {
 	}
 	defer os.RemoveAll(tempDir)
 
+	fn(api.ProgressResponse{Status: "unpacking model metadata"})
 	for _, f := range r.File {
 		fpath := filepath.Join(tempDir, f.Name)
 		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
@@ -650,32 +654,27 @@ func convertSafetensors(name, fn string) (string, error) {
 		return "", err
 	}
 
-	SupportedArchs := []string{
-		"MistralForCausalLM",
-	}
-
-	for _, arch := range params.Architectures {
-		if !slices.Contains(SupportedArchs, arch) {
-			return "", fmt.Errorf("this safetensors model is not yet supported")
-		}
-	}
-
-	t, err := convert.GetSafeTensors(tempDir)
+	mArch, err := convert.GetModelArchFromParams(name, tempDir, params)
 	if err != nil {
 		return "", err
 	}
 
-	vocab, err := convert.LoadTokens(tempDir)
+	fn(api.ProgressResponse{Status: "processing safetensors"})
+	if err := mArch.GetTensors(); err != nil {
+		return "", err
+	}
+
+	if err := mArch.LoadVocab(); err != nil {
+		return "", err
+	}
+
+	fn(api.ProgressResponse{Status: "converting model"})
+	path, err = mArch.WriteGGUF()
 	if err != nil {
 		return "", err
 	}
 
-	fn, err = convert.WriteGGUF(name, t, params, vocab)
-	if err != nil {
-		return "", err
-	}
-
-	return fn, nil
+	return path, nil
 }
 
 func CopyModel(src, dest string) error {
@@ -785,9 +784,7 @@ func PruneLayers() error {
 
 	for _, blob := range blobs {
 		name := blob.Name()
-		if runtime.GOOS == "windows" {
-			name = strings.ReplaceAll(name, "-", ":")
-		}
+		name = strings.ReplaceAll(name, "-", ":")
 		if strings.HasPrefix(name, "sha256:") {
 			deleteMap[name] = struct{}{}
 		}

@@ -140,7 +140,7 @@ func AMDValidateLibDir() (string, error) {
 	// $LibDir/rocm, we instead rely on setting PATH to point
 	// to the location of the ROCm library
 
-	// Installer payload location
+	// Installer payload location if we're running the installed binary
 	exe, err := os.Executable()
 	if err == nil {
 		rocmTargetDir := filepath.Join(filepath.Dir(exe), "rocm")
@@ -150,13 +150,12 @@ func AMDValidateLibDir() (string, error) {
 		}
 	}
 
-	// If we already have a rocm dependency wired, nothing more to do
-	libDir, err := AssetsDir()
-	if err != nil {
-		return "", fmt.Errorf("unable to lookup lib dir: %w", err)
-	}
-	rocmTargetDir := filepath.Join(libDir, "rocm")
+	// Installer payload (if we're running from some other location)
+	localAppData := os.Getenv("LOCALAPPDATA")
+	appDir := filepath.Join(localAppData, "Programs", "Ollama")
+	rocmTargetDir := filepath.Join(appDir, "rocm")
 	if rocmLibUsable(rocmTargetDir) {
+		slog.Debug("detected ollama installed ROCm at " + rocmTargetDir)
 		return rocmTargetDir, nil
 	}
 
@@ -175,16 +174,7 @@ func AMDValidateLibDir() (string, error) {
 		return RocmStandardLocation, nil
 	}
 
-	// Installer payload (if we're running from some other location)
-	localAppData := os.Getenv("LOCALAPPDATA")
-	appDir := filepath.Join(localAppData, "Programs", "Ollama")
-	rocmTargetDir = filepath.Join(appDir, "rocm")
-	if rocmLibUsable(rocmTargetDir) {
-		slog.Debug("detected ollama installed ROCm at " + rocmTargetDir)
-		return rocmTargetDir, nil
-	}
-
 	// Should not happen on windows since we include it in the installer, but stand-alone binary might hit this
-	slog.Warn("amdgpu detected, but no compatible rocm library found.  Please install ROCm v6")
+	slog.Warn("amdgpu detected, but no compatible rocm library found.  Please install ROCm")
 	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
 }

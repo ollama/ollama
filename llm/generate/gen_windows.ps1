@@ -13,6 +13,9 @@ function amdGPUs {
         "gfx908:xnack-"
         "gfx90a:xnack+"
         "gfx90a:xnack-"
+        "gfx940"
+        "gfx941"
+        "gfx942"
         "gfx1010"
         "gfx1012"
         "gfx1030"
@@ -24,19 +27,13 @@ function amdGPUs {
 }
 
 function init_vars {
-    # Verify the environment is a Developer Shell for MSVC 2019
-    write-host $env:VSINSTALLDIR
-    if (($env:VSINSTALLDIR -eq $null)) {
-        Write-Error "`r`nBUILD ERROR - YOUR DEVELOPMENT ENVIRONMENT IS NOT SET UP CORRECTLY`r`nTo build Ollama you must run from an MSVC Developer Shell`r`nSee .\docs\development.md for instructions to set up your dev environment"
-        exit 1
-    }
     $script:SRC_DIR = $(resolve-path "..\..\")
     $script:llamacppDir = "../llama.cpp"
     $script:cmakeDefs = @(
         "-DBUILD_SHARED_LIBS=on",
         "-DLLAMA_NATIVE=off"
         )
-    $script:cmakeTargets = @("ext_server")
+    $script:cmakeTargets = @("ollama_llama_server")
     $script:ARCH = "amd64" # arm not yet supported.
     if ($env:CGO_CFLAGS -contains "-g") {
         $script:cmakeDefs += @("-DCMAKE_VERBOSE_MAKEFILE=on", "-DLLAMA_SERVER_VERBOSE=on", "-DCMAKE_BUILD_TYPE=RelWithDebInfo")
@@ -65,8 +62,12 @@ function init_vars {
     } else {
         $script:CMAKE_CUDA_ARCHITECTURES=$env:CMAKE_CUDA_ARCHITECTURES
     }
-    # Note: 10 Windows Kit signtool crashes with GCP's plugin
-    ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
+    # Note: Windows Kits 10 signtool crashes with GCP's plugin
+    if ($null -eq $env:SIGN_TOOL) {
+        ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
+    } else {
+        ${script:SignTool}=${env:SIGN_TOOL}
+    }
     if ("${env:KEY_CONTAINER}") {
         ${script:OLLAMA_CERT}=$(resolve-path "${script:SRC_DIR}\ollama_inc.crt")
     }
@@ -82,8 +83,8 @@ function git_module_setup {
 
 function apply_patches {
     # Wire up our CMakefile
-    if (!(Select-String -Path "${script:llamacppDir}/examples/server/CMakeLists.txt" -Pattern 'ollama')) {
-        Add-Content -Path "${script:llamacppDir}/examples/server/CMakeLists.txt" -Value 'include (../../../ext_server/CMakeLists.txt) # ollama'
+    if (!(Select-String -Path "${script:llamacppDir}/CMakeLists.txt" -Pattern 'ollama')) {
+        Add-Content -Path "${script:llamacppDir}/CMakeLists.txt" -Value 'add_subdirectory(../ext_server ext_server) # ollama'
     }
 
     # Apply temporary patches until fix is upstream
@@ -96,22 +97,15 @@ function apply_patches {
         }
 
         # Checkout each file
-        Set-Location -Path ${script:llamacppDir}
         foreach ($file in $filePaths) {
-            git checkout $file
+            git -C "${script:llamacppDir}" checkout $file
         }
     }
 
     # Apply each patch
     foreach ($patch in $patches) {
-        Set-Location -Path ${script:llamacppDir}
-        git apply $patch.FullName
+        git -C "${script:llamacppDir}" apply $patch.FullName
     }
-
-    # Avoid duplicate main symbols when we link into the cgo binary
-    $content = Get-Content -Path "${script:llamacppDir}/examples/server/server.cpp"
-    $content = $content -replace 'int main\(', 'int __main('
-    Set-Content -Path "${script:llamacppDir}/examples/server/server.cpp" -Value $content
 }
 
 function build {
@@ -119,26 +113,20 @@ function build {
     & cmake --version
     & cmake -S "${script:llamacppDir}" -B $script:buildDir $script:cmakeDefs
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    write-host "building with: cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ })"
+    write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ })"
     & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ })
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-}
-
-function install {
-    rm -ea 0 -recurse -force -path "${script:buildDir}/lib"
-    md "${script:buildDir}/lib" -ea 0 > $null
-    cp "${script:buildDir}/bin/${script:config}/ext_server.dll" "${script:buildDir}/lib"
-    cp "${script:buildDir}/bin/${script:config}/llama.dll" "${script:buildDir}/lib"
-    # Display the dll dependencies in the build log
-    if ($script:DUMPBIN -ne $null) {
-        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+    # Rearrange output to be consistent between different generators
+    if ($null -ne ${script:config} -And (test-path -path "${script:buildDir}/bin/${script:config}" ) ) {
+        mv -force "${script:buildDir}/bin/${script:config}/*" "${script:buildDir}/bin/"
+        remove-item "${script:buildDir}/bin/${script:config}"
     }
 }
 
 function sign {
     if ("${env:KEY_CONTAINER}") {
-        write-host "Signing ${script:buildDir}/lib/*.dll"
-        foreach ($file in (get-childitem "${script:buildDir}/lib/*.dll")){
+        write-host "Signing ${script:buildDir}/bin/*.exe  ${script:buildDir}/bin/*.dll"
+        foreach ($file in @(get-childitem "${script:buildDir}/bin/*.exe") + @(get-childitem "${script:buildDir}/bin/*.dll")){
             & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
                 /csp "Google Cloud KMS Provider" /kc "${env:KEY_CONTAINER}" $file
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -146,14 +134,20 @@ function sign {
     }
 }
 
-function compress_libs {
+function compress {
     if ($script:GZIP -eq $null) {
         write-host "gzip not installed, not compressing files"
         return
     }
+    write-host "Compressing binaries..."
+    $binaries = dir "${script:buildDir}/bin/*.exe"
+    foreach ($file in $binaries) {
+        & "$script:GZIP" --best -f $file
+    }
+
     write-host "Compressing dlls..."
-    $libs = dir "${script:buildDir}/lib/*.dll"
-    foreach ($file in $libs) {
+    $dlls = dir "${script:buildDir}/bin/*.dll"
+    foreach ($file in $dlls) {
         & "$script:GZIP" --best -f $file
     }
 }
@@ -168,14 +162,11 @@ function cleanup {
         }
 
         # Checkout each file
-        Set-Location -Path ${script:llamacppDir}
         foreach ($file in $filePaths) {            
-            git checkout $file
+            git -C "${script:llamacppDir}" checkout $file
         }
+        git -C "${script:llamacppDir}" checkout CMakeLists.txt
     }
-    Set-Location "${script:llamacppDir}/examples/server"
-    git checkout CMakeLists.txt server.cpp
-
 }
 
 init_vars
@@ -183,38 +174,64 @@ git_module_setup
 apply_patches
 
 # -DLLAMA_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
-# -DLLAMA_F16C -- 2012 Intel Ivy Bridge & AMD 2011 Bulldozer (No significant improvement over just AVX)
 # -DLLAMA_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
 # -DLLAMA_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
 $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
 
-init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
-write-host "Building LCD CPU"
-build
-install
-sign
-compress_libs
+if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
 
+# GCC build for direct linking into the Go binary
 init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
-write-host "Building AVX CPU"
+# cmake will silently fallback to msvc compilers if mingw isn't in the path, so detect and fail fast
+# as we need this to be compiled by gcc for golang to be able to link with itx
+write-host "Checking for MinGW..."
+# error action ensures we exit on failure
+get-command gcc
+get-command mingw32-make
+$script:cmakeTargets = @("llama", "ggml")
+$script:cmakeDefs = @(
+    "-G", "MinGW Makefiles"
+    "-DCMAKE_C_COMPILER=gcc.exe",
+    "-DCMAKE_CXX_COMPILER=g++.exe",
+    "-DBUILD_SHARED_LIBS=off",
+    "-DLLAMA_NATIVE=off",
+    "-DLLAMA_AVX=off",
+    "-DLLAMA_AVX2=off",
+    "-DLLAMA_AVX512=off",
+    "-DLLAMA_F16C=off",
+    "-DLLAMA_FMA=off")
+$script:buildDir="../build/windows/${script:ARCH}_static"
+write-host "Building static library"
 build
-install
-sign
-compress_libs
 
-init_vars
-$script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
-write-host "Building AVX2 CPU"
-build
-install
-sign
-compress_libs
+# remaining llama.cpp builds use MSVC 
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+    $script:buildDir="../build/windows/${script:ARCH}/cpu"
+    write-host "Building LCD CPU"
+    build
+    sign
+    compress
+
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+    $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
+    write-host "Building AVX CPU"
+    build
+    sign
+    compress
+
+    init_vars
+    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
+    $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
+    write-host "Building AVX2 CPU"
+    build
+    sign
+    compress
+} else {
+    write-host "Skipping CPU generation step as requested"
+}
 
 if ($null -ne $script:CUDA_LIB_DIR) {
     # Then build cuda as a dynamically loaded library
@@ -224,13 +241,11 @@ if ($null -ne $script:CUDA_LIB_DIR) {
         $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
     }
     init_vars
-    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
+    $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
     $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
-    write-host "Building CUDA"
     build
-    install
     sign
-    compress_libs
+    compress
 }
 
 if ($null -ne $env:HIP_PATH) {
@@ -240,7 +255,7 @@ if ($null -ne $env:HIP_PATH) {
     }
 
     init_vars
-    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
+    $script:buildDir="../build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
     $script:cmakeDefs += @(
         "-G", "Ninja", 
         "-DCMAKE_C_COMPILER=clang.exe",
@@ -254,7 +269,7 @@ if ($null -ne $env:HIP_PATH) {
         )
 
     # Make sure the ROCm binary dir is first in the path
-    $env:PATH="$env:HIP_PATH\bin;$env:VSINSTALLDIR\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja;$env:PATH"
+    $env:PATH="$env:HIP_PATH\bin;$env:PATH"
 
     # We have to clobber the LIB var from the developer shell for clang to work properly
     $env:LIB=""
@@ -263,13 +278,13 @@ if ($null -ne $env:HIP_PATH) {
     build
     # Ninja doesn't prefix with config name
     ${script:config}=""
-    install
     if ($null -ne $script:DUMPBIN) {
-        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/ollama_llama_server.exe" | select-string ".dll"
     }
     sign
-    compress_libs
+    compress
 }
 
+
 cleanup
-write-host "`ngo generate completed"
+write-host "`ngo generate completed.  LLM runners: $(get-childitem -path ${script:SRC_DIR}\llm\build\windows\${script:ARCH})"

@@ -67,43 +67,19 @@ You can see what features your CPU has with the following.
 cat /proc/cpuinfo| grep flags  | head -1
 ```
 
-## AMD Radeon GPU Support
+## Installing older or pre-release versions on Linux
 
-Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In
-some cases you can force the system to try to use a close GPU type.  For example
-The Radeon RX 5400 is `gfx1034` (also known as 10.3.4) however, ROCm does not
-support this patch-level, the closest support is `gfx1030`.  You can use the
-environment variable `HSA_OVERRIDE_GFX_VERSION` with `x.y.z` syntax.  So for
-example, to force the system to run on the RX 5400, you would set
-`HSA_OVERRIDE_GFX_VERSION="10.3.0"` as an environment variable for the server.
-
-At this time, the known supported GPU types are the following: (This may change from
-release to release)
-- gfx900
-- gfx906
-- gfx908
-- gfx90a
-- gfx940
-- gfx941
-- gfx942
-- gfx1030
-- gfx1100
-- gfx1101
-- gfx1102
-
-This will not work for all unsupported GPUs.  Reach out on [Discord](https://discord.gg/ollama)
-or file an [issue](https://github.com/ollama/ollama/issues) for additional help.
-
-
-## Installing older versions on Linux
-
-If you run into problems on Linux and want to install an older version you can tell the install script
-which version to install.
+If you run into problems on Linux and want to install an older version, or you'd
+like to try out a pre-release before it's officially released, you can tell the
+install script which version to install.
 
 ```sh
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.27" sh
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.29" sh
 ```
 
-## Known issues
+## Linux tmp noexec 
 
-* N/A
+If your system is configured with the "noexec" flag where Ollama stores its
+temporary executable files, you can specify an alternate location by setting
+OLLAMA_TMPDIR to a location writable by the user ollama runs as.  For example
+OLLAMA_TMPDIR=/usr/share/ollama/

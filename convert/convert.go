@@ -13,11 +13,13 @@ import (
 	"regexp"
 	"slices"
 
+	"github.com/d4l3k/go-bfloat16"
 	"github.com/mitchellh/mapstructure"
+	"github.com/x448/float16"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/jmorganca/ollama/convert/sentencepiece"
-	"github.com/jmorganca/ollama/llm"
+	"github.com/ollama/ollama/convert/sentencepiece"
+	"github.com/ollama/ollama/llm"
 )
 
 type Params struct {
@@ -33,6 +35,15 @@ type Params struct {
 	RopeFreqBase     float64  `json:"rope_theta"`
 	BoSTokenID       int      `json:"bos_token_id"`
 	EoSTokenID       int      `json:"eos_token_id"`
+	HeadDimension    int      `json:"head_dim"`
+	PaddingTokenID   int      `json:"pad_token_id"`
+
+	ByteOrder
+}
+
+type ByteOrder interface {
+	binary.ByteOrder
+	binary.AppendByteOrder
 }
 
 type MetaData struct {
@@ -41,27 +52,43 @@ type MetaData struct {
 	Offsets []int  `mapstructure:"data_offsets"`
 }
 
-func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
+type ModelArch interface {
+	GetTensors() error
+	LoadVocab() error
+	WriteGGUF() (string, error)
+}
+
+type ModelData struct {
+	Path    string
+	Name    string
+	Params  *Params
+	Vocab   *Vocab
+	Tensors []llm.Tensor
+}
+
+func ReadSafeTensors(fn string, offset uint64, params *Params) ([]llm.Tensor, uint64, error) {
 	f, err := os.Open(fn)
 	if err != nil {
-		return []llm.Tensor{}, 0, err
+		return nil, 0, err
 	}
 	defer f.Close()
 
 	var jsonSize uint64
-	binary.Read(f, binary.LittleEndian, &jsonSize)
+	if err := binary.Read(f, binary.LittleEndian, &jsonSize); err != nil {
+		return nil, 0, err
+	}
 
 	buf := make([]byte, jsonSize)
 	_, err = io.ReadFull(f, buf)
 	if err != nil {
-		return []llm.Tensor{}, 0, err
+		return nil, 0, err
 	}
 
 	d := json.NewDecoder(bytes.NewBuffer(buf))
 	d.UseNumber()
 	var parsed map[string]interface{}
 	if err = d.Decode(&parsed); err != nil {
-		return []llm.Tensor{}, 0, err
+		return nil, 0, err
 	}
 
 	var keys []string
@@ -78,7 +105,7 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 		vals := parsed[k].(map[string]interface{})
 		var data MetaData
 		if err = mapstructure.Decode(vals, &data); err != nil {
-			return []llm.Tensor{}, 0, err
+			return nil, 0, err
 		}
 
 		var size uint64
@@ -100,23 +127,31 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 		ggufName, err := GetTensorName(k)
 		if err != nil {
 			slog.Error("%v", err)
-			return []llm.Tensor{}, 0, err
+			return nil, 0, err
 		}
 
-		shape := [4]uint64{0, 0, 0, 0}
-		for cnt, s := range data.Shape {
-			shape[cnt] = uint64(s)
+		shape := []uint64{0, 0, 0, 0}
+		for i := range data.Shape {
+			shape[i] = uint64(data.Shape[i])
 		}
 
 		t := llm.Tensor{
-			Name:          ggufName,
-			Kind:          kind,
-			Offset:        offset,
-			Shape:         shape,
-			FileName:      fn,
-			OffsetPadding: 8 + jsonSize,
-			FileOffsets:   []uint64{uint64(data.Offsets[0]), uint64(data.Offsets[1])},
+			Name:   ggufName,
+			Kind:   kind,
+			Offset: offset,
+			Shape:  shape[:],
 		}
+
+		t.WriterTo = safetensorWriterTo{
+			t:        &t,
+			params:   params,
+			bo:       params.ByteOrder,
+			filename: fn,
+			start:    uint64(data.Offsets[0]),
+			end:      uint64(data.Offsets[1]),
+			padding:  8 + jsonSize,
+		}
+
 		slog.Debug(fmt.Sprintf("%v", t))
 		tensors = append(tensors, t)
 		offset += size
@@ -124,21 +159,21 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 	return tensors, offset, nil
 }
 
-func GetSafeTensors(dirpath string) ([]llm.Tensor, error) {
+func GetSafeTensors(dirpath string, params *Params) ([]llm.Tensor, error) {
 	var tensors []llm.Tensor
 	files, err := filepath.Glob(filepath.Join(dirpath, "/model-*.safetensors"))
 	if err != nil {
-		return []llm.Tensor{}, err
+		return nil, err
 	}
 
 	var offset uint64
 	for _, f := range files {
 		var t []llm.Tensor
 		var err error
-		t, offset, err = ReadSafeTensors(f, offset)
+		t, offset, err = ReadSafeTensors(f, offset, params)
 		if err != nil {
 			slog.Error("%v", err)
-			return []llm.Tensor{}, err
+			return nil, err
 		}
 		tensors = append(tensors, t...)
 	}
@@ -160,6 +195,7 @@ func GetParams(dirpath string) (*Params, error) {
 		return nil, err
 	}
 
+	params.ByteOrder = binary.LittleEndian
 	return &params, nil
 }
 
@@ -171,7 +207,7 @@ type Vocab struct {
 	Types  []int32
 }
 
-func LoadTokens(dirpath string) (*Vocab, error) {
+func LoadSentencePieceTokens(dirpath string, vocabSize int) (*Vocab, error) {
 	slog.Info(fmt.Sprintf("reading vocab from %s", filepath.Join(dirpath, "tokenizer.model")))
 	in, err := os.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
 	if err != nil {
@@ -196,6 +232,14 @@ func LoadTokens(dirpath string) (*Vocab, error) {
 		v.Tokens = append(v.Tokens, p.GetPiece())
 		v.Scores = append(v.Scores, p.GetScore())
 		t := p.GetType()
+		switch t {
+		case sentencepiece.ModelProto_SentencePiece_UNKNOWN:
+		case sentencepiece.ModelProto_SentencePiece_CONTROL:
+		case sentencepiece.ModelProto_SentencePiece_UNUSED:
+		case sentencepiece.ModelProto_SentencePiece_BYTE:
+		default:
+			t = sentencepiece.ModelProto_SentencePiece_NORMAL
+		}
 		v.Types = append(v.Types, int32(t))
 	}
 
@@ -243,6 +287,16 @@ func LoadTokens(dirpath string) (*Vocab, error) {
 	}
 	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
 
+	if vocabSize > len(v.Tokens) {
+		missingTokens := vocabSize - len(v.Tokens)
+		slog.Warn(fmt.Sprintf("vocab is missing %d tokens", missingTokens))
+		for cnt := 0; cnt < missingTokens; cnt++ {
+			v.Tokens = append(v.Tokens, fmt.Sprintf("<dummy%05d>", cnt+1))
+			v.Scores = append(v.Scores, -1)
+			v.Types = append(v.Types, int32(llm.GGUFTokenUserDefined))
+		}
+	}
+
 	return v, nil
 }
 
@@ -279,53 +333,102 @@ func GetTensorName(n string) (string, error) {
 	return "", fmt.Errorf("couldn't find a layer name for '%s'", n)
 }
 
-func WriteGGUF(name string, tensors []llm.Tensor, params *Params, vocab *Vocab) (string, error) {
-	c := llm.ContainerGGUF{
-		ByteOrder: binary.LittleEndian,
-	}
+type safetensorWriterTo struct {
+	t *llm.Tensor
 
-	m := llm.NewGGUFModel(&c)
-	m.Tensors = tensors
-	m.KV["general.architecture"] = "llama"
-	m.KV["general.name"] = name
-	m.KV["llama.context_length"] = uint32(params.ContextSize)
-	m.KV["llama.embedding_length"] = uint32(params.HiddenSize)
-	m.KV["llama.block_count"] = uint32(params.HiddenLayers)
-	m.KV["llama.feed_forward_length"] = uint32(params.IntermediateSize)
-	m.KV["llama.rope.dimension_count"] = uint32(128)
-	m.KV["llama.attention.head_count"] = uint32(params.AttentionHeads)
-	m.KV["llama.attention.head_count_kv"] = uint32(params.KeyValHeads)
-	m.KV["llama.attention.layer_norm_rms_epsilon"] = float32(params.NormEPS)
-	m.KV["llama.rope.freq_base"] = float32(params.RopeFreqBase)
-	m.KV["general.file_type"] = uint32(1)
-	m.KV["tokenizer.ggml.model"] = "llama"
+	params *Params
+	bo     ByteOrder
 
-	m.KV["tokenizer.ggml.tokens"] = vocab.Tokens
-	m.KV["tokenizer.ggml.scores"] = vocab.Scores
-	m.KV["tokenizer.ggml.token_type"] = vocab.Types
+	filename string
 
-	m.KV["tokenizer.ggml.bos_token_id"] = uint32(params.BoSTokenID)
-	m.KV["tokenizer.ggml.eos_token_id"] = uint32(params.EoSTokenID)
-	m.KV["tokenizer.ggml.unknown_token_id"] = uint32(0)
-	m.KV["tokenizer.ggml.add_bos_token"] = true
-	m.KV["tokenizer.ggml.add_eos_token"] = false
+	start, end, padding uint64
+	handler             func(w io.Writer, r safetensorWriterTo, f *os.File) error
+}
 
-	// llamacpp sets the chat template, however we don't need to set it since we pass it in through a layer
-	// m.KV["tokenizer.chat_template"] = "{{ bos_token }}{% for message in messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if message['role'] == 'user' %}{{ '[INST] ' + message['content'] + ' [/INST]' }}{% elif message['role'] == 'assistant' %}{{ message['content'] + eos_token}}{% else %}{{ raise_exception('Only user and assistant roles are supported!') }}{% endif %}{% endfor %}" // XXX removeme
-
-	c.V3.NumTensor = uint64(len(tensors))
-	c.V3.NumKV = uint64(len(m.KV))
-
-	f, err := os.CreateTemp("", "ollama-gguf")
+func (r safetensorWriterTo) WriteTo(w io.Writer) (n int64, err error) {
+	f, err := os.Open(r.filename)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	defer f.Close()
 
-	err = m.Encode(f)
-	if err != nil {
-		return "", err
+	if _, err = f.Seek(int64(r.padding+r.start), 0); err != nil {
+		return 0, err
 	}
 
-	return f.Name(), nil
+	// use the handler if one is present
+	if r.handler != nil {
+		return 0, r.handler(w, r, f)
+	}
+
+	remaining := r.end - r.start
+
+	bufSize := uint64(10240)
+	var finished bool
+	for {
+		data := make([]byte, min(bufSize, remaining))
+
+		b, err := io.ReadFull(f, data)
+		remaining -= uint64(b)
+
+		if err == io.EOF || remaining <= 0 {
+			finished = true
+		} else if err != nil {
+			return 0, err
+		}
+
+		// convert bfloat16 -> ieee float32
+		tDataF32 := bfloat16.DecodeFloat32(data)
+
+		switch r.t.Kind {
+		case 0:
+			if err := binary.Write(w, r.bo, tDataF32); err != nil {
+				return 0, err
+			}
+		case 1:
+			// convert float32 -> float16
+			tempBuf := make([]uint16, len(data)/2)
+			for cnt, v := range tDataF32 {
+				tDataF16 := float16.Fromfloat32(v)
+				tempBuf[cnt] = uint16(tDataF16)
+			}
+			if err := binary.Write(w, binary.LittleEndian, tempBuf); err != nil {
+				return 0, err
+			}
+		}
+		if finished {
+			break
+		}
+	}
+	return 0, nil
+}
+
+func GetModelArchFromParams(name, dirPath string, params *Params) (ModelArch, error) {
+	switch len(params.Architectures) {
+	case 0:
+		return nil, fmt.Errorf("No architecture specified to convert")
+	case 1:
+		switch params.Architectures[0] {
+		case "MistralForCausalLM":
+			return &MistralModel{
+				ModelData{
+					Name:   name,
+					Path:   dirPath,
+					Params: params,
+				},
+			}, nil
+		case "GemmaForCausalLM":
+			return &GemmaModel{
+				ModelData{
+					Name:   name,
+					Path:   dirPath,
+					Params: params,
+				},
+			}, nil
+		default:
+			return nil, fmt.Errorf("Models based on '%s' are not yet supported", params.Architectures[0])
+		}
+	}
+
+	return nil, fmt.Errorf("Unknown error")
 }

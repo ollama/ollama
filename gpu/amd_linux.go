@@ -11,14 +11,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/jmorganca/ollama/version"
 )
 
 // Discovery logic for AMD/ROCm GPUs
 
 const (
-	curlMsg               = "curl -fsSL https://github.com/ollama/ollama/releases/download/v%s/rocm-amd64-deps.tgz | tar -zxf - -C %s"
 	DriverVersionFile     = "/sys/module/amdgpu/version"
 	AMDNodesSysfsDir      = "/sys/class/kfd/kfd/topology/nodes/"
 	GPUPropertiesFileGlob = AMDNodesSysfsDir + "*/properties"
@@ -27,6 +24,9 @@ const (
 	GPUTotalMemoryFileGlob = "mem_banks/*/properties" // size_in_bytes line
 	GPUUsedMemoryFileGlob  = "mem_banks/*/used_memory"
 	RocmStandardLocation   = "/opt/rocm/lib"
+
+	// TODO find a better way to detect iGPU instead of minimum memory
+	IGPUMemLimit = 1024 * 1024 * 1024 // 512G is what they typically report, so anything less than 1G must be iGPU
 )
 
 var (
@@ -100,6 +100,8 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 		return
 	}
 
+	updateLibPath(libDir)
+
 	gfxOverride := os.Getenv("HSA_OVERRIDE_GFX_VERSION")
 	if gfxOverride == "" {
 		supported, err := GetSupportedGFX(libDir)
@@ -113,7 +115,7 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 			if !slices.Contains[[]string, string](supported, v.ToGFXString()) {
 				slog.Warn(fmt.Sprintf("amdgpu [%d] %s is not supported by %s %v", i, v.ToGFXString(), libDir, supported))
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
-				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
+				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/gpu.md#overrides for HSA_OVERRIDE_GFX_VERSION usage")
 				skip[i] = struct{}{}
 			} else {
 				slog.Info(fmt.Sprintf("amdgpu [%d] %s is supported", i, v.ToGFXString()))
@@ -143,14 +145,29 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 	}
 }
 
+func updateLibPath(libDir string) {
+	ldPaths := []string{}
+	if val, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+		ldPaths = strings.Split(val, ":")
+	}
+	for _, d := range ldPaths {
+		if d == libDir {
+			return
+		}
+	}
+	val := strings.Join(append(ldPaths, libDir), ":")
+	slog.Debug("updated lib path", "LD_LIBRARY_PATH", val)
+	os.Setenv("LD_LIBRARY_PATH", val)
+}
+
 // Walk the sysfs nodes for the available GPUs and gather information from them
 // skipping over any devices in the skip map
 func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 	resp.memInfo.DeviceCount = 0
 	resp.memInfo.TotalMemory = 0
 	resp.memInfo.FreeMemory = 0
+	slog.Debug("discovering VRAM for amdgpu devices")
 	if len(ids) == 0 {
-		slog.Debug("discovering all amdgpu devices")
 		entries, err := os.ReadDir(AMDNodesSysfsDir)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("failed to read amdgpu sysfs %s - %s", AMDNodesSysfsDir, err))
@@ -168,7 +185,7 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 			ids = append(ids, id)
 		}
 	}
-	slog.Debug(fmt.Sprintf("discovering amdgpu devices %v", ids))
+	slog.Debug(fmt.Sprintf("amdgpu devices %v", ids))
 
 	for _, id := range ids {
 		if _, skipped := skip[id]; skipped {
@@ -176,7 +193,8 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 		}
 		totalMemory := uint64(0)
 		usedMemory := uint64(0)
-		propGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(id), GPUTotalMemoryFileGlob)
+		// Adjust for sysfs vs HIP ids
+		propGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(id+1), GPUTotalMemoryFileGlob)
 		propFiles, err := filepath.Glob(propGlob)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("error looking up total GPU memory: %s %s", propGlob, err))
@@ -208,6 +226,13 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 			}
 		}
 		if totalMemory == 0 {
+			slog.Warn(fmt.Sprintf("amdgpu [%d] reports zero total memory, skipping", id))
+			skip[id] = struct{}{}
+			continue
+		}
+		if totalMemory < IGPUMemLimit {
+			slog.Info(fmt.Sprintf("amdgpu [%d] appears to be an iGPU with %dM reported total memory, skipping", id, totalMemory/1024/1024))
+			skip[id] = struct{}{}
 			continue
 		}
 		usedGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(id), GPUUsedMemoryFileGlob)
@@ -235,8 +260,8 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 			}
 			usedMemory += used
 		}
-		slog.Info(fmt.Sprintf("[%d] amdgpu totalMemory %d", id, totalMemory))
-		slog.Info(fmt.Sprintf("[%d] amdgpu freeMemory  %d", id, (totalMemory - usedMemory)))
+		slog.Info(fmt.Sprintf("[%d] amdgpu totalMemory %dM", id, totalMemory/1024/1024))
+		slog.Info(fmt.Sprintf("[%d] amdgpu freeMemory  %dM", id, (totalMemory-usedMemory)/1024/1024))
 		resp.memInfo.DeviceCount++
 		resp.memInfo.TotalMemory += totalMemory
 		resp.memInfo.FreeMemory += (totalMemory - usedMemory)
@@ -278,22 +303,37 @@ func setupLink(source, target string) error {
 func AMDValidateLibDir() (string, error) {
 	// We rely on the rpath compiled into our library to find rocm
 	// so we establish a symlink to wherever we find it on the system
-	// to $AssetsDir/rocm
+	// to <payloads>/rocm
+	payloadsDir, err := PayloadsDir()
+	if err != nil {
+		return "", err
+	}
 
 	// If we already have a rocm dependency wired, nothing more to do
-	assetsDir, err := AssetsDir()
-	if err != nil {
-		return "", fmt.Errorf("unable to lookup lib dir: %w", err)
-	}
-	// Versioned directory
-	rocmTargetDir := filepath.Join(assetsDir, "rocm")
+	rocmTargetDir := filepath.Clean(filepath.Join(payloadsDir, "..", "rocm"))
 	if rocmLibUsable(rocmTargetDir) {
 		return rocmTargetDir, nil
 	}
-	// Parent dir (unversioned)
-	commonRocmDir := filepath.Join(filepath.Dir(assetsDir), "rocm")
-	if rocmLibUsable(commonRocmDir) {
-		return rocmTargetDir, setupLink(commonRocmDir, rocmTargetDir)
+
+	// next to the running binary
+	exe, err := os.Executable()
+	if err == nil {
+		peerDir := filepath.Dir(exe)
+		if rocmLibUsable(peerDir) {
+			slog.Debug("detected ROCM next to ollama executable " + peerDir)
+			return rocmTargetDir, setupLink(peerDir, rocmTargetDir)
+		}
+		peerDir = filepath.Join(filepath.Dir(exe), "rocm")
+		if rocmLibUsable(peerDir) {
+			slog.Debug("detected ROCM next to ollama executable " + peerDir)
+			return rocmTargetDir, setupLink(peerDir, rocmTargetDir)
+		}
+	}
+
+	// Well known ollama installer path
+	installedRocmDir := "/usr/share/ollama/lib/rocm"
+	if rocmLibUsable(installedRocmDir) {
+		return rocmTargetDir, setupLink(installedRocmDir, rocmTargetDir)
 	}
 
 	// Prefer explicit HIP env var
@@ -322,14 +362,9 @@ func AMDValidateLibDir() (string, error) {
 	if rocmLibUsable("/opt/rocm/lib") {
 		return rocmTargetDir, setupLink("/opt/rocm/lib", rocmTargetDir)
 	}
-	err = os.MkdirAll(rocmTargetDir, 0755)
-	if err != nil {
-		return "", fmt.Errorf("failed to create empty rocm dir %s %w", rocmTargetDir, err)
-	}
 
-	// If we still haven't found a usable rocm, the user will have to download it on their own
-	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or run the following")
-	slog.Warn(fmt.Sprintf(curlMsg, version.Version, rocmTargetDir))
+	// If we still haven't found a usable rocm, the user will have to install it on their own
+	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or follow manual install instructions at https://github.com/ollama/ollama/blob/main/docs/linux.md#manual-install")
 	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
 }
 
@@ -351,6 +386,8 @@ func AMDDriverVersion() (string, error) {
 }
 
 func AMDGFXVersions() map[int]Version {
+	// The amdgpu driver always exposes the host CPU as node 0, but we have to skip that and subtract one
+	// from the other IDs to get alignment with the HIP libraries expectations (zero is the first GPU, not the CPU)
 	res := map[int]Version{}
 	matches, _ := filepath.Glob(GPUPropertiesFileGlob)
 	for _, match := range matches {
@@ -366,17 +403,20 @@ func AMDGFXVersions() map[int]Version {
 			continue
 		}
 
+		if i == 0 {
+			// Skipping the CPU
+			continue
+		}
+		// Align with HIP IDs (zero is first GPU, not CPU)
+		i -= 1
+
 		scanner := bufio.NewScanner(fp)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if strings.HasPrefix(line, "gfx_target_version") {
 				ver := strings.Fields(line)
 				if len(ver) != 2 || len(ver[1]) < 5 {
-
-					if ver[1] == "0" {
-						// Silently skip the CPU
-						continue
-					} else {
+					if ver[1] != "0" {
 						slog.Debug("malformed " + line)
 					}
 					res[i] = Version{
