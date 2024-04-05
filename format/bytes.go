@@ -50,7 +50,7 @@ func HumanBytes(b int64) string {
 	}
 }
 
-func HumanBytes2(b int64) string {
+func HumanBytes2(b uint64) string {
 	switch {
 	case b >= MebiByte:
 		return fmt.Sprintf("%.1f MiB", float64(b)/MebiByte)
