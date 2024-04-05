@@ -131,10 +131,10 @@ func TestNameStringVariants(t *testing.T) {
 		t.Run(tt.in, func(t *testing.T) {
 			p := ParseName(tt.in)
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
-			if g := p.ModelAndTag(); g != tt.nameAndTag {
+			if g := p.DisplayCompact(); g != tt.nameAndTag {
 				t.Errorf("ModelAndTag(%q) = %q; want %q", tt.in, g, tt.nameAndTag)
 			}
-			if g := p.ModelTagAndBuild(); g != tt.nameTagAndBuild {
+			if g := p.DisplayShort(); g != tt.nameTagAndBuild {
 				t.Errorf("ModelTagAndBuild(%q) = %q; want %q", tt.in, g, tt.nameTagAndBuild)
 			}
 		})
@@ -166,8 +166,8 @@ func TestNameFull(t *testing.T) {
 		t.Run(tt.in, func(t *testing.T) {
 			p := ParseName(tt.in)
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
-			if g := p.Full(); g != tt.wantFull {
-				t.Errorf("Full(%q) = %q; want %q", tt.in, g, tt.wantFull)
+			if g := p.DisplayFull(); g != tt.wantFull {
+				t.Errorf("DisplayFull(%q) = %q; want %q", tt.in, g, tt.wantFull)
 			}
 		})
 	}

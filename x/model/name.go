@@ -168,26 +168,64 @@ func (r Name) MapHash() uint64 {
 // Format returns a string representation of the ref with the given
 // concreteness. If a part is missing, it is replaced with a loud
 // placeholder.
-func (r Name) Full() string {
-	r.host = cmp.Or(r.host, "!(MISSING DOMAIN)")
-	r.namespace = cmp.Or(r.namespace, "!(MISSING NAMESPACE)")
-	r.model = cmp.Or(r.model, "!(MISSING NAME)")
-	r.tag = cmp.Or(r.tag, "!(MISSING TAG)")
-	r.build = cmp.Or(r.build, "!(MISSING BUILD)")
-	return r.String()
+func (r Name) DisplayFull() string {
+	return (Name{
+		host:      cmp.Or(r.host, "!(MISSING DOMAIN)"),
+		namespace: cmp.Or(r.namespace, "!(MISSING NAMESPACE)"),
+		model:     cmp.Or(r.model, "!(MISSING NAME)"),
+		tag:       cmp.Or(r.tag, "!(MISSING TAG)"),
+		build:     cmp.Or(r.build, "!(MISSING BUILD)"),
+	}).String()
 }
 
-func (r Name) ModelAndTag() string {
-	r.host = ""
-	r.namespace = ""
-	r.build = ""
-	return r.String()
+func (r Name) DisplayModel() string {
+	return r.model
 }
 
-func (r Name) ModelTagAndBuild() string {
-	r.host = ""
-	r.namespace = ""
-	return r.String()
+func (r Name) Has(kind NamePart) bool {
+	switch kind {
+	case Host:
+		return r.host != ""
+	case Namespace:
+		return r.namespace != ""
+	case Model:
+		return r.model != ""
+	case Tag:
+		return r.tag != ""
+	case Build:
+		return r.build != ""
+	}
+	return false
+}
+
+// DisplayCompact returns a compact display string of the ref with only the
+// model and tag parts.
+func (r Name) DisplayCompact() string {
+	return (Name{
+		model: r.model,
+		tag:   r.tag,
+	}).String()
+}
+
+// DisplayShort returns a short display string of the ref with only the
+// model, tag, and build parts.
+func (r Name) DisplayShort() string {
+	return (Name{
+		model: r.model,
+		tag:   r.tag,
+		build: r.build,
+	}).String()
+}
+
+// DisplayLong returns a long display string of the ref including namespace,
+// model, tag, and build parts.
+func (r Name) DisplayLong() string {
+	return (Name{
+		namespace: r.namespace,
+		model:     r.model,
+		tag:       r.tag,
+		build:     r.build,
+	}).String()
 }
 
 // String returns the fully qualified ref string.
@@ -340,7 +378,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 func (r Name) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
-	return r.model != ""
+	return r.Has(Model)
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
