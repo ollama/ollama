@@ -172,14 +172,6 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		params = append(params, "--main-gpu", fmt.Sprintf("%d", opts.MainGPU))
 	}
 
-	if opts.RopeFrequencyBase > 0 {
-		params = append(params, "--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase))
-	}
-
-	if opts.RopeFrequencyScale > 0 {
-		params = append(params, "--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale))
-	}
-
 	if len(adapters) > 0 {
 		// TODO: applying multiple adapters is not supported by the llama.cpp server yet
 		params = append(params, "--lora", adapters[0])

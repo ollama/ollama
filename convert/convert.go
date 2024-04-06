@@ -32,7 +32,6 @@ type Params struct {
 	AttentionHeads   int      `json:"num_attention_heads"` // n_head
 	KeyValHeads      int      `json:"num_key_value_heads"`
 	NormEPS          float64  `json:"rms_norm_eps"`
-	RopeFreqBase     float64  `json:"rope_theta"`
 	BoSTokenID       int      `json:"bos_token_id"`
 	EoSTokenID       int      `json:"eos_token_id"`
 	HeadDimension    int      `json:"head_dim"`
