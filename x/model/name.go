@@ -91,6 +91,12 @@ const (
 type Name struct {
 	_     structs.Incomparable
 	parts [NumParts]string
+
+	// TODO(bmizerany): track offsets and hold s (raw string) here? We
+	// could pack the offests all into a single uint64 since the first
+	// parts take less bits since their max offset is less than the max
+	// offset of the next part. This would save a ton of bytes per Name
+	// and mean zero allocations for String.
 }
 
 // ParseName parses s into a Name. The input string must be a valid string
