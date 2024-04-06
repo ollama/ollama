@@ -3,6 +3,7 @@ package model
 import (
 	"bytes"
 	"cmp"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -349,6 +350,67 @@ func TestFill(t *testing.T) {
 				t.Errorf("Fill(%q, %q) = %q; want %q", tt.dst, tt.src, r, tt.want)
 			}
 		})
+	}
+}
+
+func TestNameTextMarshal(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    string
+		wantErr error
+	}{
+		{"example.com/mistral:latest+Q4_0", "", nil},
+		{"mistral:latest+Q4_0", "mistral:latest+Q4_0", nil},
+		{"mistral:latest", "mistral:latest", nil},
+		{"mistral", "mistral", nil},
+		{"mistral:7b", "mistral:7b", nil},
+		{"example.com/library/mistral:latest+Q4_0", "example.com/library/mistral:latest+Q4_0", nil},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			p := ParseName(tt.in)
+			got, err := p.MarshalText()
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("MarshalText() error = %v; want %v", err, tt.wantErr)
+			}
+			if string(got) != tt.want {
+				t.Errorf("MarshalText() = %q; want %q", got, tt.want)
+			}
+
+			var r Name
+			if err := r.UnmarshalText(got); err != nil {
+				t.Fatalf("UnmarshalText() error = %v; want nil", err)
+			}
+			if !r.EqualFold(p) {
+				t.Errorf("UnmarshalText() = %q; want %q", r, p)
+			}
+		})
+	}
+
+	var data []byte
+	name := ParseName("example.com/ns/mistral:latest+Q4_0")
+	if !name.Complete() {
+		// sanity check
+		t.Fatal("name is not complete")
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		var err error
+		data, err = name.MarshalText()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) == 0 {
+			t.Fatal("MarshalText() = 0; want non-zero")
+		}
+	})
+	if allocs > 1 {
+		// TODO: Update when/if this lands:
+		// https://github.com/golang/go/issues/62384
+		//
+		// Currently, the best we can do is 1 alloc.
+		t.Errorf("MarshalText allocs = %v; want <= 1", allocs)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
+	"unsafe"
 
 	"github.com/ollama/ollama/x/types/structs"
 )
@@ -233,6 +235,12 @@ func (r Name) DisplayLong() string {
 	}).String()
 }
 
+var builderPool = sync.Pool{
+	New: func() interface{} {
+		return &strings.Builder{}
+	},
+}
+
 // String returns the fullest possible display string in form:
 //
 //	<host>/<namespace>/<model>:<tag>+<build>
@@ -242,7 +250,17 @@ func (r Name) DisplayLong() string {
 // For the fullest possible display string without the build, use
 // [Name.DisplayFullest].
 func (r Name) String() string {
-	var b strings.Builder
+	b := builderPool.Get().(*strings.Builder)
+	b.Reset()
+	defer builderPool.Put(b)
+	b.Grow(0 +
+		len(r.host) +
+		len(r.namespace) +
+		len(r.model) +
+		len(r.tag) +
+		len(r.build) +
+		4, // 4 possible separators
+	)
 	if r.host != "" {
 		b.WriteString(r.host)
 		b.WriteString("/")
@@ -280,6 +298,32 @@ func (r Name) GoString() string {
 // LogValue implements slog.Valuer.
 func (r Name) LogValue() slog.Value {
 	return slog.StringValue(r.GoString())
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (r Name) MarshalText() ([]byte, error) {
+	// unsafeBytes is safe here because we gurantee that the string is
+	// never used after this function returns.
+	//
+	// TODO: We can remove this if https://github.com/golang/go/issues/62384
+	// lands.
+	return unsafeBytes(r.String()), nil
+}
+
+func unsafeBytes(s string) []byte {
+	return *(*[]byte)(unsafe.Pointer(&s))
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (r *Name) UnmarshalText(text []byte) error {
+	// unsafeString is safe here because the contract of UnmarshalText
+	// that text belongs to us for the duration of the call.
+	*r = ParseName(unsafeString(text))
+	return nil
+}
+
+func unsafeString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
 }
 
 // Complete reports whether the Name is fully qualified. That is it has a
