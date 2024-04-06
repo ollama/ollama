@@ -314,10 +314,8 @@ func TestFill(t *testing.T) {
 }
 
 func ExampleFill() {
-	r := Fill(
-		ParseName("mistral"),
-		ParseName("registry.ollama.com/library/PLACEHOLDER:latest+Q4_0"),
-	)
+	defaults := ParseName("registry.ollama.com/library/PLACEHOLDER:latest+Q4_0")
+	r := Fill(ParseName("mistral"), defaults)
 	fmt.Println(r)
 
 	// Output:
