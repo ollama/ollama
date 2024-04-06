@@ -91,8 +91,8 @@ type Name struct {
 	build     string
 }
 
-// ParseName parses s into a Name. The input string must be a valid form of
-// a model name in the form:
+// ParseName parses s into a Name. The input string must be a valid string
+// representation of a model name in the form:
 //
 //	<host>/<namespace>/<model>:<tag>+<build>
 //
@@ -191,10 +191,11 @@ func (r Name) DisplayModel() string {
 	return r.model
 }
 
-// DisplayFullest returns the most specific display string of the composed
-// of all parts leading up to, but not including, the build.
+// DisplayFullest returns the fullest possible display string in form:
 //
-// For a display string representation with the build, use [Name.String].
+//	<host>/<namespace>/<model>:<tag>
+//
+// If any part is missing, it is omitted from the display string.
 func (r Name) DisplayFullest() string {
 	return (Name{
 		host:      r.host,
@@ -204,22 +205,11 @@ func (r Name) DisplayFullest() string {
 	}).String()
 }
 
-// GoString implements fmt.GoStringer. It returns a string suitable for
-// debugging and logging. It is similar to [Name.String] but it always
-// returns a string that includes all parts of the Name, with missing parts
-// replaced with a ("?").
-func (r Name) GoString() string {
-	return (Name{
-		host:      cmp.Or(r.host, "?"),
-		namespace: cmp.Or(r.namespace, "?"),
-		model:     cmp.Or(r.model, "?"),
-		tag:       cmp.Or(r.tag, "?"),
-		build:     cmp.Or(r.build, "?"),
-	}).String()
-}
-
-// DisplayShort returns a short display string composed of the model and
-// tag.
+// DisplayShort returns the fullest possible display string in form:
+//
+//	<model>:<tag>
+//
+// If any part is missing, it is omitted from the display string.
 func (r Name) DisplayShort() string {
 	return (Name{
 		model: r.model,
@@ -227,8 +217,11 @@ func (r Name) DisplayShort() string {
 	}).String()
 }
 
-// DisplayLong returns a long display string composed of the namespace,
-// mode, and tag.
+// DisplayLong returns the fullest possible display string in form:
+//
+//	<namespace>/<model>:<tag>
+//
+// If any part is missing, it is omitted from the display string.
 func (r Name) DisplayLong() string {
 	return (Name{
 		namespace: r.namespace,
@@ -237,10 +230,14 @@ func (r Name) DisplayLong() string {
 	}).String()
 }
 
-// String returns the fullest string respresentation of the Name.
+// String returns the fullest possible display string in form:
 //
-// It includes the build, if any. For a string representation without the
-// build, use [Name.DisplayFullest].
+//	<host>/<namespace>/<model>:<tag>+<build>
+//
+// If any part is missing, it is omitted from the display string.
+//
+// For the fullest possible display string without the build, use
+// [Name.DisplayFullest].
 func (r Name) String() string {
 	var b strings.Builder
 	if r.host != "" {
@@ -261,6 +258,20 @@ func (r Name) String() string {
 		b.WriteString(r.build)
 	}
 	return b.String()
+}
+
+// GoString implements fmt.GoStringer. It returns a string suitable for
+// debugging and logging. It is similar to [Name.String] but it always
+// returns a string that includes all parts of the Name, with missing parts
+// replaced with a ("?").
+func (r Name) GoString() string {
+	return (Name{
+		host:      cmp.Or(r.host, "?"),
+		namespace: cmp.Or(r.namespace, "?"),
+		model:     cmp.Or(r.model, "?"),
+		tag:       cmp.Or(r.tag, "?"),
+		build:     cmp.Or(r.build, "?"),
+	}).String()
 }
 
 // LogValue implements slog.Valuer.
