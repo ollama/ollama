@@ -79,15 +79,11 @@ const (
 //   - Tag: the tag of the model (optional)
 //   - Build: the build of the model; usually the quantization or "file type" (optional)
 //
-// The parts can be obtained in their original form by calling [Name.Parts],
-// [Name.Host], [Name.Namespace], [Name.Model], [Name.Tag], and [Name.Build].
+// The parts can be obtained in their original form by calling [Name.Parts].
 //
 // To check if a Name has at minimum a valid model part, use [Name.Valid].
 //
-// To check if a Name is fully qualified, use [Name.Complete]. A fully
-// qualified name has all parts present.
-//
-// To update parts of a Name with defaults, use [Fill].
+// To make a Name by filling in missing parts from another Name, use [Fill].
 type Name struct {
 	_     structs.Incomparable
 	parts [NumParts]string
@@ -231,6 +227,12 @@ var seps = [...]string{
 	Build:     "",
 }
 
+// WriteTo implements io.WriterTo. It writes the fullest possible display
+// string in form:
+//
+//	<host>/<namespace>/<model>:<tag>+<build>
+//
+// Missing parts and their seperators are not written.
 func (r Name) WriteTo(w io.Writer) (n int64, err error) {
 	for i := range r.parts {
 		if r.parts[i] == "" {
@@ -379,9 +381,6 @@ func (r Name) Parts() []string {
 //
 // It normalizes the input string by removing "http://" and "https://" only.
 // No other normalization is done.
-//
-// As a special case, question marks are ignored so they may be used as
-// placeholders for missing parts in string literals.
 func NameParts(s string) iter.Seq2[NamePart, string] {
 	return func(yield func(NamePart, string) bool) {
 		if strings.HasPrefix(s, "http://") {
