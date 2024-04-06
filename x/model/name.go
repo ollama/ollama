@@ -324,9 +324,7 @@ func downcase(c byte) byte {
 	return c
 }
 
-// TODO(bmizerany): Compare
 // TODO(bmizerany): MarshalText/UnmarshalText
-// TODO(bmizerany): LogValue
 // TODO(bmizerany): driver.Value? (MarshalText etc should be enough)
 
 // Parts returns the parts of the Name in order of concreteness.
