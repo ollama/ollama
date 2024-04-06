@@ -286,6 +286,12 @@ func (r Name) Complete() bool {
 	return !slices.Contains(r.Parts(), "")
 }
 
+// CompleteNoBuild reports whether the Name is fully qualified without the
+// build part.
+func (r Name) CompleteNoBuild() bool {
+	return !slices.Contains(r.Parts()[:4], "")
+}
+
 // EqualFold reports whether r and o are equivalent model names, ignoring
 // case.
 func (r Name) EqualFold(o Name) bool {

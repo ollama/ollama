@@ -138,11 +138,11 @@ func TestParseName(t *testing.T) {
 	}
 }
 
-func TestComplete(t *testing.T) {
+func TestCompleteWithAndWithoutBuild(t *testing.T) {
 	cases := []struct {
-		in                   string
-		complete             bool
-		completeWithoutBuild bool
+		in              string
+		complete        bool
+		completeNoBuild bool
 	}{
 		{"", false, false},
 		{"incomplete/mistral:7b+x", false, false},
@@ -158,6 +158,9 @@ func TestComplete(t *testing.T) {
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
 			if g := p.Complete(); g != tt.complete {
 				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.complete)
+			}
+			if g := p.CompleteNoBuild(); g != tt.completeNoBuild {
+				t.Errorf("CompleteNoBuild(%q) = %v; want %v", tt.in, g, tt.completeNoBuild)
 			}
 		})
 	}
