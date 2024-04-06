@@ -186,14 +186,15 @@ func (r Name) MapHash() uint64 {
 	return h.Sum64()
 }
 
-// DisplayModel returns the a display string of the model.
+// DisplayModel returns the a display string composed of the model only.
 func (r Name) DisplayModel() string {
 	return r.model
 }
 
-// DisplayFullest returns the most specific display string of the Name.
+// DisplayFullest returns the most specific display string of the composed
+// of all parts leading up to, but not including, the build.
 //
-// It does not include the build.
+// For a display string representation with the build, use [Name.String].
 func (r Name) DisplayFullest() string {
 	return (Name{
 		host:      r.host,
@@ -203,8 +204,9 @@ func (r Name) DisplayFullest() string {
 	}).String()
 }
 
-// GoString implements fmt.GoStringer. It returns a string representation that
-// includes all parts of the Name. For any part that is missing, it is
+// GoString implements fmt.GoStringer. It returns a string suitable for
+// debugging and logging. It is similar to [Name.String] but it always
+// returns a string that includes all parts of the Name, with missing parts
 // replaced with a ("?").
 func (r Name) GoString() string {
 	return (Name{
@@ -216,15 +218,8 @@ func (r Name) GoString() string {
 	}).String()
 }
 
-// LogValue implements slog.Valuer.
-func (r Name) LogValue() slog.Value {
-	return slog.StringValue(r.GoString())
-}
-
-// DisplayShort returns a short display string of the Name with only the
-// model, tag.
-//
-// It does not include the build.
+// DisplayShort returns a short display string composed of the model and
+// tag.
 func (r Name) DisplayShort() string {
 	return (Name{
 		model: r.model,
@@ -232,10 +227,8 @@ func (r Name) DisplayShort() string {
 	}).String()
 }
 
-// DisplayLong returns a long display string of the Name including namespace,
-// model, tag.
-//
-// It does not include the build.
+// DisplayLong returns a long display string composed of the namespace,
+// mode, and tag.
 func (r Name) DisplayLong() string {
 	return (Name{
 		namespace: r.namespace,
@@ -270,14 +263,19 @@ func (r Name) String() string {
 	return b.String()
 }
 
+// LogValue implements slog.Valuer.
+func (r Name) LogValue() slog.Value {
+	return slog.StringValue(r.GoString())
+}
+
 // Complete reports whether the Name is fully qualified. That is it has a
 // domain, namespace, name, tag, and build.
 func (r Name) Complete() bool {
 	return !slices.Contains(r.Parts(), "")
 }
 
-// CompleteNoBuild reports whether the Name is fully qualified without the
-// build part.
+// CompleteNoBuild is like [Name.Complete] but it does not require the
+// build part to be present.
 func (r Name) CompleteNoBuild() bool {
 	return !slices.Contains(r.Parts()[:4], "")
 }
@@ -288,11 +286,11 @@ func (r Name) EqualFold(o Name) bool {
 	return r.CompareFold(o) == 0
 }
 
-// CompareFold performs a case-insensitive comparison of two Names. It returns
-// an integer comparing two Names lexicographically. The result will be 0 if
-// r == o, -1 if r < o, and +1 if r > o.
+// CompareFold performs a case-insensitive cmp.Compare on r and o.
 //
-// This can be used with [slice.SortFunc].
+// This can be used with [slices.SortFunc].
+//
+// For simple equality checks, use [Name.EqualFold].
 func (r Name) CompareFold(o Name) int {
 	return cmp.Or(
 		compareFold(r.host, o.host),
