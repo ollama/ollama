@@ -1,14 +1,8 @@
 // Package model implements the File and Name types for working with and
 // representing Modelfiles and model Names.
 //
-// The Name type is designed for safety and correctness. It is an opaque
-// reference to a model, and holds the parts of a model, casing preserved,
-// but is not directly comparable with other Names since model names can be
-// represented with different caseing depending on the use case.
-//
-// Names should never be compared manually parsed. Instead, use the
-// [Name.EqualFold] method to compare two names in a case-insensitive
-// manner, and [ParseName] to create a Name from a string, safely.
+// The Name type should be used when working with model names, and the File
+// type should be used when working with Modelfiles.
 package model
 
 import (

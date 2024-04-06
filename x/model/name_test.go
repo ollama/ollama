@@ -52,8 +52,8 @@ var testNames = map[string]Name{
 	"file:///etc/passwd:latest":   {},
 	"file:///etc/passwd:latest+u": {},
 
-	strings.Repeat("a", MaxNameLength):   {model: strings.Repeat("a", MaxNameLength)},
-	strings.Repeat("a", MaxNameLength+1): {},
+	strings.Repeat("a", MaxNamePartLen):   {model: strings.Repeat("a", MaxNamePartLen)},
+	strings.Repeat("a", MaxNamePartLen+1): {},
 }
 
 func TestNameParts(t *testing.T) {
@@ -61,6 +61,34 @@ func TestNameParts(t *testing.T) {
 	var p Name
 	if len(p.Parts()) != wantNumParts {
 		t.Errorf("Parts() = %d; want %d", len(p.Parts()), wantNumParts)
+	}
+}
+
+func TestPartTooLong(t *testing.T) {
+	for i := Host; i <= Build; i++ {
+		t.Run(i.String(), func(t *testing.T) {
+			var p Name
+			switch i {
+			case Host:
+				p.host = strings.Repeat("a", MaxNamePartLen+1)
+			case Namespace:
+				p.namespace = strings.Repeat("a", MaxNamePartLen+1)
+			case Model:
+				p.model = strings.Repeat("a", MaxNamePartLen+1)
+			case Tag:
+				p.tag = strings.Repeat("a", MaxNamePartLen+1)
+			case Build:
+				p.build = strings.Repeat("a", MaxNamePartLen+1)
+			}
+			s := strings.Trim(p.String(), "+:/")
+			if len(s) != MaxNamePartLen+1 {
+				t.Errorf("len(String()) = %d; want %d", len(s), MaxNamePartLen+1)
+				t.Logf("String() = %q", s)
+			}
+			if ParseName(p.String()).Valid() {
+				t.Errorf("Valid(%q) = true; want false", p)
+			}
+		})
 	}
 }
 
@@ -210,7 +238,7 @@ func FuzzParseName(f *testing.F) {
 		}
 
 		for _, p := range r0.Parts() {
-			if len(p) > MaxNameLength {
+			if len(p) > MaxNamePartLen {
 				t.Errorf("part too long: %q", p)
 			}
 		}
@@ -261,11 +289,15 @@ func ExampleFill() {
 func ExampleName_MapHash() {
 	m := map[uint64]bool{}
 
+	// key 1
 	m[ParseName("mistral:latest+q4").MapHash()] = true
 	m[ParseName("miSTRal:latest+Q4").MapHash()] = true
 	m[ParseName("mistral:LATest+Q4").MapHash()] = true
 
+	// key 2
+	m[ParseName("mistral:LATest").MapHash()] = true
+
 	fmt.Println(len(m))
 	// Output:
-	// 1
+	// 2
 }
