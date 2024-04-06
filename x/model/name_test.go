@@ -281,9 +281,20 @@ func TestParseNameAllocs(t *testing.T) {
 func BenchmarkParseName(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		keep(ParseName("example.com/mistral:7b+Q4_0"))
 	}
+}
+
+func BenchmarkNameDisplay(b *testing.B) {
+	b.ReportAllocs()
+
+	r := ParseName("example.com/mistral:7b+Q4_0")
+	b.Run("Short", func(b *testing.B) {
+		for range b.N {
+			keep(r.DisplayShort())
+		}
+	})
 }
 
 func FuzzParseName(f *testing.F) {
