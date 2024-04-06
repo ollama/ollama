@@ -241,19 +241,6 @@ func (r Name) DisplayLong() string {
 	}).String()
 }
 
-// DisplayFullest returns the fullest display string of the Name including
-// host, namespace, model, tag.
-//
-// It does not include the build.
-func (r Name) DisplayFullest() string {
-	return (Name{
-		host:      r.host,
-		namespace: r.namespace,
-		model:     r.model,
-		tag:       r.tag,
-	}).String()
-}
-
 // String returns the fullest string respresentation of the Name.
 //
 // It includes the build, if any. For a string representation without the
