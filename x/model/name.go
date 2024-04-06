@@ -147,9 +147,6 @@ func ParseName(s string) Name {
 
 // Fill fills in the missing parts of dst with the parts of src.
 //
-// Use this for merging a fully qualified Name with a partial Name, such as
-// when filling in a missing parts with defaults.
-//
 // The returned Name will only be valid if dst is valid.
 func Fill(dst, src Name) Name {
 	return Name{
