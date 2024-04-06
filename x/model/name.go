@@ -1,9 +1,11 @@
 package model
 
 import (
+	"bytes"
 	"cmp"
 	"errors"
 	"hash/maphash"
+	"io"
 	"iter"
 	"log/slog"
 	"slices"
@@ -41,12 +43,15 @@ func (k NamePart) String() string {
 
 // Levels of concreteness
 const (
-	Invalid NamePart = iota
-	Host
+	Host NamePart = iota
 	Namespace
 	Model
 	Tag
 	Build
+
+	NumParts = Build + 1
+
+	Invalid = NamePart(-1)
 )
 
 // Name is an opaque reference to a model. It holds the parts of a model
@@ -84,13 +89,8 @@ const (
 //
 // To update parts of a Name with defaults, use [Fill].
 type Name struct {
-	_ structs.Incomparable
-
-	host      string
-	namespace string
-	model     string
-	tag       string
-	build     string
+	_     structs.Incomparable
+	parts [NumParts]string
 }
 
 // ParseName parses s into a Name. The input string must be a valid string
@@ -127,20 +127,10 @@ type Name struct {
 func ParseName(s string) Name {
 	var r Name
 	for kind, part := range NameParts(s) {
-		switch kind {
-		case Host:
-			r.host = part
-		case Namespace:
-			r.namespace = part
-		case Model:
-			r.model = part
-		case Tag:
-			r.tag = part
-		case Build:
-			r.build = part
-		case Invalid:
+		if kind == Invalid {
 			return Name{}
 		}
+		r.parts[kind] = part
 	}
 	if !r.Valid() {
 		return Name{}
@@ -152,18 +142,16 @@ func ParseName(s string) Name {
 //
 // The returned Name will only be valid if dst is valid.
 func Fill(dst, src Name) Name {
-	return Name{
-		model:     cmp.Or(dst.model, src.model),
-		host:      cmp.Or(dst.host, src.host),
-		namespace: cmp.Or(dst.namespace, src.namespace),
-		tag:       cmp.Or(dst.tag, src.tag),
-		build:     cmp.Or(dst.build, src.build),
+	var r Name
+	for i := range r.parts {
+		r.parts[i] = cmp.Or(dst.parts[i], src.parts[i])
 	}
+	return r
 }
 
 // WithBuild returns a copy of r with the build set to the given string.
 func (r Name) WithBuild(build string) Name {
-	r.build = build
+	r.parts[Build] = build
 	return r
 }
 
@@ -188,9 +176,15 @@ func (r Name) MapHash() uint64 {
 	return h.Sum64()
 }
 
+func (r Name) slice(from, to NamePart) Name {
+	var v Name
+	copy(v.parts[from:to+1], r.parts[from:to+1])
+	return v
+}
+
 // DisplayModel returns the a display string composed of the model only.
 func (r Name) DisplayModel() string {
-	return r.model
+	return r.parts[Model]
 }
 
 // DisplayFullest returns the fullest possible display string in form:
@@ -202,12 +196,7 @@ func (r Name) DisplayModel() string {
 // It does not include the build part. For the fullest possible display
 // string with the build, use [Name.String].
 func (r Name) DisplayFullest() string {
-	return (Name{
-		host:      r.host,
-		namespace: r.namespace,
-		model:     r.model,
-		tag:       r.tag,
-	}).String()
+	return r.slice(Host, Tag).String()
 }
 
 // DisplayShort returns the fullest possible display string in form:
@@ -216,10 +205,7 @@ func (r Name) DisplayFullest() string {
 //
 // If any part is missing, it is omitted from the display string.
 func (r Name) DisplayShort() string {
-	return (Name{
-		model: r.model,
-		tag:   r.tag,
-	}).String()
+	return r.slice(Model, Tag).String()
 }
 
 // DisplayLong returns the fullest possible display string in form:
@@ -228,11 +214,36 @@ func (r Name) DisplayShort() string {
 //
 // If any part is missing, it is omitted from the display string.
 func (r Name) DisplayLong() string {
-	return (Name{
-		namespace: r.namespace,
-		model:     r.model,
-		tag:       r.tag,
-	}).String()
+	return r.slice(Namespace, Tag).String()
+}
+
+var seps = [...]string{
+	Host:      "/",
+	Namespace: "/",
+	Model:     ":",
+	Tag:       "+",
+	Build:     "",
+}
+
+func (r Name) WriteTo(w io.Writer) (n int64, err error) {
+	for i := range r.parts {
+		if r.parts[i] == "" {
+			continue
+		}
+		if n > 0 {
+			n1, err := io.WriteString(w, seps[i-1])
+			n += int64(n1)
+			if err != nil {
+				return n, err
+			}
+		}
+		n1, err := io.WriteString(w, r.parts[i])
+		n += int64(n1)
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 var builderPool = sync.Pool{
@@ -240,6 +251,9 @@ var builderPool = sync.Pool{
 		return &strings.Builder{}
 	},
 }
+
+// TODO(bmizerany): Add WriteTo and use in String and MarshalText with
+// strings.Builder and bytes.Buffer, respectively.
 
 // String returns the fullest possible display string in form:
 //
@@ -251,33 +265,10 @@ var builderPool = sync.Pool{
 // [Name.DisplayFullest].
 func (r Name) String() string {
 	b := builderPool.Get().(*strings.Builder)
-	b.Reset()
 	defer builderPool.Put(b)
-	b.Grow(0 +
-		len(r.host) +
-		len(r.namespace) +
-		len(r.model) +
-		len(r.tag) +
-		len(r.build) +
-		4, // 4 possible separators
-	)
-	if r.host != "" {
-		b.WriteString(r.host)
-		b.WriteString("/")
-	}
-	if r.namespace != "" {
-		b.WriteString(r.namespace)
-		b.WriteString("/")
-	}
-	b.WriteString(r.model)
-	if r.tag != "" {
-		b.WriteString(":")
-		b.WriteString(r.tag)
-	}
-	if r.build != "" {
-		b.WriteString("+")
-		b.WriteString(r.build)
-	}
+	b.Reset()
+	b.Grow(50) // arbitrarily long enough for most names
+	_, _ = r.WriteTo(b)
 	return b.String()
 }
 
@@ -286,13 +277,11 @@ func (r Name) String() string {
 // returns a string that includes all parts of the Name, with missing parts
 // replaced with a ("?").
 func (r Name) GoString() string {
-	return (Name{
-		host:      cmp.Or(r.host, "?"),
-		namespace: cmp.Or(r.namespace, "?"),
-		model:     cmp.Or(r.model, "?"),
-		tag:       cmp.Or(r.tag, "?"),
-		build:     cmp.Or(r.build, "?"),
-	}).String()
+	var v Name
+	for i := range r.parts {
+		v.parts[i] = cmp.Or(r.parts[i], "?")
+	}
+	return v.String()
 }
 
 // LogValue implements slog.Valuer.
@@ -300,18 +289,25 @@ func (r Name) LogValue() slog.Value {
 	return slog.StringValue(r.GoString())
 }
 
-// MarshalText implements encoding.TextMarshaler.
-func (r Name) MarshalText() ([]byte, error) {
-	// unsafeBytes is safe here because we gurantee that the string is
-	// never used after this function returns.
-	//
-	// TODO: We can remove this if https://github.com/golang/go/issues/62384
-	// lands.
-	return unsafeBytes(r.String()), nil
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
 }
 
-func unsafeBytes(s string) []byte {
-	return *(*[]byte)(unsafe.Pointer(&s))
+// MarshalText implements encoding.TextMarshaler.
+func (r Name) MarshalText() ([]byte, error) {
+	b := bufPool.Get().(*bytes.Buffer)
+	b.Reset()
+	b.Grow(50) // arbitrarily long enough for most names
+	defer bufPool.Put(b)
+	_, err := r.WriteTo(b)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: We can remove this alloc if/when
+	// https://github.com/golang/go/issues/62384 lands.
+	return b.Bytes(), nil
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
@@ -329,13 +325,13 @@ func unsafeString(b []byte) string {
 // Complete reports whether the Name is fully qualified. That is it has a
 // domain, namespace, name, tag, and build.
 func (r Name) Complete() bool {
-	return !slices.Contains(r.Parts(), "")
+	return !slices.Contains(r.parts[:], "")
 }
 
 // CompleteNoBuild is like [Name.Complete] but it does not require the
 // build part to be present.
 func (r Name) CompleteNoBuild() bool {
-	return !slices.Contains(r.Parts()[:4], "")
+	return !slices.Contains(r.parts[:Tag], "")
 }
 
 // EqualFold reports whether r and o are equivalent model names, ignoring
@@ -350,27 +346,23 @@ func (r Name) EqualFold(o Name) bool {
 //
 // For simple equality checks, use [Name.EqualFold].
 func (r Name) CompareFold(o Name) int {
-	return cmp.Or(
-		compareFold(r.host, o.host),
-		compareFold(r.namespace, o.namespace),
-		compareFold(r.model, o.model),
-		compareFold(r.tag, o.tag),
-		compareFold(r.build, o.build),
-	)
+	for i := range r.parts {
+		if n := compareFold(r.parts[i], o.parts[i]); n != 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 func compareFold(a, b string) int {
 	// fast-path for unequal lengths
-	if n := cmp.Compare(len(a), len(b)); n != 0 {
-		return n
-	}
 	for i := 0; i < len(a) && i < len(b); i++ {
 		ca, cb := downcase(a[i]), downcase(b[i])
 		if n := cmp.Compare(ca, cb); n != 0 {
 			return n
 		}
 	}
-	return 0
+	return cmp.Compare(len(a), len(b))
 }
 
 func downcase(c byte) byte {
@@ -387,13 +379,7 @@ func downcase(c byte) byte {
 //
 // The length of the returned slice is always 5.
 func (r Name) Parts() []string {
-	return []string{
-		r.host,
-		r.namespace,
-		r.model,
-		r.tag,
-		r.build,
-	}
+	return slices.Clone(r.parts[:])
 }
 
 // Parts returns a sequence of the parts of a Name string from most specific
@@ -492,7 +478,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 func (r Name) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
-	return r.model != ""
+	return r.parts[Model] != ""
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
@@ -519,4 +505,11 @@ func isValidByte(kind NamePart, c byte) bool {
 		return true
 	}
 	return false
+}
+
+func sumLens(a []string) (sum int) {
+	for _, n := range a {
+		sum += len(n)
+	}
+	return
 }

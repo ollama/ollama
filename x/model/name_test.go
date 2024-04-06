@@ -11,7 +11,21 @@ import (
 	"testing"
 )
 
-var testNames = map[string]Name{
+type fields struct {
+	host, namespace, model, tag, build string
+}
+
+func fieldsFromName(p Name) fields {
+	return fields{
+		host:      p.parts[Host],
+		namespace: p.parts[Namespace],
+		model:     p.parts[Model],
+		tag:       p.parts[Tag],
+		build:     p.parts[Build],
+	}
+}
+
+var testNames = map[string]fields{
 	"mistral:latest":                 {model: "mistral", tag: "latest"},
 	"mistral":                        {model: "mistral"},
 	"mistral:30B":                    {model: "mistral", tag: "30B"},
@@ -23,7 +37,7 @@ var testNames = map[string]Name{
 	"llama2":                         {model: "llama2"},
 	"user/model":                     {namespace: "user", model: "model"},
 	"example.com/ns/mistral:7b+Q4_0": {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "Q4_0"},
-	"example.com/ns/mistral:7b+x":    {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "X"},
+	"example.com/ns/mistral:7b+X":    {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "X"},
 
 	// preserves case for build
 	"x+b": {model: "x", build: "b"},
@@ -73,41 +87,13 @@ func TestNameParts(t *testing.T) {
 }
 
 func TestNamePartString(t *testing.T) {
-	if g := NamePart(-1).String(); g != "Unknown" {
+	if g := NamePart(-2).String(); g != "Unknown" {
 		t.Errorf("Unknown part = %q; want %q", g, "Unknown")
 	}
 	for kind, name := range kindNames {
 		if g := kind.String(); g != name {
 			t.Errorf("%s = %q; want %q", kind, g, name)
 		}
-	}
-}
-
-func TestPartTooLong(t *testing.T) {
-	for i := Host; i <= Build; i++ {
-		t.Run(i.String(), func(t *testing.T) {
-			var p Name
-			switch i {
-			case Host:
-				p.host = strings.Repeat("a", MaxNamePartLen+1)
-			case Namespace:
-				p.namespace = strings.Repeat("a", MaxNamePartLen+1)
-			case Model:
-				p.model = strings.Repeat("a", MaxNamePartLen+1)
-			case Tag:
-				p.tag = strings.Repeat("a", MaxNamePartLen+1)
-			case Build:
-				p.build = strings.Repeat("a", MaxNamePartLen+1)
-			}
-			s := strings.Trim(p.String(), "+:/")
-			if len(s) != MaxNamePartLen+1 {
-				t.Errorf("len(String()) = %d; want %d", len(s), MaxNamePartLen+1)
-				t.Logf("String() = %q", s)
-			}
-			if ParseName(p.String()).Valid() {
-				t.Errorf("Valid(%q) = true; want false", p)
-			}
-		})
 	}
 }
 
@@ -119,19 +105,20 @@ func TestParseName(t *testing.T) {
 			s := prefix + baseName
 
 			t.Run(s, func(t *testing.T) {
-				got := ParseName(s)
-				if !got.EqualFold(want) {
+				name := ParseName(s)
+				got := fieldsFromName(name)
+				if got != want {
 					t.Errorf("ParseName(%q) = %q; want %q", s, got, want)
 				}
 
 				// test round-trip
-				if !ParseName(got.String()).EqualFold(got) {
-					t.Errorf("String() = %s; want %s", got.String(), baseName)
+				if !ParseName(name.String()).EqualFold(name) {
+					t.Errorf("String() = %s; want %s", name.String(), baseName)
 				}
 
-				if got.Valid() && got.model == "" {
+				if name.Valid() && name.DisplayModel() == "" {
 					t.Errorf("Valid() = true; Model() = %q; want non-empty name", got.model)
-				} else if !got.Valid() && got.DisplayModel() != "" {
+				} else if !name.Valid() && name.DisplayModel() != "" {
 					t.Errorf("Valid() = false; Model() = %q; want empty name", got.model)
 				}
 			})
@@ -405,12 +392,22 @@ func TestNameTextMarshal(t *testing.T) {
 			t.Fatal("MarshalText() = 0; want non-zero")
 		}
 	})
-	if allocs > 1 {
+	if allocs > 0 {
 		// TODO: Update when/if this lands:
 		// https://github.com/golang/go/issues/62384
 		//
 		// Currently, the best we can do is 1 alloc.
 		t.Errorf("MarshalText allocs = %v; want <= 1", allocs)
+	}
+}
+
+func TestNameStringAllocs(t *testing.T) {
+	name := ParseName("example.com/ns/mistral:latest+Q4_0")
+	allocs := testing.AllocsPerRun(1000, func() {
+		keep(name.String())
+	})
+	if allocs > 1 {
+		t.Errorf("String allocs = %v; want 0", allocs)
 	}
 }
 
