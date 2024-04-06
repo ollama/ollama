@@ -280,12 +280,6 @@ func (r Name) Parts() []string {
 	}
 }
 
-func (r Name) Host() string      { return r.host }
-func (r Name) Namespace() string { return r.namespace }
-func (r Name) Model() string     { return r.model }
-func (r Name) Tag() string       { return r.tag }
-func (r Name) Build() string     { return r.build }
-
 // EqualFold reports whether r and o are equivalent model names, ignoring
 // case.
 func (r Name) EqualFold(o Name) bool {

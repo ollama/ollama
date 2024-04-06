@@ -121,10 +121,10 @@ func TestParseName(t *testing.T) {
 					t.Errorf("String() = %s; want %s", got.String(), baseName)
 				}
 
-				if got.Valid() && got.Model() == "" {
-					t.Errorf("Valid() = true; Model() = %q; want non-empty name", got.Model())
-				} else if !got.Valid() && got.Model() != "" {
-					t.Errorf("Valid() = false; Model() = %q; want empty name", got.Model())
+				if got.Valid() && got.model == "" {
+					t.Errorf("Valid() = true; Model() = %q; want non-empty name", got.model)
+				} else if !got.Valid() && got.DisplayModel() != "" {
+					t.Errorf("Valid() = false; Model() = %q; want empty name", got.model)
 				}
 			})
 		}
@@ -223,7 +223,7 @@ func TestNameDisplay(t *testing.T) {
 			if g := p.String(); g != tt.in {
 				t.Errorf("String(%q) = %q; want %q", tt.in, g, tt.in)
 			}
-			if g := p.Model(); g != tt.wantModel {
+			if g := p.DisplayModel(); g != tt.wantModel {
 				t.Errorf("Model = %q; want %q", g, tt.wantModel)
 			}
 			if g, w := fmt.Sprintf("%#v", p), p.DisplayComplete(); g != w {
