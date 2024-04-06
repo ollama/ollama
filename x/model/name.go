@@ -420,7 +420,7 @@ func NameParts(s string) iter.Seq2[NamePartKind, string] {
 					return
 				}
 			default:
-				if !isValidPart(state, s[i:i+1]) {
+				if !isValidByte(state, s[i]) {
 					yield(Invalid, "")
 					return
 				}
