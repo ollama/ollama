@@ -167,23 +167,6 @@ func (r Name) WithBuild(build string) Name {
 	return r
 }
 
-// Has reports whether the Name has the given part kind.
-func (r Name) Has(kind NamePartKind) bool {
-	switch kind {
-	case Host:
-		return r.host != ""
-	case Namespace:
-		return r.namespace != ""
-	case Model:
-		return r.model != ""
-	case Tag:
-		return r.tag != ""
-	case Build:
-		return r.build != ""
-	}
-	return false
-}
-
 var mapHashSeed = maphash.MakeSeed()
 
 // MapHash returns a case insensitive hash for use in maps and equality
@@ -404,7 +387,7 @@ func NameParts(s string) iter.Seq2[NamePartKind, string] {
 func (r Name) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
-	return r.Has(Model)
+	return r.model != ""
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
