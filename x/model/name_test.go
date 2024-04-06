@@ -396,4 +396,19 @@ func ExampleName_CompareFold_sort() {
 	// mistral:latest
 }
 
+func ExampleName_DisplayFullest() {
+	for _, s := range []string{
+		"example.com/jmorganca/mistral:latest+Q4_0",
+		"mistral:latest+Q4_0",
+		"mistral:latest",
+	} {
+		fmt.Println(ParseName(s).DisplayFullest())
+	}
+
+	// Output:
+	// example.com/jmorganca/mistral:latest
+	// mistral:latest
+	// mistral:latest
+}
+
 func keep[T any](v T) T { return v }
