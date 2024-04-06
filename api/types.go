@@ -121,8 +121,6 @@ type Runner struct {
 	VocabOnly          bool    `json:"vocab_only,omitempty"`
 	UseMMap            bool    `json:"use_mmap,omitempty"`
 	UseMLock           bool    `json:"use_mlock,omitempty"`
-	RopeFrequencyBase  float32 `json:"rope_frequency_base,omitempty"`
-	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 	NumThread          int     `json:"num_thread,omitempty"`
 }
 
@@ -383,8 +381,6 @@ func DefaultOptions() Options {
 		Runner: Runner{
 			// options set when the model is loaded
 			NumCtx:             2048,
-			RopeFrequencyBase:  10000.0,
-			RopeFrequencyScale: 1.0,
 			NumBatch:           512,
 			NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
 			NumGQA:             1,

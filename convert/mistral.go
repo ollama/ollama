@@ -144,7 +144,6 @@ func (m *MistralModel) WriteGGUF() (string, error) {
 		"llama.attention.head_count":             uint32(m.Params.AttentionHeads),
 		"llama.attention.head_count_kv":          uint32(m.Params.KeyValHeads),
 		"llama.attention.layer_norm_rms_epsilon": float32(m.Params.NormEPS),
-		"llama.rope.freq_base":                   float32(m.Params.RopeFreqBase),
 		"general.file_type":                      uint32(1),
 		"tokenizer.ggml.model":                   "llama",
 
