@@ -33,7 +33,7 @@ var kindNames = map[NamePartKind]string{
 }
 
 func (k NamePartKind) String() string {
-	return cmp.Or(kindNames[k], "!(UNKNOWN PART KIND)")
+	return cmp.Or(kindNames[k], "Unknown")
 }
 
 // Levels of concreteness
