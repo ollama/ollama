@@ -300,7 +300,7 @@ var bufPool = sync.Pool{
 	},
 }
 
-// MarshalText implements encoding.TextMarshaler.
+// MarshalText implements [encoding.TextMarshaler].
 func (r Name) MarshalText() ([]byte, error) {
 	b := bufPool.Get().(*bytes.Buffer)
 	b.Reset()
@@ -315,7 +315,7 @@ func (r Name) MarshalText() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
+// UnmarshalText implements [encoding.TextUnmarshaler].
 func (r *Name) UnmarshalText(text []byte) error {
 	// unsafeString is safe here because the contract of UnmarshalText
 	// that text belongs to us for the duration of the call.
@@ -465,7 +465,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 }
 
 // Valid returns true if the Name has a valid nick. To know if a Name is
-// "complete", use Complete.
+// "complete", use [Name.Complete].
 func (r Name) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
