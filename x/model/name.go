@@ -349,30 +349,20 @@ func (r Name) EqualFold(o Name) bool {
 //
 // For simple equality checks, use [Name.EqualFold].
 func (r Name) CompareFold(o Name) int {
-	for i := range r.parts {
-		if n := compareFold(r.parts[i], o.parts[i]); n != 0 {
-			return n
-		}
-	}
-	return 0
+	return slices.CompareFunc(r.parts[:], o.parts[:], compareFold)
 }
 
 func compareFold(a, b string) int {
-	// fast-path for unequal lengths
-	for i := 0; i < len(a) && i < len(b); i++ {
-		ca, cb := downcase(a[i]), downcase(b[i])
-		if n := cmp.Compare(ca, cb); n != 0 {
-			return n
-		}
-	}
-	return cmp.Compare(len(a), len(b))
+	return slices.CompareFunc([]rune(a), []rune(b), func(a, b rune) int {
+		return cmp.Compare(downcase(a), downcase(b))
+	})
 }
 
-func downcase(c byte) byte {
-	if c >= 'A' && c <= 'Z' {
-		return c + 'a' - 'A'
+func downcase(r rune) rune {
+	if r >= 'A' && r <= 'Z' {
+		return r - 'A' + 'a'
 	}
-	return c
+	return r
 }
 
 // TODO(bmizerany): driver.Value? (MarshalText etc should be enough)
