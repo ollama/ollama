@@ -252,9 +252,6 @@ var builderPool = sync.Pool{
 	},
 }
 
-// TODO(bmizerany): Add WriteTo and use in String and MarshalText with
-// strings.Builder and bytes.Buffer, respectively.
-
 // String returns the fullest possible display string in form:
 //
 //	<host>/<namespace>/<model>:<tag>+<build>
@@ -331,7 +328,7 @@ func (r Name) Complete() bool {
 // CompleteNoBuild is like [Name.Complete] but it does not require the
 // build part to be present.
 func (r Name) CompleteNoBuild() bool {
-	return !slices.Contains(r.parts[:Tag], "")
+	return !slices.Contains(r.parts[:Build-1], "")
 }
 
 // EqualFold reports whether r and o are equivalent model names, ignoring
