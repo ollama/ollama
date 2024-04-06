@@ -1,7 +1,10 @@
 package model
 
 import (
+	"bytes"
+	"cmp"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -170,6 +173,27 @@ func TestComplete(t *testing.T) {
 	}
 }
 
+func TestNameLogValue(t *testing.T) {
+	cases := []string{
+		"example.com/library/mistral:latest+Q4_0",
+		"mistral:latest",
+		"mistral:7b+Q4_0",
+	}
+	for _, s := range cases {
+		t.Run(s, func(t *testing.T) {
+			var b bytes.Buffer
+			log := slog.New(slog.NewTextHandler(&b, nil))
+			name := ParseName(s)
+			log.Info("", "name", name)
+			want := fmt.Sprintf("name=%s", name.GoString())
+			got := b.String()
+			if !strings.Contains(got, want) {
+				t.Errorf("expected log output to contain %q; got %q", want, got)
+			}
+		})
+	}
+}
+
 func TestNameDisplay(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -179,15 +203,8 @@ func TestNameDisplay(t *testing.T) {
 		wantComplete string
 		wantString   string
 		wantModel    string
+		wantGoString string // default is tt.in
 	}{
-		{
-			name:         "Full Name with Build",
-			in:           "example.com/library/mistral:latest+Q4_0",
-			wantShort:    "mistral:latest",
-			wantLong:     "library/mistral:latest",
-			wantComplete: "example.com/library/mistral:latest",
-			wantModel:    "mistral",
-		},
 		{
 			name:         "Complete Name",
 			in:           "example.com/library/mistral:latest+Q4_0",
@@ -203,6 +220,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "mistral:latest",
 			wantComplete: "?/?/mistral:latest",
 			wantModel:    "mistral",
+			wantGoString: "?/?/mistral:latest+?",
 		},
 		{
 			name:         "Long Name",
@@ -211,6 +229,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "library/mistral:latest",
 			wantComplete: "?/library/mistral:latest",
 			wantModel:    "mistral",
+			wantGoString: "?/library/mistral:latest+?",
 		},
 		{
 			name:         "Case Preserved",
@@ -219,6 +238,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "Library/Mistral:Latest",
 			wantComplete: "?/Library/Mistral:Latest",
 			wantModel:    "Mistral",
+			wantGoString: "?/Library/Mistral:Latest+?",
 		},
 	}
 
@@ -240,8 +260,10 @@ func TestNameDisplay(t *testing.T) {
 			if g := p.DisplayModel(); g != tt.wantModel {
 				t.Errorf("Model = %q; want %q", g, tt.wantModel)
 			}
-			if g, w := fmt.Sprintf("%#v", p), p.DisplayComplete(); g != w {
-				t.Errorf("GoString() = %q; want %q", g, w)
+
+			tt.wantGoString = cmp.Or(tt.wantGoString, tt.in)
+			if g := fmt.Sprintf("%#v", p); g != tt.wantGoString {
+				t.Errorf("GoString() = %q; want %q", g, tt.wantGoString)
 			}
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"hash/maphash"
 	"iter"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -205,10 +206,21 @@ func (r Name) DisplayComplete() string {
 	}).String()
 }
 
-// GoString implements fmt.GoStringer. It is identical to
-// [Name.DisplayComplete], but works with fmt.Printf("%#v", name).
+// GoString implements fmt.GoStringer. It is like DisplayComplete but
+// includes the build or a "?" if the build is missing.
 func (r Name) GoString() string {
-	return r.DisplayComplete()
+	return (Name{
+		host:      cmp.Or(r.host, "?"),
+		namespace: cmp.Or(r.namespace, "?"),
+		model:     cmp.Or(r.model, "?"),
+		tag:       cmp.Or(r.tag, "?"),
+		build:     cmp.Or(r.build, "?"),
+	}).String()
+}
+
+// LogValue implements slog.Valuer.
+func (r Name) LogValue() slog.Value {
+	return slog.StringValue(r.GoString())
 }
 
 // DisplayShort returns a short display string of the Name with only the
