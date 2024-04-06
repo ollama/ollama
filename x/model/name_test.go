@@ -254,8 +254,8 @@ func TestNameDisplay(t *testing.T) {
 			if g := p.DisplayLong(); g != tt.wantLong {
 				t.Errorf("DisplayLong = %q; want %q", g, tt.wantLong)
 			}
-			if g := p.DisplayComplete(); g != tt.wantComplete {
-				t.Errorf("DisplayComplete = %q; want %q", g, tt.wantComplete)
+			if g := p.DisplayFullest(); g != tt.wantComplete {
+				t.Errorf("DisplayFullest = %q; want %q", g, tt.wantComplete)
 			}
 			if g := p.String(); g != tt.in {
 				t.Errorf("String(%q) = %q; want %q", tt.in, g, tt.in)

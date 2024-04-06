@@ -191,7 +191,10 @@ func (r Name) DisplayModel() string {
 	return r.model
 }
 
-func (r Name) DisplayComplete() string {
+// DisplayFullest returns the most specific display string of the Name.
+//
+// It does not include the build.
+func (r Name) DisplayFullest() string {
 	return (Name{
 		host:      r.host,
 		namespace: r.namespace,
@@ -219,7 +222,7 @@ func (r Name) LogValue() slog.Value {
 }
 
 // DisplayShort returns a short display string of the Name with only the
-// model, tag, and build parts.
+// model, tag.
 //
 // It does not include the build.
 func (r Name) DisplayShort() string {
@@ -230,7 +233,7 @@ func (r Name) DisplayShort() string {
 }
 
 // DisplayLong returns a long display string of the Name including namespace,
-// model, tag, and build parts.
+// model, tag.
 //
 // It does not include the build.
 func (r Name) DisplayLong() string {
