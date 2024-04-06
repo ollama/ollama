@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -337,6 +338,25 @@ func ExampleName_MapHash() {
 	fmt.Println(len(m))
 	// Output:
 	// 2
+}
+
+func ExampleName_CompareFold_sort() {
+	names := []Name{
+		ParseName("mistral:latest"),
+		ParseName("mistRal:7b+q4"),
+		ParseName("MIstral:7b"),
+	}
+
+	slices.SortFunc(names, Name.CompareFold)
+
+	for _, n := range names {
+		fmt.Println(n)
+	}
+
+	// Output:
+	// MIstral:7b
+	// mistRal:7b+q4
+	// mistral:latest
 }
 
 func keep[T any](v T) T { return v }
