@@ -196,6 +196,9 @@ func (r Name) DisplayModel() string {
 //	<host>/<namespace>/<model>:<tag>
 //
 // If any part is missing, it is omitted from the display string.
+//
+// It does not include the build part. For the fullest possible display
+// string with the build, use [Name.String].
 func (r Name) DisplayFullest() string {
 	return (Name{
 		host:      r.host,
