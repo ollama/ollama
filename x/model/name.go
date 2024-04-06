@@ -134,7 +134,7 @@ func ParseName(s string) Name {
 		case Tag:
 			r.tag = part
 		case Build:
-			r.build = strings.ToUpper(part)
+			r.build = part
 		case Invalid:
 			return Name{}
 		}

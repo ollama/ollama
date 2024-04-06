@@ -15,11 +15,14 @@ var testNames = map[string]Name{
 	"mistral:7b+Q4_0":                {model: "mistral", tag: "7b", build: "Q4_0"},
 	"mistral+KQED":                   {model: "mistral", build: "KQED"},
 	"mistral.x-3:7b+Q4_0":            {model: "mistral.x-3", tag: "7b", build: "Q4_0"},
-	"mistral:7b+q4_0":                {model: "mistral", tag: "7b", build: "Q4_0"},
+	"mistral:7b+q4_0":                {model: "mistral", tag: "7b", build: "q4_0"},
 	"llama2":                         {model: "llama2"},
 	"user/model":                     {namespace: "user", model: "model"},
 	"example.com/ns/mistral:7b+Q4_0": {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "Q4_0"},
 	"example.com/ns/mistral:7b+x":    {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "X"},
+
+	// preserves case for build
+	"x+b": {model: "x", build: "b"},
 
 	// invalid (includes fuzzing trophies)
 	" / / : + ": {},
