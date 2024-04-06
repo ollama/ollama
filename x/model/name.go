@@ -308,13 +308,17 @@ func (r Name) CompareFold(o Name) int {
 }
 
 func compareFold(a, b string) int {
+	// fast-path for unequal lengths
+	if n := cmp.Compare(len(a), len(b)); n != 0 {
+		return n
+	}
 	for i := 0; i < len(a) && i < len(b); i++ {
 		ca, cb := downcase(a[i]), downcase(b[i])
 		if n := cmp.Compare(ca, cb); n != 0 {
 			return n
 		}
 	}
-	return cmp.Compare(len(a), len(b))
+	return 0
 }
 
 func downcase(c byte) byte {
