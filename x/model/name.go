@@ -22,9 +22,9 @@ var (
 
 const MaxNamePartLen = 128
 
-type NamePartKind int
+type NamePart int
 
-var kindNames = map[NamePartKind]string{
+var kindNames = map[NamePart]string{
 	Invalid:   "Invalid",
 	Host:      "Host",
 	Namespace: "Namespace",
@@ -33,13 +33,13 @@ var kindNames = map[NamePartKind]string{
 	Build:     "Build",
 }
 
-func (k NamePartKind) String() string {
+func (k NamePart) String() string {
 	return cmp.Or(kindNames[k], "Unknown")
 }
 
 // Levels of concreteness
 const (
-	Invalid NamePartKind = iota
+	Invalid NamePart = iota
 	Host
 	Namespace
 	Model
@@ -346,8 +346,8 @@ func (r Name) Parts() []string {
 //
 // As a special case, question marks are ignored so they may be used as
 // placeholders for missing parts in string literals.
-func NameParts(s string) iter.Seq2[NamePartKind, string] {
-	return func(yield func(NamePartKind, string) bool) {
+func NameParts(s string) iter.Seq2[NamePart, string] {
+	return func(yield func(NamePart, string) bool) {
 		if strings.HasPrefix(s, "http://") {
 			s = s[len("http://"):]
 		}
@@ -359,7 +359,7 @@ func NameParts(s string) iter.Seq2[NamePartKind, string] {
 			return
 		}
 
-		yieldValid := func(kind NamePartKind, part string) bool {
+		yieldValid := func(kind NamePart, part string) bool {
 			if !isValidPart(kind, part) {
 				yield(Invalid, "")
 				return false
@@ -438,7 +438,7 @@ func (r Name) Valid() bool {
 }
 
 // isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
-func isValidPart(kind NamePartKind, s string) bool {
+func isValidPart(kind NamePart, s string) bool {
 	if s == "" {
 		return false
 	}
@@ -450,7 +450,7 @@ func isValidPart(kind NamePartKind, s string) bool {
 	return true
 }
 
-func isValidByte(kind NamePartKind, c byte) bool {
+func isValidByte(kind NamePart, c byte) bool {
 	if kind == Namespace && c == '.' {
 		return false
 	}
