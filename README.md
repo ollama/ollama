@@ -69,7 +69,29 @@ Here are some example models that can be downloaded:
 
 ## Knowledge cutoff dates
 
-[Knowledge Cutoff for AI Models](https://gist.github.com/saket3199/9ed826eabe5896fca3cc3dc6d99cfa80)
+This provides information about the "Knowledge Cutoff" for various AI models. The "Knowledge Cutoff" refers to the point in time until which the model has been trained and is aware of the information.
+
+| Model              | Knowledge Cutoff |
+| ------------------ | ---------------- |
+| Llama 2            | September 2022   |
+| Mistral            | December 2022    |
+| Dolphin Phi        | Not Specified    |
+| Phi-2              | Not Specified    |
+| Neural Chat        | Not Specified    |
+| Starling           | Not Specified    |
+| Code Llama         | September 2022   |
+| Llama 2 Uncensored | September 2022   |
+| Llama 2 13B        | September 2022   |
+| Llama 2 70B        | September 2022   |
+| Orca Mini          | Not Specified    |
+| Vicuna             | Not Specified    |
+| LLaVA              | Not Specified    |
+| Gemma (2B)         | Not Specified    |
+| Gemma (7B)         | Not Specified    |
+
+Please note that for some models, the "Knowledge Cutoff" is not specified. This could mean that the model is continuously updated, or that the cutoff date is not publicly disclosed.
+
+For more information about these models, please refer to the official documentation or the respective sources.
 
 ## Customize a model
 
