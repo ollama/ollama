@@ -188,27 +188,30 @@ func (r Name) MapHash() uint64 {
 	return h.Sum64()
 }
 
+// DisplayModel returns the a display string of the model.
 func (r Name) DisplayModel() string {
 	return r.model
 }
 
-func (r Name) DisplayFull() string {
+// DisplayComplete returns a complete display string of the Name. For any
+// part that is missing, a ("?") is used. If a complete name is not required
+// and only the longest possible name is needed, use [Name.String] or
+// String or check if [Name.Complete] is true before calling.
+//
+// It does not include the build.
+func (r Name) DisplayComplete() string {
 	return (Name{
-		host:      cmp.Or(r.host, "!(MISSING DOMAIN)"),
-		namespace: cmp.Or(r.namespace, "!(MISSING NAMESPACE)"),
-		model:     cmp.Or(r.model, "!(MISSING NAME)"),
-		tag:       cmp.Or(r.tag, "!(MISSING TAG)"),
-		build:     cmp.Or(r.build, "!(MISSING BUILD)"),
+		host:      cmp.Or(r.host, "?"),
+		namespace: cmp.Or(r.namespace, "?"),
+		model:     cmp.Or(r.model, "?"),
+		tag:       cmp.Or(r.tag, "?"),
 	}).String()
 }
 
-// DisplayCompact returns a compact display string of the Name with only the
-// model and tag parts.
-func (r Name) DisplayCompact() string {
-	return (Name{
-		model: r.model,
-		tag:   r.tag,
-	}).String()
+// GoString implements fmt.GoStringer. It is identical to
+// [Name.DisplayComplete], but works with fmt.Printf("%#v", name).
+func (r Name) GoString() string {
+	return r.DisplayComplete()
 }
 
 // DisplayShort returns a short display string of the Name with only the
@@ -217,7 +220,6 @@ func (r Name) DisplayShort() string {
 	return (Name{
 		model: r.model,
 		tag:   r.tag,
-		build: r.build,
 	}).String()
 }
 
@@ -228,7 +230,6 @@ func (r Name) DisplayLong() string {
 		namespace: r.namespace,
 		model:     r.model,
 		tag:       r.tag,
-		build:     r.build,
 	}).String()
 }
 

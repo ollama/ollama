@@ -156,57 +156,78 @@ func TestComplete(t *testing.T) {
 	}
 }
 
-func TestNameStringVariants(t *testing.T) {
+func TestNameDisplay(t *testing.T) {
 	cases := []struct {
-		in              string
-		nameAndTag      string
-		nameTagAndBuild string
+		name         string
+		in           string
+		wantShort    string
+		wantLong     string
+		wantComplete string
+		wantString   string
+		wantModel    string
 	}{
-		{"x/y/z:8n+I", "z:8n", "z:8n+I"},
-		{"x/y/z:8n", "z:8n", "z:8n"},
+		{
+			name:         "Full Name with Build",
+			in:           "example.com/library/mistral:latest+Q4_0",
+			wantShort:    "mistral:latest",
+			wantLong:     "library/mistral:latest",
+			wantComplete: "example.com/library/mistral:latest",
+			wantModel:    "mistral",
+		},
+		{
+			name:         "Complete Name",
+			in:           "example.com/library/mistral:latest+Q4_0",
+			wantShort:    "mistral:latest",
+			wantLong:     "library/mistral:latest",
+			wantComplete: "example.com/library/mistral:latest",
+			wantModel:    "mistral",
+		},
+		{
+			name:         "Short Name",
+			in:           "mistral:latest",
+			wantShort:    "mistral:latest",
+			wantLong:     "mistral:latest",
+			wantComplete: "?/?/mistral:latest",
+			wantModel:    "mistral",
+		},
+		{
+			name:         "Long Name",
+			in:           "library/mistral:latest",
+			wantShort:    "mistral:latest",
+			wantLong:     "library/mistral:latest",
+			wantComplete: "?/library/mistral:latest",
+			wantModel:    "mistral",
+		},
+		{
+			name:         "Case Preserved",
+			in:           "Library/Mistral:Latest",
+			wantShort:    "Mistral:Latest",
+			wantLong:     "Library/Mistral:Latest",
+			wantComplete: "?/Library/Mistral:Latest",
+			wantModel:    "Mistral",
+		},
 	}
 
 	for _, tt := range cases {
-		t.Run(tt.in, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			p := ParseName(tt.in)
-			t.Logf("ParseName(%q) = %#v", tt.in, p)
-			if g := p.DisplayCompact(); g != tt.nameAndTag {
-				t.Errorf("ModelAndTag(%q) = %q; want %q", tt.in, g, tt.nameAndTag)
+			if g := p.DisplayShort(); g != tt.wantShort {
+				t.Errorf("DisplayShort = %q; want %q", g, tt.wantShort)
 			}
-			if g := p.DisplayShort(); g != tt.nameTagAndBuild {
-				t.Errorf("ModelTagAndBuild(%q) = %q; want %q", tt.in, g, tt.nameTagAndBuild)
+			if g := p.DisplayLong(); g != tt.wantLong {
+				t.Errorf("DisplayLong = %q; want %q", g, tt.wantLong)
 			}
-		})
-	}
-}
-
-func TestNameFull(t *testing.T) {
-	const empty = "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/!(MISSING NAME):!(MISSING TAG)+!(MISSING BUILD)"
-
-	cases := []struct {
-		in       string
-		wantFull string
-	}{
-		{"", empty},
-		{"ns/mistral:7b+x", "!(MISSING DOMAIN)/ns/mistral:7b+X"},
-		{"ns/mistral:7b+Q4_0", "!(MISSING DOMAIN)/ns/mistral:7b+Q4_0"},
-		{"example.com/x/mistral:latest", "example.com/x/mistral:latest+!(MISSING BUILD)"},
-		{"example.com/x/mistral:latest+Q4_0", "example.com/x/mistral:latest+Q4_0"},
-
-		{"mistral:7b+x", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:7b+X"},
-		{"mistral:7b+q4_0", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:7b+Q4_0"},
-		{"mistral:7b+Q4_0", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:7b+Q4_0"},
-		{"mistral:latest", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:latest+!(MISSING BUILD)"},
-		{"mistral", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:!(MISSING TAG)+!(MISSING BUILD)"},
-		{"mistral:30b", "!(MISSING DOMAIN)/!(MISSING NAMESPACE)/mistral:30b+!(MISSING BUILD)"},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.in, func(t *testing.T) {
-			p := ParseName(tt.in)
-			t.Logf("ParseName(%q) = %#v", tt.in, p)
-			if g := p.DisplayFull(); g != tt.wantFull {
-				t.Errorf("DisplayFull(%q) = %q; want %q", tt.in, g, tt.wantFull)
+			if g := p.DisplayComplete(); g != tt.wantComplete {
+				t.Errorf("DisplayComplete = %q; want %q", g, tt.wantComplete)
+			}
+			if g := p.String(); g != tt.in {
+				t.Errorf("String(%q) = %q; want %q", tt.in, g, tt.in)
+			}
+			if g := p.Model(); g != tt.wantModel {
+				t.Errorf("Model = %q; want %q", g, tt.wantModel)
+			}
+			if g, w := fmt.Sprintf("%#v", p), p.DisplayComplete(); g != w {
+				t.Errorf("GoString() = %q; want %q", g, w)
 			}
 		})
 	}
