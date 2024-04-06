@@ -154,6 +154,16 @@ func TestComplete(t *testing.T) {
 			}
 		})
 	}
+
+	// Complete uses Parts which returns a slice, but it should be
+	// inlined when used in Complete, preventing any allocations or
+	// escaping to the heap.
+	allocs := testing.AllocsPerRun(1000, func() {
+		keep(ParseName("complete.com/x/mistral:latest+Q4_0").Complete())
+	})
+	if allocs > 0 {
+		t.Errorf("Complete allocs = %v; want 0", allocs)
+	}
 }
 
 func TestNameDisplay(t *testing.T) {
@@ -234,12 +244,9 @@ func TestNameDisplay(t *testing.T) {
 }
 
 func TestParseNameAllocs(t *testing.T) {
-	// test allocations
-	var r Name
 	allocs := testing.AllocsPerRun(1000, func() {
-		r = ParseName("example.com/mistral:7b+Q4_0")
+		keep(ParseName("example.com/mistral:7b+Q4_0"))
 	})
-	_ = r
 	if allocs > 0 {
 		t.Errorf("ParseName allocs = %v; want 0", allocs)
 	}
@@ -248,11 +255,9 @@ func TestParseNameAllocs(t *testing.T) {
 func BenchmarkParseName(b *testing.B) {
 	b.ReportAllocs()
 
-	var r Name
 	for i := 0; i < b.N; i++ {
-		r = ParseName("example.com/mistral:7b+Q4_0")
+		keep(ParseName("example.com/mistral:7b+Q4_0"))
 	}
-	_ = r
 }
 
 func FuzzParseName(f *testing.F) {
@@ -333,3 +338,5 @@ func ExampleName_MapHash() {
 	// Output:
 	// 2
 }
+
+func keep[T any](v T) T { return v }
