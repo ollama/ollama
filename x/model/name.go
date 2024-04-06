@@ -259,7 +259,7 @@ func (r Name) String() string {
 // Complete reports whether the Name is fully qualified. That is it has a
 // domain, namespace, name, tag, and build.
 func (r Name) Complete() bool {
-	return r.Valid() && !slices.Contains(r.Parts(), "")
+	return !slices.Contains(r.Parts(), "")
 }
 
 // TODO(bmizerany): Compare
