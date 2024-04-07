@@ -117,53 +117,6 @@ func TestNamePartString(t *testing.T) {
 	}
 }
 
-func TestIsValidDigestType(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		{"sha256", true},
-		{"blake2", true},
-
-		{"", false},
-		{"-sha256", false},
-		{"sha256-", false},
-		{"Sha256", false},
-		{"sha256(", false},
-		{" sha256", false},
-	}
-	for _, tt := range cases {
-		t.Run(tt.in, func(t *testing.T) {
-			if g := isValidDigestType(tt.in); g != tt.want {
-				t.Errorf("isValidDigestType(%q) = %v; want %v", tt.in, g, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsValidDigest(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		{"", false},
-		{"sha256-123", true},
-		{"sha256-1234567890abcdef", true},
-		{"sha256-1234567890abcdef1234567890abcdeffffffffffffffffffffffffffffffffffffffffff", true},
-		{"!sha256-123", false},
-		{"sha256-123!", false},
-		{"sha256-", false},
-		{"-123", false},
-	}
-	for _, tt := range cases {
-		t.Run(tt.in, func(t *testing.T) {
-			if g := isValidDigest(tt.in); g != tt.want {
-				t.Errorf("isValidDigest(%q) = %v; want %v", tt.in, g, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseName(t *testing.T) {
 	for baseName, want := range testNames {
 		for _, prefix := range []string{"", "https://", "http://"} {

@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"hash/maphash"
 	"io"
 	"iter"
@@ -14,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"unicode"
 
 	"github.com/ollama/ollama/x/types/structs"
 )
@@ -25,6 +23,7 @@ var (
 	// other packages do not need to invent their own error type when they
 	// need to return an error for an invalid name.
 	ErrIncompleteName = errors.New("incomplete model name")
+	ErrInvalidDigest  = errors.New("invalid digest")
 )
 
 const MaxNamePartLen = 128
@@ -591,43 +590,4 @@ func isValidByte(kind NamePart, c byte) bool {
 		return true
 	}
 	return false
-}
-
-// isValidDigest returns true if the given string in the form of
-// "<digest-type>-<digest>", and <digest-type> is in the form of [a-z0-9]+
-// and <digest> is a valid hex string.
-//
-// It does not check if the digest is a valid hash for the given digest
-// type, or restrict the digest type to a known set of types. This is left
-// up to ueers of this package.
-func isValidDigest(s string) bool {
-	typ, digest, ok := strings.Cut(s, "-")
-	res := ok && isValidDigestType(typ) && isValidHex(digest)
-	fmt.Printf("DEBUG: %q: typ: %s, digest: %s, ok: %v res: %v\n", s, typ, digest, ok, res)
-	return res
-}
-
-func isValidDigestType(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-	for _, r := range s {
-		if !unicode.IsLower(r) && !unicode.IsDigit(r) {
-			return false
-		}
-	}
-	return true
-}
-
-func isValidHex(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-	for i := range s {
-		c := s[i]
-		if c < '0' || c > '9' && c < 'a' || c > 'f' {
-			return false
-		}
-	}
-	return true
 }
