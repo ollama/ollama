@@ -10,7 +10,7 @@ import (
 	"github.com/ollama/ollama/x/client/ollama/apitype"
 	"github.com/ollama/ollama/x/oweb"
 	"github.com/ollama/ollama/x/registry"
-	regtype "github.com/ollama/ollama/x/registry"
+	regtype "github.com/ollama/ollama/x/registry/apitype"
 )
 
 // Common API Errors
@@ -82,14 +82,11 @@ func (s *Server) handlePush(_ http.ResponseWriter, r *http.Request) error {
 				return err
 			}
 			defer f.Close()
-			etag, err := registry.PushLayer(r.Context(), rq.URL, rq.Offset, rq.Size, f)
+			cp, err := registry.PushLayer(r.Context(), f, rq.URL, rq.Offset, rq.Size)
 			if err != nil {
 				return err
 			}
-			uploads = append(uploads, regtype.CompletePart{
-				URL:  rq.URL,
-				ETag: etag,
-			})
+			uploads = append(uploads, cp)
 			return nil
 		}()
 		if err != nil {
