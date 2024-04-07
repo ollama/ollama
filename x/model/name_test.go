@@ -533,6 +533,22 @@ func ExampleName_CompareFold_sort() {
 	// mistral:latest
 }
 
+func ExampleName_completeAndResolved() {
+	for _, s := range []string{
+		"x/y/z:latest+q4_0@sha123-1",
+		"x/y/z:latest+q4_0",
+		"@sha123-1",
+	} {
+		p := ParseName(s)
+		fmt.Printf("complete:%v resolved:%v  digest:%s\n", p.Complete(), p.Resolved(), p.Digest())
+	}
+
+	// Output:
+	// complete:true resolved:true  digest:sha123-1
+	// complete:true resolved:false  digest:
+	// complete:false resolved:true  digest:sha123-1
+}
+
 func ExampleName_DisplayFullest() {
 	for _, s := range []string{
 		"example.com/jmorganca/mistral:latest+Q4_0",
