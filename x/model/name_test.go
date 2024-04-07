@@ -49,8 +49,16 @@ var testNames = map[string]fields{
 	"example.com/ns/mistral:7b+Q4_0": {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "Q4_0"},
 	"example.com/ns/mistral:7b+X":    {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "X"},
 
+	// invalid digest
+	"mistral:latest@invalid256-": {},
+	"mistral:latest@-123":        {},
+	"mistral:latest@!-123":       {},
+	"mistral:latest@1-!":         {},
+	"mistral:latest@":            {},
+
 	// resolved
-	"x@123": {model: "x", digest: "123"},
+	"x@sha123-1": {model: "x", digest: "sha123-1"},
+	"@sha456-2":  {digest: "sha456-2"},
 
 	// preserves case for build
 	"x+b": {model: "x", build: "b"},
@@ -109,6 +117,53 @@ func TestNamePartString(t *testing.T) {
 	}
 }
 
+func TestIsValidDigestType(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"sha256", true},
+		{"blake2", true},
+
+		{"", false},
+		{"-sha256", false},
+		{"sha256-", false},
+		{"Sha256", false},
+		{"sha256(", false},
+		{" sha256", false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			if g := isValidDigestType(tt.in); g != tt.want {
+				t.Errorf("isValidDigestType(%q) = %v; want %v", tt.in, g, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsValidDigest(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"sha256-123", true},
+		{"sha256-1234567890abcdef", true},
+		{"sha256-1234567890abcdef1234567890abcdeffffffffffffffffffffffffffffffffffffffffff", true},
+		{"!sha256-123", false},
+		{"sha256-123!", false},
+		{"sha256-", false},
+		{"-123", false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			if g := isValidDigest(tt.in); g != tt.want {
+				t.Errorf("isValidDigest(%q) = %v; want %v", tt.in, g, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseName(t *testing.T) {
 	for baseName, want := range testNames {
 		for _, prefix := range []string{"", "https://", "http://"} {
@@ -117,6 +172,10 @@ func TestParseName(t *testing.T) {
 			s := prefix + baseName
 
 			t.Run(s, func(t *testing.T) {
+				for kind, part := range Parts(s) {
+					t.Logf("Part: %s: %q", kind, part)
+				}
+
 				name := ParseName(s)
 				got := fieldsFromName(name)
 				if got != want {
@@ -132,6 +191,12 @@ func TestParseName(t *testing.T) {
 					t.Errorf("Valid() = true; Model() = %q; want non-empty name", got.model)
 				} else if !name.Valid() && name.DisplayModel() != "" {
 					t.Errorf("Valid() = false; Model() = %q; want empty name", got.model)
+				}
+
+				if name.Resolved() && name.Digest() == "" {
+					t.Errorf("Resolved() = true; Digest() = %q; want non-empty digest", got.digest)
+				} else if !name.Resolved() && name.Digest() != "" {
+					t.Errorf("Resolved() = false; Digest() = %q; want empty digest", got.digest)
 				}
 			})
 		}
