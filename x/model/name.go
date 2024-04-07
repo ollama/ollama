@@ -33,30 +33,30 @@ type NamePart int
 
 // Levels of concreteness
 const (
-	Host NamePart = iota
-	Namespace
-	Model
-	Tag
-	Build
-	Digest
+	PartHost NamePart = iota
+	PartNamespace
+	PartModel
+	PartTag
+	PartBuild
+	PartDigest
 
 	// Invalid is a special part that is used to indicate that a part is
 	// invalid. It is not a valid part of a Name.
 	//
 	// It should be kept as the last part in the list.
-	Invalid
+	PartInvalid
 
-	NumParts = Invalid
+	NumParts = PartInvalid
 )
 
 var kindNames = map[NamePart]string{
-	Invalid:   "Invalid",
-	Host:      "Host",
-	Namespace: "Namespace",
-	Model:     "Name",
-	Tag:       "Tag",
-	Build:     "Build",
-	Digest:    "Digest",
+	PartInvalid:   "Invalid",
+	PartHost:      "Host",
+	PartNamespace: "Namespace",
+	PartModel:     "Name",
+	PartTag:       "Tag",
+	PartBuild:     "Build",
+	PartDigest:    "Digest",
 }
 
 func (k NamePart) String() string {
@@ -139,7 +139,7 @@ type Name struct {
 func ParseName(s string) Name {
 	var r Name
 	for kind, part := range Parts(s) {
-		if kind == Invalid {
+		if kind == PartInvalid {
 			return Name{}
 		}
 		r.parts[kind] = part
@@ -163,7 +163,7 @@ func Fill(dst, src Name) Name {
 
 // WithBuild returns a copy of r with the build set to the given string.
 func (r Name) WithBuild(build string) Name {
-	r.parts[Build] = build
+	r.parts[PartBuild] = build
 	return r
 }
 
@@ -196,7 +196,7 @@ func (r Name) slice(from, to NamePart) Name {
 
 // DisplayModel returns the a display string composed of the model only.
 func (r Name) DisplayModel() string {
-	return r.parts[Model]
+	return r.parts[PartModel]
 }
 
 // DisplayFullest returns the fullest possible display string in form:
@@ -208,7 +208,7 @@ func (r Name) DisplayModel() string {
 // It does not include the build part. For the fullest possible display
 // string with the build, use [Name.String].
 func (r Name) DisplayFullest() string {
-	return r.slice(Host, Tag).String()
+	return r.slice(PartHost, PartTag).String()
 }
 
 // DisplayShort returns the fullest possible display string in form:
@@ -217,7 +217,7 @@ func (r Name) DisplayFullest() string {
 //
 // If any part is missing, it is omitted from the display string.
 func (r Name) DisplayShort() string {
-	return r.slice(Model, Tag).String()
+	return r.slice(PartModel, PartTag).String()
 }
 
 // DisplayLong returns the fullest possible display string in form:
@@ -226,16 +226,16 @@ func (r Name) DisplayShort() string {
 //
 // If any part is missing, it is omitted from the display string.
 func (r Name) DisplayLong() string {
-	return r.slice(Namespace, Tag).String()
+	return r.slice(PartNamespace, PartTag).String()
 }
 
 var seps = [...]string{
-	Host:      "/",
-	Namespace: "/",
-	Model:     ":",
-	Tag:       "+",
-	Build:     "@",
-	Digest:    "",
+	PartHost:      "/",
+	PartNamespace: "/",
+	PartModel:     ":",
+	PartTag:       "+",
+	PartBuild:     "@",
+	PartDigest:    "",
 }
 
 // WriteTo implements io.WriterTo. It writes the fullest possible display
@@ -253,7 +253,7 @@ func (r Name) WriteTo(w io.Writer) (n int64, err error) {
 		if r.parts[i] == "" {
 			continue
 		}
-		if n > 0 || NamePart(i) == Digest {
+		if n > 0 || NamePart(i) == PartDigest {
 			n1, err := io.WriteString(w, seps[i-1])
 			n += int64(n1)
 			if err != nil {
@@ -380,13 +380,13 @@ func (r Name) Value() (driver.Value, error) {
 // Complete reports whether the Name is fully qualified. That is it has a
 // domain, namespace, name, tag, and build.
 func (r Name) Complete() bool {
-	return !slices.Contains(r.parts[:Digest], "")
+	return !slices.Contains(r.parts[:PartDigest], "")
 }
 
 // CompleteNoBuild is like [Name.Complete] but it does not require the
 // build part to be present.
 func (r Name) CompleteNoBuild() bool {
-	return !slices.Contains(r.parts[:Build], "")
+	return !slices.Contains(r.parts[:PartBuild], "")
 }
 
 // Resolved reports true if the Name has a valid digest.
@@ -394,7 +394,7 @@ func (r Name) CompleteNoBuild() bool {
 // It is possible to have a valid Name, or a complete Name that is not
 // resolved.
 func (r Name) Resolved() bool {
-	return r.parts[Digest] != ""
+	return r.parts[PartDigest] != ""
 }
 
 // Digest returns the digest part of the Name, if any.
@@ -402,7 +402,7 @@ func (r Name) Resolved() bool {
 // If Digest returns a non-empty string, then [Name.Resolved] will return
 // true, and digest is considered valid.
 func (r Name) Digest() string {
-	return r.parts[Digest]
+	return r.parts[PartDigest]
 }
 
 // EqualFold reports whether r and o are equivalent model names, ignoring
@@ -462,27 +462,27 @@ func Parts(s string) iter.Seq2[NamePart, string] {
 
 		yieldValid := func(kind NamePart, part string) bool {
 			if !isValidPart(kind, part) {
-				yield(Invalid, "")
+				yield(PartInvalid, "")
 				return false
 			}
 			return yield(kind, part)
 		}
 
 		partLen := 0
-		state, j := Digest, len(s)
+		state, j := PartDigest, len(s)
 		for i := len(s) - 1; i >= 0; i-- {
 			if partLen++; partLen > MaxNamePartLen {
-				yield(Invalid, "")
+				yield(PartInvalid, "")
 				return
 			}
 
 			switch s[i] {
 			case '@':
 				switch state {
-				case Digest:
+				case PartDigest:
 					part := s[i+1:]
 					if isValidDigest(part) {
-						if !yield(Digest, part) {
+						if !yield(PartDigest, part) {
 							return
 						}
 						if i == 0 {
@@ -497,77 +497,77 @@ func Parts(s string) iter.Seq2[NamePart, string] {
 							return
 						}
 					} else {
-						yield(Invalid, "")
+						yield(PartInvalid, "")
 						return
 					}
-					state, j, partLen = Build, i, 0
+					state, j, partLen = PartBuild, i, 0
 				default:
-					yield(Invalid, "")
+					yield(PartInvalid, "")
 					return
 				}
 			case '+':
 				switch state {
-				case Build, Digest:
-					if !yieldValid(Build, s[i+1:j]) {
+				case PartBuild, PartDigest:
+					if !yieldValid(PartBuild, s[i+1:j]) {
 						return
 					}
-					state, j, partLen = Tag, i, 0
+					state, j, partLen = PartTag, i, 0
 				default:
-					yield(Invalid, "")
+					yield(PartInvalid, "")
 					return
 				}
 			case ':':
 				switch state {
-				case Tag, Build, Digest:
-					if !yieldValid(Tag, s[i+1:j]) {
+				case PartTag, PartBuild, PartDigest:
+					if !yieldValid(PartTag, s[i+1:j]) {
 						return
 					}
-					state, j, partLen = Model, i, 0
+					state, j, partLen = PartModel, i, 0
 				default:
-					yield(Invalid, "")
+					yield(PartInvalid, "")
 					return
 				}
 			case '/':
 				switch state {
-				case Model, Tag, Build, Digest:
-					if !yieldValid(Model, s[i+1:j]) {
+				case PartModel, PartTag, PartBuild, PartDigest:
+					if !yieldValid(PartModel, s[i+1:j]) {
 						return
 					}
-					state, j = Namespace, i
-				case Namespace:
-					if !yieldValid(Namespace, s[i+1:j]) {
+					state, j = PartNamespace, i
+				case PartNamespace:
+					if !yieldValid(PartNamespace, s[i+1:j]) {
 						return
 					}
-					state, j, partLen = Host, i, 0
+					state, j, partLen = PartHost, i, 0
 				default:
-					yield(Invalid, "")
+					yield(PartInvalid, "")
 					return
 				}
 			default:
 				if !isValidByte(state, s[i]) {
-					yield(Invalid, "")
+					yield(PartInvalid, "")
 					return
 				}
 			}
 		}
 
-		if state <= Namespace {
+		if state <= PartNamespace {
 			yieldValid(state, s[:j])
 		} else {
-			yieldValid(Model, s[:j])
+			yieldValid(PartModel, s[:j])
 		}
 	}
 }
 
-// Valid returns true if the Name has a valid nick. To know if a Name is
+// Valid returns true if the Name hPartas a valid nick. To know if a Name is
 // "complete", use [Name.Complete].
 func (r Name) Valid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
-	return r.parts[Model] != ""
+	return r.parts[PartModel] != ""
 }
 
-// isValidPart returns true if given part is valid ascii [a-zA-Z0-9_\.-]
+// isValidPart returns Parttrue if given part is valid ascii [a-zA-Z0-9_\.-]
 func isValidPart(kind NamePart, s string) bool {
 	if s == "" {
 		return false
@@ -581,7 +581,7 @@ func isValidPart(kind NamePart, s string) bool {
 }
 
 func isValidByte(kind NamePart, c byte) bool {
-	if kind == Namespace && c == '.' {
+	if kind == PartNamespace && c == '.' {
 		return false
 	}
 	if c == '.' || c == '-' {

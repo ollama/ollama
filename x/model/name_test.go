@@ -18,12 +18,12 @@ type fields struct {
 
 func fieldsFromName(p Name) fields {
 	return fields{
-		host:      p.parts[Host],
-		namespace: p.parts[Namespace],
-		model:     p.parts[Model],
-		tag:       p.parts[Tag],
-		build:     p.parts[Build],
-		digest:    p.parts[Digest],
+		host:      p.parts[PartHost],
+		namespace: p.parts[PartNamespace],
+		model:     p.parts[PartModel],
+		tag:       p.parts[PartTag],
+		build:     p.parts[PartBuild],
+		digest:    p.parts[PartDigest],
 	}
 }
 
