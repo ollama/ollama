@@ -28,19 +28,6 @@ const MaxNamePartLen = 128
 
 type NamePart int
 
-var kindNames = map[NamePart]string{
-	Invalid:   "Invalid",
-	Host:      "Host",
-	Namespace: "Namespace",
-	Model:     "Name",
-	Tag:       "Tag",
-	Build:     "Build",
-}
-
-func (k NamePart) String() string {
-	return cmp.Or(kindNames[k], "Unknown")
-}
-
 // Levels of concreteness
 const (
 	Host NamePart = iota
@@ -48,11 +35,30 @@ const (
 	Model
 	Tag
 	Build
+	Digest
 
-	NumParts = Build + 1
+	// Invalid is a special part that is used to indicate that a part is
+	// invalid. It is not a valid part of a Name.
+	//
+	// It should be kept as the last part in the list.
+	Invalid
 
-	Invalid = NamePart(-1)
+	NumParts = Invalid - 1
 )
+
+var kindNames = map[NamePart]string{
+	Invalid:   "Invalid",
+	Host:      "Host",
+	Namespace: "Namespace",
+	Model:     "Name",
+	Tag:       "Tag",
+	Build:     "Build",
+	Digest:    "Digest",
+}
+
+func (k NamePart) String() string {
+	return cmp.Or(kindNames[k], "Unknown")
+}
 
 // Name is an opaque reference to a model. It holds the parts of a model
 // with the case preserved, but is not directly comparable with other Names
