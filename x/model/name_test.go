@@ -396,14 +396,41 @@ func TestNameTextMarshal(t *testing.T) {
 			}
 		})
 	}
-}
 
-func TestNameTextUnmarshalCallOnValidName(t *testing.T) {
-	// UnmarshalText should not be called on a valid Name.
-	p := mustParse("x")
-	if err := p.UnmarshalText([]byte("mistral:latest+Q4_0")); err == nil {
-		t.Error("UnmarshalText() = nil; want error")
-	}
+	t.Run("UnmarshalText into valid Name", func(t *testing.T) {
+		// UnmarshalText should not be called on a valid Name.
+		p := mustParse("x")
+		if err := p.UnmarshalText([]byte("mistral:latest+Q4_0")); err == nil {
+			t.Error("UnmarshalText() = nil; want error")
+		}
+	})
+
+	t.Run("TextMarshal allocs", func(t *testing.T) {
+		var data []byte
+		name := ParseName("example.com/ns/mistral:latest+Q4_0")
+		if !name.Complete() {
+			// sanity check
+			panic("sanity check failed")
+		}
+
+		allocs := testing.AllocsPerRun(1000, func() {
+			var err error
+			data, err = name.MarshalText()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(data) == 0 {
+				t.Fatal("MarshalText() = 0; want non-zero")
+			}
+		})
+		if allocs > 0 {
+			// TODO: Update when/if this lands:
+			// https://github.com/golang/go/issues/62384
+			//
+			// Currently, the best we can do is 1 alloc.
+			t.Errorf("MarshalText allocs = %v; want <= 1", allocs)
+		}
+	})
 }
 
 func TestSQL(t *testing.T) {
@@ -430,33 +457,6 @@ func TestSQL(t *testing.T) {
 			t.Errorf("Value() = %q; want %q", g, "x")
 		}
 	})
-}
-
-func TestNameTextMarshalAllocs(t *testing.T) {
-	var data []byte
-	name := ParseName("example.com/ns/mistral:latest+Q4_0")
-	if !name.Complete() {
-		// sanity check
-		panic("sanity check failed")
-	}
-
-	allocs := testing.AllocsPerRun(1000, func() {
-		var err error
-		data, err = name.MarshalText()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(data) == 0 {
-			t.Fatal("MarshalText() = 0; want non-zero")
-		}
-	})
-	if allocs > 0 {
-		// TODO: Update when/if this lands:
-		// https://github.com/golang/go/issues/62384
-		//
-		// Currently, the best we can do is 1 alloc.
-		t.Errorf("MarshalText allocs = %v; want <= 1", allocs)
-	}
 }
 
 func TestNameStringAllocs(t *testing.T) {
