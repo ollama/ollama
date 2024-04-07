@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"unsafe"
 
 	"github.com/ollama/ollama/x/types/structs"
 )
@@ -333,14 +332,10 @@ func (r *Name) UnmarshalText(text []byte) error {
 		// the immutability of the Name.
 		return errors.New("model.Name: UnmarshalText on valid Name")
 	}
-	// unsafeString is safe here because the contract of UnmarshalText
-	// that text belongs to us for the duration of the call.
-	*r = ParseName(unsafeString(text))
-	return nil
-}
 
-func unsafeString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
+	// The contract of UnmarshalText  is that we copy to keep the text.
+	*r = ParseName(string(text))
+	return nil
 }
 
 // Complete reports whether the Name is fully qualified. That is it has a
