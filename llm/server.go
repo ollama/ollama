@@ -522,7 +522,7 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 		"stream":            true,
 		"n_predict":         req.Options.NumPredict,
 		"n_keep":            req.Options.NumKeep,
-		"n_probs": 			 req.Options.NProbs,
+		"n_probs":           req.Options.NProbs,
 		"main_gpu":          req.Options.MainGPU,
 		"temperature":       req.Options.Temperature,
 		"top_k":             req.Options.TopK,
@@ -646,6 +646,8 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 					return ctx.Err()
 				}
 
+				log.Printf("%v", c);
+
 				if c.Content != "" {
 					fn(CompletionResponse{
 						Content: c.Content,
@@ -656,6 +658,7 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 				if c.Stop {
 					fn(CompletionResponse{
 						Done:               true,
+						CompletionProbabilities: c.CompletionProbabilities,
 						PromptEvalCount:    c.Timings.PromptN,
 						PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 						EvalCount:          c.Timings.PredictedN,
