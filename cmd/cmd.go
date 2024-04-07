@@ -129,11 +129,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 					fi, err := f.Stat()
 					if err != nil {
+						f.Close()
 						return err
 					}
 
 					h, err := zip.FileInfoHeader(fi)
 					if err != nil {
+						f.Close()
 						return err
 					}
 
@@ -142,14 +144,16 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 					w, err := zf.CreateHeader(h)
 					if err != nil {
+						f.Close()
 						return err
 					}
 
 					_, err = io.Copy(w, f)
 					if err != nil {
+						f.Close()
 						return err
 					}
-
+					f.Close()
 				}
 
 				if err := zf.Close(); err != nil {
