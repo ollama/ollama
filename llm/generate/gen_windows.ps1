@@ -242,7 +242,7 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     }
     init_vars
     $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
-    $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+    $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
     build
     sign
     compress
@@ -261,6 +261,7 @@ if ($null -ne $env:HIP_PATH) {
         "-DCMAKE_C_COMPILER=clang.exe",
         "-DCMAKE_CXX_COMPILER=clang++.exe",
         "-DLLAMA_HIPBLAS=on",
+        "-DHIP_PLATFORM=amd",
         "-DLLAMA_AVX=on",
         "-DLLAMA_AVX2=off",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=on",
