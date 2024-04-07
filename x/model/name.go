@@ -316,7 +316,12 @@ func (r Name) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements [encoding.TextUnmarshaler].
+//
+// It is an error to call UnmarshalText on a valid Name.
 func (r *Name) UnmarshalText(text []byte) error {
+	if r.Valid() {
+		return errors.New("model.Name: UnmarshalText on valid Name")
+	}
 	// unsafeString is safe here because the contract of UnmarshalText
 	// that text belongs to us for the duration of the call.
 	*r = ParseName(unsafeString(text))

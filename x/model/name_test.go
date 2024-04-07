@@ -25,6 +25,14 @@ func fieldsFromName(p Name) fields {
 	}
 }
 
+func mustParse(s string) Name {
+	p := ParseName(s)
+	if !p.Valid() {
+		panic(fmt.Sprintf("invalid name: %q", s))
+	}
+	return p
+}
+
 var testNames = map[string]fields{
 	"mistral:latest":                 {model: "mistral", tag: "latest"},
 	"mistral":                        {model: "mistral"},
@@ -374,12 +382,22 @@ func TestNameTextMarshal(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestNameTextUnmarshalCallOnValidName(t *testing.T) {
+	// UnmarshalText should not be called on a valid Name.
+	p := mustParse("x")
+	if err := p.UnmarshalText([]byte("mistral:latest+Q4_0")); err == nil {
+		t.Error("UnmarshalText() = nil; want error")
+	}
+}
+
+func TestNameTextMarshalAllocs(t *testing.T) {
 	var data []byte
 	name := ParseName("example.com/ns/mistral:latest+Q4_0")
 	if !name.Complete() {
 		// sanity check
-		t.Fatal("name is not complete")
+		panic("sanity check failed")
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
