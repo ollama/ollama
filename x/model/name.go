@@ -320,6 +320,10 @@ func (r Name) MarshalText() ([]byte, error) {
 // It is an error to call UnmarshalText on a valid Name.
 func (r *Name) UnmarshalText(text []byte) error {
 	if r.Valid() {
+		// The invariant of UnmarshalText is that it should only be
+		// called on an invalid/zero Name. If we allow UnmarshalText
+		// on a valid Name, then the Name will be mutated, breaking
+		// the immutability of the Name.
 		return errors.New("model.Name: UnmarshalText on valid Name")
 	}
 	// unsafeString is safe here because the contract of UnmarshalText
