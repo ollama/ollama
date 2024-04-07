@@ -53,7 +53,7 @@ func Open(dir string) (*Server, error) {
 
 func (s *Server) Build(ref string, f model.File) error {
 	mp := model.ParseName(ref)
-	if !mp.CompleteWithoutBuild() {
+	if !mp.CompleteNoBuild() {
 		return fmt.Errorf("%w: %q", ErrIncompleteRef, ref)
 	}
 
