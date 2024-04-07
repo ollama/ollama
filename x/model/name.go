@@ -172,6 +172,11 @@ func (r Name) WithBuild(build string) Name {
 	return r
 }
 
+func (r Name) WithDigest(digest Digest) Name {
+	r.digest = digest
+	return r
+}
+
 var mapHashSeed = maphash.MakeSeed()
 
 // MapHash returns a case insensitive hash for use in maps and equality
