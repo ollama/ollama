@@ -13,6 +13,7 @@ import (
 
 type fields struct {
 	host, namespace, model, tag, build string
+	digest                             string
 }
 
 func fieldsFromName(p Name) fields {
@@ -22,6 +23,7 @@ func fieldsFromName(p Name) fields {
 		model:     p.parts[Model],
 		tag:       p.parts[Tag],
 		build:     p.parts[Build],
+		digest:    p.parts[Digest],
 	}
 }
 
@@ -46,6 +48,9 @@ var testNames = map[string]fields{
 	"user/model":                     {namespace: "user", model: "model"},
 	"example.com/ns/mistral:7b+Q4_0": {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "Q4_0"},
 	"example.com/ns/mistral:7b+X":    {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "X"},
+
+	// resolved
+	"x@123": {model: "x", digest: "123"},
 
 	// preserves case for build
 	"x+b": {model: "x", build: "b"},
@@ -87,10 +92,9 @@ var testNames = map[string]fields{
 }
 
 func TestNameParts(t *testing.T) {
-	const wantNumParts = 5
 	var p Name
-	if len(p.Parts()) != wantNumParts {
-		t.Errorf("Parts() = %d; want %d", len(p.Parts()), wantNumParts)
+	if len(p.Parts()) != int(NumParts) {
+		t.Errorf("Parts() = %d; want %d", len(p.Parts()), NumParts)
 	}
 }
 
@@ -211,6 +215,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "library/mistral:latest",
 			wantComplete: "example.com/library/mistral:latest",
 			wantModel:    "mistral",
+			wantGoString: "example.com/library/mistral:latest+Q4_0@?",
 		},
 		{
 			name:         "Short Name",
@@ -219,7 +224,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "mistral:latest",
 			wantComplete: "mistral:latest",
 			wantModel:    "mistral",
-			wantGoString: "?/?/mistral:latest+?",
+			wantGoString: "?/?/mistral:latest+?@?",
 		},
 		{
 			name:         "Long Name",
@@ -228,7 +233,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "library/mistral:latest",
 			wantComplete: "library/mistral:latest",
 			wantModel:    "mistral",
-			wantGoString: "?/library/mistral:latest+?",
+			wantGoString: "?/library/mistral:latest+?@?",
 		},
 		{
 			name:         "Case Preserved",
@@ -237,7 +242,16 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "Library/Mistral:Latest",
 			wantComplete: "Library/Mistral:Latest",
 			wantModel:    "Mistral",
-			wantGoString: "?/Library/Mistral:Latest+?",
+			wantGoString: "?/Library/Mistral:Latest+?@?",
+		},
+		{
+			name:         "With digest",
+			in:           "Library/Mistral:Latest@sha256-123456",
+			wantShort:    "Mistral:Latest",
+			wantLong:     "Library/Mistral:Latest",
+			wantComplete: "Library/Mistral:Latest",
+			wantModel:    "Mistral",
+			wantGoString: "?/Library/Mistral:Latest+?@sha256-123456",
 		},
 	}
 

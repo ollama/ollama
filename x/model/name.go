@@ -43,7 +43,7 @@ const (
 	// It should be kept as the last part in the list.
 	Invalid
 
-	NumParts = Invalid - 1
+	NumParts = Invalid
 )
 
 var kindNames = map[NamePart]string{
@@ -134,7 +134,7 @@ type Name struct {
 // [Name.String] will not print a "+" if the build is empty.
 func ParseName(s string) Name {
 	var r Name
-	for kind, part := range NameParts(s) {
+	for kind, part := range Parts(s) {
 		if kind == Invalid {
 			return Name{}
 		}
@@ -230,7 +230,8 @@ var seps = [...]string{
 	Namespace: "/",
 	Model:     ":",
 	Tag:       "+",
-	Build:     "",
+	Build:     "@",
+	Digest:    "",
 }
 
 // WriteTo implements io.WriterTo. It writes the fullest possible display
@@ -345,13 +346,13 @@ func unsafeString(b []byte) string {
 // Complete reports whether the Name is fully qualified. That is it has a
 // domain, namespace, name, tag, and build.
 func (r Name) Complete() bool {
-	return !slices.Contains(r.parts[:], "")
+	return !slices.Contains(r.parts[:Digest], "")
 }
 
 // CompleteNoBuild is like [Name.Complete] but it does not require the
 // build part to be present.
 func (r Name) CompleteNoBuild() bool {
-	return !slices.Contains(r.parts[:Build-1], "")
+	return !slices.Contains(r.parts[:Build], "")
 }
 
 // EqualFold reports whether r and o are equivalent model names, ignoring
@@ -396,7 +397,7 @@ func (r Name) Parts() []string {
 //
 // It normalizes the input string by removing "http://" and "https://" only.
 // No other normalization is done.
-func NameParts(s string) iter.Seq2[NamePart, string] {
+func Parts(s string) iter.Seq2[NamePart, string] {
 	return func(yield func(NamePart, string) bool) {
 		if strings.HasPrefix(s, "http://") {
 			s = s[len("http://"):]
@@ -418,16 +419,27 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 		}
 
 		partLen := 0
-		state, j := Build, len(s)
+		state, j := Digest, len(s)
 		for i := len(s) - 1; i >= 0; i-- {
 			if partLen++; partLen > MaxNamePartLen {
 				yield(Invalid, "")
 				return
 			}
 			switch s[i] {
+			case '@':
+				switch state {
+				case Digest:
+					if !yieldValid(Digest, s[i+1:j]) {
+						return
+					}
+					state, j, partLen = Build, i, 0
+				default:
+					yield(Invalid, "")
+					return
+				}
 			case '+':
 				switch state {
-				case Build:
+				case Build, Digest:
 					if !yieldValid(Build, s[i+1:j]) {
 						return
 					}
@@ -438,7 +450,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 				}
 			case ':':
 				switch state {
-				case Build, Tag:
+				case Tag, Build, Digest:
 					if !yieldValid(Tag, s[i+1:j]) {
 						return
 					}
@@ -449,7 +461,7 @@ func NameParts(s string) iter.Seq2[NamePart, string] {
 				}
 			case '/':
 				switch state {
-				case Model, Tag, Build:
+				case Model, Tag, Build, Digest:
 					if !yieldValid(Model, s[i+1:j]) {
 						return
 					}
