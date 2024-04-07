@@ -406,6 +406,32 @@ func TestNameTextUnmarshalCallOnValidName(t *testing.T) {
 	}
 }
 
+func TestSQL(t *testing.T) {
+	t.Run("Scan for already valid Name", func(t *testing.T) {
+		p := mustParse("x")
+		if err := p.Scan("mistral:latest+Q4_0"); err == nil {
+			t.Error("Scan() = nil; want error")
+		}
+	})
+	t.Run("Scan for invalid Name", func(t *testing.T) {
+		p := Name{}
+		if err := p.Scan("mistral:latest+Q4_0"); err != nil {
+			t.Errorf("Scan() = %v; want nil", err)
+		}
+		if p.String() != "mistral:latest+Q4_0" {
+			t.Errorf("String() = %q; want %q", p, "mistral:latest+Q4_0")
+		}
+	})
+	t.Run("Value", func(t *testing.T) {
+		p := mustParse("x")
+		if g, err := p.Value(); err != nil {
+			t.Errorf("Value() error = %v; want nil", err)
+		} else if g != "x" {
+			t.Errorf("Value() = %q; want %q", g, "x")
+		}
+	})
+}
+
 func TestNameTextMarshalAllocs(t *testing.T) {
 	var data []byte
 	name := ParseName("example.com/ns/mistral:latest+Q4_0")

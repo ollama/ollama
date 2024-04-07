@@ -3,6 +3,8 @@ package model
 import (
 	"bytes"
 	"cmp"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"hash/maphash"
 	"io"
@@ -330,12 +332,42 @@ func (r *Name) UnmarshalText(text []byte) error {
 		// called on an invalid/zero Name. If we allow UnmarshalText
 		// on a valid Name, then the Name will be mutated, breaking
 		// the immutability of the Name.
-		return errors.New("model.Name: UnmarshalText on valid Name")
+		return errors.New("model.Name: illegal UnmarshalText on valid Name")
 	}
 
 	// The contract of UnmarshalText  is that we copy to keep the text.
 	*r = ParseName(string(text))
 	return nil
+}
+
+var (
+	_ driver.Valuer = Name{}
+	_ sql.Scanner   = (*Name)(nil)
+)
+
+// Scan implements [database/sql.Scanner].
+func (r *Name) Scan(src any) error {
+	if r.Valid() {
+		// The invariant of Scan is that it should only be called on an
+		// invalid/zero Name. If we allow Scan on a valid Name, then the
+		// Name will be mutated, breaking the immutability of the Name.
+		return errors.New("model.Name: illegal Scan on valid Name")
+
+	}
+	switch v := src.(type) {
+	case string:
+		*r = ParseName(v)
+		return nil
+	case []byte:
+		*r = ParseName(string(v))
+		return nil
+	}
+	return errors.New("model.Name: invalid Scan source")
+}
+
+// Value implements [database/sql/driver.Valuer].
+func (r Name) Value() (driver.Value, error) {
+	return r.String(), nil
 }
 
 // Complete reports whether the Name is fully qualified. That is it has a
