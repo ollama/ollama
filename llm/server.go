@@ -474,6 +474,13 @@ type ImageData struct {
 
 type completion struct {
 	Content string `json:"content"`
+	CompletionProbabilities []struct {
+		Content string `json:"content"`
+		Probs   []struct {
+			Prob   float64 `json:"prob"`
+			TokStr string  `json:"tok_str"`
+		} `json:"probs"`
+	} `json:"completion_probabilities,omitempty"`
 	Model   string `json:"model"`
 	Prompt  string `json:"prompt"`
 	Stop    bool   `json:"stop"`
@@ -495,6 +502,13 @@ type CompletionRequest struct {
 
 type CompletionResponse struct {
 	Content            string
+	CompletionProbabilities []struct {
+		Content string `json:"content"`
+		Probs   []struct {
+			Prob   float64 `json:"prob"`
+			TokStr string  `json:"tok_str"`
+		} `json:"probs"`
+	} `json:"completion_probabilities,omitempty"`
 	Done               bool
 	PromptEvalCount    int
 	PromptEvalDuration time.Duration
@@ -508,6 +522,7 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 		"stream":            true,
 		"n_predict":         req.Options.NumPredict,
 		"n_keep":            req.Options.NumKeep,
+		"n_probs": 			 req.Options.NProbs,
 		"main_gpu":          req.Options.MainGPU,
 		"temperature":       req.Options.Temperature,
 		"top_k":             req.Options.TopK,
@@ -634,6 +649,7 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 				if c.Content != "" {
 					fn(CompletionResponse{
 						Content: c.Content,
+						CompletionProbabilities: c.CompletionProbabilities,
 					})
 				}
 
