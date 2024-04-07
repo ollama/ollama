@@ -12,3 +12,5 @@ ggml-metal.metal
 test_data
 *.crt
 llm/build
+# vscode debug build
+__debug_bin*
