@@ -44,18 +44,16 @@ const (
 	//
 	// It should be kept as the last part in the list.
 	PartInvalid
-
-	NumParts = PartInvalid
 )
 
 var kindNames = map[NamePart]string{
-	PartInvalid:   "Invalid",
 	PartHost:      "Host",
 	PartNamespace: "Namespace",
 	PartModel:     "Name",
 	PartTag:       "Tag",
 	PartBuild:     "Build",
 	PartDigest:    "Digest",
+	PartInvalid:   "Invalid",
 }
 
 func (k NamePart) String() string {
@@ -93,8 +91,9 @@ func (k NamePart) String() string {
 //
 // To make a Name by filling in missing parts from another Name, use [Fill].
 type Name struct {
-	_     structs.Incomparable
-	parts [NumParts]string
+	_      structs.Incomparable
+	parts  [5]string // host, namespace, model, tag, build
+	digest Digest    // digest is a special part
 
 	// TODO(bmizerany): track offsets and hold s (raw string) here? We
 	// could pack the offests all into a single uint64 since the first
@@ -140,6 +139,13 @@ func ParseName(s string) Name {
 	for kind, part := range Parts(s) {
 		if kind == PartInvalid {
 			return Name{}
+		}
+		if kind == PartDigest {
+			r.digest = ParseDigest(part)
+			if !r.digest.Valid() {
+				return Name{}
+			}
+			continue
 		}
 		r.parts[kind] = part
 	}
@@ -233,8 +239,7 @@ var seps = [...]string{
 	PartNamespace: "/",
 	PartModel:     ":",
 	PartTag:       "+",
-	PartBuild:     "@",
-	PartDigest:    "",
+	PartBuild:     "",
 }
 
 // WriteTo implements io.WriterTo. It writes the fullest possible display
@@ -247,25 +252,22 @@ var seps = [...]string{
 // The full digest is always prefixed with "@". That is if [Name.Valid]
 // reports false and [Name.Resolved] reports true, then the string is
 // returned as "@<digest-type>-<digest>".
-func (r Name) WriteTo(w io.Writer) (n int64, err error) {
+func (r Name) writeTo(w io.StringWriter) {
+	var partsWritten int
 	for i := range r.parts {
 		if r.parts[i] == "" {
 			continue
 		}
-		if n > 0 || NamePart(i) == PartDigest {
-			n1, err := io.WriteString(w, seps[i-1])
-			n += int64(n1)
-			if err != nil {
-				return n, err
-			}
+		if partsWritten > 0 {
+			w.WriteString(seps[i-1])
 		}
-		n1, err := io.WriteString(w, r.parts[i])
-		n += int64(n1)
-		if err != nil {
-			return n, err
-		}
+		w.WriteString(r.parts[i])
+		partsWritten++
 	}
-	return n, nil
+	if r.Resolved() {
+		w.WriteString("@")
+		w.WriteString(r.digest.String())
+	}
 }
 
 var builderPool = sync.Pool{
@@ -287,7 +289,7 @@ func (r Name) String() string {
 	defer builderPool.Put(b)
 	b.Reset()
 	b.Grow(50) // arbitrarily long enough for most names
-	_, _ = r.WriteTo(b)
+	r.writeTo(b)
 	return b.String()
 }
 
@@ -296,11 +298,13 @@ func (r Name) String() string {
 // returns a string that includes all parts of the Name, with missing parts
 // replaced with a ("?").
 func (r Name) GoString() string {
-	var v Name
 	for i := range r.parts {
-		v.parts[i] = cmp.Or(r.parts[i], "?")
+		r.parts[i] = cmp.Or(r.parts[i], "?")
 	}
-	return v.String()
+	if !r.Resolved() {
+		r.digest = Digest{"?", "?"}
+	}
+	return r.String()
 }
 
 // LogValue implements slog.Valuer.
@@ -320,10 +324,7 @@ func (r Name) MarshalText() ([]byte, error) {
 	b.Reset()
 	b.Grow(50) // arbitrarily long enough for most names
 	defer bufPool.Put(b)
-	_, err := r.WriteTo(b)
-	if err != nil {
-		return nil, err
-	}
+	r.writeTo(b)
 	// TODO: We can remove this alloc if/when
 	// https://github.com/golang/go/issues/62384 lands.
 	return b.Bytes(), nil
@@ -393,15 +394,15 @@ func (r Name) CompleteNoBuild() bool {
 // It is possible to have a valid Name, or a complete Name that is not
 // resolved.
 func (r Name) Resolved() bool {
-	return r.parts[PartDigest] != ""
+	return r.digest.Valid()
 }
 
 // Digest returns the digest part of the Name, if any.
 //
 // If Digest returns a non-empty string, then [Name.Resolved] will return
 // true, and digest is considered valid.
-func (r Name) Digest() string {
-	return r.parts[PartDigest]
+func (r Name) Digest() Digest {
+	return r.digest
 }
 
 // EqualFold reports whether r and o are equivalent model names, ignoring
@@ -479,24 +480,14 @@ func Parts(s string) iter.Seq2[NamePart, string] {
 			case '@':
 				switch state {
 				case PartDigest:
-					part := s[i+1:]
-					if isValidDigest(part) {
-						if !yield(PartDigest, part) {
-							return
-						}
-						if i == 0 {
-							// The name is in
-							// the form of
-							// "@digest". This
-							// is valid ans so
-							// we want to skip
-							// the final
-							// validation for
-							// any other state.
-							return
-						}
-					} else {
-						yield(PartInvalid, "")
+					if !yieldValid(PartDigest, s[i+1:j]) {
+						return
+					}
+					if i == 0 {
+						// This is the form
+						// "@<digest>" which is valid.
+						//
+						// We're done.
 						return
 					}
 					state, j, partLen = PartBuild, i, 0

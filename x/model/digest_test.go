@@ -49,5 +49,10 @@ func TestDigestString(t *testing.T) {
 		if got != want {
 			t.Errorf("ParseDigest(%q).String() = %q; want %q", s, got, want)
 		}
+
+		got = ParseDigest(s).String()
+		if got != want {
+			t.Errorf("roundtrip ParseDigest(%q).String() = %q; want %q", s, got, want)
+		}
 	}
 }

@@ -23,7 +23,7 @@ func fieldsFromName(p Name) fields {
 		model:     p.parts[PartModel],
 		tag:       p.parts[PartTag],
 		build:     p.parts[PartBuild],
-		digest:    p.parts[PartDigest],
+		digest:    p.digest.String(),
 	}
 }
 
@@ -101,8 +101,8 @@ var testNames = map[string]fields{
 
 func TestNameParts(t *testing.T) {
 	var p Name
-	if len(p.Parts()) != int(NumParts) {
-		t.Errorf("Parts() = %d; want %d", len(p.Parts()), NumParts)
+	if w, g := int(PartBuild+1), len(p.Parts()); w != g {
+		t.Errorf("Parts() = %d; want %d", g, w)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestParseName(t *testing.T) {
 
 				// test round-trip
 				if !ParseName(name.String()).EqualFold(name) {
-					t.Errorf("String() = %s; want %s", name.String(), baseName)
+					t.Errorf("ParseName(%q).String() = %s; want %s", s, name.String(), baseName)
 				}
 
 				if name.Valid() && name.DisplayModel() == "" {
@@ -146,9 +146,9 @@ func TestParseName(t *testing.T) {
 					t.Errorf("Valid() = false; Model() = %q; want empty name", got.model)
 				}
 
-				if name.Resolved() && name.Digest() == "" {
+				if name.Resolved() && !name.Digest().Valid() {
 					t.Errorf("Resolved() = true; Digest() = %q; want non-empty digest", got.digest)
-				} else if !name.Resolved() && name.Digest() != "" {
+				} else if !name.Resolved() && name.Digest().Valid() {
 					t.Errorf("Resolved() = false; Digest() = %q; want empty digest", got.digest)
 				}
 			})
@@ -233,7 +233,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "library/mistral:latest",
 			wantComplete: "example.com/library/mistral:latest",
 			wantModel:    "mistral",
-			wantGoString: "example.com/library/mistral:latest+Q4_0@?",
+			wantGoString: "example.com/library/mistral:latest+Q4_0@?-?",
 		},
 		{
 			name:         "Short Name",
@@ -242,7 +242,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "mistral:latest",
 			wantComplete: "mistral:latest",
 			wantModel:    "mistral",
-			wantGoString: "?/?/mistral:latest+?@?",
+			wantGoString: "?/?/mistral:latest+?@?-?",
 		},
 		{
 			name:         "Long Name",
@@ -251,7 +251,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "library/mistral:latest",
 			wantComplete: "library/mistral:latest",
 			wantModel:    "mistral",
-			wantGoString: "?/library/mistral:latest+?@?",
+			wantGoString: "?/library/mistral:latest+?@?-?",
 		},
 		{
 			name:         "Case Preserved",
@@ -260,7 +260,7 @@ func TestNameDisplay(t *testing.T) {
 			wantLong:     "Library/Mistral:Latest",
 			wantComplete: "Library/Mistral:Latest",
 			wantModel:    "Mistral",
-			wantGoString: "?/Library/Mistral:Latest+?@?",
+			wantGoString: "?/Library/Mistral:Latest+?@?-?",
 		},
 		{
 			name:         "With digest",
