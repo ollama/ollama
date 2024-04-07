@@ -477,6 +477,10 @@ func Parts(s string) iter.Seq2[NamePart, string] {
 		state, j := PartDigest, len(s)
 		for i := len(s) - 1; i >= 0; i-- {
 			if partLen++; partLen > MaxNamePartLen {
+				// catch a part that is too long early, so
+				// we don't keep spinning on it, waiting for
+				// an isInValidPart check which would scan
+				// over it again.
 				yield(PartInvalid, "")
 				return
 			}

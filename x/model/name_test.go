@@ -60,6 +60,8 @@ var testNames = map[string]fields{
 	"x@sha123-1": {model: "x", digest: "sha123-1"},
 	"@sha456-2":  {digest: "sha456-2"},
 
+	"@@sha123-1": {},
+
 	// preserves case for build
 	"x+b": {model: "x", build: "b"},
 
