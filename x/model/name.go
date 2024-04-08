@@ -28,11 +28,11 @@ var (
 
 const MaxNamePartLen = 128
 
-type NamePart int
+type PartKind int
 
 // Levels of concreteness
 const (
-	PartHost NamePart = iota
+	PartHost PartKind = iota
 	PartNamespace
 	PartModel
 	PartTag
@@ -46,7 +46,7 @@ const (
 	PartInvalid
 )
 
-var kindNames = map[NamePart]string{
+var kindNames = map[PartKind]string{
 	PartHost:      "Host",
 	PartNamespace: "Namespace",
 	PartModel:     "Name",
@@ -56,7 +56,7 @@ var kindNames = map[NamePart]string{
 	PartInvalid:   "Invalid",
 }
 
-func (k NamePart) String() string {
+func (k PartKind) String() string {
 	return cmp.Or(kindNames[k], "Unknown")
 }
 
@@ -198,7 +198,7 @@ func (r Name) MapHash() uint64 {
 	return h.Sum64()
 }
 
-func (r Name) slice(from, to NamePart) Name {
+func (r Name) slice(from, to PartKind) Name {
 	var v Name
 	copy(v.parts[from:to+1], r.parts[from:to+1])
 	return v
@@ -452,8 +452,8 @@ func (r Name) Parts() []string {
 //
 // It normalizes the input string by removing "http://" and "https://" only.
 // No other normalization is done.
-func Parts(s string) iter.Seq2[NamePart, string] {
-	return func(yield func(NamePart, string) bool) {
+func Parts(s string) iter.Seq2[PartKind, string] {
+	return func(yield func(PartKind, string) bool) {
 		if strings.HasPrefix(s, "http://") {
 			s = s[len("http://"):]
 		}
@@ -465,7 +465,7 @@ func Parts(s string) iter.Seq2[NamePart, string] {
 			return
 		}
 
-		yieldValid := func(kind NamePart, part string) bool {
+		yieldValid := func(kind PartKind, part string) bool {
 			if !isValidPart(kind, part) {
 				yield(PartInvalid, "")
 				return false
@@ -567,7 +567,7 @@ func (r Name) Valid() bool {
 }
 
 // isValidPart returns Parttrue if given part is valid ascii [a-zA-Z0-9_\.-]
-func isValidPart(kind NamePart, s string) bool {
+func isValidPart(kind PartKind, s string) bool {
 	if s == "" {
 		return false
 	}
@@ -579,7 +579,7 @@ func isValidPart(kind NamePart, s string) bool {
 	return true
 }
 
-func isValidByte(kind NamePart, c byte) bool {
+func isValidByte(kind PartKind, c byte) bool {
 	if kind == PartNamespace && c == '.' {
 		return false
 	}

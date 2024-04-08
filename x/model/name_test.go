@@ -109,7 +109,7 @@ func TestNameParts(t *testing.T) {
 }
 
 func TestNamePartString(t *testing.T) {
-	if g := NamePart(-2).String(); g != "Unknown" {
+	if g := PartKind(-2).String(); g != "Unknown" {
 		t.Errorf("Unknown part = %q; want %q", g, "Unknown")
 	}
 	for kind, name := range kindNames {
