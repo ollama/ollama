@@ -56,3 +56,28 @@ func TestDigestString(t *testing.T) {
 		}
 	}
 }
+
+func TestDigestUnmarshalText(t *testing.T) {
+	const testDigest = "sha256-1234"
+	t.Run("UnmarshalText (into Valid)", func(t *testing.T) {
+		d := ParseDigest(testDigest)
+		if !d.IsValid() {
+			panic("invalid test")
+		}
+		if err := d.UnmarshalText(nil); err == nil {
+			t.Errorf("UnmarshalText on valid Digest did not return error")
+		}
+		if d.String() != testDigest {
+			t.Errorf("UnmarshalText on valid Digest changed Digest: %q", d.String())
+		}
+	})
+	t.Run("UnmarshalText make safe copy", func(t *testing.T) {
+		data := []byte(testDigest)
+		var d Digest
+		d.UnmarshalText(data)
+		data[0] = 'x'
+		if d.String() != testDigest {
+			t.Errorf("UnmarshalText did not make a safe copy")
+		}
+	})
+}

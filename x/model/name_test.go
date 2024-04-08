@@ -443,6 +443,19 @@ func TestNameTextMarshal(t *testing.T) {
 			t.Errorf("MarshalText allocs = %v; want <= 1", allocs)
 		}
 	})
+
+	t.Run("UnmarshalTest makes safe copy", func(t *testing.T) {
+		// UnmarshalText should make a copy of the data.
+		data := []byte("mistral:latest+Q4_0")
+		p := Name{}
+		if err := p.UnmarshalText(data); err != nil {
+			t.Fatal(err)
+		}
+		data[0] = 'x'
+		if p.String() != "mistral:latest+Q4_0" {
+			t.Errorf("UnmarshalText() did not make a copy")
+		}
+	})
 }
 
 func TestSQL(t *testing.T) {
