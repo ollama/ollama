@@ -87,7 +87,7 @@ func TestPushBasic(t *testing.T) {
 	}`)
 
 	hs := httptest.NewServer(&Server{
-		minioClient:     mc,
+		S3Client:        mc,
 		UploadChunkSize: 5 * MB,
 	})
 	t.Cleanup(hs.Close)
