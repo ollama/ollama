@@ -15,20 +15,16 @@ import (
 //
 // It is comparable with other Digests and can be used as a map key.
 type Digest struct {
-	typ    string
-	digest string
+	s string
 }
 
-func (d Digest) Type() string   { return d.typ }
-func (d Digest) Digest() string { return d.digest }
-func (d Digest) IsValid() bool  { return d != Digest{} }
-
-func (d Digest) String() string {
-	if !d.IsValid() {
-		return ""
-	}
-	return fmt.Sprintf("%s-%s", d.typ, d.digest)
+func (d Digest) Type() string {
+	typ, _, _ := strings.Cut(d.s, "-")
+	return typ
 }
+
+func (d Digest) IsValid() bool  { return d.s != "" }
+func (d Digest) String() string { return d.s }
 
 func (d Digest) MarshalText() ([]byte, error) {
 	return []byte(d.String()), nil
@@ -75,7 +71,7 @@ func (d Digest) Value() (driver.Value, error) {
 func ParseDigest(s string) Digest {
 	typ, digest, ok := strings.Cut(s, "-")
 	if ok && isValidDigestType(typ) && isValidHex(digest) {
-		return Digest{typ: typ, digest: digest}
+		return Digest{s: s}
 	}
 	return Digest{}
 }

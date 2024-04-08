@@ -16,9 +16,9 @@ import "testing"
 
 var testDigests = map[string]Digest{
 	"":                 {},
-	"sha256-1234":      {typ: "sha256", digest: "1234"},
-	"sha256-5678":      {typ: "sha256", digest: "5678"},
-	"blake2-9abc":      {typ: "blake2", digest: "9abc"},
+	"sha256-1234":      {s: "sha256-1234"},
+	"sha256-5678":      {s: "sha256-5678"},
+	"blake2-9abc":      {s: "blake2-9abc"},
 	"-1234":            {},
 	"sha256-":          {},
 	"sha256-1234-5678": {},

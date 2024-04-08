@@ -91,9 +91,8 @@ func (k PartKind) String() string {
 //
 // To make a Name by filling in missing parts from another Name, use [Fill].
 type Name struct {
-	_      structs.Incomparable
-	parts  [5]string // host, namespace, model, tag, build
-	digest Digest    // digest is a special part
+	_     structs.Incomparable
+	parts [6]string // host, namespace, model, tag, build
 
 	// TODO(bmizerany): track offsets and hold s (raw string) here? We
 	// could pack the offests all into a single uint64 since the first
@@ -140,12 +139,8 @@ func ParseName(s string) Name {
 		if kind == PartInvalid {
 			return Name{}
 		}
-		if kind == PartDigest {
-			r.digest = ParseDigest(part)
-			if !r.digest.IsValid() {
-				return Name{}
-			}
-			continue
+		if kind == PartDigest && !ParseDigest(part).IsValid() {
+			return Name{}
 		}
 		r.parts[kind] = part
 	}
@@ -173,7 +168,7 @@ func (r Name) WithBuild(build string) Name {
 }
 
 func (r Name) WithDigest(digest Digest) Name {
-	r.digest = digest
+	r.parts[PartDigest] = digest.String()
 	return r
 }
 
@@ -244,7 +239,8 @@ var seps = [...]string{
 	PartNamespace: "/",
 	PartModel:     ":",
 	PartTag:       "+",
-	PartBuild:     "",
+	PartBuild:     "@",
+	PartDigest:    "",
 }
 
 // WriteTo implements io.WriterTo. It writes the fullest possible display
@@ -263,15 +259,11 @@ func (r Name) writeTo(w io.StringWriter) {
 		if r.parts[i] == "" {
 			continue
 		}
-		if partsWritten > 0 {
+		if partsWritten > 0 || i == int(PartDigest) {
 			w.WriteString(seps[i-1])
 		}
 		w.WriteString(r.parts[i])
 		partsWritten++
-	}
-	if r.IsResolved() {
-		w.WriteString("@")
-		w.WriteString(r.digest.String())
 	}
 }
 
@@ -305,9 +297,6 @@ func (r Name) String() string {
 func (r Name) GoString() string {
 	for i := range r.parts {
 		r.parts[i] = cmp.Or(r.parts[i], "?")
-	}
-	if !r.IsResolved() {
-		r.digest = Digest{"?", "?"}
 	}
 	return r.String()
 }
@@ -399,7 +388,7 @@ func (r Name) IsCompleteNoBuild() bool {
 // It is possible to have a valid Name, or a complete Name that is not
 // resolved.
 func (r Name) IsResolved() bool {
-	return r.digest.IsValid()
+	return r.Digest().IsValid()
 }
 
 // Digest returns the digest part of the Name, if any.
@@ -407,7 +396,8 @@ func (r Name) IsResolved() bool {
 // If Digest returns a non-empty string, then [Name.IsResolved] will return
 // true, and digest is considered valid.
 func (r Name) Digest() Digest {
-	return r.digest
+	// This was already validated by ParseName, so we can just return it.
+	return Digest{r.parts[PartDigest]}
 }
 
 // EqualFold reports whether r and o are equivalent model names, ignoring
