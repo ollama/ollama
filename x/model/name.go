@@ -32,6 +32,8 @@ type PartKind int
 
 // Levels of concreteness
 const (
+	// Each value aligns with its index in the Name.parts array.
+
 	PartHost PartKind = iota
 	PartNamespace
 	PartModel

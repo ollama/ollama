@@ -10,26 +10,40 @@ import (
 	"unicode"
 )
 
-// Digest is an opaque reference to a model digest. It holds the digest type
-// and the digest itself.
+// Digest represents a digest of a model Manifest. It is a comparable value
+// type and is immutable.
 //
-// It is comparable with other Digests and can be used as a map key.
+// The zero Digest is not a valid digest.
 type Digest struct {
 	s string
 }
 
+// Type returns the digest type of the digest.
+//
+// Example:
+//
+//	ParseDigest("sha256-1234").Type() // returns "sha256"
 func (d Digest) Type() string {
 	typ, _, _ := strings.Cut(d.s, "-")
 	return typ
 }
 
-func (d Digest) IsValid() bool  { return d.s != "" }
+// String returns the digest in the form of "<digest-type>-<digest>", or the
+// empty string if the digest is invalid.
 func (d Digest) String() string { return d.s }
 
+// IsValid returns true if the digest is valid (not zero).
+//
+// A valid digest may be created only by ParseDigest, or
+// ParseName(name).Digest().
+func (d Digest) IsValid() bool { return d.s != "" }
+
+// MarshalText implements encoding.TextMarshaler.
 func (d Digest) MarshalText() ([]byte, error) {
 	return []byte(d.String()), nil
 }
 
+// UnmarshalText implements encoding.TextUnmarshaler.
 func (d *Digest) UnmarshalText(text []byte) error {
 	if d.IsValid() {
 		return errors.New("model.Digest: illegal UnmarshalText on valid Digest")
@@ -38,15 +52,18 @@ func (d *Digest) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// LogValue implements slog.Value.
 func (d Digest) LogValue() slog.Value {
 	return slog.StringValue(d.String())
 }
 
 var (
-	_ driver.Valuer = Digest{}
-	_ sql.Scanner   = (*Digest)(nil)
+	_ driver.Valuer  = Digest{}
+	_ sql.Scanner    = (*Digest)(nil)
+	_ slog.LogValuer = Digest{}
 )
 
+// Scan implements the sql.Scanner interface.
 func (d *Digest) Scan(src any) error {
 	if d.IsValid() {
 		return errors.New("model.Digest: illegal Scan on valid Digest")
@@ -62,6 +79,7 @@ func (d *Digest) Scan(src any) error {
 	return fmt.Errorf("model.Digest: invalid Scan source %T", src)
 }
 
+// Value implements the driver.Valuer interface.
 func (d Digest) Value() (driver.Value, error) {
 	return d.String(), nil
 }
