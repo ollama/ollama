@@ -163,6 +163,14 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
 	}
+	
+	if len(opts.SplitMode) > 0 {
+		params = append(params, "--split-mode", opts.SplitMode)
+	}
+
+	if len(opts.TensorSplit) > 0 {
+		params = append(params, "--tensor-split", opts.TensorSplit)
+	}
 
 	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
 		params = append(params, "--verbose")
