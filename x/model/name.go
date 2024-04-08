@@ -106,7 +106,7 @@ type Name struct {
 // ParseName parses s into a Name. The input string must be a valid string
 // representation of a model name in the form:
 //
-//	<host>/<namespace>/<model>:<tag>+<build>@<digest-type>-<digest>
+//	[host/][namespace/]<model>[:tag][+build][@<digest-type>-<digest>]
 //
 // The name part is required, all others are optional. If a part is missing,
 // it is left empty in the returned Name. If a part is invalid, the zero Ref
