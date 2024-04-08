@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strconv"
 	"time"
@@ -27,13 +26,6 @@ import (
 const (
 	DefaultUploadChunkSize = 50 * 1024 * 1024
 )
-
-// TODO(bmizerany): move all env things to package envkobs?
-var defaultLibrary = cmp.Or(os.Getenv("OLLAMA_REGISTRY"), "registry.ollama.ai/library")
-
-func DefaultLibrary() string {
-	return defaultLibrary
-}
 
 type Server struct {
 	UploadChunkSize int64 // default is DefaultUploadChunkSize
