@@ -6,11 +6,13 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -109,7 +111,10 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		queryPartNumber := q.Get("partNumber")
 		partNumber, err := strconv.Atoi(queryPartNumber)
 		if err != nil {
-			return oweb.Invalid("partNumber", queryPartNumber, "invalid or missing PartNumber")
+			return oweb.Invalid("partNumber", queryPartNumber, "")
+		}
+		if partNumber < 1 {
+			return oweb.Invalid("partNumber", queryPartNumber, "must be >= 1")
 		}
 
 		// ETag is required
@@ -128,7 +133,12 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 
 	for uploadID, cp := range completePartsByUploadID {
 		var zeroOpts minio.PutObjectOptions
-		_, err := mcc.CompleteMultipartUpload(r.Context(), bucketTODO, cp.key, uploadID, cp.parts, zeroOpts)
+
+		// TODO: gross fix!!!!!!!!!!!!!!!
+		key := strings.TrimPrefix(cp.key, "/"+bucketTODO+"/")
+
+		fmt.Printf("Completing multipart upload %s %s %v\n", bucketTODO, key, cp.parts)
+		_, err := mcc.CompleteMultipartUpload(r.Context(), bucketTODO, key, uploadID, cp.parts, zeroOpts)
 		if err != nil {
 			var e minio.ErrorResponse
 			if errors.As(err, &e) && e.Code == "NoSuchUpload" {
@@ -148,14 +158,17 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		// TODO(bmizerany): "global" throttle of rate of transfer
 		pushed, err := s.statObject(r.Context(), l.Digest)
 		if err != nil {
+			println("ERROR:", "statObject", err)
 			return err
 		}
 		if !pushed {
 			key := path.Join("blobs", l.Digest)
 			if l.Size < minimumMultipartSize {
 				// single part upload
+				fmt.Printf("Presigning single %s %s\n", bucketTODO, key)
 				signedURL, err := s.s3().PresignedPutObject(r.Context(), bucketTODO, key, 15*time.Minute)
 				if err != nil {
+					println("ERROR:", "presign single", err)
 					return err
 				}
 				requirements = append(requirements, apitype.Requirement{
@@ -168,14 +181,16 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 				if err != nil {
 					return err
 				}
+				fmt.Printf("Presigning multi %s %s %s\n", bucketTODO, key, uploadID)
 				for partNumber, c := range upload.Chunks(l.Size, s.uploadChunkSize()) {
 					const timeToStartUpload = 15 * time.Minute
 
 					signedURL, err := s.s3().Presign(r.Context(), "PUT", bucketTODO, key, timeToStartUpload, url.Values{
-						"uploadId":   []string{uploadID},
 						"partNumber": []string{strconv.Itoa(partNumber)},
+						"uploadId":   []string{uploadID},
 					})
 					if err != nil {
+						println("ERROR:", "presign multi", err)
 						return err
 					}
 

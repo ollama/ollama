@@ -156,7 +156,7 @@ func TestPushBasic(t *testing.T) {
 		Layers: []apitype.Layer{
 			{Digest: "sha256-1", Size: 1},
 			{Digest: "sha256-2", Size: 2},
-			{Digest: "sha256-3", Size: 3},
+			{Digest: "sha256-3", Size: 11000000},
 		},
 	})
 
