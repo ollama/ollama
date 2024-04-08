@@ -29,7 +29,7 @@ func fieldsFromName(p Name) fields {
 
 func mustParse(s string) Name {
 	p := ParseName(s)
-	if !p.Valid() {
+	if !p.IsValid() {
 		panic(fmt.Sprintf("invalid name: %q", s))
 	}
 	return p
@@ -142,15 +142,15 @@ func TestParseName(t *testing.T) {
 					t.Errorf("ParseName(%q).String() = %s; want %s", s, name.String(), baseName)
 				}
 
-				if name.Valid() && name.DisplayModel() == "" {
+				if name.IsValid() && name.DisplayModel() == "" {
 					t.Errorf("Valid() = true; Model() = %q; want non-empty name", got.model)
-				} else if !name.Valid() && name.DisplayModel() != "" {
+				} else if !name.IsValid() && name.DisplayModel() != "" {
 					t.Errorf("Valid() = false; Model() = %q; want empty name", got.model)
 				}
 
-				if name.Resolved() && !name.Digest().Valid() {
+				if name.IsResolved() && !name.Digest().IsValid() {
 					t.Errorf("Resolved() = true; Digest() = %q; want non-empty digest", got.digest)
-				} else if !name.Resolved() && name.Digest().Valid() {
+				} else if !name.IsResolved() && name.Digest().IsValid() {
 					t.Errorf("Resolved() = false; Digest() = %q; want empty digest", got.digest)
 				}
 			})
@@ -176,10 +176,10 @@ func TestCompleteWithAndWithoutBuild(t *testing.T) {
 		t.Run(tt.in, func(t *testing.T) {
 			p := ParseName(tt.in)
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
-			if g := p.Complete(); g != tt.complete {
+			if g := p.IsComplete(); g != tt.complete {
 				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.complete)
 			}
-			if g := p.CompleteNoBuild(); g != tt.completeNoBuild {
+			if g := p.IsCompleteNoBuild(); g != tt.completeNoBuild {
 				t.Errorf("CompleteNoBuild(%q) = %v; want %v", tt.in, g, tt.completeNoBuild)
 			}
 		})
@@ -189,7 +189,7 @@ func TestCompleteWithAndWithoutBuild(t *testing.T) {
 	// inlined when used in Complete, preventing any allocations or
 	// escaping to the heap.
 	allocs := testing.AllocsPerRun(1000, func() {
-		keep(ParseName("complete.com/x/mistral:latest+Q4_0").Complete())
+		keep(ParseName("complete.com/x/mistral:latest+Q4_0").IsComplete())
 	})
 	if allocs > 0 {
 		t.Errorf("Complete allocs = %v; want 0", allocs)
@@ -337,7 +337,7 @@ func FuzzParseName(f *testing.F) {
 	f.Add("x/y/z:8n+I")
 	f.Fuzz(func(t *testing.T, s string) {
 		r0 := ParseName(s)
-		if !r0.Valid() {
+		if !r0.IsValid() {
 			if !r0.EqualFold(Name{}) {
 				t.Errorf("expected invalid path to be zero value; got %#v", r0)
 			}
@@ -428,7 +428,7 @@ func TestNameTextMarshal(t *testing.T) {
 	t.Run("TextMarshal allocs", func(t *testing.T) {
 		var data []byte
 		name := ParseName("example.com/ns/mistral:latest+Q4_0")
-		if !name.Complete() {
+		if !name.IsComplete() {
 			// sanity check
 			panic("sanity check failed")
 		}
@@ -540,7 +540,7 @@ func ExampleName_completeAndResolved() {
 		"@sha123-1",
 	} {
 		p := ParseName(s)
-		fmt.Printf("complete:%v resolved:%v  digest:%s\n", p.Complete(), p.Resolved(), p.Digest())
+		fmt.Printf("complete:%v resolved:%v  digest:%s\n", p.IsComplete(), p.IsResolved(), p.Digest())
 	}
 
 	// Output:

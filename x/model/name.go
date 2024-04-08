@@ -73,7 +73,7 @@ func (k PartKind) String() string {
 // are optional.
 //
 // A Name is considered "complete" if it has all parts present. To check if a
-// Name is complete, use [Name.Complete].
+// Name is complete, use [Name.IsComplete].
 //
 // To compare two names in a case-insensitive manner, use [Name.EqualFold].
 //
@@ -87,7 +87,7 @@ func (k PartKind) String() string {
 //
 // The parts can be obtained in their original form by calling [Name.Parts].
 //
-// To check if a Name has at minimum a valid model part, use [Name.Valid].
+// To check if a Name has at minimum a valid model part, use [Name.IsValid].
 //
 // To make a Name by filling in missing parts from another Name, use [Fill].
 type Name struct {
@@ -142,14 +142,14 @@ func ParseName(s string) Name {
 		}
 		if kind == PartDigest {
 			r.digest = ParseDigest(part)
-			if !r.digest.Valid() {
+			if !r.digest.IsValid() {
 				return Name{}
 			}
 			continue
 		}
 		r.parts[kind] = part
 	}
-	if r.Valid() || r.Resolved() {
+	if r.IsValid() || r.IsResolved() {
 		return r
 	}
 	return Name{}
@@ -254,8 +254,8 @@ var seps = [...]string{
 //
 // Missing parts and their seperators are not written.
 //
-// The full digest is always prefixed with "@". That is if [Name.Valid]
-// reports false and [Name.Resolved] reports true, then the string is
+// The full digest is always prefixed with "@". That is if [Name.IsValid]
+// reports false and [Name.IsResolved] reports true, then the string is
 // returned as "@<digest-type>-<digest>".
 func (r Name) writeTo(w io.StringWriter) {
 	var partsWritten int
@@ -269,7 +269,7 @@ func (r Name) writeTo(w io.StringWriter) {
 		w.WriteString(r.parts[i])
 		partsWritten++
 	}
-	if r.Resolved() {
+	if r.IsResolved() {
 		w.WriteString("@")
 		w.WriteString(r.digest.String())
 	}
@@ -306,7 +306,7 @@ func (r Name) GoString() string {
 	for i := range r.parts {
 		r.parts[i] = cmp.Or(r.parts[i], "?")
 	}
-	if !r.Resolved() {
+	if !r.IsResolved() {
 		r.digest = Digest{"?", "?"}
 	}
 	return r.String()
@@ -339,7 +339,7 @@ func (r Name) MarshalText() ([]byte, error) {
 //
 // It is an error to call UnmarshalText on a valid Name.
 func (r *Name) UnmarshalText(text []byte) error {
-	if r.Valid() {
+	if r.IsValid() {
 		// The invariant of UnmarshalText is that it should only be
 		// called on an invalid/zero Name. If we allow UnmarshalText
 		// on a valid Name, then the Name will be mutated, breaking
@@ -359,7 +359,7 @@ var (
 
 // Scan implements [database/sql.Scanner].
 func (r *Name) Scan(src any) error {
-	if r.Valid() {
+	if r.IsValid() {
 		// The invariant of Scan is that it should only be called on an
 		// invalid/zero Name. If we allow Scan on a valid Name, then the
 		// Name will be mutated, breaking the immutability of the Name.
@@ -382,29 +382,29 @@ func (r Name) Value() (driver.Value, error) {
 	return r.String(), nil
 }
 
-// Complete reports whether the Name is fully qualified. That is it has a
+// IsComplete reports whether the Name is fully qualified. That is it has a
 // domain, namespace, name, tag, and build.
-func (r Name) Complete() bool {
+func (r Name) IsComplete() bool {
 	return !slices.Contains(r.parts[:PartDigest], "")
 }
 
-// CompleteNoBuild is like [Name.Complete] but it does not require the
+// IsCompleteNoBuild is like [Name.IsComplete] but it does not require the
 // build part to be present.
-func (r Name) CompleteNoBuild() bool {
+func (r Name) IsCompleteNoBuild() bool {
 	return !slices.Contains(r.parts[:PartBuild], "")
 }
 
-// Resolved reports true if the Name has a valid digest.
+// IsResolved reports true if the Name has a valid digest.
 //
 // It is possible to have a valid Name, or a complete Name that is not
 // resolved.
-func (r Name) Resolved() bool {
-	return r.digest.Valid()
+func (r Name) IsResolved() bool {
+	return r.digest.IsValid()
 }
 
 // Digest returns the digest part of the Name, if any.
 //
-// If Digest returns a non-empty string, then [Name.Resolved] will return
+// If Digest returns a non-empty string, then [Name.IsResolved] will return
 // true, and digest is considered valid.
 func (r Name) Digest() Digest {
 	return r.digest
@@ -558,9 +558,9 @@ func Parts(s string) iter.Seq2[PartKind, string] {
 	}
 }
 
-// Valid returns true if the Name hPartas a valid nick. To know if a Name is
-// "complete", use [Name.Complete].
-func (r Name) Valid() bool {
+// IsValid returns true if the Name hPartas a valid nick. To know if a Name is
+// "complete", use [Name.IsComplete].
+func (r Name) IsValid() bool {
 	// Parts ensures we only have valid parts, so no need to validate
 	// them here, only check if we have a name or not.
 	return r.parts[PartModel] != ""

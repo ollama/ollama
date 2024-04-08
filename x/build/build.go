@@ -53,7 +53,7 @@ func Open(dir string) (*Server, error) {
 
 func (s *Server) Build(ref string, f model.File) error {
 	mp := model.ParseName(ref)
-	if !mp.CompleteNoBuild() {
+	if !mp.IsCompleteNoBuild() {
 		return fmt.Errorf("%w: %q", ErrIncompleteRef, ref)
 	}
 
@@ -177,7 +177,7 @@ func (s *Server) setManifestData(mp model.Name, data []byte) error {
 }
 
 func (s *Server) refFileName(mp model.Name) (string, error) {
-	if !mp.Complete() {
+	if !mp.IsComplete() {
 		return "", fmt.Errorf("ref not fully qualified: %q", mp)
 	}
 	return filepath.Join(s.st.Dir(), "manifests", filepath.Join(mp.Parts()...)), nil

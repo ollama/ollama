@@ -42,7 +42,7 @@ func TestDigestString(t *testing.T) {
 	// Test cases.
 	for s, d := range testDigests {
 		want := s
-		if !d.Valid() {
+		if !d.IsValid() {
 			want = ""
 		}
 		got := d.String()

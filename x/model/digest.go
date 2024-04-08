@@ -21,10 +21,10 @@ type Digest struct {
 
 func (d Digest) Type() string   { return d.typ }
 func (d Digest) Digest() string { return d.digest }
-func (d Digest) Valid() bool    { return d != Digest{} }
+func (d Digest) IsValid() bool  { return d != Digest{} }
 
 func (d Digest) String() string {
-	if !d.Valid() {
+	if !d.IsValid() {
 		return ""
 	}
 	return fmt.Sprintf("%s-%s", d.typ, d.digest)
@@ -35,7 +35,7 @@ func (d Digest) MarshalText() ([]byte, error) {
 }
 
 func (d *Digest) UnmarshalText(text []byte) error {
-	if d.Valid() {
+	if d.IsValid() {
 		return errors.New("model.Digest: illegal UnmarshalText on valid Digest")
 	}
 	*d = ParseDigest(string(text))
@@ -52,7 +52,7 @@ var (
 )
 
 func (d *Digest) Scan(src any) error {
-	if d.Valid() {
+	if d.IsValid() {
 		return errors.New("model.Digest: illegal Scan on valid Digest")
 	}
 	switch v := src.(type) {
