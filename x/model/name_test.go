@@ -27,14 +27,6 @@ func fieldsFromName(p Name) fields {
 	}
 }
 
-func mustParse(s string) Name {
-	p := ParseName(s)
-	if !p.IsValid() {
-		panic(fmt.Sprintf("invalid name: %q", s))
-	}
-	return p
-}
-
 var testNames = map[string]fields{
 	"mistral:latest":                 {model: "mistral", tag: "latest"},
 	"mistral":                        {model: "mistral"},
@@ -419,7 +411,7 @@ func TestNameTextMarshal(t *testing.T) {
 
 	t.Run("UnmarshalText into valid Name", func(t *testing.T) {
 		// UnmarshalText should not be called on a valid Name.
-		p := mustParse("x")
+		p := MustParseName("x")
 		if err := p.UnmarshalText([]byte("mistral:latest+Q4_0")); err == nil {
 			t.Error("UnmarshalText() = nil; want error")
 		}
@@ -455,7 +447,7 @@ func TestNameTextMarshal(t *testing.T) {
 
 func TestSQL(t *testing.T) {
 	t.Run("Scan for already valid Name", func(t *testing.T) {
-		p := mustParse("x")
+		p := MustParseName("x")
 		if err := p.Scan("mistral:latest+Q4_0"); err == nil {
 			t.Error("Scan() = nil; want error")
 		}
@@ -470,7 +462,7 @@ func TestSQL(t *testing.T) {
 		}
 	})
 	t.Run("Value", func(t *testing.T) {
-		p := mustParse("x")
+		p := MustParseName("x")
 		if g, err := p.Value(); err != nil {
 			t.Errorf("Value() error = %v; want nil", err)
 		} else if g != "x" {

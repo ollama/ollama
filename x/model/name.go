@@ -152,6 +152,14 @@ func ParseName(s string) Name {
 	return Name{}
 }
 
+func MustParseName(s string) Name {
+	r := ParseName(s)
+	if !r.IsValid() {
+		panic("model.MustParseName: invalid name: " + s)
+	}
+	return r
+}
+
 // Fill fills in the missing parts of dst with the parts of src.
 //
 // The returned Name will only be valid if dst is valid.
