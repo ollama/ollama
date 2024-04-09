@@ -647,7 +647,7 @@ func CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, model, filepath.Dir(req.Path), commands, fn); err != nil {
+		if err := CreateModel(ctx, model, filepath.Dir(req.Path), req.Quantization, commands, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -913,6 +913,24 @@ func HeadBlobHandler(c *gin.Context) {
 }
 
 func CreateBlobHandler(c *gin.Context) {
+	path, err := GetBlobsPath(c.Param("digest"))
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	_, err = os.Stat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// noop
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	default:
+		c.Status(http.StatusOK)
+		return
+	}
+
 	layer, err := NewLayer(c.Request.Body, "")
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
