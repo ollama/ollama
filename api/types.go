@@ -122,6 +122,11 @@ type Runner struct {
 	UseMMap   bool `json:"use_mmap,omitempty"`
 	UseMLock  bool `json:"use_mlock,omitempty"`
 	NumThread int  `json:"num_thread,omitempty"`
+
+	// Unused: RopeFrequencyBase is ignored. Instead the value in the model will be used
+	RopeFrequencyBase float32 `json:"rope_frequency_base,omitempty"`
+	// Unused: RopeFrequencyScale is ignored. Instead the value in the model will be used
+	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 }
 
 type EmbeddingRequest struct {
