@@ -1,5 +1,16 @@
 name: test
 
+concurrency:
+  # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
+  # cancels running CI jobs and starts all new ones.
+  #
+  # For non-PR pushes, concurrency.group needs to be unique for every distinct
+  # CI run we want to have happen. Use run_id, which in practice means all
+  # non-PR CI runs will be allowed to run without preempting each other.
+  group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+
 on:
   pull_request:
     paths:
@@ -62,10 +73,12 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
-          go generate -x ./...
+
+          $env:GOARCH = ""; go run build.go -f -d -target=${{ matrix.arch }}
         if: ${{ startsWith(matrix.os, 'windows-') }}
         name: 'Windows Go Generate'
-      - run: go generate -x ./...
+      - run: |
+          GOARCH= go run build.go -f -d -target=${{ matrix.arch }}
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
         name: 'Unix Go Generate'
       - uses: actions/upload-artifact@v4
@@ -98,7 +111,7 @@ jobs:
       - run: go get ./...
       - run: |
           git config --global --add safe.directory /__w/ollama/ollama
-          go generate -x ./...
+          GOARCH= go run build.go -f -d -target=${{ matrix.arch }}
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       - uses: actions/upload-artifact@v4
@@ -129,7 +142,7 @@ jobs:
       - run: go get ./...
       - run: |
           git config --global --add safe.directory /__w/ollama/ollama
-          go generate -x ./...
+          GOARCH= go run build.go -f -d -target=${{ matrix.arch }}
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       - uses: actions/upload-artifact@v4
@@ -168,8 +181,9 @@ jobs:
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          go generate -x ./...
-        name: go generate
+
+          $env:GOARCH = ""; go run build.go -f -d -target=${{ matrix.arch }}
+        name: go run build.go
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       # TODO - do we need any artifacts?
@@ -202,7 +216,7 @@ jobs:
       - name: 'Verify CUDA'
         run: nvcc -V
       - run: go get ./...
-      - name: go generate
+      - name: go run build.go
         run: |
           $gopath=(get-command go).source | split-path -parent
           $cudabin=(get-command nvcc).source | split-path
@@ -211,7 +225,8 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          go generate -x ./...
+          
+          $env:GOARCH = ""; go run build.go -f -d -target=${{ matrix.arch }}
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       # TODO - do we need any artifacts?
@@ -285,6 +300,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - run: |
+          GOARCH= go run build.go -f -d -target=${{ matrix.arch }}
+        if: ${{ ! startsWith(matrix.os, 'windows-') }}
+      - run: |
+          $env:GOARCH = ""; go run build.go -f -d -target=${{ matrix.arch }}
+        if: ${{ startsWith(matrix.os, 'windows-') }}
       - run: go get
       - run: |
           case ${{ matrix.arch }} in
@@ -305,9 +326,8 @@ jobs:
           touch llm/build/windows/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'windows-') }}
         shell: bash
-      - run: go generate ./...
-      - run: go build
-      - run: go test -v ./...
+      - run: |
+          go test -v ./...
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-binaries

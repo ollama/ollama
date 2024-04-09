@@ -1,6 +1,6 @@
 #!/bin/bash
-# This script is intended to run inside the go generate
-# working directory must be llm/generate/
+# This script is intended to run with the `go run build.go` script, which
+# sets the working directory to the correct location: ./llm/generate/.
 
 # First we build one or more CPU based LLM libraries
 #
@@ -237,4 +237,4 @@ if [ -d "${ROCM_PATH}" ]; then
 fi
 
 cleanup
-echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"
+echo "code generation completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"
