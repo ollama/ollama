@@ -1,6 +1,6 @@
 #!/bin/bash
-# This script is intended to run inside the `go run build.go` script, which
-# sets the working directory to the correct location: ./llm/generate/.
+# This script is intended to run inside the go generate
+# working directory must be ./llm/generate/
 
 # TODO - add hardening to detect missing tools (cmake, etc.)
 
@@ -89,10 +89,10 @@ case "${GOARCH}" in
     ;;
 *)
     echo "GOARCH must be set"
-    echo "this script is meant to be run from within 'go run build.go'"
+    echo "this script is meant to be run from within go generate"
     exit 1
     ;;
 esac
 
 cleanup
-echo "code generation completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"
+echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"

@@ -201,10 +201,16 @@ Install `cmake` and `go`:
 brew install cmake go
 ```
 
+Then generate dependencies:
+
+```
+go generate ./...
+```
+
 Then build the binary:
 
 ```
-go run build.go
+go build .
 ```
 
 More detailed instructions can be found in the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
