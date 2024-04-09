@@ -23,19 +23,23 @@ export OLLAMA_DEBUG=1
 Get the required libraries and build the native LLM code:
 
 ```bash
-go generate ./...
-```
-
-Then build ollama:
-
-```bash
-go build .
+go run build.go
 ```
 
 Now you can run `ollama`:
 
 ```bash
 ./ollama
+```
+
+### Rebuilding the native code
+
+If at any point you need to rebuild the native code, you can run the
+build.go script again using the `-f` flag to force a rebuild, and,
+optionally, the `-d` flag to skip building the Go binary:
+
+```bash
+go run build.go -f -d
 ```
 
 ### Linux
@@ -53,16 +57,10 @@ specifying an environment variable `CUDA_LIB_DIR` to the location of the shared
 libraries, and `CUDACXX` to the location of the nvcc compiler. You can customize
 set set of target CUDA architectues by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "50;60;70")
 
-Then generate dependencies:
-
-```
-go generate ./...
-```
-
 Then build the binary:
 
 ```
-go build .
+go run build.go
 ```
 
 #### Linux ROCm (AMD)
@@ -78,21 +76,17 @@ install (typically `/opt/rocm`), and `CLBlast_DIR` to the location of the
 CLBlast install (typically `/usr/lib/cmake/CLBlast`). You can also customize
 the AMD GPU targets by setting AMDGPU_TARGETS (e.g. `AMDGPU_TARGETS="gfx1101;gfx1102"`)
 
-```
-go generate ./...
-```
-
 Then build the binary:
 
 ```
-go build .
+go run build.go
 ```
 
 ROCm requires elevated privileges to access the GPU at runtime. On most distros you can add your user account to the `render` group, or run as root.
 
 #### Advanced CPU Settings
 
-By default, running `go generate ./...` will compile a few different variations
+By default, running `go run build.go` will compile a few different variations
 of the LLM library based on common CPU families and vector math capabilities,
 including a lowest-common-denominator which should run on almost any 64 bit CPU
 somewhat slowly. At runtime, Ollama will auto-detect the optimal variation to
@@ -102,8 +96,7 @@ like to use. For example, to compile an optimized binary for an Intel i9-9880H,
 you might use:
 
 ```
-OLLAMA_CUSTOM_CPU_DEFS="-DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_F16C=on -DLLAMA_FMA=on" go generate ./...
-go build .
+OLLAMA_CUSTOM_CPU_DEFS="-DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_F16C=on -DLLAMA_FMA=on" go run build.go
 ```
 
 #### Containerized Linux Build
@@ -124,8 +117,7 @@ Install required tools:
 
 ```powershell
 $env:CGO_ENABLED="1"
-go generate ./...
-go build .
+go run build.go
 ```
 
 #### Windows CUDA (NVIDIA)

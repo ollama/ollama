@@ -288,4 +288,4 @@ if ($null -ne $env:HIP_PATH) {
 
 
 cleanup
-write-host "`ngo generate completed.  LLM runners: $(get-childitem -path ${script:SRC_DIR}\llm\build\windows\${script:ARCH})"
+write-host "`ncode generation completed.  LLM runners: $(get-childitem -path ${script:SRC_DIR}\llm\build\windows\${script:ARCH})"

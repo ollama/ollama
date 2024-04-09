@@ -95,7 +95,8 @@ jobs:
           cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
-          go generate -x ./...
+          
+          $env:GOARCH = ""; go run build.go -f -d -target=${{ matrix.arch }}
         name: go generate
       - uses: actions/upload-artifact@v4
         with:
