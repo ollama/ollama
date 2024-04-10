@@ -38,20 +38,6 @@ func (d Digest) String() string { return d.s }
 // ParseName(name).Digest().
 func (d Digest) IsValid() bool { return d.s != "" }
 
-// MarshalText implements encoding.TextMarshaler.
-func (d Digest) MarshalText() ([]byte, error) {
-	return []byte(d.String()), nil
-}
-
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (d *Digest) UnmarshalText(text []byte) error {
-	if d.IsValid() {
-		return errors.New("model.Digest: illegal UnmarshalText on valid Digest")
-	}
-	*d = ParseDigest(string(text))
-	return nil
-}
-
 // LogValue implements slog.Value.
 func (d Digest) LogValue() slog.Value {
 	return slog.StringValue(d.String())
