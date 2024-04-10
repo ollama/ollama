@@ -109,7 +109,7 @@ func (llm *gguf) KV() KV {
 	return llm.kv
 }
 
-func (llm *gguf) Tensors() []*Tensor {
+func (llm *gguf) Tensors() Tensors {
 	return llm.tensors
 }
 

@@ -41,10 +41,6 @@ var cpuOnlyFamilies = []string{
 }
 
 func NewLlamaServer(model string, adapters, projectors []string, opts api.Options) (*LlamaServer, error) {
-	if _, err := os.Stat(model); err != nil {
-		return nil, err
-	}
-
 	f, err := os.Open(model)
 	if err != nil {
 		return nil, err
@@ -65,66 +61,78 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		opts.NumCtx = 4
 	}
 
-	availableMemory, _ := gpu.CheckVRAM()
+	memoryAvailable, _ := gpu.CheckVRAM()
 	info := gpu.GetGPUInfo()
 
-	usedMemory := info.MinimumMemory
+	memoryMinimum := info.MinimumMemory
 	for _, projector := range projectors {
-		usedMemory += projectorMemoryRequirements(projector)
+		memoryMinimum += projectorMemoryRequirements(projector)
 
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
-	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.KV().BlockCount()) * int64(ggml.KV().EmbeddingLength()) / int64(ggml.KV().HeadCount()) * int64(ggml.KV().HeadCountKV())
+	var kv uint64 = 2 * 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * ggml.KV().EmbeddingLength() / ggml.KV().HeadCount() * ggml.KV().HeadCountKV()
 
-	graph, ok := ggml.GraphSize(opts.NumCtx, min(opts.NumCtx, opts.NumBatch))
-	if !ok {
-		graph = int64(ggml.KV().GQA()) * kv / 6
+	graphPartialOffload, graphFullOffload := ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)))
+	if graphPartialOffload == 0 {
+		graphPartialOffload = ggml.KV().GQA() * kv / 6
 	}
 
-	usedMemory += graph
-
-	if (usedMemory > availableMemory || slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture())) && info.Library != "metal" {
-		info.Library = "cpu"
+	if graphFullOffload == 0 {
+		graphFullOffload = graphPartialOffload
 	}
 
-	requiredMemory := usedMemory
+	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
+	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
-	var layers int
-	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
-		layerMemory := ggml.LayerSize(fmt.Sprintf("blk.%d.", i)) + kv/int64(ggml.KV().BlockCount())
-		requiredMemory += layerMemory
+	// memoryRequiredPartial represents the memory required for partial GPU offloading (n > 0, n < layers)
+	memoryRequiredPartial := memoryMinimum + graphPartialOffload
 
-		if availableMemory > usedMemory+layerMemory && (opts.NumGPU < 0 || layers < opts.NumGPU) {
-			usedMemory += layerMemory
-			layers++
+	if info.Library != "metal" {
+		if memoryRequiredPartial > memoryAvailable || slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture()) {
+			info.Library = "cpu"
 		}
 	}
 
-	memOutputLayer := ggml.LayerSize("output.")
-	requiredMemory += memOutputLayer
+	var layerCount int
+	layers := ggml.Tensors().Layers()
+	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
+		memoryLayer := layers[fmt.Sprintf("%d", i)].size()
 
-	// only offload output layer if all repeating layers are offloaded
-	if layers >= int(ggml.KV().BlockCount()) && availableMemory > usedMemory+memOutputLayer {
-		usedMemory += memOutputLayer
-		layers++
+		// KV is proportional to the number of layers
+		memoryLayer += kv / ggml.KV().BlockCount()
+
+		memoryRequiredTotal += memoryLayer
+		if memoryAvailable > memoryRequiredPartial+memoryLayer {
+			memoryRequiredPartial += memoryLayer
+			layerCount++
+		}
+	}
+
+	memoryLayerOutput := layers["output"].size()
+	memoryRequiredTotal += memoryLayerOutput
+	if memoryAvailable > memoryRequiredTotal {
+		layerCount = int(ggml.KV().BlockCount()) + 1
+		memoryRequiredPartial = memoryRequiredTotal
+	}
+
+	if opts.NumGPU < 0 {
+		opts.NumGPU = layerCount
 	}
 
 	slog.Info(
 		"offload to gpu",
-		"layers", layers,
-		"required", format.HumanBytes2(requiredMemory),
-		"used", format.HumanBytes2(usedMemory),
-		"available", format.HumanBytes2(availableMemory),
+		"reallayers", opts.NumGPU,
+		"layers", layerCount,
+		"required", format.HumanBytes2(memoryRequiredTotal),
+		"used", format.HumanBytes2(memoryRequiredPartial),
+		"available", format.HumanBytes2(memoryAvailable),
 		"kv", format.HumanBytes2(kv),
-		"graph", format.HumanBytes2(graph),
+		"fulloffload", format.HumanBytes2(graphFullOffload),
+		"partialoffload", format.HumanBytes2(graphPartialOffload),
 	)
-
-	if opts.NumGPU < 0 && info.Library != "cpu" {
-		opts.NumGPU = layers
-	}
 
 	if len(adapters) > 1 {
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
@@ -282,7 +290,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	return nil, finalErr
 }
 
-func projectorMemoryRequirements(filename string) int64 {
+func projectorMemoryRequirements(filename string) uint64 {
 	file, err := os.Open(filename)
 	if err != nil {
 		return 0
@@ -294,18 +302,12 @@ func projectorMemoryRequirements(filename string) int64 {
 		return 0
 	}
 
-	prefixes := make(map[string]struct{})
-	for _, layer := range ggml.Tensors() {
-		parts := strings.Split(layer.Name, ".")
-		prefixes[strings.Join(parts[:2], ".")] = struct{}{}
+	var mem uint64
+	for _, layer := range ggml.Tensors().Layers() {
+		mem += layer.size()
 	}
 
-	var ask int64
-	for prefix := range prefixes {
-		ask += ggml.LayerSize(prefix)
-	}
-
-	return ask
+	return mem
 }
 
 type ServerStatus int
