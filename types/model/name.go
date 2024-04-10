@@ -1,7 +1,6 @@
 package model
 
 import (
-	"bytes"
 	"cmp"
 	"errors"
 	"hash/maphash"
@@ -343,12 +342,6 @@ func (r Name) GoString() string {
 // LogValue implements slog.Valuer.
 func (r Name) LogValue() slog.Value {
 	return slog.StringValue(r.GoString())
-}
-
-var bufPool = sync.Pool{
-	New: func() interface{} {
-		return new(bytes.Buffer)
-	},
 }
 
 // IsComplete reports whether the Name is fully qualified. That is it has a
