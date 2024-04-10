@@ -3,7 +3,6 @@ package model
 import (
 	"bytes"
 	"cmp"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -112,11 +111,11 @@ func TestNameConsecutiveDots(t *testing.T) {
 	for i := 1; i < 10; i++ {
 		s := strings.Repeat(".", i)
 		if i > 1 {
-			if g := ParseName(s).String(); g != "" {
+			if g := ParseNameFill(s, "").String(); g != "" {
 				t.Errorf("ParseName(%q) = %q; want empty string", s, g)
 			}
 		} else {
-			if g := ParseName(s).String(); g != s {
+			if g := ParseNameFill(s, "").String(); g != s {
 				t.Errorf("ParseName(%q) = %q; want %q", s, g, s)
 			}
 		}
@@ -149,27 +148,15 @@ func TestParseName(t *testing.T) {
 			s := prefix + baseName
 
 			t.Run(s, func(t *testing.T) {
-				name := ParseName(s)
+				name := ParseNameFill(s, "")
 				got := fieldsFromName(name)
 				if got != want {
 					t.Errorf("ParseName(%q) = %q; want %q", s, got, want)
 				}
 
 				// test round-trip
-				if !ParseName(name.String()).EqualFold(name) {
+				if !ParseNameFill(name.String(), "").EqualFold(name) {
 					t.Errorf("ParseName(%q).String() = %s; want %s", s, name.String(), baseName)
-				}
-
-				if name.IsValid() && name.DisplayModel() == "" {
-					t.Errorf("Valid() = true; Model() = %q; want non-empty name", got.model)
-				} else if !name.IsValid() && name.DisplayModel() != "" {
-					t.Errorf("Valid() = false; Model() = %q; want empty name", got.model)
-				}
-
-				if name.IsResolved() && !name.Digest().IsValid() {
-					t.Errorf("Resolved() = true; Digest() = %q; want non-empty digest", got.digest)
-				} else if !name.IsResolved() && name.Digest().IsValid() {
-					t.Errorf("Resolved() = false; Digest() = %q; want empty digest", got.digest)
 				}
 			})
 		}
@@ -192,7 +179,7 @@ func TestCompleteWithAndWithoutBuild(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
-			p := ParseName(tt.in)
+			p := ParseNameFill(tt.in, "")
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
 			if g := p.IsComplete(); g != tt.complete {
 				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.complete)
@@ -207,7 +194,7 @@ func TestCompleteWithAndWithoutBuild(t *testing.T) {
 	// inlined when used in Complete, preventing any allocations or
 	// escaping to the heap.
 	allocs := testing.AllocsPerRun(1000, func() {
-		keep(ParseName("complete.com/x/mistral:latest+Q4_0").IsComplete())
+		keep(ParseNameFill("complete.com/x/mistral:latest+Q4_0", "").IsComplete())
 	})
 	if allocs > 0 {
 		t.Errorf("Complete allocs = %v; want 0", allocs)
@@ -224,7 +211,7 @@ func TestNameLogValue(t *testing.T) {
 		t.Run(s, func(t *testing.T) {
 			var b bytes.Buffer
 			log := slog.New(slog.NewTextHandler(&b, nil))
-			name := ParseName(s)
+			name := ParseNameFill(s, "")
 			log.Info("", "name", name)
 			want := fmt.Sprintf("name=%s", name.GoString())
 			got := b.String()
@@ -235,83 +222,43 @@ func TestNameLogValue(t *testing.T) {
 	}
 }
 
-func TestNameDisplay(t *testing.T) {
+func TestNameGoString(t *testing.T) {
 	cases := []struct {
 		name         string
 		in           string
-		wantShort    string
-		wantLong     string
-		wantComplete string
 		wantString   string
-		wantModel    string
 		wantGoString string // default is tt.in
 	}{
 		{
 			name:         "Complete Name",
 			in:           "example.com/library/mistral:latest+Q4_0",
-			wantShort:    "mistral:latest",
-			wantLong:     "library/mistral:latest",
-			wantComplete: "example.com/library/mistral:latest",
-			wantModel:    "mistral",
 			wantGoString: "example.com/library/mistral:latest+Q4_0@?",
 		},
 		{
 			name:         "Short Name",
 			in:           "mistral:latest",
-			wantShort:    "mistral:latest",
-			wantLong:     "mistral:latest",
-			wantComplete: "mistral:latest",
-			wantModel:    "mistral",
 			wantGoString: "?/?/mistral:latest+?@?",
 		},
 		{
 			name:         "Long Name",
 			in:           "library/mistral:latest",
-			wantShort:    "mistral:latest",
-			wantLong:     "library/mistral:latest",
-			wantComplete: "library/mistral:latest",
-			wantModel:    "mistral",
 			wantGoString: "?/library/mistral:latest+?@?",
 		},
 		{
 			name:         "Case Preserved",
 			in:           "Library/Mistral:Latest",
-			wantShort:    "Mistral:Latest",
-			wantLong:     "Library/Mistral:Latest",
-			wantComplete: "Library/Mistral:Latest",
-			wantModel:    "Mistral",
 			wantGoString: "?/Library/Mistral:Latest+?@?",
 		},
 		{
 			name:         "With digest",
 			in:           "Library/Mistral:Latest@sha256-123456",
-			wantShort:    "Mistral:Latest",
-			wantLong:     "Library/Mistral:Latest",
-			wantComplete: "Library/Mistral:Latest",
-			wantModel:    "Mistral",
 			wantGoString: "?/Library/Mistral:Latest+?@sha256-123456",
 		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			p := ParseName(tt.in)
-			if g := p.DisplayShort(); g != tt.wantShort {
-				t.Errorf("DisplayShort = %q; want %q", g, tt.wantShort)
-			}
-			if g := p.DisplayLong(); g != tt.wantLong {
-				t.Errorf("DisplayLong = %q; want %q", g, tt.wantLong)
-			}
-			if g := p.DisplayFullest(); g != tt.wantComplete {
-				t.Errorf("DisplayFullest = %q; want %q", g, tt.wantComplete)
-			}
-			if g := p.String(); g != tt.in {
-				t.Errorf("String(%q) = %q; want %q", tt.in, g, tt.in)
-			}
-			if g := p.DisplayModel(); g != tt.wantModel {
-				t.Errorf("Model = %q; want %q", g, tt.wantModel)
-			}
-
+			p := ParseNameFill(tt.in, "")
 			tt.wantGoString = cmp.Or(tt.wantGoString, tt.in)
 			if g := fmt.Sprintf("%#v", p); g != tt.wantGoString {
 				t.Errorf("GoString() = %q; want %q", g, tt.wantGoString)
@@ -320,9 +267,60 @@ func TestNameDisplay(t *testing.T) {
 	}
 }
 
+func TestDisplayShortest(t *testing.T) {
+	cases := []struct {
+		in        string
+		mask      string
+		want      string
+		wantPanic bool
+	}{
+		{"example.com/library/mistral:latest+Q4_0", "example.com/library/_:latest", "mistral", false},
+		{"example.com/library/mistral:latest+Q4_0", "example.com/_/_:latest", "library/mistral", false},
+		{"example.com/library/mistral:latest+Q4_0", "", "example.com/library/mistral", false},
+		{"example.com/library/mistral:latest+Q4_0", "", "example.com/library/mistral", false},
+
+		// case-insensitive
+		{"Example.com/library/mistral:latest+Q4_0", "example.com/library/_:latest", "mistral", false},
+		{"example.com/Library/mistral:latest+Q4_0", "example.com/library/_:latest", "mistral", false},
+		{"example.com/library/Mistral:latest+Q4_0", "example.com/library/_:latest", "Mistral", false},
+		{"example.com/library/mistral:Latest+Q4_0", "example.com/library/_:latest", "mistral", false},
+		{"example.com/library/mistral:Latest+q4_0", "example.com/library/_:latest", "mistral", false},
+
+		// invalid mask
+		{"example.com/library/mistral:latest+Q4_0", "example.com/mistral", "", true},
+
+		// DefaultMask
+		{"registry.ollama.ai/library/mistral:latest+Q4_0", DefaultMask, "mistral", false},
+
+		// Auto-Fill
+		{"x", "example.com/library/_:latest", "x", false},
+		{"x", "example.com/library/_:latest+Q4_0", "x", false},
+		{"x/y:z", "a.com/library/_:latest+Q4_0", "x/y:z", false},
+		{"x/y:z", "a.com/library/_:latest+Q4_0", "x/y:z", false},
+	}
+
+	for _, tt := range cases {
+		t.Run("", func(t *testing.T) {
+			defer func() {
+				if tt.wantPanic {
+					if recover() == nil {
+						t.Errorf("expected panic")
+					}
+				}
+			}()
+
+			p := ParseNameFill(tt.in, "")
+			t.Logf("ParseName(%q) = %#v", tt.in, p)
+			if g := p.DisplayShortest(tt.mask); g != tt.want {
+				t.Errorf("got = %q; want %q", g, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseNameAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
-		keep(ParseName("example.com/mistral:7b+Q4_0"))
+		keep(ParseNameFill("example.com/mistral:7b+Q4_0", ""))
 	})
 	if allocs > 0 {
 		t.Errorf("ParseName allocs = %v; want 0", allocs)
@@ -333,19 +331,8 @@ func BenchmarkParseName(b *testing.B) {
 	b.ReportAllocs()
 
 	for range b.N {
-		keep(ParseName("example.com/mistral:7b+Q4_0"))
+		keep(ParseNameFill("example.com/mistral:7b+Q4_0", ""))
 	}
-}
-
-func BenchmarkNameDisplay(b *testing.B) {
-	b.ReportAllocs()
-
-	r := ParseName("example.com/mistral:7b+Q4_0")
-	b.Run("Short", func(b *testing.B) {
-		for range b.N {
-			keep(r.DisplayShort())
-		}
-	})
 }
 
 func FuzzParseName(f *testing.F) {
@@ -359,7 +346,7 @@ func FuzzParseName(f *testing.F) {
 	f.Add(":@!@")
 	f.Add("...")
 	f.Fuzz(func(t *testing.T, s string) {
-		r0 := ParseName(s)
+		r0 := ParseNameFill(s, "")
 
 		if strings.Contains(s, "..") && !r0.IsZero() {
 			t.Fatalf("non-zero value for path with '..': %q", s)
@@ -382,7 +369,7 @@ func FuzzParseName(f *testing.F) {
 			t.Errorf("String() did not round-trip with case insensitivity: %q\ngot  = %q\nwant = %q", s, r0.String(), s)
 		}
 
-		r1 := ParseName(r0.String())
+		r1 := ParseNameFill(r0.String(), "")
 		if !r0.EqualFold(r1) {
 			t.Errorf("round-trip mismatch: %+v != %+v", r0, r1)
 		}
@@ -402,7 +389,7 @@ func TestFill(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.dst, func(t *testing.T) {
-			r := Fill(ParseName(tt.dst), ParseName(tt.src))
+			r := Fill(ParseNameFill(tt.dst, ""), ParseNameFill(tt.src, ""))
 			if r.String() != tt.want {
 				t.Errorf("Fill(%q, %q) = %q; want %q", tt.dst, tt.src, r, tt.want)
 			}
@@ -410,118 +397,8 @@ func TestFill(t *testing.T) {
 	}
 }
 
-func TestNameTextMarshal(t *testing.T) {
-	cases := []struct {
-		in      string
-		want    string
-		wantErr error
-	}{
-		{"example.com/mistral:latest+Q4_0", "", nil},
-		{"mistral:latest+Q4_0", "mistral:latest+Q4_0", nil},
-		{"mistral:latest", "mistral:latest", nil},
-		{"mistral", "mistral", nil},
-		{"mistral:7b", "mistral:7b", nil},
-		{"example.com/library/mistral:latest+Q4_0", "example.com/library/mistral:latest+Q4_0", nil},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.in, func(t *testing.T) {
-			p := ParseName(tt.in)
-			got, err := p.MarshalText()
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("MarshalText() error = %v; want %v", err, tt.wantErr)
-			}
-			if string(got) != tt.want {
-				t.Errorf("MarshalText() = %q; want %q", got, tt.want)
-			}
-
-			var r Name
-			if err := r.UnmarshalText(got); err != nil {
-				t.Fatalf("UnmarshalText() error = %v; want nil", err)
-			}
-			if !r.EqualFold(p) {
-				t.Errorf("UnmarshalText() = %q; want %q", r, p)
-			}
-		})
-	}
-
-	t.Run("UnmarshalText into valid Name", func(t *testing.T) {
-		// UnmarshalText should not be called on a valid Name.
-		p := MustParseName("x")
-		if err := p.UnmarshalText([]byte("mistral:latest+Q4_0")); err == nil {
-			t.Error("UnmarshalText() = nil; want error")
-		}
-	})
-
-	t.Run("TextMarshal allocs", func(t *testing.T) {
-		var data []byte
-		name := ParseName("example.com/ns/mistral:latest+Q4_0")
-		if !name.IsComplete() {
-			// sanity check
-			panic("sanity check failed")
-		}
-
-		allocs := testing.AllocsPerRun(1000, func() {
-			var err error
-			data, err = name.MarshalText()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(data) == 0 {
-				t.Fatal("MarshalText() = 0; want non-zero")
-			}
-		})
-		if allocs > 0 {
-			// TODO: Update when/if this lands:
-			// https://github.com/golang/go/issues/62384
-			//
-			// Currently, the best we can do is 1 alloc.
-			t.Errorf("MarshalText allocs = %v; want <= 1", allocs)
-		}
-	})
-
-	t.Run("UnmarshalTest makes safe copy", func(t *testing.T) {
-		// UnmarshalText should make a copy of the data.
-		data := []byte("mistral:latest+Q4_0")
-		p := Name{}
-		if err := p.UnmarshalText(data); err != nil {
-			t.Fatal(err)
-		}
-		data[0] = 'x'
-		if p.String() != "mistral:latest+Q4_0" {
-			t.Errorf("UnmarshalText() did not make a copy")
-		}
-	})
-}
-
-func TestSQL(t *testing.T) {
-	t.Run("Scan for already valid Name", func(t *testing.T) {
-		p := MustParseName("x")
-		if err := p.Scan("mistral:latest+Q4_0"); err == nil {
-			t.Error("Scan() = nil; want error")
-		}
-	})
-	t.Run("Scan for invalid Name", func(t *testing.T) {
-		p := Name{}
-		if err := p.Scan("mistral:latest+Q4_0"); err != nil {
-			t.Errorf("Scan() = %v; want nil", err)
-		}
-		if p.String() != "mistral:latest+Q4_0" {
-			t.Errorf("String() = %q; want %q", p, "mistral:latest+Q4_0")
-		}
-	})
-	t.Run("Value", func(t *testing.T) {
-		p := MustParseName("x")
-		if g, err := p.Value(); err != nil {
-			t.Errorf("Value() error = %v; want nil", err)
-		} else if g != "x" {
-			t.Errorf("Value() = %q; want %q", g, "x")
-		}
-	})
-}
-
 func TestNameStringAllocs(t *testing.T) {
-	name := ParseName("example.com/ns/mistral:latest+Q4_0")
+	name := ParseNameFill("example.com/ns/mistral:latest+Q4_0", "")
 	allocs := testing.AllocsPerRun(1000, func() {
 		keep(name.String())
 	})
@@ -530,46 +407,9 @@ func TestNameStringAllocs(t *testing.T) {
 	}
 }
 
-func TestNameScan(t *testing.T) {
-	t.Run("Scan", func(t *testing.T) {
-		var p Name
-		if err := p.Scan("mistral:latest+Q4_0"); err != nil {
-			t.Errorf("Scan() = %v; want nil", err)
-		}
-		if p.String() != "mistral:latest+Q4_0" {
-			t.Errorf("String() = %q; want %q", p, "mistral:latest+Q4_0")
-		}
-		v, err := p.Value()
-		if err != nil {
-			t.Errorf("Value() error = %v; want nil", err)
-		}
-		if v != "mistral:latest+Q4_0" {
-			t.Errorf("Value() = %q; want %q", v, "mistral:latest+Q4_0")
-		}
-	})
-	t.Run("Scan (into valid Name)", func(t *testing.T) {
-		p := MustParseName("x")
-		if err := p.Scan("mistral:latest+Q4_0"); err == nil {
-			t.Error("Scan() = nil; want error")
-		}
-	})
-	t.Run("Scan makes safe copy of []byte", func(t *testing.T) {
-		// Scan should make a copy of the data.
-		data := []byte("mistral:latest+Q4_0")
-		var p Name
-		if err := p.Scan(data); err != nil {
-			t.Fatal(err)
-		}
-		data[0] = 'x'
-		if p.String() != "mistral:latest+Q4_0" {
-			t.Errorf("Scan() did not make a copy")
-		}
-	})
-}
-
 func ExampleFill() {
-	defaults := ParseName("registry.ollama.com/library/PLACEHOLDER:latest+Q4_0")
-	r := Fill(ParseName("mistral"), defaults)
+	defaults := ParseNameFill("registry.ollama.com/library/PLACEHOLDER:latest+Q4_0", "")
+	r := Fill(ParseNameFill("mistral", ""), defaults)
 	fmt.Println(r)
 
 	// Output:
@@ -580,12 +420,12 @@ func ExampleName_MapHash() {
 	m := map[uint64]bool{}
 
 	// key 1
-	m[ParseName("mistral:latest+q4").MapHash()] = true
-	m[ParseName("miSTRal:latest+Q4").MapHash()] = true
-	m[ParseName("mistral:LATest+Q4").MapHash()] = true
+	m[ParseNameFill("mistral:latest+q4", "").MapHash()] = true
+	m[ParseNameFill("miSTRal:latest+Q4", "").MapHash()] = true
+	m[ParseNameFill("mistral:LATest+Q4", "").MapHash()] = true
 
 	// key 2
-	m[ParseName("mistral:LATest").MapHash()] = true
+	m[ParseNameFill("mistral:LATest", "").MapHash()] = true
 
 	fmt.Println(len(m))
 	// Output:
@@ -594,9 +434,9 @@ func ExampleName_MapHash() {
 
 func ExampleName_CompareFold_sort() {
 	names := []Name{
-		ParseName("mistral:latest"),
-		ParseName("mistRal:7b+q4"),
-		ParseName("MIstral:7b"),
+		ParseNameFill("mistral:latest", ""),
+		ParseNameFill("mistRal:7b+q4", ""),
+		ParseNameFill("MIstral:7b", ""),
 	}
 
 	slices.SortFunc(names, Name.CompareFold)
@@ -617,8 +457,8 @@ func ExampleName_completeAndResolved() {
 		"x/y/z:latest+q4_0",
 		"@sha123-1",
 	} {
-		p := ParseName(s)
-		fmt.Printf("complete:%v resolved:%v  digest:%s\n", p.IsComplete(), p.IsResolved(), p.Digest())
+		name := ParseNameFill(s, "")
+		fmt.Printf("complete:%v resolved:%v  digest:%s\n", name.IsComplete(), name.IsResolved(), name.Digest())
 	}
 
 	// Output:
@@ -627,19 +467,24 @@ func ExampleName_completeAndResolved() {
 	// complete:false resolved:true  digest:sha123-1
 }
 
-func ExampleName_DisplayFullest() {
-	for _, s := range []string{
-		"example.com/jmorganca/mistral:latest+Q4_0",
-		"mistral:latest+Q4_0",
-		"mistral:latest",
-	} {
-		fmt.Println(ParseName(s).DisplayFullest())
-	}
+func ExampleName_DisplayShortest() {
+	name := ParseNameFill("example.com/jmorganca/mistral:latest+Q4_0", "")
+
+	fmt.Println(name.DisplayShortest("example.com/jmorganca/_:latest"))
+	fmt.Println(name.DisplayShortest("example.com/_/_:latest"))
+	fmt.Println(name.DisplayShortest("example.com/_/_:_"))
+	fmt.Println(name.DisplayShortest("_/_/_:_"))
+
+	// Default
+	name = ParseNameFill("registry.ollama.ai/library/mistral:latest+Q4_0", "")
+	fmt.Println(name.DisplayShortest(""))
 
 	// Output:
+	// mistral
+	// jmorganca/mistral
+	// jmorganca/mistral:latest
 	// example.com/jmorganca/mistral:latest
-	// mistral:latest
-	// mistral:latest
+	// mistral
 }
 
 func keep[T any](v T) T { return v }

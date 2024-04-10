@@ -3,8 +3,6 @@ package model
 import (
 	"bytes"
 	"cmp"
-	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"hash/maphash"
 	"io"
@@ -24,6 +22,15 @@ var (
 	ErrInvalidName    = errors.New("invalid model name")
 	ErrIncompleteName = errors.New("incomplete model name")
 	ErrInvalidDigest  = errors.New("invalid digest")
+)
+
+// Defaults
+const (
+	// DefaultMask is the default mask used by [Name.DisplayShortest].
+	DefaultMask = "registry.ollama.ai/library/_:latest"
+
+	// DefaultFill is the default fill used by [ParseName].
+	DefaultFill = "registry.ollama.ai/library/_:latest"
 )
 
 const MaxNamePartLen = 128
@@ -103,7 +110,8 @@ type Name struct {
 	// and mean zero allocations for String.
 }
 
-// ParseName parses s into a Name. The input string must be a valid string
+// ParseName parses s into a Name, and returns the result of filling it with
+// defaults. The input string must be a valid string
 // representation of a model name in the form:
 //
 //	[host/][namespace/]<model>[:tag][+build][@<digest-type>-<digest>]
@@ -135,12 +143,10 @@ type Name struct {
 // As a rule of thumb, an valid name is one that can be round-tripped with
 // the [Name.String] method. That means ("x+") is invalid because
 // [Name.String] will not print a "+" if the build is empty.
-func ParseName(s string) Name {
+//
+// For more about filling in missing parts, see [Fill].
+func ParseNameFill(s, defaults string) Name {
 	var r Name
-
-	// Once rangefunc is enabled, we can replace this with:
-	//
-	// for kind, part := range Parts(s) { ... }
 	parts(s)(func(kind PartKind, part string) bool {
 		if kind == PartInvalid {
 			r = Name{}
@@ -154,13 +160,20 @@ func ParseName(s string) Name {
 		return true
 	})
 	if r.IsValid() || r.IsResolved() {
-		return r
+		if defaults == "" {
+			return r
+		}
+		return Fill(r, ParseNameFill(defaults, ""))
 	}
 	return Name{}
 }
 
-func MustParseName(s string) Name {
-	r := ParseName(s)
+func ParseName(s string) Name {
+	return ParseNameFill(s, DefaultFill)
+}
+
+func MustParseNameFill(s, defaults string) Name {
+	r := ParseNameFill(s, "")
 	if !r.IsValid() {
 		panic("model.MustParseName: invalid name: " + s)
 	}
@@ -218,30 +231,32 @@ func (r Name) slice(from, to PartKind) Name {
 	return v
 }
 
-// DisplayModel returns a display string composed of the model only.
-func (r Name) DisplayModel() string {
-	return r.parts[PartModel]
-}
-
-// DisplayFullest returns the fullest possible display string in form:
+// DisplayShortest returns the shortest possible display string in form:
 //
-//	<host>/<namespace>/<model>:<tag>
+//	[host/][<namespace>/]<model>[:<tag>]
 //
-// If any part is missing, it is omitted from the display string.
-//
-// It does not include the build part. For the fullest possible display
-// string with the build, use [Name.String].
-func (r Name) DisplayFullest() string {
+// The host is omitted if it is the mask host is the same as r.
+// The namespace is omitted if the host and the namespace are the same as r.
+// The tag is omitted if it is the mask tag is the same as r.
+func (r Name) DisplayShortest(mask string) string {
+	mask = cmp.Or(mask, DefaultMask)
+	d := ParseName(mask)
+	if !d.IsValid() {
+		panic("mask is an invalid Name")
+	}
+	equalSlice := func(form, to PartKind) bool {
+		return r.slice(form, to).EqualFold(d.slice(form, to))
+	}
+	if equalSlice(PartHost, PartNamespace) {
+		r.parts[PartNamespace] = ""
+	}
+	if equalSlice(PartHost, PartHost) {
+		r.parts[PartHost] = ""
+	}
+	if equalSlice(PartTag, PartTag) {
+		r.parts[PartTag] = ""
+	}
 	return r.slice(PartHost, PartTag).String()
-}
-
-// DisplayShort returns the fullest possible display string in form:
-//
-//	<model>:<tag>
-//
-// If any part is missing, it is omitted from the display string.
-func (r Name) DisplayShort() string {
-	return r.slice(PartModel, PartTag).String()
 }
 
 // DisplayLong returns the fullest possible display string in form:
@@ -334,64 +349,6 @@ var bufPool = sync.Pool{
 	New: func() interface{} {
 		return new(bytes.Buffer)
 	},
-}
-
-// MarshalText implements [encoding.TextMarshaler].
-func (r Name) MarshalText() ([]byte, error) {
-	b := bufPool.Get().(*bytes.Buffer)
-	b.Reset()
-	b.Grow(50) // arbitrarily long enough for most names
-	defer bufPool.Put(b)
-	_ = r.writeTo(b)
-	// TODO: We can remove this alloc if/when
-	// https://github.com/golang/go/issues/62384 lands.
-	return b.Bytes(), nil
-}
-
-// UnmarshalText implements [encoding.TextUnmarshaler].
-//
-// It is an error to call UnmarshalText on a valid Name.
-func (r *Name) UnmarshalText(text []byte) error {
-	if r.IsValid() {
-		// The invariant of UnmarshalText is that it should only be
-		// called on an invalid/zero Name. If we allow UnmarshalText
-		// on a valid Name, then the Name will be mutated, breaking
-		// the immutability of the Name.
-		return errors.New("model.Name: illegal UnmarshalText on valid Name")
-	}
-
-	// The contract of UnmarshalText is that we copy to keep the text.
-	*r = ParseName(string(text))
-	return nil
-}
-
-var (
-	_ driver.Valuer = Name{}
-	_ sql.Scanner   = (*Name)(nil)
-)
-
-// Scan implements [database/sql.Scanner].
-func (r *Name) Scan(src any) error {
-	if r.IsValid() {
-		// The invariant of Scan is that it should only be called on an
-		// invalid/zero Name. If we allow Scan on a valid Name, then the
-		// Name will be mutated, breaking the immutability of the Name.
-		return errors.New("model.Name: illegal Scan on valid Name")
-	}
-	switch v := src.(type) {
-	case string:
-		*r = ParseName(v)
-		return nil
-	case []byte:
-		*r = ParseName(string(v))
-		return nil
-	}
-	return errors.New("model.Name: invalid Scan source")
-}
-
-// Value implements [database/sql/driver.Valuer].
-func (r Name) Value() (driver.Value, error) {
-	return r.String(), nil
 }
 
 // IsComplete reports whether the Name is fully qualified. That is it has a
