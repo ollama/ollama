@@ -109,7 +109,7 @@ type Name struct {
 	// and mean zero allocations for String.
 }
 
-// ParseName parses s into a Name, and returns the result of filling it with
+// ParseNameFill parses s into a Name, and returns the result of filling it with
 // defaults. The input string must be a valid string
 // representation of a model name in the form:
 //
@@ -167,6 +167,7 @@ func ParseNameFill(s, defaults string) Name {
 	return Name{}
 }
 
+// ParseName is equal to ParseNameFill(s, DefaultFill).
 func ParseName(s string) Name {
 	return ParseNameFill(s, DefaultFill)
 }
