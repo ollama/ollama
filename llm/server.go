@@ -383,7 +383,8 @@ func (s *LlamaServer) Ping(ctx context.Context) error {
 
 func (s *LlamaServer) waitUntilRunning() error {
 	start := time.Now()
-	expiresAt := time.Now().Add(3 * time.Minute) // be generous with timeout, large models can take a while to load
+	// TODO we need to wire up a better way to detect hangs during model load and startup of the server
+	expiresAt := time.Now().Add(10 * time.Minute) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
