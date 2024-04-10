@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jmorganca/ollama/api"
+	"github.com/ollama/ollama/api"
 )
 
 func main() {
