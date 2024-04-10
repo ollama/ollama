@@ -460,7 +460,7 @@ func (r Name) Parts() []string {
 	return slices.Clone(r.parts[:])
 }
 
-// iter_Seq2 is a iter.Seq2 defined here to avoid the current bulid
+// iter_Seq2 is a iter.Seq2 defined here to avoid the current build
 // restrictions in the go1.22 iter package requiring the
 // goexperiment.rangefunc tag to be set via the GOEXPERIMENT=rangefunc flag,
 // which we are not yet ready to support.
