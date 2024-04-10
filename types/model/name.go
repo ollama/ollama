@@ -121,7 +121,7 @@ type Name struct {
 //	"mistral:7b+x"
 //	"example.com/mike/mistral:latest+Q4_0"
 //	"example.com/bruce/mistral:latest"
-//	"example.com/mistral:7b+Q4_0@sha256-1234567890abcdef"
+//	"example.com/pdevine/thisisfine:7b+Q4_0@sha256-1234567890abcdef"
 //
 // Examples of invalid paths:
 //
