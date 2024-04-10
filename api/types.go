@@ -33,18 +33,46 @@ func (e StatusError) Error() string {
 
 type ImageData []byte
 
+// GenerateRequest describes a request sent by [Client.Generate]. While you
+// have to specify the Model and Prompt fields, all the other fields have
+// reasonable defaults for basic uses.
 type GenerateRequest struct {
-	Model     string      `json:"model"`
-	Prompt    string      `json:"prompt"`
-	System    string      `json:"system"`
-	Template  string      `json:"template"`
-	Context   []int       `json:"context,omitempty"`
-	Stream    *bool       `json:"stream,omitempty"`
-	Raw       bool        `json:"raw,omitempty"`
-	Format    string      `json:"format"`
-	KeepAlive *Duration   `json:"keep_alive,omitempty"`
-	Images    []ImageData `json:"images,omitempty"`
+	// Model is the model name; it should be a name familiar to Ollama from
+	// the library at https://ollama.com/library
+	Model string `json:"model"`
 
+	// Prompt is the textual prompt to send to the model.
+	Prompt string `json:"prompt"`
+
+	// System overrides the model's default system message/prompt.
+	System string `json:"system"`
+
+	// Template overrides the model's default prompt template.
+	Template string `json:"template"`
+
+	// Context is the context parameter returned from a previous call to
+	// Generate call. It can be used to keep a short conversational memory.
+	Context []int `json:"context,omitempty"`
+
+	// Stream specifies whether the response is streaming; it is true by default.
+	Stream *bool `json:"stream,omitempty"`
+
+	// Raw set to true means that no formatting will be applied to the prompt.
+	Raw bool `json:"raw,omitempty"`
+
+	// Format specifies the format to return a response in.
+	Format string `json:"format"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Images is an optional list of base64-encoded images accompanying this
+	// request, for multimodal models.
+	Images []ImageData `json:"images,omitempty"`
+
+	// Options lists model-specific options. For example, temperature can be
+	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
 }
 
