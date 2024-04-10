@@ -259,15 +259,6 @@ func (r Name) DisplayShortest(mask string) string {
 	return r.slice(PartHost, PartTag).String()
 }
 
-// DisplayLong returns the fullest possible display string in form:
-//
-//	<namespace>/<model>:<tag>
-//
-// If any part is missing, it is omitted from the display string.
-func (r Name) DisplayLong() string {
-	return r.slice(PartNamespace, PartTag).String()
-}
-
 var seps = [...]string{
 	PartHost:      "/",
 	PartNamespace: "/",
