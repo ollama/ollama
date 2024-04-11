@@ -21,12 +21,14 @@ amdGPUs() {
         return
     fi
     GPU_LIST=(
-        "gfx803"
         "gfx900"
         "gfx906:xnack-"
         "gfx908:xnack-"
         "gfx90a:xnack+"
         "gfx90a:xnack-"
+        "gfx940"
+        "gfx941"
+        "gfx942"
         "gfx1010"
         "gfx1012"
         "gfx1030"
@@ -55,16 +57,31 @@ init_vars
 git_module_setup
 apply_patches
 
+
+init_vars
 if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
+
+    if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "static" ]; then
+        # Static build for linking into the Go binary
+        init_vars
+        CMAKE_TARGETS="--target llama --target ggml"
+        CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DLLAMA_NATIVE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+        BUILD_DIR="../build/linux/${ARCH}_static"
+        echo "Building static library"
+        build
+    fi
+
+
     # Users building from source can tune the exact flags we pass to cmake for configuring
     # llama.cpp, and we'll build only 1 CPU variant in that case as the default.
     if [ -n "${OLLAMA_CUSTOM_CPU_DEFS}" ]; then
+        init_vars
         echo "OLLAMA_CUSTOM_CPU_DEFS=\"${OLLAMA_CUSTOM_CPU_DEFS}\""
         CMAKE_DEFS="${OLLAMA_CUSTOM_CPU_DEFS} -DCMAKE_POSITION_INDEPENDENT_CODE=on ${CMAKE_DEFS}"
-        BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu"
+        BUILD_DIR="../build/linux/${ARCH}/cpu"
         echo "Building custom CPU"
         build
-        compress_libs
+        compress
     else
         # Darwin Rosetta x86 emulation does NOT support AVX, AVX2, AVX512
         # -DLLAMA_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
@@ -81,37 +98,43 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
             #
             # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
             #
+            init_vars
             CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu"
+            BUILD_DIR="../build/linux/${ARCH}/cpu"
             echo "Building LCD CPU"
             build
-            compress_libs
+            compress
         fi
 
-        if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx" ]; then
+        if [ "${ARCH}" == "x86_64" ]; then
             #
-            # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
-            # Approximately 400% faster than LCD on same CPU
+            # ARM chips in M1/M2/M3-based MACs and NVidia Tegra devices do not currently support avx extensions.
             #
-            init_vars
-            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx"
-            echo "Building AVX CPU"
-            build
-            compress_libs
-        fi
+            if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx" ]; then
+                #
+                # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
+                # Approximately 400% faster than LCD on same CPU
+                #
+                init_vars
+                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+                BUILD_DIR="../build/linux/${ARCH}/cpu_avx"
+                echo "Building AVX CPU"
+                build
+                compress
+            fi
 
-        if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx2" ]; then
-            #
-            # ~2013 CPU Dynamic library
-            # Approximately 10% faster than AVX on same CPU
-            #
-            init_vars
-            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
-            BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cpu_avx2"
-            echo "Building AVX2 CPU"
-            build
-            compress_libs
+            if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx2" ]; then
+                #
+                # ~2013 CPU Dynamic library
+                # Approximately 10% faster than AVX on same CPU
+                #
+                init_vars
+                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
+                BUILD_DIR="../build/linux/${ARCH}/cpu_avx2"
+                echo "Building AVX2 CPU"
+                build
+                compress
+            fi
         fi
     fi
 else
@@ -128,6 +151,11 @@ if [ -z "${CUDA_LIB_DIR}" ] && [ -d /opt/cuda/targets/x86_64-linux/lib ]; then
     CUDA_LIB_DIR=/opt/cuda/targets/x86_64-linux/lib
 fi
 
+# Allow override in case libcudart is in the wrong place
+if [ -z "${CUDART_LIB_DIR}" ]; then
+    CUDART_LIB_DIR="${CUDA_LIB_DIR}"
+fi
+
 if [ -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
@@ -135,27 +163,38 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
     if [ -n "${CUDA_MAJOR}" ]; then
         CUDA_VARIANT=_v${CUDA_MAJOR}
     fi
-    CMAKE_DEFS="-DLLAMA_CUBLAS=on -DLLAMA_CUDA_FORCE_MMQ=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS}"
-    BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/cuda${CUDA_VARIANT}"
+    if [ "${ARCH}" == "arm64" ]; then
+        echo "ARM CPU detected - disabling unsupported AVX instructions"
+        
+        # ARM-based CPUs such as M1 and Tegra do not support AVX extensions.
+        #
+        # CUDA compute < 6.0 lacks proper FP16 support on ARM. 
+        # Disabling has minimal performance effect while maintaining compatibility. 
+        ARM64_DEFS="-DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_CUDA_F16=off"
+    fi
+    CMAKE_DEFS="-DLLAMA_CUDA=on -DLLAMA_CUDA_FORCE_MMQ=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS}"
+    BUILD_DIR="../build/linux/${ARCH}/cuda${CUDA_VARIANT}"
     EXTRA_LIBS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
     build
 
-    # Cary the CUDA libs as payloads to help reduce dependency burden on users
+    # Carry the CUDA libs as payloads to help reduce dependency burden on users
     #
     # TODO - in the future we may shift to packaging these separately and conditionally
     #        downloading them in the install script.
-    DEPS="$(ldd ${BUILD_DIR}/lib/libext_server.so )"
+    DEPS="$(ldd ${BUILD_DIR}/bin/ollama_llama_server )"
     for lib in libcudart.so libcublas.so libcublasLt.so ; do
         DEP=$(echo "${DEPS}" | grep ${lib} | cut -f1 -d' ' | xargs || true)
         if [ -n "${DEP}" -a -e "${CUDA_LIB_DIR}/${DEP}" ]; then
-            cp "${CUDA_LIB_DIR}/${DEP}" "${BUILD_DIR}/lib/"
+            cp "${CUDA_LIB_DIR}/${DEP}" "${BUILD_DIR}/bin/"
         elif [ -e "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" ]; then
-            cp "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" "${BUILD_DIR}/lib/"
+            cp "${CUDA_LIB_DIR}/${lib}.${CUDA_MAJOR}" "${BUILD_DIR}/bin/"
+        elif [ -e "${CUDART_LIB_DIR}/${lib}" ]; then
+            cp -d ${CUDART_LIB_DIR}/${lib}* "${BUILD_DIR}/bin/"
         else
-            cp -d "${CUDA_LIB_DIR}/${lib}*" "${BUILD_DIR}/lib/"
+            cp -d "${CUDA_LIB_DIR}/${lib}*" "${BUILD_DIR}/bin/"
         fi
     done
-    compress_libs
+    compress
 
 fi
 
@@ -173,18 +212,29 @@ fi
 
 if [ -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
-    if [ -f ${ROCM_PATH}/lib/librocm_smi64.so.? ]; then
-        ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocm_smi64.so.? | cut -f3 -d. || true)
+    if [ -f ${ROCM_PATH}/lib/librocblas.so.*.*.????? ]; then
+        ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocblas.so.*.*.????? | cut -f5 -d. || true)
     fi
     init_vars
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
-    BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/rocm${ROCM_VARIANT}"
-    EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,${ROCM_PATH}/lib,-rpath,/opt/amdgpu/lib/x86_64-linux-gnu/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
+    BUILD_DIR="../build/linux/${ARCH}/rocm${ROCM_VARIANT}"
+    EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,\$ORIGIN/../../rocm/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
     build
 
-    # Note: the ROCM libs and runtime library files are too large to embed, so we depend on
-    #       them being present at runtime on the host
-    compress_libs
+    # Record the ROCM dependencies
+    rm -f "${BUILD_DIR}/bin/deps.txt"
+    touch "${BUILD_DIR}/bin/deps.txt"
+    for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu -e libtinfo ); do
+        echo "${dep}" >> "${BUILD_DIR}/bin/deps.txt"
+    done
+    # bomb out if for some reason we didn't get a few deps
+    if [ $(cat "${BUILD_DIR}/bin/deps.txt" | wc -l ) -lt 8 ] ; then
+        cat "${BUILD_DIR}/bin/deps.txt"
+        echo "ERROR: deps file short"
+        exit 1
+    fi
+    compress
 fi
 
 cleanup
+echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"

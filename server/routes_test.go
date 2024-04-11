@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,17 +16,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/llm"
-	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/version"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/version"
 )
-
-func setupServer(t *testing.T) (*Server, error) {
-	t.Helper()
-
-	return NewServer()
-}
 
 func Test_Routes(t *testing.T) {
 	type testCase struct {
@@ -37,13 +31,22 @@ func Test_Routes(t *testing.T) {
 	}
 
 	createTestFile := func(t *testing.T, name string) string {
+		t.Helper()
+
 		f, err := os.CreateTemp(t.TempDir(), name)
 		assert.Nil(t, err)
 		defer f.Close()
 
-		_, err = f.Write([]byte("GGUF"))
+		err = binary.Write(f, binary.LittleEndian, []byte("GGUF"))
 		assert.Nil(t, err)
-		_, err = f.Write([]byte{0x2, 0})
+
+		err = binary.Write(f, binary.LittleEndian, uint32(3))
+		assert.Nil(t, err)
+
+		err = binary.Write(f, binary.LittleEndian, uint64(0))
+		assert.Nil(t, err)
+
+		err = binary.Write(f, binary.LittleEndian, uint64(0))
 		assert.Nil(t, err)
 
 		return f.Name()
@@ -58,7 +61,7 @@ func Test_Routes(t *testing.T) {
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
 		}
-		err = CreateModel(context.TODO(), name, "", commands, fn)
+		err = CreateModel(context.TODO(), name, "", "", commands, fn)
 		assert.Nil(t, err)
 	}
 
@@ -207,9 +210,7 @@ func Test_Routes(t *testing.T) {
 		},
 	}
 
-	s, err := setupServer(t)
-	assert.Nil(t, err)
-
+	s := &Server{}
 	router := s.GenerateRoutes()
 
 	httpSrv := httptest.NewServer(router)
@@ -239,259 +240,4 @@ func Test_Routes(t *testing.T) {
 		}
 
 	}
-}
-
-func Test_ChatPrompt(t *testing.T) {
-	tests := []struct {
-		name     string
-		template string
-		chat     *ChatHistory
-		numCtx   int
-		runner   MockLLM
-		want     string
-		wantErr  string
-	}{
-		{
-			name:     "Single Message",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					{
-						System: "You are a Wizard.",
-						Prompt: "What are the potion ingredients?",
-						First:  true,
-					},
-				},
-				LastSystem: "You are a Wizard.",
-			},
-			numCtx: 1,
-			runner: MockLLM{
-				encoding: []int{1}, // fit the ctxLen
-			},
-			want: "[INST] You are a Wizard. What are the potion ingredients? [/INST]",
-		},
-		{
-			name:     "First Message",
-			template: "[INST] {{if .First}}Hello!{{end}} {{ .System }} {{ .Prompt }} [/INST]",
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					{
-						System:   "You are a Wizard.",
-						Prompt:   "What are the potion ingredients?",
-						Response: "eye of newt",
-						First:    true,
-					},
-					{
-						Prompt: "Anything else?",
-					},
-				},
-				LastSystem: "You are a Wizard.",
-			},
-			numCtx: 2,
-			runner: MockLLM{
-				encoding: []int{1}, // fit the ctxLen
-			},
-			want: "[INST] Hello! You are a Wizard. What are the potion ingredients? [/INST]eye of newt[INST]   Anything else? [/INST]",
-		},
-		{
-			name:     "Message History",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					{
-						System:   "You are a Wizard.",
-						Prompt:   "What are the potion ingredients?",
-						Response: "sugar",
-						First:    true,
-					},
-					{
-						Prompt: "Anything else?",
-					},
-				},
-				LastSystem: "You are a Wizard.",
-			},
-			numCtx: 4,
-			runner: MockLLM{
-				encoding: []int{1}, // fit the ctxLen, 1 for each message
-			},
-			want: "[INST] You are a Wizard. What are the potion ingredients? [/INST]sugar[INST]  Anything else? [/INST]",
-		},
-		{
-			name:     "Assistant Only",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					{
-						Response: "everything nice",
-						First:    true,
-					},
-				},
-			},
-			numCtx: 1,
-			runner: MockLLM{
-				encoding: []int{1},
-			},
-			want: "[INST]   [/INST]everything nice",
-		},
-		{
-			name:     "Message History Truncated, No System",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					{
-						Prompt:   "What are the potion ingredients?",
-						Response: "sugar",
-						First:    true,
-					},
-					{
-						Prompt:   "Anything else?",
-						Response: "spice",
-					},
-					{
-						Prompt: "... and?",
-					},
-				},
-			},
-			numCtx: 2, // only 1 message from history and most recent message
-			runner: MockLLM{
-				encoding: []int{1},
-			},
-			want: "[INST]  Anything else? [/INST]spice[INST]  ... and? [/INST]",
-		},
-		{
-			name:     "System is Preserved when Truncated",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					{
-						Prompt:   "What are the magic words?",
-						Response: "abracadabra",
-					},
-					{
-						Prompt: "What is the spell for invisibility?",
-					},
-				},
-				LastSystem: "You are a wizard.",
-			},
-			numCtx: 2,
-			runner: MockLLM{
-				encoding: []int{1},
-			},
-			want: "[INST] You are a wizard. What is the spell for invisibility? [/INST]",
-		},
-		{
-			name:     "System is Preserved when Length Exceeded",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					{
-						Prompt:   "What are the magic words?",
-						Response: "abracadabra",
-					},
-					{
-						Prompt: "What is the spell for invisibility?",
-					},
-				},
-				LastSystem: "You are a wizard.",
-			},
-			numCtx: 1,
-			runner: MockLLM{
-				encoding: []int{1},
-			},
-			want: "[INST] You are a wizard. What is the spell for invisibility? [/INST]",
-		},
-		{
-			name:     "First is Preserved when Truncated",
-			template: "[INST] {{ if .First }}{{ .System }} {{ end }}{{ .Prompt }} [/INST]",
-
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					// first message omitted for test
-					{
-						Prompt:   "Do you have a magic hat?",
-						Response: "Of course.",
-					},
-					{
-						Prompt: "What is the spell for invisibility?",
-					},
-				},
-				LastSystem: "You are a wizard.",
-			},
-			numCtx: 3, // two most recent messages and room for system message
-			runner: MockLLM{
-				encoding: []int{1},
-			},
-			want: "[INST] You are a wizard. Do you have a magic hat? [/INST]Of course.[INST] What is the spell for invisibility? [/INST]",
-		},
-		{
-			name:     "Most recent message is returned when longer than ctxLen",
-			template: "[INST] {{ .Prompt }} [/INST]",
-
-			chat: &ChatHistory{
-				Prompts: []PromptVars{
-					{
-						Prompt: "What is the spell for invisibility?",
-						First:  true,
-					},
-				},
-			},
-			numCtx: 1, // two most recent messages
-			runner: MockLLM{
-				encoding: []int{1, 2},
-			},
-			want: "[INST] What is the spell for invisibility? [/INST]",
-		},
-	}
-
-	for _, testCase := range tests {
-		tt := testCase
-		m := &Model{
-			Template: tt.template,
-		}
-		t.Run(tt.name, func(t *testing.T) {
-			loaded.runner = &tt.runner
-			loaded.Options = &api.Options{
-				Runner: api.Runner{
-					NumCtx: tt.numCtx,
-				},
-			}
-			// TODO: add tests for trimming images
-			got, _, err := trimmedPrompt(context.Background(), tt.chat, m)
-			if tt.wantErr != "" {
-				if err == nil {
-					t.Errorf("ChatPrompt() expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf("ChatPrompt() error = %v, wantErr %v", err, tt.wantErr)
-				}
-			}
-			if got != tt.want {
-				t.Errorf("ChatPrompt() got = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-type MockLLM struct {
-	encoding []int
-}
-
-func (llm *MockLLM) Predict(ctx context.Context, pred llm.PredictOpts, fn func(llm.PredictResult)) error {
-	return nil
-}
-
-func (llm *MockLLM) Encode(ctx context.Context, prompt string) ([]int, error) {
-	return llm.encoding, nil
-}
-
-func (llm *MockLLM) Decode(ctx context.Context, tokens []int) (string, error) {
-	return "", nil
-}
-
-func (llm *MockLLM) Embedding(ctx context.Context, input string) ([]float64, error) {
-	return []float64{}, nil
-}
-
-func (llm *MockLLM) Close() {
-	// do nothing
 }

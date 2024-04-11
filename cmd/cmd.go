@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -14,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -22,18 +22,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/containerd/console"
+
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/format"
-	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/progress"
-	"github.com/jmorganca/ollama/server"
-	"github.com/jmorganca/ollama/version"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/server"
+	"github.com/ollama/ollama/version"
 )
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
@@ -86,22 +88,82 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = filepath.Join(filepath.Dir(filename), path)
 			}
 
-			bin, err := os.Open(path)
+			fi, err := os.Stat(path)
 			if errors.Is(err, os.ErrNotExist) && c.Name == "model" {
 				continue
 			} else if err != nil {
 				return err
 			}
-			defer bin.Close()
 
-			hash := sha256.New()
-			if _, err := io.Copy(hash, bin); err != nil {
-				return err
+			// TODO make this work w/ adapters
+			if fi.IsDir() {
+				tf, err := os.CreateTemp("", "ollama-tf")
+				if err != nil {
+					return err
+				}
+				defer os.RemoveAll(tf.Name())
+
+				zf := zip.NewWriter(tf)
+
+				files, err := filepath.Glob(filepath.Join(path, "model-*.safetensors"))
+				if err != nil {
+					return err
+				}
+
+				if len(files) == 0 {
+					return fmt.Errorf("no safetensors files were found in '%s'", path)
+				}
+
+				// add the safetensor config file + tokenizer
+				files = append(files, filepath.Join(path, "config.json"))
+				files = append(files, filepath.Join(path, "added_tokens.json"))
+				files = append(files, filepath.Join(path, "tokenizer.model"))
+
+				for _, fn := range files {
+					f, err := os.Open(fn)
+					if os.IsNotExist(err) && strings.HasSuffix(fn, "added_tokens.json") {
+						continue
+					} else if err != nil {
+						return err
+					}
+
+					fi, err := f.Stat()
+					if err != nil {
+						return err
+					}
+
+					h, err := zip.FileInfoHeader(fi)
+					if err != nil {
+						return err
+					}
+
+					h.Name = filepath.Base(fn)
+					h.Method = zip.Store
+
+					w, err := zf.CreateHeader(h)
+					if err != nil {
+						return err
+					}
+
+					_, err = io.Copy(w, f)
+					if err != nil {
+						return err
+					}
+
+				}
+
+				if err := zf.Close(); err != nil {
+					return err
+				}
+
+				if err := tf.Close(); err != nil {
+					return err
+				}
+				path = tf.Name()
 			}
-			bin.Seek(0, io.SeekStart)
 
-			digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
-			if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
+			digest, err := createBlob(cmd, client, path)
+			if err != nil {
 				return err
 			}
 
@@ -132,7 +194,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile)}
+	quantization, _ := cmd.Flags().GetString("quantization")
+
+	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile), Quantization: quantization}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -140,7 +204,38 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, error) {
+	bin, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer bin.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, bin); err != nil {
+		return "", err
+	}
+
+	if _, err := bin.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+
+	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
+	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
+		return "", err
+	}
+	return digest, nil
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
+	if os.Getenv("OLLAMA_MODELS") != "" {
+		return errors.New("OLLAMA_MODELS must only be set for 'ollama serve'")
+	}
+
+	if err := checkServerHeartbeat(cmd, args); err != nil {
+		return err
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -685,7 +780,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, err := net.SplitHostPort(os.Getenv("OLLAMA_HOST"))
+	host, port, err := net.SplitHostPort(strings.Trim(os.Getenv("OLLAMA_HOST"), "\"'"))
 	if err != nil {
 		host, port = "127.0.0.1", "11434"
 		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
@@ -717,59 +812,42 @@ func initializeKeypair() error {
 	_, err = os.Stat(privKeyPath)
 	if os.IsNotExist(err) {
 		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
-		_, privKey, err := ed25519.GenerateKey(rand.Reader)
+		cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return err
 		}
 
-		privKeyBytes, err := format.OpenSSHPrivateKey(privKey, "")
+		privateKeyBytes, err := ssh.MarshalPrivateKey(cryptoPrivateKey, "")
 		if err != nil {
 			return err
 		}
 
-		err = os.MkdirAll(filepath.Dir(privKeyPath), 0o755)
-		if err != nil {
+		if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
 			return fmt.Errorf("could not create directory %w", err)
 		}
 
-		err = os.WriteFile(privKeyPath, pem.EncodeToMemory(privKeyBytes), 0o600)
+		if err := os.WriteFile(privKeyPath, pem.EncodeToMemory(privateKeyBytes), 0o600); err != nil {
+			return err
+		}
+
+		sshPublicKey, err := ssh.NewPublicKey(cryptoPublicKey)
 		if err != nil {
 			return err
 		}
 
-		sshPrivateKey, err := ssh.NewSignerFromKey(privKey)
-		if err != nil {
+		publicKeyBytes := ssh.MarshalAuthorizedKey(sshPublicKey)
+
+		if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o644); err != nil {
 			return err
 		}
 
-		pubKeyData := ssh.MarshalAuthorizedKey(sshPrivateKey.PublicKey())
-
-		err = os.WriteFile(pubKeyPath, pubKeyData, 0o644)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("Your new public key is: \n\n%s\n", string(pubKeyData))
+		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
 	}
 	return nil
 }
 
-func startMacApp(ctx context.Context, client *api.Client) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	link, err := os.Readlink(exe)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(link, "Ollama.app") {
-		return fmt.Errorf("could not find ollama app")
-	}
-	path := strings.Split(link, "Ollama.app")
-	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
-		return err
-	}
+//nolint:unused
+func waitForServer(ctx context.Context, client *api.Client) error {
 	// wait for the server to start
 	timeout := time.After(5 * time.Second)
 	tick := time.Tick(500 * time.Millisecond)
@@ -783,6 +861,7 @@ func startMacApp(ctx context.Context, client *api.Client) error {
 			}
 		}
 	}
+
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
@@ -791,15 +870,11 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if err := client.Heartbeat(cmd.Context()); err != nil {
-		if !strings.Contains(err.Error(), "connection refused") {
+		if !strings.Contains(err.Error(), " refused") {
 			return err
 		}
-		if runtime.GOOS == "darwin" {
-			if err := startMacApp(cmd.Context(), client); err != nil {
-				return fmt.Errorf("could not connect to ollama app, is it running?")
-			}
-		} else {
-			return fmt.Errorf("could not connect to ollama server, run 'ollama serve' to start it")
+		if err := startApp(cmd.Context(), client); err != nil {
+			return fmt.Errorf("could not connect to ollama app, is it running?")
 		}
 	}
 	return nil
@@ -825,9 +900,21 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
+func appendHostEnvDocs(cmd *cobra.Command) {
+	const hostEnvDocs = `
+Environment Variables:
+      OLLAMA_HOST        The host:port or base URL of the Ollama server (e.g. http://localhost:11434)
+`
+	cmd.SetUsageTemplate(cmd.UsageTemplate() + hostEnvDocs)
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
+
+	if runtime.GOOS == "windows" {
+		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
+	}
 
 	rootCmd := &cobra.Command{
 		Use:           "ollama",
@@ -858,6 +945,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
+	createCmd.Flags().StringP("quantization", "q", "", "Quantization level.")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -874,18 +962,16 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
 
 	runCmd := &cobra.Command{
-		Use:     "run MODEL [PROMPT]",
-		Short:   "Run a model",
-		Args:    cobra.MinimumNArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    RunHandler,
+		Use:   "run MODEL [PROMPT]",
+		Short: "Run a model",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  RunHandler,
 	}
 
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
-
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
@@ -893,6 +979,15 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
+	serveCmd.SetUsageTemplate(serveCmd.UsageTemplate() + `
+Environment Variables:
+
+    OLLAMA_HOST         The host:port to bind to (default "127.0.0.1:11434")
+    OLLAMA_ORIGINS      A comma separated list of allowed origins.
+    OLLAMA_MODELS       The path to the models directory (default is "~/.ollama/models")
+    OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default is "5m")
+    OLLAMA_DEBUG        Set to 1 to enable additional debug logging
+`)
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
@@ -921,7 +1016,6 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
-
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE TARGET",
 		Short:   "Copy a model",
@@ -936,6 +1030,19 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    DeleteHandler,
+	}
+
+	for _, cmd := range []*cobra.Command{
+		createCmd,
+		showCmd,
+		runCmd,
+		pullCmd,
+		pushCmd,
+		listCmd,
+		copyCmd,
+		deleteCmd,
+	} {
+		appendHostEnvDocs(cmd)
 	}
 
 	rootCmd.AddCommand(

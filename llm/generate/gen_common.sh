@@ -1,4 +1,4 @@
-# common logic accross linux and darwin
+# common logic across linux and darwin
 
 init_vars() {
     case "${GOARCH}" in
@@ -14,7 +14,7 @@ init_vars() {
 
     LLAMACPP_DIR=../llama.cpp
     CMAKE_DEFS=""
-    CMAKE_TARGETS="--target ext_server"
+    CMAKE_TARGETS="--target ollama_llama_server"
     if echo "${CGO_CFLAGS}" | grep -- '-g' >/dev/null; then
         CMAKE_DEFS="-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_VERBOSE_MAKEFILE=on -DLLAMA_GPROF=on -DLLAMA_SERVER_VERBOSE=on ${CMAKE_DEFS}"
     else
@@ -39,7 +39,7 @@ init_vars() {
     *)
         ;;
     esac
-    if [ -z "${CMAKE_CUDA_ARCHITECTURES}" ] ; then 
+    if [ -z "${CMAKE_CUDA_ARCHITECTURES}" ] ; then
         CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
     fi
 }
@@ -61,8 +61,8 @@ git_module_setup() {
 
 apply_patches() {
     # Wire up our CMakefile
-    if ! grep ollama ${LLAMACPP_DIR}/examples/server/CMakeLists.txt; then
-        echo 'include (../../../ext_server/CMakeLists.txt) # ollama' >>${LLAMACPP_DIR}/examples/server/CMakeLists.txt
+    if ! grep ollama ${LLAMACPP_DIR}/CMakeLists.txt; then
+        echo 'add_subdirectory(../ext_server ext_server) # ollama' >>${LLAMACPP_DIR}/CMakeLists.txt
     fi
 
     if [ -n "$(ls -A ../patches/*.diff)" ]; then
@@ -76,35 +76,29 @@ apply_patches() {
             (cd ${LLAMACPP_DIR} && git apply ${patch})
         done
     fi
-
-    # Avoid duplicate main symbols when we link into the cgo binary
-    sed -e 's/int main(/int __main(/g' <${LLAMACPP_DIR}/examples/server/server.cpp >${LLAMACPP_DIR}/examples/server/server.cpp.tmp &&
-        mv ${LLAMACPP_DIR}/examples/server/server.cpp.tmp ${LLAMACPP_DIR}/examples/server/server.cpp
 }
 
 build() {
     cmake -S ${LLAMACPP_DIR} -B ${BUILD_DIR} ${CMAKE_DEFS}
     cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8
-    mkdir -p ${BUILD_DIR}/lib/
-    g++ -fPIC -g -shared -o ${BUILD_DIR}/lib/libext_server.${LIB_EXT} \
-        ${GCC_ARCH} \
-        ${WHOLE_ARCHIVE} ${BUILD_DIR}/examples/server/libext_server.a ${NO_WHOLE_ARCHIVE} \
-        ${BUILD_DIR}/common/libcommon.a \
-        ${BUILD_DIR}/libllama.a \
-        -Wl,-rpath,\$ORIGIN \
-        -lpthread -ldl -lm \
-        ${EXTRA_LIBS}
 }
 
-compress_libs() {
+compress() {
     echo "Compressing payloads to reduce overall binary size..."
     pids=""
-    rm -rf ${BUILD_DIR}/lib/*.${LIB_EXT}*.gz
-    for lib in ${BUILD_DIR}/lib/*.${LIB_EXT}* ; do
-        gzip --best -f ${lib} &
+    rm -rf ${BUILD_DIR}/bin/*.gz
+    for f in ${BUILD_DIR}/bin/* ; do
+        gzip -n --best -f ${f} &
         pids+=" $!"
     done
-    echo 
+    # check for lib directory
+    if [ -d ${BUILD_DIR}/lib ]; then
+        for f in ${BUILD_DIR}/lib/* ; do
+            gzip -n --best -f ${f} &
+            pids+=" $!"
+        done
+    fi
+    echo
     for pid in ${pids}; do
         wait $pid
     done
@@ -113,7 +107,7 @@ compress_libs() {
 
 # Keep the local tree clean after we're done with the build
 cleanup() {
-    (cd ${LLAMACPP_DIR}/examples/server/ && git checkout CMakeLists.txt server.cpp)
+    (cd ${LLAMACPP_DIR}/ && git checkout CMakeLists.txt)
 
     if [ -n "$(ls -A ../patches/*.diff)" ]; then
         for patch in ../patches/*.diff; do

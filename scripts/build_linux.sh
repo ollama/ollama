@@ -3,7 +3,7 @@
 set -eu
 
 export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
-export GOFLAGS="'-ldflags=-w -s \"-X=github.com/jmorganca/ollama/version.Version=$VERSION\" \"-X=github.com/jmorganca/ollama/server.mode=release\"'"
+export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$VERSION\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
 
 BUILD_ARCH=${BUILD_ARCH:-"amd64 arm64"}
 export AMDGPU_TARGETS=${AMDGPU_TARGETS:=""}
@@ -21,6 +21,11 @@ for TARGETARCH in ${BUILD_ARCH}; do
         -t builder:$TARGETARCH \
         .
     docker create --platform linux/$TARGETARCH --name builder-$TARGETARCH builder:$TARGETARCH
-    docker cp builder-$TARGETARCH:/go/src/github.com/jmorganca/ollama/ollama ./dist/ollama-linux-$TARGETARCH
+    docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/ollama ./dist/ollama-linux-$TARGETARCH
+
+    if [ "$TARGETARCH" = "amd64" ]; then
+        docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/dist/deps/ ./dist/
+    fi
+
     docker rm builder-$TARGETARCH
 done
