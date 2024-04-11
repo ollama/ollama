@@ -13,6 +13,7 @@ import (
 
 	"github.com/nlpodyssey/gopickle/pytorch"
 	"github.com/nlpodyssey/gopickle/types"
+	"github.com/x448/float16"
 
 	"github.com/ollama/ollama/llm"
 )
@@ -246,9 +247,13 @@ func (r torchWriterTo) WriteTo(w io.Writer) (n int64, err error) {
 				return 0, err
 			}
 		case 1:
-			data := r.storage.(*pytorch.HalfStorage).UData
-			slog.Debug(fmt.Sprintf("%35s F16 (%d)", r.t.Name, len(data)))
-			if err := binary.Write(w, r.bo, data); err != nil {
+			data := r.storage.(*pytorch.HalfStorage).Data
+			tData := make([]uint16, len(data))
+			for cnt, v := range data {
+				tData[cnt] = uint16(float16.Fromfloat32(v))
+			}
+			slog.Debug(fmt.Sprintf("%35s F16 (%d)", r.t.Name, len(tData)))
+			if err := binary.Write(w, r.bo, tData); err != nil {
 				return 0, err
 			}
 		}
