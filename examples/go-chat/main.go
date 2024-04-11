@@ -16,6 +16,10 @@ func main() {
 
 	messages := []api.Message{
 		api.Message{
+			Role:    "system",
+			Content: "Provide very brief, concise responses",
+		},
+		api.Message{
 			Role:    "user",
 			Content: "Name some unusual animals",
 		},
@@ -25,7 +29,7 @@ func main() {
 		},
 		api.Message{
 			Role:    "user",
-			Content: "which of these is the cuddliest?",
+			Content: "which of these is the most dangerous?",
 		},
 	}
 
