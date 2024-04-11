@@ -238,24 +238,17 @@ func (r torchWriterTo) WriteTo(w io.Writer) (n int64, err error) {
 		slog.Warn(fmt.Sprintf("unexpected storage found for layer '%s'; skipping", r.t.Name))
 		return 0, nil
 	case *pytorch.HalfStorage:
-		data := r.storage.(*pytorch.HalfStorage).Data
-		udata := r.storage.(*pytorch.HalfStorage).UData
 		switch r.t.Kind {
 		case 0:
-			slog.Debug(fmt.Sprintf("write %35s F32 size = (%d)", r.t.Name, len(data)))
-			if err := binary.Write(w, r.bo, r.storage.(*pytorch.HalfStorage).Data); err != nil {
+			data := r.storage.(*pytorch.HalfStorage).Data
+			slog.Debug(fmt.Sprintf("%35s F32 (%d)", r.t.Name, len(data)))
+			if err := binary.Write(w, r.bo, data); err != nil {
 				return 0, err
 			}
 		case 1:
-			slog.Debug(fmt.Sprintf("write %35s F16 size = (%d)", r.t.Name, len(data)))
-			/*
-				tempBuf := make([]uint16, len(r.storage.(*pytorch.HalfStorage).Data))
-				for cnt, v := range data {
-					tDataF16 := float16.Fromfloat32(v)
-					tempBuf[cnt] = uint16(tDataF16)
-				}
-			*/
-			if err := binary.Write(w, r.bo, udata); err != nil {
+			data := r.storage.(*pytorch.HalfStorage).UData
+			slog.Debug(fmt.Sprintf("%35s F16 (%d)", r.t.Name, len(data)))
+			if err := binary.Write(w, r.bo, data); err != nil {
 				return 0, err
 			}
 		}
