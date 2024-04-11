@@ -42,7 +42,7 @@ ARG CGO_CFLAGS
 ARG AMDGPU_TARGETS
 RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 RUN mkdir /tmp/scratch && \
-    for dep in $(cat /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/x86_64/rocm*/lib/deps.txt) ; do \
+    for dep in $(zcat /go/src/github.com/ollama/ollama/llm/build/linux/x86_64/rocm*/bin/deps.txt.gz) ; do \
         cp ${dep} /tmp/scratch/ || exit 1 ; \
     done && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd /tmp/scratch/ && tar xf - ) && \
