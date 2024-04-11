@@ -4,8 +4,6 @@ go 1.22
 
 toolchain go1.22.0
 
-replace github.com/nlpodyssey/gopickle v0.3.0 => /Users/pdevine/git/gopickle
-
 require (
 	github.com/containerd/console v1.0.3
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
