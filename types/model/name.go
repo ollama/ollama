@@ -144,7 +144,7 @@ type Name struct {
 // [Name.String] will not print a "+" if the build is empty.
 //
 // For more about filling in missing parts, see [Fill].
-func ParseNameFill(s, defaults string) Name {
+func ParseName(s, defaults string) Name {
 	var r Name
 	parts(s)(func(kind PartKind, part string) bool {
 		if kind == PartInvalid {
@@ -162,18 +162,13 @@ func ParseNameFill(s, defaults string) Name {
 		if defaults == "" {
 			return r
 		}
-		return Fill(r, ParseNameFill(defaults, ""))
+		return Fill(r, ParseName(defaults, ""))
 	}
 	return Name{}
 }
 
-// ParseName is equal to ParseNameFill(s, DefaultFill).
-func ParseName(s string) Name {
-	return ParseNameFill(s, DefaultFill)
-}
-
 func MustParseNameFill(s, defaults string) Name {
-	r := ParseNameFill(s, "")
+	r := ParseName(s, "")
 	if !r.IsValid() {
 		panic("model.MustParseName: invalid name: " + s)
 	}
@@ -231,6 +226,8 @@ func (r Name) slice(from, to PartKind) Name {
 	return v
 }
 
+const empty = "?/?/?:?+?@?"
+
 // DisplayShortest returns the shortest possible display string in form:
 //
 //	[host/][<namespace>/]<model>[:<tag>]
@@ -240,7 +237,7 @@ func (r Name) slice(from, to PartKind) Name {
 // The tag is omitted if it is the mask tag is the same as r.
 func (r Name) DisplayShortest(mask string) string {
 	mask = cmp.Or(mask, DefaultMask)
-	d := ParseName(mask)
+	d := ParseName(mask, empty)
 	if !d.IsValid() {
 		panic("mask is an invalid Name")
 	}

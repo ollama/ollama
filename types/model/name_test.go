@@ -111,11 +111,11 @@ func TestNameConsecutiveDots(t *testing.T) {
 	for i := 1; i < 10; i++ {
 		s := strings.Repeat(".", i)
 		if i > 1 {
-			if g := ParseNameFill(s, "").String(); g != "" {
+			if g := ParseName(s, "").String(); g != "" {
 				t.Errorf("ParseName(%q) = %q; want empty string", s, g)
 			}
 		} else {
-			if g := ParseNameFill(s, "").String(); g != s {
+			if g := ParseName(s, "").String(); g != s {
 				t.Errorf("ParseName(%q) = %q; want %q", s, g, s)
 			}
 		}
@@ -148,14 +148,14 @@ func TestParseName(t *testing.T) {
 			s := prefix + baseName
 
 			t.Run(s, func(t *testing.T) {
-				name := ParseNameFill(s, "")
+				name := ParseName(s, "")
 				got := fieldsFromName(name)
 				if got != want {
 					t.Errorf("ParseName(%q) = %q; want %q", s, got, want)
 				}
 
 				// test round-trip
-				if !ParseNameFill(name.String(), "").EqualFold(name) {
+				if !ParseName(name.String(), "").EqualFold(name) {
 					t.Errorf("ParseName(%q).String() = %s; want %s", s, name.String(), baseName)
 				}
 			})
@@ -179,7 +179,7 @@ func TestCompleteWithAndWithoutBuild(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
-			p := ParseNameFill(tt.in, "")
+			p := ParseName(tt.in, "")
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
 			if g := p.IsComplete(); g != tt.complete {
 				t.Errorf("Complete(%q) = %v; want %v", tt.in, g, tt.complete)
@@ -194,7 +194,7 @@ func TestCompleteWithAndWithoutBuild(t *testing.T) {
 	// inlined when used in Complete, preventing any allocations or
 	// escaping to the heap.
 	allocs := testing.AllocsPerRun(1000, func() {
-		keep(ParseNameFill("complete.com/x/mistral:latest+Q4_0", "").IsComplete())
+		keep(ParseName("complete.com/x/mistral:latest+Q4_0", "").IsComplete())
 	})
 	if allocs > 0 {
 		t.Errorf("Complete allocs = %v; want 0", allocs)
@@ -211,7 +211,7 @@ func TestNameLogValue(t *testing.T) {
 		t.Run(s, func(t *testing.T) {
 			var b bytes.Buffer
 			log := slog.New(slog.NewTextHandler(&b, nil))
-			name := ParseNameFill(s, "")
+			name := ParseName(s, "")
 			log.Info("", "name", name)
 			want := fmt.Sprintf("name=%s", name.GoString())
 			got := b.String()
@@ -258,7 +258,7 @@ func TestNameGoString(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			p := ParseNameFill(tt.in, "")
+			p := ParseName(tt.in, "")
 			tt.wantGoString = cmp.Or(tt.wantGoString, tt.in)
 			if g := fmt.Sprintf("%#v", p); g != tt.wantGoString {
 				t.Errorf("GoString() = %q; want %q", g, tt.wantGoString)
@@ -309,7 +309,7 @@ func TestDisplayShortest(t *testing.T) {
 				}
 			}()
 
-			p := ParseNameFill(tt.in, "")
+			p := ParseName(tt.in, "")
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
 			if g := p.DisplayShortest(tt.mask); g != tt.want {
 				t.Errorf("got = %q; want %q", g, tt.want)
@@ -320,7 +320,7 @@ func TestDisplayShortest(t *testing.T) {
 
 func TestParseNameAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
-		keep(ParseNameFill("example.com/mistral:7b+Q4_0", ""))
+		keep(ParseName("example.com/mistral:7b+Q4_0", ""))
 	})
 	if allocs > 0 {
 		t.Errorf("ParseName allocs = %v; want 0", allocs)
@@ -331,7 +331,7 @@ func BenchmarkParseName(b *testing.B) {
 	b.ReportAllocs()
 
 	for range b.N {
-		keep(ParseNameFill("example.com/mistral:7b+Q4_0", ""))
+		keep(ParseName("example.com/mistral:7b+Q4_0", ""))
 	}
 }
 
@@ -346,7 +346,7 @@ func FuzzParseName(f *testing.F) {
 	f.Add(":@!@")
 	f.Add("...")
 	f.Fuzz(func(t *testing.T, s string) {
-		r0 := ParseNameFill(s, "")
+		r0 := ParseName(s, "")
 
 		if strings.Contains(s, "..") && !r0.IsZero() {
 			t.Fatalf("non-zero value for path with '..': %q", s)
@@ -369,7 +369,7 @@ func FuzzParseName(f *testing.F) {
 			t.Errorf("String() did not round-trip with case insensitivity: %q\ngot  = %q\nwant = %q", s, r0.String(), s)
 		}
 
-		r1 := ParseNameFill(r0.String(), "")
+		r1 := ParseName(r0.String(), "")
 		if !r0.EqualFold(r1) {
 			t.Errorf("round-trip mismatch: %+v != %+v", r0, r1)
 		}
@@ -389,7 +389,7 @@ func TestFill(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.dst, func(t *testing.T) {
-			r := Fill(ParseNameFill(tt.dst, ""), ParseNameFill(tt.src, ""))
+			r := Fill(ParseName(tt.dst, ""), ParseName(tt.src, ""))
 			if r.String() != tt.want {
 				t.Errorf("Fill(%q, %q) = %q; want %q", tt.dst, tt.src, r, tt.want)
 			}
@@ -398,7 +398,7 @@ func TestFill(t *testing.T) {
 }
 
 func TestNameStringAllocs(t *testing.T) {
-	name := ParseNameFill("example.com/ns/mistral:latest+Q4_0", "")
+	name := ParseName("example.com/ns/mistral:latest+Q4_0", "")
 	allocs := testing.AllocsPerRun(1000, func() {
 		keep(name.String())
 	})
@@ -408,8 +408,8 @@ func TestNameStringAllocs(t *testing.T) {
 }
 
 func ExampleFill() {
-	defaults := ParseNameFill("registry.ollama.com/library/PLACEHOLDER:latest+Q4_0", "")
-	r := Fill(ParseNameFill("mistral", ""), defaults)
+	defaults := ParseName("registry.ollama.com/library/PLACEHOLDER:latest+Q4_0", "")
+	r := Fill(ParseName("mistral", ""), defaults)
 	fmt.Println(r)
 
 	// Output:
@@ -420,12 +420,12 @@ func ExampleName_MapHash() {
 	m := map[uint64]bool{}
 
 	// key 1
-	m[ParseNameFill("mistral:latest+q4", "").MapHash()] = true
-	m[ParseNameFill("miSTRal:latest+Q4", "").MapHash()] = true
-	m[ParseNameFill("mistral:LATest+Q4", "").MapHash()] = true
+	m[ParseName("mistral:latest+q4", "").MapHash()] = true
+	m[ParseName("miSTRal:latest+Q4", "").MapHash()] = true
+	m[ParseName("mistral:LATest+Q4", "").MapHash()] = true
 
 	// key 2
-	m[ParseNameFill("mistral:LATest", "").MapHash()] = true
+	m[ParseName("mistral:LATest", "").MapHash()] = true
 
 	fmt.Println(len(m))
 	// Output:
@@ -434,9 +434,9 @@ func ExampleName_MapHash() {
 
 func ExampleName_CompareFold_sort() {
 	names := []Name{
-		ParseNameFill("mistral:latest", ""),
-		ParseNameFill("mistRal:7b+q4", ""),
-		ParseNameFill("MIstral:7b", ""),
+		ParseName("mistral:latest", ""),
+		ParseName("mistRal:7b+q4", ""),
+		ParseName("MIstral:7b", ""),
 	}
 
 	slices.SortFunc(names, Name.CompareFold)
@@ -457,7 +457,7 @@ func ExampleName_completeAndResolved() {
 		"x/y/z:latest+q4_0",
 		"@sha123-1",
 	} {
-		name := ParseNameFill(s, "")
+		name := ParseName(s, "")
 		fmt.Printf("complete:%v resolved:%v  digest:%s\n", name.IsComplete(), name.IsResolved(), name.Digest())
 	}
 
@@ -468,7 +468,7 @@ func ExampleName_completeAndResolved() {
 }
 
 func ExampleName_DisplayShortest() {
-	name := ParseNameFill("example.com/jmorganca/mistral:latest+Q4_0", "")
+	name := ParseName("example.com/jmorganca/mistral:latest+Q4_0", "")
 
 	fmt.Println(name.DisplayShortest("example.com/jmorganca/_:latest"))
 	fmt.Println(name.DisplayShortest("example.com/_/_:latest"))
@@ -476,7 +476,7 @@ func ExampleName_DisplayShortest() {
 	fmt.Println(name.DisplayShortest("_/_/_:_"))
 
 	// Default
-	name = ParseNameFill("registry.ollama.ai/library/mistral:latest+Q4_0", "")
+	name = ParseName("registry.ollama.ai/library/mistral:latest+Q4_0", "")
 	fmt.Println(name.DisplayShortest(""))
 
 	// Output:
