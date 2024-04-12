@@ -117,9 +117,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 					}
 				}
 
-				for _, f := range tfiles {
-					files = append(files, f)
-				}
+				files = append(files, tfiles...)
 
 				if len(files) == 0 {
 					return fmt.Errorf("no models were found in '%s'", path)

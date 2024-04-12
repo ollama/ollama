@@ -516,7 +516,7 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 	}
 
 	kvCheck := make(map[string]bool)
-	for k, _ := range kv {
+	for k := range kv {
 		kvCheck[k] = false
 	}
 
@@ -580,7 +580,7 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 	}
 
 	for k, v := range kvCheck {
-		if v == false {
+		if !v {
 			return fmt.Errorf("Didn't know how to write kv %s", k)
 		}
 	}
