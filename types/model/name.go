@@ -7,6 +7,8 @@ import (
 	"hash/maphash"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -159,7 +161,6 @@ func ParseName(s, fill string) Name {
 		return true
 	})
 	if r.IsValid() || r.IsResolved() {
-		fill = cmp.Or(fill, FillDefault)
 		return fillName(r, fill)
 	}
 	return Name{}
@@ -195,7 +196,11 @@ func MustParseName(s, defaults string) Name {
 //
 // It skipps fill parts that are "?".
 func fillName(r Name, fill string) Name {
+	fill = cmp.Or(fill, FillDefault)
 	f := parseMask(fill)
+	if fill != FillNothing && f.IsZero() {
+		panic("invalid fill")
+	}
 	for i := range r.parts {
 		if f.parts[i] == "?" {
 			continue
@@ -267,11 +272,8 @@ func (r Name) slice(from, to PartKind) Name {
 //
 // If mask is the empty string, then [MaskDefault] is used.
 //
-// # Safety
-//
-// To avoid unsafe behavior, DisplayShortest will panic if r is the zero
-// value to prevent the returns of a "" string. Callers should consult
-// [Name.IsValid] before calling this method.
+// DisplayShortest panics if the mask is not the empty string, MaskNothing, and
+// invalid.
 //
 // # Builds
 //
@@ -280,10 +282,7 @@ func (r Name) slice(from, to PartKind) Name {
 func (r Name) DisplayShortest(mask string) string {
 	mask = cmp.Or(mask, MaskDefault)
 	d := parseMask(mask)
-	if d.IsZero() {
-		panic(fmt.Errorf("invalid mask %q", mask))
-	}
-	if r.IsZero() {
+	if mask != MaskNothing && r.IsZero() {
 		panic("invalid Name")
 	}
 	for i := range PartTag {
@@ -298,7 +297,12 @@ func (r Name) DisplayShortest(mask string) string {
 		}
 		r.parts[i] = ""
 	}
-	return r.slice(PartHost, PartTag).String()
+	return r.slice(PartHost, PartTag).DisplayLong()
+}
+
+// DisplayLongest returns the result of r.DisplayShortest(MaskNothing).
+func (r Name) DisplayLongest() string {
+	return r.DisplayShortest(MaskNothing)
 }
 
 var seps = [...]string{
@@ -345,15 +349,12 @@ var builderPool = sync.Pool{
 	},
 }
 
-// String returns the fullest possible display string in form:
+// DisplayLong returns the fullest possible display string in form:
 //
 //	<host>/<namespace>/<model>:<tag>+<build>
 //
 // If any part is missing, it is omitted from the display string.
-//
-// For the fullest possible display string without the build, use
-// [Name.DisplayFullest].
-func (r Name) String() string {
+func (r Name) DisplayLong() string {
 	b := builderPool.Get().(*strings.Builder)
 	defer builderPool.Put(b)
 	b.Reset()
@@ -363,14 +364,14 @@ func (r Name) String() string {
 }
 
 // GoString implements fmt.GoStringer. It returns a string suitable for
-// debugging and logging. It is similar to [Name.String] but it always
+// debugging and logging. It is similar to [Name.DisplayLong] but it always
 // returns a string that includes all parts of the Name, with missing parts
 // replaced with a ("?").
 func (r Name) GoString() string {
 	for i := range r.parts {
 		r.parts[i] = cmp.Or(r.parts[i], "?")
 	}
-	return r.String()
+	return r.DisplayLong()
 }
 
 // LogValue implements slog.Valuer.
@@ -461,7 +462,7 @@ type iter_Seq2[A, B any] func(func(A, B) bool)
 func parts(s string) iter_Seq2[PartKind, string] {
 	return func(yield func(PartKind, string) bool) {
 		if strings.HasPrefix(s, "http://") {
-			s = s[len("http://"):]
+			s = strings.TrimPrefix(s, "http://")
 		} else {
 			s = strings.TrimPrefix(s, "https://")
 		}
@@ -571,13 +572,92 @@ func (r Name) IsValid() bool {
 	return r.parts[PartModel] != ""
 }
 
+// ParseNameFromURLPath parses forms of a URL path into a Name. Specifically,
+// it trims any leading "/" and then calls [ParseName] with fill.
+func ParseNameFromURLPath(s, fill string) Name {
+	s = strings.TrimPrefix(s, "/")
+	return ParseName(s, fill)
+}
+
+// URLPath returns a complete, canonicalized, relative URL path using the parts of a
+// complete Name.
+//
+// The parts maintain their original case.
+//
+// Example:
+//
+//	ParseName("example.com/namespace/model:tag+build").URLPath() // returns "/example.com/namespace/model:tag"
+func (r Name) URLPath() string {
+	return r.DisplayShortest(MaskNothing)
+}
+
+// ParseNameFromFilepath parses a file path into a Name. The input string must be a
+// valid file path representation of a model name in the form:
+//
+//	host/namespace/model/tag/build
+//
+// The zero valid is returned if s does not contain all path elements
+// leading up to the model part, or if any path element is an invalid part
+// for the its corresponding part kind.
+//
+// The fill string is used to fill in missing parts of any constructed Name.
+// See [ParseName] for more information on the fill string.
+func ParseNameFromFilepath(s, fill string) Name {
+	var r Name
+	for i := range PartBuild + 1 {
+		part, rest, _ := strings.Cut(s, string(os.PathSeparator))
+		if !isValidPart(i, part) {
+			return Name{}
+		}
+		r.parts[i] = part
+		s = rest
+		if s == "" {
+			break
+		}
+	}
+	if s != "" {
+		return Name{}
+	}
+	if !r.IsValid() {
+		return Name{}
+	}
+	return fillName(r, fill)
+}
+
+// Filepath returns a complete, canonicalized, relative file path using the
+// parts of a complete Name.
+//
+// Each parts is downcased, except for the build part which is upcased.
+//
+// Example:
+//
+//	ParseName("example.com/namespace/model:tag+build").Filepath() // returns "example.com/namespace/model/tag/BUILD"
+func (r Name) Filepath() string {
+	for i := range r.parts {
+		if PartKind(i) == PartBuild {
+			r.parts[i] = strings.ToUpper(r.parts[i])
+		} else {
+			r.parts[i] = strings.ToLower(r.parts[i])
+		}
+	}
+	return filepath.Join(r.parts[:]...)
+}
+
 // isValidPart reports if s contains all valid characters for the given
 // part kind.
 func isValidPart(kind PartKind, s string) bool {
 	if s == "" {
 		return false
 	}
+	var consecutiveDots int
 	for _, c := range []byte(s) {
+		if c == '.' {
+			if consecutiveDots++; consecutiveDots >= 2 {
+				return false
+			}
+		} else {
+			consecutiveDots = 0
+		}
 		if !isValidByteFor(kind, c) {
 			return false
 		}
