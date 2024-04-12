@@ -173,7 +173,7 @@ func parseMask(s string) Name {
 			return true
 		}
 		if !isValidPart(kind, part) {
-			panic(fmt.Errorf("model.ParseName: invalid mark part %s: %q", kind, part))
+			panic(fmt.Errorf("invalid mask part %s: %q", kind, part))
 		}
 		r.parts[kind] = part
 		return true
@@ -184,7 +184,7 @@ func parseMask(s string) Name {
 func MustParseName(s, defaults string) Name {
 	r := ParseName(s, "")
 	if !r.IsValid() {
-		panic("model.MustParseName: invalid name: " + s)
+		panic("invalid Name: " + s)
 	}
 	return r
 }
@@ -281,10 +281,10 @@ func (r Name) DisplayShortest(mask string) string {
 	mask = cmp.Or(mask, MaskDefault)
 	d := parseMask(mask)
 	if d.IsZero() {
-		panic(fmt.Errorf("model.Name.DisplayShortest: invalid mask %q", mask))
+		panic(fmt.Errorf("invalid mask %q", mask))
 	}
 	if r.IsZero() {
-		panic(fmt.Errorf("model.Name.DisplayShortest: invalid call to DisplayShortest on zero value"))
+		panic("invalid Name")
 	}
 	for i := range PartTag {
 		if !strings.EqualFold(r.parts[i], d.parts[i]) {
