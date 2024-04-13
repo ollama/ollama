@@ -377,3 +377,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
+- [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
