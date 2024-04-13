@@ -293,6 +293,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ChatOllama: Open Source Chatbot based on Ollama with Knowledge Bases](https://github.com/sugarforever/chat-ollama)
 - [CRAG Ollama Chat: Simple Web Search with Corrective RAG](https://github.com/Nagi-ovo/CRAG-Ollama-Chat)
 - [RAGFlow: Open-source Retrieval-Augmented Generation engine based on deep document understanding](https://github.com/infiniflow/ragflow)
+- [StreamDeploy: LLM Application Scaffold](https://github.com/StreamDeploy-DevRel/streamdeploy-llm-app-scaffold)
 
 ### Terminal
 
