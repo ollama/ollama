@@ -7,7 +7,6 @@ import (
 	"hash/maphash"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -56,6 +55,10 @@ const (
 	PartBuild
 	PartDigest
 
+	// NumParts is the number of parts in a Name. In this list, it must
+	// follow the final part.
+	NumParts
+
 	PartExtraneous = -1
 )
 
@@ -102,7 +105,7 @@ func (k PartKind) String() string {
 // To check if a Name has at minimum a valid model part, use [Name.IsValid].
 type Name struct {
 	_     structs.Incomparable
-	parts [6]string // host, namespace, model, tag, build, digest
+	parts [NumParts]string // host, namespace, model, tag, build, digest
 
 	// TODO(bmizerany): track offsets and hold s (raw string) here? We
 	// could pack the offsets all into a single uint64 since the first
@@ -231,7 +234,7 @@ func (r Name) MapHash() uint64 {
 	// correctly hash the parts with case insensitive comparison
 	var h maphash.Hash
 	h.SetSeed(mapHashSeed)
-	for _, part := range r.Parts() {
+	for _, part := range r.parts {
 		// downcase the part for hashing
 		for i := range part {
 			c := part[i]
@@ -436,14 +439,11 @@ func downcase(r rune) rune {
 	return r
 }
 
-// TODO(bmizerany): driver.Value? (MarshalText etc should be enough)
-
-// Parts returns the parts of the Name in order of concreteness.
-//
-// The length of the returned slice is always 5.
-func (r Name) Parts() []string {
-	return slices.Clone(r.parts[:])
-}
+func (r Name) Host() string      { return r.parts[PartHost] }
+func (r Name) Namespace() string { return r.parts[PartNamespace] }
+func (r Name) Model() string     { return r.parts[PartModel] }
+func (r Name) Build() string     { return r.parts[PartBuild] }
+func (r Name) Tag() string       { return r.parts[PartTag] }
 
 // iter_Seq2 is a iter.Seq2 defined here to avoid the current build
 // restrictions in the go1.22 iter package requiring the
@@ -562,7 +562,7 @@ func parts(s string) iter_Seq2[PartKind, string] {
 }
 
 func (r Name) IsZero() bool {
-	return r.parts == [6]string{}
+	return r.parts == [NumParts]string{}
 }
 
 // IsValid reports if a model has at minimum a valid model part.
@@ -605,7 +605,7 @@ func (r Name) URLPath() string {
 func ParseNameFromFilepath(s, fill string) Name {
 	var r Name
 	for i := range PartBuild + 1 {
-		part, rest, _ := strings.Cut(s, string(os.PathSeparator))
+		part, rest, _ := strings.Cut(s, string(filepath.Separator))
 		if !isValidPart(i, part) {
 			return Name{}
 		}

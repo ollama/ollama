@@ -125,7 +125,7 @@ func TestNameConsecutiveDots(t *testing.T) {
 
 func TestNameParts(t *testing.T) {
 	var p Name
-	if w, g := int(PartDigest+1), len(p.Parts()); w != g {
+	if w, g := int(NumParts), len(p.parts); w != g {
 		t.Errorf("Parts() = %d; want %d", g, w)
 	}
 }
@@ -429,7 +429,7 @@ func FuzzParseName(f *testing.F) {
 			t.Skipf("invalid path: %q", s)
 		}
 
-		for _, p := range r0.Parts() {
+		for _, p := range r0.parts {
 			if len(p) > MaxNamePartLen {
 				t.Errorf("part too long: %q", p)
 			}
