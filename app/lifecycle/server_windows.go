@@ -11,10 +11,7 @@ import (
 
 func getCmd(ctx context.Context, exePath string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, exePath, "serve")
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP,
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 
 	return cmd
 }
