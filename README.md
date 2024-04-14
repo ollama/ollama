@@ -275,7 +275,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [LibreChat](https://github.com/danny-avila/LibreChat)
-- [LLM-X: Progressive Web App](https://github.com/mrdjohnson/llm-x)
+- [LLM-X: A Feature Rich Progressive Web App](https://github.com/mrdjohnson/llm-x)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [MindMac](https://mindmac.app)
