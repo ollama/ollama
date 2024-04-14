@@ -26,6 +26,7 @@ import (
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/exp/slices"
 	"golang.org/x/term"
@@ -37,6 +38,37 @@ import (
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/version"
 )
+
+func parseGrammar(flags *pflag.FlagSet) (string, string, error) {
+	format, err := flags.GetString("format")
+	if err != nil {
+		return "", "", err
+	}
+	if format == "json" {
+		return format, "", nil
+	} else if format != "" {
+		return "", "", errors.New("Unsupported --format: " + format)
+	}
+	grammar, err := flags.GetString("grammar")
+	if err != nil {
+		return "", "", err
+	}
+	if grammar != "" {
+		return "", grammar, nil
+	}
+	grammarFile, err := flags.GetString("grammar-file")
+	if err != nil {
+		return "", "", err
+	}
+	if grammarFile != "" {
+		grammar, err := os.ReadFile(grammarFile)
+		if err != nil {
+			return "", "", err
+		}
+		return "", string(grammar), nil
+	}
+	return "", "", nil
+}
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	filename, _ := cmd.Flags().GetString("file")
@@ -270,11 +302,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		ParentModel: show.Details.ParentModel,
 	}
 
-	format, err := cmd.Flags().GetString("format")
+	opts.Format, opts.Grammar, err = parseGrammar(cmd.Flags())
 	if err != nil {
 		return err
 	}
-	opts.Format = format
 
 	prompts := args[1:]
 	// prepend stdin to the prompt if provided
@@ -564,6 +595,7 @@ type runOptions struct {
 	Messages    []api.Message
 	WordWrap    bool
 	Format      string
+	Grammar     string
 	System      string
 	Template    string
 	Images      []api.ImageData
@@ -660,6 +692,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		Model:    opts.Model,
 		Messages: opts.Messages,
 		Format:   opts.Format,
+		Grammar:  opts.Grammar,
 		Options:  opts.Options,
 	}
 
@@ -743,6 +776,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		Context:  generateContext,
 		Images:   opts.Images,
 		Format:   opts.Format,
+		Grammar:  opts.Grammar,
 		System:   opts.System,
 		Template: opts.Template,
 		Options:  opts.Options,
@@ -971,7 +1005,10 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().String("format", "", "Response format, supported values: 'json'; use --grammar or --grammar-file for more control")
+	runCmd.Flags().String("grammar", "", "Response grammar as GBNF string")
+	runCmd.Flags().String("grammar-file", "", "Response grammar as path to a GBNF file")
+
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},

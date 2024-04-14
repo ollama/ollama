@@ -492,6 +492,7 @@ type completion struct {
 type CompletionRequest struct {
 	Prompt  string
 	Format  string
+	Grammar string
 	Images  []ImageData
 	Options api.Options
 }
@@ -527,6 +528,7 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 		"penalize_nl":       req.Options.PenalizeNewline,
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
+		"grammar":           req.Grammar,
 		"image_data":        req.Images,
 		"cache_prompt":      true,
 	}
@@ -539,8 +541,7 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 		return fmt.Errorf("unexpected server status: %d", status)
 	}
 
-	if req.Format == "json" {
-		request["grammar"] = jsonGrammar
+	if request["grammar"] == jsonGrammar {
 		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
 			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
 		}

@@ -63,6 +63,10 @@ type GenerateRequest struct {
 	// Format specifies the format to return a response in.
 	Format string `json:"format"`
 
+	// Grammar specifies the grammar to use for the response.
+	// Mutually exclusive with Format.
+	Grammar string `json:"grammar"`
+
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
@@ -81,6 +85,7 @@ type ChatRequest struct {
 	Messages  []Message `json:"messages"`
 	Stream    *bool     `json:"stream,omitempty"`
 	Format    string    `json:"format"`
+	Grammar   string    `json:"grammar"`
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`

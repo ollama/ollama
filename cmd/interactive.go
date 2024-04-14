@@ -109,17 +109,20 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	usageSet := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set parameter ...     Set a parameter")
-		fmt.Fprintln(os.Stderr, "  /set system <string>   Set system message")
-		fmt.Fprintln(os.Stderr, "  /set template <string> Set prompt template")
-		fmt.Fprintln(os.Stderr, "  /set history           Enable history")
-		fmt.Fprintln(os.Stderr, "  /set nohistory         Disable history")
-		fmt.Fprintln(os.Stderr, "  /set wordwrap          Enable wordwrap")
-		fmt.Fprintln(os.Stderr, "  /set nowordwrap        Disable wordwrap")
-		fmt.Fprintln(os.Stderr, "  /set format json       Enable JSON mode")
-		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
-		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
-		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set parameter ...       Set a parameter")
+		fmt.Fprintln(os.Stderr, "  /set system <string>     Set system message")
+		fmt.Fprintln(os.Stderr, "  /set template <string>   Set prompt template")
+		fmt.Fprintln(os.Stderr, "  /set history             Enable history")
+		fmt.Fprintln(os.Stderr, "  /set nohistory           Disable history")
+		fmt.Fprintln(os.Stderr, "  /set wordwrap            Enable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set nowordwrap          Disable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set format json         Constraint output to JSON")
+		fmt.Fprintln(os.Stderr, "  /set grammar <gbnf>      Constraint output grammar as GBNF string")
+		fmt.Fprintln(os.Stderr, "  /set grammar-file <path> Constraint output grammar as GBNF file")
+		fmt.Fprintln(os.Stderr, "  /set noformat            Disable output format constraint")
+		fmt.Fprintln(os.Stderr, "  /set nogrammar           Disable output format constraint")
+		fmt.Fprintln(os.Stderr, "  /set verbose             Show LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set quiet               Disable LLM stats")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -309,11 +312,35 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
 					} else {
 						opts.Format = args[2]
+						opts.Grammar = ""
 						fmt.Printf("Set format to '%s' mode.\n", args[2])
 					}
 				case "noformat":
+				case "nogrammar":
 					opts.Format = ""
+					opts.Grammar = ""
 					fmt.Println("Disabled format.")
+				case "grammar":
+					if len(args) < 3 {
+						usageParameters()
+						continue
+					}
+					opts.Format = ""
+					opts.Grammar = strings.Join(args[2:], " ")
+					fmt.Printf("Set grammar.\n")
+				case "grammar-file":
+					if len(args) != 3 {
+						usageParameters()
+						continue
+					}
+					data, err := os.ReadFile(args[2])
+					if err != nil {
+						fmt.Printf("Error reading grammar file: %s\n", err)
+						continue
+					}
+					opts.Format = ""
+					opts.Grammar = string(data)
+					fmt.Printf("Set grammar from %s.\n", args[2])
 				case "parameter":
 					if len(args) < 4 {
 						usageParameters()
