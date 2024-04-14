@@ -72,7 +72,7 @@ func isProcessExited(pid int) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("failed to open process: %v", err)
 	}
-	defer windows.CloseHandle(hProcess)
+	defer windows.CloseHandle(hProcess) // nolint: errcheck
 
 	var exitCode uint32
 	err = windows.GetExitCodeProcess(hProcess, &exitCode)
