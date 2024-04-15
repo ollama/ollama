@@ -36,6 +36,11 @@ const (
 	fileTypeQ2_K_S
 	fileTypeQ3_K_XS
 	fileTypeIQ3_XXS
+	fileTypeIQ1_S
+	fileTypeIQ4_NL
+	fileTypeIQ3_S
+	fileTypeIQ2_S
+	fileTypeIQ4_XS
 )
 
 func fileType(fileType uint32) string {
@@ -82,6 +87,16 @@ func fileType(fileType uint32) string {
 		return "Q2_K_S"
 	case fileTypeQ3_K_XS:
 		return "Q3_K_XS"
+	case fileTypeIQ1_S:
+		return "IQ1_S"
+	case fileTypeIQ4_NL:
+		return "IQ4_NL"
+	case fileTypeIQ3_S:
+		return "IQ3_S"
+	case fileTypeIQ2_S:
+		return "IQ2_S"
+	case fileTypeIQ4_XS:
+		return "IQ4_XS"
 	case fileTypeIQ3_XXS:
 		return "IQ3_XXS"
 	default:
@@ -247,6 +262,16 @@ func (t Tensor) typeSize() uint64 {
 		return 2 + 2*blockSize/8 + blockSize/32
 	case 18: // IQ3_XXS
 		return 2 + 3*blockSize/8
+	case 19: // IQ1_S
+		return 2 + blockSize/8 + blockSize/16
+	case 20: // IQ4_NL
+		return 2 + blockSize/2
+	case 21: // IQ3_S
+		return 2 + 2*blockSize/8 + blockSize/8 + blockSize/32 + 4
+	case 22: // IQ2_S
+		return 2 + blockSize/4 + blockSize/16
+	case 23: // IQ4_XS
+		return 4 + blockSize/2 + blockSize/64
 	default:
 		return 0
 	}
