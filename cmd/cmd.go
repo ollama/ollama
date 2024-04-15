@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -830,13 +831,48 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	return nil
 }
 
-func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, err := net.SplitHostPort(strings.Trim(os.Getenv("OLLAMA_HOST"), "\"'"))
+func getHostIPAndPort() (string, string, error) {
+	hostStr := strings.Trim(strings.TrimSpace(os.Getenv("OLLAMA_HOST")), "\"'")
+	if hostStr == "" {
+		hostStr = "127.0.0.1:11434"
+	}
+
+	host, port, err := net.SplitHostPort(hostStr)
 	if err != nil {
-		host, port = "127.0.0.1", "11434"
-		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
-			host = ip.String()
+		var netErr *net.AddrError
+		if errors.As(err, &netErr) {
+			if netErr.Err == "missing port in address" {
+				host, port, err = net.SplitHostPort(hostStr + ":11434")
+				if err != nil {
+					return "", "", err
+				}
+			} else {
+				return "", "", err
+			}
+		} else {
+			return "", "", err
 		}
+	}
+
+	if host == "" {
+		host = "0.0.0.0"
+	}
+
+	if ip := net.ParseIP(host); ip == nil {
+		return "", "", fmt.Errorf("invalid IP address specified in OLLAMA_HOST")
+	}
+
+	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 1 {
+		return "", "", fmt.Errorf("invalid port specified in OLLAMA_HOST")
+	}
+
+	return host, port, nil
+}
+
+func RunServer(cmd *cobra.Command, _ []string) error {
+	host, port, err := getHostIPAndPort()
+	if err != nil {
+		return err
 	}
 
 	if err := initializeKeypair(); err != nil {
