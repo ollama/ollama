@@ -1150,9 +1150,7 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		if loaded.llama != nil {
-			loaded.llama.Close()
-		}
+		unload()
 		gpu.Cleanup()
 		os.Exit(0)
 	}()
