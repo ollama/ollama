@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: "submodules"
+    directory: "/"
+    schedule:
+      interval: "daily"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+  - package-ecosystem: "go"
+    directory: "/"
+    schedule:
+      interval: "daily"
