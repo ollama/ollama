@@ -252,14 +252,6 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
-	if os.Getenv("OLLAMA_MODELS") != "" {
-		return errors.New("OLLAMA_MODELS must only be set for 'ollama serve'")
-	}
-
-	if err := checkServerHeartbeat(cmd, args); err != nil {
-		return err
-	}
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -986,10 +978,11 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
 
 	runCmd := &cobra.Command{
-		Use:   "run MODEL [PROMPT]",
-		Short: "Run a model",
-		Args:  cobra.MinimumNArgs(1),
-		RunE:  RunHandler,
+		Use:     "run MODEL [PROMPT]",
+		Short:   "Run a model",
+		Args:    cobra.MinimumNArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    RunHandler,
 	}
 
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
