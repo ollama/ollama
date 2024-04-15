@@ -61,20 +61,28 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
-status "Downloading ollama..."
-curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
+OLLAMA_CONTAINER_MANAGER="${OLLAMA_CONTAINER_MANAGER-}"
+if [ -z "$OLLAMA_CONTAINER_MANAGER" ]; then
+    status "Downloading ollama..."
+    URL="https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
+    curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "${URL}"
+fi
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
 
-status "Installing ollama to $BINDIR..."
-$SUDO install -o0 -g0 -m755 -d $BINDIR
-$SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
+if [ -z "$OLLAMA_CONTAINER_MANAGER" ]; then
+    status "Installing ollama to $BINDIR..."
+    $SUDO install -o0 -g0 -m755 -d $BINDIR
+    $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
+fi
 
 install_success() { 
-    status 'The Ollama API is now available at 127.0.0.1:11434.'
-    status 'Install complete. Run "ollama" from the command line.'
+    if [ -z "$OLLAMA_CONTAINER_MANAGER" ]; then
+        status 'The Ollama API is now available at 127.0.0.1:11434.'
+        status 'Install complete. Run "ollama" from the command line.'
+    fi
 }
 trap install_success EXIT
 
@@ -127,7 +135,7 @@ EOF
     esac
 }
 
-if available systemctl; then
+if [ -z "$OLLAMA_CONTAINER_MANAGER" ] && available systemctl; then
     configure_systemd
 fi
 
@@ -165,6 +173,10 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
 fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
+    if [ -n "$OLLAMA_CONTAINER_MANAGER" ]; then
+        exit 0
+    fi
+
     # Look for pre-existing ROCm v6 before downloading the dependencies
     for search in "${HIP_PATH:-''}" "${ROCM_PATH:-''}" "/opt/rocm"; do
         if [ -n "${search}" ] && [ -e "${search}/lib/libhipblas.so.2" ]; then
