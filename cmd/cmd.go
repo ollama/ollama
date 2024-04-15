@@ -105,24 +105,48 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 				zf := zip.NewWriter(tf)
 
-				files, err := filepath.Glob(filepath.Join(path, "model-*.safetensors"))
+				files := []string{}
+
+				tfiles, err := filepath.Glob(filepath.Join(path, "pytorch_model-*.bin"))
 				if err != nil {
 					return err
+				} else if len(tfiles) == 0 {
+					tfiles, err = filepath.Glob(filepath.Join(path, "model-*.safetensors"))
+					if err != nil {
+						return err
+					}
 				}
+
+				files = append(files, tfiles...)
 
 				if len(files) == 0 {
-					return fmt.Errorf("no safetensors files were found in '%s'", path)
+					return fmt.Errorf("no models were found in '%s'", path)
 				}
 
-				// add the safetensor config file + tokenizer
+				// add the safetensor/torch config file + tokenizer
 				files = append(files, filepath.Join(path, "config.json"))
+				files = append(files, filepath.Join(path, "params.json"))
 				files = append(files, filepath.Join(path, "added_tokens.json"))
 				files = append(files, filepath.Join(path, "tokenizer.model"))
 
 				for _, fn := range files {
 					f, err := os.Open(fn)
-					if os.IsNotExist(err) && strings.HasSuffix(fn, "added_tokens.json") {
-						continue
+
+					// just skip whatever files aren't there
+					if os.IsNotExist(err) {
+						if strings.HasSuffix(fn, "tokenizer.model") {
+							// try the parent dir before giving up
+							parentDir := filepath.Dir(path)
+							newFn := filepath.Join(parentDir, "tokenizer.model")
+							f, err = os.Open(newFn)
+							if os.IsNotExist(err) {
+								continue
+							} else if err != nil {
+								return err
+							}
+						} else {
+							continue
+						}
 					} else if err != nil {
 						return err
 					}

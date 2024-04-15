@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"log/slog"
 )
 
 type containerGGUF struct {
@@ -52,6 +54,7 @@ func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
 	}
 
 	model := newGGUF(c)
+	slog.Debug(fmt.Sprintf("model = %#v", model))
 	if err := model.Decode(rs); err != nil {
 		return nil, err
 	}
@@ -186,6 +189,8 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 
 		llm.kv[k] = v
 	}
+
+	slog.Debug(fmt.Sprintf("general.architecture = %s", llm.kv["general.architecture"]))
 
 	// decode tensors
 	for i := 0; uint64(i) < llm.numTensor(); i++ {
@@ -451,6 +456,7 @@ var ggufKVOrder = map[string][]string{
 	"llama": {
 		"general.architecture",
 		"general.name",
+		"llama.vocab_size",
 		"llama.context_length",
 		"llama.embedding_length",
 		"llama.block_count",
@@ -509,11 +515,17 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 		return err
 	}
 
+	kvCheck := make(map[string]bool)
+	for k := range kv {
+		kvCheck[k] = false
+	}
+
 	for _, k := range ggufKVOrder["llama"] {
 		v, ok := kv[k]
 		if !ok {
 			continue
 		}
+		kvCheck[k] = true
 
 		if err := binary.Write(ws, llm.ByteOrder, uint64(len(k))); err != nil {
 			return err
@@ -564,6 +576,12 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 		}
 		if err != nil {
 			return err
+		}
+	}
+
+	for k, v := range kvCheck {
+		if !v {
+			return fmt.Errorf("Didn't know how to write kv %s", k)
 		}
 	}
 
