@@ -1010,7 +1010,8 @@ Generate embeddings from a model
 ### Parameters
 
 - `model`: name of model to generate embeddings from
-- `prompt`: text to generate embeddings for
+- `prompt`: string to generate the embedding for
+- `prompts`: array of strings to generate a batch of embeddings for
 
 Advanced parameters:
 
@@ -1035,6 +1036,36 @@ curl http://localhost:11434/api/embeddings -d '{
   "embedding": [
     0.5670403838157654, 0.009260174818336964, 0.23178744316101074, -0.2916173040866852, -0.8924556970596313,
     0.8785552978515625, -0.34576427936553955, 0.5742510557174683, -0.04222835972905159, -0.137906014919281
+  ]
+}
+```
+
+
+#### Request (batch)
+
+```shell
+curl http://localhost:11434/api/embeddings -d '{
+  "model": "all-minilm",
+  "prompt_batch": [
+    "Here is an article about llamas...",
+    "Here is another article about llamas..."
+  ]
+}'
+```
+
+#### Response
+
+```json
+{
+  "embedding_batch": [
+    [
+      0.5670403838157654, 0.009260174818336964, 0.23178744316101074, -0.2916173040866852, -0.8924556970596313,
+      0.8785552978515625, -0.34576427936553955, 0.5742510557174683, -0.04222835972905159, -0.137906014919281
+    ],
+    [
+      0.5670403838157654, 0.009260174818336964, 0.23178744316101074, -0.2916173040866852, -0.8924556970596313,
+      0.8785552978515625, -0.34576427936553955, 0.5742510557174683, -0.04222835972905159, -0.137906014919281
+    ],
   ]
 }
 ```

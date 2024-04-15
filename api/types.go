@@ -159,15 +159,17 @@ type Runner struct {
 }
 
 type EmbeddingRequest struct {
-	Model     string    `json:"model"`
-	Prompt    string    `json:"prompt"`
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	Model       string    `json:"model"`
+	Prompt      string    `json:"prompt,omitempty"`
+	PromptBatch []string  `json:"prompt_batch,omitempty"`
+	KeepAlive   *Duration `json:"keep_alive,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
 
 type EmbeddingResponse struct {
-	Embedding []float64 `json:"embedding"`
+	Embedding      []float64   `json:"embedding,omitempty"`
+	EmbeddingBatch [][]float64 `json:"embedding_batch,omitempty"`
 }
 
 type CreateRequest struct {
