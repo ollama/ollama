@@ -2788,10 +2788,7 @@ char* wchar_to_char(const wchar_t* wstr) {
 }
 
 int wmain(int argc, wchar_t **wargv) {
-    // Create a new array to hold the converted char* arguments
     char** argv = new char*[argc];
-
-    // Convert each wide-character argument to a UTF-8 char* argument
     for (int i = 0; i < argc; ++i) {
         argv[i] = wchar_to_char(wargv[i]);
     }
@@ -2802,9 +2799,6 @@ int main(int argc, char **argv) {
 #if SERVER_VERBOSE != 1
     log_disable();
 #endif
-    std::setlocale(LC_ALL, "");
-    std::locale::global(std::locale(""));
-
     // own arguments required by this example
     gpt_params params;
     server_params sparams;
