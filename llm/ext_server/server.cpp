@@ -39,6 +39,10 @@
 #include "httplib.h"
 #include "json.hpp"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include <cstddef>
 #include <thread>
 #include <chrono>
@@ -2770,11 +2774,37 @@ inline void signal_handler(int signal) {
     shutdown_handler(signal);
 }
 
-int main(int argc, char **argv)
-{
+#if defined(_WIN32)
+char* wchar_to_char(const wchar_t* wstr) {
+    if (wstr == nullptr) return nullptr;
+
+    // Determine the number of bytes needed for the UTF-8 string
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, nullptr, 0, nullptr, nullptr);
+    char* str = new char[bytes];
+
+    // Convert the wide-character string to a UTF-8 string
+    WideCharToMultiByte(CP_UTF8, 0, wstr, -1, str, bytes, nullptr, nullptr);
+    return str;
+}
+
+int wmain(int argc, wchar_t **wargv) {
+    // Create a new array to hold the converted char* arguments
+    char** argv = new char*[argc];
+
+    // Convert each wide-character argument to a UTF-8 char* argument
+    for (int i = 0; i < argc; ++i) {
+        argv[i] = wchar_to_char(wargv[i]);
+    }
+#else
+int main(int argc, char **argv) {
+#endif
+
 #if SERVER_VERBOSE != 1
     log_disable();
 #endif
+    std::setlocale(LC_ALL, "");
+    std::locale::global(std::locale(""));
+
     // own arguments required by this example
     gpt_params params;
     server_params sparams;
@@ -2783,6 +2813,13 @@ int main(int argc, char **argv)
     llama_server_context llama;
 
     server_params_parse(argc, argv, sparams, params, llama);
+
+#if defined(_WIN32)
+    for (int i = 0; i < argc; ++i) {
+        delete[] argv[i];
+    }
+    delete[] argv;
+#endif
 
     if (params.model_alias == "unknown")
     {
