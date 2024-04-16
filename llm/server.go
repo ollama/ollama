@@ -79,6 +79,9 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		graphFullOffload = graphPartialOffload
 	}
 
+	graphFullOffload *= uint64(info.DeviceCount)
+	graphPartialOffload *= uint64(info.DeviceCount)
+
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
 	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
