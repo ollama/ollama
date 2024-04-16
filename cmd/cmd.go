@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -831,46 +830,9 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	return nil
 }
 
-func getHostIPAndPort() (string, string, error) {
-	hostStr := strings.Trim(strings.TrimSpace(os.Getenv("OLLAMA_HOST")), "\"'")
-	if hostStr == "" {
-		hostStr = "127.0.0.1:11434"
-	}
-
-	host, port, err := net.SplitHostPort(hostStr)
-	if err != nil {
-		var netErr *net.AddrError
-		if errors.As(err, &netErr) {
-			if netErr.Err == "missing port in address" {
-				host, port, err = net.SplitHostPort(hostStr + ":11434")
-				if err != nil {
-					return "", "", err
-				}
-			} else {
-				return "", "", err
-			}
-		} else {
-			return "", "", err
-		}
-	}
-
-	if host == "" {
-		host = "0.0.0.0"
-	}
-
-	if ip := net.ParseIP(host); ip == nil {
-		return "", "", fmt.Errorf("invalid IP address specified in OLLAMA_HOST")
-	}
-
-	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 1 {
-		return "", "", fmt.Errorf("invalid port specified in OLLAMA_HOST")
-	}
-
-	return host, port, nil
-}
-
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, err := getHostIPAndPort()
+	// retrieve the OLLAMA_HOST environment variable
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -879,7 +841,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(host, port))
+	ln, err := net.Listen("tcp", client.GetHost())
 	if err != nil {
 		return err
 	}

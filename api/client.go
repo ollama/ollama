@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -82,6 +83,10 @@ func ClientFromEnvironment() (*Client, error) {
 		}
 	}
 
+	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 0 {
+		return nil, ErrInvalidHostPort
+	}
+
 	return &Client{
 		base: &url.URL{
 			Scheme: scheme,
@@ -96,6 +101,10 @@ func NewClient(base *url.URL, http *http.Client) *Client {
 		base: base,
 		http: http,
 	}
+}
+
+func (c *Client) GetHost() string {
+	return c.base.Host
 }
 
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
