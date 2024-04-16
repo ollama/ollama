@@ -60,10 +60,13 @@ func checkError(resp *http.Response, body []byte) error {
 func ClientFromEnvironment() (*Client, error) {
 	defaultPort := "11434"
 
-	scheme, hostport, ok := strings.Cut(os.Getenv("OLLAMA_HOST"), "://")
+	hostVar := os.Getenv("OLLAMA_HOST")
+	hostVar = strings.Trim(strings.TrimSpace(hostVar), "\"'")
+
+	scheme, hostport, ok := strings.Cut(hostVar, "://")
 	switch {
 	case !ok:
-		scheme, hostport = "http", os.Getenv("OLLAMA_HOST")
+		scheme, hostport = "http", hostVar
 	case scheme == "http":
 		defaultPort = "80"
 	case scheme == "https":
