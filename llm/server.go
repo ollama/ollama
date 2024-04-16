@@ -108,7 +108,11 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 
 	memoryLayerOutput := layers["output"].size()
 	memoryRequiredTotal += memoryLayerOutput
-	if memoryAvailable > memoryRequiredTotal {
+
+	if info.Library == "metal" && memoryRequiredTotal > info.TotalMemory {
+		// disable partial offloading when model is greater than total system memory
+		opts.NumGPU = 0
+	} else if memoryAvailable > memoryRequiredTotal {
 		layerCount = int(ggml.KV().BlockCount()) + 1
 		memoryRequiredPartial = memoryRequiredTotal
 	}
