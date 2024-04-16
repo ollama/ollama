@@ -98,7 +98,7 @@ func StartServer(ctx context.Context, ollamaHost string) error {
 
 	if tmp := os.Getenv("OLLAMA_HOST"); tmp != ollamaHost {
 		slog.Info("setting env", "OLLAMA_HOST", ollamaHost)
-		os.Setenv("OLLAMA_HOST", ollamaHost)
+		t.Setenv("OLLAMA_HOST", ollamaHost)
 	}
 
 	slog.Info("starting server", "url", ollamaHost)
