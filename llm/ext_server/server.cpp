@@ -2808,13 +2808,6 @@ int main(int argc, char **argv) {
 
     server_params_parse(argc, argv, sparams, params, llama);
 
-#if defined(_WIN32)
-    for (int i = 0; i < argc; ++i) {
-        delete[] argv[i];
-    }
-    delete[] argv;
-#endif
-
     if (params.model_alias == "unknown")
     {
         params.model_alias = params.model;
@@ -3313,6 +3306,11 @@ int main(int argc, char **argv) {
         return (ctrl_type == CTRL_C_EVENT) ? (signal_handler(SIGINT), true) : false;
     };
     SetConsoleCtrlHandler(reinterpret_cast<PHANDLER_ROUTINE>(console_ctrl_handler), true);
+
+    for (int i = 0; i < argc; ++i) {
+        delete[] argv[i];
+    }
+    delete[] argv;
 #endif
     llama.queue_tasks.start_loop();
     svr.stop();
