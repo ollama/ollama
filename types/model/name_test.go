@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -111,11 +112,11 @@ func TestNameConsecutiveDots(t *testing.T) {
 	for i := 1; i < 10; i++ {
 		s := strings.Repeat(".", i)
 		if i > 1 {
-			if g := ParseName(s, FillNothing).String(); g != "" {
+			if g := ParseName(s, FillNothing).DisplayLong(); g != "" {
 				t.Errorf("ParseName(%q) = %q; want empty string", s, g)
 			}
 		} else {
-			if g := ParseName(s, FillNothing).String(); g != s {
+			if g := ParseName(s, FillNothing).DisplayLong(); g != s {
 				t.Errorf("ParseName(%q) = %q; want %q", s, g, s)
 			}
 		}
@@ -124,7 +125,7 @@ func TestNameConsecutiveDots(t *testing.T) {
 
 func TestNameParts(t *testing.T) {
 	var p Name
-	if w, g := int(PartDigest+1), len(p.Parts()); w != g {
+	if w, g := int(NumParts), len(p.parts); w != g {
 		t.Errorf("Parts() = %d; want %d", g, w)
 	}
 }
@@ -155,8 +156,8 @@ func TestParseName(t *testing.T) {
 				}
 
 				// test round-trip
-				if !ParseName(name.String(), FillNothing).EqualFold(name) {
-					t.Errorf("ParseName(%q).String() = %s; want %s", s, name.String(), baseName)
+				if !ParseName(name.DisplayLong(), FillNothing).EqualFold(name) {
+					t.Errorf("ParseName(%q).String() = %s; want %s", s, name.DisplayLong(), baseName)
 				}
 			})
 		}
@@ -181,11 +182,20 @@ func TestParseNameFill(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
 			name := ParseName(tt.in, tt.fill)
-			if g := name.String(); g != tt.want {
+			if g := name.DisplayLong(); g != tt.want {
 				t.Errorf("ParseName(%q, %q) = %q; want %q", tt.in, tt.fill, g, tt.want)
 			}
 		})
 	}
+
+	t.Run("invalid fill", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		ParseName("x", "^")
+	})
 }
 
 func TestParseNameHTTPDoublePrefixStrip(t *testing.T) {
@@ -379,6 +389,22 @@ func BenchmarkParseName(b *testing.B) {
 	}
 }
 
+func FuzzParseNameFromFilepath(f *testing.F) {
+	f.Add("example.com/library/mistral/7b/Q4_0")
+	f.Add("example.com/../mistral/7b/Q4_0")
+	f.Add("example.com/x/../7b/Q4_0")
+	f.Add("example.com/x/../7b")
+	f.Fuzz(func(t *testing.T, s string) {
+		name := ParseNameFromFilepath(s, FillNothing)
+		if strings.Contains(s, "..") && !name.IsZero() {
+			t.Fatalf("non-zero value for path with '..': %q", s)
+		}
+		if name.IsValid() == name.IsZero() {
+			t.Errorf("expected valid path to be non-zero value; got %#v", name)
+		}
+	})
+}
+
 func FuzzParseName(f *testing.F) {
 	f.Add("example.com/mistral:7b+Q4_0")
 	f.Add("example.com/mistral:7b+q4_0")
@@ -403,17 +429,17 @@ func FuzzParseName(f *testing.F) {
 			t.Skipf("invalid path: %q", s)
 		}
 
-		for _, p := range r0.Parts() {
+		for _, p := range r0.parts {
 			if len(p) > MaxNamePartLen {
 				t.Errorf("part too long: %q", p)
 			}
 		}
 
-		if !strings.EqualFold(r0.String(), s) {
-			t.Errorf("String() did not round-trip with case insensitivity: %q\ngot  = %q\nwant = %q", s, r0.String(), s)
+		if !strings.EqualFold(r0.DisplayLong(), s) {
+			t.Errorf("String() did not round-trip with case insensitivity: %q\ngot  = %q\nwant = %q", s, r0.DisplayLong(), s)
 		}
 
-		r1 := ParseName(r0.String(), FillNothing)
+		r1 := ParseName(r0.DisplayLong(), FillNothing)
 		if !r0.EqualFold(r1) {
 			t.Errorf("round-trip mismatch: %+v != %+v", r0, r1)
 		}
@@ -423,10 +449,170 @@ func FuzzParseName(f *testing.F) {
 func TestNameStringAllocs(t *testing.T) {
 	name := ParseName("example.com/ns/mistral:latest+Q4_0", FillNothing)
 	allocs := testing.AllocsPerRun(1000, func() {
-		keep(name.String())
+		keep(name.DisplayLong())
 	})
 	if allocs > 1 {
 		t.Errorf("String allocs = %v; want 0", allocs)
+	}
+}
+
+func TestNamePath(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"example.com/library/mistral:latest+Q4_0", "example.com/library/mistral:latest"},
+
+		// incomplete
+		{"example.com/library/mistral:latest", "example.com/library/mistral:latest"},
+		{"", ""},
+	}
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			p := ParseName(tt.in, FillNothing)
+			t.Logf("ParseName(%q) = %#v", tt.in, p)
+			if g := p.URLPath(); g != tt.want {
+				t.Errorf("got = %q; want %q", g, tt.want)
+			}
+		})
+	}
+}
+
+func TestNameFromFilepath(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{
+			in:   "example.com/library/mistral:latest+Q4_0",
+			want: "example.com/library/mistral/latest/Q4_0",
+		},
+		{
+			in:   "Example.Com/Library/Mistral:Latest+Q4_0",
+			want: "example.com/library/mistral/latest/Q4_0",
+		},
+		{
+			in:   "Example.Com/Library/Mistral:Latest+Q4_0",
+			want: "example.com/library/mistral/latest/Q4_0",
+		},
+		{
+			in:   "example.com/library/mistral:latest",
+			want: "example.com/library/mistral/latest",
+		},
+		{
+			in:   "",
+			want: "",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			p := ParseName(tt.in, FillNothing)
+			t.Logf("ParseName(%q) = %#v", tt.in, p)
+			g := p.Filepath()
+			g = filepath.ToSlash(g)
+			if g != tt.want {
+				t.Errorf("got = %q; want %q", g, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseNameFilepath(t *testing.T) {
+	cases := []struct {
+		in   string
+		fill string // default is FillNothing
+		want string
+	}{
+		{
+			in:   "example.com/library/mistral/latest/Q4_0",
+			want: "example.com/library/mistral:latest+Q4_0",
+		},
+		{
+			in:   "example.com/library/mistral/latest",
+			fill: "?/?/?:latest+Q4_0",
+			want: "example.com/library/mistral:latest+Q4_0",
+		},
+		{
+			in:   "example.com/library/mistral",
+			fill: "?/?/?:latest+Q4_0",
+			want: "example.com/library/mistral:latest+Q4_0",
+		},
+		{
+			in:   "example.com/library",
+			want: "",
+		},
+		{
+			in:   "example.com/",
+			want: "",
+		},
+		{
+			in:   "example.com/^/mistral/latest/Q4_0",
+			want: "",
+		},
+		{
+			in:   "example.com/library/mistral/../Q4_0",
+			want: "",
+		},
+		{
+			in:   "example.com/library/mistral/latest/Q4_0/extra",
+			want: "",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			in := strings.ReplaceAll(tt.in, "/", string(filepath.Separator))
+			fill := cmp.Or(tt.fill, FillNothing)
+			want := ParseName(tt.want, fill)
+			if g := ParseNameFromFilepath(in, fill); !g.EqualFold(want) {
+				t.Errorf("got = %q; want %q", g.DisplayLong(), tt.want)
+			}
+		})
+	}
+}
+
+func TestParseNameFromPath(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		fill string // default is FillNothing
+	}{
+		{
+			in:   "example.com/library/mistral:latest+Q4_0",
+			want: "example.com/library/mistral:latest+Q4_0",
+		},
+		{
+			in:   "/example.com/library/mistral:latest+Q4_0",
+			want: "example.com/library/mistral:latest+Q4_0",
+		},
+		{
+			in:   "/example.com/library/mistral",
+			want: "example.com/library/mistral",
+		},
+		{
+			in:   "/example.com/library/mistral",
+			fill: "?/?/?:latest+Q4_0",
+			want: "example.com/library/mistral:latest+Q4_0",
+		},
+		{
+			in:   "/example.com/library",
+			want: "",
+		},
+		{
+			in:   "/example.com/",
+			want: "",
+		},
+		{
+			in:   "/example.com/^/mistral/latest",
+			want: "",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			fill := cmp.Or(tt.fill, FillNothing)
+			if g := ParseNameFromURLPath(tt.in, fill); g.DisplayLong() != tt.want {
+				t.Errorf("got = %q; want %q", g.DisplayLong(), tt.want)
+			}
+		})
 	}
 }
 
@@ -456,7 +642,7 @@ func ExampleName_CompareFold_sort() {
 	slices.SortFunc(names, Name.CompareFold)
 
 	for _, n := range names {
-		fmt.Println(n)
+		fmt.Println(n.DisplayLong())
 	}
 
 	// Output:
