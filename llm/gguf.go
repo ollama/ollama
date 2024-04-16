@@ -248,7 +248,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	}
 
 	padding := llm.padding(offset, int64(alignment))
-	if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
+	if _, err := rs.Seek(padding-offset, io.SeekCurrent); err != nil {
 		return err
 	}
 
