@@ -531,36 +531,32 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 	return nil
 }
 
-func CopyModel(src, dest string) error {
-	srcModelPath := ParseModelPath(src)
-	srcPath, err := srcModelPath.GetManifestPath()
+func CopyModel(src, dst model.Name) error {
+	manifests, err := GetManifestPath()
 	if err != nil {
 		return err
 	}
 
-	destModelPath := ParseModelPath(dest)
-	destPath, err := destModelPath.GetManifestPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+	dstpath := filepath.Join(manifests, dst.FilepathNoBuild())
+	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
 		return err
 	}
 
-	// copy the file
-	input, err := os.ReadFile(srcPath)
+	srcpath := filepath.Join(manifests, src.FilepathNoBuild())
+	srcfile, err := os.Open(srcpath)
 	if err != nil {
-		fmt.Println("Error reading file:", err)
 		return err
 	}
+	defer srcfile.Close()
 
-	err = os.WriteFile(destPath, input, 0o644)
+	dstfile, err := os.Create(dstpath)
 	if err != nil {
-		fmt.Println("Error reading file:", err)
 		return err
 	}
+	defer dstfile.Close()
 
-	return nil
+	_, err = io.Copy(dstfile, srcfile)
+	return err
 }
 
 func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{}, dryRun bool) error {
