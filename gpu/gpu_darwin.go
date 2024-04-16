@@ -55,6 +55,6 @@ func getCPUMem() (memInfo, error) {
 	return memInfo{
 		TotalMemory: uint64(C.getPhysicalMemory()),
 		FreeMemory:  0,
-		DeviceCount: 0,
+		DeviceCount: 1,
 	}, nil
 }
