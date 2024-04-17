@@ -123,7 +123,7 @@ model.push_to_hub_merged(“myhfusername/my-model", tokenizer, save_method = "lo
 
 ## Installation
 
-We took parts from the page when we wrote part of this guide
+When we wrote part of this guide we merely took from the page below
 https://rentry.org/llama-cpp-conversions#setup
 
 ### 1. Build llama.cpp
