@@ -185,8 +185,8 @@ func parseMask(s string) Name {
 	return r
 }
 
-func MustParseName(s, defaults string) Name {
-	r := ParseName(s, "")
+func MustParseName(s, fill string) Name {
+	r := ParseName(s, fill)
 	if !r.IsValid() {
 		panic("invalid Name: " + s)
 	}
@@ -641,6 +641,15 @@ func (r Name) Filepath() string {
 		}
 	}
 	return filepath.Join(r.parts[:]...)
+}
+
+// FilepathNoBuild returns a complete, canonicalized, relative file path using
+// the parts of a complete Name, but without the build part.
+func (r Name) FilepathNoBuild() string {
+	for i := range PartBuild {
+		r.parts[i] = strings.ToLower(r.parts[i])
+	}
+	return filepath.Join(r.parts[:PartBuild]...)
 }
 
 // isValidPart reports if s contains all valid characters for the given

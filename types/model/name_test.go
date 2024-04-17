@@ -318,6 +318,13 @@ func TestNameGoString(t *testing.T) {
 	}
 }
 
+func TestDisplayLongest(t *testing.T) {
+	g := ParseName("example.com/library/mistral:latest+Q4_0", FillNothing).DisplayLongest()
+	if g != "example.com/library/mistral:latest" {
+		t.Errorf("got = %q; want %q", g, "example.com/library/mistral:latest")
+	}
+}
+
 func TestDisplayShortest(t *testing.T) {
 	cases := []struct {
 		in        string
@@ -478,30 +485,36 @@ func TestNamePath(t *testing.T) {
 	}
 }
 
-func TestNameFromFilepath(t *testing.T) {
+func TestNameFilepath(t *testing.T) {
 	cases := []struct {
-		in   string
-		want string
+		in          string
+		want        string
+		wantNoBuild string
 	}{
 		{
-			in:   "example.com/library/mistral:latest+Q4_0",
-			want: "example.com/library/mistral/latest/Q4_0",
+			in:          "example.com/library/mistral:latest+Q4_0",
+			want:        "example.com/library/mistral/latest/Q4_0",
+			wantNoBuild: "example.com/library/mistral/latest",
 		},
 		{
-			in:   "Example.Com/Library/Mistral:Latest+Q4_0",
-			want: "example.com/library/mistral/latest/Q4_0",
+			in:          "Example.Com/Library/Mistral:Latest+Q4_0",
+			want:        "example.com/library/mistral/latest/Q4_0",
+			wantNoBuild: "example.com/library/mistral/latest",
 		},
 		{
-			in:   "Example.Com/Library/Mistral:Latest+Q4_0",
-			want: "example.com/library/mistral/latest/Q4_0",
+			in:          "Example.Com/Library/Mistral:Latest+Q4_0",
+			want:        "example.com/library/mistral/latest/Q4_0",
+			wantNoBuild: "example.com/library/mistral/latest",
 		},
 		{
-			in:   "example.com/library/mistral:latest",
-			want: "example.com/library/mistral/latest",
+			in:          "example.com/library/mistral:latest",
+			want:        "example.com/library/mistral/latest",
+			wantNoBuild: "example.com/library/mistral/latest",
 		},
 		{
-			in:   "",
-			want: "",
+			in:          "",
+			want:        "",
+			wantNoBuild: "",
 		},
 	}
 	for _, tt := range cases {
@@ -512,6 +525,11 @@ func TestNameFromFilepath(t *testing.T) {
 			g = filepath.ToSlash(g)
 			if g != tt.want {
 				t.Errorf("got = %q; want %q", g, tt.want)
+			}
+			g = p.FilepathNoBuild()
+			g = filepath.ToSlash(g)
+			if g != tt.wantNoBuild {
+				t.Errorf("got = %q; want %q", g, tt.wantNoBuild)
 			}
 		})
 	}
