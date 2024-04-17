@@ -40,6 +40,7 @@ var testNames = map[string]fields{
 	"user/model":                     {namespace: "user", model: "model"},
 	"example.com/ns/mistral:7b+Q4_0": {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "Q4_0"},
 	"example.com/ns/mistral:7b+X":    {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "X"},
+	"localhost:5000/ns/mistral":      {host: "localhost:5000", namespace: "ns", model: "mistral"},
 
 	// invalid digest
 	"mistral:latest@invalid256-": {},
