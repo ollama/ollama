@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -811,61 +812,65 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 }
 
 func ListModelsHandler(c *gin.Context) {
-	models := make([]api.ModelResponse, 0)
-	manifestsPath, err := GetManifestPath()
+	manifests, err := GetManifestPath()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	modelResponse := func(modelName string) (api.ModelResponse, error) {
-		model, err := GetModel(modelName)
-		if err != nil {
-			return api.ModelResponse{}, err
-		}
-
-		modelDetails := api.ModelDetails{
-			Format:            model.Config.ModelFormat,
-			Family:            model.Config.ModelFamily,
-			Families:          model.Config.ModelFamilies,
-			ParameterSize:     model.Config.ModelType,
-			QuantizationLevel: model.Config.FileType,
-		}
-
-		return api.ModelResponse{
-			Model:   model.ShortName,
-			Name:    model.ShortName,
-			Size:    model.Size,
-			Digest:  model.Digest,
-			Details: modelDetails,
-		}, nil
-	}
-
-	walkFunc := func(path string, info os.FileInfo, _ error) error {
+	var models []api.ModelResponse
+	if err := filepath.Walk(manifests, func(path string, info os.FileInfo, _ error) error {
 		if !info.IsDir() {
-			path, tag := filepath.Split(path)
-			model := strings.Trim(strings.TrimPrefix(path, manifestsPath), string(os.PathSeparator))
-			modelPath := strings.Join([]string{model, tag}, ":")
-			canonicalModelPath := strings.ReplaceAll(modelPath, string(os.PathSeparator), "/")
-
-			resp, err := modelResponse(canonicalModelPath)
+			rel, err := filepath.Rel(manifests, path)
 			if err != nil {
-				slog.Info(fmt.Sprintf("skipping file: %s", canonicalModelPath))
-				// nolint: nilerr
-				return nil
+				return err
 			}
 
-			resp.ModifiedAt = info.ModTime()
-			models = append(models, resp)
+			name := model.ParseNameFromFilepath(rel, "")
+			manifest, err := ParseNamedManifest(name)
+			if err != nil {
+				return err
+			}
+
+			configfile, err := manifest.Config.Open()
+			if err != nil {
+				return err
+			}
+			defer configfile.Close()
+
+			var config ConfigV2
+			if err := json.NewDecoder(configfile).Decode(&config); err != nil {
+				return err
+			}
+
+			// tag should never be masked
+			mask := "registry.ollama.ai/library/?:?"
+			models = append(models, api.ModelResponse{
+				Model:      name.DisplayShortest(mask),
+				Name:       name.DisplayShortest(mask),
+				Size:       manifest.Size(),
+				Digest:     manifest.Digest,
+				ModifiedAt: info.ModTime(),
+				Details: api.ModelDetails{
+					Format:            config.ModelFormat,
+					Family:            config.ModelFamily,
+					Families:          config.ModelFamilies,
+					ParameterSize:     config.ModelType,
+					QuantizationLevel: config.FileType,
+				},
+			})
 		}
 
 		return nil
-	}
-
-	if err := filepath.Walk(manifestsPath, walkFunc); err != nil {
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	slices.SortStableFunc(models, func(i, j api.ModelResponse) int {
+		// most recently modified first
+		return cmp.Compare(j.ModifiedAt.Unix(), i.ModifiedAt.Unix())
+	})
 
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
