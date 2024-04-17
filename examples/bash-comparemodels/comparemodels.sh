@@ -6,7 +6,7 @@ SELECTIONS=()
 declare -a SUMS=()
 
 # Get the list of models
-CHOICES=$(ollama list | awk '{print $1}')
+CHOICES=$(ollama list | awk 'NR > 1 {print $1}')
 
 # Select which models to run as a comparison
 echo "Select $NUMBEROFCHOICES models to compare:"
