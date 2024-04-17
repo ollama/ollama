@@ -52,7 +52,6 @@ type Model struct {
 	System         string
 	License        []string
 	Digest         string
-	Size           int64
 	Options        map[string]interface{}
 	Messages       []Message
 }
@@ -161,15 +160,6 @@ type RootFS struct {
 	DiffIDs []string `json:"diff_ids"`
 }
 
-func (m *ManifestV2) GetTotalSize() (total int64) {
-	for _, layer := range m.Layers {
-		total += layer.Size
-	}
-
-	total += m.Config.Size
-	return total
-}
-
 func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
 	fp, err := mp.GetManifestPath()
 	if err != nil {
@@ -210,7 +200,6 @@ func GetModel(name string) (*Model, error) {
 		Digest:    digest,
 		Template:  "{{ .Prompt }}",
 		License:   []string{},
-		Size:      manifest.GetTotalSize(),
 	}
 
 	filename, err := GetBlobsPath(manifest.Config.Digest)
