@@ -1,0 +1,8 @@
+name: Model request
+labels: ['model request']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What model would you like?
+      description: Please provide a link to the model.
