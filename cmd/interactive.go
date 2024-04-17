@@ -14,9 +14,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/exp/slices"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/progress"
-	"github.com/jmorganca/ollama/readline"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/readline"
 )
 
 type MultilineState int
@@ -295,10 +295,14 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.WordWrap = false
 					fmt.Println("Set 'nowordwrap' mode.")
 				case "verbose":
-					cmd.Flags().Set("verbose", "true")
+					if err := cmd.Flags().Set("verbose", "true"); err != nil {
+						return err
+					}
 					fmt.Println("Set 'verbose' mode.")
 				case "quiet":
-					cmd.Flags().Set("verbose", "false")
+					if err := cmd.Flags().Set("verbose", "false"); err != nil {
+						return err
+					}
 					fmt.Println("Set 'quiet' mode.")
 				case "format":
 					if len(args) < 3 || args[2] != "json" {
@@ -354,8 +358,15 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 
 					if args[1] == "system" {
-						opts.System = sb.String()
-						opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
+						opts.System = sb.String() // for display in modelfile
+						newMessage := api.Message{Role: "system", Content: sb.String()}
+						// Check if the slice is not empty and the last message is from 'system'
+						if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
+							// Replace the last message
+							opts.Messages[len(opts.Messages)-1] = newMessage
+						} else {
+							opts.Messages = append(opts.Messages, newMessage)
+						}
 						fmt.Println("Set system message.")
 						sb.Reset()
 					} else if args[1] == "template" {
@@ -463,7 +474,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			} else {
 				usage()
 			}
-		case line == "/exit", line == "/bye":
+		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
@@ -625,7 +636,7 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	contentType := http.DetectContentType(buf)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/svg+xml", "image/png"}
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
 	if !slices.Contains(allowedTypes, contentType) {
 		return nil, fmt.Errorf("invalid image type: %s", contentType)
 	}

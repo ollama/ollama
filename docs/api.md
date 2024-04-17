@@ -54,7 +54,7 @@ Advanced parameters (optional):
 
 #### JSON mode
 
-Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#generate-request-json-mode) below.
+Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#request-json-mode) below.
 
 > Note: it's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
 
@@ -247,6 +247,23 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
+#### Request (Reproducible outputs)
+
+For reproducible outputs, set `temperature` to 0 and `seed` to a number:
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "mistral",
+  "prompt": "Why is the sky blue?",
+  "options": {
+    "seed": 123,
+    "temperature": 0
+  }
+}'
+```
+
 ##### Response
 
 ```json
@@ -304,7 +321,6 @@ curl http://localhost:11434/api/generate -d '{
     "vocab_only": false,
     "use_mmap": true,
     "use_mlock": false,
-    "embedding_only": false,
     "rope_frequency_base": 1.1,
     "rope_frequency_scale": 0.8,
     "num_thread": 8
@@ -378,7 +394,6 @@ Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
@@ -567,6 +582,46 @@ curl http://localhost:11434/api/chat -d '{
   "prompt_eval_duration": 359682000,
   "eval_count": 83,
   "eval_duration": 1303285000
+}
+```
+
+#### Chat request (Reproducible outputs)
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "options": {
+    "seed": 101,
+    "temperature": 0
+  }
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "registry.ollama.ai/library/llama2:latest",
+  "created_at": "2023-12-12T14:13:43.416799Z",
+  "message": {
+    "role": "assistant",
+    "content": "Hello! How are you today?"
+  },
+  "done": true,
+  "total_duration": 5191566416,
+  "load_duration": 2154458,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 383809000,
+  "eval_count": 298,
+  "eval_duration": 4799921000
 }
 ```
 
@@ -968,7 +1023,7 @@ Advanced parameters:
 
 ```shell
 curl http://localhost:11434/api/embeddings -d '{
-  "model": "llama2",
+  "model": "all-minilm",
   "prompt": "Here is an article about llamas..."
 }'
 ```

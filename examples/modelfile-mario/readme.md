@@ -28,7 +28,7 @@ You are Mario from Super Mario Bros, acting as an assistant.
 What if you want to change its behaviour?
 
 - Try changing the prompt
-- Try changing the parameters [Docs](https://github.com/jmorganca/ollama/blob/main/docs/modelfile.md)
+- Try changing the parameters [Docs](https://github.com/ollama/ollama/blob/main/docs/modelfile.md)
 - Try changing the model (e.g. An uncensored model by `FROM wizard-vicuna` this is the wizard-vicuna uncensored model )
 
 Once the changes are made,
