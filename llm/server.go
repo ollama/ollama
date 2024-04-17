@@ -381,56 +381,42 @@ func (s *LlamaServer) Ping(ctx context.Context) error {
 
 func (s *LlamaServer) WaitUntilRunning() error {
 	start := time.Now()
-	// TODO we need to wire up a better way to detect hangs during model load and startup of the server
 	expiresAt := time.Now().Add(10 * time.Minute) // be generous with timeout, large models can take a while to load
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
 
 	slog.Info("waiting for llama runner to start responding")
-	var lastStatus ServerStatus = -1
+
 	for {
-		select {
-		case err := <-s.done:
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		status, err := s.getServerStatus(ctx)
+		if err != nil {
+			slog.Debug("server not yet available", "error", err)
+		}
+		if time.Now().After(expiresAt) {
+			// timeout
 			msg := ""
 			if s.status != nil && s.status.LastErrMsg != "" {
 				msg = s.status.LastErrMsg
 			}
-			return fmt.Errorf("llama runner process has terminated: %v %s", err, msg)
-		case <-ticker.C:
-			if time.Now().After(expiresAt) {
-				// timeout
-				msg := ""
-				if s.status != nil && s.status.LastErrMsg != "" {
-					msg = s.status.LastErrMsg
-				}
-				return fmt.Errorf("timed out waiting for llama runner to start: %s", msg)
+			return fmt.Errorf("timed out waiting for llama runner to start: %s", msg)
+		}
+		if s.cmd.ProcessState != nil {
+			msg := ""
+			if s.status != nil && s.status.LastErrMsg != "" {
+				msg = s.status.LastErrMsg
 			}
-			if s.cmd.ProcessState != nil {
-				msg := ""
-				if s.status != nil && s.status.LastErrMsg != "" {
-					msg = s.status.LastErrMsg
-				}
-				return fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-			defer cancel()
-			status, err := s.getServerStatus(ctx)
-			if err != nil && lastStatus != status {
-				slog.Debug("server not yet available", "error", err)
-				lastStatus = status
-				continue
-			}
-
-			switch status {
-			case ServerStatusLoadingModel:
-				// TODO - this state never seems to happen with the current server.cpp code (bug?)
-				// it doesn't respond to the health endpoint until after the model is loaded
-				slog.Debug("loading model")
-			case ServerStatusReady:
-				slog.Debug(fmt.Sprintf("llama runner started in %f seconds", time.Since(start).Seconds()))
-				return nil
-			}
+			return fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
+		}
+		switch status {
+		case ServerStatusLoadingModel:
+			time.Sleep(time.Millisecond * 250)
+			slog.Debug("loading model")
+		case ServerStatusReady:
+			slog.Info(fmt.Sprintf("llama runner started in %0.2f seconds", time.Since(start).Seconds()))
+			return nil
+		default:
+			time.Sleep(time.Millisecond * 250)
+			continue
 		}
 	}
 }
