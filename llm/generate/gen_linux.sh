@@ -172,8 +172,15 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
         # Disabling has minimal performance effect while maintaining compatibility. 
         ARM64_DEFS="-DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_CUDA_F16=off"
     fi
-    CMAKE_DEFS="-DLLAMA_CUDA=on -DLLAMA_CUDA_FORCE_MMQ=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} ${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS}"
-    CMAKE_DEFS="${CMAKE_DEFS} ${OLLAMA_CUSTOM_GPU_DEPS}"
+    # Users building from source can tune the exact flags we pass to cmake for configuring llama.cpp
+    if [ -n "${OLLAMA_CUSTOM_GPU_DEFS}" ]; then
+        echo "OLLAMA_CUSTOM_GPU_DEFS=\"${OLLAMA_CUSTOM_GPU_DEFS}\""
+        CMAKE_CUDA_DEFS="-DLLAMA_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} ${OLLAMA_CUSTOM_GPU_DEFS}"
+        echo "Building custom GPU"
+    else
+        CMAKE_CUDA_DEFS="-DLLAMA_CUDA=on -DLLAMA_CUDA_FORCE_MMQ=on -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
+    fi
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS} ${CMAKE_CUDA_DEFS}"
     BUILD_DIR="../build/linux/${ARCH}/cuda${CUDA_VARIANT}"
     EXTRA_LIBS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
     build
@@ -218,7 +225,12 @@ if [ -d "${ROCM_PATH}" ]; then
     fi
     init_vars
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
-    CMAKE_DEFS="${CMAKE_DEFS} ${OLLAMA_CUSTOM_GPU_DEPS}"
+    # Users building from source can tune the exact flags we pass to cmake for configuring llama.cpp
+    if [ -n "${OLLAMA_CUSTOM_GPU_DEFS}" ]; then
+        echo "OLLAMA_CUSTOM_GPU_DEFS=\"${OLLAMA_CUSTOM_GPU_DEFS}\""
+        CMAKE_DEFS="${CMAKE_DEFS} ${OLLAMA_CUSTOM_GPU_DEFS}"
+        echo "Building custom GPU"
+    fi
     BUILD_DIR="../build/linux/${ARCH}/rocm${ROCM_VARIANT}"
     EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,\$ORIGIN/../../rocm/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
     build
