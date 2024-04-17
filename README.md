@@ -6,7 +6,7 @@
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-Get up and running with large language models locally.
+Get up and running with large language models locally, powered by [llama.cpp](https://github.com/ggerganov/llama.cpp)
 
 ### macOS
 
@@ -40,6 +40,8 @@ To run and chat with [Llama 2](https://ollama.com/library/llama2):
 ```
 ollama run llama2
 ```
+
+Ollama uses [llama.cpp](https://github.com/ggerganov/llama.cpp) under the hood for its low-level, optimized, multi-platform inference.
 
 ## Model library
 
@@ -378,3 +380,4 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
+
