@@ -2726,7 +2726,7 @@ static json format_detokenized_response(std::string content)
 static void log_server_request(const httplib::Request &req, const httplib::Response &res)
 {
     // skip GH copilot requests when using default port
-    if (req.path == "/v1/health" || req.path == "/v1/completions")
+    if (req.path == "/health" || req.path == "/v1/health" || req.path == "/v1/completions")
     {
         return;
     }
@@ -3053,6 +3053,26 @@ int main(int argc, char **argv) {
         log_data["api_key"] = "api_key: " + std::to_string(sparams.api_keys.size()) + " keys loaded";
     }
 
+    if (sparams.n_threads_http < 1) {
+        // +2 threads for monitoring endpoints
+        sparams.n_threads_http = std::max(params.n_parallel + 2, (int32_t) std::thread::hardware_concurrency() - 1);
+    }
+    log_data["n_threads_http"] =  std::to_string(sparams.n_threads_http);
+    svr.new_task_queue = [&sparams] { return new httplib::ThreadPool(sparams.n_threads_http); };
+
+    LOG_INFO("HTTP server listening", log_data);
+    // run the HTTP server in a thread - see comment below
+    std::thread t([&]()
+            {
+                if (!svr.listen_after_bind())
+                {
+                    state.store(SERVER_STATE_ERROR);
+                    return 1;
+                }
+
+                return 0;
+            });
+
     // load the model
     if (!llama.load_model(params))
     {
@@ -3256,26 +3276,6 @@ int main(int argc, char **argv) {
         }
     }*/
     //);
-
-    if (sparams.n_threads_http < 1) {
-        // +2 threads for monitoring endpoints
-        sparams.n_threads_http = std::max(params.n_parallel + 2, (int32_t) std::thread::hardware_concurrency() - 1);
-    }
-    log_data["n_threads_http"] =  std::to_string(sparams.n_threads_http);
-    svr.new_task_queue = [&sparams] { return new httplib::ThreadPool(sparams.n_threads_http); };
-
-    LOG_INFO("HTTP server listening", log_data);
-    // run the HTTP server in a thread - see comment below
-    std::thread t([&]()
-            {
-                if (!svr.listen_after_bind())
-                {
-                    state.store(SERVER_STATE_ERROR);
-                    return 1;
-                }
-
-                return 0;
-            });
 
     llama.queue_tasks.on_new_task(std::bind(
         &llama_server_context::process_single_task, &llama, std::placeholders::_1));
