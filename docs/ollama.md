@@ -216,4 +216,5 @@ PARAMETER stop </s>
 `ollama run my-model "<s>\nQ: \nWhat is the capital of France?\nA:\n"`
 
 Author: Jed Tiotuico
+
 Github: http://github.com/jedt
