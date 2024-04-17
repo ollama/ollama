@@ -1,9 +1,6 @@
+---
 name: Model request
+about: Request support for a new model to be added to Ollama
 labels: ['model request']
-description: Request a new model.
-body:
-  - type: textarea
-    id: problem
-    attributes:
-      label: What model would you like?
-      description: Please provide a link to the model.
+---
+

@@ -1,11 +1,6 @@
+---
 name: Feature request
+about: Request a new feature
 labels: ['feature request']
-description: Request a new feature.
-body:
-  - type: textarea
-    id: problem
-    attributes:
-      label: What new feature would you like to see?
-      description: Tell us about the problem you're trying to solve.
-    validations:
-      required: false
+---
+
