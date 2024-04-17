@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,10 +33,6 @@ type LlamaServer struct {
 	done    chan error // Channel to signal when the process exits
 	status  *StatusWriter
 	options api.Options
-}
-
-var cpuOnlyFamilies = []string{
-	"mamba",
 }
 
 func NewLlamaServer(model string, adapters, projectors []string, opts api.Options) (*LlamaServer, error) {
@@ -84,6 +79,9 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		graphFullOffload = graphPartialOffload
 	}
 
+	graphFullOffload *= uint64(info.DeviceCount)
+	graphPartialOffload *= uint64(info.DeviceCount)
+
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
 	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
@@ -91,7 +89,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	memoryRequiredPartial := memoryMinimum + graphPartialOffload
 
 	if info.Library != "metal" {
-		if memoryRequiredPartial > memoryAvailable || slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture()) {
+		if memoryRequiredPartial > memoryAvailable {
 			info.Library = "cpu"
 		}
 	}
@@ -113,7 +111,11 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 
 	memoryLayerOutput := layers["output"].size()
 	memoryRequiredTotal += memoryLayerOutput
-	if memoryAvailable > memoryRequiredTotal {
+
+	if info.Library == "metal" && memoryRequiredTotal > info.TotalMemory {
+		// disable partial offloading when model is greater than total system memory
+		opts.NumGPU = 0
+	} else if memoryAvailable > memoryRequiredTotal {
 		layerCount = int(ggml.KV().BlockCount()) + 1
 		memoryRequiredPartial = memoryRequiredTotal
 	}
@@ -277,12 +279,6 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 			_ = s.cmd.Wait()
 		}()
 
-		if err = s.waitUntilRunning(); err != nil {
-			slog.Error("error starting llama server", "server", servers[i], "error", err)
-			s.Close()
-			finalErr = err
-			continue
-		}
 		return s, nil
 	}
 
@@ -383,7 +379,7 @@ func (s *LlamaServer) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (s *LlamaServer) waitUntilRunning() error {
+func (s *LlamaServer) WaitUntilRunning() error {
 	start := time.Now()
 	// TODO we need to wire up a better way to detect hangs during model load and startup of the server
 	expiresAt := time.Now().Add(10 * time.Minute) // be generous with timeout, large models can take a while to load
