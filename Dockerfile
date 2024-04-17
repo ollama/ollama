@@ -18,7 +18,7 @@ ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
-RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+RUN OLLAMA_SKIP_CPU_GENERATE=1 OLLAMA_SKIP_STATIC_GENERATE=1 sh gen_linux.sh
 
 FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION-devel-rockylinux8 AS cuda-build-arm64
 ARG CMAKE_VERSION
@@ -28,7 +28,7 @@ ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
-RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+RUN OLLAMA_SKIP_CPU_GENERATE=1 OLLAMA_SKIP_STATIC_GENERATE=1 sh gen_linux.sh
 
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS rocm-build-amd64
 ARG CMAKE_VERSION
@@ -40,7 +40,7 @@ COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG AMDGPU_TARGETS
-RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+RUN OLLAMA_SKIP_CPU_GENERATE=1 OLLAMA_SKIP_STATIC_GENERATE=1 sh gen_linux.sh
 RUN mkdir /tmp/scratch && \
     for dep in $(zcat /go/src/github.com/ollama/ollama/llm/build/linux/x86_64/rocm*/bin/deps.txt.gz) ; do \
         cp ${dep} /tmp/scratch/ || exit 1 ; \

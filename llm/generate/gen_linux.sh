@@ -57,10 +57,8 @@ init_vars
 git_module_setup
 apply_patches
 
-
 init_vars
-if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
-
+if [ -z "${OLLAMA_SKIP_STATIC_GENERATE}" ]; then
     if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "static" ]; then
         # Static build for linking into the Go binary
         init_vars
@@ -70,7 +68,10 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
         echo "Building static library"
         build
     fi
+fi
 
+init_vars
+if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
 
     # Users building from source can tune the exact flags we pass to cmake for configuring
     # llama.cpp, and we'll build only 1 CPU variant in that case as the default.
