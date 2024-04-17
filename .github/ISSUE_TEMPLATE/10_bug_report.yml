@@ -1,5 +1,6 @@
 name: Bug report
 labels: [bug]
+description: Something isn't working right.
 body:
   - type: textarea
     id: description

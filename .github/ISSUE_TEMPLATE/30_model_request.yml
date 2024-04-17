@@ -1,5 +1,6 @@
 name: Model request
 labels: ['model request']
+description: Request a new model.
 body:
   - type: textarea
     id: problem
