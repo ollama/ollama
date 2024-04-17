@@ -97,7 +97,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	var layerCount int
 	layers := ggml.Tensors().Layers()
 	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
-		memoryLayer := layers[fmt.Sprintf("%d", i)].size()
+		memoryLayer := layers[fmt.Sprintf("blk.%d", i)].size()
 
 		// KV is proportional to the number of layers
 		memoryLayer += kv / ggml.KV().BlockCount()
@@ -109,7 +109,14 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		}
 	}
 
-	memoryLayerOutput := layers["output"].size()
+	var memoryLayerOutput uint64
+	for k, v := range layers {
+		if !strings.HasPrefix(k, "blk.") {
+			slog.Info("aaa", "name", k, "size", format.HumanBytes2(v.size()))
+			memoryLayerOutput += v.size()
+		}
+	}
+
 	memoryRequiredTotal += memoryLayerOutput
 
 	if info.Library == "metal" && memoryRequiredTotal > info.TotalMemory {
@@ -124,16 +131,47 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		opts.NumGPU = layerCount
 	}
 
+	memoryWeights := memoryRequiredTotal - memoryMinimum - graphFullOffload - kv
+
 	slog.Info(
 		"offload to gpu",
-		"reallayers", opts.NumGPU,
-		"layers", layerCount,
-		"required", format.HumanBytes2(memoryRequiredTotal),
-		"used", format.HumanBytes2(memoryRequiredPartial),
-		"available", format.HumanBytes2(memoryAvailable),
-		"kv", format.HumanBytes2(kv),
-		"fulloffload", format.HumanBytes2(graphFullOffload),
-		"partialoffload", format.HumanBytes2(graphPartialOffload),
+		slog.Group(
+			"layers",
+			// actual number of layers offloaded
+			"real", opts.NumGPU,
+			// estimated number of layers that can be offloaded
+			"estimate", layerCount,
+		),
+		slog.Group(
+			"memory",
+			// memory available for offloading
+			"available", format.HumanBytes2(memoryAvailable),
+			slog.Group(
+				"required",
+				// memory required for full offloading
+				"full", format.HumanBytes2(memoryRequiredTotal),
+				// memory required to offload layers.estimate layers
+				"partial", format.HumanBytes2(memoryRequiredPartial),
+				// memory of KV cache
+				"kv", format.HumanBytes2(kv),
+			),
+			slog.Group(
+				"weights",
+				// memory of the weights
+				"total", format.HumanBytes2(memoryWeights),
+				// memory of repeating layers
+				"repeating", format.HumanBytes2(memoryWeights-memoryLayerOutput),
+				// memory of non-repeating layers
+				"nonrepeating", format.HumanBytes2(memoryLayerOutput),
+			),
+			slog.Group(
+				"graph",
+				// memory of graph when fully offloaded
+				"full", format.HumanBytes2(graphFullOffload),
+				// memory of graph when not fully offloaded
+				"partial", format.HumanBytes2(graphPartialOffload),
+			),
+		),
 	)
 
 	if len(adapters) > 1 {
