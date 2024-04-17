@@ -215,9 +215,9 @@ type Tensor struct {
 
 func (t Tensor) blockSize() uint64 {
 	switch {
-	case t.Kind < 2:
+	case t.Kind < 2 || (t.Kind > 23 && t.Kind < 29):
 		return 1
-	case t.Kind < 10:
+	case t.Kind < 10 || t.Kind == 20:
 		return 32
 	default:
 		return 256
