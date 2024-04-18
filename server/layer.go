@@ -88,3 +88,26 @@ func (l *Layer) Open() (io.ReadCloser, error) {
 
 	return os.Open(blob)
 }
+
+func (l *Layer) Remove() error {
+	ms, err := Manifests()
+	if err != nil {
+		return err
+	}
+
+	for _, m := range ms {
+		for _, layer := range append(m.Layers, m.Config) {
+			if layer.Digest == l.Digest {
+				// something is using this layer
+				return nil
+			}
+		}
+	}
+
+	blob, err := GetBlobsPath(l.Digest)
+	if err != nil {
+		return err
+	}
+
+	return os.Remove(blob)
+}
