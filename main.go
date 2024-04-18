@@ -66,7 +66,7 @@ func handleUnkownKeyError(accessErr error) error {
 		fmt.Println("Add your key at: https://ollama.com/settings/keys")
 		fmt.Println(localPubKey)
 
-		//lint:ignore errcheck this is optional, it may not work on all systems
+		//nolint:errcheck
 		browser.OpenURL("https://ollama.com/settings/keys?add=" + base64.StdEncoding.EncodeToString([]byte(localPubKey)))
 
 		return nil
