@@ -574,48 +574,31 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 }
 
 func (s *Server) DeleteModelHandler(c *gin.Context) {
-	var req api.DeleteRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
+	var r api.DeleteRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	var model string
-	if req.Model != "" {
-		model = req.Model
-	} else if req.Name != "" {
-		model = req.Name
-	} else {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+	n := model.ParseName(cmp.Or(r.Model, r.Name))
+	if !n.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("name %q is invalid", cmp.Or(r.Model, r.Name))})
 		return
 	}
 
-	if err := DeleteModel(model); err != nil {
-		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", model)})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
-		return
-	}
-
-	manifestsPath, err := GetManifestPath()
+	m, err := ParseNamedManifest(n)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := PruneDirectory(manifestsPath); err != nil {
+	if err := m.Remove(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	c.JSON(http.StatusOK, nil)
 }
 
 func (s *Server) ShowModelHandler(c *gin.Context) {
@@ -769,7 +752,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 				Model:      n.DisplayShortest(),
 				Name:       n.DisplayShortest(),
 				Size:       m.Size(),
-				Digest:     m.Digest,
+				Digest:     m.digest,
 				ModifiedAt: info.ModTime(),
 				Details: api.ModelDetails{
 					Format:            c.ModelFormat,
