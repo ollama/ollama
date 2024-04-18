@@ -77,7 +77,8 @@ func GetModelFormat(dirname string) (ModelFormat, error) {
 		slog.Debug(fmt.Sprintf("file = %s", fn))
 		if strings.HasSuffix(fn, ".safetensors") {
 			return &SafetensorFormat{}, nil
-		} else if strings.HasSuffix(fn, ".bin") {
+		//} else if strings.HasSuffix(fn, ".bin") {
+		} else if strings.HasSuffix(fn, ".pth") {
 			slog.Debug("model is torch")
 			return &TorchFormat{}, nil
 		}

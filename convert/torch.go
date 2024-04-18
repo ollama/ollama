@@ -33,7 +33,8 @@ type TorchFormat struct{}
 func (tf *TorchFormat) GetTensors(dirpath string, params *Params) ([]llm.Tensor, error) {
 	slog.Debug("getting torch tensors")
 
-	files, err := filepath.Glob(filepath.Join(dirpath, "pytorch_model-*.bin"))
+	//files, err := filepath.Glob(filepath.Join(dirpath, "pytorch_model-*.bin"))
+	files, err := filepath.Glob(filepath.Join(dirpath, "consolidatedr.*.pth"))
 	if err != nil {
 		slog.Error("didn't find any torch files")
 		return nil, err
@@ -120,7 +121,7 @@ func getAltParams(dirpath string) (*Params, error) {
 		AttentionHeads int     `json:"n_heads"`
 		KeyValHeads    int     `json:"n_kv_heads"`
 		HiddenLayers   int     `json:"n_layers"`
-		RopeTheta      int     `json:"rope_theta"`
+		RopeTheta      float64 `json:"rope_theta"`
 		NormEPS        float64 `json:"norm_eps"`
 	}
 
@@ -133,6 +134,7 @@ func getAltParams(dirpath string) (*Params, error) {
 	}
 
 	params := &Params{
+		Architectures:  []string{"LlamaForCausalLM"},
 		HiddenSize:     tparams.HiddenSize,
 		AttentionHeads: tparams.AttentionHeads,
 		KeyValHeads:    tparams.KeyValHeads,
