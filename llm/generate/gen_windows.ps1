@@ -243,6 +243,11 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     init_vars
     $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
     $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+    if ($null -ne $script:OLLAMA_CUSTOM_CUDA_DEFS) {
+        write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${script:OLLAMA_CUSTOM_CUDA_DEFS}`"
+        $script:cmakeDefs +=@("${script:OLLAMA_CUSTOM_CUDA_DEFS}")
+        write-host "building custom CUDA GPU"
+    }
     build
     sign
     compress
@@ -274,7 +279,11 @@ if ($null -ne $env:HIP_PATH) {
 
     # We have to clobber the LIB var from the developer shell for clang to work properly
     $env:LIB=""
-
+    if ($null -ne $script:OLLAMA_CUSTOM_ROCM_DEFS) {
+        write-host "OLLAMA_CUSTOM_ROCM_DEFS=`"${script:OLLAMA_CUSTOM_ROCM_DEFS}`"
+        $script:cmakeDefs += @("${script:OLLAMA_CUSTOM_ROCM_DEFS}")
+        write-host "building custom ROCM GPU"
+    }
     write-host "Building ROCm"
     build
     # Ninja doesn't prefix with config name
