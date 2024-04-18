@@ -156,7 +156,7 @@ ollama rm llama3
 ### Copy a model
 
 ```
-ollama cp llama3 my-llama2
+ollama cp llama3 my-model
 ```
 
 ### Multiline input
