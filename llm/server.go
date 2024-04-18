@@ -82,6 +82,34 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	graphFullOffload *= uint64(info.DeviceCount)
 	graphPartialOffload *= uint64(info.DeviceCount)
 
+	userThreadsLimit := strings.Trim(os.Getenv("OLLAMA_MAX_LLM_THREADS"), "\"'")
+	if userThreadsLimit != "" {
+		maxNumThreads, err := strconv.Atoi(userThreadsLimit)
+		if err != nil {
+			maxNumThreads = 0
+			slog.Error(fmt.Sprintf("Invalid OLLAMA_MAX_LLM_THREADS setting %s: %s", userThreadsLimit, err))
+		}
+
+		if maxNumThreads > 0 && (opts.NumThread > maxNumThreads || opts.NumThread == 0) {
+			slog.Info(fmt.Sprintf("User override OLLAMA_MAX_LLM_THREADS=%d", maxNumThreads))
+			opts.NumThread = maxNumThreads
+		}
+	}
+
+	userGPULimit := strings.Trim(os.Getenv("OLLAMA_MAX_GPU_LAYERS"), "\"'")
+	if userGPULimit != "" {
+		maxGPULayers, err := strconv.Atoi(userGPULimit)
+		if err != nil {
+			maxGPULayers = -1
+			slog.Error(fmt.Sprintf("Invalid OLLAMA_MAX_GPU_LAYERS setting %s: %s", userGPULimit, err))
+		}
+
+		if maxGPULayers >= 0 && (opts.NumGPU > maxGPULayers || opts.NumGPU == -1) {
+			slog.Info(fmt.Sprintf("User override OLLAMA_MAX_GPU_LAYERS=%d", maxGPULayers))
+			opts.NumGPU = maxGPULayers
+		}
+	}
+
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
 	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
