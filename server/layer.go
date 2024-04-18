@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/ollama/ollama/types/model"
 )
 
 type Layer struct {
@@ -87,4 +89,28 @@ func (l *Layer) Open() (io.ReadCloser, error) {
 	}
 
 	return os.Open(blob)
+}
+
+func (l *Layer) Remove() error {
+	var count int
+	Manifests()(func(name model.Name, manifest *Manifest) bool {
+		for _, layer := range append(manifest.Layers, manifest.Config) {
+			if layer.Digest == l.Digest {
+				count++
+			}
+		}
+
+		return true
+	})
+
+	if count > 0 {
+		return nil
+	}
+
+	blob, err := GetBlobsPath(l.Digest)
+	if err != nil {
+		return err
+	}
+
+	return os.Remove(blob)
 }

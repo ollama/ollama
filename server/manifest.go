@@ -14,7 +14,9 @@ import (
 
 type Manifest struct {
 	ManifestV2
-	Digest string `json:"-"`
+
+	filepath string
+	digest   string `json:"-"`
 }
 
 func (m *Manifest) Size() (size int64) {
@@ -25,26 +27,48 @@ func (m *Manifest) Size() (size int64) {
 	return
 }
 
+func (m *Manifest) Remove() error {
+	if err := os.Remove(m.filepath); err != nil {
+		return err
+	}
+
+	for _, layer := range append(m.Layers, m.Config) {
+		if err := layer.Remove(); err != nil {
+			return err
+		}
+	}
+
+	manifests, err := GetManifestPath()
+	if err != nil {
+		return err
+	}
+
+	return PruneDirectory(manifests)
+}
+
 func ParseNamedManifest(name model.Name) (*Manifest, error) {
 	manifests, err := GetManifestPath()
 	if err != nil {
 		return nil, err
 	}
 
+	manifestpath := filepath.Join(manifests, name.FilepathNoBuild())
+
 	var manifest ManifestV2
-	manifestfile, err := os.Open(filepath.Join(manifests, name.FilepathNoBuild()))
+	file, err := os.Open(manifestpath)
 	if err != nil {
 		return nil, err
 	}
 
 	sha256sum := sha256.New()
-	if err := json.NewDecoder(io.TeeReader(manifestfile, sha256sum)).Decode(&manifest); err != nil {
+	if err := json.NewDecoder(io.TeeReader(file, sha256sum)).Decode(&manifest); err != nil {
 		return nil, err
 	}
 
 	return &Manifest{
 		ManifestV2: manifest,
-		Digest:     fmt.Sprintf("%x", sha256sum.Sum(nil)),
+		filepath:   manifestpath,
+		digest:     fmt.Sprintf("%x", sha256sum.Sum(nil)),
 	}, nil
 }
 
@@ -72,4 +96,40 @@ func WriteManifest(name string, config *Layer, layers []*Layer) error {
 	}
 
 	return os.WriteFile(manifestPath, b.Bytes(), 0o644)
+}
+
+type iter_Seq2[A, B any] func(func(A, B) bool)
+
+func Manifests() iter_Seq2[model.Name, *Manifest] {
+	return func(yield func(model.Name, *Manifest) bool) {
+		manifests, err := GetManifestPath()
+		if err != nil {
+			return
+		}
+
+		// TODO(mxyng): use something less brittle
+		matches, err := filepath.Glob(fmt.Sprintf("%s/*/*/*/*", manifests))
+		if err != nil {
+			return
+		}
+
+		for _, match := range matches {
+			rel, err := filepath.Rel(manifests, match)
+			if err != nil {
+				return
+			}
+
+			name := model.ParseNameFromFilepath(rel, "")
+			if name.IsValid() {
+				manifest, err := ParseNamedManifest(name)
+				if err != nil {
+					return
+				}
+
+				if !yield(name, manifest) {
+					return
+				}
+			}
+		}
+	}
 }
