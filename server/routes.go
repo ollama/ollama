@@ -795,58 +795,44 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 }
 
 func ListModelsHandler(c *gin.Context) {
-	manifests, err := GetManifestPath()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
+	var errs []error
 	var models []api.ModelResponse
-	if err := filepath.Walk(manifests, func(path string, info os.FileInfo, _ error) error {
-		if !info.IsDir() {
-			rel, err := filepath.Rel(manifests, path)
-			if err != nil {
-				return err
-			}
+	// TODO(mxyng): for name, manifest := range Manifests() { ... }
+	Manifests()(func(name model.Name, manifest *Manifest) bool {
+		configfile, err := manifest.Config.Open()
+		if err != nil {
+			errs = append(errs, err)
+			return false
+		}
+		defer configfile.Close()
 
-			name := model.ParseNameFromFilepath(rel, "")
-			manifest, err := ParseNamedManifest(name)
-			if err != nil {
-				return err
-			}
-
-			configfile, err := manifest.Config.Open()
-			if err != nil {
-				return err
-			}
-			defer configfile.Close()
-
-			var config ConfigV2
-			if err := json.NewDecoder(configfile).Decode(&config); err != nil {
-				return err
-			}
-
-			// tag should never be masked
-			mask := "registry.ollama.ai/library/?:?"
-			models = append(models, api.ModelResponse{
-				Model:      name.DisplayShortest(mask),
-				Name:       name.DisplayShortest(mask),
-				Size:       manifest.Size(),
-				Digest:     manifest.digest,
-				ModifiedAt: info.ModTime(),
-				Details: api.ModelDetails{
-					Format:            config.ModelFormat,
-					Family:            config.ModelFamily,
-					Families:          config.ModelFamilies,
-					ParameterSize:     config.ModelType,
-					QuantizationLevel: config.FileType,
-				},
-			})
+		var config ConfigV2
+		if err := json.NewDecoder(configfile).Decode(&config); err != nil {
+			errs = append(errs, err)
+			return false
 		}
 
-		return nil
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		mask := "registry.ollama.ai/library/?:?"
+		models = append(models, api.ModelResponse{
+			Model:      name.DisplayShortest(mask),
+			Name:       name.DisplayShortest(mask),
+			Size:       manifest.Size(),
+			Digest:     manifest.digest,
+			ModifiedAt: manifest.stat.ModTime(),
+			Details: api.ModelDetails{
+				Format:            config.ModelFormat,
+				Family:            config.ModelFamily,
+				Families:          config.ModelFamilies,
+				ParameterSize:     config.ModelType,
+				QuantizationLevel: config.FileType,
+			},
+		})
+
+		return true
+	})
+
+	if len(errs) > 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errs})
 		return
 	}
 

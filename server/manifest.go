@@ -16,6 +16,7 @@ type Manifest struct {
 	ManifestV2
 
 	filepath string
+	stat     os.FileInfo
 	digest   string `json:"-"`
 }
 
@@ -55,19 +56,26 @@ func ParseNamedManifest(name model.Name) (*Manifest, error) {
 	manifestpath := filepath.Join(manifests, name.FilepathNoBuild())
 
 	var manifest ManifestV2
-	file, err := os.Open(manifestpath)
+	manifestfile, err := os.Open(manifestpath)
+	if err != nil {
+		return nil, err
+	}
+	defer manifestfile.Close()
+
+	stat, err := manifestfile.Stat()
 	if err != nil {
 		return nil, err
 	}
 
 	sha256sum := sha256.New()
-	if err := json.NewDecoder(io.TeeReader(file, sha256sum)).Decode(&manifest); err != nil {
+	if err := json.NewDecoder(io.TeeReader(manifestfile, sha256sum)).Decode(&manifest); err != nil {
 		return nil, err
 	}
 
 	return &Manifest{
 		ManifestV2: manifest,
 		filepath:   manifestpath,
+		stat:       stat,
 		digest:     fmt.Sprintf("%x", sha256sum.Sum(nil)),
 	}, nil
 }
