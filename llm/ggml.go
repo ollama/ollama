@@ -164,7 +164,8 @@ func (ts Tensors) Layers() map[string]Layer {
 	for _, t := range ts {
 		parts := strings.Split(t.Name, ".")
 		if parts[0] == "blk" {
-			parts = parts[1:]
+			// join first and second part, e.g. blk.%d
+			parts = append([]string{fmt.Sprintf("%s.%s", parts[0], parts[1])}, parts[2:]...)
 		}
 
 		if _, ok := layers[parts[0]]; !ok {
@@ -380,6 +381,12 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 		)
 
 		partialOffload = 4*batch*(2*embedding+vocab) + embedding*vocab*105/128
+	case "stablelm":
+		fullOffload = 4 * batch * (context*(1+heads) + 3*embedding + 2)
+		partialOffload = max(
+			4*batch*(vocab+2*embedding),
+			fullOffload,
+		)
 	}
 
 	return
