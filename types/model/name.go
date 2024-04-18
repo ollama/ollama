@@ -521,6 +521,8 @@ func parts(s string) iter_Seq2[PartKind, string] {
 						return
 					}
 					state, j, partLen = PartModel, i, 0
+				case PartHost:
+					// noop: support for host:port
 				default:
 					yield(PartExtraneous, s[i+1:j])
 					return
@@ -677,6 +679,9 @@ func isValidPart(kind PartKind, s string) bool {
 func isValidByteFor(kind PartKind, c byte) bool {
 	if kind == PartNamespace && c == '.' {
 		return false
+	}
+	if kind == PartHost && c == ':' {
+		return true
 	}
 	if c == '.' || c == '-' {
 		return true
