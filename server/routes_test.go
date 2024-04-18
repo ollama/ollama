@@ -18,6 +18,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
@@ -61,7 +62,7 @@ func Test_Routes(t *testing.T) {
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
 		}
-		err = CreateModel(context.TODO(), name, "", "", commands, fn)
+		err = CreateModel(context.TODO(), model.ParseName(name, ""), "", "", commands, fn)
 		assert.Nil(t, err)
 	}
 

@@ -19,8 +19,7 @@ import (
 )
 
 func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (*ordered.Map[*Layer, *llm.GGML], error) {
-	modelpath := ParseModelPath(name.DisplayLongest())
-	manifest, _, err := GetManifest(modelpath)
+	manifest, err := ParseNamedManifest(name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := PullModel(ctx, name.DisplayLongest(), &registryOptions{}, fn); err != nil {
@@ -34,7 +33,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 
 	layers := ordered.NewMap[*Layer, *llm.GGML]()
 	for _, layer := range manifest.Layers {
-		layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, modelpath.GetShortTagname())
+		layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, name.DisplayShortest(""))
 		if err != nil {
 			return nil, err
 		}

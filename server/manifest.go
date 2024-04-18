@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -80,30 +79,45 @@ func ParseNamedManifest(name model.Name) (*Manifest, error) {
 	}, nil
 }
 
-func WriteManifest(name string, config *Layer, layers []*Layer) error {
-	manifest := ManifestV2{
-		SchemaVersion: 2,
-		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
-		Config:        config,
-		Layers:        layers,
-	}
-
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(manifest); err != nil {
-		return err
-	}
-
-	modelpath := ParseModelPath(name)
-	manifestPath, err := modelpath.GetManifestPath()
+func NewManifest(name model.Name, config *Layer, layers []*Layer) (*Manifest, error) {
+	manifests, err := GetManifestPath()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
-		return err
+	manifestpath := filepath.Join(manifests, name.FilepathNoBuild())
+	if err := os.MkdirAll(filepath.Dir(manifestpath), 0o755); err != nil {
+		return nil, err
 	}
 
-	return os.WriteFile(manifestPath, b.Bytes(), 0o644)
+	manifestfile, err := os.Create(manifestpath)
+	if err != nil {
+		return nil, err
+	}
+	defer manifestfile.Close()
+
+	manifest := Manifest{
+		ManifestV2: ManifestV2{
+			SchemaVersion: 2,
+			MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+			Config:        config,
+			Layers:        layers,
+		},
+	}
+
+	sha256sum := sha256.New()
+	if err := json.NewEncoder(io.MultiWriter(manifestfile, sha256sum)).Encode(manifest); err != nil {
+		return nil, err
+	}
+
+	manifest.filepath = manifestpath
+	manifest.stat, err = manifestfile.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	manifest.digest = fmt.Sprintf("%x", sha256sum.Sum(nil))
+	return &manifest, nil
 }
 
 type iter_Seq2[A, B any] func(func(A, B) bool)

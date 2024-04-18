@@ -243,7 +243,7 @@ func realpath(rel, from string) string {
 	return abspath
 }
 
-func CreateModel(ctx context.Context, name, modelFileDir, quantization string, commands []parser.Command, fn func(resp api.ProgressResponse)) (err error) {
+func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantization string, commands []parser.Command, fn func(resp api.ProgressResponse)) (err error) {
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
@@ -491,29 +491,16 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 		}
 	}
 
-	unref := make(map[string]struct{})
-	if manifest, _, err := GetManifest(ParseModelPath(name)); err == nil {
-		for _, layer := range manifest.Layers {
-			if !slices.Contains(digests, layer.Digest) {
-				unref[layer.Digest] = struct{}{}
-			}
-		}
-
-		if manifest.Config.Digest != layer.Digest {
-			unref[manifest.Config.Digest] = struct{}{}
+	if os.Getenv("OLLAMA_NOPRUNE") == "" {
+		fn(api.ProgressResponse{Status: "removing unused layers"})
+		if manifest, err := ParseNamedManifest(name); err == nil {
+			_ = manifest.Remove()
 		}
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, layer, layers); err != nil {
+	if _, err := NewManifest(name, layer, layers); err != nil {
 		return err
-	}
-
-	if os.Getenv("OLLAMA_NOPRUNE") == "" && len(unref) > 0 {
-		fn(api.ProgressResponse{Status: "removing unused layers"})
-		if err := deleteUnusedLayers(nil, unref, false); err != nil {
-			return err
-		}
 	}
 
 	fn(api.ProgressResponse{Status: "success"})
