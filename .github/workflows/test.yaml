@@ -93,7 +93,7 @@ jobs:
         cuda-version:
           - '11.8.0'
     runs-on: linux
-    container: nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
+    container: nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu22.04
     steps:
       - run: |
           apt-get update && apt-get install -y git build-essential curl
@@ -124,9 +124,9 @@ jobs:
     strategy:
       matrix:
         rocm-version:
-          - '6.0.2'
+          - '6.1'
     runs-on: linux
-    container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
+    container: rocm/dev-ubuntu-22.04:${{ matrix.rocm-version }}
     steps:
       - run: |
           apt-get update && apt-get install -y git build-essential curl rocm-libs
