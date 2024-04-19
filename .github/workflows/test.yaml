@@ -73,12 +73,12 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
-          go generate -x ./...
+          $env:GOARCH=""; $env:OLLAMA_BUILD_TARGET_ARCH="${{ matrix.arch }}"; go generate -x ./...
         if: ${{ startsWith(matrix.os, 'windows-') }}
-        name: 'Windows Go Generate'
-      - run: go generate -x ./...
+        name: 'Windows Generate'
+      - run: GOARCH= OLLAMA_BUILD_TARGET_ARCH=${{ matrix.arch }} go generate -x ./...
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
-        name: 'Unix Go Generate'
+        name: 'Unix Generate'
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
@@ -184,7 +184,7 @@ jobs:
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
           go generate -x ./...
-        name: go generate
+        name: go generate -x ./...
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       # TODO - do we need any artifacts?
@@ -217,7 +217,7 @@ jobs:
       - name: 'Verify CUDA'
         run: nvcc -V
       - run: go get ./...
-      - name: go generate
+      - name: go generate -x ./...
         run: |
           $gopath=(get-command go).source | split-path -parent
           $cudabin=(get-command nvcc).source | split-path
@@ -312,7 +312,10 @@ jobs:
           touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
         shell: bash
-      - run: go generate ./...
+      - run: $env:GOARCH=""; $env:OLLAMA_BUILD_TARGET_ARCH="${{ matrix.arch }}"; go generate -x ./...
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+      - run: GOARCH= OLLAMA_BUILD_TARGET_ARCH=${{ matrix.arch }} go generate -x ./...
+        if: ${{ ! startsWith(matrix.os, 'windows-') }}
       - run: go build
       - run: go test -v ./...
       - uses: actions/upload-artifact@v4

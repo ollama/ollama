@@ -1,5 +1,7 @@
 package main
 
+//go:generate go run build.go -g -s
+
 import (
 	"context"
 
