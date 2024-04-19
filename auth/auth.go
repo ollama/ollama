@@ -34,7 +34,6 @@ func GetPublicKey() (string, error) {
 
 	pubKey, err := os.ReadFile(keyPath + ".pub") // note: the .pub suffix is extremely important to not leak the private key
 	if err != nil {
-		slog.Info(fmt.Sprintf("Failed to load public key: %v", err))
 		return "", err
 	}
 
