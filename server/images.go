@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -1217,20 +1218,17 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		}
 	}
 
-	switch {
-	case anonymous:
+	if anonymous {
 		// no user is associated with the public key, and the request requires non-anonymous access
 		pubKey, nestedErr := auth.GetPublicKey()
 		if nestedErr != nil {
 			slog.Error(fmt.Sprintf("couldn't get public key: %v", nestedErr))
 			return nil, errUnauthorized
 		}
-		// if this error mesage is updated the error message check in main.go should be updated as well
-		return nil, fmt.Errorf("unauthorized: unknown ollama key %q", strings.TrimSpace(pubKey))
-	default:
-		// user is associated with the public key, but is not authorized to make the request
-		return nil, errUnauthorized
+		return nil, &errtypes.UnknownOllamaKey{Key: pubKey}
 	}
+	// user is associated with the public key, but is not authorized to make the request
+	return nil, errUnauthorized
 }
 
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
