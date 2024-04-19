@@ -310,27 +310,31 @@ func (b *blobUpload) release() {
 	}
 }
 
-func (b *blobUpload) Wait(ctx context.Context, fn func(api.ProgressResponse)) error {
-	b.acquire()
-	defer b.release()
+func (b *blobUpload) Wait(ctx context.Context) iter_Seq2[any, error] {
+	return func(yield func(any, error) bool) {
+		b.acquire()
+		defer b.release()
 
-	ticker := time.NewTicker(60 * time.Millisecond)
-	for {
-		select {
-		case <-ticker.C:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		ticker := time.NewTicker(60 * time.Millisecond)
+		for {
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				yield(nil, ctx.Err())
+				return
+			}
 
-		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("pushing %s", b.Digest[7:19]),
-			Digest:    b.Digest,
-			Total:     b.Total,
-			Completed: b.Completed.Load(),
-		})
+			yield(api.ProgressResponse{
+				Status:    fmt.Sprintf("pushing %s", b.Digest[7:19]),
+				Digest:    b.Digest,
+				Total:     b.Total,
+				Completed: b.Completed.Load(),
+			}, nil)
 
-		if b.done || b.err != nil {
-			return b.err
+			if b.done || b.err != nil {
+				yield(nil, b.err)
+				return
+			}
 		}
 	}
 }
@@ -360,40 +364,45 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
-	requestURL := mp.BaseURL()
-	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
+func uploadBlob(ctx context.Context, baseURL *url.URL, layer *Layer, opts *registryOptions) iter_Seq2[any, error] {
+	return func(yield func(any, error) bool) {
+		requestURL := baseURL.JoinPath("blobs", layer.Digest)
+		resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
+		if errors.Is(err, os.ErrNotExist) {
+			data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})
+			upload := data.(*blobUpload)
+			if !ok {
+				requestURL = baseURL.JoinPath("blobs/uploads/")
+				if err := upload.Prepare(ctx, requestURL, opts); err != nil {
+					blobUploadManager.Delete(layer.Digest)
+					yield(nil, err)
+					return
+				}
 
-	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
-		return err
-	default:
+				// nolint: contextcheck
+				go upload.Run(context.Background(), opts)
+			}
+
+			upload.Wait(ctx)(func(v any, err error) bool {
+				if err != nil {
+					yield(nil, err)
+					return false
+				}
+
+				yield(v, nil)
+				return true
+			})
+			return
+		} else if err != nil {
+			yield(nil, err)
+			return
+		}
 		defer resp.Body.Close()
-		fn(api.ProgressResponse{
+		yield(api.ProgressResponse{
 			Status:    fmt.Sprintf("pushing %s", layer.Digest[7:19]),
 			Digest:    layer.Digest,
 			Total:     layer.Size,
 			Completed: layer.Size,
-		})
-
-		return nil
+		}, nil)
 	}
-
-	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})
-	upload := data.(*blobUpload)
-	if !ok {
-		requestURL := mp.BaseURL()
-		requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs/uploads/")
-		if err := upload.Prepare(ctx, requestURL, opts); err != nil {
-			blobUploadManager.Delete(layer.Digest)
-			return err
-		}
-
-		// nolint: contextcheck
-		go upload.Run(context.Background(), opts)
-	}
-
-	return upload.Wait(ctx, fn)
 }

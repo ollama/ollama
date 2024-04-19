@@ -753,54 +753,60 @@ PARAMETER {{ $k }} {{ printf "%#v" $parameter }}
 	return buf.String(), nil
 }
 
-func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
-	mp := ParseModelPath(name)
-	fn(api.ProgressResponse{Status: "retrieving manifest"})
+func PushModel(ctx context.Context, name model.Name, opts *registryOptions) iter_Seq2[any, error] {
+	return func(yield func(any, error) bool) {
+		yield(api.ProgressResponse{Status: "retrieving manifest"}, nil)
 
-	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
-	}
-
-	manifest, _, err := GetManifest(mp)
-	if err != nil {
-		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
-		return err
-	}
-
-	var layers []*Layer
-	layers = append(layers, manifest.Layers...)
-	layers = append(layers, manifest.Config)
-
-	for _, layer := range layers {
-		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
-			slog.Info(fmt.Sprintf("error uploading blob: %v", err))
-			if errors.Is(err, errUnauthorized) {
-				return fmt.Errorf("unable to push %s, make sure this namespace exists and you are authorized to push to it", ParseModelPath(name).GetNamespaceRepository())
-			}
-			return err
+		manifest, err := ParseNamedManifest(name)
+		if err != nil {
+			yield(nil, err)
+			return
 		}
+
+		scheme := "https"
+		if opts.Insecure {
+			scheme = "http"
+		}
+
+		baseURL, err := url.Parse(fmt.Sprintf("%s://%s/v2/%s/%s", scheme, name.Host(), name.Namespace(), name.Model()))
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+
+		for _, layer := range append(manifest.Layers, manifest.Config) {
+			uploadBlob(ctx, baseURL, layer, opts)(func(w any, err error) bool {
+				if err != nil {
+					yield(nil, err)
+					return false
+				}
+
+				yield(w, nil)
+				return true
+			})
+		}
+
+		yield(api.ProgressResponse{Status: "pushing manifest"}, nil)
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(manifest); err != nil {
+			yield(nil, err)
+			return
+		}
+
+		requestURL := baseURL.JoinPath("manifests", name.Host())
+
+		headers := make(http.Header)
+		headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+		response, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(b.Bytes()), opts)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		defer response.Body.Close()
+
+		yield(api.ProgressResponse{Status: "success"}, nil)
 	}
-
-	fn(api.ProgressResponse{Status: "pushing manifest"})
-	requestURL := mp.BaseURL()
-	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
-
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-
-	headers := make(http.Header)
-	headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	fn(api.ProgressResponse{Status: "success"})
-
-	return nil
 }
 
 func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
