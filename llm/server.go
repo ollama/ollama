@@ -477,16 +477,16 @@ root   ::= value
 value  ::= object | array | string | number | ("true" | "false" | "null")
 
 object ::=
-  "{" ws (
-            string ":" ws value
-    ("," ws string ":" ws value)*
-  )? ws "}"
+  "{" (
+            string ":" value
+    ("," string ":" value)*
+  )? "}"
 
 array  ::=
-  "[" ws (
+  "[" (
             value
-    ("," ws value)*
-  )? ws "]"
+    ("," value)*
+  )? "]"
 
 string ::=
   "\"" (
@@ -495,9 +495,6 @@ string ::=
   )* "\""
 
 number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
-
-# Optional space: by convention, applied in this grammar after literal chars when allowed
-ws ::= ([ \t\n] ws)?
 `
 
 const maxBufferSize = 512 * format.KiloByte
