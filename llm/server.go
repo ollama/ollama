@@ -473,8 +473,8 @@ func (s *LlamaServer) WaitUntilRunning() error {
 }
 
 const jsonGrammar = `
-root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
+root   ::= value
 
 object ::=
   "{" ws (
