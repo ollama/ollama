@@ -171,39 +171,6 @@ function cleanup {
 # -DGGML_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
 
-function build_static() {
-    if ((-not "${env:OLLAMA_SKIP_STATIC_GENERATE}") -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "static"))) {
-        # GCC build for direct linking into the Go binary
-        init_vars
-
-        # cmake will silently fallback to msvc compilers if gcc isn't in the path, so detect and fail fast
-        # as we need this to be compiled by gcc for golang to be able to link with it
-        write-host "Checking for gcc..."
-        get-command  gcc
-        get-command  mingw32-make
-        $oldTargets = $script:cmakeTargets
-        $script:cmakeTargets = @("llama", "ggml")
-        $script:cmakeDefs = @(
-            "-G", "MinGW Makefiles"
-            "-DCMAKE_C_COMPILER=gcc.exe",
-            "-DCMAKE_CXX_COMPILER=g++.exe",
-            "-DBUILD_SHARED_LIBS=off",
-            "-DGGML_NATIVE=off",
-            "-DGGML_AVX=off",
-            "-DGGML_AVX2=off",
-            "-DGGML_AVX512=off",
-            "-DGGML_F16C=off",
-            "-DGGML_FMA=off",
-            "-DGGML_OPENMP=off")
-        $script:buildDir="../build/windows/${script:ARCH}_static"
-        write-host "Building static library"
-        build
-        $script:cmakeTargets = $oldTargets
-    } else {
-        write-host "Skipping CPU generation step as requested"
-    }
-}
-
 function build_cpu_x64 {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
         init_vars
@@ -416,7 +383,6 @@ init_vars
 if ($($args.count) -eq 0) {
     git_module_setup
     apply_patches
-    build_static
     if ($script:ARCH -eq "arm64") {
         build_cpu_arm64
     } else { # amd64
