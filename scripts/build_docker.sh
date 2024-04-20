@@ -39,6 +39,17 @@ if [ -z "${OLLAMA_SKIP_IMAGE_BUILD}" ]; then
             -f Dockerfile \
             -t ${RELEASE_IMAGE_REPO}:$VERSION-${TARGETARCH} \
             .
+
+# OneAPI image build        
+        docker build \
+            ${LOAD_OR_PUSH} \
+            --platform=linux/${TARGETARCH} \
+            --build-arg=VERSION \
+            --build-arg=GOFLAGS \
+            --target runtime-oneapi \
+            -f Dockerfile \
+            -t ${RELEASE_IMAGE_REPO}:$VERSION-oneapi \
+            .
     done
 
     if echo ${BUILD_ARCH} | grep "amd64" > /dev/null; then
@@ -75,3 +86,4 @@ if [ -z "${OLLAMA_SKIP_MANIFEST_CREATE}" ]; then
         echo "  ${RELEASE_IMAGE_REPO}:$VERSION-rocm"
     fi
 fi
+
