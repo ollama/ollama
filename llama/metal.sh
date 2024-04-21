@@ -6,5 +6,6 @@ echo "_ggml_metallib_start:"              >> $TEMP_ASSEMBLY
 echo ".incbin \"ggml-metal-embed.metal\"" >> $TEMP_ASSEMBLY
 echo ".globl _ggml_metallib_end"          >> $TEMP_ASSEMBLY
 echo "_ggml_metallib_end:"                >> $TEMP_ASSEMBLY
-as $TEMP_ASSEMBLY -o ggml-metal-embed.o
+as -mmacosx-version-min=11.3 $TEMP_ASSEMBLY -o ggml-metal.o
 rm -f $TEMP_ASSEMBLY
+rm -rf ggml-metal-embed.metal
