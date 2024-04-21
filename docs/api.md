@@ -90,7 +90,7 @@ The final response in the stream also includes additional data about the generat
 - `load_duration`: time spent in nanoseconds loading the model
 - `prompt_eval_count`: number of tokens in the prompt
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
-- `eval_count`: number of tokens the response
+- `eval_count`: number of tokens in the response
 - `eval_duration`: time in nanoseconds spent generating the response
 - `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
@@ -394,7 +394,6 @@ Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 

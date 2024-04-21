@@ -105,24 +105,48 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 				zf := zip.NewWriter(tf)
 
-				files, err := filepath.Glob(filepath.Join(path, "model-*.safetensors"))
+				files := []string{}
+
+				tfiles, err := filepath.Glob(filepath.Join(path, "pytorch_model-*.bin"))
 				if err != nil {
 					return err
+				} else if len(tfiles) == 0 {
+					tfiles, err = filepath.Glob(filepath.Join(path, "model-*.safetensors"))
+					if err != nil {
+						return err
+					}
 				}
+
+				files = append(files, tfiles...)
 
 				if len(files) == 0 {
-					return fmt.Errorf("no safetensors files were found in '%s'", path)
+					return fmt.Errorf("no models were found in '%s'", path)
 				}
 
-				// add the safetensor config file + tokenizer
+				// add the safetensor/torch config file + tokenizer
 				files = append(files, filepath.Join(path, "config.json"))
+				files = append(files, filepath.Join(path, "params.json"))
 				files = append(files, filepath.Join(path, "added_tokens.json"))
 				files = append(files, filepath.Join(path, "tokenizer.model"))
 
 				for _, fn := range files {
 					f, err := os.Open(fn)
-					if os.IsNotExist(err) && strings.HasSuffix(fn, "added_tokens.json") {
-						continue
+
+					// just skip whatever files aren't there
+					if os.IsNotExist(err) {
+						if strings.HasSuffix(fn, "tokenizer.model") {
+							// try the parent dir before giving up
+							parentDir := filepath.Dir(path)
+							newFn := filepath.Join(parentDir, "tokenizer.model")
+							f, err = os.Open(newFn)
+							if os.IsNotExist(err) {
+								continue
+							} else if err != nil {
+								return err
+							}
+						} else {
+							continue
+						}
 					} else if err != nil {
 						return err
 					}
@@ -194,7 +218,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile)}
+	quantization, _ := cmd.Flags().GetString("quantization")
+
+	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile), Quantization: quantization}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -226,14 +252,6 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
-	if os.Getenv("OLLAMA_MODELS") != "" {
-		return errors.New("OLLAMA_MODELS must only be set for 'ollama serve'")
-	}
-
-	if err := checkServerHeartbeat(cmd, args); err != nil {
-		return err
-	}
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -943,6 +961,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
+	createCmd.Flags().StringP("quantization", "q", "", "Quantization level.")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -959,10 +978,11 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
 
 	runCmd := &cobra.Command{
-		Use:   "run MODEL [PROMPT]",
-		Short: "Run a model",
-		Args:  cobra.MinimumNArgs(1),
-		RunE:  RunHandler,
+		Use:     "run MODEL [PROMPT]",
+		Short:   "Run a model",
+		Args:    cobra.MinimumNArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    RunHandler,
 	}
 
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")

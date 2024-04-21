@@ -243,7 +243,7 @@ func getCPUMem() (memInfo, error) {
 	return ret, nil
 }
 
-func CheckVRAM() (int64, error) {
+func CheckVRAM() (uint64, error) {
 	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
 	if userLimit != "" {
 		avail, err := strconv.ParseInt(userLimit, 10, 64)
@@ -251,11 +251,11 @@ func CheckVRAM() (int64, error) {
 			return 0, fmt.Errorf("Invalid OLLAMA_MAX_VRAM setting %s: %s", userLimit, err)
 		}
 		slog.Info(fmt.Sprintf("user override OLLAMA_MAX_VRAM=%d", avail))
-		return avail, nil
+		return uint64(avail), nil
 	}
 	gpuInfo := GetGPUInfo()
 	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
-		return int64(gpuInfo.FreeMemory), nil
+		return gpuInfo.FreeMemory, nil
 	}
 
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation

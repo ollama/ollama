@@ -15,7 +15,7 @@ type GpuInfo struct {
 	Variant string `json:"variant,omitempty"`
 
 	// MinimumMemory represents the minimum memory required to use the GPU
-	MinimumMemory int64 `json:"-"`
+	MinimumMemory uint64 `json:"-"`
 
 	// TODO add other useful attributes about the card here for discovery information
 }

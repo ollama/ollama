@@ -49,7 +49,7 @@ func (llm *ggla) KV() KV {
 	return llm.kv
 }
 
-func (llm *ggla) Tensors() []*Tensor {
+func (llm *ggla) Tensors() Tensors {
 	return llm.tensors
 }
 
