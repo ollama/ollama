@@ -97,7 +97,7 @@ func repack(data []uint16, heads int, shape []uint64) ([]uint16, error) {
 }
 
 func (m *MistralModel) GetTensors() error {
-	t, err := GetSafeTensors(m.Path, m.Params)
+	t, err := m.Format.GetTensors(m.Path, m.Params)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (m *MistralModel) GetTensors() error {
 }
 
 func (m *MistralModel) LoadVocab() error {
-	v, err := LoadSentencePieceTokens(m.Path, m.Params.VocabSize)
+	v, err := LoadSentencePieceTokens(m.Path, m.Params)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,6 @@ func (m *MistralModel) WriteGGUF() (string, error) {
 		"llama.attention.head_count":             uint32(m.Params.AttentionHeads),
 		"llama.attention.head_count_kv":          uint32(m.Params.KeyValHeads),
 		"llama.attention.layer_norm_rms_epsilon": float32(m.Params.NormEPS),
-		"llama.rope.freq_base":                   float32(m.Params.RopeFreqBase),
 		"general.file_type":                      uint32(1),
 		"tokenizer.ggml.model":                   "llama",
 

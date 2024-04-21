@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,15 +35,7 @@ type LlamaServer struct {
 	options api.Options
 }
 
-var cpuOnlyFamilies = []string{
-	"mamba",
-}
-
 func NewLlamaServer(model string, adapters, projectors []string, opts api.Options) (*LlamaServer, error) {
-	if _, err := os.Stat(model); err != nil {
-		return nil, err
-	}
-
 	f, err := os.Open(model)
 	if err != nil {
 		return nil, err
@@ -65,66 +56,122 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		opts.NumCtx = 4
 	}
 
-	availableMemory, _ := gpu.CheckVRAM()
+	memoryAvailable, _ := gpu.CheckVRAM()
 	info := gpu.GetGPUInfo()
 
-	usedMemory := info.MinimumMemory
+	memoryMinimum := info.MinimumMemory
 	for _, projector := range projectors {
-		usedMemory += projectorMemoryRequirements(projector)
+		memoryMinimum += projectorMemoryRequirements(projector)
 
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
-	kv := 2 * 2 * int64(opts.NumCtx) * int64(ggml.KV().BlockCount()) * int64(ggml.KV().EmbeddingLength()) / int64(ggml.KV().HeadCount()) * int64(ggml.KV().HeadCountKV())
+	var kv uint64 = 2 * 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * ggml.KV().EmbeddingLength() / ggml.KV().HeadCount() * ggml.KV().HeadCountKV()
 
-	graph, ok := ggml.GraphSize(opts.NumCtx, min(opts.NumCtx, opts.NumBatch))
-	if !ok {
-		graph = int64(ggml.KV().GQA()) * kv / 6
+	graphPartialOffload, graphFullOffload := ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)))
+	if graphPartialOffload == 0 {
+		graphPartialOffload = ggml.KV().GQA() * kv / 6
 	}
 
-	usedMemory += graph
-
-	if (usedMemory > availableMemory || slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture())) && info.Library != "metal" {
-		info.Library = "cpu"
+	if graphFullOffload == 0 {
+		graphFullOffload = graphPartialOffload
 	}
 
-	requiredMemory := usedMemory
+	graphFullOffload *= uint64(info.DeviceCount)
+	graphPartialOffload *= uint64(info.DeviceCount)
 
-	var layers int
-	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
-		layerMemory := ggml.LayerSize(fmt.Sprintf("blk.%d.", i)) + kv/int64(ggml.KV().BlockCount())
-		requiredMemory += layerMemory
+	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
+	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
-		if availableMemory > usedMemory+layerMemory && (opts.NumGPU < 0 || layers < opts.NumGPU) {
-			usedMemory += layerMemory
-			layers++
+	// memoryRequiredPartial represents the memory required for partial GPU offloading (n > 0, n < layers)
+	memoryRequiredPartial := memoryMinimum + graphPartialOffload
+
+	if info.Library != "metal" {
+		if memoryRequiredPartial > memoryAvailable {
+			info.Library = "cpu"
 		}
 	}
 
-	memOutputLayer := ggml.LayerSize("output.")
-	requiredMemory += memOutputLayer
+	var layerCount int
+	layers := ggml.Tensors().Layers()
+	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
+		memoryLayer := layers[fmt.Sprintf("blk.%d", i)].size()
 
-	// only offload output layer if all repeating layers are offloaded
-	if layers >= int(ggml.KV().BlockCount()) && availableMemory > usedMemory+memOutputLayer {
-		usedMemory += memOutputLayer
-		layers++
+		// KV is proportional to the number of layers
+		memoryLayer += kv / ggml.KV().BlockCount()
+
+		memoryRequiredTotal += memoryLayer
+		if memoryAvailable > memoryRequiredPartial+memoryLayer {
+			memoryRequiredPartial += memoryLayer
+			layerCount++
+		}
 	}
+
+	var memoryLayerOutput uint64
+	for k, v := range layers {
+		if !strings.HasPrefix(k, "blk.") {
+			memoryLayerOutput += v.size()
+		}
+	}
+
+	memoryRequiredTotal += memoryLayerOutput
+
+	if info.Library == "metal" && memoryRequiredTotal > info.TotalMemory {
+		// disable partial offloading when model is greater than total system memory
+		opts.NumGPU = 0
+	} else if memoryAvailable > memoryRequiredTotal {
+		layerCount = int(ggml.KV().BlockCount()) + 1
+		memoryRequiredPartial = memoryRequiredTotal
+	}
+
+	if opts.NumGPU < 0 {
+		opts.NumGPU = layerCount
+	}
+
+	memoryWeights := memoryRequiredTotal - memoryMinimum - graphFullOffload - kv
 
 	slog.Info(
 		"offload to gpu",
-		"layers", layers,
-		"required", format.HumanBytes2(requiredMemory),
-		"used", format.HumanBytes2(usedMemory),
-		"available", format.HumanBytes2(availableMemory),
-		"kv", format.HumanBytes2(kv),
-		"graph", format.HumanBytes2(graph),
+		slog.Group(
+			"layers",
+			// actual number of layers offloaded
+			"real", opts.NumGPU,
+			// estimated number of layers that can be offloaded
+			"estimate", layerCount,
+		),
+		slog.Group(
+			"memory",
+			// memory available for offloading
+			"available", format.HumanBytes2(memoryAvailable),
+			slog.Group(
+				"required",
+				// memory required for full offloading
+				"full", format.HumanBytes2(memoryRequiredTotal),
+				// memory required to offload layers.estimate layers
+				"partial", format.HumanBytes2(memoryRequiredPartial),
+				// memory of KV cache
+				"kv", format.HumanBytes2(kv),
+			),
+			slog.Group(
+				"weights",
+				// memory of the weights
+				"total", format.HumanBytes2(memoryWeights),
+				// memory of repeating layers
+				"repeating", format.HumanBytes2(memoryWeights-memoryLayerOutput),
+				// memory of non-repeating layers
+				"nonrepeating", format.HumanBytes2(memoryLayerOutput),
+			),
+			slog.Group(
+				"graph",
+				// memory of graph when fully offloaded
+				"full", format.HumanBytes2(graphFullOffload),
+				// memory of graph when not fully offloaded
+				"partial", format.HumanBytes2(graphPartialOffload),
+			),
+		),
 	)
-
-	if opts.NumGPU < 0 && info.Library != "cpu" {
-		opts.NumGPU = layers
-	}
 
 	if len(adapters) > 1 {
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
@@ -170,14 +217,6 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 
 	if opts.MainGPU > 0 {
 		params = append(params, "--main-gpu", fmt.Sprintf("%d", opts.MainGPU))
-	}
-
-	if opts.RopeFrequencyBase > 0 {
-		params = append(params, "--rope-freq-base", fmt.Sprintf("%f", opts.RopeFrequencyBase))
-	}
-
-	if opts.RopeFrequencyScale > 0 {
-		params = append(params, "--rope-freq-scale", fmt.Sprintf("%f", opts.RopeFrequencyScale))
 	}
 
 	if len(adapters) > 0 {
@@ -277,12 +316,6 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 			_ = s.cmd.Wait()
 		}()
 
-		if err = s.waitUntilRunning(); err != nil {
-			slog.Error("error starting llama server", "server", servers[i], "error", err)
-			s.Close()
-			finalErr = err
-			continue
-		}
 		return s, nil
 	}
 
@@ -290,7 +323,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	return nil, finalErr
 }
 
-func projectorMemoryRequirements(filename string) int64 {
+func projectorMemoryRequirements(filename string) uint64 {
 	file, err := os.Open(filename)
 	if err != nil {
 		return 0
@@ -302,18 +335,12 @@ func projectorMemoryRequirements(filename string) int64 {
 		return 0
 	}
 
-	prefixes := make(map[string]struct{})
-	for _, layer := range ggml.Tensors() {
-		parts := strings.Split(layer.Name, ".")
-		prefixes[strings.Join(parts[:2], ".")] = struct{}{}
+	var mem uint64
+	for _, layer := range ggml.Tensors().Layers() {
+		mem += layer.size()
 	}
 
-	var ask int64
-	for prefix := range prefixes {
-		ask += ggml.LayerSize(prefix)
-	}
-
-	return ask
+	return mem
 }
 
 type ServerStatus int
@@ -389,9 +416,10 @@ func (s *LlamaServer) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (s *LlamaServer) waitUntilRunning() error {
+func (s *LlamaServer) WaitUntilRunning() error {
 	start := time.Now()
-	expiresAt := time.Now().Add(3 * time.Minute) // be generous with timeout, large models can take a while to load
+	// TODO we need to wire up a better way to detect hangs during model load and startup of the server
+	expiresAt := time.Now().Add(10 * time.Minute) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
