@@ -17,7 +17,7 @@ import (
 	"github.com/ollama/ollama/gpu"
 )
 
-var errPayloadMissing = fmt.Errorf("expected payloads not included in this build of ollama")
+var errPayloadMissing = errors.New("expected payloads not included in this build of ollama")
 
 func Init() error {
 	payloadsDir, err := gpu.PayloadsDir()

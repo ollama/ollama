@@ -156,7 +156,7 @@ func ParseName(s, fill string) Name {
 			r = Name{}
 			return false
 		}
-		if kind == PartExtraneous || !isValidPart(kind, part) {
+		if kind == PartExtraneous || !IsValidNamePart(kind, part) {
 			r = Name{}
 			return false
 		}
@@ -176,7 +176,7 @@ func parseMask(s string) Name {
 			// mask part; treat as empty but valid
 			return true
 		}
-		if !isValidPart(kind, part) {
+		if !IsValidNamePart(kind, part) {
 			panic(fmt.Errorf("invalid mask part %s: %q", kind, part))
 		}
 		r.parts[kind] = part
@@ -608,7 +608,7 @@ func ParseNameFromFilepath(s, fill string) Name {
 	var r Name
 	for i := range PartBuild + 1 {
 		part, rest, _ := strings.Cut(s, string(filepath.Separator))
-		if !isValidPart(i, part) {
+		if !IsValidNamePart(i, part) {
 			return Name{}
 		}
 		r.parts[i] = part
@@ -654,9 +654,12 @@ func (r Name) FilepathNoBuild() string {
 	return filepath.Join(r.parts[:PartBuild]...)
 }
 
-// isValidPart reports if s contains all valid characters for the given
-// part kind.
-func isValidPart(kind PartKind, s string) bool {
+// IsValidNamePart reports if s contains all valid characters for the given
+// part kind and is under MaxNamePartLen bytes.
+func IsValidNamePart(kind PartKind, s string) bool {
+	if len(s) > MaxNamePartLen {
+		return false
+	}
 	if s == "" {
 		return false
 	}
