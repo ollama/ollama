@@ -1,0 +1,4 @@
+*.bin
+*.gguf
+*.lib
+*.exp

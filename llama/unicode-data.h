@@ -1,16 +1,20 @@
 #pragma once
 
 #include <cstdint>
-#include <map>
-#include <utility>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
-extern const std::vector<std::pair<uint32_t, uint32_t>> unicode_ranges_digit;
-extern const std::vector<std::pair<uint32_t, uint32_t>> unicode_ranges_letter;
-extern const std::vector<std::pair<uint32_t, uint32_t>> unicode_ranges_whitespace;
-extern const std::vector<std::pair<uint32_t, uint32_t>> unicode_ranges_accent_mark;
-extern const std::vector<std::pair<uint32_t, uint32_t>> unicode_ranges_punctuation;
-extern const std::vector<std::pair<uint32_t, uint32_t>> unicode_ranges_symbol;
-extern const std::vector<std::pair<uint32_t, uint32_t>> unicode_ranges_control;
-extern const std::multimap<uint32_t, uint32_t> unicode_map_nfd;
-extern const std::map<char32_t, char32_t> unicode_map_lowercase;
+struct range_nfd {
+    uint32_t first;
+    uint32_t last;
+    uint32_t nfd;
+};
+
+static const uint32_t MAX_CODEPOINTS = 0x110000;
+
+extern const std::vector<std::pair<uint32_t, uint16_t>> unicode_ranges_flags;
+extern const std::unordered_set<uint32_t> unicode_set_whitespace;
+extern const std::unordered_map<uint32_t, uint32_t> unicode_map_lowercase;
+extern const std::unordered_map<uint32_t, uint32_t> unicode_map_uppercase;
+extern const std::vector<range_nfd> unicode_ranges_nfd;
