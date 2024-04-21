@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ollama/ollama/types/structs"
+	"ollama.com/types/structs"
 )
 
 // Errors

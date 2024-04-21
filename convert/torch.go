@@ -15,7 +15,7 @@ import (
 	"github.com/nlpodyssey/gopickle/types"
 	"github.com/x448/float16"
 
-	"github.com/ollama/ollama/llm"
+	"ollama.com/llm"
 )
 
 type torchWriterTo struct {

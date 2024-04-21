@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/format"
 	"golang.org/x/sync/errgroup"
+	"ollama.com/api"
+	"ollama.com/format"
 )
 
 var blobUploadManager sync.Map

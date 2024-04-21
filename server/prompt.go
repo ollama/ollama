@@ -7,7 +7,7 @@ import (
 	"text/template"
 	"text/template/parse"
 
-	"github.com/ollama/ollama/api"
+	"ollama.com/api"
 )
 
 // isResponseNode checks if the node contains .Response

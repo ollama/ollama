@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/api"
+	"ollama.com/api"
 )
 
 // TODO - this would ideally be in the llm package, but that would require some refactoring of interfaces in the server

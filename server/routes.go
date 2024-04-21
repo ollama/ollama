@@ -27,12 +27,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/exp/slices"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/gpu"
-	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/parser"
-	"github.com/ollama/ollama/version"
+	"ollama.com/api"
+	"ollama.com/gpu"
+	"ollama.com/llm"
+	"ollama.com/openai"
+	"ollama.com/parser"
+	"ollama.com/version"
 )
 
 var mode string = gin.DebugMode

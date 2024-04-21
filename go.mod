@@ -1,4 +1,4 @@
-module github.com/ollama/ollama
+module ollama.com
 
 go 1.22
 

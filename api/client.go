@@ -20,8 +20,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/version"
+	"ollama.com/format"
+	"ollama.com/version"
 )
 
 // Client encapsulates client state for interacting with the ollama

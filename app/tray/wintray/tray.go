@@ -13,8 +13,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/ollama/ollama/app/tray/commontray"
 	"golang.org/x/sys/windows"
+	"ollama.com/app/tray/commontray"
 )
 
 // Helpful sources: https://github.com/golang/exp/blob/master/shiny/driver/internal/win32

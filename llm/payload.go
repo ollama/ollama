@@ -14,7 +14,7 @@ import (
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/gpu"
+	"ollama.com/gpu"
 )
 
 var errPayloadMissing = fmt.Errorf("expected payloads not included in this build of ollama")

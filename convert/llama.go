@@ -14,7 +14,7 @@ import (
 	"github.com/pdevine/tensor/native"
 	"github.com/x448/float16"
 
-	"github.com/ollama/ollama/llm"
+	"ollama.com/llm"
 )
 
 type LlamaModel struct {

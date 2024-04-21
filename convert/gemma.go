@@ -12,7 +12,7 @@ import (
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
-	"github.com/ollama/ollama/llm"
+	"ollama.com/llm"
 )
 
 type GemmaModel struct {
