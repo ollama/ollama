@@ -371,16 +371,16 @@ struct ggml_gallocr {
 };
 
 ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs) {
-    ggml_gallocr_t galloc = (ggml_gallocr_t)calloc(sizeof(struct ggml_gallocr), 1);
+    ggml_gallocr_t galloc = (ggml_gallocr_t)calloc(1, sizeof(struct ggml_gallocr));
     GGML_ASSERT(galloc != NULL);
 
-    galloc->bufts = calloc(sizeof(ggml_backend_buffer_type_t) * n_bufs, 1);
+    galloc->bufts = calloc(n_bufs, sizeof(ggml_backend_buffer_type_t));
     GGML_ASSERT(galloc->bufts != NULL);
 
-    galloc->buffers = calloc(sizeof(ggml_backend_buffer_t) * n_bufs, 1);
+    galloc->buffers = calloc(n_bufs, sizeof(ggml_backend_buffer_t) * n_bufs);
     GGML_ASSERT(galloc->buffers != NULL);
 
-    galloc->buf_tallocs = calloc(sizeof(struct ggml_dyn_tallocr *) * n_bufs, 1);
+    galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 
     for (int i = 0; i < n_bufs; i++) {
@@ -646,8 +646,8 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
         free(galloc->hash_set.keys);
         free(galloc->hash_values);
         galloc->hash_set.size = hash_size;
-        galloc->hash_set.keys = calloc(sizeof(struct ggml_tensor *), hash_size);
-        galloc->hash_values   = calloc(sizeof(struct hash_node), hash_size);
+        galloc->hash_set.keys = calloc(hash_size, sizeof(struct ggml_tensor *));
+        galloc->hash_values   = calloc(hash_size, sizeof(struct hash_node));
         GGML_ASSERT(galloc->hash_set.keys != NULL);
         GGML_ASSERT(galloc->hash_values != NULL);
     } else {
@@ -667,7 +667,7 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
     // set the node_allocs from the hash table
     if (galloc->n_nodes < graph->n_nodes) {
         free(galloc->node_allocs);
-        galloc->node_allocs = calloc(sizeof(struct node_alloc), graph->n_nodes);
+        galloc->node_allocs = calloc(graph->n_nodes, sizeof(struct node_alloc));
         GGML_ASSERT(galloc->node_allocs != NULL);
     }
     galloc->n_nodes = graph->n_nodes;
@@ -697,7 +697,7 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
     }
     if (galloc->n_leafs < graph->n_leafs) {
         free(galloc->leaf_allocs);
-        galloc->leaf_allocs = calloc(sizeof(galloc->leaf_allocs[0]), graph->n_leafs);
+        galloc->leaf_allocs = calloc(graph->n_leafs, sizeof(galloc->leaf_allocs[0]));
         GGML_ASSERT(galloc->leaf_allocs != NULL);
     }
     galloc->n_leafs = graph->n_leafs;
