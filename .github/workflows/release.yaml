@@ -8,7 +8,7 @@ on:
 jobs:
   # Full build of the Mac assets
   build-darwin:
-    runs-on: macos-latest
+    runs-on: macos-12
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +30,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
           cache: true
       - name: Build Darwin
         env:
@@ -38,16 +38,17 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           APPLE_ID: ${{ vars.APPLE_ID }}
+          SDKROOT: /Applications/Xcode_13.4.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+          DEVELOPER_DIR: /Applications/Xcode_13.4.1.app/Contents/Developer
         run: |
           ./scripts/build_darwin.sh
-        
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist-darwin
           path: |
             dist/*arwin*
             !dist/*-cov
-
 
   # Windows builds take a long time to both install the dependencies and build, so parallelize
   # CPU generation step
@@ -85,7 +86,7 @@ jobs:
           write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
           cache: true
       - run: go get ./...
       - run: |
@@ -99,7 +100,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cpu
-          path: llm/llama.cpp/build/**/lib/*
+          path: |
+            llm/build/**/bin/*
+            llm/build/**/*.a
 
   # ROCm generation step
   generate-windows-rocm:
@@ -136,9 +139,9 @@ jobs:
           write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
           cache: true
-      - name: "Install ROCm"
+      - name: 'Install ROCm'
         run: |
           $ErrorActionPreference = "Stop"
           write-host "downloading AMD HIP Installer"
@@ -146,7 +149,7 @@ jobs:
           write-host "Installing AMD HIP"
           Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
           write-host "Completed AMD HIP"
-      - name: "Verify ROCm"
+      - name: 'Verify ROCm'
         run: |
           & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
       - run: go get ./...
@@ -160,7 +163,7 @@ jobs:
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
           go generate -x ./...
         name: go generate
-      - name: "gather rocm dependencies"
+      - name: 'gather rocm dependencies'
         run: |
           $HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
           md "dist\deps\bin\rocblas\library"
@@ -170,7 +173,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/llama.cpp/build/**/lib/*
+          path: llm/build/**/bin/*
       - uses: actions/upload-artifact@v4
         with:
           name: windows-rocm-deps
@@ -211,29 +214,36 @@ jobs:
           write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
           cache: true
-      # TODO - consider replacing this action with a ps1 snippet to install
-      # This actions seems to fail sometimes with "no tools in cache" but a re-run of the failed job clears it
-      # https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
-      - name: "Install CUDA"
-        uses: Jimver/cuda-toolkit@v0.2.14
-        id: cuda-toolkit
-        with:
-          cuda: '11.3.1'      
-      - name: "Verify CUDA"
+      - name: 'Install CUDA'
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading CUDA Installer"
+          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe" -OutFile "${env:RUNNER_TEMP}\cuda-install.exe"
+          write-host "Installing CUDA"
+          Start-Process "${env:RUNNER_TEMP}\cuda-install.exe" -ArgumentList '-s' -NoNewWindow -Wait
+          write-host "Completed CUDA"
+          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
+          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
+          echo "$cudaPath\bin" >> $env:GITHUB_PATH
+          echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
+      - name: 'Verify CUDA'
         run: nvcc -V
       - run: go get ./...
       - name: go generate
         run: |
           $gopath=(get-command go).source | split-path -parent
+          $cudabin=(get-command nvcc).source | split-path
           & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
           cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
+          $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           go generate -x ./...
-      - name: "gather cuda dependencies"
+      - name: 'gather cuda dependencies'
         run: |
           $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
           md "dist\deps"
@@ -243,7 +253,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/llama.cpp/build/**/lib/*
+          path: llm/build/**/bin/*
       - uses: actions/upload-artifact@v4
         with:
           name: windows-cuda-deps
@@ -290,17 +300,17 @@ jobs:
           write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
           cache: true
       - run: go get
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cpu
-          path: llm/llama.cpp/build
+          path: llm/build
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/llama.cpp/build
+          path: llm/build
       - uses: actions/download-artifact@v4
         with:
           name: windows-cuda-deps
@@ -312,8 +322,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/llama.cpp/build
-      - run: dir llm/llama.cpp/build
+          path: llm/build
+      - run: dir llm/build
       - run: |
           $gopath=(get-command go).source | split-path -parent
           & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
@@ -329,14 +339,14 @@ jobs:
           name: dist-windows
           path: dist/*.exe
 
-  # Linux x86 assets built using the container based build 
+  # Linux x86 assets built using the container based build
   build-linux-amd64:
     environment: release
     runs-on: linux
     env:
-      OLLAMA_SKIP_MANIFEST_CREATE: "1"
+      OLLAMA_SKIP_MANIFEST_CREATE: '1'
       BUILD_ARCH: amd64
-      PUSH: "1"
+      PUSH: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -366,9 +376,9 @@ jobs:
     environment: release
     runs-on: linux-arm64
     env:
-      OLLAMA_SKIP_MANIFEST_CREATE: "1"
+      OLLAMA_SKIP_MANIFEST_CREATE: '1'
       BUILD_ARCH: arm64
-      PUSH: "1"
+      PUSH: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -376,7 +386,7 @@ jobs:
       - name: Set Version
         shell: bash
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - name: "Install Docker"
+      - name: 'Install Docker'
         run: |
           # Add Docker's official GPG key:
           env
@@ -413,19 +423,19 @@ jobs:
             !dist/*-cov
 
   # Aggregate all the assets and ship a release
-  release: 
+  release:
     needs:
       - build-darwin
       - build-windows
       - build-linux-amd64
       - build-linux-arm64
-    runs-on: ubuntu-latest
+    runs-on: linux
     environment: release
     permissions:
       contents: write
     env:
-      OLLAMA_SKIP_IMAGE_BUILD: "1"
-      PUSH: "1"
+      OLLAMA_SKIP_IMAGE_BUILD: '1'
+      PUSH: '1'
     steps:
       - uses: actions/checkout@v4
       - name: Set Version
@@ -453,7 +463,7 @@ jobs:
         with:
           name: ${{ env.RELEASE_VERSION }}
           allowUpdates: true
-          artifacts: "dist/*"
+          artifacts: 'dist/*'
           draft: true
           prerelease: true
           omitBodyDuringUpdate: true

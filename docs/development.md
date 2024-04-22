@@ -69,7 +69,7 @@ go build .
 
 _Your operating system distribution may already have packages for AMD ROCm and CLBlast. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
 
-Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [ROCm](https://rocm.docs.amd.com/en/latest/deploy/linux/quick_start.html) development packages first, as well as `cmake` and `golang`.
+Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [ROCm](https://rocm.docs.amd.com/en/latest/) development packages first, as well as `cmake` and `golang`.
 
 Typically the build scripts will auto-detect ROCm, however, if your Linux distro
 or installation approach uses unusual paths, you can specify the location by
@@ -116,29 +116,30 @@ Note: The windows build for Ollama is still under development.
 
 Install required tools:
 
-- MSVC toolchain - C/C++ and cmake as minimal requirements - You must build from a "Developer Shell" with the environment variables set
-- go version 1.22 or higher
+- MSVC toolchain - C/C++ and cmake as minimal requirements
+- Go version 1.22 or higher
 - MinGW (pick one variant) with GCC.
-  - <https://www.mingw-w64.org/>
-  - <https://www.msys2.org/>
+  - [MinGW-w64](https://www.mingw-w64.org/)
+  - [MSYS2](https://www.msys2.org/)
 
 ```powershell
 $env:CGO_ENABLED="1"
-
 go generate ./...
-
 go build .
 ```
 
 #### Windows CUDA (NVIDIA)
 
-In addition to the common Windows development tools described above, install CUDA **AFTER** you install MSVC.
+In addition to the common Windows development tools described above, install CUDA after installing MSVC.
 
 - [NVIDIA CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
 
 
 #### Windows ROCm (AMD Radeon)
 
-In addition to the common Windows development tools described above, install AMDs HIP package **AFTER** you install MSVC
+In addition to the common Windows development tools described above, install AMDs HIP package after installing MSVC.
 
 - [AMD HIP](https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html)
+- [Strawberry Perl](https://strawberryperl.com/)
+
+Lastly, add `ninja.exe` included with MSVC to the system path (e.g. `C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`).

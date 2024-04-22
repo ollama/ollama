@@ -14,6 +14,10 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 Review the [Troubleshooting](./troubleshooting.md) docs for more about using logs.
 
+## Is my GPU compatible with Ollama?
+
+Please refer to the [GPU docs](./gpu.md).
+
 ## How can I specify the context window size?
 
 By default, Ollama uses a context window size of 2048 tokens.
@@ -95,6 +99,37 @@ Ollama binds 127.0.0.1 port 11434 by default. Change the bind address with the `
 
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
+## How can I use Ollama with a proxy server?
+
+Ollama runs an HTTP server and can be exposed using a proxy server such as Nginx. To do so, configure the proxy to forward requests and optionally set required headers (if not exposing Ollama on the network). For example, with Nginx:
+
+```
+server {
+    listen 80;
+    server_name example.com;  # Replace with your domain or IP
+    location / {
+        proxy_pass http://localhost:11434;
+        proxy_set_header Host localhost:11434;
+    }
+}
+```
+
+## How can I use Ollama with ngrok?
+
+Ollama can be accessed using a range of tools for tunneling tools. For example with Ngrok:
+
+```
+ngrok http 11434 --host-header="localhost:11434"
+```
+
+## How can I use Ollama with Cloudflare Tunnel?
+
+To use Ollama with Cloudflare Tunnel, use the `--url` and `--http-host-header` flags:
+
+```
+cloudflared tunnel --url http://localhost:11434 --http-host-header="localhost:11434"
+```
+
 ## How can I allow additional web origins to access Ollama?
 
 Ollama allows cross-origin requests from `127.0.0.1` and `0.0.0.0` by default. Additional origins can be configured with `OLLAMA_ORIGINS`.
@@ -119,7 +154,7 @@ No. Ollama runs locally, and conversation data does not leave your machine.
 
 ## How can I use Ollama in Visual Studio Code?
 
-There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. See the list of [extensions & plugins](https://github.com/jmorganca/ollama#extensions--plugins) at the bottom of the main repository readme.
+There is already a large collection of plugins available for VSCode as well as other editors that leverage Ollama. See the list of [extensions & plugins](https://github.com/ollama/ollama#extensions--plugins) at the bottom of the main repository readme.
 
 ## How do I use Ollama behind a proxy?
 
@@ -193,13 +228,3 @@ To unload the model and free up memory use:
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": 0}'
 ```
-
-## Controlling which GPUs to use
-
-By default, on Linux and Windows, Ollama will attempt to use Nvidia GPUs, or
-Radeon GPUs, and will use all the GPUs it can find. You can limit which GPUs
-will be utilized by setting the environment variable `CUDA_VISIBLE_DEVICES` for
-NVIDIA cards, or `HIP_VISIBLE_DEVICES` for Radeon GPUs to a comma delimited list
-of GPU IDs.  You can see the list of devices with GPU tools such as `nvidia-smi` or
-`rocminfo`. You can set to an invalid GPU ID (e.g., "-1") to bypass the GPU and
-fallback to CPU.

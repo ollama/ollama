@@ -1,4 +1,4 @@
-module github.com/jmorganca/ollama
+module github.com/ollama/ollama
 
 go 1.22
 
@@ -22,6 +22,7 @@ require (
 require (
 	codeberg.org/meta/bytesize v1.0.3
 	github.com/conduitio/bwlimit v0.1.0
+	github.com/nlpodyssey/gopickle v0.3.0
 	github.com/pdevine/tensor v0.0.0-20240228013915-64ccaa8d9ca9
 )
 
@@ -73,7 +74,7 @@ require (
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sys v0.13.0
 	golang.org/x/term v0.13.0
-	golang.org/x/text v0.13.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 	google.golang.org/protobuf v1.30.0
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

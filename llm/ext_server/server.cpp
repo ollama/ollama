@@ -1,3 +1,25 @@
+// MIT License
+
+// Copyright (c) 2023 Georgi Gerganov
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "common.h"
 #include "llama.h"
 #include "grammar-parser.h"
@@ -16,6 +38,10 @@
 #define CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH 1048576
 #include "httplib.h"
 #include "json.hpp"
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include <cstddef>
 #include <thread>
@@ -343,6 +369,12 @@ struct llama_server_context
 
     ~llama_server_context()
     {
+        if (clp_ctx)
+        {
+            LOG_INFO("freeing clip model", {});
+            clip_free(clp_ctx);
+            clp_ctx = nullptr;
+        }
         if (ctx)
         {
             llama_free(ctx);
@@ -979,12 +1011,14 @@ struct llama_server_context
                 slot.n_sent_text += result.text_to_send.size();
                 // add the token to slot queue and cache
             }
-            slot.add_token_string(result);
+
             if (slot.params.stream)
             {
                 send_partial_response(slot, result);
             }
         }
+
+        slot.add_token_string(result);
 
         if (incomplete)
         {
@@ -2740,8 +2774,28 @@ inline void signal_handler(int signal) {
     shutdown_handler(signal);
 }
 
-int _main(int argc, char **argv)
-{
+#if defined(_WIN32)
+char* wchar_to_char(const wchar_t* wstr) {
+    if (wstr == nullptr) return nullptr;
+
+    // Determine the number of bytes needed for the UTF-8 string
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, nullptr, 0, nullptr, nullptr);
+    char* str = new char[bytes];
+
+    // Convert the wide-character string to a UTF-8 string
+    WideCharToMultiByte(CP_UTF8, 0, wstr, -1, str, bytes, nullptr, nullptr);
+    return str;
+}
+
+int wmain(int argc, wchar_t **wargv) {
+    char** argv = new char*[argc];
+    for (int i = 0; i < argc; ++i) {
+        argv[i] = wchar_to_char(wargv[i]);
+    }
+#else
+int main(int argc, char **argv) {
+#endif
+
 #if SERVER_VERBOSE != 1
     log_disable();
 #endif
@@ -3252,6 +3306,11 @@ int _main(int argc, char **argv)
         return (ctrl_type == CTRL_C_EVENT) ? (signal_handler(SIGINT), true) : false;
     };
     SetConsoleCtrlHandler(reinterpret_cast<PHANDLER_ROUTINE>(console_ctrl_handler), true);
+
+    for (int i = 0; i < argc; ++i) {
+        delete[] argv[i];
+    }
+    delete[] argv;
 #endif
     llama.queue_tasks.start_loop();
     svr.stop();

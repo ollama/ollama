@@ -100,6 +100,8 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 		return
 	}
 
+	updateLibPath(libDir)
+
 	gfxOverride := os.Getenv("HSA_OVERRIDE_GFX_VERSION")
 	if gfxOverride == "" {
 		supported, err := GetSupportedGFX(libDir)
@@ -113,7 +115,7 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 			if !slices.Contains[[]string, string](supported, v.ToGFXString()) {
 				slog.Warn(fmt.Sprintf("amdgpu [%d] %s is not supported by %s %v", i, v.ToGFXString(), libDir, supported))
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
-				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
+				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/gpu.md#overrides for HSA_OVERRIDE_GFX_VERSION usage")
 				skip[i] = struct{}{}
 			} else {
 				slog.Info(fmt.Sprintf("amdgpu [%d] %s is supported", i, v.ToGFXString()))
@@ -141,6 +143,21 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 	if len(skip) > 0 {
 		amdSetVisibleDevices(ids, skip)
 	}
+}
+
+func updateLibPath(libDir string) {
+	ldPaths := []string{}
+	if val, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+		ldPaths = strings.Split(val, ":")
+	}
+	for _, d := range ldPaths {
+		if d == libDir {
+			return
+		}
+	}
+	val := strings.Join(append(ldPaths, libDir), ":")
+	slog.Debug("updated lib path", "LD_LIBRARY_PATH", val)
+	os.Setenv("LD_LIBRARY_PATH", val)
 }
 
 // Walk the sysfs nodes for the available GPUs and gather information from them
