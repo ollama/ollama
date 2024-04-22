@@ -253,6 +253,12 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	var finalErr error
 	for i := 0; i < len(servers); i++ {
 		dir := availableServers[servers[i]]
+		if dir == "" {
+			// Shouldn't happen
+			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)
+			slog.Error("sever list inconsistent", "error", finalErr)
+			continue
+		}
 
 		// Find an availableServers  port, retry on each iterration in case the failure was a port conflict race
 		port := 0
