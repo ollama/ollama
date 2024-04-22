@@ -91,7 +91,7 @@ func countTokens(tmpl string, system string, prompt string, response string, enc
 }
 
 // ChatPrompt builds up a prompt from a series of messages, truncating based on context window size
-func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(string) ([]int, error)) (string, error) {
+func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(string) ([]int, error)) (string, int, error) {
 	type prompt struct {
 		System   string
 		Prompt   string
@@ -138,7 +138,7 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 
 			p.Response = msg.Content
 		default:
-			return "", fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
+			return "", 0, fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
 		}
 	}
 
@@ -151,7 +151,7 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 	for i, p := range prompts {
 		tokens, err := countTokens(tmpl, p.System, p.Prompt, p.Response, encode)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 
 		prompts[i].tokens = tokens + len(prompts[i].images)*768
@@ -160,15 +160,17 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 	// truncate images and prompts starting from the beginning of the list
 	// until either one prompt remains or the total tokens fits the context window
 	// TODO (jmorganca): this doesn't account for the context window room required for the response
+	var required int
 	for {
-		var required int
+		required = 0
 		for _, p := range prompts {
 			required += p.tokens
 		}
 
 		required += 1 // for bos token
 
-		if required <= window {
+		// leave ~1024 tokens for generation
+		if required <= max(1024, window/2) {
 			slog.Debug("prompt now fits in context window", "required", required, "window", window)
 			break
 		}
@@ -194,7 +196,7 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 
 				tokens, err := countTokens(tmpl, prompts[0].System, prompts[0].Prompt, prompts[0].Response, encode)
 				if err != nil {
-					return "", err
+					return "", 0, err
 				}
 
 				prompts[0].tokens = tokens + len(prompts[0].images)*768
@@ -212,10 +214,10 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 		// last prompt should leave the response unrendered (for completion)
 		rendered, err := Prompt(tmpl, p.System, p.Prompt, p.Response, i == len(prompts)-1)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		sb.WriteString(rendered)
 	}
 
-	return sb.String(), nil
+	return sb.String(), required, nil
 }

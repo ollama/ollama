@@ -98,7 +98,8 @@ type ChatResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 	Message   Message   `json:"message"`
 
-	Done bool `json:"done"`
+	Done       bool   `json:"done"`
+	DoneReason string `json:"done_reason,omitempty"`
 
 	Metrics
 }
@@ -265,8 +266,9 @@ type GenerateResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 	Response  string    `json:"response"`
 
-	Done    bool  `json:"done"`
-	Context []int `json:"context,omitempty"`
+	Done       bool   `json:"done"`
+	DoneReason string `json:"done_reason,omitempty"`
+	Context    []int  `json:"context,omitempty"`
 
 	Metrics
 }

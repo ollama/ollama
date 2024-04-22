@@ -509,10 +509,13 @@ type ImageData struct {
 }
 
 type completion struct {
-	Content string `json:"content"`
-	Model   string `json:"model"`
-	Prompt  string `json:"prompt"`
-	Stop    bool   `json:"stop"`
+	Content      string `json:"content"`
+	Model        string `json:"model"`
+	Prompt       string `json:"prompt"`
+	Stop         bool   `json:"stop"`
+	StoppedEos   bool   `json:"stopped_eos"`
+	StoppedWord  bool   `json:"stopped_word"`
+	StoppedLimit bool   `json:"stopped_limit"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -532,6 +535,7 @@ type CompletionRequest struct {
 type CompletionResponse struct {
 	Content            string
 	Done               bool
+	DoneReason         string
 	PromptEvalCount    int
 	PromptEvalDuration time.Duration
 	EvalCount          int
@@ -648,6 +652,8 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 					return fmt.Errorf("error parsing llm response stream: %s", line)
 				}
 
+				fmt.Println("c", string(evt))
+
 				var c completion
 				if err := json.Unmarshal(evt, &c); err != nil {
 					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
@@ -674,8 +680,18 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 				}
 
 				if c.Stop {
+					var doneReason string
+					switch {
+					case c.StoppedEos:
+						doneReason = "stop"
+					case c.StoppedWord:
+						doneReason = "stop"
+					case c.StoppedLimit:
+						doneReason = "limit"
+					}
 					fn(CompletionResponse{
 						Done:               true,
+						DoneReason:         doneReason,
 						PromptEvalCount:    c.Timings.PromptN,
 						PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 						EvalCount:          c.Timings.PredictedN,
