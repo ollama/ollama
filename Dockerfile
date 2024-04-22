@@ -50,14 +50,15 @@ RUN mkdir /tmp/scratch && \
     (cd /tmp/scratch/ && tar czvf /go/src/github.com/ollama/ollama/dist/deps/ollama-linux-amd64-rocm.tgz . )
 
 
-FROM --platform=linux/amd64 intel/oneapi-basekit:2024.1.0-devel-rockylinux9 AS oneapi-build-amd64
+FROM --platform=linux/amd64 intel/oneapi-basekit:2024.0.1-devel-rockylinux9 AS oneapi-build-amd64
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
+ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
-RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
 ARG CMAKE_VERSION
@@ -107,7 +108,7 @@ COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linu
 COPY --from=cuda-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/deps/ ./dist/deps/
-COPY --from=oneapi-build-amd64 /go/src/github.com/ollama/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+COPY --from=oneapi-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN go build -trimpath .
@@ -143,7 +144,7 @@ ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
 
 # oneAPI images are much larger so we keep it distinct from the CPU/CUDA image
-FROM --platform=linux/amd64 intel/oneapi-runtime:2024.1.0-devel-rockylinux9 as runtime-oneapi
+FROM --platform=linux/amd64 intel/oneapi-runtime:2024.0.1-devel-rockylinux9 as runtime-oneapi
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 EXPOSE 11434
 ENV OLLAMA_HOST 0.0.0.0

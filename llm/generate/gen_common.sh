@@ -12,8 +12,6 @@ init_vars() {
         ARCH=$(uname -m | sed -e "s/aarch64/arm64/g")
     esac
 
-    CC=g++
-    DEBUG_FLAGS=-g
     LLAMACPP_DIR=../llama.cpp
     CMAKE_DEFS=""
     CMAKE_TARGETS="--target ollama_llama_server"

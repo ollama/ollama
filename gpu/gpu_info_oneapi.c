@@ -154,6 +154,7 @@ void oneapi_check_vram(oneapi_handle_t h, mem_info_t *resp) {
       }
 
       if (ext_props.flags & ZES_DEVICE_PROPERTY_FLAG_INTEGRATED) {
+        LOG(h.verbose, "device %d is an integrated device\n", globalDeviceIndex);
         resp->igpu_index = globalDeviceIndex;
       }
 
