@@ -105,6 +105,12 @@ var testNames = map[string]fields{
 	strings.Repeat("a", MaxNamePartLen+1): {},
 }
 
+func TestIsValidNameLen(t *testing.T) {
+	if IsValidNamePart(PartNamespace, strings.Repeat("a", MaxNamePartLen+1)) {
+		t.Errorf("unexpectedly valid long name")
+	}
+}
+
 // TestConsecutiveDots tests that consecutive dots are not allowed in any
 // part, to avoid path traversal. There also are some tests in testNames, but
 // this test is more exhaustive and exists to emphasize the importance of
