@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -309,7 +310,7 @@ func (m *Metrics) Summary() {
 	}
 }
 
-var ErrInvalidOpts = fmt.Errorf("invalid options")
+var ErrInvalidOpts = errors.New("invalid options")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
