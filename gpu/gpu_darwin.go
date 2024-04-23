@@ -9,52 +9,41 @@ package gpu
 */
 import "C"
 import (
-	"fmt"
-	"log/slog"
-	"os"
 	"runtime"
-	"strconv"
 )
 
-// CheckVRAM returns the free VRAM in bytes on Linux machines with NVIDIA GPUs
-func CheckVRAM() (uint64, error) {
-	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
-	if userLimit != "" {
-		avail, err := strconv.ParseInt(userLimit, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("Invalid OLLAMA_MAX_VRAM setting %s: %s", userLimit, err)
-		}
-		slog.Info(fmt.Sprintf("user override OLLAMA_MAX_VRAM=%d", avail))
-		return uint64(avail), nil
-	}
-
+func GetGPUInfo() GpuInfoList {
+	mem, _ := GetCPUMem()
 	if runtime.GOARCH == "amd64" {
-		// gpu not supported, this may not be metal
-		return 0, nil
-	}
-
-	return uint64(C.getRecommendedMaxVRAM()), nil
-}
-
-func GetGPUInfo() GpuInfo {
-	mem, _ := getCPUMem()
-	if runtime.GOARCH == "amd64" {
-		return GpuInfo{
-			Library: "cpu",
-			Variant: GetCPUVariant(),
-			memInfo: mem,
+		return []GpuInfo{
+			{
+				Library: "cpu",
+				Variant: GetCPUVariant(),
+				memInfo: mem,
+			},
 		}
 	}
-	return GpuInfo{
+	info := GpuInfo{
 		Library: "metal",
-		memInfo: mem,
+		ID:      "0",
 	}
+	info.TotalMemory = uint64(C.getRecommendedMaxVRAM())
+
+	// TODO is there a way to gather actual allocated video memory? (currentAllocatedSize doesn't work)
+	info.FreeMemory = info.TotalMemory
+
+	info.MinimumMemory = 0
+	return []GpuInfo{info}
 }
 
-func getCPUMem() (memInfo, error) {
+func GetCPUMem() (memInfo, error) {
 	return memInfo{
 		TotalMemory: uint64(C.getPhysicalMemory()),
 		FreeMemory:  0,
-		DeviceCount: 1,
 	}, nil
+}
+
+func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
+	// No-op on darwin
+	return "", ""
 }
