@@ -48,7 +48,7 @@ if [ -z "${OLLAMA_SKIP_IMAGE_BUILD}" ]; then
             --build-arg=GOFLAGS \
             --target runtime-oneapi \
             -f Dockerfile \
-            -t ${RELEASE_IMAGE_REPO}:$VERSION-oneapi \
+            -t ${RELEASE_IMAGE_REPO}:$VERSION-oneapi-${TARGETARCH} \
             .
     done
 
