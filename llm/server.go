@@ -483,31 +483,28 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 }
 
 const jsonGrammar = `
-root   ::= object
-value  ::= object | array | string | number | ("true" | "false" | "null") ws
+root   ::= value
+value  ::= object | array | string | number | ("true" | "false" | "null")
 
 object ::=
-  "{" ws (
-            string ":" ws value
-    ("," ws string ":" ws value)*
-  )? "}" ws
+  "{" (
+            string ":" value
+    ("," string ":" value)*
+  )? "}"
 
 array  ::=
-  "[" ws (
+  "[" (
             value
-    ("," ws value)*
-  )? "]" ws
+    ("," value)*
+  )? "]"
 
 string ::=
   "\"" (
-    [^"\\] |
+    [^"\\\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
-  )* "\"" ws
+  )* "\""
 
-number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
-
-# Optional space: by convention, applied in this grammar after literal chars when allowed
-ws ::= ([ \t\n] ws)?
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
 `
 
 const maxBufferSize = 512 * format.KiloByte
