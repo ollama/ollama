@@ -47,7 +47,7 @@ func (kv KV) ParameterCount() uint64 {
 
 func (kv KV) FileType() string {
 	if u64 := kv.u64("general.file_type"); u64 > 0 {
-		return filetype(uint32(u64)).String()
+		return fileType(uint32(u64)).String()
 	}
 
 	return "unknown"

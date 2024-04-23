@@ -27,7 +27,11 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 			return nil, err
 		}
 
-		return parseFromModel(ctx, name, fn)
+		modelpath = ParseModelPath(name.DisplayLongest())
+		manifest, _, err = GetManifest(modelpath)
+		if err != nil {
+			return nil, err
+		}
 	case err != nil:
 		return nil, err
 	}

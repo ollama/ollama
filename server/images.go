@@ -344,9 +344,9 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 
 		switch c.Name {
 		case "model", "adapter":
-			var layers2 *ordered.Map[*Layer, *llm.GGML]
+			var baseLayers *ordered.Map[*Layer, *llm.GGML]
 			if name := model.ParseName(c.Args, ""); name.IsValid() {
-				layers2, err = parseFromModel(ctx, name, fn)
+				baseLayers, err = parseFromModel(ctx, name, fn)
 				if err != nil {
 					return err
 				}
@@ -362,14 +362,14 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 				}
 				defer blob.Close()
 
-				layers2, err = parseFromFile(ctx, blob, fn)
+				baseLayers, err = parseFromFile(ctx, blob, fn)
 				if err != nil {
 					return err
 				}
 			} else if file, err := os.Open(realpath(modelFileDir, c.Args)); err == nil {
 				defer file.Close()
 
-				layers2, err = parseFromFile(ctx, file, fn)
+				baseLayers, err = parseFromFile(ctx, file, fn)
 				if err != nil {
 					return err
 				}
@@ -381,7 +381,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 			var tempfiles []*os.File
 
 			// TODO(mxyng): replace with rangefunc
-			layers2.Items()(func(layer *Layer, ggml *llm.GGML) bool {
+			baseLayers.Items()(func(layer *Layer, ggml *llm.GGML) bool {
 				if quantization != "" && ggml != nil && ggml.Name() == "gguf" {
 					ftype, err := llm.ParseFileType(quantization)
 					if err != nil {
