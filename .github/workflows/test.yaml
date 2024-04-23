@@ -260,7 +260,7 @@ jobs:
         shell: bash
       - uses: golangci/golangci-lint-action@v4
         with:
-          args: --timeout 8m0s
+          args: --timeout 8m0s -v
   test:
     strategy:
       matrix:
