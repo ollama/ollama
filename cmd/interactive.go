@@ -475,14 +475,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				usage()
 			}
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
-			// stop the running model
-			client, err := api.ClientFromEnvironment()
-			if err != nil {
-				return err
-			}
-			client.Chat(cmd.Context(), &api.ChatRequest{Model: opts.Model, KeepAlive: &api.Duration{}}, func(resp api.ChatResponse) error {
-				return nil
-			})
 			return nil
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
