@@ -250,6 +250,17 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			server = server + ".exe"
 		}
 
+		// Detect tmp cleaners wiping out the file
+		_, err := os.Stat(server)
+		if errors.Is(err, os.ErrNotExist) {
+			slog.Warn("llama server disappeared, reinitializing payloads", "path", server, "error", err)
+			err = Init()
+			if err != nil {
+				slog.Warn("failed to reinitialize payloads", "error", err)
+				return nil, err
+			}
+		}
+
 		s := &llmServer{
 			port:          port,
 			cmd:           exec.Command(server, finalParams...),

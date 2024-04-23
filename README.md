@@ -51,16 +51,12 @@ Here are some example models that can be downloaded:
 | ------------------ | ---------- | ----- | ------------------------------ |
 | Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
 | Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
+| Phi-3              | 3,8B       | 2.3GB | `ollama run phi3`              |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
-| Dolphin Phi        | 2.7B       | 1.6GB | `ollama run dolphin-phi`       |
-| Phi-2              | 2.7B       | 1.7GB | `ollama run phi`               |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
 | Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
-| Llama 2 13B        | 13B        | 7.3GB | `ollama run llama2:13b`        |
-| Llama 2 70B        | 70B        | 39GB  | `ollama run llama2:70b`        |
-| Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 | Gemma              | 2B         | 1.4GB | `ollama run gemma:2b`          |
 | Gemma              | 7B         | 4.8GB | `ollama run gemma:7b`          |
