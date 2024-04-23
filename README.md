@@ -299,6 +299,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Terminal
 
+- [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
