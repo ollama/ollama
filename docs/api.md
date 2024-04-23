@@ -44,6 +44,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
+- `grammar`: [GBNF-like format](https://github.com/ggerganov/llama.cpp/blob/master/grammars/README.md) to return a response in. Don't use with `format` parameter!
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
