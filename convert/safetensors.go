@@ -16,7 +16,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/x448/float16"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/uppercaveman/ollama-server/llm"
 )
 
 type safetensorWriterTo struct {

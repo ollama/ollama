@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ollama/ollama/api"
+	"github.com/uppercaveman/ollama-server/api"
 )
 
 func TestPrompt(t *testing.T) {

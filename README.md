@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+  <img alt="ollama" height="200px" src="https://github.com/uppercaveman/ollama-server/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
 
 # Ollama
@@ -22,7 +22,7 @@ Get up and running with large language models locally.
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
+[Manual install instructions](https://github.com/uppercaveman/ollama-server/blob/main/docs/linux.md)
 
 ### Docker
 
@@ -30,8 +30,8 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 ### Libraries
 
-- [ollama-python](https://github.com/ollama/ollama-python)
-- [ollama-js](https://github.com/ollama/ollama-js)
+- [ollama-python](https://github.com/uppercaveman/ollama-server-python)
+- [ollama-js](https://github.com/uppercaveman/ollama-server-js)
 
 ## Quickstart
 
@@ -214,7 +214,7 @@ Then build the binary:
 go build .
 ```
 
-More detailed instructions can be found in the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
+More detailed instructions can be found in the [developer guide](https://github.com/uppercaveman/ollama-server/blob/main/docs/development.md)
 
 ### Running local builds
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/api"
+	"github.com/uppercaveman/ollama-server/api"
 )
 
 func TestContextExhaustion(t *testing.T) {

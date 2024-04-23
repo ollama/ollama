@@ -13,7 +13,7 @@ import (
 	"github.com/pdevine/tensor/native"
 	"github.com/x448/float16"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/uppercaveman/ollama-server/llm"
 )
 
 type MistralModel struct {

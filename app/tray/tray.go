@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/ollama/ollama/app/assets"
-	"github.com/ollama/ollama/app/tray/commontray"
+	"github.com/uppercaveman/ollama-server/app/assets"
+	"github.com/uppercaveman/ollama-server/app/tray/commontray"
 )
 
 func NewTray() (commontray.OllamaTray, error) {

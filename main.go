@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	"github.com/ollama/ollama/cmd"
 	"github.com/spf13/cobra"
+	"github.com/uppercaveman/ollama-server/cmd"
 )
 
 func main() {

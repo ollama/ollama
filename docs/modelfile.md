@@ -113,7 +113,7 @@ FROM llama2
 ```
 
 A list of available base models:
-<https://github.com/ollama/ollama#model-library>
+<https://github.com/uppercaveman/ollama-server#model-library>
 
 #### Build from a `bin` file
 

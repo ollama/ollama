@@ -13,8 +13,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ollama/ollama/convert/sentencepiece"
-	"github.com/ollama/ollama/llm"
+	"github.com/uppercaveman/ollama-server/convert/sentencepiece"
+	"github.com/uppercaveman/ollama-server/llm"
 )
 
 type Params struct {

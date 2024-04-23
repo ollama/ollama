@@ -21,7 +21,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/ollama/ollama/format"
+	"github.com/uppercaveman/ollama-server/format"
 )
 
 type handles struct {

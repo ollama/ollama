@@ -5,7 +5,7 @@ package tray
 import (
 	"fmt"
 
-	"github.com/ollama/ollama/app/tray/commontray"
+	"github.com/uppercaveman/ollama-server/app/tray/commontray"
 )
 
 func InitPlatformTray(icon, updateIcon []byte) (commontray.OllamaTray, error) {

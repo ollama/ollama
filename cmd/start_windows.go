@@ -10,7 +10,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/ollama/ollama/api"
+	"github.com/uppercaveman/ollama-server/api"
 )
 
 func startApp(ctx context.Context, client *api.Client) error {

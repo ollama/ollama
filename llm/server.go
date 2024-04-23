@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/gpu"
+	"github.com/uppercaveman/ollama-server/api"
+	"github.com/uppercaveman/ollama-server/format"
+	"github.com/uppercaveman/ollama-server/gpu"
 )
 
 // LlamaServer is an instance of the llama.cpp server

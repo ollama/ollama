@@ -30,12 +30,12 @@ import (
 	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/parser"
-	"github.com/ollama/ollama/progress"
-	"github.com/ollama/ollama/server"
-	"github.com/ollama/ollama/version"
+	"github.com/uppercaveman/ollama-server/api"
+	"github.com/uppercaveman/ollama-server/format"
+	"github.com/uppercaveman/ollama-server/parser"
+	"github.com/uppercaveman/ollama-server/progress"
+	"github.com/uppercaveman/ollama-server/server"
+	"github.com/uppercaveman/ollama-server/version"
 )
 
 func CreateHandler(cmd *cobra.Command, args []string) error {

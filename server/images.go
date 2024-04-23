@@ -24,12 +24,12 @@ import (
 
 	"golang.org/x/exp/slices"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/convert"
-	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/parser"
-	"github.com/ollama/ollama/version"
+	"github.com/uppercaveman/ollama-server/api"
+	"github.com/uppercaveman/ollama-server/convert"
+	"github.com/uppercaveman/ollama-server/format"
+	"github.com/uppercaveman/ollama-server/llm"
+	"github.com/uppercaveman/ollama-server/parser"
+	"github.com/uppercaveman/ollama-server/version"
 )
 
 type registryOptions struct {

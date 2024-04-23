@@ -13,7 +13,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/ollama/ollama/app/tray/commontray"
+	"github.com/uppercaveman/ollama-server/app/tray/commontray"
 	"golang.org/x/sys/windows"
 )
 

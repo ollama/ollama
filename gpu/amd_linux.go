@@ -115,7 +115,7 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 			if !slices.Contains[[]string, string](supported, v.ToGFXString()) {
 				slog.Warn(fmt.Sprintf("amdgpu [%d] %s is not supported by %s %v", i, v.ToGFXString(), libDir, supported))
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
-				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/gpu.md#overrides for HSA_OVERRIDE_GFX_VERSION usage")
+				slog.Warn("See https://github.com/uppercaveman/ollama-server/blob/main/docs/gpu.md#overrides for HSA_OVERRIDE_GFX_VERSION usage")
 				skip[i] = struct{}{}
 			} else {
 				slog.Info(fmt.Sprintf("amdgpu [%d] %s is supported", i, v.ToGFXString()))
@@ -364,7 +364,7 @@ func AMDValidateLibDir() (string, error) {
 	}
 
 	// If we still haven't found a usable rocm, the user will have to install it on their own
-	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or follow manual install instructions at https://github.com/ollama/ollama/blob/main/docs/linux.md#manual-install")
+	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or follow manual install instructions at https://github.com/uppercaveman/ollama-server/blob/main/docs/linux.md#manual-install")
 	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
 }
 

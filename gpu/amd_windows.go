@@ -99,7 +99,7 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 			if !slices.Contains[[]string, string](supported, gfx) {
 				slog.Warn(fmt.Sprintf("amdgpu [%d] %s is not supported by %s %v", i, gfx, libDir, supported))
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
-				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
+				slog.Warn("See https://github.com/uppercaveman/ollama-server/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
 				skip[i] = struct{}{}
 				continue
 			} else {

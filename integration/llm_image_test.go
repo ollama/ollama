@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/require"
+	"github.com/uppercaveman/ollama-server/api"
 )
 
 func TestIntegrationMultimodal(t *testing.T) {

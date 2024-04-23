@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/stretchr/testify/assert"
+	"github.com/uppercaveman/ollama-server/api"
+	"github.com/uppercaveman/ollama-server/app/lifecycle"
 )
 
 func FindPort() string {
