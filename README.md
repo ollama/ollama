@@ -260,17 +260,17 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [Open WebUI](https://github.com/open-webui/open-webui)
+- [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
 - [LibreChat](https://github.com/danny-avila/LibreChat)
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
-- [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Saddle](https://github.com/jikkuatwork/saddle)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Chatbot UI v2](https://github.com/mckaywrigley/chatbot-ui)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
-- [Open WebUI](https://github.com/open-webui/open-webui)
 - [Ollamac](https://github.com/kevinhermawan/Ollamac)
 - [big-AGI](https://github.com/enricoros/big-AGI/blob/main/docs/config-local-ollama.md)
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
@@ -302,7 +302,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Terminal
 
-- [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
@@ -321,6 +320,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [typechat-cli](https://github.com/anaisbetts/typechat-cli)
 - [ShellOracle](https://github.com/djcopley/ShellOracle)
 - [tlm](https://github.com/yusufcanb/tlm)
+- [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 
 ### Database
 
