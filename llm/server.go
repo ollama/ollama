@@ -180,7 +180,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	availableServers := availableServers()
 	servers := serversForGpu(info)
 
-	demandLib := os.Getenv("OLLAMA_LLM_LIBRARY")
+	demandLib := strings.Trim(os.Getenv("OLLAMA_LLM_LIBRARY"), "\"' ")
 	if demandLib != "" {
 		serverPath := availableServers[demandLib]
 		if serverPath == "" {
