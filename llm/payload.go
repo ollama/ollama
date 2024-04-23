@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"golang.org/x/exp/slices"
@@ -136,6 +137,23 @@ func serversForGpu(info gpu.GpuInfo) []string {
 	}
 
 	return servers
+}
+
+// Return the optimal server for this CPU architecture
+func serverForCpu() string {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return "metal"
+	}
+	variant := gpu.GetCPUVariant()
+	availableServers := availableServers()
+	if variant != "" {
+		for cmp := range availableServers {
+			if cmp == "cpu_"+variant {
+				return cmp
+			}
+		}
+	}
+	return "cpu"
 }
 
 // extract extracts the embedded files to the target directory
