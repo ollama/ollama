@@ -26,13 +26,15 @@ func Init() error {
 		return err
 	}
 
-	slog.Info("extracting embedded files", "dir", payloadsDir)
-	binGlob := "build/*/*/*/bin/*"
+	if runtime.GOOS != "windows" {
+		slog.Info("extracting embedded files", "dir", payloadsDir)
+		binGlob := "build/*/*/*/bin/*"
 
-	// extract server libraries
-	err = extractFiles(payloadsDir, binGlob)
-	if err != nil {
-		return fmt.Errorf("extract binaries: %v", err)
+		// extract server libraries
+		err = extractFiles(payloadsDir, binGlob)
+		if err != nil {
+			return fmt.Errorf("extract binaries: %v", err)
+		}
 	}
 
 	var variants []string
