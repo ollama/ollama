@@ -79,6 +79,9 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		graphFullOffload = graphPartialOffload
 	}
 
+	graphFullOffload *= uint64(info.DeviceCount)
+	graphPartialOffload *= uint64(info.DeviceCount)
+
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
 	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
@@ -94,7 +97,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	var layerCount int
 	layers := ggml.Tensors().Layers()
 	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
-		memoryLayer := layers[fmt.Sprintf("%d", i)].size()
+		memoryLayer := layers[fmt.Sprintf("blk.%d", i)].size()
 
 		// KV is proportional to the number of layers
 		memoryLayer += kv / ggml.KV().BlockCount()
@@ -106,9 +109,19 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		}
 	}
 
-	memoryLayerOutput := layers["output"].size()
+	var memoryLayerOutput uint64
+	for k, v := range layers {
+		if !strings.HasPrefix(k, "blk.") {
+			memoryLayerOutput += v.size()
+		}
+	}
+
 	memoryRequiredTotal += memoryLayerOutput
-	if memoryAvailable > memoryRequiredTotal {
+
+	if info.Library == "metal" && memoryRequiredTotal > info.TotalMemory {
+		// disable partial offloading when model is greater than total system memory
+		opts.NumGPU = 0
+	} else if memoryAvailable > memoryRequiredTotal {
 		layerCount = int(ggml.KV().BlockCount()) + 1
 		memoryRequiredPartial = memoryRequiredTotal
 	}
@@ -117,16 +130,47 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 		opts.NumGPU = layerCount
 	}
 
+	memoryWeights := memoryRequiredTotal - memoryMinimum - graphFullOffload - kv
+
 	slog.Info(
 		"offload to gpu",
-		"reallayers", opts.NumGPU,
-		"layers", layerCount,
-		"required", format.HumanBytes2(memoryRequiredTotal),
-		"used", format.HumanBytes2(memoryRequiredPartial),
-		"available", format.HumanBytes2(memoryAvailable),
-		"kv", format.HumanBytes2(kv),
-		"fulloffload", format.HumanBytes2(graphFullOffload),
-		"partialoffload", format.HumanBytes2(graphPartialOffload),
+		slog.Group(
+			"layers",
+			// actual number of layers offloaded
+			"real", opts.NumGPU,
+			// estimated number of layers that can be offloaded
+			"estimate", layerCount,
+		),
+		slog.Group(
+			"memory",
+			// memory available for offloading
+			"available", format.HumanBytes2(memoryAvailable),
+			slog.Group(
+				"required",
+				// memory required for full offloading
+				"full", format.HumanBytes2(memoryRequiredTotal),
+				// memory required to offload layers.estimate layers
+				"partial", format.HumanBytes2(memoryRequiredPartial),
+				// memory of KV cache
+				"kv", format.HumanBytes2(kv),
+			),
+			slog.Group(
+				"weights",
+				// memory of the weights
+				"total", format.HumanBytes2(memoryWeights),
+				// memory of repeating layers
+				"repeating", format.HumanBytes2(memoryWeights-memoryLayerOutput),
+				// memory of non-repeating layers
+				"nonrepeating", format.HumanBytes2(memoryLayerOutput),
+			),
+			slog.Group(
+				"graph",
+				// memory of graph when fully offloaded
+				"full", format.HumanBytes2(graphFullOffload),
+				// memory of graph when not fully offloaded
+				"partial", format.HumanBytes2(graphPartialOffload),
+			),
+		),
 	)
 
 	if len(adapters) > 1 {
@@ -136,7 +180,7 @@ func NewLlamaServer(model string, adapters, projectors []string, opts api.Option
 	availableServers := availableServers()
 	servers := serversForGpu(info)
 
-	demandLib := os.Getenv("OLLAMA_LLM_LIBRARY")
+	demandLib := strings.Trim(os.Getenv("OLLAMA_LLM_LIBRARY"), "\"' ")
 	if demandLib != "" {
 		serverPath := availableServers[demandLib]
 		if serverPath == "" {

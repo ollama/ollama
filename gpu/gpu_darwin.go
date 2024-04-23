@@ -32,6 +32,7 @@ func CheckVRAM() (uint64, error) {
 		// gpu not supported, this may not be metal
 		return 0, nil
 	}
+
 	return uint64(C.getRecommendedMaxVRAM()), nil
 }
 
@@ -52,8 +53,8 @@ func GetGPUInfo() GpuInfo {
 
 func getCPUMem() (memInfo, error) {
 	return memInfo{
-		TotalMemory: 0,
+		TotalMemory: uint64(C.getPhysicalMemory()),
 		FreeMemory:  0,
-		DeviceCount: 0,
+		DeviceCount: 1,
 	}, nil
 }
