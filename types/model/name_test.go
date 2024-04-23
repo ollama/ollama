@@ -40,6 +40,7 @@ var testNames = map[string]fields{
 	"user/model":                     {namespace: "user", model: "model"},
 	"example.com/ns/mistral:7b+Q4_0": {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "Q4_0"},
 	"example.com/ns/mistral:7b+X":    {host: "example.com", namespace: "ns", model: "mistral", tag: "7b", build: "X"},
+	"localhost:5000/ns/mistral":      {host: "localhost:5000", namespace: "ns", model: "mistral"},
 
 	// invalid digest
 	"mistral:latest@invalid256-": {},
@@ -102,6 +103,12 @@ var testNames = map[string]fields{
 
 	strings.Repeat("a", MaxNamePartLen):   {model: strings.Repeat("a", MaxNamePartLen)},
 	strings.Repeat("a", MaxNamePartLen+1): {},
+}
+
+func TestIsValidNameLen(t *testing.T) {
+	if IsValidNamePart(PartNamespace, strings.Repeat("a", MaxNamePartLen+1)) {
+		t.Errorf("unexpectedly valid long name")
+	}
 }
 
 // TestConsecutiveDots tests that consecutive dots are not allowed in any
@@ -318,6 +325,13 @@ func TestNameGoString(t *testing.T) {
 	}
 }
 
+func TestDisplayLongest(t *testing.T) {
+	g := ParseName("example.com/library/mistral:latest+Q4_0", FillNothing).DisplayLongest()
+	if g != "example.com/library/mistral:latest" {
+		t.Errorf("got = %q; want %q", g, "example.com/library/mistral:latest")
+	}
+}
+
 func TestDisplayShortest(t *testing.T) {
 	cases := []struct {
 		in        string
@@ -478,30 +492,36 @@ func TestNamePath(t *testing.T) {
 	}
 }
 
-func TestNameFromFilepath(t *testing.T) {
+func TestNameFilepath(t *testing.T) {
 	cases := []struct {
-		in   string
-		want string
+		in          string
+		want        string
+		wantNoBuild string
 	}{
 		{
-			in:   "example.com/library/mistral:latest+Q4_0",
-			want: "example.com/library/mistral/latest/Q4_0",
+			in:          "example.com/library/mistral:latest+Q4_0",
+			want:        "example.com/library/mistral/latest/Q4_0",
+			wantNoBuild: "example.com/library/mistral/latest",
 		},
 		{
-			in:   "Example.Com/Library/Mistral:Latest+Q4_0",
-			want: "example.com/library/mistral/latest/Q4_0",
+			in:          "Example.Com/Library/Mistral:Latest+Q4_0",
+			want:        "example.com/library/mistral/latest/Q4_0",
+			wantNoBuild: "example.com/library/mistral/latest",
 		},
 		{
-			in:   "Example.Com/Library/Mistral:Latest+Q4_0",
-			want: "example.com/library/mistral/latest/Q4_0",
+			in:          "Example.Com/Library/Mistral:Latest+Q4_0",
+			want:        "example.com/library/mistral/latest/Q4_0",
+			wantNoBuild: "example.com/library/mistral/latest",
 		},
 		{
-			in:   "example.com/library/mistral:latest",
-			want: "example.com/library/mistral/latest",
+			in:          "example.com/library/mistral:latest",
+			want:        "example.com/library/mistral/latest",
+			wantNoBuild: "example.com/library/mistral/latest",
 		},
 		{
-			in:   "",
-			want: "",
+			in:          "",
+			want:        "",
+			wantNoBuild: "",
 		},
 	}
 	for _, tt := range cases {
@@ -512,6 +532,11 @@ func TestNameFromFilepath(t *testing.T) {
 			g = filepath.ToSlash(g)
 			if g != tt.want {
 				t.Errorf("got = %q; want %q", g, tt.want)
+			}
+			g = p.FilepathNoBuild()
+			g = filepath.ToSlash(g)
+			if g != tt.wantNoBuild {
+				t.Errorf("got = %q; want %q", g, tt.wantNoBuild)
 			}
 		})
 	}

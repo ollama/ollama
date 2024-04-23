@@ -156,7 +156,7 @@ func ParseName(s, fill string) Name {
 			r = Name{}
 			return false
 		}
-		if kind == PartExtraneous || !isValidPart(kind, part) {
+		if kind == PartExtraneous || !IsValidNamePart(kind, part) {
 			r = Name{}
 			return false
 		}
@@ -176,7 +176,7 @@ func parseMask(s string) Name {
 			// mask part; treat as empty but valid
 			return true
 		}
-		if !isValidPart(kind, part) {
+		if !IsValidNamePart(kind, part) {
 			panic(fmt.Errorf("invalid mask part %s: %q", kind, part))
 		}
 		r.parts[kind] = part
@@ -185,8 +185,8 @@ func parseMask(s string) Name {
 	return r
 }
 
-func MustParseName(s, defaults string) Name {
-	r := ParseName(s, "")
+func MustParseName(s, fill string) Name {
+	r := ParseName(s, fill)
 	if !r.IsValid() {
 		panic("invalid Name: " + s)
 	}
@@ -521,6 +521,8 @@ func parts(s string) iter_Seq2[PartKind, string] {
 						return
 					}
 					state, j, partLen = PartModel, i, 0
+				case PartHost:
+					// noop: support for host:port
 				default:
 					yield(PartExtraneous, s[i+1:j])
 					return
@@ -606,7 +608,7 @@ func ParseNameFromFilepath(s, fill string) Name {
 	var r Name
 	for i := range PartBuild + 1 {
 		part, rest, _ := strings.Cut(s, string(filepath.Separator))
-		if !isValidPart(i, part) {
+		if !IsValidNamePart(i, part) {
 			return Name{}
 		}
 		r.parts[i] = part
@@ -643,9 +645,21 @@ func (r Name) Filepath() string {
 	return filepath.Join(r.parts[:]...)
 }
 
-// isValidPart reports if s contains all valid characters for the given
-// part kind.
-func isValidPart(kind PartKind, s string) bool {
+// FilepathNoBuild returns a complete, canonicalized, relative file path using
+// the parts of a complete Name, but without the build part.
+func (r Name) FilepathNoBuild() string {
+	for i := range PartBuild {
+		r.parts[i] = strings.ToLower(r.parts[i])
+	}
+	return filepath.Join(r.parts[:PartBuild]...)
+}
+
+// IsValidNamePart reports if s contains all valid characters for the given
+// part kind and is under MaxNamePartLen bytes.
+func IsValidNamePart(kind PartKind, s string) bool {
+	if len(s) > MaxNamePartLen {
+		return false
+	}
 	if s == "" {
 		return false
 	}
@@ -668,6 +682,9 @@ func isValidPart(kind PartKind, s string) bool {
 func isValidByteFor(kind PartKind, c byte) bool {
 	if kind == PartNamespace && c == '.' {
 		return false
+	}
+	if kind == PartHost && c == ':' {
+		return true
 	}
 	if c == '.' || c == '-' {
 		return true

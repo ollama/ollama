@@ -322,7 +322,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 
 			pathName := realpath(modelFileDir, c.Args)
 
-			ggufName, err := convertSafetensors(name, pathName, fn)
+			ggufName, err := convertModel(name, pathName, fn)
 			if err != nil {
 				var pathErr *fs.PathError
 				switch {
@@ -633,7 +633,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 	return nil
 }
 
-func convertSafetensors(name, path string, fn func(resp api.ProgressResponse)) (string, error) {
+func convertModel(name, path string, fn func(resp api.ProgressResponse)) (string, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return "", err
@@ -668,17 +668,22 @@ func convertSafetensors(name, path string, fn func(resp api.ProgressResponse)) (
 		rc.Close()
 	}
 
-	params, err := convert.GetParams(tempDir)
+	mf, err := convert.GetModelFormat(tempDir)
 	if err != nil {
 		return "", err
 	}
 
-	mArch, err := convert.GetModelArchFromParams(name, tempDir, params)
+	params, err := mf.GetParams(tempDir)
 	if err != nil {
 		return "", err
 	}
 
-	fn(api.ProgressResponse{Status: "processing safetensors"})
+	mArch, err := mf.GetModelArch(name, tempDir, params)
+	if err != nil {
+		return "", err
+	}
+
+	fn(api.ProgressResponse{Status: "processing tensors"})
 	if err := mArch.GetTensors(); err != nil {
 		return "", err
 	}
@@ -1132,7 +1137,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-var errUnauthorized = fmt.Errorf("unauthorized")
+var errUnauthorized = errors.New("unauthorized")
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
 	for i := 0; i < 2; i++ {
@@ -1250,7 +1255,7 @@ func parseRegistryChallenge(authStr string) registryChallenge {
 	}
 }
 
-var errDigestMismatch = fmt.Errorf("digest mismatch, file must be downloaded again")
+var errDigestMismatch = errors.New("digest mismatch, file must be downloaded again")
 
 func verifyBlob(digest string) error {
 	fp, err := GetBlobsPath(digest)
