@@ -92,6 +92,7 @@ func TestLoad(t *testing.T) {
 	runner := s.loaded["dummy_model_path"]
 	require.NotNil(t, runner)
 	require.Equal(t, uint(0), runner.refCount)
+	time.Sleep(1 * time.Millisecond)
 	require.Len(t, s.expiredCh, 1)
 }
 
