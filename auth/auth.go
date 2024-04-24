@@ -37,6 +37,11 @@ func GetPublicKey() (string, error) {
 		return "", err
 	}
 
+	_, err = ssh.ParsePublicKey([]byte(pubKey))
+	if err != nil {
+		return "", fmt.Errorf("failed to parse public key: %v", err)
+	}
+
 	return strings.TrimSpace(string(pubKey)), nil
 }
 
