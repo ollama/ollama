@@ -18,19 +18,23 @@ import (
 )
 
 type Params struct {
-	Architectures    []string `json:"architectures"`
-	VocabSize        int      `json:"vocab_size"`
-	HiddenSize       int      `json:"hidden_size"`       // n_embd
-	HiddenLayers     int      `json:"num_hidden_layers"` // n_layer
-	ContextSize      int      `json:"max_position_embeddings"`
-	IntermediateSize int      `json:"intermediate_size"`
-	AttentionHeads   int      `json:"num_attention_heads"` // n_head
-	KeyValHeads      int      `json:"num_key_value_heads"`
-	NormEPS          float64  `json:"rms_norm_eps"`
-	BoSTokenID       int      `json:"bos_token_id"`
-	EoSTokenID       int      `json:"eos_token_id"`
-	HeadDimension    int      `json:"head_dim"`
-	PaddingTokenID   int      `json:"pad_token_id"`
+	Architectures     []string `json:"architectures"`
+	VocabSize         int      `json:"vocab_size"`
+	HiddenSize        int      `json:"hidden_size"`       // n_embd
+	HiddenLayers      int      `json:"num_hidden_layers"` // n_layer
+	ContextSize       int      `json:"max_position_embeddings"`
+	IntermediateSize  int      `json:"intermediate_size"`
+	AttentionHeads    int      `json:"num_attention_heads"` // n_head
+	KeyValHeads       int      `json:"num_key_value_heads"`
+	NormEPS           float64  `json:"rms_norm_eps"`
+	BoSTokenID        int      `json:"bos_token_id"`
+	EoSTokenID        int      `json:"eos_token_id"`
+	HeadDimension     int      `json:"head_dim"`
+	PaddingTokenID    int      `json:"pad_token_id"`
+	RopeFrequencyBase float64  `json:"rope_theta"`
+
+	Experts     int `json:"num_local_experts"`
+	ExpertsUsed int `json:"num_experts_per_tok"`
 
 	ByteOrder
 }
