@@ -345,7 +345,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 		switch c.Name {
 		case "model", "adapter":
 			var baseLayers *ordered.Map[*Layer, *llm.GGML]
-			if name := model.ParseName(c.Args, ""); name.IsValid() {
+			if name := model.ParseName(c.Args); name.IsValid() {
 				baseLayers, err = parseFromModel(ctx, name, fn)
 				if err != nil {
 					return err
