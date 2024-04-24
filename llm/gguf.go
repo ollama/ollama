@@ -286,15 +286,14 @@ func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
 		return "", err
 	}
 
-	var b bytes.Buffer
-	if _, err := io.CopyN(&b, r, int64(length)); err != nil {
+	b := make([]byte, length)
+	_, err := io.ReadFull(r, b)
+	if err != nil {
 		return "", err
 	}
 
 	// gguf v1 strings are null-terminated
-	b.Truncate(b.Len() - 1)
-
-	return b.String(), nil
+	return string(b[:len(b)-1]), nil
 }
 
 func readGGUFString(llm *gguf, r io.Reader) (string, error) {
@@ -307,12 +306,13 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 		return "", err
 	}
 
-	var b bytes.Buffer
-	if _, err := io.CopyN(&b, r, int64(length)); err != nil {
+	b := make([]byte, length)
+	_, err := io.ReadFull(r, b)
+	if err != nil {
 		return "", err
 	}
 
-	return b.String(), nil
+	return string(b), nil
 }
 
 func writeGGUFString(llm *gguf, w io.Writer, s string) error {
@@ -328,7 +328,7 @@ func writeGGUFString(llm *gguf, w io.Writer, s string) error {
 	return err
 }
 
-func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
+func readGGUFV1Array(llm *gguf, r io.Reader) ([]any, error) {
 	t, err := readGGUF[uint32](llm, r)
 	if err != nil {
 		return nil, err
@@ -339,7 +339,8 @@ func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
 		return nil, err
 	}
 
-	for i := 0; uint32(i) < n; i++ {
+	a := make([]any, n)
+	for i := range a {
 		var e any
 		switch t {
 		case ggufTypeUint8:
@@ -373,13 +374,13 @@ func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
 			return nil, err
 		}
 
-		a = append(a, e)
+		a[i] = e
 	}
 
-	return
+	return a, err
 }
 
-func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
+func readGGUFArray(llm *gguf, r io.Reader) ([]any, error) {
 	if llm.Version == 1 {
 		return readGGUFV1Array(llm, r)
 	}
@@ -394,7 +395,8 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 		return nil, err
 	}
 
-	for i := 0; uint64(i) < n; i++ {
+	a := make([]any, n)
+	for i := range a {
 		var e any
 		switch t {
 		case ggufTypeUint8:
@@ -428,10 +430,10 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 			return nil, err
 		}
 
-		a = append(a, e)
+		a[i] = e
 	}
 
-	return
+	return a, nil
 }
 
 func writeGGUFArray[S ~[]E, E any](llm *gguf, w io.Writer, t uint32, s S) error {
