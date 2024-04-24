@@ -13,5 +13,5 @@ type UnknownOllamaKey struct {
 }
 
 func (e *UnknownOllamaKey) Error() string {
-	return fmt.Sprintf("unauthorized: %s  %q", UnknownOllamaKeyErrMsg, strings.TrimSpace(e.Key))
+	return fmt.Sprintf("unauthorized: %s %q", UnknownOllamaKeyErrMsg, strings.TrimSpace(e.Key))
 }

@@ -37,7 +37,16 @@ func GetPublicKey() (string, error) {
 		return "", err
 	}
 
-	_, err = ssh.ParsePublicKey([]byte(pubKey))
+	// validate that what we read is a valid public key
+	parts := strings.Fields(string(pubKey))
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid public key format")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("base64 decode failed: %v", err)
+	}
+	_, err = ssh.ParsePublicKey(decoded)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse public key: %v", err)
 	}
