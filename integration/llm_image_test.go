@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"encoding/base64"
-	"net/http"
 	"testing"
 	"time"
 
@@ -29,10 +28,11 @@ func TestIntegrationMultimodal(t *testing.T) {
 		},
 	}
 
-	resp := "the ollamas"
+	// Note: sometimes it returns "the ollamas" sometimes "the ollams"
+	resp := "the ollam"
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	GenerateTestHelper(ctx, t, &http.Client{}, req, []string{resp})
+	GenerateTestHelper(ctx, t, req, []string{resp})
 }
 
 const imageEncoding = `iVBORw0KGgoAAAANSUhEUgAAANIAAAB4CAYAAACHHqzKAAAAAXNSR0IArs4c6QAAAIRlWElmTU0AKgAAAAgABQESAAMAAAABAAEAAAEaAAUAAAABAAAASgEb

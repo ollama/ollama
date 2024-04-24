@@ -4,7 +4,7 @@
 .venv
 .swp
 dist
-ollama
+ollama-server
 ggml-metal.metal
 .cache
 *.exe
