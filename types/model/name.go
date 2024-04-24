@@ -686,7 +686,10 @@ func IsValidNamePart(kind PartKind, s string) bool {
 		return false
 	}
 	var consecutiveDots int
-	for _, c := range []byte(s) {
+	for i, c := range []byte(s) {
+		if i == 0 && !isAlphaNumeric(c) {
+			return false
+		}
 		if c == '.' {
 			if consecutiveDots++; consecutiveDots >= 2 {
 				return false
@@ -699,6 +702,10 @@ func IsValidNamePart(kind PartKind, s string) bool {
 		}
 	}
 	return true
+}
+
+func isAlphaNumeric(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 func isValidByteFor(kind PartKind, c byte) bool {

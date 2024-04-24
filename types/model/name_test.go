@@ -101,6 +101,8 @@ var testNames = map[string]fields{
 	"./../passwd":    {},
 	"./0+..":         {},
 
+	"-h": {},
+
 	strings.Repeat("a", MaxNamePartLen):   {model: strings.Repeat("a", MaxNamePartLen)},
 	strings.Repeat("a", MaxNamePartLen+1): {},
 }
@@ -117,7 +119,7 @@ func TestIsValidNameLen(t *testing.T) {
 // preventing path traversal.
 func TestNameConsecutiveDots(t *testing.T) {
 	for i := 1; i < 10; i++ {
-		s := strings.Repeat(".", i)
+		s := "a" + strings.Repeat(".", i)
 		if i > 1 {
 			if g := ParseNameFill(s, FillNothing).DisplayLong(); g != "" {
 				t.Errorf("ParseName(%q) = %q; want empty string", s, g)
@@ -339,17 +341,17 @@ func TestDisplayShortest(t *testing.T) {
 		want      string
 		wantPanic bool
 	}{
-		{"example.com/library/mistral:latest+Q4_0", "example.com/library/_:latest", "mistral", false},
-		{"example.com/library/mistral:latest+Q4_0", "example.com/_/_:latest", "library/mistral", false},
+		{"example.com/library/mistral:latest+Q4_0", "example.com/library/?:latest", "mistral", false},
+		{"example.com/library/mistral:latest+Q4_0", "example.com/?/?:latest", "library/mistral", false},
 		{"example.com/library/mistral:latest+Q4_0", "", "example.com/library/mistral", false},
 		{"example.com/library/mistral:latest+Q4_0", "", "example.com/library/mistral", false},
 
 		// case-insensitive
-		{"Example.com/library/mistral:latest+Q4_0", "example.com/library/_:latest", "mistral", false},
-		{"example.com/Library/mistral:latest+Q4_0", "example.com/library/_:latest", "mistral", false},
-		{"example.com/library/Mistral:latest+Q4_0", "example.com/library/_:latest", "Mistral", false},
-		{"example.com/library/mistral:Latest+Q4_0", "example.com/library/_:latest", "mistral", false},
-		{"example.com/library/mistral:Latest+q4_0", "example.com/library/_:latest", "mistral", false},
+		{"Example.com/library/mistral:latest+Q4_0", "example.com/library/?:latest", "mistral", false},
+		{"example.com/Library/mistral:latest+Q4_0", "example.com/library/?:latest", "mistral", false},
+		{"example.com/library/Mistral:latest+Q4_0", "example.com/library/?:latest", "Mistral", false},
+		{"example.com/library/mistral:Latest+Q4_0", "example.com/library/?:latest", "mistral", false},
+		{"example.com/library/mistral:Latest+q4_0", "example.com/library/?:latest", "mistral", false},
 
 		// zero value
 		{"", MaskDefault, "", true},
@@ -361,10 +363,10 @@ func TestDisplayShortest(t *testing.T) {
 		{"registry.ollama.ai/library/mistral:latest+Q4_0", MaskDefault, "mistral", false},
 
 		// Auto-Fill
-		{"x", "example.com/library/_:latest", "x", false},
-		{"x", "example.com/library/_:latest+Q4_0", "x", false},
-		{"x/y:z", "a.com/library/_:latest+Q4_0", "x/y:z", false},
-		{"x/y:z", "a.com/library/_:latest+Q4_0", "x/y:z", false},
+		{"x", "example.com/library/?:latest", "x", false},
+		{"x", "example.com/library/?:latest+Q4_0", "x", false},
+		{"x/y:z", "a.com/library/?:latest+Q4_0", "x/y:z", false},
+		{"x/y:z", "a.com/library/?:latest+Q4_0", "x/y:z", false},
 	}
 
 	for _, tt := range cases {
@@ -695,10 +697,10 @@ func ExampleName_completeAndResolved() {
 func ExampleName_DisplayShortest() {
 	name := ParseNameFill("example.com/jmorganca/mistral:latest+Q4_0", FillNothing)
 
-	fmt.Println(name.DisplayShortest("example.com/jmorganca/_:latest"))
-	fmt.Println(name.DisplayShortest("example.com/_/_:latest"))
-	fmt.Println(name.DisplayShortest("example.com/_/_:_"))
-	fmt.Println(name.DisplayShortest("_/_/_:_"))
+	fmt.Println(name.DisplayShortest("example.com/jmorganca/?:latest"))
+	fmt.Println(name.DisplayShortest("example.com/?/?:latest"))
+	fmt.Println(name.DisplayShortest("example.com/?/?:?"))
+	fmt.Println(name.DisplayShortest("?/?/?:?"))
 
 	// Default
 	name = ParseNameFill("registry.ollama.ai/library/mistral:latest+Q4_0", FillNothing)
