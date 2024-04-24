@@ -1,65 +1,14 @@
 package convert
 
 import (
-	"encoding/binary"
-	"fmt"
-	"io"
 	"os"
 	"regexp"
-	"strings"
-
-	"github.com/d4l3k/go-bfloat16"
-	"github.com/x448/float16"
 
 	"github.com/ollama/ollama/llm"
 )
 
 type MixtralModel struct {
 	ModelData
-}
-
-func mixtralLayerHandler(w io.Writer, r safetensorWriterTo, f *os.File) error {
-	layerSize := r.end - r.start
-
-	var err error
-	tData := make([]uint16, layerSize/2)
-	if err = binary.Read(f, r.bo, tData); err != nil {
-		return err
-	}
-
-	var heads uint32
-	if strings.Contains(r.t.Name, "attn_q") {
-		heads = uint32(r.params.AttentionHeads)
-	} else if strings.Contains(r.t.Name, "attn_k") {
-		heads = uint32(r.params.KeyValHeads)
-		if heads == 0 {
-			heads = uint32(r.params.AttentionHeads)
-		}
-	} else {
-		return fmt.Errorf("unknown layer type")
-	}
-
-	tData, err = repack(tData, int(heads), r.t.Shape)
-	if err != nil {
-		return err
-	}
-
-	var buf []byte
-	for _, n := range tData {
-		buf = r.bo.AppendUint16(buf, n)
-	}
-
-	tempBuf := make([]uint16, len(tData))
-	tDataF32 := bfloat16.DecodeFloat32(buf)
-	for cnt, v := range tDataF32 {
-		tDataF16 := float16.Fromfloat32(v)
-		tempBuf[cnt] = uint16(tDataF16)
-	}
-
-	if err = binary.Write(w, r.bo, tempBuf); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (m *MixtralModel) GetTensors() error {
@@ -80,7 +29,7 @@ func (m *MixtralModel) GetTensors() error {
 		matches := re.FindAllStringSubmatch(l.Name, -1)
 		if len(matches) > 0 {
 			wt := l.WriterTo.(safetensorWriterTo)
-			wt.handler = mixtralLayerHandler
+			wt.handler = mistralLayerHandler
 			l.WriterTo = wt
 		}
 		m.Tensors = append(m.Tensors, l)
