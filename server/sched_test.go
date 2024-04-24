@@ -47,7 +47,7 @@ func TestLoad(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
-	ggml := nil // value not used in tests
+	var ggml *llm.GGML // value not used in tests
 	req := &LlmRequest{
 		ctx:             ctx,
 		model:           &Model{ModelPath: "foo"},

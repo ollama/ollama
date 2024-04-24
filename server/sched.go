@@ -123,36 +123,35 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
-				} else if loadedCount == 0 {
-					slog.Debug("loading first model", "model", pending.model.ModelPath)
-					gpus := s.getGpuFn()
-
-					ggml, err := llm.LoadModel(pending.model.ModelPath)
-					if err != nil {
-						pending.errCh <- err
-						break
-					}
-					g := pickBestFitGPUs(pending, ggml, gpus)
-					if g != nil {
-						gpus = g
-					}
-					s.loadFn(pending, ggml, gpus)
-					break
 				} else if loadedMax > 0 && loadedCount >= loadedMax {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
 					runnerToExpire = s.findRunnerToUnload(pending)
 				} else {
-					// More than one loaded model, so we have to see if the new one fits
+					// Either no models are loaded or below loadedMax
 					// Get a refreshed GPU list
 					gpus := s.getGpuFn()
-					// Update free memory from currently loaded models
-					s.updateFreeSpace(gpus)
 
+					// Load model for fitting
 					ggml, err := llm.LoadModel(pending.model.ModelPath)
 					if err != nil {
 						pending.errCh <- err
 						break
 					}
+
+					// No models loaded. Load the model but prefer the best fit.
+					if loadedCount == 0 {
+						slog.Debug("loading first model", "model", pending.model.ModelPath)
+						g := pickBestFitGPUs(pending, ggml, gpus)
+						if g != nil {
+							gpus = g
+						}
+						s.loadFn(pending, ggml, gpus)
+						break
+					}
+
+					// More than one loaded model, so we have to see if the new one fits
+					// Update free memory from currently loaded models
+					s.updateFreeSpace(gpus)
 					gpus = pickBestFitGPUs(pending, ggml, gpus)
 					if gpus != nil {
 						slog.Debug("new model fits with existing models, loading")
