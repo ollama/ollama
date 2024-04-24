@@ -10,7 +10,7 @@ export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$V
 # For developers, you can override the DOCKER_ORG to generate multiarch manifests
 #  DOCKER_ORG=jdoe PUSH=1 ./scripts/build_docker.sh
 DOCKER_ORG=${DOCKER_ORG:-"ollama"}
-ARCH_IMAGE_REPO=${ARCH_IMAGE_REPO:-"${DOCKER_ORG}/release"}
+RELEASE_IMAGE_REPO=${RELEASE_IMAGE_REPO:-"${DOCKER_ORG}/release"}
 FINAL_IMAGE_REPO=${FINAL_IMAGE_REPO:-"${DOCKER_ORG}/ollama"}
 
 BUILD_ARCH=${BUILD_ARCH:-"amd64 arm64"}
@@ -25,7 +25,7 @@ OLLAMA_SKIP_IMAGE_BUILD=${OLLAMA_SKIP_IMAGE_BUILD:-""}
 if [ -z "${PUSH}" ] ; then
     LOAD_OR_PUSH="--load"
 else
-    echo "Will be pushing ${ARCH_IMAGE_REPO}:$VERSION for ${BUILD_ARCH}"
+    echo "Will be pushing ${RELEASE_IMAGE_REPO}:$VERSION for ${BUILD_ARCH}"
     LOAD_OR_PUSH="--push"
 fi
 
@@ -37,7 +37,7 @@ if [ -z "${OLLAMA_SKIP_IMAGE_BUILD}" ]; then
             --build-arg=VERSION \
             --build-arg=GOFLAGS \
             -f Dockerfile \
-            -t ${ARCH_IMAGE_REPO}:$VERSION-${TARGETARCH} \
+            -t ${RELEASE_IMAGE_REPO}:$VERSION-${TARGETARCH} \
             .
     done
 
@@ -49,7 +49,7 @@ if [ -z "${OLLAMA_SKIP_IMAGE_BUILD}" ]; then
             --build-arg=GOFLAGS \
             --target runtime-rocm \
             -f Dockerfile \
-            -t ${ARCH_IMAGE_REPO}:$VERSION-rocm \
+            -t ${RELEASE_IMAGE_REPO}:$VERSION-rocm \
             .
     fi
 fi
@@ -57,21 +57,21 @@ fi
 if [ -z "${OLLAMA_SKIP_MANIFEST_CREATE}" ]; then
     if [ -n "${PUSH}" ]; then
         docker manifest create ${FINAL_IMAGE_REPO}:$VERSION \
-            ${ARCH_IMAGE_REPO}:$VERSION-amd64 \
-            ${ARCH_IMAGE_REPO}:$VERSION-arm64
+            ${RELEASE_IMAGE_REPO}:$VERSION-amd64 \
+            ${RELEASE_IMAGE_REPO}:$VERSION-arm64
         docker manifest push ${FINAL_IMAGE_REPO}:$VERSION
 
         # For symmetry, tag/push the rocm image
-        if [ "${ARCH_IMAGE_REPO}" != "${FINAL_IMAGE_REPO}" ]; then
+        if [ "${RELEASE_IMAGE_REPO}" != "${FINAL_IMAGE_REPO}" ]; then
             echo "Tagging and pushing rocm image"
-            docker pull ${ARCH_IMAGE_REPO}:$VERSION-rocm
-            docker tag ${ARCH_IMAGE_REPO}:$VERSION-rocm ${FINAL_IMAGE_REPO}:$VERSION-rocm
+            docker pull ${RELEASE_IMAGE_REPO}:$VERSION-rocm
+            docker tag ${RELEASE_IMAGE_REPO}:$VERSION-rocm ${FINAL_IMAGE_REPO}:$VERSION-rocm
             docker push ${FINAL_IMAGE_REPO}:$VERSION-rocm
         fi
     else
         echo "Skipping manifest generation when not pushing images are available locally as "
-        echo "  ${ARCH_IMAGE_REPO}:$VERSION-amd64"
-        echo "  ${ARCH_IMAGE_REPO}:$VERSION-arm64"
-        echo "  ${ARCH_IMAGE_REPO}:$VERSION-rocm"
+        echo "  ${RELEASE_IMAGE_REPO}:$VERSION-amd64"
+        echo "  ${RELEASE_IMAGE_REPO}:$VERSION-arm64"
+        echo "  ${RELEASE_IMAGE_REPO}:$VERSION-rocm"
     fi
 fi

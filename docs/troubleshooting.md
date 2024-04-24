@@ -76,3 +76,10 @@ install script which version to install.
 ```sh
 curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.29" sh
 ```
+
+## Linux tmp noexec 
+
+If your system is configured with the "noexec" flag where Ollama stores its
+temporary executable files, you can specify an alternate location by setting
+OLLAMA_TMPDIR to a location writable by the user ollama runs as.  For example
+OLLAMA_TMPDIR=/usr/share/ollama/
