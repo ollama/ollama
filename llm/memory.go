@@ -3,6 +3,8 @@ package llm
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -49,6 +51,17 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	for _, info := range gpus {
 		memoryAvailable += info.FreeMemory
 	}
+	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
+	if userLimit != "" {
+		avail, err := strconv.ParseUint(userLimit, 10, 64)
+		if err != nil {
+			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_VRAM", userLimit, "error", err)
+		} else {
+			slog.Info("user override memory limit", "OLLAMA_MAX_VRAM", avail, "actual", memoryAvailable)
+			memoryAvailable = avail
+		}
+	}
+
 	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", format.HumanBytes2(memoryAvailable))
 
 	// TODO - this is probably wrong, first GPU vs secondaries will have different overheads
