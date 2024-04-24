@@ -26,7 +26,10 @@ const (
 	stateComment
 )
 
-var errInvalidRole = errors.New("role must be one of \"system\", \"user\", or \"assistant\"")
+var (
+	errMissingFrom = errors.New("no FROM line")
+	errInvalidRole = errors.New("role must be one of \"system\", \"user\", or \"assistant\"")
+)
 
 func Parse(r io.Reader) (cmds []Command, err error) {
 	var cmd Command
@@ -123,7 +126,7 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 		}
 	}
 
-	return nil, errors.New("no FROM line")
+	return nil, errMissingFrom
 }
 
 func parseRuneForState(r rune, cs state) (state, rune, error) {
