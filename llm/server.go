@@ -115,12 +115,12 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	if userThreadsLimit != "" {
 		maxNumThreads, err := strconv.Atoi(userThreadsLimit)
 		if err != nil {
+			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_LLM_THREADS", userThreadsLimit, "error", err)
 			maxNumThreads = 0
-			slog.Error(fmt.Sprintf("Invalid OLLAMA_MAX_LLM_THREADS setting %s: %s", userThreadsLimit, err))
 		}
 
 		if maxNumThreads > 0 && (opts.NumThread > maxNumThreads || opts.NumThread == 0) {
-			slog.Info(fmt.Sprintf("User override OLLAMA_MAX_LLM_THREADS=%d", maxNumThreads))
+			slog.Info("user override thread limit", "OLLAMA_MAX_LLM_THREADS", maxNumThreads)
 			opts.NumThread = maxNumThreads
 		}
 	}
@@ -129,12 +129,12 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	if userGPULimit != "" {
 		maxGPULayers, err := strconv.Atoi(userGPULimit)
 		if err != nil {
+			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_GPU_LAYERS", userGPULimit, "error", err)
 			maxGPULayers = -1
-			slog.Error(fmt.Sprintf("Invalid OLLAMA_MAX_GPU_LAYERS setting %s: %s", userGPULimit, err))
 		}
 
 		if maxGPULayers >= 0 && (opts.NumGPU > maxGPULayers || opts.NumGPU == -1) {
-			slog.Info(fmt.Sprintf("User override OLLAMA_MAX_GPU_LAYERS=%d", maxGPULayers))
+			slog.Info("user override gpu layers", "OLLAMA_MAX_GPU_LAYERS", maxGPULayers)
 			opts.NumGPU = maxGPULayers
 		}
 	}
