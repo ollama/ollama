@@ -5,13 +5,14 @@ package integration
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,8 +24,12 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func Init() {
+	lifecycle.InitLogging()
+}
 
 func FindPort() string {
 	port := 0
@@ -41,7 +46,7 @@ func FindPort() string {
 	return strconv.Itoa(port)
 }
 
-func GetTestEndpoint() (string, string) {
+func GetTestEndpoint() (*api.Client, string) {
 	defaultPort := "11434"
 	ollamaHost := os.Getenv("OLLAMA_HOST")
 
@@ -67,16 +72,20 @@ func GetTestEndpoint() (string, string) {
 		port = FindPort()
 	}
 
-	url := fmt.Sprintf("%s:%s", host, port)
-	slog.Info("server connection", "url", url)
-	return scheme, url
+	slog.Info("server connection", "host", host, "port", port)
+
+	return api.NewClient(
+		&url.URL{
+			Scheme: scheme,
+			Host:   net.JoinHostPort(host, port),
+		},
+		http.DefaultClient), fmt.Sprintf("%s:%s", host, port)
 }
 
-// TODO make fanicier, grab logs, etc.
 var serverMutex sync.Mutex
 var serverReady bool
 
-func StartServer(ctx context.Context, ollamaHost string) error {
+func startServer(ctx context.Context, ollamaHost string) error {
 	// Make sure the server has been built
 	CLIName, err := filepath.Abs("../ollama")
 	if err != nil {
@@ -125,67 +134,76 @@ func StartServer(ctx context.Context, ollamaHost string) error {
 	return nil
 }
 
-func PullIfMissing(ctx context.Context, client *http.Client, scheme, testEndpoint, modelName string) error {
+func PullIfMissing(ctx context.Context, client *api.Client, modelName string) error {
 	slog.Info("checking status of model", "model", modelName)
 	showReq := &api.ShowRequest{Name: modelName}
-	requestJSON, err := json.Marshal(showReq)
-	if err != nil {
-		return err
-	}
 
-	req, err := http.NewRequest("POST", scheme+"://"+testEndpoint+"/api/show", bytes.NewReader(requestJSON))
-	if err != nil {
+	showCtx, cancel := context.WithDeadlineCause(
+		ctx,
+		time.Now().Add(5*time.Second),
+		fmt.Errorf("show for existing model %s took too long", modelName),
+	)
+	defer cancel()
+	_, err := client.Show(showCtx, showReq)
+	var statusError api.StatusError
+	switch {
+	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
+		break
+	case err != nil:
 		return err
-	}
-
-	// Make the request with the HTTP client
-	response, err := client.Do(req.WithContext(ctx))
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode == 200 {
+	default:
 		slog.Info("model already present", "model", modelName)
 		return nil
 	}
-	slog.Info("model missing", "status", response.StatusCode)
+	slog.Info("model missing", "model", modelName)
 
+	stallDuration := 30 * time.Second // This includes checksum verification, which can take a while on larger models
+	stallTimer := time.NewTimer(stallDuration)
+	fn := func(resp api.ProgressResponse) error {
+		// fmt.Print(".")
+		if !stallTimer.Reset(stallDuration) {
+			return fmt.Errorf("stall was detected, aborting status reporting")
+		}
+		return nil
+	}
+
+	stream := true
 	pullReq := &api.PullRequest{Name: modelName, Stream: &stream}
-	requestJSON, err = json.Marshal(pullReq)
-	if err != nil {
-		return err
-	}
 
-	req, err = http.NewRequest("POST", scheme+"://"+testEndpoint+"/api/pull", bytes.NewReader(requestJSON))
-	if err != nil {
-		return err
-	}
-	slog.Info("pulling", "model", modelName)
+	var pullError error
 
-	response, err = client.Do(req.WithContext(ctx))
-	if err != nil {
-		return err
+	done := make(chan int)
+	go func() {
+		pullError = client.Pull(ctx, pullReq, fn)
+		done <- 0
+	}()
+
+	select {
+	case <-stallTimer.C:
+		return fmt.Errorf("download stalled")
+	case <-done:
+		return pullError
 	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return fmt.Errorf("failed to pull model") // TODO more details perhaps
-	}
-	slog.Info("model pulled", "model", modelName)
-	return nil
 }
 
 var serverProcMutex sync.Mutex
 
-func GenerateTestHelper(ctx context.Context, t *testing.T, client *http.Client, genReq api.GenerateRequest, anyResp []string) {
-
-	// TODO maybe stuff in an init routine?
-	lifecycle.InitLogging()
-
-	requestJSON, err := json.Marshal(genReq)
-	if err != nil {
-		t.Fatalf("Error serializing request: %v", err)
+// Returns an Client, the testEndpoint, and a cleanup function, fails the test on errors
+// Starts the server if needed
+func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, string, func()) {
+	client, testEndpoint := GetTestEndpoint()
+	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
+		serverProcMutex.Lock()
+		fp, err := os.CreateTemp("", "ollama-server-*.log")
+		if err != nil {
+			t.Fatalf("failed to generate log file: %s", err)
+		}
+		lifecycle.ServerLogFile = fp.Name()
+		fp.Close()
+		require.NoError(t, startServer(ctx, testEndpoint))
 	}
-	defer func() {
+
+	return client, testEndpoint, func() {
 		if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
 			defer serverProcMutex.Unlock()
 			if t.Failed() {
@@ -203,63 +221,118 @@ func GenerateTestHelper(ctx context.Context, t *testing.T, client *http.Client, 
 				os.Stderr.Write(data)
 				slog.Warn("END OF SERVER")
 			}
-			err = os.Remove(lifecycle.ServerLogFile)
+			err := os.Remove(lifecycle.ServerLogFile)
 			if err != nil && !os.IsNotExist(err) {
 				slog.Warn("failed to cleanup", "logfile", lifecycle.ServerLogFile, "error", err)
 			}
 		}
+	}
+}
+
+func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRequest, anyResp []string) {
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	require.NoError(t, PullIfMissing(ctx, client, genReq.Model))
+	DoGenerate(ctx, t, client, genReq, anyResp, 30*time.Second, 10*time.Second)
+}
+
+func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) {
+	stallTimer := time.NewTimer(initialTimeout)
+	var buf bytes.Buffer
+	fn := func(response api.GenerateResponse) error {
+		// fmt.Print(".")
+		buf.Write([]byte(response.Response))
+		if !stallTimer.Reset(streamTimeout) {
+			return fmt.Errorf("stall was detected while streaming response, aborting")
+		}
+		return nil
+	}
+
+	stream := true
+	genReq.Stream = &stream
+	done := make(chan int)
+	var genErr error
+	go func() {
+		genErr = client.Generate(ctx, &genReq, fn)
+		done <- 0
 	}()
-	scheme, testEndpoint := GetTestEndpoint()
 
-	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
-		serverProcMutex.Lock()
-		fp, err := os.CreateTemp("", "ollama-server-*.log")
-		if err != nil {
-			t.Fatalf("failed to generate log file: %s", err)
+	select {
+	case <-stallTimer.C:
+		if buf.Len() == 0 {
+			t.Errorf("generate never started.  Timed out after :%s", initialTimeout.String())
+		} else {
+			t.Errorf("generate stalled.  Response so far:%s", buf.String())
 		}
-		lifecycle.ServerLogFile = fp.Name()
-		fp.Close()
-		assert.NoError(t, StartServer(ctx, testEndpoint))
-	}
-
-	err = PullIfMissing(ctx, client, scheme, testEndpoint, genReq.Model)
-	if err != nil {
-		t.Fatalf("Error pulling model: %v", err)
-	}
-
-	// Make the request and get the response
-	req, err := http.NewRequest("POST", scheme+"://"+testEndpoint+"/api/generate", bytes.NewReader(requestJSON))
-	if err != nil {
-		t.Fatalf("Error creating request: %v", err)
-	}
-
-	// Set the content type for the request
-	req.Header.Set("Content-Type", "application/json")
-
-	// Make the request with the HTTP client
-	response, err := client.Do(req.WithContext(ctx))
-	if err != nil {
-		t.Fatalf("Error making request: %v", err)
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	assert.NoError(t, err)
-	assert.Equal(t, response.StatusCode, 200, string(body))
-
-	// Verify the response is valid JSON
-	var payload api.GenerateResponse
-	err = json.Unmarshal(body, &payload)
-	if err != nil {
-		assert.NoError(t, err, body)
-	}
-
-	// Verify the response contains the expected data
-	atLeastOne := false
-	for _, resp := range anyResp {
-		if strings.Contains(strings.ToLower(payload.Response), resp) {
-			atLeastOne = true
-			break
+	case <-done:
+		require.NoError(t, genErr, "failed with %s request prompt %s ", genReq.Model, genReq.Prompt)
+		// Verify the response contains the expected data
+		response := buf.String()
+		atLeastOne := false
+		for _, resp := range anyResp {
+			if strings.Contains(strings.ToLower(response), resp) {
+				atLeastOne = true
+				break
+			}
 		}
+		require.True(t, atLeastOne, "none of %v found in %s", anyResp, response)
+		slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", response)
+	case <-ctx.Done():
+		t.Error("outer test context done while waiting for generate")
 	}
-	assert.True(t, atLeastOne, "none of %v found in %s", anyResp, payload.Response)
+}
+
+// Generate a set of requests
+// By default each request uses orca-mini as the model
+func GenerateRequests() ([]api.GenerateRequest, [][]string) {
+	return []api.GenerateRequest{
+			{
+				Model:  "orca-mini",
+				Prompt: "why is the ocean blue?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}, {
+				Model:  "orca-mini",
+				Prompt: "why is the color of dirt brown?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}, {
+				Model:  "orca-mini",
+				Prompt: "what is the origin of the us thanksgiving holiday?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}, {
+				Model:  "orca-mini",
+				Prompt: "what is the origin of independence day?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}, {
+				Model:  "orca-mini",
+				Prompt: "what is the composition of air?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			},
+		},
+		[][]string{
+			[]string{"sunlight"},
+			[]string{"soil", "organic", "earth", "black", "tan"},
+			[]string{"england", "english", "massachusetts", "pilgrims"},
+			[]string{"fourth", "july", "declaration", "independence"},
+			[]string{"nitrogen", "oxygen", "carbon", "dioxide"},
+		}
 }

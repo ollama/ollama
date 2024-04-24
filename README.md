@@ -35,10 +35,10 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 ## Quickstart
 
-To run and chat with [Llama 2](https://ollama.com/library/llama2):
+To run and chat with [Llama 3](https://ollama.com/library/llama3):
 
 ```
-ollama run llama2
+ollama run llama3
 ```
 
 ## Model library
@@ -49,17 +49,14 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
-| Llama 2            | 7B         | 3.8GB | `ollama run llama2`            |
+| Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
+| Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
+| Phi-3              | 3,8B       | 2.3GB | `ollama run phi3`              |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
-| Dolphin Phi        | 2.7B       | 1.6GB | `ollama run dolphin-phi`       |
-| Phi-2              | 2.7B       | 1.7GB | `ollama run phi`               |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
 | Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
-| Llama 2 13B        | 13B        | 7.3GB | `ollama run llama2:13b`        |
-| Llama 2 70B        | 70B        | 39GB  | `ollama run llama2:70b`        |
-| Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 | Gemma              | 2B         | 1.4GB | `ollama run gemma:2b`          |
 | Gemma              | 7B         | 4.8GB | `ollama run gemma:7b`          |
@@ -97,16 +94,16 @@ See the [guide](docs/import.md) on importing models for more information.
 
 ### Customize a prompt
 
-Models from the Ollama library can be customized with a prompt. For example, to customize the `llama2` model:
+Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3` model:
 
 ```
-ollama pull llama2
+ollama pull llama3
 ```
 
 Create a `Modelfile`:
 
 ```
-FROM llama2
+FROM llama3
 
 # set the temperature to 1 [higher is more creative, lower is more coherent]
 PARAMETER temperature 1
@@ -141,7 +138,7 @@ ollama create mymodel -f ./Modelfile
 ### Pull a model
 
 ```
-ollama pull llama2
+ollama pull llama3
 ```
 
 > This command can also be used to update a local model. Only the diff will be pulled.
@@ -149,13 +146,13 @@ ollama pull llama2
 ### Remove a model
 
 ```
-ollama rm llama2
+ollama rm llama3
 ```
 
 ### Copy a model
 
 ```
-ollama cp llama2 my-llama2
+ollama cp llama3 my-model
 ```
 
 ### Multiline input
@@ -179,7 +176,7 @@ The image features a yellow smiley face, which is likely the central focus of th
 ### Pass in prompt as arguments
 
 ```
-$ ollama run llama2 "Summarize this file: $(cat README.md)"
+$ ollama run llama3 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
@@ -226,7 +223,7 @@ Next, start the server:
 Finally, in a separate shell, run a model:
 
 ```
-./ollama run llama2
+./ollama run llama3
 ```
 
 ## REST API
@@ -237,7 +234,7 @@ Ollama has a REST API for running and managing models.
 
 ```
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama2",
+  "model": "llama3",
   "prompt":"Why is the sky blue?"
 }'
 ```
@@ -246,7 +243,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ```
 curl http://localhost:11434/api/chat -d '{
-  "model": "mistral",
+  "model": "llama3",
   "messages": [
     { "role": "user", "content": "why is the sky blue?" }
   ]
@@ -259,16 +256,17 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [Open WebUI](https://github.com/open-webui/open-webui)
+- [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
 - [LibreChat](https://github.com/danny-avila/LibreChat)
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
-- [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Saddle](https://github.com/jikkuatwork/saddle)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
+- [Chatbot UI v2](https://github.com/mckaywrigley/chatbot-ui)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
-- [Open WebUI](https://github.com/open-webui/open-webui)
 - [Ollamac](https://github.com/kevinhermawan/Ollamac)
 - [big-AGI](https://github.com/enricoros/big-AGI/blob/main/docs/config-local-ollama.md)
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
@@ -290,9 +288,13 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
+- [QA-Pilot: Chat with Code Repository](https://github.com/reid41/QA-Pilot)
 - [ChatOllama: Open Source Chatbot based on Ollama with Knowledge Bases](https://github.com/sugarforever/chat-ollama)
 - [CRAG Ollama Chat: Simple Web Search with Corrective RAG](https://github.com/Nagi-ovo/CRAG-Ollama-Chat)
 - [RAGFlow: Open-source Retrieval-Augmented Generation engine based on deep document understanding](https://github.com/infiniflow/ragflow)
+- [chat: chat web app for teams](https://github.com/swuecho/chat)
+- [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
+- [Ollama RAG Chatbot: Local Chat with multiples PDFs using Ollama and RAG.](https://github.com/datvodinh/rag-chatbot.git)
 
 ### Terminal
 
@@ -308,11 +310,13 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
 - [cmdh](https://github.com/pgibler/cmdh)
 - [ooo](https://github.com/npahlfer/ooo)
+- [shell-pilot](https://github.com/reid41/shell-pilot)
 - [tenere](https://github.com/pythops/tenere)
 - [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
 - [typechat-cli](https://github.com/anaisbetts/typechat-cli)
 - [ShellOracle](https://github.com/djcopley/ShellOracle)
 - [tlm](https://github.com/yusufcanb/tlm)
+- [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 
 ### Database
 
@@ -377,6 +381,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
+- [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
 
 ### Supported backends 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov. 
