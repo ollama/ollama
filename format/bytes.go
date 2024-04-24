@@ -15,6 +15,7 @@ const (
 
 	KibiByte = Byte * 1024
 	MebiByte = KibiByte * 1024
+	GibiByte = MebiByte * 1024
 )
 
 func HumanBytes(b int64) string {

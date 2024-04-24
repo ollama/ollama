@@ -2,5 +2,5 @@ package llm
 
 import "embed"
 
-//go:embed build/windows/*/*/bin/*
+// unused on windows
 var libEmbed embed.FS
