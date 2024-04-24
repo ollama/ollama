@@ -24,9 +24,10 @@ import (
 )
 
 type handles struct {
-	deviceCount int
-	cudart      *C.cudart_ha
-	oneapi      *C.oneapi_handle_t
+	deviceCount       int
+	oneApiDeviceCount int
+	cudart            *C.cudart_handle_t
+	oneapi            *C.oneapi_handle_t
 }
 
 const (
@@ -124,12 +125,14 @@ func initGPUHandles() *handles {
 		}
 	}
 
+	slog.Info("Detecting Intel GPUs")
 	oneapiLibPaths := FindGPULibs(oneapiMgmtName, oneapiMgmtPatterns)
 	if len(oneapiLibPaths) > 0 {
-		oneapi := LoadOneapiMgmt(oneapiLibPaths)
+		deviceCount, oneapi, libPath := LoadOneApiMgmt(oneapiLibPaths)
 		if oneapi != nil {
-			slog.Info("Intel GPU detected")
+			slog.Info("detected Intel GPUs", "library", libPath, "count", deviceCount)
 			gpuHandles.oneapi = oneapi
+			gpuHandles.oneApiDeviceCount = deviceCount
 			return gpuHandles
 		}
 	}
@@ -147,6 +150,9 @@ func GetGPUInfo() GpuInfoList {
 	defer func() {
 		if gpuHandles.cudart != nil {
 			C.cudart_release(*gpuHandles.cudart)
+		}
+		if gpuHandles.oneapi != nil {
+			C.oneapi_release(*gpuHandles.oneapi)
 		}
 	}()
 
@@ -186,6 +192,34 @@ func GetGPUInfo() GpuInfoList {
 		gpuInfo.MinimumMemory = cudaMinimumMemory
 
 		// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
+		resp = append(resp, gpuInfo)
+	}
+
+	slog.Info(fmt.Sprintf("%v", gpuHandles.oneApiDeviceCount))
+	// OneApi Intel
+	for i := 0; i < gpuHandles.oneApiDeviceCount; i++ {
+		// TODO once we support CPU compilation variants of GPU libraries refine this...
+		if cpuVariant == "" || runtime.GOARCH == "amd64" {
+			continue
+		}
+
+		gpuInfo := GpuInfo{
+			Library: "oneapi",
+		}
+		C.oneapi_check_vram(*gpuHandles.oneapi, C.int(i), &memInfo)
+		if memInfo.err != nil {
+			slog.Info("error looking up Intel GPU memory", "error", C.GoString(memInfo.err))
+			C.free(unsafe.Pointer(memInfo.err))
+		}
+		gpuInfo.TotalMemory = uint64(memInfo.total)
+		gpuInfo.FreeMemory = uint64(memInfo.free)
+		gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+		gpuInfo.Major = int(memInfo.major)
+		gpuInfo.Minor = int(memInfo.minor)
+		slog.Info(gpuInfo.ID)
+
+		slog.Info(fmt.Sprintf("%v", gpuInfo.TotalMemory))
+
 		resp = append(resp, gpuInfo)
 	}
 
@@ -297,10 +331,11 @@ func LoadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string) {
 	return 0, nil, ""
 }
 
-func LoadOneapiMgmt(rocmLibPaths []string) *C.oneapi_handle_t {
+func LoadOneApiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
 	var resp C.oneapi_init_resp_t
 	resp.oh.verbose = getVerboseState()
-	for _, libPath := range rocmLibPaths {
+
+	for _, libPath := range oneapiLibPaths {
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
 		C.oneapi_init(lib, &resp)
@@ -308,10 +343,10 @@ func LoadOneapiMgmt(rocmLibPaths []string) *C.oneapi_handle_t {
 			slog.Info(fmt.Sprintf("Unable to load oneAPI management library %s: %s", libPath, C.GoString(resp.err)))
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			return &resp.oh
+			return int(resp.num_devices), &resp.oh, libPath
 		}
 	}
-	return nil
+	return 0, nil, ""
 }
 
 func getVerboseState() C.uint16_t {
@@ -334,6 +369,8 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 		return cudaGetVisibleDevicesEnv(l)
 	case "rocm":
 		return rocmGetVisibleDevicesEnv(l)
+	case "oneapi":
+		return oneApiGetVisibleDevicesEnv(l)
 	default:
 		slog.Debug("no filter required for library " + l[0].Library)
 		return "", ""

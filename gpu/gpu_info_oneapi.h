@@ -11,6 +11,8 @@
 // Just enough typedef's to dlopen/dlsym for memory information
 typedef enum ze_result_t {
   ZE_RESULT_SUCCESS = 0,
+  ZE_RESULT_ERROR_UNINITIALIZED = 1,
+  ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY = 2
   // Other values omitted for now...
 } ze_result_t;
 
@@ -154,6 +156,12 @@ typedef struct _zes_mem_state_t {
   uint64_t size;
 } zes_mem_state_t;
 
+typedef struct oneapi_device_info_t {
+  uint32_t driver_index; // which driver this device belongsto
+  ze_device_uuid_t uuid;
+  zes_device_handle_t device; // single device handle
+} oneapi_device_info_t;
+
 typedef struct oneapi_handle {
   void *handle;
   uint16_t verbose;
@@ -171,20 +179,19 @@ typedef struct oneapi_handle {
   ze_result_t (*zesMemoryGetState)(zes_mem_handle_t hMemory,
                                    zes_mem_state_t *pState);
 
+  oneapi_device_info_t *device_info;
 } oneapi_handle_t;
 
 typedef struct oneapi_init_resp {
   char *err; // If err is non-null handle is invalid
   oneapi_handle_t oh;
+  int num_devices;
 } oneapi_init_resp_t;
 
-typedef struct oneapi_version_resp {
-  ze_result_t status;
-  char *str; // Contains version or error string if status != 0
-} oneapi_version_resp_t;
-
 void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp);
-void oneapi_check_vram(oneapi_handle_t rh, mem_info_t *resp);
+ze_result_t oneapi_device_info(oneapi_init_resp_t *resp);
+void oneapi_check_vram(oneapi_handle_t h, int i, mem_info_t *resp);
+void oneapi_release(oneapi_handle_t h);
 
 #endif // __GPU_INFO_INTEL_H__
 #endif // __APPLE__

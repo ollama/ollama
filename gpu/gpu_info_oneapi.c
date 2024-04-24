@@ -1,3 +1,8 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <time.h>
+#include <wchar.h>
 #ifndef __APPLE__
 
 #include "gpu_info_oneapi.h"
@@ -67,60 +72,137 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
     resp->err = strdup(buf);
   }
 
-  return;
+  // Get get driver and device informaton
+  resp->num_devices = 0;
+  resp->oh.device_info = NULL;
+
+  ret = oneapi_device_info(resp);
+  if (ret != ZE_RESULT_SUCCESS) {
+    LOG(resp->oh.verbose, "oneapi_get_device_info err: %d\n", ret);
+    UNLOAD_LIBRARY(resp->oh.handle);
+    resp->oh.handle = NULL;
+    snprintf(buf, buflen, "failed to get device info: %d\n", ret);
+    resp->err = strdup(buf);
+  }
 }
 
-void oneapi_check_vram(oneapi_handle_t h, mem_info_t *resp) {
+void oneapi_check_vram(oneapi_handle_t h, int i, mem_info_t *resp) {
   ze_result_t ret;
   resp->err = NULL;
-  resp->igpu_index = -1;
   uint64_t totalMem = 0;
   uint64_t usedMem = 0;
   const int buflen = 256;
   char buf[buflen + 1];
-  int i, d, m;
+  int d, m;
 
   if (h.handle == NULL) {
     resp->err = strdup("Level-Zero handle not initialized");
     return;
   }
 
-  uint32_t driversCount = 0;
-  ret = (*h.zesDriverGet)(&driversCount, NULL);
+  if (h.device_info == NULL) {
+    resp->err = strdup("invalid device info");
+    return;
+  }
+
+  resp->total = 0;
+  resp->free = 1;
+  resp->major = 0;
+  resp->minor = 0;
+
+  zes_device_handle_t device = h.device_info->device;
+
+  // Format the GPU ID as a string
+  snprintf(&resp->gpu_id[0], GPU_ID_LEN,
+           "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%"
+           "02x%02x",
+           h.device_info->uuid.id[0], h.device_info->uuid.id[1],
+           h.device_info->uuid.id[2], h.device_info->uuid.id[3],
+           h.device_info->uuid.id[4], h.device_info->uuid.id[5],
+           h.device_info->uuid.id[6], h.device_info->uuid.id[7],
+           h.device_info->uuid.id[8], h.device_info->uuid.id[9],
+           h.device_info->uuid.id[10], h.device_info->uuid.id[11],
+           h.device_info->uuid.id[12], h.device_info->uuid.id[13],
+           h.device_info->uuid.id[14], h.device_info->uuid.id[15]);
+
+  uint32_t memCount = 0;
+  ret = (*h.zesDeviceEnumMemoryModules)(device, &memCount, NULL);
   if (ret != ZE_RESULT_SUCCESS) {
-    snprintf(buf, buflen, "unable to get driver count: %d", ret);
+    snprintf(buf, buflen, "unable to enumerate Level-Zero memory modules: %d",
+             ret);
     resp->err = strdup(buf);
     return;
   }
-  LOG(h.verbose, "discovered %d Level-Zero drivers\n", driversCount);
 
-  zes_driver_handle_t *allDrivers =
-      malloc(driversCount * sizeof(zes_driver_handle_t));
-  (*h.zesDriverGet)(&driversCount, allDrivers);
+  LOG(h.verbose, "discovered %d Level-Zero memory modules\n", memCount);
 
-  resp->total = 0;
-  resp->free = 0;
+  zes_mem_handle_t *mems = malloc(memCount * sizeof(zes_mem_handle_t));
 
-  for (d = 0; d < driversCount; d++) {
-    uint32_t deviceCount = 0;
-    ret = (*h.zesDeviceGet)(allDrivers[d], &deviceCount, NULL);
+  (*h.zesDeviceEnumMemoryModules)(device, &memCount, mems);
+
+  for (m = 0; m < memCount; m++) {
+    zes_mem_state_t state;
+    state.stype = ZES_STRUCTURE_TYPE_MEM_STATE;
+    state.pNext = NULL;
+
+    ret = (*h.zesMemoryGetState)(mems[m], &state);
     if (ret != ZE_RESULT_SUCCESS) {
-      snprintf(buf, buflen, "unable to get device count: %d", ret);
+      snprintf(buf, buflen, "unable to get memory state: %d", ret);
       resp->err = strdup(buf);
-      free(allDrivers);
+      free(mems);
       return;
     }
 
-    LOG(h.verbose, "discovered %d Level-Zero devices\n", deviceCount);
+    resp->total += state.size;
+    resp->free += state.free;
+  }
 
-    zes_device_handle_t *devices =
-        malloc(deviceCount * sizeof(zes_device_handle_t));
-    (*h.zesDeviceGet)(allDrivers[d], &deviceCount, devices);
+  free(mems);
+}
 
-    for (i = 0; i < deviceCount; i++) {
-      uint32_t globalDeviceIndex = resp->count;
-      resp->count++;
+ze_result_t oneapi_device_info(oneapi_init_resp_t *resp) {
+  const int buflen = 256;
+  char buf[buflen + 1];
+  int i, d;
 
+  if (resp->oh.handle == NULL) {
+    snprintf(buf, buflen, "Level-Zero handle not initialized");
+    LOG(resp->oh.verbose, "%s\n", buf);
+    return ZE_RESULT_ERROR_UNINITIALIZED;
+  }
+
+  uint32_t driver_count = 0;
+  ze_result_t ret = (*resp->oh.zesDriverGet)(&driver_count, NULL);
+  if (ret != ZE_RESULT_SUCCESS) {
+    snprintf(buf, buflen, "unable to get driver count: %d", ret);
+    LOG(resp->oh.verbose, "%sn", buf);
+    return ret;
+  }
+
+  LOG(resp->oh.verbose, "discovered %d Level-Zero drivers\n", driver_count);
+
+  // get all the driver information
+  zes_driver_handle_t *drivers =
+      (zes_driver_handle_t *)malloc(driver_count * sizeof(zes_driver_handle_t));
+  (*resp->oh.zesDriverGet)(&driver_count, drivers);
+
+  for (d = 0; d < driver_count; d++) {
+    uint32_t device_count = 0;
+    ret = (*resp->oh.zesDeviceGet)(drivers[d], &device_count, NULL);
+    if (ret != ZE_RESULT_SUCCESS) {
+      snprintf(buf, buflen, "unable to get device count: %d", ret);
+      LOG(resp->oh.verbose, "%s\n", buf);
+      free(drivers);
+      continue;
+    }
+
+    LOG(resp->oh.verbose, "discovered %d Level-Zero devices\n", device_count);
+
+    zes_device_handle_t *devices = (zes_device_handle_t *)malloc(
+        device_count * sizeof(zes_device_handle_t));
+    (*resp->oh.zesDeviceGet)(drivers[i], &device_count, devices);
+
+    for (i = 0; i < device_count; i++) {
       zes_device_ext_properties_t ext_props;
       ext_props.stype = ZES_STRUCTURE_TYPE_DEVICE_EXT_PROPERTIES;
       ext_props.pNext = NULL;
@@ -129,76 +211,62 @@ void oneapi_check_vram(oneapi_handle_t h, mem_info_t *resp) {
       props.stype = ZES_STRUCTURE_TYPE_DEVICE_PROPERTIES;
       props.pNext = &ext_props;
 
-      ret = (*h.zesDeviceGetProperties)(devices[i], &props);
+      ret = (*resp->oh.zesDeviceGetProperties)(devices[i], &props);
       if (ret != ZE_RESULT_SUCCESS) {
         snprintf(buf, buflen, "unable to get device properties: %d", ret);
-        resp->err = strdup(buf);
-        free(allDrivers);
-        free(devices);
-        return;
+        continue;
+      }
+      // skip all the integrated gpus from the devices
+      if (props.core.flags && ZES_DEVICE_PROPERTY_FLAG_INTEGRATED) {
+        LOG(resp->oh.verbose, "discovered an integrated GPU %s\n",
+            props.modelName);
+        //  continue;
       }
 
-      if (h.verbose) {
+      resp->num_devices++;
+      resp->oh.device_info = (oneapi_device_info_t *)realloc(
+          resp->oh.device_info,
+          resp->num_devices * sizeof(oneapi_device_info_t));
+
+      if (resp->oh.device_info == NULL) {
+        // Handle memory allocation failure
+        LOG(resp->oh.verbose, "failed to allocate memory for device info\n");
+        snprintf(buf, buflen, "failed to allocate memory for device info");
+        resp->err = strdup(buf);
+        free(drivers);
+        free(devices);
+        return ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY;
+      }
+
+      resp->oh.device_info[resp->num_devices - 1].driver_index = d;
+      resp->oh.device_info[resp->num_devices - 1].device = devices[i];
+      resp->oh.device_info[resp->num_devices - 1].uuid = props.core.uuid;
+
+      if (resp->oh.verbose) {
         // When in verbose mode, report more information about
         // the card we discover.
-        LOG(h.verbose, "[%d] oneAPI device name: %s\n", globalDeviceIndex,
-            props.modelName);
-        LOG(h.verbose, "[%d] oneAPI brand: %s\n", globalDeviceIndex,
+        LOG(resp->oh.verbose, "[%d] oneAPI device name: %s\n",
+            resp->num_devices, props.modelName);
+        LOG(resp->oh.verbose, "[%d] oneAPI brand: %s\n", resp->num_devices,
             props.brandName);
-        LOG(h.verbose, "[%d] oneAPI vendor: %s\n", globalDeviceIndex,
+        LOG(resp->oh.verbose, "[%d] oneAPI vendor: %s\n", resp->num_devices,
             props.vendorName);
-        LOG(h.verbose, "[%d] oneAPI S/N: %s\n", globalDeviceIndex,
+        LOG(resp->oh.verbose, "[%d] oneAPI S/N: %s\n", resp->num_devices,
             props.serialNumber);
-        LOG(h.verbose, "[%d] oneAPI board number: %s\n", globalDeviceIndex,
-            props.boardNumber);
+        LOG(resp->oh.verbose, "[%d] oneAPI board number: %s\n",
+            resp->num_devices, props.boardNumber);
       }
-
-      if (ext_props.flags & ZES_DEVICE_PROPERTY_FLAG_INTEGRATED) {
-        LOG(h.verbose, "device %d is an integrated device\n", globalDeviceIndex);
-        resp->igpu_index = globalDeviceIndex;
-      }
-
-      uint32_t memCount = 0;
-      ret = (*h.zesDeviceEnumMemoryModules)(devices[i], &memCount, NULL);
-      if (ret != ZE_RESULT_SUCCESS) {
-        snprintf(buf, buflen,
-                 "unable to enumerate Level-Zero memory modules: %d", ret);
-        resp->err = strdup(buf);
-        free(allDrivers);
-        free(devices);
-        return;
-      }
-
-      LOG(h.verbose, "discovered %d Level-Zero memory modules\n", memCount);
-
-      zes_mem_handle_t *mems = malloc(memCount * sizeof(zes_mem_handle_t));
-      (*h.zesDeviceEnumMemoryModules)(devices[i], &memCount, mems);
-
-      for (m = 0; m < memCount; m++) {
-        zes_mem_state_t state;
-        state.stype = ZES_STRUCTURE_TYPE_MEM_STATE;
-        state.pNext = NULL;
-        ret = (*h.zesMemoryGetState)(mems[m], &state);
-        if (ret != ZE_RESULT_SUCCESS) {
-          snprintf(buf, buflen, "unable to get memory state: %d", ret);
-          resp->err = strdup(buf);
-          free(allDrivers);
-          free(devices);
-          free(mems);
-          return;
-        }
-
-        resp->total += state.size;
-        resp->free += state.free;
-      }
-
-      free(mems);
     }
-
     free(devices);
   }
+  free(drivers);
+  return ZE_RESULT_SUCCESS;
+}
 
-  free(allDrivers);
+void oneapi_release(oneapi_handle_t h) {
+  LOG(h.verbose, "releasing oneapi Library\n");
+  UNLOAD_LIBRARY(h.handle);
+  h.handle = NULL;
 }
 
 #endif // __APPLE__
