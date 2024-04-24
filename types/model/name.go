@@ -150,7 +150,7 @@ type Name struct {
 // For any valid s, the fill string is used to fill in missing parts of the
 // Name. The fill string must be a valid Name with the exception that any part
 // may be the string ("?"), which will not be considered for filling.
-func ParseName(s, fill string) Name {
+func ParseNameFill(s, fill string) Name {
 	var r Name
 	parts(s)(func(kind PartKind, part string) bool {
 		if kind == PartDigest && !ParseDigest(part).IsValid() {
@@ -170,6 +170,13 @@ func ParseName(s, fill string) Name {
 	return Name{}
 }
 
+// ParseName parses s into a Name, and returns the result of filling it
+// with FillDefault. The input string must be a valid string representation
+// of a model
+func ParseName(s string) Name {
+	return ParseNameFill(s, "")
+}
+
 func parseMask(s string) Name {
 	var r Name
 	parts(s)(func(kind PartKind, part string) bool {
@@ -187,7 +194,7 @@ func parseMask(s string) Name {
 }
 
 func MustParseName(s, fill string) Name {
-	r := ParseName(s, fill)
+	r := ParseNameFill(s, fill)
 	if !r.IsValid() {
 		panic("invalid Name: " + s)
 	}
@@ -579,7 +586,11 @@ func (r Name) IsValid() bool {
 // it trims any leading "/" and then calls [ParseName] with fill.
 func ParseNameFromURLPath(s, fill string) Name {
 	s = strings.TrimPrefix(s, "/")
-	return ParseName(s, fill)
+	return ParseNameFill(s, fill)
+}
+
+func ParseNameFromURLPathFill(s, fill string) Name {
+	return ParseNameFill(s, fill)
 }
 
 // URLPath returns a complete, canonicalized, relative URL path using the parts of a
