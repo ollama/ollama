@@ -205,7 +205,7 @@ func MustParseName(s, fill string) Name {
 //
 // The returned Name will only be valid if dst is valid.
 //
-// It skipps fill parts that are "?".
+// It skips fill parts that are "?".
 func fillName(r Name, fill string) Name {
 	fill = cmp.Or(fill, FillDefault)
 	f := parseMask(fill)
@@ -479,7 +479,6 @@ func parts(s string) iter_Seq2[PartKind, string] {
 			return
 		}
 
-		numConsecutiveDots := 0
 		partLen := 0
 		state, j := PartDigest, len(s)
 		for i := len(s) - 1; i >= 0; i-- {
@@ -550,15 +549,6 @@ func parts(s string) iter_Seq2[PartKind, string] {
 				default:
 					yield(PartExtraneous, s[i+1:j])
 					return
-				}
-			default:
-				if s[i] == '.' {
-					if numConsecutiveDots++; numConsecutiveDots > 1 {
-						yield(state, "")
-						return
-					}
-				} else {
-					numConsecutiveDots = 0
 				}
 			}
 		}
