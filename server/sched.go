@@ -23,7 +23,6 @@ import (
 type LlmRequest struct {
 	ctx             context.Context //nolint:containedctx
 	model           *Model
-	ggml            *llm.GGML // TODO - how large is this, and do we need to free it after we've finished loading?
 	opts            api.Options
 	sessionDuration time.Duration
 	successCh       chan *runnerRef
@@ -39,7 +38,7 @@ type Scheduler struct {
 	loaded   map[string]*runnerRef
 	loadedMu sync.Mutex
 
-	loadFn      func(req *LlmRequest, gpus gpu.GpuInfoList)
+	loadFn      func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList)
 	newServerFn func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options) (llm.LlamaServer, error)
 	getGpuFn    func() gpu.GpuInfoList
 }
@@ -74,19 +73,13 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration time.Duration) (chan *runnerRef, chan error) {
-	ggml, err := llm.LoadModel(model.ModelPath)
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
-		ggml:            ggml,
 		opts:            opts,
 		sessionDuration: sessionDuration,
 		successCh:       make(chan *runnerRef),
 		errCh:           make(chan error, 1),
-	}
-	if err != nil {
-		req.errCh <- err
-		return req.successCh, req.errCh
 	}
 	select {
 	case s.pendingReqCh <- req:
@@ -133,11 +126,17 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				} else if loadedCount == 0 {
 					slog.Debug("loading first model", "model", pending.model.ModelPath)
 					gpus := s.getGpuFn()
-					g := pickBestFitGPUs(pending, gpus)
+
+					ggml, err := llm.LoadModel(pending.model.ModelPath)
+					if err != nil {
+						pending.errCh <- err
+						break
+					}
+					g := pickBestFitGPUs(pending, ggml, gpus)
 					if g != nil {
 						gpus = g
 					}
-					s.loadFn(pending, gpus)
+					s.loadFn(pending, ggml, gpus)
 					break
 				} else if loadedMax > 0 && loadedCount >= loadedMax {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
@@ -148,10 +147,16 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					gpus := s.getGpuFn()
 					// Update free memory from currently loaded models
 					s.updateFreeSpace(gpus)
-					gpus = pickBestFitGPUs(pending, gpus)
+
+					ggml, err := llm.LoadModel(pending.model.ModelPath)
+					if err != nil {
+						pending.errCh <- err
+						break
+					}
+					gpus = pickBestFitGPUs(pending, ggml, gpus)
 					if gpus != nil {
 						slog.Debug("new model fits with existing models, loading")
-						s.loadFn(pending, gpus)
+						s.loadFn(pending, ggml, gpus)
 						break
 					}
 					runnerToExpire = s.findRunnerToUnload(pending)
@@ -282,8 +287,8 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	}()
 }
 
-func (s *Scheduler) load(req *LlmRequest, gpus gpu.GpuInfoList) {
-	llama, err := s.newServerFn(gpus, req.model.ModelPath, req.ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts)
+func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) {
+	llama, err := s.newServerFn(gpus, req.model.ModelPath, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts)
 	if err != nil {
 		// some older models are not compatible with newer versions of llama.cpp
 		// show a generalized compatibility error until there is a better way to
@@ -454,7 +459,7 @@ func (a ByDuration) Less(i, j int) bool {
 
 // pickBestFitGPUs will try to find the optimal placement of the model in the available GPUs where the model fully fits
 // If the model can not be fit fully within the available GPU(s) nil is returned
-func pickBestFitGPUs(req *LlmRequest, gpus gpu.GpuInfoList) gpu.GpuInfoList {
+func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) gpu.GpuInfoList {
 	var estimatedVRAM uint64
 	for _, gl := range gpus.ByLibrary() {
 		var ok bool
@@ -466,7 +471,7 @@ func pickBestFitGPUs(req *LlmRequest, gpus gpu.GpuInfoList) gpu.GpuInfoList {
 
 		// First attempt to fit the model into a single GPU
 		for _, g := range sgl {
-			if ok, estimatedVRAM = llm.PredictServerFit([]gpu.GpuInfo{g}, req.ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
+			if ok, estimatedVRAM = llm.PredictServerFit([]gpu.GpuInfo{g}, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
 				slog.Debug("new model will fit in available VRAM in single GPU, loading", "model", req.model.ModelPath, "gpu", g.ID, "available", g.FreeMemory, "required", format.HumanBytes2(estimatedVRAM))
 				return []gpu.GpuInfo{g}
 			}
@@ -477,7 +482,7 @@ func pickBestFitGPUs(req *LlmRequest, gpus gpu.GpuInfoList) gpu.GpuInfoList {
 		// - try subsets of GPUs instead of just falling back to 1 or all in a family
 
 		// Now try all the GPUs
-		if ok, estimatedVRAM = llm.PredictServerFit(gl, req.ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
+		if ok, estimatedVRAM = llm.PredictServerFit(gl, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
 			slog.Debug("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", gl[0].Library, "required", format.HumanBytes2(estimatedVRAM))
 			return gl
 		}
