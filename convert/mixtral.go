@@ -4,7 +4,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/uppercaveman/ollama-server/llm"
 )
 
 type MixtralModel struct {
