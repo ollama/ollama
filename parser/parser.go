@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strconv"
 	"strings"
 )
@@ -66,7 +65,7 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 					cmd.Name = s
 				}
 			case stateMessage:
-				if !slices.Contains([]string{"system", "user", "assistant"}, b.String()) {
+				if !isValidRole(b.String()) {
 					return nil, errInvalidRole
 				}
 
@@ -74,8 +73,6 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 			case stateComment, stateNil:
 				// pass
 			case stateValue:
-				s := b.String()
-
 				s, ok := unquote(b.String())
 				if !ok || isSpace(r) {
 					if _, err := b.WriteRune(r); err != nil {
