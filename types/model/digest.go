@@ -15,14 +15,10 @@ type Digest struct {
 	s string
 }
 
-// Type returns the digest type of the digest.
-//
-// Example:
-//
-//	ParseDigest("sha256-1234").Type() // returns "sha256"
-func (d Digest) Type() string {
-	typ, _, _ := strings.Cut(d.s, "-")
-	return typ
+// Split returns the digest type and the digest value.
+func (d Digest) Split() (typ, digest string) {
+	typ, digest, _ = strings.Cut(d.s, "-")
+	return
 }
 
 // String returns the digest in the form of "<digest-type>-<digest>", or the
@@ -51,10 +47,18 @@ func ParseDigest(s string) Digest {
 	if !ok {
 		typ, digest, ok = strings.Cut(s, ":")
 	}
-	if ok && isValidDigestType(typ) && isValidHex(digest) {
+	if ok && isValidDigestType(typ) && isValidHex(digest) && len(digest) >= 2 {
 		return Digest{s: fmt.Sprintf("%s-%s", typ, digest)}
 	}
 	return Digest{}
+}
+
+func MustParseDigest(s string) Digest {
+	d := ParseDigest(s)
+	if !d.IsValid() {
+		panic(fmt.Sprintf("invalid digest: %q", s))
+	}
+	return d
 }
 
 func isValidDigestType(s string) bool {

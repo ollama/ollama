@@ -7,6 +7,7 @@ import (
 	"hash/maphash"
 	"io"
 	"log/slog"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -589,8 +590,18 @@ func ParseNameFromURLPath(s, fill string) Name {
 // Example:
 //
 //	ParseName("example.com/namespace/model:tag+build").URLPath() // returns "/example.com/namespace/model:tag"
-func (r Name) URLPath() string {
+func (r Name) DisplayURLPath() string {
 	return r.DisplayShortest(MaskNothing)
+}
+
+// URLPath returns a complete, canonicalized, relative URL path using the parts of a
+// complete Name in the form:
+//
+//	<host>/<namespace>/<model>/<tag>
+//
+// The parts are downcased.
+func (r Name) URLPath() string {
+	return strings.ToLower(path.Join(r.parts[:PartBuild]...))
 }
 
 // ParseNameFromFilepath parses a file path into a Name. The input string must be a

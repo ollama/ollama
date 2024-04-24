@@ -50,10 +50,10 @@ var testNames = map[string]fields{
 	"mistral:latest@":            {},
 
 	// resolved
-	"x@sha123-1": {model: "x", digest: "sha123-1"},
-	"@sha456-2":  {digest: "sha456-2"},
-
-	"@@sha123-1": {},
+	"x@sha123-12": {model: "x", digest: "sha123-12"},
+	"@sha456-22":  {digest: "sha456-22"},
+	"@sha456-1":  {},
+	"@@sha123-22": {},
 
 	// preserves case for build
 	"x+b": {model: "x", build: "b"},
@@ -485,7 +485,7 @@ func TestNamePath(t *testing.T) {
 		t.Run(tt.in, func(t *testing.T) {
 			p := ParseName(tt.in, FillNothing)
 			t.Logf("ParseName(%q) = %#v", tt.in, p)
-			if g := p.URLPath(); g != tt.want {
+			if g := p.DisplayURLPath(); g != tt.want {
 				t.Errorf("got = %q; want %q", g, tt.want)
 			}
 		})
@@ -678,18 +678,18 @@ func ExampleName_CompareFold_sort() {
 
 func ExampleName_completeAndResolved() {
 	for _, s := range []string{
-		"x/y/z:latest+q4_0@sha123-1",
+		"x/y/z:latest+q4_0@sha123-abc",
 		"x/y/z:latest+q4_0",
-		"@sha123-1",
+		"@sha123-abc",
 	} {
 		name := ParseName(s, FillNothing)
 		fmt.Printf("complete:%v resolved:%v  digest:%s\n", name.IsComplete(), name.IsResolved(), name.Digest())
 	}
 
 	// Output:
-	// complete:true resolved:true  digest:sha123-1
+	// complete:true resolved:true  digest:sha123-abc
 	// complete:true resolved:false  digest:
-	// complete:false resolved:true  digest:sha123-1
+	// complete:false resolved:true  digest:sha123-abc
 }
 
 func ExampleName_DisplayShortest() {
