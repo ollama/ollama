@@ -38,12 +38,17 @@
 extern "C" {
 #endif
 
+#define GPU_ID_LEN 64
+
 typedef struct mem_info {
+  char *err;  // If non-nill, caller responsible for freeing
+  char gpu_id[GPU_ID_LEN];
   uint64_t total;
   uint64_t free;
-  unsigned int count;
-  int igpu_index; // If >= 0, we detected an integrated GPU to ignore
-  char *err;  // If non-nill, caller responsible for freeing
+
+  // Compute Capability
+  int major; 
+  int minor;
 } mem_info_t;
 
 void cpu_check_ram(mem_info_t *resp);
@@ -52,7 +57,6 @@ void cpu_check_ram(mem_info_t *resp);
 }
 #endif
 
-#include "gpu_info_nvml.h"
 #include "gpu_info_cudart.h"
 
 #endif  // __GPU_INFO_H__

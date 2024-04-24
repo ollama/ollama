@@ -103,6 +103,7 @@ jobs:
           path: |
             llm/build/**/bin/*
             llm/build/**/*.a
+            dist/windows-amd64/**
 
   # ROCm generation step
   generate-windows-rocm:
@@ -173,7 +174,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/build/**/bin/*
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
       - uses: actions/upload-artifact@v4
         with:
           name: windows-rocm-deps
@@ -253,7 +256,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/build/**/bin/*
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
       - uses: actions/upload-artifact@v4
         with:
           name: windows-cuda-deps
@@ -306,11 +311,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cpu
-          path: llm/build
+          path: |
+            llm/build
+            dist/windows-amd64
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/build
+          path: |
+            llm/build
+            dist/windows-amd64
       - uses: actions/download-artifact@v4
         with:
           name: windows-cuda-deps
@@ -322,7 +331,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/build
+          path: |
+            llm/build
+            dist/windows-amd64
       - run: dir llm/build
       - run: |
           $gopath=(get-command go).source | split-path -parent
@@ -337,7 +348,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: dist-windows
-          path: dist/*.exe
+          path: |
+            dist/OllamaSetup.exe
+            dist/ollama-windows-*.zip
 
   # Linux x86 assets built using the container based build
   build-linux-amd64:

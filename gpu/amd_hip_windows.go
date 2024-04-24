@@ -69,7 +69,7 @@ func NewHipLib() (*HipLib, error) {
 func (hl *HipLib) Release() {
 	err := windows.FreeLibrary(hl.dll)
 	if err != nil {
-		slog.Warn(fmt.Sprintf("failed to unload amdhip64.dll: %s", err))
+		slog.Warn("failed to unload amdhip64.dll", "error", err)
 	}
 	hl.dll = 0
 }
@@ -98,7 +98,7 @@ func (hl *HipLib) HipGetDeviceCount() int {
 		return 0
 	}
 	if status != hipSuccess {
-		slog.Warn(fmt.Sprintf("failed call to hipGetDeviceCount: %d %s", status, err))
+		slog.Warn("failed call to hipGetDeviceCount", "status", status, "error", err)
 	}
 	return count
 }
