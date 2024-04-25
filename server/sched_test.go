@@ -47,6 +47,7 @@ func TestLoad(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
+	var ggml *llm.GGML // value not used in tests
 	req := &LlmRequest{
 		ctx:             ctx,
 		model:           &Model{ModelPath: "foo"},
@@ -59,7 +60,7 @@ func TestLoad(t *testing.T) {
 		return nil, fmt.Errorf("something failed to load model blah")
 	}
 	gpus := gpu.GpuInfoList{}
-	s.load(req, gpus)
+	s.load(req, ggml, gpus)
 	require.Len(t, req.successCh, 0)
 	require.Len(t, req.errCh, 1)
 	require.Len(t, s.loaded, 0)
@@ -70,7 +71,7 @@ func TestLoad(t *testing.T) {
 	s.newServerFn = func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options) (llm.LlamaServer, error) {
 		return server, nil
 	}
-	s.load(req, gpus)
+	s.load(req, ggml, gpus)
 	select {
 	case err := <-req.errCh:
 		require.NoError(t, err)
@@ -82,7 +83,7 @@ func TestLoad(t *testing.T) {
 
 	req.model.ModelPath = "dummy_model_path"
 	server.waitResp = fmt.Errorf("wait failure")
-	s.load(req, gpus)
+	s.load(req, ggml, gpus)
 	select {
 	case err := <-req.errCh:
 		require.Contains(t, err.Error(), "wait failure")
@@ -101,6 +102,7 @@ type bundle struct {
 	ctxDone func()
 	srv     *mockLlm
 	req     *LlmRequest
+	ggml    *llm.GGML
 }
 
 func (scenario *bundle) newServer(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options) (llm.LlamaServer, error) {
@@ -132,14 +134,15 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: &bytes.Reader{}},
 	})
 	assert.Nil(t, err)
+
 	fname := f.Name()
 	model := &Model{Name: modelName, ModelPath: fname}
-	ggml, err := llm.LoadModel(model.ModelPath)
+	scenario.ggml, err = llm.LoadModel(model.ModelPath)
 	require.NoError(t, err)
+
 	scenario.req = &LlmRequest{
 		ctx:             scenario.ctx,
 		model:           model,
-		ggml:            ggml,
 		sessionDuration: 5 * time.Millisecond,
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
@@ -157,13 +160,13 @@ func TestRequests(t *testing.T) {
 	scenario1a.req.sessionDuration = 0
 	scenario1b := newScenario(t, ctx, "ollama-model-1", 11)
 	scenario1b.req.model = scenario1a.req.model
-	scenario1b.req.ggml = scenario1a.req.ggml
+	scenario1b.ggml = scenario1a.ggml
 	scenario1b.req.sessionDuration = 0
 
 	// simple reload of same model
 	scenario2a := newScenario(t, ctx, "ollama-model-1", 20)
 	scenario2a.req.model = scenario1a.req.model
-	scenario2a.req.ggml = scenario1a.req.ggml
+	scenario2a.ggml = scenario1a.ggml
 
 	// Multiple loaded models
 	scenario3a := newScenario(t, ctx, "ollama-model-3a", 1*format.GigaByte)
@@ -322,13 +325,14 @@ func TestGetRunner(t *testing.T) {
 	successCh1c, errCh1c := s.GetRunner(scenario1c.ctx, scenario1c.req.model, scenario1c.req.opts, scenario1c.req.sessionDuration)
 	require.Len(t, s.pendingReqCh, 0)
 	require.Len(t, successCh1c, 0)
+	require.Len(t, errCh1c, 0)
+
+	time.Sleep(5 * time.Millisecond)
+	require.Len(t, s.loaded, 0)
 	require.Len(t, errCh1c, 1)
 	err = <-errCh1c
 	require.Contains(t, err.Error(), "bad path")
 	scenario1b.ctxDone()
-
-	time.Sleep(5 * time.Millisecond)
-	require.Len(t, s.loaded, 0)
 }
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
@@ -366,7 +370,9 @@ func TestPrematureExpired(t *testing.T) {
 	require.LessOrEqual(t, len(s.finishedReqCh), 1)
 	time.Sleep(10 * time.Millisecond)
 	require.Len(t, s.finishedReqCh, 0)
+	s.loadedMu.Lock()
 	require.Len(t, s.loaded, 0)
+	s.loadedMu.Unlock()
 
 	// also shouldn't happen in real life
 	s.finishedReqCh <- scenario1a.req
@@ -426,7 +432,6 @@ func TestUpdateFreeSpace(t *testing.T) {
 	s.updateFreeSpace(gpus)
 	require.Equal(t, uint64(850), gpus[0].FreeMemory)
 	require.Equal(t, uint64(1850), gpus[1].FreeMemory)
-
 }
 
 func TestFindRunnerToUnload(t *testing.T) {
