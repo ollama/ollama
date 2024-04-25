@@ -110,11 +110,16 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 	case stateComment, stateNil:
 		// pass; nothing to flush
 	case stateValue:
-		if _, ok := unquote(b.String()); !ok {
+		s, ok := unquote(b.String())
+		if !ok {
 			return nil, io.ErrUnexpectedEOF
 		}
 
-		cmd.Args = b.String()
+		if role != "" {
+			s = role + ": " + s
+		}
+
+		cmd.Args = s
 		cmds = append(cmds, cmd)
 	default:
 		return nil, io.ErrUnexpectedEOF

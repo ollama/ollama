@@ -124,6 +124,16 @@ MESSAGE system You are a Parser. Always Parse things.
 		{
 			`
 FROM foo
+MESSAGE system You are a Parser. Always Parse things.`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "message", Args: "system: You are a Parser. Always Parse things."},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
 MESSAGE system You are a Parser. Always Parse things.
 MESSAGE user Hey there!
 MESSAGE assistant Hello, I want to parse all the things!
@@ -192,57 +202,57 @@ func TestParserQuoted(t *testing.T) {
 		{
 			`
 FROM foo
-TEMPLATE """
+SYSTEM """
 This is a
-multiline template.
+multiline system.
 """
 			`,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: "\nThis is a\nmultiline template.\n"},
+				{Name: "system", Args: "\nThis is a\nmultiline system.\n"},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-TEMPLATE """
+SYSTEM """
 This is a
-multiline template."""
+multiline system."""
 			`,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: "\nThis is a\nmultiline template."},
+				{Name: "system", Args: "\nThis is a\nmultiline system."},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-TEMPLATE """This is a
-multiline template."""
+SYSTEM """This is a
+multiline system."""
 			`,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: "This is a\nmultiline template."},
+				{Name: "system", Args: "This is a\nmultiline system."},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-TEMPLATE """This is a multiline template."""
+SYSTEM """This is a multiline system."""
 			`,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: "This is a multiline template."},
+				{Name: "system", Args: "This is a multiline system."},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-TEMPLATE """This is a multiline template.""
+SYSTEM """This is a multiline system.""
 			`,
 			nil,
 			io.ErrUnexpectedEOF,
@@ -250,7 +260,7 @@ TEMPLATE """This is a multiline template.""
 		{
 			`
 FROM foo
-TEMPLATE "
+SYSTEM "
 			`,
 			nil,
 			io.ErrUnexpectedEOF,
@@ -258,57 +268,69 @@ TEMPLATE "
 		{
 			`
 FROM foo
-TEMPLATE """
-This is a multiline template with "quotes".
+SYSTEM """
+This is a multiline system with "quotes".
 """
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: "\nThis is a multiline template with \"quotes\".\n"},
+				{Name: "system", Args: "\nThis is a multiline system with \"quotes\".\n"},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-TEMPLATE """"""
+SYSTEM """"""
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: ""},
+				{Name: "system", Args: ""},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-TEMPLATE ""
+SYSTEM ""
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: ""},
+				{Name: "system", Args: ""},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-TEMPLATE "'"
+SYSTEM "'"
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: "'"},
+				{Name: "system", Args: "'"},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-TEMPLATE """''"'""'""'"'''''""'""'"""
+SYSTEM """''"'""'""'"'''''""'""'"""
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "template", Args: `''"'""'""'"'''''""'""'`},
+				{Name: "system", Args: `''"'""'""'"'''''""'""'`},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+TEMPLATE """
+{{ .Prompt }}
+"""`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "template", Args: "\n{{ .Prompt }}\n"},
 			},
 			nil,
 		},
