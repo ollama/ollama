@@ -80,6 +80,36 @@ type GenerateRequest struct {
 	Options map[string]interface{} `json:"options"`
 }
 
+// InfillRequest describes a request sent by [Client.Infill]. While you
+// have to specify the Model, InputPrefix and InputSuffix fields, all the other fields have
+// reasonable defaults for basic uses.
+type InfillRequest struct {
+
+	// InputPrefix is the text before the infilling position to send to the model.
+	InputPrefix string `json:"input_prefix"`
+
+	// InputSuffix is the text after the infilling position to send to the model.
+	InputSuffix string `json:"input_suffix"`
+
+	// Model is the model name; it should be a name familiar to Ollama from
+	// the library at https://ollama.com/library and support Fill-In-the-Middle (FIM)
+	Model string `json:"model"`
+
+	// System overrides the model's default system message/prompt.
+	System string `json:"system"`
+
+	// Stream specifies whether the response is streaming; it is true by default.
+	Stream *bool `json:"stream,omitempty"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Options lists model-specific options. For example, temperature can be
+	// set through this field, if the model supports it.
+	Options map[string]interface{} `json:"options"`
+}
+
 // ChatRequest describes a request sent by [Client.Chat].
 type ChatRequest struct {
 	// Model is the model name, as in [GenerateRequest].

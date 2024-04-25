@@ -267,6 +267,20 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn Generate
 	})
 }
 
+// Infill generates a response for a given input_prefix and input_suffix. The req parameter should
+// be populated with input prefix and suffix. fn is called for each response (there may
+// be multiple responses, e.g. in case streaming is enabled).
+func (c *Client) Infill(ctx context.Context, req *InfillRequest, fn GenerateResponseFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/infill", req, func(bts []byte) error {
+		var resp GenerateResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		return fn(resp)
+	})
+}
+
 // ChatResponseFunc is a function that [Client.Chat] invokes every time
 // a response is received from the service. If this function returns an error,
 // [Client.Chat] will stop generating and return this error.

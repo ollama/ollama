@@ -3121,81 +3121,90 @@ int main(int argc, char **argv) {
                 return true;
             });
 
-    svr.Post("/completion", [&llama, &validate_api_key](const httplib::Request &req, httplib::Response &res)
+    auto request_completion = [&llama, &validate_api_key] (const httplib::Request &req, httplib::Response &res, bool infill) {
+      res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
+      if (!validate_api_key(req, res)) {
+          return;
+      }
+      json data = json::parse(req.body);
+      const int task_id = llama.queue_tasks.get_new_id();
+      llama.queue_results.add_waiting_task_id(task_id);
+      llama.request_completion(task_id, data, infill, false, -1);
+      if (!json_value(data, "stream", false)) {
+          std::string completion_text;
+          task_result result = llama.queue_results.recv(task_id);
+          if (!result.error && result.stop) {
+              res.set_content(result.result_json.dump(-1, ' ', false, json::error_handler_t::replace), "application/json; charset=utf-8");
+          }
+          else
+          {
+              res.status = 404;
+              res.set_content(result.result_json["content"], "text/plain; charset=utf-8");
+          }
+          llama.queue_results.remove_waiting_task_id(task_id);
+      } else {
+          const auto chunked_content_provider = [task_id, &llama](size_t, httplib::DataSink & sink)
+          {
+              while (true)
+              {
+                  task_result result = llama.queue_results.recv(task_id);
+                  if (!result.error) {
+                      const std::string str =
+                          "data: " +
+                          result.result_json.dump(-1, ' ', false, json::error_handler_t::replace) +
+                          "\n\n";
+                      LOG_VERBOSE("data stream", {
+                          { "to_send", str }
+                      });
+                      if (!sink.write(str.c_str(), str.size()))
+                      {
+                          llama.queue_results.remove_waiting_task_id(task_id);
+                          return false;
+                      }
+                      if (result.stop) {
+                          break;
+                      }
+                  } else {
+                      const std::string str =
+                          "error: " +
+                          result.result_json.dump(-1, ' ', false, json::error_handler_t::replace) +
+                          "\n\n";
+                      LOG_VERBOSE("data stream", {
+                          { "to_send", str }
+                      });
+                      if (!sink.write(str.c_str(), str.size()))
+                      {
+                          llama.queue_results.remove_waiting_task_id(task_id);
+                          return false;
+                      }
+                      break;
+                  }
+              }
+
+              llama.queue_results.remove_waiting_task_id(task_id);
+              sink.done();
+              return true;
+          };
+
+          auto on_complete = [task_id, &llama] (bool)
+          {
+              // cancel
+              llama.request_cancel(task_id);
+              llama.queue_results.remove_waiting_task_id(task_id);
+          };
+
+          res.set_chunked_content_provider("text/event-stream", chunked_content_provider, on_complete);
+      }
+    };
+
+    svr.Post("/completion", [&llama, &validate_api_key, &request_completion](const httplib::Request &req, httplib::Response &res)
             {
-                res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
-                if (!validate_api_key(req, res)) {
-                    return;
-                }
-                json data = json::parse(req.body);
-                const int task_id = llama.queue_tasks.get_new_id();
-                llama.queue_results.add_waiting_task_id(task_id);
-                llama.request_completion(task_id, data, false, false, -1);
-                if (!json_value(data, "stream", false)) {
-                    std::string completion_text;
-                    task_result result = llama.queue_results.recv(task_id);
-                    if (!result.error && result.stop) {
-                        res.set_content(result.result_json.dump(-1, ' ', false, json::error_handler_t::replace), "application/json; charset=utf-8");
-                    }
-                    else
-                    {
-                        res.status = 404;
-                        res.set_content(result.result_json["content"], "text/plain; charset=utf-8");
-                    }
-                    llama.queue_results.remove_waiting_task_id(task_id);
-                } else {
-                    const auto chunked_content_provider = [task_id, &llama](size_t, httplib::DataSink & sink)
-                    {
-                        while (true)
-                        {
-                            task_result result = llama.queue_results.recv(task_id);
-                            if (!result.error) {
-                                const std::string str =
-                                    "data: " +
-                                    result.result_json.dump(-1, ' ', false, json::error_handler_t::replace) +
-                                    "\n\n";
-                                LOG_VERBOSE("data stream", {
-                                    { "to_send", str }
-                                });
-                                if (!sink.write(str.c_str(), str.size()))
-                                {
-                                    llama.queue_results.remove_waiting_task_id(task_id);
-                                    return false;
-                                }
-                                if (result.stop) {
-                                    break;
-                                }
-                            } else {
-                                const std::string str =
-                                    "error: " +
-                                    result.result_json.dump(-1, ' ', false, json::error_handler_t::replace) +
-                                    "\n\n";
-                                LOG_VERBOSE("data stream", {
-                                    { "to_send", str }
-                                });
-                                if (!sink.write(str.c_str(), str.size()))
-                                {
-                                    llama.queue_results.remove_waiting_task_id(task_id);
-                                    return false;
-                                }
-                                break;
-                            }
-                        }
+               request_completion(req, res, false);
+            });
 
-                        llama.queue_results.remove_waiting_task_id(task_id);
-                        sink.done();
-                        return true;
-                    };
-
-                    auto on_complete = [task_id, &llama] (bool)
-                    {
-                        // cancel
-                        llama.request_cancel(task_id);
-                        llama.queue_results.remove_waiting_task_id(task_id);
-                    };
-
-                    res.set_chunked_content_provider("text/event-stream", chunked_content_provider, on_complete);
-                }
+    svr.Post("/infill", [&llama, &validate_api_key, &request_completion](const httplib::Request &req, httplib::Response &res)
+            {
+               request_completion(req, res, true);
             });
 
     svr.Post("/tokenize", [&llama](const httplib::Request &req, httplib::Response &res)

@@ -33,6 +33,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
+	Infill(ctx context.Context, req InfillRequest, fn func(CompletionResponse)) error
 	Embedding(ctx context.Context, prompt string) ([]float64, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
@@ -594,6 +595,12 @@ type CompletionRequest struct {
 	Options api.Options
 }
 
+type InfillRequest struct {
+	InputPrefix  string
+	InputSuffix  string
+	Options api.Options
+}
+
 type CompletionResponse struct {
 	Content            string
 	DoneReason         string
@@ -603,44 +610,7 @@ type CompletionResponse struct {
 	EvalCount          int
 	EvalDuration       time.Duration
 }
-
-func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
-	if err := s.sem.Acquire(ctx, 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
-		return err
-	}
-	defer s.sem.Release(1)
-
-	// only allow maximum 10 "context shifts" to avoid infinite generation
-	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
-		req.Options.NumPredict = 10 * s.options.NumCtx
-		slog.Debug("setting token limit to 10x num_ctx", "num_ctx", s.options.NumCtx, "num_predict", req.Options.NumPredict)
-	}
-
-	request := map[string]any{
-		"prompt":            req.Prompt,
-		"stream":            true,
-		"n_predict":         req.Options.NumPredict,
-		"n_keep":            req.Options.NumKeep,
-		"main_gpu":          req.Options.MainGPU,
-		"temperature":       req.Options.Temperature,
-		"top_k":             req.Options.TopK,
-		"top_p":             req.Options.TopP,
-		"tfs_z":             req.Options.TFSZ,
-		"typical_p":         req.Options.TypicalP,
-		"repeat_last_n":     req.Options.RepeatLastN,
-		"repeat_penalty":    req.Options.RepeatPenalty,
-		"presence_penalty":  req.Options.PresencePenalty,
-		"frequency_penalty": req.Options.FrequencyPenalty,
-		"mirostat":          req.Options.Mirostat,
-		"mirostat_tau":      req.Options.MirostatTau,
-		"mirostat_eta":      req.Options.MirostatEta,
-		"penalize_nl":       req.Options.PenalizeNewline,
-		"seed":              req.Options.Seed,
-		"stop":              req.Options.Stop,
-		"image_data":        req.Images,
-		"cache_prompt":      true,
-	}
+func GenerateCompletion(s *llmServer, ctx context.Context, api_path string, request map[string]any, fn func(CompletionResponse)) error {
 
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
@@ -650,12 +620,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	if req.Format == "json" {
-		request["grammar"] = jsonGrammar
-		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
-			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
-		}
-	}
 
 	// Handling JSON marshaling with special characters unescaped.
 	buffer := &bytes.Buffer{}
@@ -666,7 +630,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return fmt.Errorf("failed to marshal data: %v", err)
 	}
 
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d%s", s.port, api_path)
 	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
 		return fmt.Errorf("error creating POST request: %v", err)
@@ -770,6 +734,91 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	return nil
+}
+
+func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		slog.Error("Failed to acquire semaphore", "error", err)
+		return err
+	}
+	defer s.sem.Release(1)
+
+	// only allow maximum 10 "context shifts" to avoid infinite generation
+	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
+		req.Options.NumPredict = 10 * s.options.NumCtx
+		slog.Debug("setting token limit to 10x num_ctx", "num_ctx", s.options.NumCtx, "num_predict", req.Options.NumPredict)
+	}
+
+	request := map[string]any{
+		"prompt":            req.Prompt,
+		"stream":            true,
+		"n_predict":         req.Options.NumPredict,
+		"n_keep":            req.Options.NumKeep,
+		"main_gpu":          req.Options.MainGPU,
+		"temperature":       req.Options.Temperature,
+		"top_k":             req.Options.TopK,
+		"top_p":             req.Options.TopP,
+		"tfs_z":             req.Options.TFSZ,
+		"typical_p":         req.Options.TypicalP,
+		"repeat_last_n":     req.Options.RepeatLastN,
+		"repeat_penalty":    req.Options.RepeatPenalty,
+		"presence_penalty":  req.Options.PresencePenalty,
+		"frequency_penalty": req.Options.FrequencyPenalty,
+		"mirostat":          req.Options.Mirostat,
+		"mirostat_tau":      req.Options.MirostatTau,
+		"mirostat_eta":      req.Options.MirostatEta,
+		"penalize_nl":       req.Options.PenalizeNewline,
+		"seed":              req.Options.Seed,
+		"stop":              req.Options.Stop,
+		"image_data":        req.Images,
+		"cache_prompt":      true,
+	}
+  if req.Format == "json" {
+    request["grammar"] = jsonGrammar
+    if !strings.Contains(strings.ToLower(req.Prompt), "json") {
+      slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+    }
+  }
+  return GenerateCompletion(s, ctx, "/completion", request, fn)
+}
+
+func (s *llmServer) Infill(ctx context.Context, req InfillRequest, fn func(CompletionResponse)) error {
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		slog.Error("Failed to acquire semaphore", "error", err)
+		return err
+	}
+	defer s.sem.Release(1)
+
+	// only allow maximum 10 "context shifts" to avoid infinite generation
+	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
+		req.Options.NumPredict = 10 * s.options.NumCtx
+		slog.Debug("setting token limit to 10x num_ctx", "num_ctx", s.options.NumCtx, "num_predict", req.Options.NumPredict)
+	}
+
+	request := map[string]any{
+		"input_prefix":      req.InputPrefix,
+		"input_suffix":      req.InputSuffix,
+		"stream":            true,
+		"n_predict":         req.Options.NumPredict,
+		"n_keep":            req.Options.NumKeep,
+		"main_gpu":          req.Options.MainGPU,
+		"temperature":       req.Options.Temperature,
+		"top_k":             req.Options.TopK,
+		"top_p":             req.Options.TopP,
+		"tfs_z":             req.Options.TFSZ,
+		"typical_p":         req.Options.TypicalP,
+		"repeat_last_n":     req.Options.RepeatLastN,
+		"repeat_penalty":    req.Options.RepeatPenalty,
+		"presence_penalty":  req.Options.PresencePenalty,
+		"frequency_penalty": req.Options.FrequencyPenalty,
+		"mirostat":          req.Options.Mirostat,
+		"mirostat_tau":      req.Options.MirostatTau,
+		"mirostat_eta":      req.Options.MirostatEta,
+		"penalize_nl":       req.Options.PenalizeNewline,
+		"seed":              req.Options.Seed,
+		"stop":              req.Options.Stop,
+	}
+  return GenerateCompletion(s, ctx, "/infill", request, fn)
 }
 
 type EmbeddingRequest struct {

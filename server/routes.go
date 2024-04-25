@@ -313,6 +313,162 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+func (s *Server) InfillHandler(c *gin.Context) {
+
+	checkpointStart := time.Now()
+	var req api.InfillRequest
+	err := c.ShouldBindJSON(&req)
+
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// validate the request
+	if req.Model == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	model, err := GetModel(req.Model)
+	if err != nil {
+		var pErr *fs.PathError
+		if errors.As(err, &pErr) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if model.IsEmbedding() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "embedding models do not support generate"})
+		return
+	}
+
+  // TODO: check if model supports FIM/Infill -> Add SupportFIM to type ConfigV2?
+
+	opts, err := modelOptions(model, req.Options)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = getDefaultSessionDuration()
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
+	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, sessionDuration)
+	var runner *runnerRef
+	select {
+	case runner = <-rCh:
+	case err = <-eCh:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// an empty request loads the model
+	if req.InputPrefix == "" && req.InputSuffix == "" && req.System == "" {
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			CreatedAt: time.Now().UTC(),
+			Model:     req.Model,
+			Done:      true,
+		})
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+		if req.System == "" {
+			req.System = model.System
+		}
+
+		slog.Info("infill handler", "input_prefix", req.InputPrefix)
+		slog.Info("infill handler", "input_suffix", req.InputSuffix)
+		slog.Info("infill handler", "system", req.System)
+
+	ch := make(chan any)
+	var generated strings.Builder
+	go func() {
+		defer close(ch)
+
+		fn := func(r llm.CompletionResponse) {
+			// Build up the full response
+			if _, err := generated.WriteString(r.Content); err != nil {
+				ch <- gin.H{"error": err.Error()}
+				return
+			}
+
+			resp := api.GenerateResponse{
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Done:      r.Done,
+				Response:  r.Content,
+				Metrics: api.Metrics{
+					PromptEvalCount:    r.PromptEvalCount,
+					PromptEvalDuration: r.PromptEvalDuration,
+					EvalCount:          r.EvalCount,
+					EvalDuration:       r.EvalDuration,
+				},
+			}
+
+			if r.Done {
+				resp.TotalDuration = time.Since(checkpointStart)
+				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			}
+
+			ch <- resp
+		}
+
+		// Start prediction
+		req := llm.InfillRequest{
+			InputPrefix:  req.InputPrefix,
+			InputSuffix:  req.InputSuffix,
+			Options: opts,
+		}
+		if err := runner.llama.Infill(c.Request.Context(), req, fn); err != nil {
+			ch <- gin.H{"error": err.Error()}
+		}
+	}()
+
+	if req.Stream != nil && !*req.Stream {
+		// Accumulate responses into the final response
+		var final api.GenerateResponse
+		var sb strings.Builder
+		for resp := range ch {
+			switch r := resp.(type) {
+			case api.GenerateResponse:
+				sb.WriteString(r.Response)
+				final = r
+			case gin.H:
+				if errorMsg, ok := r["error"].(string); ok {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+					return
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in response"})
+					return
+				}
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error"})
+				return
+			}
+		}
+
+		final.Response = sb.String()
+		c.JSON(http.StatusOK, final)
+		return
+	}
+
+	streamResponse(c, ch)
+}
+
 func getDefaultSessionDuration() time.Duration {
 	if t, exists := os.LookupEnv("OLLAMA_KEEP_ALIVE"); exists {
 		v, err := strconv.Atoi(t)
@@ -971,6 +1127,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 	r.POST("/api/pull", s.PullModelHandler)
 	r.POST("/api/generate", s.GenerateHandler)
+	r.POST("/api/infill", s.InfillHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 	r.POST("/api/create", s.CreateModelHandler)
