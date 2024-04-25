@@ -15,10 +15,14 @@ import (
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/types/ordered"
 )
 
-func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (*ordered.Map[*Layer, *llm.GGML], error) {
+type layerWithGGML struct {
+	*Layer
+	*llm.GGML
+}
+
+func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
 	modelpath := ParseModelPath(name.DisplayLongest())
 	manifest, _, err := GetManifest(modelpath)
 	switch {
@@ -36,7 +40,6 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		return nil, err
 	}
 
-	layers := ordered.NewMap[*Layer, *llm.GGML]()
 	for _, layer := range manifest.Layers {
 		layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, modelpath.GetShortTagname())
 		if err != nil {
@@ -62,9 +65,10 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 			if err != nil {
 				return nil, err
 			}
-			layers.Add(layer, ggml)
+
+			layers = append(layers, &layerWithGGML{layer, ggml})
 		default:
-			layers.Add(layer, nil)
+			layers = append(layers, &layerWithGGML{layer, nil})
 		}
 
 	}
@@ -72,7 +76,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 	return layers, nil
 }
 
-func parseFromZipFile(_ context.Context, file *os.File, fn func(api.ProgressResponse)) (*ordered.Map[*Layer, *llm.GGML], error) {
+func parseFromZipFile(_ context.Context, file *os.File, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
 	stat, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -184,12 +188,11 @@ func parseFromZipFile(_ context.Context, file *os.File, fn func(api.ProgressResp
 		return nil, err
 	}
 
-	layers := ordered.NewMap[*Layer, *llm.GGML]()
-	layers.Add(layer, ggml)
+	layers = append(layers, &layerWithGGML{layer, ggml})
 	return layers, nil
 }
 
-func parseFromFile(ctx context.Context, file *os.File, fn func(api.ProgressResponse)) (*ordered.Map[*Layer, *llm.GGML], error) {
+func parseFromFile(ctx context.Context, file *os.File, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
 	sr := io.NewSectionReader(file, 0, 512)
 	contentType, err := detectContentType(sr)
 	if err != nil {
@@ -204,8 +207,6 @@ func parseFromFile(ctx context.Context, file *os.File, fn func(api.ProgressRespo
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
-
-	layers := ordered.NewMap[*Layer, *llm.GGML]()
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -233,7 +234,7 @@ func parseFromFile(ctx context.Context, file *os.File, fn func(api.ProgressRespo
 			return nil, err
 		}
 
-		layers.Add(layer, ggml)
+		layers = append(layers, &layerWithGGML{layer, ggml})
 		offset = n
 	}
 
