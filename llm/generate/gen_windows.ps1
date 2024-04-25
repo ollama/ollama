@@ -35,6 +35,7 @@ function init_vars {
         )
     $script:cmakeTargets = @("ollama_llama_server")
     $script:ARCH = "amd64" # arm not yet supported.
+    $script:DIST_BASE = "${script:SRC_DIR}\dist\windows-${script:ARCH}\ollama_runners"
     if ($env:CGO_CFLAGS -contains "-g") {
         $script:cmakeDefs += @("-DCMAKE_VERBOSE_MAKEFILE=on", "-DLLAMA_SERVER_VERBOSE=on", "-DCMAKE_BUILD_TYPE=RelWithDebInfo")
         $script:config = "RelWithDebInfo"
@@ -55,7 +56,6 @@ function init_vars {
     } else {
         $script:CUDA_LIB_DIR=$env:CUDA_LIB_DIR
     }
-    $script:GZIP=(get-command -ea 'silentlycontinue' gzip).path
     $script:DUMPBIN=(get-command -ea 'silentlycontinue' dumpbin).path
     if ($null -eq $env:CMAKE_CUDA_ARCHITECTURES) {
         $script:CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
@@ -134,21 +134,18 @@ function sign {
     }
 }
 
-function compress {
-    if ($script:GZIP -eq $null) {
-        write-host "gzip not installed, not compressing files"
-        return
-    }
-    write-host "Compressing binaries..."
+function install {
+    write-host "Installing binaries to dist dir ${script:distDir}"
+    mkdir ${script:distDir} -ErrorAction SilentlyContinue
     $binaries = dir "${script:buildDir}/bin/*.exe"
     foreach ($file in $binaries) {
-        & "$script:GZIP" --best -f $file
+        copy-item -Path $file -Destination ${script:distDir} -Force
     }
 
-    write-host "Compressing dlls..."
+    write-host "Installing dlls to dist dir ${script:distDir}"
     $dlls = dir "${script:buildDir}/bin/*.dll"
     foreach ($file in $dlls) {
-        & "$script:GZIP" --best -f $file
+        copy-item -Path $file -Destination ${script:distDir} -Force
     }
 }
 
@@ -209,26 +206,29 @@ build
     init_vars
     $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
     $script:buildDir="../build/windows/${script:ARCH}/cpu"
+    $script:distDir="$script:DIST_BASE\cpu"
     write-host "Building LCD CPU"
     build
     sign
-    compress
+    install
 
     init_vars
     $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
     $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
+    $script:distDir="$script:DIST_BASE\cpu_avx"
     write-host "Building AVX CPU"
     build
     sign
-    compress
+    install
 
     init_vars
     $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
     $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
+    $script:distDir="$script:DIST_BASE\cpu_avx2"
     write-host "Building AVX2 CPU"
     build
     sign
-    compress
+    install
 } else {
     write-host "Skipping CPU generation step as requested"
 }
@@ -242,6 +242,7 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     }
     init_vars
     $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
+    $script:distDir="$script:DIST_BASE\cuda$script:CUDA_VARIANT"
     $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
     if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
         write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${env:OLLAMA_CUSTOM_CUDA_DEFS}`""
@@ -250,7 +251,7 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     }
     build
     sign
-    compress
+    install
 }
 
 if ($null -ne $env:HIP_PATH) {
@@ -261,6 +262,7 @@ if ($null -ne $env:HIP_PATH) {
 
     init_vars
     $script:buildDir="../build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
+    $script:distDir="$script:DIST_BASE\rocm$script:ROCM_VARIANT"
     $script:cmakeDefs += @(
         "-G", "Ninja", 
         "-DCMAKE_C_COMPILER=clang.exe",
@@ -292,9 +294,9 @@ if ($null -ne $env:HIP_PATH) {
         & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/ollama_llama_server.exe" | select-string ".dll"
     }
     sign
-    compress
+    install
 }
 
 
 cleanup
-write-host "`ngo generate completed.  LLM runners: $(get-childitem -path ${script:SRC_DIR}\llm\build\windows\${script:ARCH})"
+write-host "`ngo generate completed.  LLM runners: $(get-childitem -path $script:DIST_BASE)"

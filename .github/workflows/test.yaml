@@ -103,7 +103,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cuda-${{ matrix.cuda-version }}-libraries
-          path: llm/build/**/bin/*
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
   generate-rocm:
     needs: [changes]
     if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
@@ -134,7 +136,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rocm-${{ matrix.rocm-version }}-libraries
-          path: llm/build/**/bin/*
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
 
   # ROCm generation step
   generate-windows-rocm:
@@ -253,11 +257,6 @@ jobs:
           mkdir -p llm/build/darwin/$ARCH/stub/bin
           touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
-      - run: |
-          mkdir -p llm/build/windows/$ARCH/stub/bin
-          touch llm/build/windows/$ARCH/stub/bin/ollama_llama_server
-        if: ${{ startsWith(matrix.os, 'windows-') }}
-        shell: bash
       - uses: golangci/golangci-lint-action@v4
         with:
           args: --timeout 8m0s -v
@@ -299,10 +298,6 @@ jobs:
           mkdir -p llm/build/darwin/$ARCH/stub/bin
           touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
-      - run: |
-          mkdir -p llm/build/windows/$ARCH/stub/bin
-          touch llm/build/windows/$ARCH/stub/bin/ollama_llama_server
-        if: ${{ startsWith(matrix.os, 'windows-') }}
         shell: bash
       - run: go generate ./...
       - run: go build
