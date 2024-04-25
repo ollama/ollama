@@ -207,6 +207,7 @@ type ShowResponse struct {
 	System     string       `json:"system,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
 	Messages   []Message    `json:"messages,omitempty"`
+	ModelInfo  string       `json:"modelinfo,omitempty"`
 }
 
 type CopyRequest struct {

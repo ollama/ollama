@@ -191,7 +191,7 @@ func (l Layer) size() (size uint64) {
 type Tensor struct {
 	Name   string `json:"name"`
 	Kind   uint32 `json:"kind"`
-	Offset uint64 `json:"-"`
+	Offset uint64 `json:"offset"`
 
 	// Shape is the number of elements in each dimension
 	Shape []uint64 `json:"shape"`
