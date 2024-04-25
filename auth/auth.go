@@ -32,26 +32,20 @@ func GetPublicKey() (string, error) {
 		return "", err
 	}
 
-	pubKey, err := os.ReadFile(keyPath + ".pub") // note: the .pub suffix is extremely important to not leak the private key
+	privateKeyFile, err := os.ReadFile(keyPath)
+	if err != nil {
+		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
+		return "", err
+	}
+
+	privateKey, err := ssh.ParsePrivateKey(privateKeyFile)
 	if err != nil {
 		return "", err
 	}
 
-	// validate that what we read is a valid public key
-	parts := strings.Fields(string(pubKey))
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid public key format")
-	}
-	decoded, err := base64.StdEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", fmt.Errorf("base64 decode failed: %v", err)
-	}
-	_, err = ssh.ParsePublicKey(decoded)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse public key: %v", err)
-	}
+	publicKey := ssh.MarshalAuthorizedKey(privateKey.PublicKey())
 
-	return strings.TrimSpace(string(pubKey)), nil
+	return strings.TrimSpace(string(publicKey)), nil
 }
 
 func NewNonce(r io.Reader, length int) (string, error) {

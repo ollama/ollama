@@ -455,7 +455,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
 		}
 		host := model.ParseName(args[0]).Host()
-		isOllamaHost := host == model.DefaultHost || strings.HasSuffix(host, "ollama.ai") || strings.HasSuffix(host, "ollama.com")
+		isOllamaHost := strings.HasSuffix(host, ".ollama.ai") || strings.HasSuffix(host, ".ollama.com")
 		if strings.Contains(err.Error(), errtypes.UnknownOllamaKeyErrMsg) && isOllamaHost {
 			// the user has not added their ollama key to ollama.com
 			// re-throw an error with a more user-friendly message
