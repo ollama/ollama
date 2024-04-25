@@ -18,6 +18,10 @@ Review the [Troubleshooting](./troubleshooting.md) docs for more about using log
 
 Please refer to the [GPU docs](./gpu.md).
 
+## Can I improve the performance on just a CPU?
+
+Please refer to the [Linear Algebra](./blas.md)
+
 ## How can I specify the context window size?
 
 By default, Ollama uses a context window size of 2048 tokens.
