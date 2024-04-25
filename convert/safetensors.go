@@ -281,6 +281,15 @@ func (m *SafetensorFormat) GetModelArch(name, dirPath string, params *Params) (M
 		return nil, fmt.Errorf("No architecture specified to convert")
 	case 1:
 		switch params.Architectures[0] {
+		case "LlamaForCausalLM":
+			return &LlamaModel{
+				ModelData{
+					Name:   name,
+					Path:   dirPath,
+					Params: params,
+					Format: m,
+				},
+			}, nil
 		case "MistralForCausalLM":
 			return &MistralModel{
 				ModelData{
