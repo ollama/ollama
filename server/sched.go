@@ -427,14 +427,23 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		timeout = 2 * time.Minute // Initial load can take a long time for big models on slow systems...
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout) // BUG -
+	// Don't reload runner if num_gpu=-1 was provided
+	optsExisting := runner.Options.Runner
+	optsNew := req.opts.Runner
+	if optsNew.NumGPU < 0 {
+		optsExisting.NumGPU = -1
+		optsNew.NumGPU = -1
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if !reflect.DeepEqual(runner.adapters, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.projectors, req.model.ProjectorPaths) || // have the projectors changed?
-		!reflect.DeepEqual(runner.Options.Runner, req.opts.Runner) || // have the runner options changed?
+		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}
+
 	return false
 }
 
