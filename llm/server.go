@@ -560,6 +560,14 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return err
 	}
 	defer s.sem.Release(1)
+
+	// only allow maximum 10 "context shifts" to avoid infinite generation
+	maxPredict := 10 * s.options.NumCtx
+	if req.Options.NumPredict < 0 || req.Options.NumPredict > maxPredict {
+		req.Options.NumPredict = maxPredict
+		slog.Debug("setting token limit to 10x num_ctx", "num_ctx", s.options.NumCtx, "num_predict", req.Options.NumPredict)
+	}
+
 	request := map[string]any{
 		"prompt":            req.Prompt,
 		"stream":            true,
