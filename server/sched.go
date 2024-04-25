@@ -421,20 +421,17 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	slog.Debug("evaluating already loaded", "model", req.model.ModelPath)
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
-	// Ignore the NumGPU settings for comparison
-	optsExisting := runner.Options.Runner
-	optsExisting.NumGPU = -1
-	optsNew := req.opts.Runner
-	optsNew.NumGPU = -1
+
 	timeout := 10 * time.Second
 	if runner.loading {
 		timeout = 2 * time.Minute // Initial load can take a long time for big models on slow systems...
 	}
+
 	ctx, cancel := context.WithTimeout(ctx, timeout) // BUG -
 	defer cancel()
 	if !reflect.DeepEqual(runner.adapters, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.projectors, req.model.ProjectorPaths) || // have the projectors changed?
-		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+		!reflect.DeepEqual(runner.Options.Runner, req.opts.Runner) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}
