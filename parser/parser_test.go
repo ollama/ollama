@@ -429,3 +429,63 @@ FROM foo
 		})
 	}
 }
+
+func TestParseFormatParse(t *testing.T) {
+	var cases = []string{
+		`
+FROM foo
+ADAPTER adapter1
+LICENSE MIT
+PARAMETER param1 value1
+PARAMETER param2 value2
+TEMPLATE template1
+MESSAGE system You are a Parser. Always Parse things.
+MESSAGE user Hey there!
+MESSAGE assistant Hello, I want to parse all the things!
+`,
+		`
+FROM foo
+ADAPTER adapter1
+LICENSE MIT
+PARAMETER param1 value1
+PARAMETER param2 value2
+TEMPLATE template1
+MESSAGE system """
+You are a store greeter. Always responsed with "Hello!".
+"""
+MESSAGE user Hey there!
+MESSAGE assistant Hello, I want to parse all the things!
+`,
+		`
+FROM foo
+ADAPTER adapter1
+LICENSE """
+Very long and boring legal text.
+Blah blah blah.
+"Oh look, a quote!"
+"""
+
+PARAMETER param1 value1
+PARAMETER param2 value2
+TEMPLATE template1
+MESSAGE system """
+You are a store greeter. Always responsed with "Hello!".
+"""
+MESSAGE user Hey there!
+MESSAGE assistant Hello, I want to parse all the things!
+`,
+	}
+
+	for _, c := range cases {
+		t.Run("", func(t *testing.T) {
+			commands, err := Parse(strings.NewReader(c))
+			assert.NoError(t, err)
+
+			commands2, err := Parse(strings.NewReader(Format(commands)))
+			assert.NoError(t, err)
+
+			assert.Equal(t, commands, commands2)
+		})
+	}
+
+}
