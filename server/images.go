@@ -349,7 +349,10 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 			}
 
 			for _, baseLayer := range baseLayers {
-				if quantization != "" && baseLayer.GGML != nil && baseLayer.GGML.Name() == "gguf" {
+				if quantization != "" &&
+					baseLayer.MediaType == "application/vnd.ollama.image.model" &&
+					baseLayer.GGML != nil &&
+					baseLayer.GGML.Name() == "gguf" {
 					ftype, err := llm.ParseFileType(quantization)
 					if err != nil {
 						return err
@@ -554,7 +557,6 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 	fn(api.ProgressResponse{Status: "success"})
 	return nil
 }
-
 
 func CopyModel(src, dst model.Name) error {
 	if !dst.IsFullyQualified() {
