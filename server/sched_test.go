@@ -490,6 +490,9 @@ func TestNeedsReload(t *testing.T) {
 	require.False(t, resp)
 	req.opts.NumGPU = 99
 	resp = runner.needsReload(ctx, req)
+	require.True(t, resp)
+	req.opts.NumGPU = -1
+	resp = runner.needsReload(ctx, req)
 	require.False(t, resp)
 }
 
