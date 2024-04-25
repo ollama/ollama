@@ -752,16 +752,16 @@ func getGGMLData(model *Model) ([]byte, error) {
 	kvMap := make(map[string]any)
 
 	for _, k := range keys {
-		v := kv[k]
+		val := kv[k]
 
-		switch v.(type) {
+		switch v := val.(type) {
 		case []interface{}:
-			if len(v.([]interface{})) > 5 {
+			if len(v) > 5 {
 				kvMap[k] = []string{}
 				continue
 			}
 		}
-		kvMap[k] = v
+		kvMap[k] = val
 	}
 
 	ggmlMap := make(map[string]any)
