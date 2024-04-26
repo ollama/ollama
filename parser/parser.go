@@ -32,7 +32,7 @@ var (
 )
 
 func Format(cmds []Command) string {
-	var b bytes.Buffer
+	var sb strings.Builder
 	for _, cmd := range cmds {
 		name := cmd.Name
 		args := cmd.Args
@@ -43,19 +43,18 @@ func Format(cmds []Command) string {
 			args = cmd.Args
 		case "license", "template", "system", "adapter":
 			args = quote(args)
-			// pass
 		case "message":
 			role, message, _ := strings.Cut(cmd.Args, ": ")
 			args = role + " " + quote(message)
 		default:
 			name = "parameter"
-			args = cmd.Name + " " + cmd.Args
+			args = cmd.Name + " " + quote(cmd.Args)
 		}
 
-		fmt.Fprintln(&b, strings.ToUpper(name), args)
+		fmt.Fprintln(&sb, strings.ToUpper(name), args)
 	}
 
-	return b.String()
+	return sb.String()
 }
 
 func Parse(r io.Reader) (cmds []Command, err error) {
@@ -225,12 +224,12 @@ func parseRuneForState(r rune, cs state) (state, rune, error) {
 }
 
 func quote(s string) string {
-	if strings.Contains(s, "\n") || strings.HasSuffix(s, " ") {
+	if strings.Contains(s, "\n") || strings.HasPrefix(s, " ") || strings.HasSuffix(s, " ") {
 		if strings.Contains(s, "\"") {
 			return `"""` + s + `"""`
 		}
 
-		return strconv.Quote(s)
+		return `"` + s + `"`
 	}
 
 	return s
