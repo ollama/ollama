@@ -149,13 +149,16 @@ func AMDGetGPUInfo() []GpuInfo {
 			}
 		}
 		if patch != "" {
-			gpuInfo.Patch, err = strconv.Atoi(patch)
+			// Patch rev is hex; e.g. gfx90a
+			p, err := strconv.ParseInt(patch, 16, 0)
 			if err != nil {
 				slog.Info("failed to parse version", "version", gfx, "error", err)
+			} else {
+				gpuInfo.Patch = int(p)
 			}
 		}
 		if gpuInfo.Major < RocmComputeMin {
-			slog.Warn(fmt.Sprintf("amdgpu [%s] too old gfx%d%d%d", gpuInfo.ID, gpuInfo.Major, gpuInfo.Minor, gpuInfo.Patch))
+			slog.Warn(fmt.Sprintf("amdgpu [%s] too old gfx%d%d%x", gpuInfo.ID, gpuInfo.Major, gpuInfo.Minor, gpuInfo.Patch))
 			continue
 		}
 
