@@ -26,7 +26,6 @@ function amdGPUs {
     $GPU_LIST -join ';'
 }
 
-$script:cmakeTargets = @("ollama_llama_server")
 
 function init_vars {
     if (!$script:SRC_DIR) {
@@ -34,6 +33,9 @@ function init_vars {
     }
     if (!$script:llamacppDir) {
         $script:llamacppDir = "../llama.cpp"
+    }
+    if (!$script:cmakeTargets) {
+        $script:cmakeTargets = @("ollama_llama_server")
     }
     $script:cmakeDefs = @(
         "-DBUILD_SHARED_LIBS=on",
@@ -188,6 +190,7 @@ function build_static() {
         # error action ensures we exit on failure
         get-command gcc
         get-command mingw32-make
+        $oldTargets = $script:cmakeTargets
         $script:cmakeTargets = @("llama", "ggml")
         $script:cmakeDefs = @(
             "-G", "MinGW Makefiles"
@@ -203,6 +206,7 @@ function build_static() {
         $script:buildDir="../build/windows/${script:ARCH}_static"
         write-host "Building static library"
         build
+        $script:cmakeTargets = $oldTargets
     } else {
         write-host "Skipping CPU generation step as requested"
     }
