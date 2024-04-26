@@ -395,42 +395,66 @@ func readGGUFArray(llm *gguf, r io.Reader) ([]any, error) {
 		return nil, err
 	}
 
+	switch t {
+	case ggufTypeUint8:
+		return readGGUFValueArray[uint8](r, llm.ByteOrder, n)
+	case ggufTypeInt8:
+		return readGGUFValueArray[int8](r, llm.ByteOrder, n)
+	case ggufTypeUint16:
+		return readGGUFValueArray[uint16](r, llm.ByteOrder, n)
+	case ggufTypeInt16:
+		return readGGUFValueArray[int16](r, llm.ByteOrder, n)
+	case ggufTypeUint32:
+		return readGGUFValueArray[uint32](r, llm.ByteOrder, n)
+	case ggufTypeInt32:
+		return readGGUFValueArray[int32](r, llm.ByteOrder, n)
+	case ggufTypeUint64:
+		return readGGUFValueArray[uint64](r, llm.ByteOrder, n)
+	case ggufTypeInt64:
+		return readGGUFValueArray[int64](r, llm.ByteOrder, n)
+	case ggufTypeFloat32:
+		return readGGUFValueArray[float32](r, llm.ByteOrder, n)
+	case ggufTypeFloat64:
+		return readGGUFValueArray[float64](r, llm.ByteOrder, n)
+	case ggufTypeBool:
+		return readGGUFValueArray[bool](r, llm.ByteOrder, n)
+	case ggufTypeString:
+		return readGGUFStringArray(r, llm.ByteOrder, n)
+	default:
+		return nil, fmt.Errorf("invalid array type: %d", t)
+	}
+}
+
+func readGGUFValueArray[T any](r io.Reader, order binary.ByteOrder, length uint64) ([]any, error) {
+	t := make([]T, length)
+	err := binary.Read(r, order, t)
+	if err != nil {
+		return nil, err
+	}
+
+	a := make([]any, length)
+	for i := range t {
+		a[i] = t[i]
+	}
+	return a, nil
+}
+
+func readGGUFStringArray(r io.Reader, order binary.ByteOrder, n uint64) ([]any, error) {
+	uint64Buf := make([]byte, 8)
+	buf := bytes.NewBuffer(make([]byte, 128))
 	a := make([]any, n)
-	for i := range a {
-		var e any
-		switch t {
-		case ggufTypeUint8:
-			e, err = readGGUF[uint8](llm, r)
-		case ggufTypeInt8:
-			e, err = readGGUF[int8](llm, r)
-		case ggufTypeUint16:
-			e, err = readGGUF[uint16](llm, r)
-		case ggufTypeInt16:
-			e, err = readGGUF[int16](llm, r)
-		case ggufTypeUint32:
-			e, err = readGGUF[uint32](llm, r)
-		case ggufTypeInt32:
-			e, err = readGGUF[int32](llm, r)
-		case ggufTypeUint64:
-			e, err = readGGUF[uint64](llm, r)
-		case ggufTypeInt64:
-			e, err = readGGUF[int64](llm, r)
-		case ggufTypeFloat32:
-			e, err = readGGUF[float32](llm, r)
-		case ggufTypeFloat64:
-			e, err = readGGUF[float64](llm, r)
-		case ggufTypeBool:
-			e, err = readGGUF[bool](llm, r)
-		case ggufTypeString:
-			e, err = readGGUFString(llm, r)
-		default:
-			return nil, fmt.Errorf("invalid array type: %d", t)
+	for i := uint64(0); i < n; i++ {
+		if _, err := io.ReadFull(r, uint64Buf); err != nil {
+			return nil, err
 		}
-		if err != nil {
+		length := order.Uint64(uint64Buf)
+
+		if _, err := io.CopyN(buf, r, int64(length)); err != nil {
 			return nil, err
 		}
 
-		a[i] = e
+		a[i] = make([]byte, length)
+		buf.Reset()
 	}
 
 	return a, nil
