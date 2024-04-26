@@ -22,20 +22,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/containerd/console"
-
-	"github.com/olekukonko/tablewriter"
-	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/exp/slices"
-	"golang.org/x/term"
-
 	"github.com/uppercaveman/ollama-server/api"
 	"github.com/uppercaveman/ollama-server/format"
 	"github.com/uppercaveman/ollama-server/parser"
 	"github.com/uppercaveman/ollama-server/progress"
 	"github.com/uppercaveman/ollama-server/server"
 	"github.com/uppercaveman/ollama-server/version"
+
+	"github.com/containerd/console"
+	"github.com/olekukonko/tablewriter"
+	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/exp/slices"
+	"golang.org/x/term"
 )
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
