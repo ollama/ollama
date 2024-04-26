@@ -442,7 +442,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			slog.Info("context expired before server started")
-			return fmt.Errorf("timed out waiting for llama runner to start")
+			return fmt.Errorf("timed out waiting for llama runner to start: %w", ctx.Err())
 		case err := <-s.done:
 			msg := ""
 			if s.status != nil && s.status.LastErrMsg != "" {
