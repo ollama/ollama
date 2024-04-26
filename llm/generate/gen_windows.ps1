@@ -26,8 +26,6 @@ function amdGPUs {
     $GPU_LIST -join ';'
 }
 
-$script:cmakeTargets = @("ollama_llama_server")
-
 function init_vars {
     if (!$script:SRC_DIR) {
         $script:SRC_DIR = $(resolve-path "..\..\")
@@ -35,6 +33,8 @@ function init_vars {
     if (!$script:llamacppDir) {
         $script:llamacppDir = "../llama.cpp"
     }
+
+    $script:cmakeTargets = @("ollama_llama_server")
     $script:cmakeDefs = @(
         "-DBUILD_SHARED_LIBS=on",
         "-DLLAMA_NATIVE=off"
