@@ -232,3 +232,13 @@ curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": 0
 Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
 
 If you wish to override the `OLLAMA_KEEP_ALIVE` setting, use the `keep_alive` API parameter with the `/api/generate` or `/api/chat` API endpoints.
+
+## Model was pulled but is not found
+
+Sometimes the pulled model is not seen. If the model is found in `ollama list` but you get `model $MODEL_NAME not found, try pulling it first` you should pull it with API:
+
+```
+curl -X POST http://localhost:[port]/api/pull -d '{"model":'"$MODEL_NAME}"
+```
+
+This fix was suggested by sridvijay in [this issue](https://github.com/ollama/ollama/issues/3876)
