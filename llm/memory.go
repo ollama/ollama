@@ -102,10 +102,14 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	layers := ggml.Tensors().Layers()
 
 	var memoryLayerOutput uint64
-	for k, v := range layers {
-		if k == "output" || k == "output_norm" {
-			memoryLayerOutput += v.size()
-		}
+	if layer, ok := layers["output_norm"]; ok {
+		memoryLayerOutput += layer.size()
+	}
+
+	if layer, ok := layers["output"]; ok {
+		memoryLayerOutput += layer.size()
+	} else if layer, ok := layers["token_embd"]; ok {
+		memoryLayerOutput += layer.size()
 	}
 
 	if gpus[0].Library == "metal" && opts.UseMMap {
