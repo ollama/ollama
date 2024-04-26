@@ -311,29 +311,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cpu
-          path: |
-            llm/build
-            dist/windows-amd64
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cuda
-          path: |
-            llm/build
-            dist/windows-amd64
       - uses: actions/download-artifact@v4
         with:
           name: windows-cuda-deps
-          path: dist/deps
       - uses: actions/download-artifact@v4
         with:
           name: windows-rocm-deps
-          path: dist/deps
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
-          path: |
-            llm/build
-            dist/windows-amd64
       - run: dir llm/build
       - run: |
           $gopath=(get-command go).source | split-path -parent
