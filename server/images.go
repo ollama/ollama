@@ -1277,6 +1277,4 @@ func verifyBlob(digest string) error {
 		slog.Warn(err.Error())
 	}
 	return err
-
-	return nil
 }
