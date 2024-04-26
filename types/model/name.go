@@ -132,11 +132,12 @@ type Name struct {
 // field values are left in an undefined state. Use [Name.IsValid] to check
 // if the name is valid.
 func ParseName(s string) Name {
-	return merge(parseName(s), DefaultName())
+	return Merge(ParseNameBare(s), DefaultName())
 }
 
-// parseName is the same as [ParseName] without a merge.
-func parseName(s string) Name {
+// ParseNameBare parses s as a name string and returns a Name. No merge with
+// [DefaultName] is performed.
+func ParseNameBare(s string) Name {
 	var n Name
 	var promised bool
 
@@ -161,9 +162,9 @@ func parseName(s string) Name {
 	return n
 }
 
-// merge merges the host, namespace, and tag parts of the two names,
+// Merge merges the host, namespace, and tag parts of the two names,
 // preferring the non-empty parts of a.
-func merge(a, b Name) Name {
+func Merge(a, b Name) Name {
 	a.Host = cmp.Or(a.Host, b.Host)
 	a.Namespace = cmp.Or(a.Namespace, b.Namespace)
 	a.Tag = cmp.Or(a.Tag, b.Tag)
