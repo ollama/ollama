@@ -649,7 +649,7 @@ Create a new model from a `Modelfile`.
 ##### Request
 
 ```shell
-curl http://localhost:11434/api/create -d '{
+curl -X POST http://localhost:11434/api/create -d '{
   "name": "mario",
   "modelfile": "FROM llama2\nSYSTEM You are mario from Super Mario Bros."
 }'
