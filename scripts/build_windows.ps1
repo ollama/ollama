@@ -109,9 +109,6 @@ function gatherDependencies() {
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DEPS_DIR}\"
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DEPS_DIR}\"
 
-    cp "${script:NVIDIA_DIR}\cudart64_*.dll" "${script:DEPS_DIR}\"
-    cp "${script:NVIDIA_DIR}\cublas64_*.dll" "${script:DEPS_DIR}\"
-    cp "${script:NVIDIA_DIR}\cublasLt64_*.dll" "${script:DEPS_DIR}\"
 
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
     if ("${env:KEY_CONTAINER}") {
@@ -122,15 +119,6 @@ function gatherDependencies() {
                 /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} $file
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
-    }
-    if ($null -ne $env:HIP_PATH) {
-        # Assumes v5.7, may need adjustments for v6
-        rm -ea 0 -recurse -force -path "${script:DEPS_DIR}\rocm\"
-        md "${script:DEPS_DIR}\rocm\rocblas\library\" -ea 0 > $null
-        cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:DEPS_DIR}\rocm\"
-        cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:DEPS_DIR}\rocm\"
-        # amdhip64.dll dependency comes from the driver and must be installed on the host to use AMD GPUs
-        cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:DEPS_DIR}\rocm\rocblas\library\"
     }
 }
 
