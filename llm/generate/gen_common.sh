@@ -21,7 +21,7 @@ init_vars() {
         # TODO - add additional optimization flags...
         CMAKE_DEFS="-DCMAKE_BUILD_TYPE=Release -DLLAMA_SERVER_VERBOSE=off ${CMAKE_DEFS}"
     fi
-    case $(uname -s) in 
+    case $(uname -s) in
     "Darwin")
         LIB_EXT="dylib"
         WHOLE_ARCHIVE="-Wl,-force_load"
