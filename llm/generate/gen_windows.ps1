@@ -340,6 +340,7 @@ if ($($args.count) -eq 0) {
     git_module_setup
     apply_patches
     build_static
+    build_cpu
     build_cpu_avx
     build_cpu_avx2
     build_cuda
