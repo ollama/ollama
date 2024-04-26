@@ -25,7 +25,11 @@ import (
 	"github.com/ollama/ollama/format"
 )
 
-const maxRetries = 6
+// env-tweakable constants
+var maxRetries = getEnvInt("OLLAMA_DOWNLOAD_RETRIES", 6)
+var numDownloadParts = getEnvInt("OLLAMA_DOWNLOAD_PARALLEL", 64)
+var minDownloadPartSize = getEnvInt("OLLAMA_DOWNLOAD_MIN_SIZE", int64(100*format.MegaByte))
+var maxDownloadPartSize = getEnvInt("OLLAMA_DOWNLOAD_MAX_SIZE", int64(1000*format.MegaByte))
 
 var errMaxRetriesExceeded = errors.New("max retries exceeded")
 var errPartStalled = errors.New("part stalled")
@@ -57,12 +61,6 @@ type blobDownloadPart struct {
 
 	*blobDownload `json:"-"`
 }
-
-const (
-	numDownloadParts          = 64
-	minDownloadPartSize int64 = 100 * format.MegaByte
-	maxDownloadPartSize int64 = 1000 * format.MegaByte
-)
 
 func (p *blobDownloadPart) Name() string {
 	return strings.Join([]string{
@@ -111,7 +109,7 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 
 		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
-		size := b.Total / numDownloadParts
+		size := b.Total / int64(numDownloadParts)
 		switch {
 		case size < minDownloadPartSize:
 			size = minDownloadPartSize

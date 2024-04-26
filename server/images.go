@@ -33,6 +33,8 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+var maxDigestRetries = getEnvInt("OLLAMA_DOWNLOAD_DIGEST_RETRIES", 3)
+
 type registryOptions struct {
 	Insecure bool
 	Username string
@@ -1266,10 +1268,15 @@ func verifyBlob(digest string) error {
 	}
 	defer f.Close()
 
-	fileDigest, _ := GetSHA256Digest(f)
-	if digest != fileDigest {
-		return fmt.Errorf("%w: want %s, got %s", errDigestMismatch, digest, fileDigest)
+	for i := 0; i < maxDigestRetries; i++ {
+		fileDigest, _ := GetSHA256Digest(f)
+		if digest == fileDigest {
+			return nil
+		}
+		err = fmt.Errorf("%w: want %s, got %s", errDigestMismatch, digest, fileDigest)
+		slog.Warn(err.Error())
 	}
+	return err
 
 	return nil
 }
