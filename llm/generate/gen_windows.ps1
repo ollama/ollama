@@ -26,14 +26,20 @@ function amdGPUs {
     $GPU_LIST -join ';'
 }
 
+$script:cmakeTargets = @("ollama_llama_server")
+
 function init_vars {
-    $script:SRC_DIR = $(resolve-path "..\..\")
-    $script:llamacppDir = "../llama.cpp"
+    if (!$script:SRC_DIR) {
+        $script:SRC_DIR = $(resolve-path "..\..\")
+    }
+    if (!$script:llamacppDir) {
+        $script:llamacppDir = "../llama.cpp"
+    }
     $script:cmakeDefs = @(
         "-DBUILD_SHARED_LIBS=on",
         "-DLLAMA_NATIVE=off"
         )
-    $script:cmakeTargets = @("ollama_llama_server")
+    $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
     $script:ARCH = "amd64" # arm not yet supported.
     $script:DIST_BASE = "${script:SRC_DIR}\dist\windows-${script:ARCH}\ollama_runners"
     if ($env:CGO_CFLAGS -contains "-g") {
@@ -166,150 +172,184 @@ function cleanup {
     }
 }
 
-init_vars
-git_module_setup
-apply_patches
 
 # -DLLAMA_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
 # -DLLAMA_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
 # -DLLAMA_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
-$script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
 
-if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
+function build_static() {
+    if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
+        # GCC build for direct linking into the Go binary
+        init_vars
+        # cmake will silently fallback to msvc compilers if mingw isn't in the path, so detect and fail fast
+        # as we need this to be compiled by gcc for golang to be able to link with itx
+        write-host "Checking for MinGW..."
+        # error action ensures we exit on failure
+        get-command gcc
+        get-command mingw32-make
+        $script:cmakeTargets = @("llama", "ggml")
+        $script:cmakeDefs = @(
+            "-G", "MinGW Makefiles"
+            "-DCMAKE_C_COMPILER=gcc.exe",
+            "-DCMAKE_CXX_COMPILER=g++.exe",
+            "-DBUILD_SHARED_LIBS=off",
+            "-DLLAMA_NATIVE=off",
+            "-DLLAMA_AVX=off",
+            "-DLLAMA_AVX2=off",
+            "-DLLAMA_AVX512=off",
+            "-DLLAMA_F16C=off",
+            "-DLLAMA_FMA=off")
+        $script:buildDir="../build/windows/${script:ARCH}_static"
+        write-host "Building static library"
+        build
+    } else {
+        write-host "Skipping CPU generation step as requested"
+    }
+}
 
-# GCC build for direct linking into the Go binary
+function build_cpu() {
+    if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
+        # remaining llama.cpp builds use MSVC 
+        init_vars
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu"
+        $script:distDir="$script:DIST_BASE\cpu"
+        write-host "Building LCD CPU"
+        build
+        sign
+        install
+    } else {
+        write-host "Skipping CPU generation step as requested"
+    }
+}
+
+function build_cpu_avx() {
+    if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
+        init_vars
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
+        $script:distDir="$script:DIST_BASE\cpu_avx"
+        write-host "Building AVX CPU"
+        build
+        sign
+        install
+    } else {
+        write-host "Skipping CPU generation step as requested"
+    }
+}
+
+function build_cpu_avx2() {
+    if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
+        init_vars
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
+        $script:distDir="$script:DIST_BASE\cpu_avx2"
+        write-host "Building AVX2 CPU"
+        build
+        sign
+        install
+    } else {
+        write-host "Skipping CPU generation step as requested"
+    }
+}
+
+function build_cuda() {
+    if ($null -ne $script:CUDA_LIB_DIR) {
+        # Then build cuda as a dynamically loaded library
+        $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
+        $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
+        if ($null -ne $script:CUDA_VERSION) {
+            $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
+        }
+        init_vars
+        $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
+        $script:distDir="$script:DIST_BASE\cuda$script:CUDA_VARIANT"
+        $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+        if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
+            write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${env:OLLAMA_CUSTOM_CUDA_DEFS}`""
+            $script:cmakeDefs +=@("${env:OLLAMA_CUSTOM_CUDA_DEFS}")
+            write-host "building custom CUDA GPU"
+        }
+        build
+        sign
+        install
+
+        write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\"
+        cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
+        cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
+        cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
+    }
+}
+
+function build_rocm() {
+    if ($null -ne $env:HIP_PATH) {
+        $script:ROCM_VERSION=(get-item $env:HIP_PATH).Basename
+        if ($null -ne $script:ROCM_VERSION) {
+            $script:ROCM_VARIANT="_v"+$script:ROCM_VERSION
+        }
+
+        init_vars
+        $script:buildDir="../build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
+        $script:distDir="$script:DIST_BASE\rocm$script:ROCM_VARIANT"
+        $script:cmakeDefs += @(
+            "-G", "Ninja", 
+            "-DCMAKE_C_COMPILER=clang.exe",
+            "-DCMAKE_CXX_COMPILER=clang++.exe",
+            "-DLLAMA_HIPBLAS=on",
+            "-DHIP_PLATFORM=amd",
+            "-DLLAMA_AVX=on",
+            "-DLLAMA_AVX2=off",
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=on",
+            "-DAMDGPU_TARGETS=$(amdGPUs)",
+            "-DGPU_TARGETS=$(amdGPUs)"
+            )
+
+        # Make sure the ROCm binary dir is first in the path
+        $env:PATH="$env:HIP_PATH\bin;$env:PATH"
+
+        # We have to clobber the LIB var from the developer shell for clang to work properly
+        $env:LIB=""
+        if ($null -ne $env:OLLAMA_CUSTOM_ROCM_DEFS) {
+            write-host "OLLAMA_CUSTOM_ROCM_DEFS=`"${env:OLLAMA_CUSTOM_ROCM_DEFS}`""
+            $script:cmakeDefs += @("${env:OLLAMA_CUSTOM_ROCM_DEFS}")
+            write-host "building custom ROCM GPU"
+        }
+        write-host "Building ROCm"
+        build
+        # Ninja doesn't prefix with config name
+        ${script:config}=""
+        if ($null -ne $script:DUMPBIN) {
+            & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/ollama_llama_server.exe" | select-string ".dll"
+        }
+        sign
+        install
+
+        # Assumes v5.7, may need adjustments for v6
+        rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
+        md "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\" -ea 0 > $null
+        cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
+        cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
+        # amdhip64.dll dependency comes from the driver and must be installed on the host to use AMD GPUs
+        cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\"
+    }
+}
+
 init_vars
-# cmake will silently fallback to msvc compilers if mingw isn't in the path, so detect and fail fast
-# as we need this to be compiled by gcc for golang to be able to link with itx
-write-host "Checking for MinGW..."
-# error action ensures we exit on failure
-get-command gcc
-get-command mingw32-make
-$script:cmakeTargets = @("llama", "ggml")
-$script:cmakeDefs = @(
-    "-G", "MinGW Makefiles"
-    "-DCMAKE_C_COMPILER=gcc.exe",
-    "-DCMAKE_CXX_COMPILER=g++.exe",
-    "-DBUILD_SHARED_LIBS=off",
-    "-DLLAMA_NATIVE=off",
-    "-DLLAMA_AVX=off",
-    "-DLLAMA_AVX2=off",
-    "-DLLAMA_AVX512=off",
-    "-DLLAMA_F16C=off",
-    "-DLLAMA_FMA=off")
-$script:buildDir="../build/windows/${script:ARCH}_static"
-write-host "Building static library"
-build
+if ($($args.count) -eq 0) {
+    git_module_setup
+    apply_patches
+    build_static
+    build_cpu_avx
+    build_cpu_avx2
+    build_cuda
+    build_rocm
 
-# remaining llama.cpp builds use MSVC 
-    init_vars
-    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-    $script:buildDir="../build/windows/${script:ARCH}/cpu"
-    $script:distDir="$script:DIST_BASE\cpu"
-    write-host "Building LCD CPU"
-    build
-    sign
-    install
-
-    init_vars
-    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-    $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
-    $script:distDir="$script:DIST_BASE\cpu_avx"
-    write-host "Building AVX CPU"
-    build
-    sign
-    install
-
-    init_vars
-    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
-    $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
-    $script:distDir="$script:DIST_BASE\cpu_avx2"
-    write-host "Building AVX2 CPU"
-    build
-    sign
-    install
+    cleanup
+    write-host "`ngo generate completed.  LLM runners: $(get-childitem -path $script:DIST_BASE)"
 } else {
-    write-host "Skipping CPU generation step as requested"
+    for ( $i = 0; $i -lt $args.count; $i++ ) {
+        write-host "performing $($args[$i])"
+        & $($args[$i])
+    } 
 }
-
-if ($null -ne $script:CUDA_LIB_DIR) {
-    # Then build cuda as a dynamically loaded library
-    $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
-    $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
-    if ($null -ne $script:CUDA_VERSION) {
-        $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
-    }
-    init_vars
-    $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
-    $script:distDir="$script:DIST_BASE\cuda$script:CUDA_VARIANT"
-    $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
-    if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
-        write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${env:OLLAMA_CUSTOM_CUDA_DEFS}`""
-        $script:cmakeDefs +=@("${env:OLLAMA_CUSTOM_CUDA_DEFS}")
-        write-host "building custom CUDA GPU"
-    }
-    build
-    sign
-    install
-
-    write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-    cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-    cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-    cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-}
-
-if ($null -ne $env:HIP_PATH) {
-    $script:ROCM_VERSION=(get-item $env:HIP_PATH).Basename
-    if ($null -ne $script:ROCM_VERSION) {
-        $script:ROCM_VARIANT="_v"+$script:ROCM_VERSION
-    }
-
-    init_vars
-    $script:buildDir="../build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
-    $script:distDir="$script:DIST_BASE\rocm$script:ROCM_VARIANT"
-    $script:cmakeDefs += @(
-        "-G", "Ninja", 
-        "-DCMAKE_C_COMPILER=clang.exe",
-        "-DCMAKE_CXX_COMPILER=clang++.exe",
-        "-DLLAMA_HIPBLAS=on",
-        "-DHIP_PLATFORM=amd",
-        "-DLLAMA_AVX=on",
-        "-DLLAMA_AVX2=off",
-        "-DCMAKE_POSITION_INDEPENDENT_CODE=on",
-        "-DAMDGPU_TARGETS=$(amdGPUs)",
-        "-DGPU_TARGETS=$(amdGPUs)"
-        )
-
-    # Make sure the ROCm binary dir is first in the path
-    $env:PATH="$env:HIP_PATH\bin;$env:PATH"
-
-    # We have to clobber the LIB var from the developer shell for clang to work properly
-    $env:LIB=""
-    if ($null -ne $env:OLLAMA_CUSTOM_ROCM_DEFS) {
-        write-host "OLLAMA_CUSTOM_ROCM_DEFS=`"${env:OLLAMA_CUSTOM_ROCM_DEFS}`""
-        $script:cmakeDefs += @("${env:OLLAMA_CUSTOM_ROCM_DEFS}")
-        write-host "building custom ROCM GPU"
-    }
-    write-host "Building ROCm"
-    build
-    # Ninja doesn't prefix with config name
-    ${script:config}=""
-    if ($null -ne $script:DUMPBIN) {
-        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/ollama_llama_server.exe" | select-string ".dll"
-    }
-    sign
-    install
-
-    # Assumes v5.7, may need adjustments for v6
-    rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
-    md "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\" -ea 0 > $null
-    cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
-    cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
-    # amdhip64.dll dependency comes from the driver and must be installed on the host to use AMD GPUs
-    cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\"
-}
-
-
-cleanup
-write-host "`ngo generate completed.  LLM runners: $(get-childitem -path $script:DIST_BASE)"
