@@ -53,22 +53,26 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 			return nil, err
 		}
 
+		// process the state transition, some transitions need to be intercepted and redirected
 		if next != curr {
 			switch curr {
 			case stateName, stateParameter:
+				// next state sometimes depends on the current buffer value
 				switch s := strings.ToLower(b.String()); s {
 				case "from":
 					cmd.Name = "model"
 				case "parameter":
+					// transition to stateParameter which sets command name
 					next = stateParameter
 				case "message":
+					// transition to stateMessage which validates the message role
 					next = stateMessage
 					fallthrough
 				default:
 					cmd.Name = s
 				}
 			case stateMessage:
-				if !isValidRole(b.String()) {
+				if !isValidMessageRole(b.String()) {
 					return nil, errInvalidRole
 				}
 
@@ -234,6 +238,6 @@ func isNewline(r rune) bool {
 	return r == '\r' || r == '\n'
 }
 
-func isValidRole(role string) bool {
+func isValidMessageRole(role string) bool {
 	return role == "system" || role == "user" || role == "assistant"
 }
