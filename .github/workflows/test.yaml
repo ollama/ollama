@@ -1,5 +1,15 @@
 name: test
 
+concurrency:
+  # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
+  # cancels running CI jobs and starts all new ones.
+  #
+  # For non-PR pushes, concurrency.group needs to be unique for every distinct
+  # CI run we want to have happen. Use run_id, which in practice means all
+  # non-PR CI runs will be allowed to run without preempting each other.
+  group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths:
@@ -283,7 +293,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go get
       - run: |
           case ${{ matrix.arch }} in
             amd64) echo ARCH=x86_64 ;;
