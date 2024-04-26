@@ -93,7 +93,7 @@ func TestParseNameParts(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.in, func(t *testing.T) {
-			got := parseName(tt.in)
+			got := ParseNameBare(tt.in)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("parseName(%q) = %v; want %v", tt.in, got, tt.want)
 			}
@@ -166,7 +166,7 @@ func TestNameparseNameDefault(t *testing.T) {
 func TestNameIsValid(t *testing.T) {
 	var numStringTests int
 	for s, want := range testCases {
-		n := parseName(s)
+		n := ParseNameBare(s)
 		t.Logf("n: %#v", n)
 		got := n.IsValid()
 		if got != want {
@@ -175,7 +175,7 @@ func TestNameIsValid(t *testing.T) {
 
 		// Test roundtrip with String
 		if got {
-			got := parseName(s).String()
+			got := ParseNameBare(s).String()
 			if got != s {
 				t.Errorf("parseName(%q).String() = %q; want %q", s, got, s)
 			}
@@ -221,7 +221,7 @@ func FuzzName(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
-		n := parseName(s)
+		n := ParseNameBare(s)
 		if n.IsValid() {
 			parts := [...]string{n.Host, n.Namespace, n.Model, n.Tag, n.RawDigest}
 			for _, part := range parts {
