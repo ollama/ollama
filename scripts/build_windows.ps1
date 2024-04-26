@@ -82,7 +82,7 @@ function buildOllama() {
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
     New-Item -ItemType Directory -Path .\dist\windows-amd64\ -Force
-    cp .\ollama.exe .\dist\windows-amd64\ollama-windows-amd64.exe
+    cp .\ollama.exe .\dist\windows-amd64\
 }
 
 function buildApp() {
