@@ -104,6 +104,16 @@ PARAMETER param1
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
+func TestParserBadCommand(t *testing.T) {
+	input := `
+FROM foo
+BADCOMMAND param1 value1
+`
+	_, err := Parse(strings.NewReader(input))
+	assert.ErrorIs(t, err, errInvalidCommand)
+
+}
+
 func TestParserMessages(t *testing.T) {
 	var cases = []struct {
 		input    string
@@ -165,7 +175,7 @@ FROM foo
 MESSAGE badguy I'm a bad guy!
 `,
 			nil,
-			errInvalidRole,
+			errInvalidMessageRole,
 		},
 		{
 			`

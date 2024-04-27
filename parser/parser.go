@@ -27,8 +27,9 @@ const (
 )
 
 var (
-	errMissingFrom = errors.New("no FROM line")
-	errInvalidRole = errors.New("role must be one of \"system\", \"user\", or \"assistant\"")
+	errMissingFrom        = errors.New("no FROM line")
+	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
 )
 
 func Format(cmds []Command) string {
@@ -82,7 +83,11 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 		// process the state transition, some transitions need to be intercepted and redirected
 		if next != curr {
 			switch curr {
-			case stateName, stateParameter:
+			case stateName:
+				if !isValidCommand(b.String()) {
+					return nil, errInvalidCommand
+				}
+
 				// next state sometimes depends on the current buffer value
 				switch s := strings.ToLower(b.String()); s {
 				case "from":
@@ -97,9 +102,11 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 				default:
 					cmd.Name = s
 				}
+			case stateParameter:
+				cmd.Name = b.String()
 			case stateMessage:
 				if !isValidMessageRole(b.String()) {
-					return nil, errInvalidRole
+					return nil, errInvalidMessageRole
 				}
 
 				role = b.String()
@@ -182,7 +189,7 @@ func parseRuneForState(r rune, cs state) (state, rune, error) {
 		case isSpace(r):
 			return stateValue, 0, nil
 		default:
-			return stateNil, 0, errors.New("invalid")
+			return stateNil, 0, errInvalidCommand
 		}
 	case stateValue:
 		switch {
@@ -278,4 +285,13 @@ func isNewline(r rune) bool {
 
 func isValidMessageRole(role string) bool {
 	return role == "system" || role == "user" || role == "assistant"
+}
+
+func isValidCommand(cmd string) bool {
+	switch strings.ToLower(cmd) {
+	case "from", "license", "template", "system", "adapter", "parameter", "message":
+		return true
+	default:
+		return false
+	}
 }
