@@ -22,22 +22,31 @@
     // user about what this is doing, and ideally use Touch ID.
     // or add an alias in the current shell environment,
     // which wouldn't require any special privileges
-    dispatch_async(dispatch_get_main_queue(), ^{ 
-        createSymlinkWithAuthorization();
-    });
+    // dispatch_async(dispatch_get_main_queue(), ^{
+    //     createSymlinkWithAuthorization();
+    // });
 
     // show status menu
     NSMenu *menu = [[NSMenu alloc] init];
-
-    NSMenuItem *openSettingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings..." action:@selector(openSettingsWindow) keyEquivalent:@""];
-    [menu addItem:openSettingsItem];
-    [menu addItem:[NSMenuItem separatorItem]];
     [menu addItemWithTitle:@"Quit Ollama" action:@selector(quit) keyEquivalent:@"q"];
     self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
+    [self.statusItem addObserver:self forKeyPath:@"button.effectiveAppearance" options:NSKeyValueObservingOptionNew|NSKeyValueObservingOptionInitial context:nil];
+
     self.statusItem.menu = menu;
-    NSImage *statusImage = [NSImage imageNamed:@"icon"];
+    [self showIcon];
+}
+
+-(void) showIcon {
+    NSAppearance* appearance = self.statusItem.button.effectiveAppearance;
+    NSString* appearanceName = (NSString*)(appearance.name);
+    NSString* iconName = [[appearanceName lowercaseString] containsString:@"dark"] ? @"iconDark" : @"icon";
+    NSImage* statusImage = [NSImage imageNamed:iconName];
     [statusImage setTemplate:YES];
     self.statusItem.button.image = statusImage;
+}
+
+-(void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context {
+    [self showIcon];
 }
 
 - (void)openSettingsWindow {
@@ -66,57 +75,8 @@
     }
 }
 
-#pragma mark - NSToolbarDelegate
-
-- (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier willBeInsertedIntoToolbar:(BOOL)flag {
-    NSToolbarItem *toolbarItem = [[NSToolbarItem alloc] initWithItemIdentifier:itemIdentifier];
-
-    if ([itemIdentifier isEqualToString:@"General"]) {
-        toolbarItem.label = @"General";
-        toolbarItem.paletteLabel = @"General";
-        toolbarItem.toolTip = @"General Settings";
-        toolbarItem.image = [NSImage imageWithSystemSymbolName:@"gear" accessibilityDescription:nil]; // Monochrome symbol
-        toolbarItem.target = self;
-        toolbarItem.action = @selector(switchTabs:);
-    }
-
-    if ([itemIdentifier isEqualToString:@"Networking"]) {
-        toolbarItem.label = @"Networking";
-        toolbarItem.paletteLabel = @"Networking";
-        toolbarItem.toolTip = @"Networking Settings";
-        toolbarItem.image = [NSImage imageWithSystemSymbolName:@"network" accessibilityDescription:nil]; // Monochrome symbol
-        toolbarItem.target = self;
-        toolbarItem.action = @selector(switchTabs:);
-    }
-    // Create other items with their respective images and selectors here...
-
-    return toolbarItem;
-}
-
-- (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar {
-    return @[
-        NSToolbarFlexibleSpaceItemIdentifier, 
-        @"General",
-        @"Networking",
-        NSToolbarFlexibleSpaceItemIdentifier
-    ];
-}
-
-- (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar {
-    return @[
-        NSToolbarFlexibleSpaceItemIdentifier, 
-        @"General", 
-        @"Networking",
-        NSToolbarFlexibleSpaceItemIdentifier
-    ];
-}
-
-- (void)switchTabs:(NSToolbarItem *)sender {
-    // Your code to switch tabs based on the sender's identifier
-}
-
 - (void)quit {
-    Quit();
+    [NSApp stop:nil];
 }
 
 @end
@@ -132,12 +92,13 @@ int askToMoveToApplications() {
     [alert setInformativeText:@"Ollama works best when run from the Applications directory."];
     [alert addButtonWithTitle:@"Move to Applications"];
     [alert addButtonWithTitle:@"Don't move"];
-    
+
     [NSApp activateIgnoringOtherApps:YES];
 
     if ([alert runModal] != NSAlertFirstButtonReturn) {
         return 0;
     }
+
     // move to applications
     NSString *applicationsPath = @"/Applications";
     NSString *newPath = [applicationsPath stringByAppendingPathComponent:@"Ollama.app"];

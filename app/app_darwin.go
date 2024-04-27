@@ -33,20 +33,21 @@ func run() {
 		panic(err)
 	}
 
-	resources := filepath.Join(filepath.Dir(exe), "..", "Resources")
-
 	ctx, cancel := context.WithCancel(context.Background())
 	var done chan int
 
-	done, err = SpawnServer(ctx, filepath.Join(resources, "ollama"))
+	done, err = SpawnServer(ctx, filepath.Join(filepath.Dir(exe), "..", "Resources", "ollama"))
 	if err != nil {
 		slog.Error(fmt.Sprintf("Failed to spawn ollama server %s", err))
 		done = make(chan int, 1)
 		done <- 1
 	}
 
-	// Run the native app
+	// Run the native macOS app
+	// Note: this will block until the app is closed
 	C.run()
+
+	slog.Info("ollama macOS app closed")
 
 	cancel()
 	slog.Info("Waiting for ollama server to shutdown...")

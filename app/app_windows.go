@@ -13,10 +13,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jmorganca/ollama/app/lifecycle"
-	"github.com/jmorganca/ollama/app/store"
-	"github.com/jmorganca/ollama/app/tray"
-	"github.com/jmorganca/ollama/app/updater"
+	"github.com/ollama/ollama/app/lifecycle"
+	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/tray"
+	"github.com/ollama/ollama/app/updater"
 )
 
 func init() {
