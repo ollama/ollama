@@ -129,9 +129,9 @@ function buildInstaller() {
     cd "${script:SRC_DIR}\app"
     $env:PKG_VERSION=$script:PKG_VERSION
     if ("${env:KEY_CONTAINER}") {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\ollama.iss
+        & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\ollama.iss
     } else {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" .\ollama.iss
+        & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH .\ollama.iss
     }
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
