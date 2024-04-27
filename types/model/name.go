@@ -4,7 +4,6 @@ package model
 
 import (
 	"cmp"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -171,11 +170,6 @@ func Merge(a, b Name) Name {
 	return a
 }
 
-// Digest returns the result of [ParseDigest] with the RawDigest field.
-func (n Name) Digest() Digest {
-	return ParseDigest(n.RawDigest)
-}
-
 // String returns the name string, in the format that [ParseNameNoDefaults]
 // accepts as valid, if [Name.IsValid] reports true; otherwise the empty
 // string is returned.
@@ -204,7 +198,7 @@ func (n Name) String() string {
 // IsValid reports whether all parts of the name are present and valid. The
 // digest is a special case, and is checked for validity only if present.
 func (n Name) IsValid() bool {
-	if n.RawDigest != "" && !ParseDigest(n.RawDigest).IsValid() {
+	if n.RawDigest != "" && !isValidPart(kindDigest, n.RawDigest) {
 		return false
 	}
 	return n.IsFullyQualified()
@@ -282,7 +276,7 @@ func isValidPart(kind partKind, s string) bool {
 				return false
 			}
 		case ':':
-			if kind != kindHost {
+			if kind != kindHost && kind != kindDigest {
 				return false
 			}
 		default:
@@ -316,76 +310,4 @@ func cutPromised(s, sep string) (before, after string, ok bool) {
 		return before, after, false
 	}
 	return cmp.Or(before, MissingPart), cmp.Or(after, MissingPart), true
-}
-
-type DigestType int
-
-const (
-	DigestTypeInvalid DigestType = iota
-	DigestTypeSHA256
-)
-
-func (t DigestType) String() string {
-	if t == DigestTypeSHA256 {
-		return "sha256"
-	}
-	return "unknown"
-}
-
-// Digest represents a type and hash of a digest. It is comparable and can
-// be used as a map key.
-type Digest struct {
-	Type DigestType
-	Hash [32]byte
-}
-
-// ParseDigest parses a digest string into a Digest struct. It accepts both
-// the forms:
-//
-//	sha256:deadbeef
-//	sha256-deadbeef
-//
-// The hash part must be exactly 64 characters long.
-//
-// The form "type:hash" does not round trip through [Digest.String].
-func ParseDigest(s string) Digest {
-	typ, hash, ok := cutLast(s, ":")
-	if !ok {
-		typ, hash, ok = cutLast(s, "-")
-		if !ok {
-			return Digest{}
-		}
-	}
-	if typ != "sha256" {
-		return Digest{}
-	}
-	var d Digest
-	n, err := hex.Decode(d.Hash[:], []byte(hash))
-	if err != nil || n != 32 {
-		return Digest{}
-	}
-	return Digest{Type: DigestTypeSHA256, Hash: d.Hash}
-}
-
-// IsValid returns true if the digest has a valid Type and Hash.
-func (d Digest) IsValid() bool {
-	if d.Type != DigestTypeSHA256 {
-		return false
-	}
-	return d.Hash != [32]byte{}
-}
-
-// String returns the digest as a string in the form "type-hash". The hash
-// is encoded as a hex string.
-func (d Digest) String() string {
-	var b strings.Builder
-	b.WriteString(d.Type.String())
-	b.WriteByte('-')
-	b.WriteString(hex.EncodeToString(d.Hash[:]))
-	return b.String()
-}
-
-// LogValue returns a slog.Value that represents the digest as a string.
-func (d Digest) LogValue() slog.Value {
-	return slog.StringValue(d.String())
 }
