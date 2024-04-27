@@ -101,6 +101,11 @@ func TestParseNameParts(t *testing.T) {
 }
 
 var testCases = map[string]bool{ // name -> valid
+	"": false,
+
+	// minimal
+	"h/n/m:t@d": true,
+
 	"host/namespace/model:tag": true,
 	"host/namespace/model":     false,
 	"namespace/model":          false,
@@ -116,11 +121,12 @@ var testCases = map[string]bool{ // name -> valid
 	"h/nn/mm:t@sha256-1000000000000000000000000000000000000000000000000000000000000000": true, // bare minimum part sizes
 	"h/nn/mm:t@sha256:1000000000000000000000000000000000000000000000000000000000000000": true, // bare minimum part sizes
 
-	"m":        false, // model too short
-	"n/mm:":    false, // namespace too short
-	"h/n/mm:t": false, // namespace too short
-	"@t":       false, // digest too short
-	"mm@d":     false, // digest too short
+	// unqualified
+	"m":     false,
+	"n/m:":  false,
+	"h/n/m": false,
+	"@t":    false,
+	"m@d":   false,
 
 	// invalids
 	"^":      false,
@@ -139,8 +145,6 @@ var testCases = map[string]bool{ // name -> valid
 	"hh/nn/-mm:tt@dd": false,
 	"hh/nn/mm:-tt@dd": false,
 	"hh/nn/mm:tt@-dd": false,
-
-	"": false,
 
 	// hosts
 	"host:https/namespace/model:tag": true,
