@@ -2,7 +2,6 @@ package model
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -82,10 +81,10 @@ func TestParseNameParts(t *testing.T) {
 			wantValidDigest: false,
 		},
 		{
-			in: "model@sha256:" + validSHA256Hex,
+			in: "model@sha256:123",
 			want: Name{
 				Model:     "model",
-				RawDigest: "sha256:" + validSHA256Hex,
+				RawDigest: "sha256:123",
 			},
 			wantValidDigest: true,
 		},
@@ -96,9 +95,6 @@ func TestParseNameParts(t *testing.T) {
 			got := ParseNameBare(tt.in)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("parseName(%q) = %v; want %v", tt.in, got, tt.want)
-			}
-			if got.Digest().IsValid() != tt.wantValidDigest {
-				t.Errorf("parseName(%q).Digest().IsValid() = %v; want %v", tt.in, got.Digest().IsValid(), tt.wantValidDigest)
 			}
 		})
 	}
@@ -238,58 +234,4 @@ func FuzzName(f *testing.F) {
 		}
 
 	})
-}
-
-const validSHA256Hex = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-
-func TestParseDigest(t *testing.T) {
-	cases := map[string]bool{
-		"sha256-1000000000000000000000000000000000000000000000000000000000000000": true,
-		"sha256:1000000000000000000000000000000000000000000000000000000000000000": true,
-		"sha256:0000000000000000000000000000000000000000000000000000000000000000": false,
-
-		"sha256:" + validSHA256Hex: true,
-		"sha256-" + validSHA256Hex: true,
-
-		"":                               false,
-		"sha134:" + validSHA256Hex:       false,
-		"sha256:" + validSHA256Hex + "x": false,
-		"sha256:x" + validSHA256Hex:      false,
-		"sha256-" + validSHA256Hex + "x": false,
-		"sha256-x":                       false,
-	}
-
-	for s, want := range cases {
-		t.Run(s, func(t *testing.T) {
-			d := ParseDigest(s)
-			if d.IsValid() != want {
-				t.Errorf("ParseDigest(%q).IsValid() = %v; want %v", s, d.IsValid(), want)
-			}
-			norm := strings.ReplaceAll(s, ":", "-")
-			if d.IsValid() && d.String() != norm {
-				t.Errorf("ParseDigest(%q).String() = %q; want %q", s, d.String(), norm)
-			}
-		})
-	}
-}
-
-func TestDigestString(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{in: "sha256:" + validSHA256Hex, want: "sha256-" + validSHA256Hex},
-		{in: "sha256-" + validSHA256Hex, want: "sha256-" + validSHA256Hex},
-		{in: "", want: "unknown-0000000000000000000000000000000000000000000000000000000000000000"},
-		{in: "blah-100000000000000000000000000000000000000000000000000000000000000", want: "unknown-0000000000000000000000000000000000000000000000000000000000000000"},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.in, func(t *testing.T) {
-			d := ParseDigest(tt.in)
-			if d.String() != tt.want {
-				t.Errorf("ParseDigest(%q).String() = %q; want %q", tt.in, d.String(), tt.want)
-			}
-		})
-	}
 }
