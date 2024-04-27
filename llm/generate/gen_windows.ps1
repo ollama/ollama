@@ -213,14 +213,10 @@ function build_static() {
     }
 }
 
-function build_cpu() {
+function build_cpu($gen_arch) {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
         # remaining llama.cpp builds use MSVC 
         init_vars
-        $gen_arch = "x64"
-        if ($scrip:ARCH -eq "arm64") {
-            $gen_arch = "ARM64"
-        }
         $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
         $script:buildDir="../build/windows/${script:ARCH}/cpu"
         $script:distDir="$script:DIST_BASE\cpu"
@@ -353,11 +349,15 @@ if ($($args.count) -eq 0) {
     git_module_setup
     apply_patches
     build_static
-    build_cpu
-    build_cpu_avx
-    build_cpu_avx2
-    build_cuda
-    build_rocm
+    if ($script:ARCH -eq "arm64") {
+        build_cpu("ARM64")
+    } else { # amd64
+        build_cpu("x64")
+        build_cpu_avx
+        build_cpu_avx2
+        build_cuda
+        build_rocm
+    }
 
     cleanup
     write-host "`ngo generate completed.  LLM runners: $(get-childitem -path $script:DIST_BASE)"
