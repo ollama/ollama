@@ -127,7 +127,7 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 		// Keep the server running unless we're shuttind down the app
 		crashCount := 0
 		for {
-			slog.Info(fmt.Sprintf("starting server..."))
+			slog.Info("starting server...")
 			cmd, err := start(ctx, command)
 			if err != nil {
 				slog.Error(fmt.Sprintf("failed to start server %s", err))
