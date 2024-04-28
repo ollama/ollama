@@ -483,6 +483,7 @@ var ggufKVOrder = map[string][]string{
 		"tokenizer.ggml.model",
 		"tokenizer.ggml.tokens",
 		"tokenizer.ggml.scores",
+		"tokenizer.ggml.merges",
 		"tokenizer.ggml.token_type",
 		"tokenizer.ggml.bos_token_id",
 		"tokenizer.ggml.eos_token_id",

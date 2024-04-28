@@ -93,6 +93,7 @@ type Vocab struct {
 	Tokens []string
 	Scores []float32
 	Types  []int32
+	Merges []string
 }
 
 func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
