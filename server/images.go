@@ -29,6 +29,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
@@ -701,36 +702,39 @@ func convertModel(name, path string, fn func(resp api.ProgressResponse)) (string
 	return path, nil
 }
 
-func CopyModel(src, dest string) error {
-	srcModelPath := ParseModelPath(src)
-	srcPath, err := srcModelPath.GetManifestPath()
+func CopyModel(src, dst model.Name) error {
+	if !dst.IsFullyQualified() {
+		return model.Unqualified(dst)
+	}
+	if !src.IsFullyQualified() {
+		return model.Unqualified(src)
+	}
+
+	manifests, err := GetManifestPath()
 	if err != nil {
 		return err
 	}
 
-	destModelPath := ParseModelPath(dest)
-	destPath, err := destModelPath.GetManifestPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+	dstpath := filepath.Join(manifests, dst.Filepath())
+	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
 		return err
 	}
 
-	// copy the file
-	input, err := os.ReadFile(srcPath)
+	srcpath := filepath.Join(manifests, src.Filepath())
+	srcfile, err := os.Open(srcpath)
 	if err != nil {
-		fmt.Println("Error reading file:", err)
 		return err
 	}
+	defer srcfile.Close()
 
-	err = os.WriteFile(destPath, input, 0o644)
+	dstfile, err := os.Create(dstpath)
 	if err != nil {
-		fmt.Println("Error reading file:", err)
 		return err
 	}
+	defer dstfile.Close()
 
-	return nil
+	_, err = io.Copy(dstfile, srcfile)
+	return err
 }
 
 func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{}, dryRun bool) error {
@@ -1137,7 +1141,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-var errUnauthorized = fmt.Errorf("unauthorized")
+var errUnauthorized = errors.New("unauthorized")
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
 	for i := 0; i < 2; i++ {
@@ -1255,7 +1259,7 @@ func parseRegistryChallenge(authStr string) registryChallenge {
 	}
 }
 
-var errDigestMismatch = fmt.Errorf("digest mismatch, file must be downloaded again")
+var errDigestMismatch = errors.New("digest mismatch, file must be downloaded again")
 
 func verifyBlob(digest string) error {
 	fp, err := GetBlobsPath(digest)

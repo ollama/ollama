@@ -51,16 +51,12 @@ Here are some example models that can be downloaded:
 | ------------------ | ---------- | ----- | ------------------------------ |
 | Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
 | Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
+| Phi-3              | 3,8B       | 2.3GB | `ollama run phi3`              |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
-| Dolphin Phi        | 2.7B       | 1.6GB | `ollama run dolphin-phi`       |
-| Phi-2              | 2.7B       | 1.7GB | `ollama run phi`               |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
 | Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
-| Llama 2 13B        | 13B        | 7.3GB | `ollama run llama2:13b`        |
-| Llama 2 70B        | 70B        | 39GB  | `ollama run llama2:70b`        |
-| Orca Mini          | 3B         | 1.9GB | `ollama run orca-mini`         |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 | Gemma              | 2B         | 1.4GB | `ollama run gemma:2b`          |
 | Gemma              | 7B         | 4.8GB | `ollama run gemma:7b`          |
@@ -314,11 +310,13 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
 - [cmdh](https://github.com/pgibler/cmdh)
 - [ooo](https://github.com/npahlfer/ooo)
+- [shell-pilot](https://github.com/reid41/shell-pilot)
 - [tenere](https://github.com/pythops/tenere)
 - [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
 - [typechat-cli](https://github.com/anaisbetts/typechat-cli)
 - [ShellOracle](https://github.com/djcopley/ShellOracle)
 - [tlm](https://github.com/yusufcanb/tlm)
+- [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 
 ### Database
 
@@ -383,6 +381,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
+- [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
 
 ### Supported backends 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov. 

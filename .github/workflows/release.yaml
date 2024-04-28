@@ -103,6 +103,7 @@ jobs:
           path: |
             llm/build/**/bin/*
             llm/build/**/*.a
+            dist/windows-amd64/**
 
   # ROCm generation step
   generate-windows-rocm:
@@ -173,7 +174,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/build/**/bin/*
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
       - uses: actions/upload-artifact@v4
         with:
           name: windows-rocm-deps
@@ -253,7 +256,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/build/**/bin/*
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
       - uses: actions/upload-artifact@v4
         with:
           name: windows-cuda-deps
@@ -306,23 +311,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cpu
-          path: llm/build
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cuda
-          path: llm/build
       - uses: actions/download-artifact@v4
         with:
           name: windows-cuda-deps
-          path: dist/deps
       - uses: actions/download-artifact@v4
         with:
           name: windows-rocm-deps
-          path: dist/deps
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
-          path: llm/build
       - run: dir llm/build
       - run: |
           $gopath=(get-command go).source | split-path -parent
@@ -331,13 +331,13 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_GENERATE="1"
-          $env:NVIDIA_DIR=$(resolve-path ".\dist\deps")
-          $env:HIP_PATH=$(resolve-path ".\dist\deps")
           & .\scripts\build_windows.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: dist-windows
-          path: dist/*.exe
+          path: |
+            dist/OllamaSetup.exe
+            dist/ollama-windows-*.zip
 
   # Linux x86 assets built using the container based build
   build-linux-amd64:

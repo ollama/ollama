@@ -30,7 +30,7 @@ function checkEnv() {
     
     $script:INNO_SETUP_DIR=(get-item "C:\Program Files*\Inno Setup*\")[0]
 
-    $script:DEPS_DIR="${script:SRC_DIR}\dist\windeps"
+    $script:DEPS_DIR="${script:SRC_DIR}\dist\windows-amd64"
     $env:CGO_ENABLED="1"
     echo "Checking version"
     if (!$env:VERSION) {
@@ -81,8 +81,8 @@ function buildOllama() {
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
-    New-Item -ItemType Directory -Path .\dist -Force
-    cp .\ollama.exe .\dist\ollama-windows-amd64.exe
+    New-Item -ItemType Directory -Path .\dist\windows-amd64\ -Force
+    cp .\ollama.exe .\dist\windows-amd64\
 }
 
 function buildApp() {
@@ -101,7 +101,6 @@ function buildApp() {
 function gatherDependencies() {
     write-host "Gathering runtime dependencies"
     cd "${script:SRC_DIR}"
-    rm -ea 0 -recurse -force -path "${script:DEPS_DIR}"
     md "${script:DEPS_DIR}" -ea 0 > $null
 
     # TODO - this varies based on host build system and MSVC version - drive from dumpbin output
@@ -110,9 +109,6 @@ function gatherDependencies() {
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DEPS_DIR}\"
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DEPS_DIR}\"
 
-    cp "${script:NVIDIA_DIR}\cudart64_*.dll" "${script:DEPS_DIR}\"
-    cp "${script:NVIDIA_DIR}\cublas64_*.dll" "${script:DEPS_DIR}\"
-    cp "${script:NVIDIA_DIR}\cublasLt64_*.dll" "${script:DEPS_DIR}\"
 
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
     if ("${env:KEY_CONTAINER}") {
@@ -124,7 +120,6 @@ function gatherDependencies() {
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
-
 }
 
 function buildInstaller() {
@@ -139,12 +134,18 @@ function buildInstaller() {
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
+function distZip() {
+    write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
+    Compress-Archive -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
+}
+
 try {
     checkEnv
     buildOllama
     buildApp
     gatherDependencies
     buildInstaller
+    distZip
 } catch {
     write-host "Build Failed"
     write-host $_

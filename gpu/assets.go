@@ -24,6 +24,51 @@ func PayloadsDir() (string, error) {
 	defer lock.Unlock()
 	var err error
 	if payloadsDir == "" {
+		runnersDir := os.Getenv("OLLAMA_RUNNERS_DIR")
+		// On Windows we do not carry the payloads inside the main executable
+		if runtime.GOOS == "windows" && runnersDir == "" {
+			appExe, err := os.Executable()
+			if err != nil {
+				slog.Error("failed to lookup executable path", "error", err)
+				return "", err
+			}
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				slog.Error("failed to lookup working directory", "error", err)
+				return "", err
+			}
+
+			var paths []string
+			for _, root := range []string{appExe, cwd} {
+				paths = append(paths,
+					filepath.Join(root),
+					filepath.Join(root, "windows-"+runtime.GOARCH),
+					filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
+				)
+			}
+
+			// Try a few variations to improve developer experience when building from source in the local tree
+			for _, p := range paths {
+				candidate := filepath.Join(p, "ollama_runners")
+				_, err := os.Stat(candidate)
+				if err == nil {
+					runnersDir = candidate
+					break
+				}
+			}
+			if runnersDir == "" {
+				err = fmt.Errorf("unable to locate llm runner directory.  Set OLLAMA_RUNNERS_DIR to the location of 'ollama_runners'")
+				slog.Error("incomplete distribution", "error", err)
+				return "", err
+			}
+		}
+		if runnersDir != "" {
+			payloadsDir = runnersDir
+			return payloadsDir, nil
+		}
+
+		// The remainder only applies on non-windows where we still carry payloads in the main executable
 		cleanupTmpDirs()
 		tmpDir := os.Getenv("OLLAMA_TMPDIR")
 		if tmpDir == "" {
@@ -80,7 +125,7 @@ func cleanupTmpDirs() {
 		}
 		err = os.RemoveAll(d)
 		if err != nil {
-			slog.Debug(fmt.Sprintf("unable to cleanup stale tmpdir %s: %s", d, err))
+			slog.Debug("unable to cleanup stale tmpdir", "path", d, "error", err)
 		}
 	}
 }
@@ -88,7 +133,8 @@ func cleanupTmpDirs() {
 func Cleanup() {
 	lock.Lock()
 	defer lock.Unlock()
-	if payloadsDir != "" {
+	runnersDir := os.Getenv("OLLAMA_RUNNERS_DIR")
+	if payloadsDir != "" && runnersDir == "" && runtime.GOOS != "windows" {
 		// We want to fully clean up the tmpdir parent of the payloads dir
 		tmpDir := filepath.Clean(filepath.Join(payloadsDir, ".."))
 		slog.Debug("cleaning up", "dir", tmpDir)
@@ -120,7 +166,7 @@ func UpdatePath(dir string) {
 			}
 		}
 		newPath := strings.Join(append([]string{dir}, pathComponents...), ";")
-		slog.Info(fmt.Sprintf("Updating PATH to %s", newPath))
+		slog.Info("updating", "PATH", newPath)
 		os.Setenv("PATH", newPath)
 	}
 	// linux and darwin rely on rpath

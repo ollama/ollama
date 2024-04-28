@@ -6,6 +6,7 @@
 void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
   cudartReturn_t ret;
   resp->err = NULL;
+  resp->num_devices = 0;
   const int buflen = 256;
   char buf[buflen + 1];
   int i;
@@ -21,6 +22,7 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
       {"cudaGetDeviceCount", (void *)&resp->ch.cudaGetDeviceCount},
       {"cudaDeviceGetAttribute", (void *)&resp->ch.cudaDeviceGetAttribute},
       {"cudaDriverGetVersion", (void *)&resp->ch.cudaDriverGetVersion},
+      {"cudaGetDeviceProperties", (void *)&resp->ch.cudaGetDeviceProperties},
       {NULL, NULL},
   };
 
@@ -36,13 +38,7 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
     return;
   }
 
-  // TODO once we've squashed the remaining corner cases remove this log
-  LOG(resp->ch.verbose, "wiring cudart library functions in %s\n", cudart_lib_path);
-  
   for (i = 0; l[i].s != NULL; i++) {
-    // TODO once we've squashed the remaining corner cases remove this log
-    LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
-
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
     if (!l[i].p) {
       char *msg = LOAD_ERR();
@@ -63,7 +59,7 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
     UNLOAD_LIBRARY(resp->ch.handle);
     resp->ch.handle = NULL;
     if (ret == CUDA_ERROR_INSUFFICIENT_DRIVER) {
-      resp->err = strdup("your nvidia driver is too old or missing, please upgrade to run ollama");
+      resp->err = strdup("your nvidia driver is too old or missing.  If you have a CUDA GPU please upgrade to run ollama");
       return;
     }
     snprintf(buf, buflen, "cudart init failure: %d", ret);
@@ -85,110 +81,95 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
     driverVersion.minor = (version - (driverVersion.major * 1000)) / 10;
     LOG(resp->ch.verbose, "CUDA driver version: %d-%d\n", driverVersion.major, driverVersion.minor);
   }
+
+  ret = (*resp->ch.cudaGetDeviceCount)(&resp->num_devices);
+  if (ret != CUDART_SUCCESS) {
+    LOG(resp->ch.verbose, "cudaGetDeviceCount err: %d\n", ret);
+    UNLOAD_LIBRARY(resp->ch.handle);
+    resp->ch.handle = NULL;
+    snprintf(buf, buflen, "unable to get device count: %d", ret);
+    resp->err = strdup(buf);
+    return;
+  }
 }
 
 
-void cudart_check_vram(cudart_handle_t h, mem_info_t *resp) {
+void cudart_check_vram(cudart_handle_t h, int i, mem_info_t *resp) {
   resp->err = NULL;
   cudartMemory_t memInfo = {0,0,0};
   cudartReturn_t ret;
   const int buflen = 256;
   char buf[buflen + 1];
-  int i;
 
   if (h.handle == NULL) {
     resp->err = strdup("cudart handle isn't initialized");
     return;
   }
 
-  // cudaGetDeviceCount takes int type, resp-> count is uint
-  int deviceCount;
-  ret = (*h.cudaGetDeviceCount)(&deviceCount);
+  ret = (*h.cudaSetDevice)(i);
   if (ret != CUDART_SUCCESS) {
-    snprintf(buf, buflen, "unable to get device count: %d", ret);
+    snprintf(buf, buflen, "cudart device failed to initialize");
     resp->err = strdup(buf);
     return;
+  }
+
+  cudaDeviceProp_t props;
+  ret = (*h.cudaGetDeviceProperties)(&props, i);
+  if (ret != CUDART_SUCCESS) {
+    LOG(h.verbose, "[%d] device properties lookup failure: %d\n", i, ret);
+    snprintf(&resp->gpu_id[0], GPU_ID_LEN, "%d", i);
+    resp->major = 0;
+    resp->minor = 0;
   } else {
-    resp->count = (unsigned int)deviceCount;
-  }
-
-  resp->total = 0;
-  resp->free = 0;
-  for (i = 0; i < resp-> count; i++) {  
-    ret = (*h.cudaSetDevice)(i);
-    if (ret != CUDART_SUCCESS) {
-      snprintf(buf, buflen, "cudart device failed to initialize");
-      resp->err = strdup(buf);
-      return;
+    int allNull = 1;
+    for (int j = 0; j < 16; j++) {
+      if (props.uuid.bytes[j] != 0) {
+        allNull = 0;
+        break;
+      }
     }
-    ret = (*h.cudaMemGetInfo)(&memInfo.free, &memInfo.total);
-    if (ret != CUDART_SUCCESS) {
-      snprintf(buf, buflen, "cudart device memory info lookup failure %d", ret);
-      resp->err = strdup(buf);
-      return;
+    if (allNull != 0) {
+      snprintf(&resp->gpu_id[0], GPU_ID_LEN, "%d", i);
+    } else {
+      // GPU-d110a105-ac29-1d54-7b49-9c90440f215b
+      snprintf(&resp->gpu_id[0], GPU_ID_LEN,
+          "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+          props.uuid.bytes[0],
+          props.uuid.bytes[1],
+          props.uuid.bytes[2],
+          props.uuid.bytes[3],
+          props.uuid.bytes[4],
+          props.uuid.bytes[5],
+          props.uuid.bytes[6],
+          props.uuid.bytes[7],
+          props.uuid.bytes[8],
+          props.uuid.bytes[9],
+          props.uuid.bytes[10],
+          props.uuid.bytes[11],
+          props.uuid.bytes[12],
+          props.uuid.bytes[13],
+          props.uuid.bytes[14],
+          props.uuid.bytes[15]
+        );
     }
+    resp->major = props.major;
+    resp->minor = props.minor;
 
-    LOG(h.verbose, "[%d] CUDA totalMem %lu\n", i, memInfo.total);
-    LOG(h.verbose, "[%d] CUDA freeMem %lu\n", i, memInfo.free);
-
-    resp->total += memInfo.total;
-    resp->free += memInfo.free;
+    // TODO add other useful properties from props
   }
-}
-
-void cudart_compute_capability(cudart_handle_t h, cudart_compute_capability_t *resp) {
-  resp->err = NULL;
-  resp->major = 0;
-  resp->minor = 0;
-  int major = 0;
-  int minor = 0;
-  cudartReturn_t ret;
-  const int buflen = 256;
-  char buf[buflen + 1];
-  int i;
-
-  if (h.handle == NULL) {
-    resp->err = strdup("cudart handle not initialized");
-    return;
-  }
-
-  int devices;
-  ret = (*h.cudaGetDeviceCount)(&devices);
+  ret = (*h.cudaMemGetInfo)(&memInfo.free, &memInfo.total);
   if (ret != CUDART_SUCCESS) {
-    snprintf(buf, buflen, "unable to get cudart device count: %d", ret);
+    snprintf(buf, buflen, "cudart device memory info lookup failure %d", ret);
     resp->err = strdup(buf);
     return;
   }
 
-  for (i = 0; i < devices; i++) {
-    ret = (*h.cudaSetDevice)(i);
-    if (ret != CUDART_SUCCESS) {
-      snprintf(buf, buflen, "cudart device failed to initialize");
-      resp->err = strdup(buf);
-      return;
-    }
+  resp->total = memInfo.total;
+  resp->free = memInfo.free;
 
-    ret = (*h.cudaDeviceGetAttribute)(&major, cudartDevAttrComputeCapabilityMajor, i);
-    if (ret != CUDART_SUCCESS) {
-      snprintf(buf, buflen, "device compute capability lookup failure %d: %d", i, ret);
-      resp->err = strdup(buf);
-      return;
-    }
-    ret = (*h.cudaDeviceGetAttribute)(&minor, cudartDevAttrComputeCapabilityMinor, i);
-    if (ret != CUDART_SUCCESS) {
-      snprintf(buf, buflen, "device compute capability lookup failure %d: %d", i, ret);
-      resp->err = strdup(buf);
-      return;
-    }
-      
-    // Report the lowest major.minor we detect as that limits our compatibility
-    if (resp->major == 0 || resp->major > major ) {
-      resp->major = major;
-      resp->minor = minor;
-    } else if ( resp->major == major && resp->minor > minor ) {
-      resp->minor = minor;
-    }
-  }
+  LOG(h.verbose, "[%s] CUDA totalMem %lu\n", resp->gpu_id, resp->total);
+  LOG(h.verbose, "[%s] CUDA freeMem %lu\n", resp->gpu_id, resp->free);
+  LOG(h.verbose, "[%s] Compute Capability %d.%d\n", resp->gpu_id, resp->major, resp->minor);
 }
 
 void cudart_release(cudart_handle_t h) {
