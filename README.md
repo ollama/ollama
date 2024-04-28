@@ -47,20 +47,18 @@ Ollama supports a list of models available on [ollama.com/library](https://ollam
 
 Here are some example models that can be downloaded:
 
-| Model       | Parameters | Size | Download            |
-| ------------------ | ---------- | ----- | ------------------------------ |
-| Llama 3      | 8B     | 4.7GB | `ollama run llama3`      |
-| Llama 3      | 70B    | 40GB | `ollama run llama3:70b`    |
-| Phi-3       | 3.8B    | 2.3GB | `ollama run phi3`       |
-| Mistral      | 7B     | 4.1GB | `ollama run mistral`      |
-| Neural Chat    | 7B     | 4.1GB | `ollama run neural-chat`    |
-| Starling      | 7B     | 4.1GB | `ollama run starling-lm`    |
-| Code Llama     | 7B     | 3.8GB | `ollama run codellama`     |
-| Llama 2 Uncensored | 7B     | 3.8GB | `ollama run llama2-uncensored` |
-| LLaVA       | 7B     | 4.5GB | `ollama run llava`       |
-| Gemma       | 2B     | 1.4GB | `ollama run gemma:2b`     |
-| Gemma       | 7B     | 4.8GB | `ollama run gemma:7b`     |
-| Solar       | 10.7B   | 6.1GB | `ollama run solar`       |
+| Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
+| Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
+| Phi-3              | 3,8B       | 2.3GB | `ollama run phi3`              |
+| Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
+| Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
+| Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
+| Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
+| Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
+| LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
+| Gemma              | 2B         | 1.4GB | `ollama run gemma:2b`          |
+| Gemma              | 7B         | 4.8GB | `ollama run gemma:7b`          |
+| Solar              | 10.7B      | 6.1GB | `ollama run solar`             |
 
 > Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
@@ -72,21 +70,21 @@ Ollama supports importing GGUF models in the Modelfile:
 
 1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
 
-  ```
-  FROM ./vicuna-33b.Q4_0.gguf
-  ```
+   ```
+   FROM ./vicuna-33b.Q4_0.gguf
+   ```
 
 2. Create the model in Ollama
 
-  ```
-  ollama create example -f Modelfile
-  ```
+   ```
+   ollama create example -f Modelfile
+   ```
 
 3. Run the model
 
-  ```
-  ollama run example
-  ```
+   ```
+   ollama run example
+   ```
 
 ### Import from PyTorch or Safetensors
 
@@ -234,19 +232,18 @@ Ollama has a REST API for running and managing models.
 
 ```
 curl http://localhost:11434/api/generate -d '{
- "model": "llama3",
- "prompt":"Why is the sky blue?"
-}'
+  "model": "llama3",
+  "prompt":"Why is the sky blue?"}'
 ```
 
 ### Chat with a model
 
 ```
 curl http://localhost:11434/api/chat -d '{
- "model": "llama3",
- "messages": [
-  { "role": "user", "content": "Why is the sky blue?" }
- ]
+  "model": "llama3",
+  "messages": [
+    { "role": "user", "content": "why is the sky blue?" }
+  ]
 }'
 ```
 
