@@ -62,7 +62,12 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 
 	logDir := filepath.Dir(ServerLogFile)
 	_, err = os.Stat(logDir)
-	if errors.Is(err, os.ErrNotExist) {
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("stat ollama server log dir %s: %v", logDir, err)
+
+		}
+
 		if err := os.MkdirAll(logDir, 0o755); err != nil {
 			return nil, fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
 		}
