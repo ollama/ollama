@@ -296,6 +296,10 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 	runner.refCount++
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	runner.sessionDuration = pending.sessionDuration
 	pending.successCh <- runner
 	go func() {
