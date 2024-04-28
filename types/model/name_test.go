@@ -103,6 +103,8 @@ func TestParseNameParts(t *testing.T) {
 var testCases = map[string]bool{ // name -> valid
 	"": false,
 
+	"_why/_the/_lucky:_stiff": true,
+
 	// minimal
 	"h/n/m:t@d": true,
 
@@ -167,7 +169,6 @@ func TestNameIsValid(t *testing.T) {
 	var numStringTests int
 	for s, want := range testCases {
 		n := ParseNameBare(s)
-		t.Logf("n: %#v", n)
 		got := n.IsValid()
 		if got != want {
 			t.Errorf("parseName(%q).IsValid() = %v; want %v", s, got, want)

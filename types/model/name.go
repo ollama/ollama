@@ -109,19 +109,19 @@ type Name struct {
 //		  { model }
 //		  "@" { digest }
 //	  host:
-//	      pattern: alphanum { alphanum | "-" | "_" | "." | ":" }*
+//	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." | ":" }*
 //	      length:  [1, 350]
 //	  namespace:
-//	      pattern: alphanum { alphanum | "-" | "_" }*
+//	      pattern: { alphanum | "_" } { alphanum | "-" | "_" }*
 //	      length:  [1, 80]
 //	  model:
-//	      pattern: alphanum { alphanum | "-" | "_" | "." }*
+//	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." }*
 //	      length:  [1, 80]
 //	  tag:
-//	      pattern: alphanum { alphanum | "-" | "_" | "." }*
+//	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." }*
 //	      length:  [1, 80]
 //	  digest:
-//	      pattern: alphanum { alphanum | "-" | ":" }*
+//	      pattern: { alphanum | "_" } { alphanum | "-" | ":" }*
 //	      length:  [1, 80]
 //
 // Most users should use [ParseName] instead, unless need to support
@@ -264,7 +264,7 @@ func isValidPart(kind partKind, s string) bool {
 	}
 	for i := range s {
 		if i == 0 {
-			if !isAlphanumeric(s[i]) {
+			if !isAlphanumericOrUnderscore(s[i]) {
 				return false
 			}
 			continue
@@ -280,7 +280,7 @@ func isValidPart(kind partKind, s string) bool {
 				return false
 			}
 		default:
-			if !isAlphanumeric(s[i]) {
+			if !isAlphanumericOrUnderscore(s[i]) {
 				return false
 			}
 		}
@@ -288,8 +288,8 @@ func isValidPart(kind partKind, s string) bool {
 	return true
 }
 
-func isAlphanumeric(c byte) bool {
-	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
+func isAlphanumericOrUnderscore(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_'
 }
 
 func cutLast(s, sep string) (before, after string, ok bool) {
