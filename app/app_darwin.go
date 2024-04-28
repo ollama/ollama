@@ -1,7 +1,7 @@
 package main
 
-// #cgo CFLAGS: -x objective-c -Wno-deprecated-declarations
-// #cgo LDFLAGS: -framework Cocoa -framework LocalAuthentication
+// #cgo CFLAGS: -x objective-c
+// #cgo LDFLAGS: -framework Cocoa -framework LocalAuthentication -framework ServiceManagement
 // #include "app_darwin.h"
 import "C"
 import (
@@ -26,7 +26,18 @@ func run() {
 	initLogging()
 	slog.Info("ollama macOS app started")
 
+	// Ask to move to applications directory
+	moving := C.askToMoveToApplications()
+	if moving {
+		return
+	}
+
 	C.killOtherInstances()
+
+	code := C.installSymlink()
+	if code != 0 {
+		slog.Error("Failed to install symlink")
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
