@@ -47,6 +47,8 @@ Ollama supports a list of models available on [ollama.com/library](https://ollam
 
 Here are some example models that can be downloaded:
 
+| Model              | Parameters | Size  | Download                       |
+| ------------------ | ---------- | ----- | ------------------------------ |
 | Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
 | Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
 | Phi-3              | 3,8B       | 2.3GB | `ollama run phi3`              |
@@ -175,7 +177,7 @@ The image features a yellow smiley face, which is likely the central focus of th
 
 ```
 $ ollama run llama3 "Summarize this file: $(cat README.md)"
- Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
+ Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
 ### List models on your computer
@@ -380,5 +382,5 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
 
-### Supported backends 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov. 
+### Supported backends 
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov. 
