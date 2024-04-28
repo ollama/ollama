@@ -43,36 +43,21 @@ func getCLIFullPath(command string) string {
 	return command
 }
 
-func SpawnServer(ctx context.Context, command string) (chan int, error) {
-	done := make(chan int)
-
-	logDir := filepath.Dir(ServerLogFile)
-	_, err := os.Stat(logDir)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(logDir, 0o755); err != nil {
-			return done, fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
-		}
-	}
-
+func start(ctx context.Context, command string) (*exec.Cmd, error) {
 	cmd := getCmd(ctx, getCLIFullPath(command))
-	// send stdout and stderr to a file
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return done, fmt.Errorf("failed to spawn server stdout pipe %s", err)
+		return nil, fmt.Errorf("failed to spawn server stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return done, fmt.Errorf("failed to spawn server stderr pipe %s", err)
-	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return done, fmt.Errorf("failed to spawn server stdin pipe %s", err)
+		return nil, fmt.Errorf("failed to spawn server stderr pipe: %w", err)
 	}
 
 	// TODO - rotation
 	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
 	if err != nil {
-		return done, fmt.Errorf("failed to create server log %w", err)
+		return nil, fmt.Errorf("failed to create server log: %w", err)
 	}
 	go func() {
 		defer logFile.Close()
@@ -117,19 +102,38 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 
 	// run the command and wait for it to finish
 	if err := cmd.Start(); err != nil {
-		return done, fmt.Errorf("failed to start server %w", err)
+		return nil, fmt.Errorf("failed to start server %w", err)
 	}
 	if cmd.Process != nil {
 		slog.Info(fmt.Sprintf("started ollama server with pid %d", cmd.Process.Pid))
 	}
 	slog.Info(fmt.Sprintf("ollama server logs %s", ServerLogFile))
 
+	return cmd, nil
+}
+
+func SpawnServer(ctx context.Context, command string) (chan int, error) {
+	logDir := filepath.Dir(ServerLogFile)
+	_, err := os.Stat(logDir)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
+		}
+	}
+
+	done := make(chan int)
+
 	go func() {
 		// Keep the server running unless we're shuttind down the app
 		crashCount := 0
 		for {
+			slog.Info(fmt.Sprintf("starting server..."))
+			cmd, err := start(ctx, command)
+			if err != nil {
+				slog.Error(fmt.Sprintf("failed to start server %s", err))
+			}
+
 			cmd.Wait() //nolint:errcheck
-			stdin.Close()
 			var code int
 			if cmd.ProcessState != nil {
 				code = cmd.ProcessState.ExitCode()
@@ -143,15 +147,12 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 			default:
 				crashCount++
 				slog.Warn(fmt.Sprintf("server crash %d - exit code %d - respawning", crashCount, code))
-				time.Sleep(500 * time.Millisecond)
-				if err := cmd.Start(); err != nil {
-					slog.Error(fmt.Sprintf("failed to restart server %s", err))
-					// Keep trying, but back off if we keep failing
-					time.Sleep(time.Duration(crashCount) * time.Second)
-				}
+				time.Sleep(500 * time.Millisecond * time.Duration(crashCount))
+				break
 			}
 		}
 	}()
+
 	return done, nil
 }
 
