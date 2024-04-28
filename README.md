@@ -235,7 +235,8 @@ Ollama has a REST API for running and managing models.
 ```
 curl http://localhost:11434/api/generate -d '{
   "model": "llama3",
-  "prompt":"Why is the sky blue?"}'
+  "prompt":"Why is the sky blue?"
+}'
 ```
 
 ### Chat with a model
