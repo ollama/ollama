@@ -44,10 +44,12 @@ func run() {
 		panic(err)
 	}
 
+	var options ServerOptions
+
 	ctx, cancel := context.WithCancel(context.Background())
 	var done chan int
 
-	done, err = SpawnServer(ctx, filepath.Join(filepath.Dir(exe), "..", "Resources", "ollama"))
+	done, err = SpawnServer(ctx, filepath.Join(filepath.Dir(exe), "..", "Resources", "ollama"), options)
 	if err != nil {
 		slog.Error(fmt.Sprintf("Failed to spawn ollama server %s", err))
 		done = make(chan int, 1)

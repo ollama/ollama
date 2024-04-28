@@ -14,8 +14,28 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func start(ctx context.Context, command string) (*exec.Cmd, error) {
+type ServerOptions struct {
+	Cors       bool
+	Expose     bool
+	ModelsPath string
+}
+
+func start(ctx context.Context, command string, options ServerOptions) (*exec.Cmd, error) {
 	cmd := getCmd(ctx, command)
+
+	// set environment variables
+	if options.ModelsPath != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("OLLAMA_MODELS=%s", options.ModelsPath))
+	}
+
+	if options.Cors {
+		cmd.Env = append(cmd.Env, "OLLAMA_ORIGINS=*")
+	}
+
+	if options.Expose {
+		cmd.Env = append(cmd.Env, "OLLAMA_HOST=0.0.0.0")
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to spawn server stdout pipe: %w", err)
@@ -83,7 +103,7 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-func SpawnServer(ctx context.Context, command string) (chan int, error) {
+func SpawnServer(ctx context.Context, command string, options ServerOptions) (chan int, error) {
 	logDir := filepath.Dir(ServerLogFile)
 	_, err := os.Stat(logDir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -99,7 +119,7 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 		crashCount := 0
 		for {
 			slog.Info(fmt.Sprintf("starting server..."))
-			cmd, err := start(ctx, command)
+			cmd, err := start(ctx, command, options)
 			if err != nil {
 				slog.Error(fmt.Sprintf("failed to start server %s", err))
 			}

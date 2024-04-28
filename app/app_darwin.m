@@ -16,12 +16,82 @@
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
     // show status menu
     NSMenu *menu = [[NSMenu alloc] init];
+
+    NSMenuItem *aboutMenuItem = [[NSMenuItem alloc] initWithTitle:@"About Ollama" action:@selector(aboutOllama) keyEquivalent:@""];
+    [aboutMenuItem setTarget:self];
+    [menu addItem:aboutMenuItem];
+
+    // Settings submenu
+    NSMenu *settingsMenu = [[NSMenu alloc] initWithTitle:@"Settings"];
+
+    // Submenu items
+    NSMenuItem *chooseModelDirectoryItem = [[NSMenuItem alloc] initWithTitle:@"Choose model directory..." action:@selector(chooseModelDirectory) keyEquivalent:@""];
+    [chooseModelDirectoryItem setTarget:self];
+    [chooseModelDirectoryItem setEnabled:YES];
+    [settingsMenu addItem:chooseModelDirectoryItem];
+
+    NSMenuItem *exposeExternallyItem = [[NSMenuItem alloc] initWithTitle:@"Allow external connections" action:@selector(toggleExposeExternally:) keyEquivalent:@""];
+    [exposeExternallyItem setTarget:self];
+    [exposeExternallyItem setState:NSOffState]; // Set initial state to off
+    [exposeExternallyItem setEnabled:YES];
+    [settingsMenu addItem:exposeExternallyItem];
+
+    NSMenuItem *allowCrossOriginItem = [[NSMenuItem alloc] initWithTitle:@"Allow browser requests" action:@selector(toggleCrossOrigin:) keyEquivalent:@""];
+    [allowCrossOriginItem setTarget:self];
+    [allowCrossOriginItem setState:NSOffState]; // Set initial state to off
+    [allowCrossOriginItem setEnabled:YES];
+    [settingsMenu addItem:allowCrossOriginItem];
+
+    NSMenuItem *settingsMenuItem = [[NSMenuItem alloc] initWithTitle:@"Settings" action:nil keyEquivalent:@""];
+    [settingsMenuItem setSubmenu:settingsMenu];
+    [menu addItem:settingsMenuItem];
+
     [menu addItemWithTitle:@"Quit Ollama" action:@selector(quit) keyEquivalent:@"q"];
+
     self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
     [self.statusItem addObserver:self forKeyPath:@"button.effectiveAppearance" options:NSKeyValueObservingOptionNew|NSKeyValueObservingOptionInitial context:nil];
 
     self.statusItem.menu = menu;
     [self showIcon];
+}
+
+- (void)aboutOllama {
+    [[NSApplication sharedApplication] orderFrontStandardAboutPanel:nil];
+}
+
+- (void)toggleCrossOrigin:(id)sender {
+    NSMenuItem *item = (NSMenuItem *)sender;
+    if ([item state] == NSOffState) {
+        // Do something when cross-origin requests are allowed
+        [item setState:NSOnState];
+    } else {
+        // Do something when cross-origin requests are disallowed
+        [item setState:NSOffState];
+    }
+}
+
+- (void)toggleExposeExternally:(id)sender {
+    NSMenuItem *item = (NSMenuItem *)sender;
+    if ([item state] == NSOffState) {
+        // Do something when Ollama is exposed externally
+        [item setState:NSOnState];
+    } else {
+        // Do something when Ollama is not exposed externally
+        [item setState:NSOffState];
+    }
+}
+
+- (void)chooseModelDirectory {
+    NSOpenPanel *openPanel = [NSOpenPanel openPanel];
+    [openPanel setCanChooseFiles:NO];
+    [openPanel setCanChooseDirectories:YES];
+    [openPanel setAllowsMultipleSelection:NO];
+
+    NSInteger result = [openPanel runModal];
+    if (result == NSModalResponseOK) {
+        NSURL *selectedDirectoryURL = [openPanel URLs].firstObject;
+        // Do something with the selected directory URL
+    }
 }
 
 -(void) showIcon {
