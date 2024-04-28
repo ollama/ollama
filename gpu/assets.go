@@ -32,9 +32,25 @@ func PayloadsDir() (string, error) {
 				slog.Error("failed to lookup executable path", "error", err)
 				return "", err
 			}
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				slog.Error("failed to lookup working directory", "error", err)
+				return "", err
+			}
+
+			var paths []string
+			for _, root := range []string{appExe, cwd} {
+				paths = append(paths,
+					filepath.Join(root),
+					filepath.Join(root, "windows-"+runtime.GOARCH),
+					filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
+				)
+			}
+
 			// Try a few variations to improve developer experience when building from source in the local tree
-			for _, d := range []string{".", "windows-" + runtime.GOARCH, "dist\\windows-" + runtime.GOARCH} {
-				candidate := filepath.Join(filepath.Dir(appExe), d, "ollama_runners")
+			for _, p := range paths {
+				candidate := filepath.Join(p, "ollama_runners")
 				_, err := os.Stat(candidate)
 				if err == nil {
 					runnersDir = candidate
