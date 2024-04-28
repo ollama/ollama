@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+ <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
 
 # Ollama
@@ -47,20 +47,20 @@ Ollama supports a list of models available on [ollama.com/library](https://ollam
 
 Here are some example models that can be downloaded:
 
-| Model              | Parameters | Size  | Download                       |
+| Model       | Parameters | Size | Download            |
 | ------------------ | ---------- | ----- | ------------------------------ |
-| Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
-| Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
-| Phi-3              | 3,8B       | 2.3GB | `ollama run phi3`              |
-| Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
-| Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
-| Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
-| Code Llama         | 7B         | 3.8GB | `ollama run codellama`         |
-| Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored` |
-| LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
-| Gemma              | 2B         | 1.4GB | `ollama run gemma:2b`          |
-| Gemma              | 7B         | 4.8GB | `ollama run gemma:7b`          |
-| Solar              | 10.7B      | 6.1GB | `ollama run solar`             |
+| Llama 3      | 8B     | 4.7GB | `ollama run llama3`      |
+| Llama 3      | 70B    | 40GB | `ollama run llama3:70b`    |
+| Phi-3       | 3.8B    | 2.3GB | `ollama run phi3`       |
+| Mistral      | 7B     | 4.1GB | `ollama run mistral`      |
+| Neural Chat    | 7B     | 4.1GB | `ollama run neural-chat`    |
+| Starling      | 7B     | 4.1GB | `ollama run starling-lm`    |
+| Code Llama     | 7B     | 3.8GB | `ollama run codellama`     |
+| Llama 2 Uncensored | 7B     | 3.8GB | `ollama run llama2-uncensored` |
+| LLaVA       | 7B     | 4.5GB | `ollama run llava`       |
+| Gemma       | 2B     | 1.4GB | `ollama run gemma:2b`     |
+| Gemma       | 7B     | 4.8GB | `ollama run gemma:7b`     |
+| Solar       | 10.7B   | 6.1GB | `ollama run solar`       |
 
 > Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
@@ -72,21 +72,21 @@ Ollama supports importing GGUF models in the Modelfile:
 
 1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
 
-   ```
-   FROM ./vicuna-33b.Q4_0.gguf
-   ```
+  ```
+  FROM ./vicuna-33b.Q4_0.gguf
+  ```
 
 2. Create the model in Ollama
 
-   ```
-   ollama create example -f Modelfile
-   ```
+  ```
+  ollama create example -f Modelfile
+  ```
 
 3. Run the model
 
-   ```
-   ollama run example
-   ```
+  ```
+  ollama run example
+  ```
 
 ### Import from PyTorch or Safetensors
 
@@ -173,11 +173,11 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
-### Pass in prompt as arguments
+### Pass in the prompt as arguments
 
 ```
 $ ollama run llama3 "Summarize this file: $(cat README.md)"
- Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
+ Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
 ### List models on your computer
@@ -234,8 +234,8 @@ Ollama has a REST API for running and managing models.
 
 ```
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
-  "prompt":"Why is the sky blue?"
+ "model": "llama3",
+ "prompt":"Why is the sky blue?"
 }'
 ```
 
@@ -243,10 +243,10 @@ curl http://localhost:11434/api/generate -d '{
 
 ```
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
-  "messages": [
-    { "role": "user", "content": "why is the sky blue?" }
-  ]
+ "model": "llama3",
+ "messages": [
+  { "role": "user", "content": "Why is the sky blue?" }
+ ]
 }'
 ```
 
@@ -294,7 +294,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [RAGFlow: Open-source Retrieval-Augmented Generation engine based on deep document understanding](https://github.com/infiniflow/ragflow)
 - [chat: chat web app for teams](https://github.com/swuecho/chat)
 - [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
-- [Ollama RAG Chatbot: Local Chat with multiples PDFs using Ollama and RAG.](https://github.com/datvodinh/rag-chatbot.git)
+- [Ollama RAG Chatbot: Local Chat with multiple PDFs using Ollama and RAG.](https://github.com/datvodinh/rag-chatbot.git)
 
 ### Terminal
 
@@ -383,5 +383,5 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
 
-### Supported backends 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov. 
+### Supported backends 
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov. 
