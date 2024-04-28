@@ -59,6 +59,15 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server log: %w", err)
 	}
+
+	logDir := filepath.Dir(ServerLogFile)
+	_, err = os.Stat(logDir)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
+		}
+	}
+
 	go func() {
 		defer logFile.Close()
 		io.Copy(logFile, stdout) //nolint:errcheck
@@ -113,14 +122,6 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 }
 
 func SpawnServer(ctx context.Context, command string) (chan int, error) {
-	logDir := filepath.Dir(ServerLogFile)
-	_, err := os.Stat(logDir)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(logDir, 0o755); err != nil {
-			return nil, fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
-		}
-	}
-
 	done := make(chan int)
 
 	go func() {
