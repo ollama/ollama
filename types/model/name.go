@@ -113,16 +113,16 @@ type Name struct {
 //	      length:  [1, 350]
 //	  namespace:
 //	      pattern: alphanum { alphanum | "-" | "_" }*
-//	      length:  [2, 80]
+//	      length:  [1, 80]
 //	  model:
 //	      pattern: alphanum { alphanum | "-" | "_" | "." }*
-//	      length:  [2, 80]
+//	      length:  [1, 80]
 //	  tag:
 //	      pattern: alphanum { alphanum | "-" | "_" | "." }*
 //	      length:  [1, 80]
 //	  digest:
 //	      pattern: alphanum { alphanum | "-" | ":" }*
-//	      length:  [2, 80]
+//	      length:  [1, 80]
 //
 // Most users should use [ParseName] instead, unless need to support
 // different defaults than DefaultName.
@@ -254,7 +254,7 @@ func isValidLen(kind partKind, s string) bool {
 	case kindTag:
 		return len(s) >= 1 && len(s) <= 80
 	default:
-		return len(s) >= 2 && len(s) <= 80
+		return len(s) >= 1 && len(s) <= 80
 	}
 }
 
