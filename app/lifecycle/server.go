@@ -130,7 +130,10 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 			slog.Info("starting server...")
 			cmd, err := start(ctx, command)
 			if err != nil {
+				crashCount++
 				slog.Error(fmt.Sprintf("failed to start server %s", err))
+				time.Sleep(500 * time.Millisecond * time.Duration(crashCount))
+				continue
 			}
 
 			cmd.Wait() //nolint:errcheck
