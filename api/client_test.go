@@ -1,6 +1,12 @@
 package api
 
-import "testing"
+import (
+	"fmt"
+	"net"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestClientFromEnvironment(t *testing.T) {
 	type testCase struct {
@@ -64,13 +70,14 @@ func TestClientFromEnvironment(t *testing.T) {
 		t.Run(k, func(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", v.value)
 
-			client, err := ClientFromEnvironment()
+			oh, err := GetOllamaHost()
 			if err != v.err {
 				t.Fatalf("expected %s, got %s", v.err, err)
 			}
 
-			if client != nil && client.GetHost() != v.expect {
-				t.Fatalf("expected %s, got %s", v.expect, client.GetHost())
+			if err == nil {
+				host := net.JoinHostPort(oh.Host, oh.Port)
+				assert.Equal(t, v.expect, host, fmt.Sprintf("%s: expected %s, got %s", k, v.expect, host))
 			}
 		})
 	}

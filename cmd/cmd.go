@@ -832,7 +832,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 
 func RunServer(cmd *cobra.Command, _ []string) error {
 	// retrieve the OLLAMA_HOST environment variable
-	client, err := api.ClientFromEnvironment()
+	ollamaHost, err := api.GetOllamaHost()
 	if err != nil {
 		return err
 	}
@@ -841,7 +841,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", client.GetHost())
+	ln, err := net.Listen("tcp", net.JoinHostPort(ollamaHost.Host, ollamaHost.Port))
 	if err != nil {
 		return err
 	}

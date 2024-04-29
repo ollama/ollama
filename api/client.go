@@ -58,6 +58,27 @@ func checkError(resp *http.Response, body []byte) error {
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
+	ollamaHost, err := GetOllamaHost()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		base: &url.URL{
+			Scheme: ollamaHost.Scheme,
+			Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
+		},
+		http: http.DefaultClient,
+	}, nil
+}
+
+type OllamaHost struct {
+	Scheme string
+	Host   string
+	Port   string
+}
+
+func GetOllamaHost() (OllamaHost, error) {
 	defaultPort := "11434"
 
 	hostVar := os.Getenv("OLLAMA_HOST")
@@ -87,15 +108,13 @@ func ClientFromEnvironment() (*Client, error) {
 	}
 
 	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 0 {
-		return nil, ErrInvalidHostPort
+		return OllamaHost{}, ErrInvalidHostPort
 	}
 
-	return &Client{
-		base: &url.URL{
-			Scheme: scheme,
-			Host:   net.JoinHostPort(host, port),
-		},
-		http: http.DefaultClient,
+	return OllamaHost{
+		Scheme: scheme,
+		Host:   host,
+		Port:   port,
 	}, nil
 }
 
@@ -104,10 +123,6 @@ func NewClient(base *url.URL, http *http.Client) *Client {
 		base: base,
 		http: http,
 	}
-}
-
-func (c *Client) GetHost() string {
-	return c.base.Host
 }
 
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
