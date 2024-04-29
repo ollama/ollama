@@ -1,103 +1,87 @@
 package llm
 
+// #cgo CFLAGS: -Illama.cpp
+// #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/build/darwin/arm64_static/libllama.a -lstdc++
+// #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/build/darwin/x86_64_static/libllama.a -lstdc++
+// #cgo windows,amd64 LDFLAGS: ${SRCDIR}/build/windows/amd64_static/libllama.a -static -lstdc++
+// #cgo windows,arm64 LDFLAGS: ${SRCDIR}/build/windows/arm64_static/libllama.a -static -lstdc++
+// #cgo linux,amd64 LDFLAGS: ${SRCDIR}/build/linux/x86_64_static/libllama.a -lstdc++
+// #cgo linux,arm64 LDFLAGS: ${SRCDIR}/build/linux/arm64_static/libllama.a -lstdc++
+// #include <stdlib.h>
+// #include "llama.h"
+import "C"
 import (
-	"context"
 	"fmt"
-	"log"
-	"os"
-	"runtime"
-
-	"github.com/pbnjay/memory"
-
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/format"
-	"github.com/jmorganca/ollama/gpu"
+	"unsafe"
 )
 
-type LLM interface {
-	Predict(context.Context, PredictOpts, func(PredictResult)) error
-	Embedding(context.Context, string) ([]float64, error)
-	Encode(context.Context, string) ([]int, error)
-	Decode(context.Context, []int) (string, error)
-	Close()
+// SystemInfo is an unused example of calling llama.cpp functions using CGo
+func SystemInfo() string {
+	return C.GoString(C.llama_print_system_info())
 }
 
-var AvailableShims = map[string]string{}
+func Quantize(infile, outfile, filetype string) error {
+	cinfile := C.CString(infile)
+	defer C.free(unsafe.Pointer(cinfile))
 
-func New(workDir, model string, adapters, projectors []string, opts api.Options) (LLM, error) {
-	if _, err := os.Stat(model); err != nil {
-		return nil, err
+	coutfile := C.CString(outfile)
+	defer C.free(unsafe.Pointer(coutfile))
+
+	params := C.llama_model_quantize_default_params()
+	params.nthread = -1
+
+	switch filetype {
+	case "F32":
+		params.ftype = fileTypeF32
+	case "F16":
+		params.ftype = fileTypeF16
+	case "Q4_0":
+		params.ftype = fileTypeQ4_0
+	case "Q4_1":
+		params.ftype = fileTypeQ4_1
+	case "Q4_1_F16":
+		params.ftype = fileTypeQ4_1_F16
+	case "Q8_0":
+		params.ftype = fileTypeQ8_0
+	case "Q5_0":
+		params.ftype = fileTypeQ5_0
+	case "Q5_1":
+		params.ftype = fileTypeQ5_1
+	case "Q2_K":
+		params.ftype = fileTypeQ2_K
+	case "Q3_K_S":
+		params.ftype = fileTypeQ3_K_S
+	case "Q3_K_M":
+		params.ftype = fileTypeQ3_K_M
+	case "Q3_K_L":
+		params.ftype = fileTypeQ3_K_L
+	case "Q4_K_S":
+		params.ftype = fileTypeQ4_K_S
+	case "Q4_K_M":
+		params.ftype = fileTypeQ4_K_M
+	case "Q5_K_S":
+		params.ftype = fileTypeQ5_K_S
+	case "Q5_K_M":
+		params.ftype = fileTypeQ5_K_M
+	case "Q6_K":
+		params.ftype = fileTypeQ6_K
+	case "IQ2_XXS":
+		params.ftype = fileTypeIQ2_XXS
+	case "IQ2_XS":
+		params.ftype = fileTypeIQ2_XS
+	case "Q2_K_S":
+		params.ftype = fileTypeQ2_K_S
+	case "Q3_K_XS":
+		params.ftype = fileTypeQ3_K_XS
+	case "IQ3_XXS":
+		params.ftype = fileTypeIQ3_XXS
+	default:
+		return fmt.Errorf("unknown filetype: %s", filetype)
 	}
 
-	f, err := os.Open(model)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	ggml, err := DecodeGGML(f)
-	if err != nil {
-		return nil, err
+	if retval := C.llama_model_quantize(cinfile, coutfile, &params); retval != 0 {
+		return fmt.Errorf("llama_model_quantize: %d", retval)
 	}
 
-	if runtime.GOOS == "darwin" {
-		switch ggml.FileType() {
-		case "F32", "Q5_0", "Q5_1", "Q8_0":
-			if ggml.Name() != "gguf" && opts.NumGPU != 0 {
-				// GGML Q8_0 do not support Metal API and will
-				// cause the runner to segmentation fault so disable GPU
-				log.Printf("WARNING: GPU disabled for F32, Q5_0, Q5_1, and Q8_0")
-				opts.NumGPU = 0
-			}
-		}
-
-		var requiredMemory int64
-		var f16Multiplier int64 = 2
-
-		switch ggml.ModelType() {
-		case "3B", "7B":
-			requiredMemory = 8 * format.GigaByte
-		case "13B":
-			requiredMemory = 16 * format.GigaByte
-		case "30B", "34B", "40B":
-			requiredMemory = 32 * format.GigaByte
-		case "65B", "70B":
-			requiredMemory = 64 * format.GigaByte
-		case "180B":
-			requiredMemory = 128 * format.GigaByte
-			f16Multiplier = 4
-		}
-
-		systemMemory := int64(memory.TotalMemory())
-
-		if ggml.FileType() == "F16" && requiredMemory*f16Multiplier > systemMemory {
-			return nil, fmt.Errorf("F16 model requires at least %s of total memory", format.HumanBytes(requiredMemory))
-		} else if requiredMemory > systemMemory {
-			return nil, fmt.Errorf("model requires at least %s of total memory", format.HumanBytes(requiredMemory))
-		}
-	}
-
-	opts.NumGQA = 0
-	opts.RopeFrequencyBase = 0.0
-	opts.RopeFrequencyScale = 0.0
-	gpuInfo := gpu.GetGPUInfo()
-	return newLlmServer(gpuInfo.Library, model, adapters, projectors, ggml.NumLayers(), opts)
-}
-
-// Give any native cgo implementations an opportunity to initialize
-func Init(workdir string) error {
-	return nativeInit(workdir)
-}
-
-func newLlmServer(library, model string, adapters, projectors []string, numLayers int64, opts api.Options) (extServer, error) {
-	if _, libPresent := AvailableShims[library]; libPresent && library != "default" {
-		srv, err := newDynamicShimExtServer(AvailableShims[library], model, adapters, projectors, numLayers, opts)
-		if err == nil {
-			return srv, nil
-		}
-		log.Printf("Failed to load dynamic library - falling back to CPU mode %s", err)
-	}
-
-	return newDefaultExtServer(model, adapters, projectors, numLayers, opts)
-
+	return nil
 }

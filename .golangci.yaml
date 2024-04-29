@@ -1,0 +1,17 @@
+run:
+  timeout: 5m
+linters:
+  enable:
+    - asasalint
+    - bidichk
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - exportloopref
+    - gocheckcompilerdirectives
+    # FIXME: for some reason this errors on windows
+    # - gofmt
+    # - goimports
+    - misspell
+    - nilerr
+    - unused

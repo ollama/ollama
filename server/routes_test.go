@@ -3,27 +3,23 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/version"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/version"
 )
-
-func setupServer(t *testing.T) (*Server, error) {
-	t.Helper()
-
-	return NewServer()
-}
 
 func Test_Routes(t *testing.T) {
 	type testCase struct {
@@ -35,13 +31,22 @@ func Test_Routes(t *testing.T) {
 	}
 
 	createTestFile := func(t *testing.T, name string) string {
+		t.Helper()
+
 		f, err := os.CreateTemp(t.TempDir(), name)
 		assert.Nil(t, err)
 		defer f.Close()
 
-		_, err = f.Write([]byte("GGUF"))
+		err = binary.Write(f, binary.LittleEndian, []byte("GGUF"))
 		assert.Nil(t, err)
-		_, err = f.Write([]byte{0x2, 0})
+
+		err = binary.Write(f, binary.LittleEndian, uint32(3))
+		assert.Nil(t, err)
+
+		err = binary.Write(f, binary.LittleEndian, uint64(0))
+		assert.Nil(t, err)
+
+		err = binary.Write(f, binary.LittleEndian, uint64(0))
 		assert.Nil(t, err)
 
 		return f.Name()
@@ -50,13 +55,13 @@ func Test_Routes(t *testing.T) {
 	createTestModel := func(t *testing.T, name string) {
 		fname := createTestFile(t, "ollama-model")
 
-		modelfile := strings.NewReader(fmt.Sprintf("FROM %s", fname))
+		modelfile := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
 		commands, err := parser.Parse(modelfile)
 		assert.Nil(t, err)
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
 		}
-		err = CreateModel(context.TODO(), name, "", commands, fn)
+		err = CreateModel(context.TODO(), name, "", "", commands, fn)
 		assert.Nil(t, err)
 	}
 
@@ -167,11 +172,45 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, "beefsteak:latest", model.ShortName)
 			},
 		},
+		{
+			Name:   "Show Model Handler",
+			Method: http.MethodPost,
+			Path:   "/api/show",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "show-model")
+				showReq := api.ShowRequest{Model: "show-model"}
+				jsonData, err := json.Marshal(showReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, contentType, "application/json; charset=utf-8")
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+
+				var showResp api.ShowResponse
+				err = json.Unmarshal(body, &showResp)
+				assert.Nil(t, err)
+
+				var params []string
+				paramsSplit := strings.Split(showResp.Parameters, "\n")
+				for _, p := range paramsSplit {
+					params = append(params, strings.Join(strings.Fields(p), " "))
+				}
+				sort.Strings(params)
+				expectedParams := []string{
+					"seed 42",
+					"stop \"bar\"",
+					"stop \"foo\"",
+					"top_p 0.9",
+				}
+				assert.Equal(t, expectedParams, params)
+			},
+		},
 	}
 
-	s, err := setupServer(t)
-	assert.Nil(t, err)
-
+	s := &Server{}
 	router := s.GenerateRoutes()
 
 	httpSrv := httptest.NewServer(router)
@@ -193,13 +232,12 @@ func Test_Routes(t *testing.T) {
 		}
 
 		resp, err := httpSrv.Client().Do(req)
-		defer resp.Body.Close()
 		assert.Nil(t, err)
+		defer resp.Body.Close()
 
 		if tc.Expected != nil {
 			tc.Expected(t, resp)
 		}
 
 	}
-
 }

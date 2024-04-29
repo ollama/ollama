@@ -9,12 +9,20 @@ import (
 
 func TestBasicGetGPUInfo(t *testing.T) {
 	info := GetGPUInfo()
-	assert.Contains(t, "CUDA ROCM CPU METAL", info.Driver)
+	assert.Greater(t, len(info), 0)
+	assert.Contains(t, "cuda rocm cpu metal", info[0].Library)
+	if info[0].Library != "cpu" {
+		assert.Greater(t, info[0].TotalMemory, uint64(0))
+		assert.Greater(t, info[0].FreeMemory, uint64(0))
+	}
+}
 
+func TestCPUMemInfo(t *testing.T) {
+	info, err := GetCPUMem()
+	assert.NoError(t, err)
 	switch runtime.GOOS {
 	case "darwin":
-		// TODO - remove this once MacOS returns some size for CPU
-		return
+		t.Skip("CPU memory not populated on darwin")
 	case "linux", "windows":
 		assert.Greater(t, info.TotalMemory, uint64(0))
 		assert.Greater(t, info.FreeMemory, uint64(0))
