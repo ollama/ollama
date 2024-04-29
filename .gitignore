@@ -12,3 +12,4 @@ ggml-metal.metal
 test_data
 *.crt
 llm/build
+__debug_bin*
