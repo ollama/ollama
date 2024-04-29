@@ -63,6 +63,7 @@ func TestClientFromEnvironment(t *testing.T) {
 		"ipv6 + port":         {value: "[::1]:1337", expect: "[::1]:1337"},
 		"extra space":         {value: " 1.2.3.4 ", expect: "1.2.3.4:11434"},
 		"extra quotes":        {value: "\"1.2.3.4\"", expect: "1.2.3.4:11434"},
+		"extra space+quotes":  {value: " \" 1.2.3.4 \" ", expect: "1.2.3.4:11434"},
 		"extra single quotes": {value: "'1.2.3.4'", expect: "1.2.3.4:11434"},
 	}
 

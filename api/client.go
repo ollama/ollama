@@ -82,7 +82,7 @@ func GetOllamaHost() (OllamaHost, error) {
 	defaultPort := "11434"
 
 	hostVar := os.Getenv("OLLAMA_HOST")
-	hostVar = strings.Trim(strings.TrimSpace(hostVar), "\"'")
+	hostVar = strings.TrimSpace(strings.Trim(strings.TrimSpace(hostVar), "\"'"))
 
 	scheme, hostport, ok := strings.Cut(hostVar, "://")
 	switch {
