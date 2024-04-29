@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -70,7 +69,7 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	req.Header.Set("Authorization", signature)
 	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 
-	slog.Debug("checking for available update", "requestURL", requestURL)
+	slog.Info("checking for available update", "requestURL", requestURL)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to check for update: %s", err))
@@ -104,60 +103,63 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 }
 
 func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
-	// Do a head first to check etag info
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, updateResp.UpdateURL, nil)
+	etagfilename := filepath.Join(UpdateStageDir, updateResp.UpdateVersion, "etag")
+
+	// parse the base of the url for the filename
+	u, err := url.Parse(updateResp.UpdateURL)
+	if err != nil {
+		return fmt.Errorf("could not parse update url: %w", err)
+	}
+
+	var etag string
+	filename := filepath.Join(UpdateStageDir, updateResp.UpdateVersion, filepath.Base(u.Path))
+	_, err = os.Stat(filename)
+	if err == nil {
+		file, err := os.Open(etagfilename)
+		if err == nil {
+			content, err := io.ReadAll(file)
+			if err != nil {
+				return fmt.Errorf("could not read etag file: %w", err)
+			}
+
+			etag = string(content)
+			file.Close()
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, updateResp.UpdateURL, nil)
 	if err != nil {
 		return err
 	}
 
+	if etag != "" {
+		req.Header.Set("If-None-Match", "\""+etag+"\"")
+	}
+
+	slog.Info("sending update request", "url", req.URL.String())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("error checking update: %w", err)
 	}
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
-	}
-	resp.Body.Close()
-	etag := strings.Trim(resp.Header.Get("etag"), "\"")
-	if etag == "" {
-		slog.Debug("no etag detected, falling back to filename based dedup")
-		etag = "_"
-	}
-	filename := Installer
-	_, params, err := mime.ParseMediaType(resp.Header.Get("content-disposition"))
-	if err == nil {
-		filename = params["filename"]
-	}
+	defer resp.Body.Close()
 
-	stageFilename := filepath.Join(UpdateStageDir, etag, filename)
-
-	// Check to see if we already have it downloaded
-	_, err = os.Stat(stageFilename)
-	if err == nil {
+	if resp.StatusCode == 304 {
 		slog.Info("update already downloaded")
 		return nil
 	}
 
+	slog.Info("got status", "status", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
+	}
+
 	cleanupOldDownloads()
 
-	req.Method = http.MethodGet
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error checking update: %w", err)
-	}
-	defer resp.Body.Close()
-	etag = strings.Trim(resp.Header.Get("etag"), "\"")
-	if etag == "" {
-		slog.Debug("no etag detected, falling back to filename based dedup") // TODO probably can get rid of this redundant log
-		etag = "_"
-	}
-
-	stageFilename = filepath.Join(UpdateStageDir, etag, filename)
-
-	_, err = os.Stat(filepath.Dir(stageFilename))
+	// Create the directory for the update
+	_, err = os.Stat(filepath.Dir(filename))
 	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(stageFilename), 0o755); err != nil {
-			return fmt.Errorf("create ollama dir %s: %v", filepath.Dir(stageFilename), err)
+		if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
+			return fmt.Errorf("create update dir %s: %v", filepath.Dir(filename), err)
 		}
 	}
 
@@ -165,17 +167,33 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	if err != nil {
 		return fmt.Errorf("failed to read body response: %w", err)
 	}
-	fp, err := os.OpenFile(stageFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	fp, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
-		return fmt.Errorf("write payload %s: %w", stageFilename, err)
+		return fmt.Errorf("write payload %s: %w", filename, err)
 	}
 	defer fp.Close()
 	if n, err := fp.Write(payload); err != nil || n != len(payload) {
-		return fmt.Errorf("write payload %s: %d vs %d -- %w", stageFilename, n, len(payload), err)
+		return fmt.Errorf("write payload %s: %d vs %d -- %w", filename, n, len(payload), err)
 	}
-	slog.Info("new update downloaded " + stageFilename)
+
+	etag = strings.Trim(resp.Header.Get("etag"), "\"")
+	if etag != "" {
+		file, err := os.OpenFile(etagfilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return fmt.Errorf("could not open etag file for writing: %w", err)
+		}
+
+		if _, err := file.Write([]byte(etag)); err != nil {
+			return fmt.Errorf("could not write etag file: %w", err)
+		}
+
+		file.Close()
+	}
+
+	slog.Info("new update downloaded " + filename)
 
 	UpdateDownloaded = true
+
 	return nil
 }
 
