@@ -8,6 +8,7 @@ import (
 
 const UnknownOllamaKeyErrMsg = "unknown ollama key"
 
+// TODO: This should have a structured response from the API
 type UnknownOllamaKey struct {
 	Key string
 }
