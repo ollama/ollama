@@ -903,9 +903,7 @@ func (s *llmServer) Close() error {
 			return err
 		}
 
-		if err := s.cmd.Wait(); err != nil {
-			return err
-		}
+		_ = s.cmd.Wait()
 
 		slog.Debug("llama server stopped")
 	}
