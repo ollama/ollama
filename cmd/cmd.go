@@ -388,7 +388,7 @@ func errFromUnknownKey(unknownKeyErr error) error {
 			return unknownKeyErr
 		}
 
-		msg := strings.Builder{}
+		var msg strings.Builder
 		msg.WriteString(unknownKeyErr.Error())
 		msg.WriteString("\n\nYour ollama key is:\n")
 		msg.WriteString(localPubKey)
