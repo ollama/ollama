@@ -40,7 +40,7 @@ func PayloadsDir() (string, error) {
 			}
 
 			var paths []string
-			for _, root := range []string{appExe, cwd} {
+			for _, root := range []string{filepath.Dir(appExe), cwd} {
 				paths = append(paths,
 					filepath.Join(root),
 					filepath.Join(root, "windows-"+runtime.GOARCH),
