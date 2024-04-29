@@ -902,7 +902,12 @@ func (s *llmServer) Close() error {
 		if err := s.cmd.Process.Kill(); err != nil {
 			return err
 		}
-		return s.cmd.Wait()
+
+		if err := s.cmd.Wait(); err != nil {
+			return err
+		}
+
+		slog.Debug("llama server stopped")
 	}
 
 	return nil
