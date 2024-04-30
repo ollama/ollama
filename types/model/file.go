@@ -1,4 +1,4 @@
-package parser
+package model
 
 import (
 	"bufio"
@@ -10,9 +10,43 @@ import (
 	"strings"
 )
 
+type File struct {
+	Commands []Command
+}
+
+func (f File) String() string {
+	var sb strings.Builder
+	for _, cmd := range f.Commands {
+		fmt.Fprintln(&sb, cmd.String())
+	}
+
+	return sb.String()
+}
+
 type Command struct {
 	Name string
 	Args string
+}
+
+func (c Command) String() string {
+	name := c.Name
+	args := c.Args
+
+	switch c.Name {
+	case "model":
+		name = "from"
+		args = c.Args
+	case "license", "template", "system", "adapter":
+		args = quote(args)
+	case "message":
+		role, message, _ := strings.Cut(c.Args, ": ")
+		args = role + " " + quote(message)
+	default:
+		name = "parameter"
+		args = c.Name + " " + quote(c.Args)
+	}
+
+	return fmt.Sprintf("%s %s", strings.ToUpper(name), args)
 }
 
 type state int
@@ -32,37 +66,13 @@ var (
 	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
 )
 
-func Format(cmds []Command) string {
-	var sb strings.Builder
-	for _, cmd := range cmds {
-		name := cmd.Name
-		args := cmd.Args
-
-		switch cmd.Name {
-		case "model":
-			name = "from"
-			args = cmd.Args
-		case "license", "template", "system", "adapter":
-			args = quote(args)
-		case "message":
-			role, message, _ := strings.Cut(cmd.Args, ": ")
-			args = role + " " + quote(message)
-		default:
-			name = "parameter"
-			args = cmd.Name + " " + quote(cmd.Args)
-		}
-
-		fmt.Fprintln(&sb, strings.ToUpper(name), args)
-	}
-
-	return sb.String()
-}
-
-func Parse(r io.Reader) (cmds []Command, err error) {
+func ParseFile(r io.Reader) (*File, error) {
 	var cmd Command
 	var curr state
 	var b bytes.Buffer
 	var role string
+
+	var f File
 
 	br := bufio.NewReader(r)
 	for {
@@ -128,7 +138,7 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 				}
 
 				cmd.Args = s
-				cmds = append(cmds, cmd)
+				f.Commands = append(f.Commands, cmd)
 			}
 
 			b.Reset()
@@ -157,14 +167,14 @@ func Parse(r io.Reader) (cmds []Command, err error) {
 		}
 
 		cmd.Args = s
-		cmds = append(cmds, cmd)
+		f.Commands = append(f.Commands, cmd)
 	default:
 		return nil, io.ErrUnexpectedEOF
 	}
 
-	for _, cmd := range cmds {
+	for _, cmd := range f.Commands {
 		if cmd.Name == "model" {
-			return cmds, nil
+			return &f, nil
 		}
 	}
 
