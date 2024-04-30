@@ -111,6 +111,15 @@ func GetOllamaHost() (OllamaHost, error) {
 		return OllamaHost{}, ErrInvalidHostPort
 	}
 
+	// 0.0.0.0 => 127.0.0.1
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		if ip.To4() != nil {
+			host = "127.0.0.1"
+		} else {
+			host = net.IPv6loopback.String()
+		}
+	}
+
 	return OllamaHost{
 		Scheme: scheme,
 		Host:   host,
