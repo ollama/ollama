@@ -1032,7 +1032,7 @@ struct llama_server_context
             slot.has_next_token = false;
         }
 
-        if (llama_token_is_eog(model, result.tok))
+        if (!slot.cache_tokens.empty() && llama_token_is_eog(model, result.tok))
         {
             slot.stopped_eos = true;
             slot.has_next_token = false;
