@@ -51,7 +51,7 @@ Here are some example models that can be downloaded:
 | ------------------ | ---------- | ----- | ------------------------------ |
 | Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
 | Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
-| Phi-3              | 3,8B       | 2.3GB | `ollama run phi3`              |
+| Phi-3              | 3.8B       | 2.3GB | `ollama run phi3`              |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
 | Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
