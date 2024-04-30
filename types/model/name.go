@@ -80,9 +80,6 @@ func (k partKind) String() string {
 //
 // It is not guaranteed to be valid. Use [Name.IsValid] to check if the name
 // is valid.
-//
-// It is not directly comparable with other Names. Use [Name.Equal] and
-// [Name.MapHash] for determining equality and using as a map key.
 type Name struct {
 	Host      string
 	Namespace string

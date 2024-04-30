@@ -710,6 +710,10 @@ func CopyModel(src, dst model.Name) error {
 		return model.Unqualified(src)
 	}
 
+	if src.Filepath() == dst.Filepath() {
+		return nil
+	}
+
 	manifests, err := GetManifestPath()
 	if err != nil {
 		return err

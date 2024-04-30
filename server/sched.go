@@ -149,6 +149,14 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
+					// If we're CPU only mode, just limit by loadedMax above
+					// TODO handle system memory exhaustion
+					if (len(gpus) == 1 && gpus[0].Library == "cpu") || pending.opts.NumGPU == 0 {
+						slog.Debug("cpu mode with existing models, loading")
+						s.loadFn(pending, ggml, gpus)
+						break
+					}
+
 					// No models loaded. Load the model but prefer the best fit.
 					if loadedCount == 0 {
 						slog.Debug("loading first model", "model", pending.model.ModelPath)
