@@ -29,9 +29,6 @@ var (
 type Client struct {
 	BaseURL string
 
-	// TODO(bmizerany): remove NameFill (once we remove model dep here)
-	NameFill string
-
 	Logger *slog.Logger
 }
 
@@ -208,7 +205,6 @@ func (nopSeeker) Seek(int64, int) (int64, error) {
 // If the server requests layers not found in the cache, ErrLayerNotFound is
 // returned.
 func (c *Client) Push(ctx context.Context, cache Cache, name string) error {
-	// TODO(bmizerany): remove dep on model.Name
 	manifest := cache.ManifestData(name)
 	if len(manifest) == 0 {
 		return fmt.Errorf("manifest not found: %s", name)
