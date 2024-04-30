@@ -4,6 +4,7 @@ package model
 
 import (
 	"cmp"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -307,4 +308,58 @@ func cutPromised(s, sep string) (before, after string, ok bool) {
 		return before, after, false
 	}
 	return cmp.Or(before, MissingPart), cmp.Or(after, MissingPart), true
+}
+
+type DigestType byte
+
+const (
+	DigestTypeInvalid DigestType = iota
+	DigestTypeSHA256
+)
+
+func (t DigestType) String() string {
+	switch t {
+	case DigestTypeSHA256:
+		return "sha256"
+	default:
+		return "invalid"
+	}
+}
+
+type Digest struct {
+	Type DigestType
+	Sum  [32]byte
+}
+
+func ParseDigest(s string) (Digest, error) {
+	i := strings.IndexAny(s, "-:")
+	if i < 0 {
+		return Digest{}, fmt.Errorf("invalid digest %q", s)
+	}
+	typ, encSum := s[:i], s[i+1:]
+	if typ != "sha256" {
+		return Digest{}, fmt.Errorf("unsupported digest type %q", typ)
+	}
+	d := Digest{
+		Type: DigestTypeSHA256,
+	}
+	n, err := hex.Decode(d.Sum[:], []byte(encSum))
+	if err != nil {
+		return Digest{}, err
+	}
+	if n != 32 {
+		return Digest{}, fmt.Errorf("digest %q decoded to %d bytes; want 32", encSum, n)
+	}
+	return d, nil
+}
+
+func (d Digest) String() string {
+	if d.Type == DigestTypeInvalid {
+		return ""
+	}
+	return fmt.Sprintf("sha256-%x", d.Sum)
+}
+
+func (d Digest) IsValid() bool {
+	return d.Type != DigestTypeInvalid
 }
