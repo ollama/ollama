@@ -3,7 +3,8 @@ package llm
 import (
 	"fmt"
 	"log/slog"
-	"strings"
+	"os"
+	"strconv"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
@@ -49,6 +50,17 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	for _, info := range gpus {
 		memoryAvailable += info.FreeMemory
 	}
+	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
+	if userLimit != "" {
+		avail, err := strconv.ParseUint(userLimit, 10, 64)
+		if err != nil {
+			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_VRAM", userLimit, "error", err)
+		} else {
+			slog.Info("user override memory limit", "OLLAMA_MAX_VRAM", avail, "actual", memoryAvailable)
+			memoryAvailable = avail
+		}
+	}
+
 	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", format.HumanBytes2(memoryAvailable))
 
 	// TODO - this is probably wrong, first GPU vs secondaries will have different overheads
@@ -87,8 +99,26 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		return 0, 0
 	}
 
-	var layerCount int
 	layers := ggml.Tensors().Layers()
+
+	var memoryLayerOutput uint64
+	if layer, ok := layers["output_norm"]; ok {
+		memoryLayerOutput += layer.size()
+	}
+
+	if layer, ok := layers["output"]; ok {
+		memoryLayerOutput += layer.size()
+	} else if layer, ok := layers["token_embd"]; ok {
+		memoryLayerOutput += layer.size()
+	}
+
+	if gpus[0].Library == "metal" && opts.UseMMap {
+		// memory is preallocated for output tensors
+		memoryRequiredTotal += memoryLayerOutput
+		memoryRequiredPartial += memoryLayerOutput
+	}
+
+	var layerCount int
 	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
 		memoryLayer := layers[fmt.Sprintf("blk.%d", i)].size()
 
@@ -102,14 +132,10 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		}
 	}
 
-	var memoryLayerOutput uint64
-	for k, v := range layers {
-		if !strings.HasPrefix(k, "blk.") {
-			memoryLayerOutput += v.size()
-		}
+	if gpus[0].Library != "metal" || !opts.UseMMap {
+		// memory was not preallocated for output tensors
+		memoryRequiredTotal += memoryLayerOutput
 	}
-
-	memoryRequiredTotal += memoryLayerOutput
 
 	if memoryAvailable > memoryRequiredTotal {
 		layerCount = int(ggml.KV().BlockCount()) + 1

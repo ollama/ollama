@@ -73,8 +73,7 @@ func LoadModel(model string) (*GGML, error) {
 func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options) (LlamaServer, error) {
 	var err error
 	if opts.NumCtx > int(ggml.KV().ContextLength()) {
-		slog.Warn("requested context length is greater than model max context length", "requested", opts.NumCtx, "model", ggml.KV().ContextLength())
-		opts.NumCtx = int(ggml.KV().ContextLength())
+		slog.Warn("requested context length is greater than the model's training context window size", "requested", opts.NumCtx, "training size", ggml.KV().ContextLength())
 	}
 
 	if opts.NumCtx < 4 {
@@ -208,6 +207,12 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	for i := 0; i < len(servers); i++ {
 		dir := availableServers[servers[i]]
+		if dir == "" {
+			// Shouldn't happen
+			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)
+			slog.Error("sever list inconsistent", "error", finalErr)
+			continue
+		}
 
 		// Find an availableServers  port, retry on each iterration in case the failure was a port conflict race
 		port := 0
@@ -436,7 +441,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			slog.Info("context expired before server started")
-			return fmt.Errorf("timed out waiting for llama runner to start")
+			return fmt.Errorf("timed out waiting for llama runner to start: %w", ctx.Err())
 		case err := <-s.done:
 			msg := ""
 			if s.status != nil && s.status.LastErrMsg != "" {
@@ -554,6 +559,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return err
 	}
 	defer s.sem.Release(1)
+
+	// only allow maximum 10 "context shifts" to avoid infinite generation
+	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
+		req.Options.NumPredict = 10 * s.options.NumCtx
+		slog.Debug("setting token limit to 10x num_ctx", "num_ctx", s.options.NumCtx, "num_predict", req.Options.NumPredict)
+	}
+
 	request := map[string]any{
 		"prompt":            req.Prompt,
 		"stream":            true,
