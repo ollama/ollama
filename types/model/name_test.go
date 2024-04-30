@@ -2,6 +2,7 @@ package model
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -215,6 +216,20 @@ func TestNameIsValidPart(t *testing.T) {
 		})
 	}
 
+}
+
+func TestFilepathAllocs(t *testing.T) {
+	n := ParseNameBare("HOST/NAMESPACE/MODEL:TAG")
+	allocs := testing.AllocsPerRun(1000, func() {
+		n.Filepath()
+	})
+	allowedAllocs := 2.0
+	if runtime.GOOS == "windows" {
+		allowedAllocs = 4
+	}
+	if allocs > allowedAllocs {
+		t.Errorf("allocs = %v; allowed %v", allocs, allowedAllocs)
+	}
 }
 
 func FuzzName(f *testing.F) {
