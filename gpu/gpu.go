@@ -26,6 +26,7 @@ import (
 type handles struct {
 	deviceCount int
 	cudart      *C.cudart_handle_t
+	nvcuda      *C.nvcuda_handle_t
 }
 
 const (
@@ -62,6 +63,22 @@ var CudartWindowsGlobs = []string{
 	"c:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v*\\bin\\cudart64_*.dll",
 }
 
+var NvcudaLinuxGlobs = []string{
+	"/usr/local/cuda*/targets/*/lib/libcuda.so*",
+	"/usr/lib/*-linux-gnu/nvidia/current/libcuda.so*",
+	"/usr/lib/*-linux-gnu/libcuda.so*",
+	"/usr/lib/wsl/lib/libcuda.so*",
+	"/usr/lib/wsl/drivers/*/libcuda.so*",
+	"/opt/cuda/lib*/libcuda.so*",
+	"/usr/local/cuda/lib*/libcuda.so*",
+	"/usr/lib*/libcuda.so*",
+	"/usr/local/lib*/libcuda.so*",
+}
+
+var NvcudaWindowsGlobs = []string{
+	"c:\\windows\\system*\\nvcuda.dll",
+}
+
 // Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
@@ -74,6 +91,8 @@ func initGPUHandles() *handles {
 	gpuHandles := &handles{}
 	var cudartMgmtName string
 	var cudartMgmtPatterns []string
+	var nvcudaMgmtName string
+	var nvcudaMgmtPatterns []string
 
 	tmpDir, _ := PayloadsDir()
 	switch runtime.GOOS {
@@ -82,6 +101,9 @@ func initGPUHandles() *handles {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		cudartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", cudartMgmtName)}
 		cudartMgmtPatterns = append(cudartMgmtPatterns, CudartWindowsGlobs...)
+		// Aligned with driver, we can't carry as payloads
+		nvcudaMgmtName = "nvcuda.dll"
+		nvcudaMgmtPatterns = NvcudaWindowsGlobs
 	case "linux":
 		cudartMgmtName = "libcudart.so*"
 		if tmpDir != "" {
@@ -89,11 +111,25 @@ func initGPUHandles() *handles {
 			cudartMgmtPatterns = []string{filepath.Join(tmpDir, "cuda*", cudartMgmtName)}
 		}
 		cudartMgmtPatterns = append(cudartMgmtPatterns, CudartLinuxGlobs...)
+		// Aligned with driver, we can't carry as payloads
+		nvcudaMgmtName = "libcuda.so*"
+		nvcudaMgmtPatterns = NvcudaLinuxGlobs
 	default:
 		return gpuHandles
 	}
 
 	slog.Info("Detecting GPUs")
+	nvcudaLibPaths := FindGPULibs(nvcudaMgmtName, nvcudaMgmtPatterns)
+	if len(nvcudaLibPaths) > 0 {
+		deviceCount, nvcuda, libPath := LoadNVCUDAMgmt(nvcudaLibPaths)
+		if nvcuda != nil {
+			slog.Info("detected GPUs", "count", deviceCount, "library", libPath)
+			gpuHandles.nvcuda = nvcuda
+			gpuHandles.deviceCount = deviceCount
+			return gpuHandles
+		}
+	}
+
 	cudartLibPaths := FindGPULibs(cudartMgmtName, cudartMgmtPatterns)
 	if len(cudartLibPaths) > 0 {
 		deviceCount, cudart, libPath := LoadCUDARTMgmt(cudartLibPaths)
@@ -118,6 +154,9 @@ func GetGPUInfo() GpuInfoList {
 		if gpuHandles.cudart != nil {
 			C.cudart_release(*gpuHandles.cudart)
 		}
+		if gpuHandles.nvcuda != nil {
+			C.nvcuda_release(*gpuHandles.nvcuda)
+		}
 	}()
 
 	// All our GPU builds on x86 have AVX enabled, so fallback to CPU if we don't detect at least AVX
@@ -138,7 +177,11 @@ func GetGPUInfo() GpuInfoList {
 		gpuInfo := GpuInfo{
 			Library: "cuda",
 		}
-		C.cudart_check_vram(*gpuHandles.cudart, C.int(i), &memInfo)
+		if gpuHandles.cudart != nil {
+			C.cudart_check_vram(*gpuHandles.cudart, C.int(i), &memInfo)
+		} else {
+			C.nvcuda_check_vram(*gpuHandles.nvcuda, C.int(i), &memInfo)
+		}
 		if memInfo.err != nil {
 			slog.Info("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
 			C.free(unsafe.Pointer(memInfo.err))
@@ -196,9 +239,10 @@ func GetCPUMem() (memInfo, error) {
 	return ret, nil
 }
 
-func FindGPULibs(baseLibName string, patterns []string) []string {
+func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 	// Multiple GPU libraries may exist, and some may not work, so keep trying until we exhaust them
 	var ldPaths []string
+	var patterns []string
 	gpuLibPaths := []string{}
 	slog.Debug("Searching for GPU library", "name", baseLibName)
 
@@ -218,6 +262,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 		}
 		patterns = append(patterns, filepath.Join(d, baseLibName+"*"))
 	}
+	patterns = append(patterns, defaultPatterns...)
 	slog.Debug("gpu library search", "globs", patterns)
 	for _, pattern := range patterns {
 		// Ignore glob discovery errors
@@ -259,6 +304,23 @@ func LoadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string) {
 		C.cudart_init(lib, &resp)
 		if resp.err != nil {
 			slog.Debug("Unable to load cudart", "library", libPath, "error", C.GoString(resp.err))
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			return int(resp.num_devices), &resp.ch, libPath
+		}
+	}
+	return 0, nil, ""
+}
+
+func LoadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string) {
+	var resp C.nvcuda_init_resp_t
+	resp.ch.verbose = getVerboseState()
+	for _, libPath := range nvcudaLibPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.nvcuda_init(lib, &resp)
+		if resp.err != nil {
+			slog.Debug("Unable to load nvcuda", "library", libPath, "error", C.GoString(resp.err))
 			C.free(unsafe.Pointer(resp.err))
 		} else {
 			return int(resp.num_devices), &resp.ch, libPath
