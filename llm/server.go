@@ -300,12 +300,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			continue
 		}
 
-		// reap subprocess when it exits
-		go func() {
-			// Exit status managed via getServerStatus
-			_ = s.cmd.Wait()
-		}()
-
 		// TODO - make sure this is all wired up correctly
 		// if err = s.WaitUntilRunning(); err != nil {
 		// 	slog.Error("error starting llama server", "server", servers[i], "error", err)
@@ -899,7 +893,13 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 func (s *llmServer) Close() error {
 	if s.cmd != nil {
 		slog.Debug("stopping llama server")
-		return s.cmd.Process.Kill()
+		if err := s.cmd.Process.Kill(); err != nil {
+			return err
+		}
+
+		_ = s.cmd.Wait()
+
+		slog.Debug("llama server stopped")
 	}
 
 	return nil

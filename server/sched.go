@@ -250,6 +250,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 						defer runner.refMu.Unlock()
 						if runner.expireTimer != nil {
 							runner.expireTimer.Stop()
+							runner.expireTimer = nil
 						}
 						s.expiredCh <- runner
 					})
@@ -296,6 +297,10 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 	runner.refCount++
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	runner.sessionDuration = pending.sessionDuration
 	pending.successCh <- runner
 	go func() {
@@ -426,6 +431,10 @@ type runnerRef struct {
 
 // The refMu must already be held when calling unload
 func (runner *runnerRef) unload() {
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	if runner.llama != nil {
 		runner.llama.Close()
 	}
