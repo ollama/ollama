@@ -88,6 +88,11 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	graphFullOffload *= uint64(len(gpus))
 	graphPartialOffload *= uint64(len(gpus))
 
+	// on metal there's no partial offload overhead
+	if gpus[0].Library == "metal" {
+		graphPartialOffload = graphFullOffload
+	}
+
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
 	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
