@@ -35,6 +35,14 @@ func TestParseNameParts(t *testing.T) {
 			},
 		},
 		{
+			in: "host:12345/namespace/model",
+			want: Name{
+				Host:      "host:12345",
+				Namespace: "namespace",
+				Model:     "model",
+			},
+		},
+		{
 			in: "namespace/model",
 			want: Name{
 				Namespace: "namespace",
