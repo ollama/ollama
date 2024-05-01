@@ -18,9 +18,27 @@ func TestParseNameParts(t *testing.T) {
 		wantValidDigest bool
 	}{
 		{
+			in: "scheme://host:port/namespace/model:tag",
+			want: Name{
+				Host:      "host:port",
+				Namespace: "namespace",
+				Model:     "model",
+				Tag:       "tag",
+			},
+		},
+		{
 			in: "host/namespace/model:tag",
 			want: Name{
 				Host:      "host",
+				Namespace: "namespace",
+				Model:     "model",
+				Tag:       "tag",
+			},
+		},
+		{
+			in: "host:port/namespace/model:tag",
+			want: Name{
+				Host:      "host:port",
 				Namespace: "namespace",
 				Model:     "model",
 				Tag:       "tag",
@@ -35,9 +53,9 @@ func TestParseNameParts(t *testing.T) {
 			},
 		},
 		{
-			in: "host:12345/namespace/model",
+			in: "host:port/namespace/model",
 			want: Name{
-				Host:      "host:12345",
+				Host:      "host:port",
 				Namespace: "namespace",
 				Model:     "model",
 			},

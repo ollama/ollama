@@ -153,12 +153,18 @@ func ParseNameBare(s string) Name {
 		n.Model = s
 		return n
 	}
+
 	s, n.Namespace, promised = cutPromised(s, "/")
 	if !promised {
 		n.Namespace = s
 		return n
 	}
-	n.Host = s
+
+	scheme, host, ok := strings.Cut(s, "://")
+	if ! ok {
+		host = scheme
+	}
+	n.Host = host
 
 	return n
 }
