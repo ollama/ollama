@@ -222,6 +222,7 @@ func (nopSeeker) Seek(int64, int) (int64, error) {
 }
 
 func parseNameFill(name, fill string) model.Name {
+	fill = cmp.Or(fill, "bllamo.com/library/_:latest")
 	f := model.ParseNameBare(fill)
 	if !f.IsFullyQualified() {
 		panic(fmt.Errorf("invalid fill: %q", fill))

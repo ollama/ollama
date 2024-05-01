@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/client/ollama"
 	"github.com/ollama/ollama/client/registry"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
@@ -35,11 +37,20 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+// envs
+var (
+	envRegistryBaseURL = cmp.Or(os.Getenv("OLLAMA_REGISTRY_BASE_URL"), "https://bllamo.com")
+)
+
+func init() {
+	ollama.I_Acknowledge_This_API_Is_Unstable = true
+}
+
 var experiments = sync.OnceValue(func() []string {
-	return strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ",")
+	return strings.Split(strings.ToLower(os.Getenv("OLLAMA_EXPERIMENT")), ",")
 })
 
-func useExperiemntal(flag string) bool {
+func useExperiment(flag string) bool {
 	return slices.Contains(experiments(), flag)
 }
 
@@ -454,9 +465,9 @@ func (s *Server) PullModelHandler(c *gin.Context) {
 		return
 	}
 
-	if useExperiemntal("pull") {
+	if useExperiment("pull") {
 		rc := &registry.Client{
-			BaseURL: os.Getenv("OLLAMA_REGISTRY_BASE_URL"),
+			BaseURL: envRegistryBaseURL,
 		}
 		modelsDir, err := modelsDir()
 		if err != nil {
@@ -464,6 +475,7 @@ func (s *Server) PullModelHandler(c *gin.Context) {
 			return
 		}
 		cache := &cache{dir: modelsDir}
+		println("DIR: ", modelsDir)
 		// TODO(bmizerany): progress updates
 		if err := rc.Pull(c.Request.Context(), cache, model); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
