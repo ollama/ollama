@@ -143,18 +143,28 @@ func ParseNameBare(s string) Name {
 		n.RawDigest = MissingPart
 	}
 
-	s, n.Tag, _ = cutPromised(s, ":")
+	// "/" is an illegal tag character, so we can use it to split the host
+	if strings.LastIndex(s, ":") > strings.LastIndex(s, "/") {
+		s, n.Tag, _ = cutPromised(s, ":")
+	}
+
 	s, n.Model, promised = cutPromised(s, "/")
 	if !promised {
 		n.Model = s
 		return n
 	}
+
 	s, n.Namespace, promised = cutPromised(s, "/")
 	if !promised {
 		n.Namespace = s
 		return n
 	}
-	n.Host = s
+
+	scheme, host, ok := strings.Cut(s, "://")
+	if ! ok {
+		host = scheme
+	}
+	n.Host = host
 
 	return n
 }
