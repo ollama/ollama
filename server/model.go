@@ -23,15 +23,15 @@ type layerWithGGML struct {
 }
 
 func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
-	modelpath := ParseModelPath(name.DisplayLongest())
+	modelpath := ParseModelPath(name.String())
 	manifest, _, err := GetManifest(modelpath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		if err := PullModel(ctx, name.DisplayLongest(), &registryOptions{}, fn); err != nil {
+		if err := PullModel(ctx, name.String(), &registryOptions{}, fn); err != nil {
 			return nil, err
 		}
 
-		modelpath = ParseModelPath(name.DisplayLongest())
+		modelpath = ParseModelPath(name.String())
 		manifest, _, err = GetManifest(modelpath)
 		if err != nil {
 			return nil, err
