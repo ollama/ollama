@@ -13,7 +13,8 @@ type Layer struct {
 	Size      int64  `json:"size"`
 	From      string `json:"from,omitempty"`
 
-	MergeBase string `json:"merge_base,omitempty"`
+	Intermediate bool   `json:"intermediate,omitempty"`
+	MergeBase    string `json:"merge_base,omitempty"`
 
 	message string
 }
