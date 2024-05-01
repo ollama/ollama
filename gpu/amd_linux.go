@@ -25,12 +25,12 @@ const (
 	// Prefix with the node dir
 	GPUTotalMemoryFileGlob = "mem_banks/*/properties" // size_in_bytes line
 	GPUUsedMemoryFileGlob  = "mem_banks/*/used_memory"
-	RocmStandardLocation   = "/opt/rocm/lib"
 )
 
 var (
 	// Used to validate if the given ROCm lib is usable
-	ROCmLibGlobs = []string{"libhipblas.so.2*", "rocblas"} // TODO - probably include more coverage of files here...
+	ROCmLibGlobs          = []string{"libhipblas.so.2*", "rocblas"} // TODO - probably include more coverage of files here...
+	RocmStandardLocations = []string{"/opt/rocm/lib", "/usr/lib64"}
 )
 
 // Gather GPU information from the amdgpu driver if any supported GPUs are detected
