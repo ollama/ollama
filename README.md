@@ -173,7 +173,7 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
-### Pass in the prompt as arguments
+### Pass the prompt as an argument
 
 ```
 $ ollama run llama3 "Summarize this file: $(cat README.md)"
