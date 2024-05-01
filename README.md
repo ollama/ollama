@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+ <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
 
 # Ollama
@@ -173,7 +173,7 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
-### Pass in prompt as arguments
+### Pass the prompt as an argument
 
 ```
 $ ollama run llama3 "Summarize this file: $(cat README.md)"
@@ -294,7 +294,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [RAGFlow: Open-source Retrieval-Augmented Generation engine based on deep document understanding](https://github.com/infiniflow/ragflow)
 - [chat: chat web app for teams](https://github.com/swuecho/chat)
 - [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
-- [Ollama RAG Chatbot: Local Chat with multiples PDFs using Ollama and RAG.](https://github.com/datvodinh/rag-chatbot.git)
+- [Ollama RAG Chatbot: Local Chat with multiple PDFs using Ollama and RAG.](https://github.com/datvodinh/rag-chatbot.git)
 
 ### Terminal
 
