@@ -29,24 +29,20 @@ type Command struct {
 }
 
 func (c Command) String() string {
-	name := c.Name
-	args := c.Args
-
+	var sb strings.Builder
 	switch c.Name {
 	case "model":
-		name = "from"
-		args = c.Args
+		fmt.Fprintf(&sb, "FROM %s", c.Args)
 	case "license", "template", "system", "adapter":
-		args = quote(args)
+		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
-		args = role + " " + quote(message)
+		fmt.Fprintf(&sb, "MESSAGE %s %s", role, quote(message))
 	default:
-		name = "parameter"
-		args = c.Name + " " + quote(c.Args)
+		fmt.Fprintf(&sb, "PARAMETER %s %s", c.Name, quote(c.Args))
 	}
 
-	return fmt.Sprintf("%s %s", strings.ToUpper(name), args)
+	return sb.String()
 }
 
 type state int
