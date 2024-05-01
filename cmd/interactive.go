@@ -94,7 +94,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
-		fmt.Fprintln(os.Stderr, "  /clear          Clears chat history")
+		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
@@ -283,7 +283,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			continue
 		case strings.HasPrefix(line, "/clear"):
 			opts.Messages = []api.Message{}
-			fmt.Println("Cleared chat history")
+			fmt.Println("Cleared session context")
 			continue
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
