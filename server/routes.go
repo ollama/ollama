@@ -810,16 +810,13 @@ func (s *Server) CopyModelHandler(c *gin.Context) {
 
 	src := model.ParseName(r.Source)
 	if !src.IsValid() {
-		_ = c.Error(fmt.Errorf("source %q is invalid", r.Source))
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("source %q is invalid", r.Source)})
+		return
 	}
 
 	dst := model.ParseName(r.Destination)
 	if !dst.IsValid() {
-		_ = c.Error(fmt.Errorf("destination %q is invalid", r.Destination))
-	}
-
-	if len(c.Errors) > 0 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": c.Errors.Errors()})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Source)})
 		return
 	}
 
