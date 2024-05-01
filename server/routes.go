@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/client/registry"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
@@ -32,6 +34,14 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+var experiments = sync.OnceValue(func() []string {
+	return strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ",")
+})
+
+func useExperiemntal(flag string) bool {
+	return slices.Contains(experiments(), flag)
+}
 
 var mode string = gin.DebugMode
 
@@ -441,6 +451,24 @@ func (s *Server) PullModelHandler(c *gin.Context) {
 		model = req.Name
 	} else {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	if useExperiemntal("pull") {
+		rc := &registry.Client{
+			BaseURL: os.Getenv("OLLAMA_REGISTRY_BASE_URL"),
+		}
+		modelsDir, err := modelsDir()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		cache := &cache{dir: modelsDir}
+		// TODO(bmizerany): progress updates
+		if err := rc.Pull(c.Request.Context(), cache, model); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 		return
 	}
 

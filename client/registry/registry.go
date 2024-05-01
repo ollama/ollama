@@ -31,9 +31,19 @@ type Client struct {
 	BaseURL string
 
 	Logger *slog.Logger
+
+	// NameFill is a string that is used to fill in the missing parts of
+	// a name when it is not fully qualified. It is used to make a name
+	// fully qualified before pushing or pulling it. The default is
+	// "registry.ollama.ai/library/_:latest".
+	//
+	// Most users can ignore this field. It is intended for use by
+	// clients that need to push or pull names to registries other than
+	// registry.ollama.ai, and for testing.
+	NameFill string
 }
 
-func (c *Client) logger() *slog.Logger {
+func (c *Client) log() *slog.Logger {
 	return cmp.Or(c.Logger, slog.Default())
 }
 
@@ -92,12 +102,12 @@ type Cache interface {
 // layers that are not already in the cache. It returns an error if any part
 // of the process fails, specifically:
 func (c *Client) Pull(ctx context.Context, cache Cache, name string) error {
-	mn := model.ParseName(name)
+	mn := parseNameFill(name, c.NameFill)
 	if !mn.IsFullyQualified() {
 		return fmt.Errorf("ollama: pull: invalid name: %s", name)
 	}
 
-	log := c.logger().With("name", name)
+	log := c.log().With("name", name)
 
 	pr, err := ollama.Do[*apitype.PullResponse](ctx, c.oclient(), "GET", "/v1/pull/"+name, nil)
 	if err != nil {
@@ -211,6 +221,14 @@ func (nopSeeker) Seek(int64, int) (int64, error) {
 	return 0, nil
 }
 
+func parseNameFill(name, fill string) model.Name {
+	f := model.ParseNameBare(fill)
+	if !f.IsFullyQualified() {
+		panic(fmt.Errorf("invalid fill: %q", fill))
+	}
+	return model.Merge(model.ParseNameBare(name), f)
+}
+
 // Push pushes a manifest to the server and responds to the server's
 // requests for layer uploads, if any, and finally commits the manifest for
 // name. It returns an error if any part of the process fails, specifically:
@@ -218,7 +236,7 @@ func (nopSeeker) Seek(int64, int) (int64, error) {
 // If the server requests layers not found in the cache, ErrLayerNotFound is
 // returned.
 func (c *Client) Push(ctx context.Context, cache Cache, name string) error {
-	mn := model.ParseName(name)
+	mn := parseNameFill(name, c.NameFill)
 	if !mn.IsFullyQualified() {
 		return fmt.Errorf("ollama: push: invalid name: %s", name)
 	}
@@ -259,6 +277,7 @@ func (c *Client) Push(ctx context.Context, cache Cache, name string) error {
 			}
 			defer f.Close()
 
+			c.log().Info("pushing layer", "digest", need.Digest, "start", need.Start, "end", need.End)
 			cp, err := PushLayer(ctx, f, need.URL, need.Start, need.End)
 			if err != nil {
 				return fmt.Errorf("PushLayer: %w: %s", err, need.Digest)
