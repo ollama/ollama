@@ -12,7 +12,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## How can I install a specific version of Ollama?
 
-On Linux, you can run the install script and setting the `VER_PARAM` environment variable to whatever version you want to install. You can fint the version numbers in the [Github's release page](https://github.com/ollama/ollama/releases). 
+On Linux, you can run the install script and setting the `VER_PARAM` environment variable to whatever version you want to install. You can find the version numbers in the [Github's release page](https://github.com/ollama/ollama/releases). 
 
 For example:
 
