@@ -931,6 +931,11 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 		}
 
 		if allowedHost(host) {
+			if c.Request.Method == "OPTIONS" {
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+
 			c.Next()
 			return
 		}
