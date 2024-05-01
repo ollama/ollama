@@ -16,6 +16,7 @@ type GGML struct {
 type model interface {
 	KV() KV
 	Tensors() Tensors
+	Offset() int64
 }
 
 type KV map[string]any

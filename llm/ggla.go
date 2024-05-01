@@ -33,6 +33,7 @@ func (c *containerGGLA) Decode(rs io.ReadSeeker) (model, error) {
 
 type ggla struct {
 	*containerGGLA
+	offset int64
 
 	kv      KV
 	tensors []*Tensor
@@ -53,6 +54,10 @@ func (llm *ggla) Tensors() Tensors {
 	return llm.tensors
 }
 
+func (llm *ggla) Offset() int64 {
+	return llm.offset
+}
+
 func (llm *ggla) decode(rs io.ReadSeeker) error {
 	var r uint32
 	if err := binary.Read(rs, binary.LittleEndian, &r); err != nil {
@@ -65,6 +70,13 @@ func (llm *ggla) decode(rs io.ReadSeeker) error {
 		return err
 	}
 	llm.kv["alpha"] = alpha
+
+	offset, err := rs.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+
+	llm.offset = offset
 
 	for {
 		var dims uint32

@@ -55,7 +55,7 @@ func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
 
 	model := newGGUF(c)
 	slog.Debug(fmt.Sprintf("model = %#v", model))
-	if err := model.Decode(rs); err != nil {
+	if err := model.decode(rs); err != nil {
 		return nil, err
 	}
 
@@ -90,6 +90,7 @@ const (
 
 type gguf struct {
 	*containerGGUF
+	offset int64
 
 	kv      KV
 	tensors []*Tensor
@@ -116,6 +117,10 @@ func (llm *gguf) Tensors() Tensors {
 	return llm.tensors
 }
 
+func (llm *gguf) Offset() int64 {
+	return llm.offset
+}
+
 func (llm *gguf) numTensor() uint64 {
 	switch llm.Version {
 	case 1:
@@ -138,7 +143,7 @@ func (llm *gguf) numKV() uint64 {
 	}
 }
 
-func (llm *gguf) Decode(rs io.ReadSeeker) error {
+func (llm *gguf) decode(rs io.ReadSeeker) error {
 	// decode key-values
 	for i := 0; uint64(i) < llm.numKV(); i++ {
 		k, err := readGGUFString(llm, rs)
@@ -249,6 +254,8 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
 		return err
 	}
+
+	llm.offset = offset + padding
 
 	for _, tensor := range llm.tensors {
 		if _, err := rs.Seek(int64(tensor.size()), io.SeekCurrent); err != nil {

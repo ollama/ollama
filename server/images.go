@@ -210,6 +210,14 @@ func GetModel(name string) (*Model, error) {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
 			model.ParentModel = layer.From
+		case "application/vnd.ollama.image.model+metadata", "application/vnd.ollama.image.model+data":
+			filename, err = GetBlobsPath(layer.MergeBase)
+			if err != nil {
+				return nil, err
+			}
+
+			model.ModelPath = filename
+			model.ParentModel = layer.From
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -349,10 +357,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 			}
 
 			for _, baseLayer := range baseLayers {
-				if quantization != "" &&
-					baseLayer.MediaType == "application/vnd.ollama.image.model" &&
-					baseLayer.GGML != nil &&
-					baseLayer.GGML.Name() == "gguf" {
+				if quantization != "" && baseLayer.MediaType == "application/vnd.ollama.image.model" {
 					ftype, err := llm.ParseFileType(quantization)
 					if err != nil {
 						return err
@@ -393,6 +398,36 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 					config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(baseLayer.GGML.KV().ParameterCount()))
 					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType())
 					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
+
+					f, err := baseLayer.Layer.Open()
+					if err != nil {
+						return err
+					}
+					defer f.Close()
+
+					metadata := io.NewSectionReader(f, 0, baseLayer.GGML.Offset())
+					metadataLayer, err := NewLayer(metadata, "application/vnd.ollama.image.model+metadata")
+					if err != nil {
+						return err
+					}
+					metadataLayer.MergeBase = baseLayer.Digest
+
+					layers = append(layers, metadataLayer)
+
+					stat, err := f.Stat()
+					if err != nil {
+						return err
+					}
+
+					data := io.NewSectionReader(f, baseLayer.GGML.Offset(), stat.Size())
+					dataLayer, err := NewLayer(data, "application/vnd.ollama.image.model+data")
+					if err != nil {
+						return err
+					}
+					dataLayer.MergeBase = baseLayer.Digest
+
+					layers = append(layers, dataLayer)
+					continue
 				}
 
 				layers = append(layers, baseLayer.Layer)
@@ -524,8 +559,8 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 	}
 
 	for _, layer := range append(layers, layer) {
-		if layer.status != "" {
-			fn(api.ProgressResponse{Status: layer.status})
+		if layer.message != "" {
+			fn(api.ProgressResponse{Status: layer.message})
 		}
 	}
 
@@ -627,6 +662,9 @@ func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{},
 
 		for _, layer := range manifest.Layers {
 			delete(deleteMap, layer.Digest)
+			if layer.MergeBase != "" {
+				delete(deleteMap, layer.MergeBase)
+			}
 		}
 
 		delete(deleteMap, manifest.Config.Digest)
@@ -733,6 +771,9 @@ func DeleteModel(name string) error {
 	deleteMap := make(map[string]struct{})
 	for _, layer := range manifest.Layers {
 		deleteMap[layer.Digest] = struct{}{}
+		if layer.MergeBase != "" {
+			deleteMap[layer.MergeBase] = struct{}{}
+		}
 	}
 	deleteMap[manifest.Config.Digest] = struct{}{}
 
@@ -854,6 +895,43 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		delete(deleteMap, layer.Digest)
 	}
 	delete(deleteMap, manifest.Config.Digest)
+
+	type mergedLayer struct {
+		Metadata, Data *Layer
+	}
+
+	mergedLayers := make(map[string]mergedLayer)
+	for _, layer := range manifest.Layers {
+		merged := mergedLayers[layer.MergeBase]
+		if layer.MediaType == "application/vnd.ollama.image.model+metadata" {
+			merged.Metadata = layer
+		} else if layer.MediaType == "application/vnd.ollama.image.model+data" {
+			merged.Data = layer
+		} else {
+			continue
+		}
+
+		mergedLayers[layer.MergeBase] = merged
+	}
+
+	for _, mergedLayer := range mergedLayers {
+		fn(api.ProgressResponse{Status: "merging layers"})
+		metadata, err := mergedLayer.Metadata.Open()
+		if err != nil {
+			return err
+		}
+		defer metadata.Close()
+
+		data, err := mergedLayer.Data.Open()
+		if err != nil {
+			return err
+		}
+		defer data.Close()
+
+		if _, err := NewLayer(io.MultiReader(metadata, data), "application/vnd.ollama.image.model"); err != nil {
+			return err
+		}
+	}
 
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
 	for _, layer := range layers {
