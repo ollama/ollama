@@ -12,7 +12,7 @@ terminal application. As usual the Ollama [api](./api.md) will be served on
 
 As this is a preview release, you should expect a few bugs here and there.  If
 you run into a problem you can reach out on
-[Discord](https://discord.gg/ollama), or file an 
+[Discord](https://discord.gg/ollama), or file an
 [issue](https://github.com/ollama/ollama/issues).
 Logs will often be helpful in diagnosing the problem (see
 [Troubleshooting](#troubleshooting) below)
