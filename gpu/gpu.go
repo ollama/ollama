@@ -210,6 +210,14 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 	default:
 		return gpuLibPaths
 	}
+	// Exclude the specific directory (reason: PhysX is installed by default with Nvidia drivers and its folder is listed in Environment Variables, but only has cudart64_*.dll and no cublasLt64_*.dll and cublas64_*.dll)
+	excludedDir := `C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common`
+	for i, ldPath := range ldPaths {
+		if ldPath == excludedDir {
+			ldPaths = append(ldPaths[:i], ldPaths[i+1:]...)
+			break
+		}
+	}
 	// Start with whatever we find in the PATH/LD_LIBRARY_PATH
 	for _, ldPath := range ldPaths {
 		d, err := filepath.Abs(ldPath)
@@ -219,6 +227,45 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 		patterns = append(patterns, filepath.Join(d, baseLibName+"*"))
 	}
 	slog.Debug("gpu library search", "globs", patterns)
+        for _, pattern := range patterns {
+                // Ignore glob discovery errors
+		matches, _ := filepath.Glob(pattern)
+		for _, match := range matches {
+			// Resolve any links so we don't try the same lib multiple times
+			// and weed out any dups across globs
+			libPath := match
+			tmp := match
+			var err error
+			for ; err == nil; tmp, err = os.Readlink(libPath) {
+				if !filepath.IsAbs(tmp) {
+					tmp = filepath.Join(filepath.Dir(libPath), tmp)
+				}
+				libPath = tmp
+			}
+			new := true
+			for _, cmp := range gpuLibPaths {
+				if cmp == libPath {
+					new = false
+					break
+				}
+			}
+			if new {
+				// Check if the files "cudart64_*.dll", "cublasLt64_*.dll", "cublas64_*.dll" exist in the directory
+				requiredFiles := []string{"cudart64_*.dll", "cublasLt64_*.dll", "cublas64_*.dll"}
+				allExist := true
+				for _, requiredFile := range requiredFiles {
+					files, _ := filepath.Glob(filepath.Join(filepath.Dir(libPath), requiredFile))
+					if len(files) == 0 {
+						allExist = false
+						break
+					}
+				}
+				if allExist {
+					gpuLibPaths = append(gpuLibPaths, libPath)
+				}
+			}
+		}
+	}
 	for _, pattern := range patterns {
 		// Ignore glob discovery errors
 		matches, _ := filepath.Glob(pattern)
