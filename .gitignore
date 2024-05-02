@@ -13,3 +13,4 @@ test_data
 *.crt
 llm/build
 ollama/ollama
+__debug_bin*

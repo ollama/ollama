@@ -1,2 +1,2 @@
 go test fuzz v1
-string(":")
+string("00@")
