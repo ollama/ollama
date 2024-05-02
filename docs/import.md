@@ -146,7 +146,7 @@ After publishing, your model will be available at `https://ollama.com/<your user
 
 ### Tagging models
 
-If your model has different versions you can optionally tag them, without a tag it will be `latest`:
+If your model has different versions you can optionally tag them, without a tag, it will be `latest`:
 
 ```
 ollama push <your username>/example[:tag]
@@ -156,7 +156,7 @@ All your tags will be available at `https://ollama.com/<your username>/example/t
 
 ## Quantization reference
 
-The quantization options are as follow (from highest highest to lowest levels of quantization). Note: some architectures such as Falcon do not support K quants.
+The quantization options are as follows (from highest to lowest levels of quantization). Note: some architectures such as Falcon do not support K quants.
 
 - `q2_K`
 - `q3_K`
