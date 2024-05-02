@@ -22,6 +22,7 @@ Once configured, create a GPU enabled Ollama deployment.
 ```bash
 kubectl apply -f gpu.yaml
 ```
+
 ## Test
 
 1. Port forward the Ollama service to connect and use it locally
