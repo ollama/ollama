@@ -149,6 +149,14 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
+					// If we're CPU only mode, just limit by loadedMax above
+					// TODO handle system memory exhaustion
+					if (len(gpus) == 1 && gpus[0].Library == "cpu") || pending.opts.NumGPU == 0 {
+						slog.Debug("cpu mode with existing models, loading")
+						s.loadFn(pending, ggml, gpus)
+						break
+					}
+
 					// No models loaded. Load the model but prefer the best fit.
 					if loadedCount == 0 {
 						slog.Debug("loading first model", "model", pending.model.ModelPath)
@@ -242,6 +250,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 						defer runner.refMu.Unlock()
 						if runner.expireTimer != nil {
 							runner.expireTimer.Stop()
+							runner.expireTimer = nil
 						}
 						s.expiredCh <- runner
 					})
@@ -288,6 +297,10 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 	runner.refCount++
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	runner.sessionDuration = pending.sessionDuration
 	pending.successCh <- runner
 	go func() {
@@ -418,6 +431,10 @@ type runnerRef struct {
 
 // The refMu must already be held when calling unload
 func (runner *runnerRef) unload() {
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	if runner.llama != nil {
 		runner.llama.Close()
 	}

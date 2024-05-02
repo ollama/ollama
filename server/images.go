@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,15 +23,17 @@ import (
 	"strings"
 	"text/template"
 
-	"golang.org/x/exp/slices"
-
 	"github.com/uppercaveman/ollama-server/api"
+	"github.com/uppercaveman/ollama-server/auth"
 	"github.com/uppercaveman/ollama-server/convert"
 	"github.com/uppercaveman/ollama-server/format"
 	"github.com/uppercaveman/ollama-server/llm"
 	"github.com/uppercaveman/ollama-server/parser"
+	"github.com/uppercaveman/ollama-server/types/errtypes"
 	"github.com/uppercaveman/ollama-server/types/model"
 	"github.com/uppercaveman/ollama-server/version"
+
+	"golang.org/x/exp/slices"
 )
 
 type registryOptions struct {
@@ -703,17 +706,28 @@ func convertModel(name, path string, fn func(resp api.ProgressResponse)) (string
 }
 
 func CopyModel(src, dst model.Name) error {
+	if !dst.IsFullyQualified() {
+		return model.Unqualified(dst)
+	}
+	if !src.IsFullyQualified() {
+		return model.Unqualified(src)
+	}
+
+	if src.Filepath() == dst.Filepath() {
+		return nil
+	}
+
 	manifests, err := GetManifestPath()
 	if err != nil {
 		return err
 	}
 
-	dstpath := filepath.Join(manifests, dst.FilepathNoBuild())
+	dstpath := filepath.Join(manifests, dst.Filepath())
 	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
 		return err
 	}
 
-	srcpath := filepath.Join(manifests, src.FilepathNoBuild())
+	srcpath := filepath.Join(manifests, src.Filepath())
 	srcfile, err := os.Open(srcpath)
 	if err != nil {
 		return err
@@ -969,9 +983,6 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
 			slog.Info(fmt.Sprintf("error uploading blob: %v", err))
-			if errors.Is(err, errUnauthorized) {
-				return fmt.Errorf("unable to push %s, make sure this namespace exists and you are authorized to push to it", ParseModelPath(name).GetNamespaceRepository())
-			}
 			return err
 		}
 	}
@@ -1134,9 +1145,40 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-var errUnauthorized = errors.New("unauthorized")
+var errUnauthorized = fmt.Errorf("unauthorized: access denied")
+
+// getTokenSubject returns the subject of a JWT token, it does not validate the token
+func getTokenSubject(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		slog.Error("jwt token does not contain 3 parts")
+		return ""
+	}
+
+	payload := parts[1]
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		slog.Error(fmt.Sprintf("failed to decode jwt payload: %v", err))
+		return ""
+	}
+
+	var payloadMap map[string]interface{}
+	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
+		slog.Error(fmt.Sprintf("failed to unmarshal payload JSON: %v", err))
+		return ""
+	}
+
+	sub, ok := payloadMap["sub"]
+	if !ok {
+		slog.Error("jwt does not contain 'sub' field")
+		return ""
+	}
+
+	return fmt.Sprintf("%s", sub)
+}
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
+	anonymous := true // access will default to anonymous if no user is found associated with the public key
 	for i := 0; i < 2; i++ {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
@@ -1155,6 +1197,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 			if err != nil {
 				return nil, err
 			}
+			anonymous = getTokenSubject(token) == "anonymous"
 			regOpts.Token = token
 			if body != nil {
 				_, err = body.Seek(0, io.SeekStart)
@@ -1175,6 +1218,16 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		}
 	}
 
+	if anonymous {
+		// no user is associated with the public key, and the request requires non-anonymous access
+		pubKey, nestedErr := auth.GetPublicKey()
+		if nestedErr != nil {
+			slog.Error(fmt.Sprintf("couldn't get public key: %v", nestedErr))
+			return nil, errUnauthorized
+		}
+		return nil, &errtypes.UnknownOllamaKey{Key: pubKey}
+	}
+	// user is associated with the public key, but is not authorized to make the request
 	return nil, errUnauthorized
 }
 

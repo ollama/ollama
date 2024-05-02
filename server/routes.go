@@ -146,6 +146,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
+		if errors.Is(err, context.Canceled) {
+			c.JSON(499, gin.H{"error": "request canceled"})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -389,6 +394,11 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
+		if errors.Is(err, context.Canceled) {
+			c.JSON(499, gin.H{"error": "request canceled"})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -800,16 +810,13 @@ func (s *Server) CopyModelHandler(c *gin.Context) {
 
 	src := model.ParseName(r.Source)
 	if !src.IsValid() {
-		_ = c.Error(fmt.Errorf("source %q is invalid", r.Source))
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("source %q is invalid", r.Source)})
+		return
 	}
 
 	dst := model.ParseName(r.Destination)
 	if !dst.IsValid() {
-		_ = c.Error(fmt.Errorf("destination %q is invalid", r.Destination))
-	}
-
-	if len(c.Errors) > 0 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": c.Errors.Errors()})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Source)})
 		return
 	}
 
@@ -1216,6 +1223,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
+		if errors.Is(err, context.Canceled) {
+			c.JSON(499, gin.H{"error": "request canceled"})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
