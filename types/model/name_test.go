@@ -27,7 +27,7 @@ func TestParseNameParts(t *testing.T) {
 				Model:     "model",
 				Tag:       "tag",
 			},
-			wantFilepath: filepath.Join("host:port", "namespace", "model", "tag"),
+			wantFilepath: filepath.Join("host%port", "namespace", "model", "tag"),
 		},
 		{
 			in: "host/namespace/model:tag",
@@ -47,7 +47,7 @@ func TestParseNameParts(t *testing.T) {
 				Model:     "model",
 				Tag:       "tag",
 			},
-			wantFilepath: filepath.Join("host:port", "namespace", "model", "tag"),
+			wantFilepath: filepath.Join("host%port", "namespace", "model", "tag"),
 		},
 		{
 			in: "host/namespace/model",
@@ -65,7 +65,7 @@ func TestParseNameParts(t *testing.T) {
 				Namespace: "namespace",
 				Model:     "model",
 			},
-			wantFilepath: filepath.Join("host:port", "namespace", "model", "latest"),
+			wantFilepath: filepath.Join("host%port", "namespace", "model", "latest"),
 		},
 		{
 			in: "namespace/model",
@@ -126,6 +126,15 @@ func TestParseNameParts(t *testing.T) {
 				RawDigest: "sha256:123",
 			},
 			wantValidDigest: true,
+		},
+		{
+			in: "y.com:443/n/model",
+			want: Name{
+				Host:      "y.com:443",
+				Namespace: "n",
+				Model:     "model",
+			},
+			wantFilepath: filepath.Join("y.com%443", "n", "model", "latest"),
 		},
 	}
 

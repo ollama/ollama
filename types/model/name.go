@@ -161,7 +161,7 @@ func ParseNameBare(s string) Name {
 	}
 
 	scheme, host, ok := strings.Cut(s, "://")
-	if ! ok {
+	if !ok {
 		host = scheme
 	}
 	n.Host = host
@@ -243,7 +243,7 @@ func (n Name) Filepath() string {
 		panic("illegal attempt to get filepath of invalid name")
 	}
 	return strings.ToLower(filepath.Join(
-		n.Host,
+		strings.Replace(n.Host, ":", "%", 1),
 		n.Namespace,
 		n.Model,
 		n.Tag,

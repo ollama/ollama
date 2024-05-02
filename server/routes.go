@@ -1046,6 +1046,13 @@ func Serve(ln net.Listener) error {
 	if err := fixBlobs(blobsDir); err != nil {
 		return err
 	}
+	manifestsDir, err := GetManifestPath()
+	if err != nil {
+		return err
+	}
+	if err := fixManifests(manifestsDir); err != nil {
+		return err
+	}
 
 	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
 		// clean up unused layers and manifests
