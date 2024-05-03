@@ -898,6 +898,31 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	logFileName, err := cmd.Flags().GetString("logfile")
+	if err != nil {
+		return err
+	}
+	if logFileName != "" {
+		logDir := filepath.Dir(logFileName)
+		_, err = os.Stat(logDir)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("stat ollama server log dir %s: %v", logDir, err)
+
+			}
+
+			if err := os.MkdirAll(logDir, 0o755); err != nil {
+				return fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
+			}
+		}
+		fd, err := os.OpenFile(logFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
+		if err != nil {
+			return fmt.Errorf("failed to create server log: %w", err)
+		}
+		os.Stdout = fd
+		os.Stderr = fd
+	}
+
 	return server.Serve(ln)
 }
 
@@ -1090,6 +1115,7 @@ Environment Variables:
     OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default is "5m")
     OLLAMA_DEBUG        Set to 1 to enable additional debug logging
 `)
+	serveCmd.Flags().String("logfile", "", "Send server log output to a file")
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",

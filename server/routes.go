@@ -40,18 +40,6 @@ type Server struct {
 	sched *Scheduler
 }
 
-func init() {
-	switch mode {
-	case gin.DebugMode:
-	case gin.ReleaseMode:
-	case gin.TestMode:
-	default:
-		mode = gin.DebugMode
-	}
-
-	gin.SetMode(mode)
-}
-
 var defaultSessionDuration = 5 * time.Minute
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
@@ -1008,6 +996,18 @@ func (s *Server) GenerateRoutes() http.Handler {
 }
 
 func Serve(ln net.Listener) error {
+	switch mode {
+	case gin.DebugMode:
+	case gin.ReleaseMode:
+	case gin.TestMode:
+	default:
+		mode = gin.DebugMode
+	}
+
+	gin.SetMode(mode)
+	gin.DefaultErrorWriter = os.Stderr
+	gin.DefaultWriter = os.Stderr
+
 	level := slog.LevelInfo
 	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
 		level = slog.LevelDebug
