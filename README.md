@@ -28,6 +28,8 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
+More extensive Docker docs can be found [here](docs/docker.md).
+
 ### Libraries
 
 - [ollama-python](https://github.com/ollama/ollama-python)
