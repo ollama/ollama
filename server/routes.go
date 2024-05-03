@@ -728,12 +728,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		}
 	}
 
-	mf, err := ShowModelfile(model)
-	if err != nil {
-		return nil, err
-	}
-
-	resp.Modelfile = mf
+	var sb strings.Builder
+	fmt.Fprintln(&sb, "# Modelfile generate by \"ollama show\"")
+	fmt.Fprintln(&sb, "# To build a new Modelfile based on this, replace FROM with:")
+	fmt.Fprintf(&sb, "# FROM %s\n\n", model.ShortName)
+	fmt.Fprint(&sb, parser.Format(model.Commands()))
+	resp.Modelfile = sb.String()
 
 	return resp, nil
 }
