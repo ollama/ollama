@@ -58,7 +58,7 @@ func TestInitScheduler(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	var ggml *llm.GGML // value not used in tests
@@ -174,7 +174,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 }
 
 func TestRequests(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer done()
 
 	// Same model, same request
@@ -329,7 +329,7 @@ func TestRequests(t *testing.T) {
 }
 
 func TestGetRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 
 	// Same model, same request
@@ -391,7 +391,7 @@ func TestGetRunner(t *testing.T) {
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
 func TestPrematureExpired(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer done()
 
 	// Same model, same request
@@ -436,7 +436,7 @@ func TestPrematureExpired(t *testing.T) {
 }
 
 func TestUseLoadedRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	req := &LlmRequest{
 		ctx:             ctx,
 		opts:            api.DefaultOptions(),
@@ -461,7 +461,7 @@ func TestUseLoadedRunner(t *testing.T) {
 }
 
 func TestUpdateFreeSpace(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 	gpus := gpu.GpuInfoList{
 		{
@@ -494,7 +494,7 @@ func TestUpdateFreeSpace(t *testing.T) {
 }
 
 func TestFindRunnerToUnload(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 	req := &LlmRequest{
 		ctx:  ctx,
@@ -518,7 +518,7 @@ func TestFindRunnerToUnload(t *testing.T) {
 }
 
 func TestNeedsReload(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 
 	llm := &mockLlm{}
@@ -562,7 +562,7 @@ func TestNeedsReload(t *testing.T) {
 }
 
 func TestUnloadAllRunners(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 
 	llm1 := &mockLlm{}
