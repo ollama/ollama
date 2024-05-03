@@ -295,6 +295,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [chat: chat web app for teams](https://github.com/swuecho/chat)
 - [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
 - [Ollama RAG Chatbot: Local Chat with multiple PDFs using Ollama and RAG.](https://github.com/datvodinh/rag-chatbot.git)
+- [RWKV-Runner: RWKV offline LLM deployment tool, also usable as a client for ChatGPT and Ollama](https://github.com/josStorer/RWKV-Runner)
 
 ### Terminal
 
@@ -382,6 +383,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
+- [ChatGPTBox: All in one browser extension](https://github.com/josStorer/chatGPTBox) with [Integrating Tutorial](https://github.com/josStorer/chatGPTBox/issues/616#issuecomment-1975186467)
 
 ### Supported backends 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov. 
