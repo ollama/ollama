@@ -330,7 +330,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Tools & Deployments
 
-- [Ollama Operator](https://github.com/nekomeowww/ollama-operator)
+- [Ollama Operator](https://github.com/nekomeowww/ollama-operator) (Ollama running in Kubernetes)
 
 ### Libraries
 
