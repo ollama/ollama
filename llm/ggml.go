@@ -125,9 +125,9 @@ type Tensor struct {
 
 func (t Tensor) blockSize() uint64 {
 	switch {
-	case t.Kind < 2:
+	case t.Kind < 2 || (t.Kind > 23 && t.Kind < 29):
 		return 1
-	case t.Kind < 10:
+	case t.Kind < 10 || t.Kind == 20:
 		return 32
 	default:
 		return 256
@@ -172,6 +172,16 @@ func (t Tensor) typeSize() uint64 {
 		return 2 + 2*blockSize/8 + blockSize/32
 	case 18: // IQ3_XXS
 		return 2 + 3*blockSize/8
+	case 19: // IQ1_S
+		return 2 + blockSize/8 + blockSize/16
+	case 20: // IQ4_NL
+		return 2 + blockSize/2
+	case 21: // IQ3_S
+		return 2 + 2*blockSize/8 + blockSize/8 + blockSize/32 + 4
+	case 22: // IQ2_S
+		return 2 + blockSize/4 + blockSize/16
+	case 23: // IQ4_XS
+		return 4 + blockSize/2 + blockSize/64
 	default:
 		return 0
 	}

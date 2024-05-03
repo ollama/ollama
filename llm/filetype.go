@@ -29,6 +29,11 @@ const (
 	fileTypeQ2_K_S
 	fileTypeQ3_K_XS
 	fileTypeIQ3_XXS
+	fileTypeIQ1_S
+	fileTypeIQ4_NL
+	fileTypeIQ3_S
+	fileTypeIQ2_S
+	fileTypeIQ4_XS
 
 	fileTypeUnknown
 )
@@ -77,6 +82,16 @@ func ParseFileType(s string) (fileType, error) {
 		return fileTypeQ2_K_S, nil
 	case "Q3_K_XS":
 		return fileTypeQ3_K_XS, nil
+	case "IQ1_S":
+		return fileTypeIQ1_S, nil
+	case "IQ4_NL":
+		return fileTypeIQ4_NL, nil
+	case "IQ3_S":
+		return fileTypeIQ3_S, nil
+	case "IQ2_S":
+		return fileTypeIQ2_S, nil
+	case "IQ4_XS":
+		return fileTypeIQ4_XS, nil
 	case "IQ3_XXS":
 		return fileTypeIQ3_XXS, nil
 	default:
@@ -128,6 +143,16 @@ func (t fileType) String() string {
 		return "Q2_K_S"
 	case fileTypeQ3_K_XS:
 		return "Q3_K_XS"
+	case fileTypeIQ1_S:
+		return "IQ1_S"
+	case fileTypeIQ4_NL:
+		return "IQ4_NL"
+	case fileTypeIQ3_S:
+		return "IQ3_S"
+	case fileTypeIQ2_S:
+		return "IQ2_S"
+	case fileTypeIQ4_XS:
+		return "IQ4_XS"
 	case fileTypeIQ3_XXS:
 		return "IQ3_XXS"
 	default:
