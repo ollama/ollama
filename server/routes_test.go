@@ -238,6 +238,5 @@ func Test_Routes(t *testing.T) {
 		if tc.Expected != nil {
 			tc.Expected(t, resp)
 		}
-
 	}
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
@@ -145,6 +146,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
+		if errors.Is(err, context.Canceled) {
+			c.JSON(499, gin.H{"error": "request canceled"})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -388,6 +394,11 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
+		if errors.Is(err, context.Canceled) {
+			c.JSON(499, gin.H{"error": "request canceled"})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -717,12 +728,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		}
 	}
 
-	mf, err := ShowModelfile(model)
-	if err != nil {
-		return nil, err
-	}
-
-	resp.Modelfile = mf
+	var sb strings.Builder
+	fmt.Fprintln(&sb, "# Modelfile generate by \"ollama show\"")
+	fmt.Fprintln(&sb, "# To build a new Modelfile based on this, replace FROM with:")
+	fmt.Fprintf(&sb, "# FROM %s\n\n", model.ShortName)
+	fmt.Fprint(&sb, parser.Format(model.Commands()))
+	resp.Modelfile = sb.String()
 
 	return resp, nil
 }
@@ -788,34 +799,31 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 }
 
 func (s *Server) CopyModelHandler(c *gin.Context) {
-	var req api.CopyRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
+	var r api.CopyRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if req.Source == "" || req.Destination == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "source add destination are required"})
+	src := model.ParseName(r.Source)
+	if !src.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("source %q is invalid", r.Source)})
 		return
 	}
 
-	if err := ParseModelPath(req.Destination).Validate(); err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	dst := model.ParseName(r.Destination)
+	if !dst.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Source)})
 		return
 	}
 
-	if err := CopyModel(req.Source, req.Destination); err != nil {
-		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Source)})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
-		return
+	if err := CopyModel(src, dst); errors.Is(err, os.ErrNotExist) {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model %q not found", r.Source)})
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
 }
 
@@ -1215,6 +1223,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
+		if errors.Is(err, context.Canceled) {
+			c.JSON(499, gin.H{"error": "request canceled"})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

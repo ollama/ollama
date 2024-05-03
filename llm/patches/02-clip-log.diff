@@ -1,0 +1,12 @@
+diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
+index e431c7f7..f077e688 100644
+--- a/examples/llava/clip.cpp
++++ b/examples/llava/clip.cpp
+@@ -3,6 +3,7 @@
+ // I'll gradually clean and extend it
+ // Note: Even when using identical normalized image inputs (see normalize_image_u8_to_f32()) we have a significant difference in resulting embeddings compared to pytorch
+ #include "clip.h"
++#include "common.h"
+ #include "log.h"
+ #include "ggml.h"
+ #include "ggml-alloc.h"
