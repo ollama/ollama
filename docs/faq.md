@@ -32,7 +32,7 @@ When using the API, specify the `num_ctx` parameter:
 
 ```
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama2",
+  "model": "llama3",
   "prompt": "Why is the sky blue?",
   "options": {
     "num_ctx": 4096
@@ -88,9 +88,9 @@ On windows, Ollama inherits your user and system environment variables.
 
 3. Edit or create New variable(s) for your user account for `OLLAMA_HOST`, `OLLAMA_MODELS`, etc.
 
-4. Click OK/Apply to save 
+4. Click OK/Apply to save
 
-5. Run `ollama` from a new terminal window 
+5. Run `ollama` from a new terminal window
 
 
 ## How can I expose Ollama on my network?
@@ -221,12 +221,12 @@ The `keep_alive` parameter can be set to:
 
 For example, to preload a model and leave it in memory use:
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": -1}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3", "keep_alive": -1}'
 ```
 
 To unload the model and free up memory use:
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": 0}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3", "keep_alive": 0}'
 ```
 
 Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
