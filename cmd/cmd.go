@@ -34,7 +34,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/errtypes"
@@ -57,13 +56,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
-	modelfile, err := os.Open(filename)
+	f, err := os.Open(filename)
 	if err != nil {
 		return err
 	}
-	defer modelfile.Close()
+	defer f.Close()
 
-	commands, err := parser.Parse(modelfile)
+	modelfile, err := model.ParseFile(f)
 	if err != nil {
 		return err
 	}
@@ -77,10 +76,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
-	for i := range commands {
-		switch commands[i].Name {
+	for i := range modelfile.Commands {
+		switch modelfile.Commands[i].Name {
 		case "model", "adapter":
-			path := commands[i].Args
+			path := modelfile.Commands[i].Args
 			if path == "~" {
 				path = home
 			} else if strings.HasPrefix(path, "~/") {
@@ -92,7 +91,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			fi, err := os.Stat(path)
-			if errors.Is(err, os.ErrNotExist) && commands[i].Name == "model" {
+			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
 				continue
 			} else if err != nil {
 				return err
@@ -115,7 +114,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			commands[i].Args = "@"+digest
+			modelfile.Commands[i].Args = "@" + digest
 		}
 	}
 
@@ -145,7 +144,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	quantization, _ := cmd.Flags().GetString("quantization")
 
-	request := api.CreateRequest{Name: args[0], Modelfile: parser.Format(commands), Quantization: quantization}
+	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantization: quantization}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}

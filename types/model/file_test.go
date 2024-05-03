@@ -1,4 +1,4 @@
-package parser
+package model
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestParser(t *testing.T) {
+func TestParseFileFile(t *testing.T) {
 	input := `
 FROM model1
 ADAPTER adapter1
@@ -22,8 +22,8 @@ TEMPLATE template1
 
 	reader := strings.NewReader(input)
 
-	commands, err := Parse(reader)
-	assert.Nil(t, err)
+	modelfile, err := ParseFile(reader)
+	assert.NoError(t, err)
 
 	expectedCommands := []Command{
 		{Name: "model", Args: "model1"},
@@ -34,10 +34,10 @@ TEMPLATE template1
 		{Name: "template", Args: "template1"},
 	}
 
-	assert.Equal(t, expectedCommands, commands)
+	assert.Equal(t, expectedCommands, modelfile.Commands)
 }
 
-func TestParserFrom(t *testing.T) {
+func TestParseFileFrom(t *testing.T) {
 	var cases = []struct {
 		input    string
 		expected []Command
@@ -85,14 +85,16 @@ func TestParserFrom(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
-			commands, err := Parse(strings.NewReader(c.input))
+			modelfile, err := ParseFile(strings.NewReader(c.input))
 			assert.ErrorIs(t, err, c.err)
-			assert.Equal(t, c.expected, commands)
+			if modelfile != nil {
+				assert.Equal(t, c.expected, modelfile.Commands)
+			}
 		})
 	}
 }
 
-func TestParserParametersMissingValue(t *testing.T) {
+func TestParseFileParametersMissingValue(t *testing.T) {
 	input := `
 FROM foo
 PARAMETER param1
@@ -100,21 +102,21 @@ PARAMETER param1
 
 	reader := strings.NewReader(input)
 
-	_, err := Parse(reader)
+	_, err := ParseFile(reader)
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
-func TestParserBadCommand(t *testing.T) {
+func TestParseFileBadCommand(t *testing.T) {
 	input := `
 FROM foo
 BADCOMMAND param1 value1
 `
-	_, err := Parse(strings.NewReader(input))
+	_, err := ParseFile(strings.NewReader(input))
 	assert.ErrorIs(t, err, errInvalidCommand)
 
 }
 
-func TestParserMessages(t *testing.T) {
+func TestParseFileMessages(t *testing.T) {
 	var cases = []struct {
 		input    string
 		expected []Command
@@ -123,34 +125,34 @@ func TestParserMessages(t *testing.T) {
 		{
 			`
 FROM foo
-MESSAGE system You are a Parser. Always Parse things.
+MESSAGE system You are a file parser. Always parse things.
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "system: You are a Parser. Always Parse things."},
+				{Name: "message", Args: "system: You are a file parser. Always parse things."},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-MESSAGE system You are a Parser. Always Parse things.`,
+MESSAGE system You are a file parser. Always parse things.`,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "system: You are a Parser. Always Parse things."},
+				{Name: "message", Args: "system: You are a file parser. Always parse things."},
 			},
 			nil,
 		},
 		{
 			`
 FROM foo
-MESSAGE system You are a Parser. Always Parse things.
+MESSAGE system You are a file parser. Always parse things.
 MESSAGE user Hey there!
 MESSAGE assistant Hello, I want to parse all the things!
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "system: You are a Parser. Always Parse things."},
+				{Name: "message", Args: "system: You are a file parser. Always parse things."},
 				{Name: "message", Args: "user: Hey there!"},
 				{Name: "message", Args: "assistant: Hello, I want to parse all the things!"},
 			},
@@ -160,12 +162,12 @@ MESSAGE assistant Hello, I want to parse all the things!
 			`
 FROM foo
 MESSAGE system """
-You are a multiline Parser. Always Parse things.
+You are a multiline file parser. Always parse things.
 """
 			`,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "system: \nYou are a multiline Parser. Always Parse things.\n"},
+				{Name: "message", Args: "system: \nYou are a multiline file parser. Always parse things.\n"},
 			},
 			nil,
 		},
@@ -196,14 +198,16 @@ MESSAGE system`,
 
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
-			commands, err := Parse(strings.NewReader(c.input))
+			modelfile, err := ParseFile(strings.NewReader(c.input))
 			assert.ErrorIs(t, err, c.err)
-			assert.Equal(t, c.expected, commands)
+			if modelfile != nil {
+				assert.Equal(t, c.expected, modelfile.Commands)
+			}
 		})
 	}
 }
 
-func TestParserQuoted(t *testing.T) {
+func TestParseFileQuoted(t *testing.T) {
 	var cases = []struct {
 		multiline string
 		expected  []Command
@@ -348,14 +352,16 @@ TEMPLATE """
 
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
-			commands, err := Parse(strings.NewReader(c.multiline))
+			modelfile, err := ParseFile(strings.NewReader(c.multiline))
 			assert.ErrorIs(t, err, c.err)
-			assert.Equal(t, c.expected, commands)
+			if modelfile != nil {
+				assert.Equal(t, c.expected, modelfile.Commands)
+			}
 		})
 	}
 }
 
-func TestParserParameters(t *testing.T) {
+func TestParseFileParameters(t *testing.T) {
 	var cases = map[string]struct {
 		name, value string
 	}{
@@ -404,18 +410,18 @@ func TestParserParameters(t *testing.T) {
 			var b bytes.Buffer
 			fmt.Fprintln(&b, "FROM foo")
 			fmt.Fprintln(&b, "PARAMETER", k)
-			commands, err := Parse(&b)
-			assert.Nil(t, err)
+			modelfile, err := ParseFile(&b)
+			assert.NoError(t, err)
 
 			assert.Equal(t, []Command{
 				{Name: "model", Args: "foo"},
 				{Name: v.name, Args: v.value},
-			}, commands)
+			}, modelfile.Commands)
 		})
 	}
 }
 
-func TestParserComments(t *testing.T) {
+func TestParseFileComments(t *testing.T) {
 	var cases = []struct {
 		input    string
 		expected []Command
@@ -433,14 +439,14 @@ FROM foo
 
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
-			commands, err := Parse(strings.NewReader(c.input))
-			assert.Nil(t, err)
-			assert.Equal(t, c.expected, commands)
+			modelfile, err := ParseFile(strings.NewReader(c.input))
+			assert.NoError(t, err)
+			assert.Equal(t, c.expected, modelfile.Commands)
 		})
 	}
 }
 
-func TestParseFormatParse(t *testing.T) {
+func TestParseFileFormatParseFile(t *testing.T) {
 	var cases = []string{
 		`
 FROM foo
@@ -449,7 +455,7 @@ LICENSE MIT
 PARAMETER param1 value1
 PARAMETER param2 value2
 TEMPLATE template1
-MESSAGE system You are a Parser. Always Parse things.
+MESSAGE system You are a file parser. Always parse things.
 MESSAGE user Hey there!
 MESSAGE assistant Hello, I want to parse all the things!
 `,
@@ -488,13 +494,13 @@ MESSAGE assistant Hello, I want to parse all the things!
 
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
-			commands, err := Parse(strings.NewReader(c))
+			modelfile, err := ParseFile(strings.NewReader(c))
 			assert.NoError(t, err)
 
-			commands2, err := Parse(strings.NewReader(Format(commands)))
+			modelfile2, err := ParseFile(strings.NewReader(modelfile.String()))
 			assert.NoError(t, err)
 
-			assert.Equal(t, commands, commands2)
+			assert.Equal(t, modelfile, modelfile2)
 		})
 	}
 
