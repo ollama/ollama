@@ -148,6 +148,10 @@ If a different directory needs to be used, set the environment variable `OLLAMA_
 
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
+### How do I increase the timeout when i get "timed out waiting for llama runner to start"? 
+
+To increase the timeout for loading models from disk, set the environment variable `OLLAMA_LOAD_TIMEOUT` (default 600s).
+
 ## Does Ollama send my prompts and answers back to ollama.com?
 
 No. Ollama runs locally, and conversation data does not leave your machine.
