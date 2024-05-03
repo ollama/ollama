@@ -374,6 +374,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
 - [Cliobot](https://github.com/herval/cliobot) (Telegram bot with Ollama support)
 - [Copilot for Obsidian plugin](https://github.com/logancyang/obsidian-copilot)
+- [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) (Proxy that allows you to use ollama as a copilot like Github copilot)
 - [Obsidian Local GPT plugin](https://github.com/pfrankov/obsidian-local-gpt)
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)
 - [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
