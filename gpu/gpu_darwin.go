@@ -10,6 +10,12 @@ package gpu
 import "C"
 import (
 	"runtime"
+
+	"github.com/ollama/ollama/format"
+)
+
+const (
+	metalMinimumMemory = 512 * format.MebiByte
 )
 
 func GetGPUInfo() GpuInfoList {
@@ -32,7 +38,7 @@ func GetGPUInfo() GpuInfoList {
 	// TODO is there a way to gather actual allocated video memory? (currentAllocatedSize doesn't work)
 	info.FreeMemory = info.TotalMemory
 
-	info.MinimumMemory = 0
+	info.MinimumMemory = metalMinimumMemory
 	return []GpuInfo{info}
 }
 

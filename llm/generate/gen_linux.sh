@@ -165,11 +165,11 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
     fi
     if [ "${ARCH}" == "arm64" ]; then
         echo "ARM CPU detected - disabling unsupported AVX instructions"
-        
+
         # ARM-based CPUs such as M1 and Tegra do not support AVX extensions.
         #
-        # CUDA compute < 6.0 lacks proper FP16 support on ARM. 
-        # Disabling has minimal performance effect while maintaining compatibility. 
+        # CUDA compute < 6.0 lacks proper FP16 support on ARM.
+        # Disabling has minimal performance effect while maintaining compatibility.
         ARM64_DEFS="-DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_CUDA_F16=off"
     fi
     # Users building from source can tune the exact flags we pass to cmake for configuring llama.cpp

@@ -309,6 +309,7 @@ func (m *Metrics) Summary() {
 }
 
 var ErrInvalidOpts = errors.New("invalid options")
+var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
@@ -396,8 +397,10 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 func DefaultOptions() Options {
 	return Options{
 		// options set on request to runner
-		NumPredict:       -1,
-		NumKeep:          0,
+		NumPredict: -1,
+
+		// set a minimal num_keep to avoid issues on context shifts
+		NumKeep:          4,
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,

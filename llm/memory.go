@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
@@ -89,6 +88,11 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	graphFullOffload *= uint64(len(gpus))
 	graphPartialOffload *= uint64(len(gpus))
 
+	// on metal there's no partial offload overhead
+	if gpus[0].Library == "metal" {
+		graphPartialOffload = graphFullOffload
+	}
+
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
 	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
@@ -100,8 +104,26 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		return 0, 0
 	}
 
-	var layerCount int
 	layers := ggml.Tensors().Layers()
+
+	var memoryLayerOutput uint64
+	if layer, ok := layers["output_norm"]; ok {
+		memoryLayerOutput += layer.size()
+	}
+
+	if layer, ok := layers["output"]; ok {
+		memoryLayerOutput += layer.size()
+	} else if layer, ok := layers["token_embd"]; ok {
+		memoryLayerOutput += layer.size()
+	}
+
+	if gpus[0].Library == "metal" && opts.UseMMap {
+		// memory is preallocated for output tensors
+		memoryRequiredTotal += memoryLayerOutput
+		memoryRequiredPartial += memoryLayerOutput
+	}
+
+	var layerCount int
 	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
 		memoryLayer := layers[fmt.Sprintf("blk.%d", i)].size()
 
@@ -115,14 +137,10 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		}
 	}
 
-	var memoryLayerOutput uint64
-	for k, v := range layers {
-		if !strings.HasPrefix(k, "blk.") {
-			memoryLayerOutput += v.size()
-		}
+	if gpus[0].Library != "metal" || !opts.UseMMap {
+		// memory was not preallocated for output tensors
+		memoryRequiredTotal += memoryLayerOutput
 	}
-
-	memoryRequiredTotal += memoryLayerOutput
 
 	if memoryAvailable > memoryRequiredTotal {
 		layerCount = int(ggml.KV().BlockCount()) + 1
