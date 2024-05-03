@@ -1,16 +1,16 @@
 # Using LangChain with Ollama in Python
 
-Let's imagine we are studying the classics, such as **the Odyssey** by **Homer**. We might have a question about Neleus and his family. If you ask llama3 for that info, you may get something like:
+Let's imagine we are studying the classics, such as **the Odyssey** by **Homer**. We might have a question about Neleus and his family. If you ask llama2 for that info, you may get something like:
 
 > I apologize, but I'm a large language model, I cannot provide information on individuals or families that do not exist in reality. Neleus is not a real person or character, and therefore does not have a family or any other personal details. My apologies for any confusion. Is there anything else I can help you with?
 
-This sounds like a typical censored response, but even llama3-uncensored gives a mediocre answer:
+This sounds like a typical censored response, but even llama2-uncensored gives a mediocre answer:
 
 > Neleus was a legendary king of Pylos and the father of Nestor, one of the Argonauts. His mother was Clymene, a sea nymph, while his father was Neptune, the god of the sea.
 
 So let's figure out how we can use **LangChain** with Ollama to ask our question to the actual document, the Odyssey by Homer, using Python.
 
-Let's start by asking a simple question that we can get an answer to from the **Llama3** model using **Ollama**. First, we need to install the **LangChain** package:
+Let's start by asking a simple question that we can get an answer to from the **Llama2** model using **Ollama**. First, we need to install the **LangChain** package:
 
 `pip install langchain`
 

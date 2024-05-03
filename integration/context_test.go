@@ -15,7 +15,7 @@ func TestContextExhaustion(t *testing.T) {
 	defer cancel()
 	// Set up the test data
 	req := api.GenerateRequest{
-		Model:  "llama3",
+		Model:  "llama2",
 		Prompt: "Write me a story with a ton of emojis?",
 		Stream: &stream,
 		Options: map[string]interface{}{
