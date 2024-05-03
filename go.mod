@@ -1,4 +1,4 @@
-module github.com/jmorganca/ollama
+module github.com/ollama/ollama
 
 go 1.22
 
@@ -9,7 +9,7 @@ require (
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
 	github.com/emirpasic/gods v1.18.1
 	github.com/gin-gonic/gin v1.9.1
-	github.com/golang/protobuf v1.5.0
+	github.com/golang/protobuf v1.5.0 // indirect
 	github.com/google/uuid v1.0.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/olekukonko/tablewriter v0.0.5
@@ -19,7 +19,10 @@ require (
 	golang.org/x/sync v0.3.0
 )
 
-require github.com/pdevine/tensor v0.0.0-20240228013915-64ccaa8d9ca9
+require (
+	github.com/nlpodyssey/gopickle v0.3.0
+	github.com/pdevine/tensor v0.0.0-20240228013915-64ccaa8d9ca9
+)
 
 require (
 	github.com/apache/arrow/go/arrow v0.0.0-20201229220542-30ce2eb5d4dc // indirect
@@ -68,7 +71,7 @@ require (
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sys v0.13.0
 	golang.org/x/term v0.13.0
-	golang.org/x/text v0.13.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 	google.golang.org/protobuf v1.30.0
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
