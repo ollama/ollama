@@ -351,6 +351,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
 - [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
 - [Testcontainers](https://testcontainers.com/modules/ollama/)
+- [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
 
 ### Mobile
 
