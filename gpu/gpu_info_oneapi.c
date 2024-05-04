@@ -200,7 +200,7 @@ ze_result_t oneapi_device_info(oneapi_init_resp_t *resp) {
 
     zes_device_handle_t *devices = (zes_device_handle_t *)malloc(
         device_count * sizeof(zes_device_handle_t));
-    (*resp->oh.zesDeviceGet)(drivers[i], &device_count, devices);
+    (*resp->oh.zesDeviceGet)(drivers[d], &device_count, devices);
 
     for (i = 0; i < device_count; i++) {
       zes_device_ext_properties_t ext_props;
