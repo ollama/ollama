@@ -195,11 +195,10 @@ func GetGPUInfo() GpuInfoList {
 		resp = append(resp, gpuInfo)
 	}
 
-	slog.Info(fmt.Sprintf("%v", gpuHandles.oneApiDeviceCount))
 	// OneApi Intel
 	for i := 0; i < gpuHandles.oneApiDeviceCount; i++ {
-		// TODO once we support CPU compilation variants of GPU libraries refine this...
-		if cpuVariant == "" || runtime.GOARCH == "amd64" {
+		// TODO remove this when we complete testing for arm64...
+		if runtime.GOARCH != "amd64" {
 			continue
 		}
 
@@ -216,9 +215,6 @@ func GetGPUInfo() GpuInfoList {
 		gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 		gpuInfo.Major = int(memInfo.major)
 		gpuInfo.Minor = int(memInfo.minor)
-		slog.Info(gpuInfo.ID)
-
-		slog.Info(fmt.Sprintf("%v", gpuInfo.TotalMemory))
 
 		resp = append(resp, gpuInfo)
 	}

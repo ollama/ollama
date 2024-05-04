@@ -110,20 +110,20 @@ void oneapi_check_vram(oneapi_handle_t h, int i, mem_info_t *resp) {
   resp->major = 0;
   resp->minor = 0;
 
-  zes_device_handle_t device = h.device_info->device;
+  zes_device_handle_t device = h.device_info[i].device;
 
   // Format the GPU ID as a string
   snprintf(&resp->gpu_id[0], GPU_ID_LEN,
            "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%"
            "02x%02x",
-           h.device_info->uuid.id[0], h.device_info->uuid.id[1],
-           h.device_info->uuid.id[2], h.device_info->uuid.id[3],
-           h.device_info->uuid.id[4], h.device_info->uuid.id[5],
-           h.device_info->uuid.id[6], h.device_info->uuid.id[7],
-           h.device_info->uuid.id[8], h.device_info->uuid.id[9],
-           h.device_info->uuid.id[10], h.device_info->uuid.id[11],
-           h.device_info->uuid.id[12], h.device_info->uuid.id[13],
-           h.device_info->uuid.id[14], h.device_info->uuid.id[15]);
+           h.device_info[i].uuid.id[0], h.device_info[i].uuid.id[1],
+           h.device_info[i].uuid.id[2], h.device_info[i].uuid.id[3],
+           h.device_info[i].uuid.id[4], h.device_info[i].uuid.id[5],
+           h.device_info[i].uuid.id[6], h.device_info[i].uuid.id[7],
+           h.device_info[i].uuid.id[8], h.device_info[i].uuid.id[9],
+           h.device_info[i].uuid.id[10], h.device_info[i].uuid.id[11],
+           h.device_info[i].uuid.id[12], h.device_info[i].uuid.id[13],
+           h.device_info[i].uuid.id[14], h.device_info[i].uuid.id[15]);
 
   uint32_t memCount = 0;
   ret = (*h.zesDeviceEnumMemoryModules)(device, &memCount, NULL);
