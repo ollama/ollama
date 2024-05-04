@@ -29,6 +29,7 @@ import (
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/server/envconfig"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -695,7 +696,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 		return err
 	}
 
-	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+	if !envconfig.NoPrune {
 		if err := deleteUnusedLayers(nil, deleteMap, false); err != nil {
 			return err
 		}
@@ -1026,7 +1027,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
 
-	if noprune = os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+	if !envconfig.NoPrune {
 		manifest, _, err = GetManifest(mp)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
