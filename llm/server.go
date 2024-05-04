@@ -49,7 +49,10 @@ type llmServer struct {
 	options api.Options
 
 	// TODO - this should be broken down by GPU
-	estimatedVRAM uint64 // Estimated usage of VRAM by the loaded model
+	estimatedVRAM  uint64 // Estimated usage of VRAM by the loaded model
+	estimatedTotal uint64 // Total size of model
+	totalLayers    uint64
+	gpuCount       int
 
 	sem *semaphore.Weighted
 }
@@ -83,12 +86,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	cpuRunner := ""
 	var estimatedVRAM uint64
+	var estimatedTotal uint64
 	var systemMemory uint64
+	gpuCount := len(gpus)
 	if (len(gpus) == 1 && gpus[0].Library == "cpu") || opts.NumGPU == 0 {
 
 		// TODO evaluate system memory to see if we should block the load, or force an unload of another CPU runner
 
 		cpuRunner = serverForCpu()
+		gpuCount = 0
 	} else {
 		if gpus[0].Library == "metal" {
 			memInfo, err := gpu.GetCPUMem()
@@ -100,7 +106,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			}
 		}
 		var layers int
-		layers, estimatedVRAM = EstimateGPULayers(gpus, ggml, projectors, opts)
+		layers, estimatedVRAM, estimatedTotal = EstimateGPULayers(gpus, ggml, projectors, opts)
 
 		if gpus[0].Library == "metal" && estimatedVRAM > systemMemory {
 			// disable partial offloading when model is greater than total system memory as this
@@ -133,6 +139,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		} else {
 			slog.Info("user override", "OLLAMA_LLM_LIBRARY", demandLib, "path", serverPath)
 			servers = []string{demandLib}
+			if strings.HasPrefix(demandLib, "cpu") {
+				// Omit the GPU flag to silence the warning
+				opts.NumGPU = -1
+			}
 		}
 	}
 
@@ -214,6 +224,11 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			continue
 		}
 
+		if strings.HasPrefix(servers[i], "cpu") {
+			// TODO if we tried a gpu runner first, and it failed, record the error and bubble that back up
+			gpuCount = 0
+		}
+
 		// Find an availableServers  port, retry on each iterration in case the failure was a port conflict race
 		port := 0
 		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
@@ -267,12 +282,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		s := &llmServer{
-			port:          port,
-			cmd:           exec.Command(server, finalParams...),
-			status:        NewStatusWriter(os.Stderr),
-			options:       opts,
-			estimatedVRAM: estimatedVRAM,
-			sem:           semaphore.NewWeighted(int64(numParallel)),
+			port:           port,
+			cmd:            exec.Command(server, finalParams...),
+			status:         NewStatusWriter(os.Stderr),
+			options:        opts,
+			estimatedVRAM:  estimatedVRAM,
+			estimatedTotal: estimatedTotal,
+			sem:            semaphore.NewWeighted(int64(numParallel)),
+			totalLayers:    ggml.KV().BlockCount() + 1,
+			gpuCount:       gpuCount,
 		}
 
 		s.cmd.Env = os.Environ()

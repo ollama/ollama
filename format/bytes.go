@@ -53,6 +53,8 @@ func HumanBytes(b int64) string {
 
 func HumanBytes2(b uint64) string {
 	switch {
+	case b >= GibiByte:
+		return fmt.Sprintf("%.1f GiB", float64(b)/GibiByte)
 	case b >= MebiByte:
 		return fmt.Sprintf("%.1f MiB", float64(b)/MebiByte)
 	case b >= KibiByte:
