@@ -328,6 +328,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
 
+### Tools & Deployments
+
+- [Ollama Operator](https://github.com/nekomeowww/ollama-operator) (Ollama running in Kubernetes)
+
 ### Libraries
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
