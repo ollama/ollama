@@ -210,14 +210,6 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 	default:
 		return gpuLibPaths
 	}
-	// Exclude the specific directory (reason: PhysX is installed by default with Nvidia drivers and its folder is listed in Environment Variables, but only has cudart64_*.dll and no cublasLt64_*.dll and cublas64_*.dll)
-	excludedDir := `C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common`
-	for i, ldPath := range ldPaths {
-		if ldPath == excludedDir {
-			ldPaths = append(ldPaths[:i], ldPaths[i+1:]...)
-			break
-		}
-	}
 	// Start with whatever we find in the PATH/LD_LIBRARY_PATH
 	for _, ldPath := range ldPaths {
 		d, err := filepath.Abs(ldPath)
@@ -228,6 +220,11 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 	}
 	slog.Debug("gpu library search", "globs", patterns)
         for _, pattern := range patterns {
+	// Exclude the specific directory (reason: PhysX is installed by default with Nvidia drivers and its folder is listed in Environment Variables, but only has cudart64_*.dll and no cublasLt64_*.dll and cublas64_*.dll)
+		// Nvidia PhysX known to return bogus results (better, disk letter agnostic version of code based on PR#4135)
+		if strings.Contains(pattern, "PhysX") {
+			slog.Debug("skipping PhysX cuda library path", "path", pattern)
+		}
                 // Ignore glob discovery errors
 		matches, _ := filepath.Glob(pattern)
 		for _, match := range matches {
