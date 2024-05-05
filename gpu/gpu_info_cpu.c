@@ -44,6 +44,8 @@ void cpu_check_ram(mem_info_t *resp) {
 //   mem_info_t resp = {0, 0, NULL};
 //   return resp;
 // }
+#elif __DragonFly__ || __FreeBSD__ || __NetBSD__ || __OpenBSD__
+// This is already implemented as a Go function in GetCPUMem().
 #else
 #error "Unsupported platform"
 #endif

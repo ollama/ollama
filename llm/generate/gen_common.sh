@@ -89,7 +89,7 @@ compress() {
     rm -rf ${BUILD_DIR}/bin/*.gz
     for f in ${BUILD_DIR}/bin/* ; do
         gzip -n --best -f ${f} &
-        pids+=" $!"
+        pids="$pids $!"
     done
     # check for lib directory
     if [ -d ${BUILD_DIR}/lib ]; then
