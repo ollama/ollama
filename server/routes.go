@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,7 +29,6 @@ import (
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -146,12 +146,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
-		if errors.Is(err, context.Canceled) {
-			c.JSON(499, gin.H{"error": "request canceled"})
-			return
-		}
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		handleErrorResponse(c, err)
 		return
 	}
 
@@ -394,12 +389,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
-		if errors.Is(err, context.Canceled) {
-			c.JSON(499, gin.H{"error": "request canceled"})
-			return
-		}
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		handleErrorResponse(c, err)
 		return
 	}
 
@@ -522,28 +512,17 @@ func (s *Server) PushModelHandler(c *gin.Context) {
 
 func (s *Server) CreateModelHandler(c *gin.Context) {
 	var req api.CreateRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	var model string
-	if req.Model != "" {
-		model = req.Model
-	} else if req.Name != "" {
-		model = req.Name
-	} else {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
-	}
-
-	if err := ParseModelPath(model).Validate(); err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	name := model.ParseName(cmp.Or(req.Model, req.Name))
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid model name"})
 		return
 	}
 
@@ -552,19 +531,19 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	var modelfile io.Reader = strings.NewReader(req.Modelfile)
+	var r io.Reader = strings.NewReader(req.Modelfile)
 	if req.Path != "" && req.Modelfile == "" {
-		mf, err := os.Open(req.Path)
+		f, err := os.Open(req.Path)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("error reading modelfile: %s", err)})
 			return
 		}
-		defer mf.Close()
+		defer f.Close()
 
-		modelfile = mf
+		r = f
 	}
 
-	commands, err := parser.Parse(modelfile)
+	modelfile, err := model.ParseFile(r)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -580,7 +559,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, model, filepath.Dir(req.Path), req.Quantization, commands, fn); err != nil {
+		if err := CreateModel(ctx, name.String(), filepath.Dir(req.Path), req.Quantization, modelfile, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -732,7 +711,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprintln(&sb, "# Modelfile generate by \"ollama show\"")
 	fmt.Fprintln(&sb, "# To build a new Modelfile based on this, replace FROM with:")
 	fmt.Fprintf(&sb, "# FROM %s\n\n", model.ShortName)
-	fmt.Fprint(&sb, parser.Format(model.Commands()))
+	fmt.Fprint(&sb, model.String())
 	resp.Modelfile = sb.String()
 
 	return resp, nil
@@ -1223,12 +1202,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
-		if errors.Is(err, context.Canceled) {
-			c.JSON(499, gin.H{"error": "request canceled"})
-			return
-		}
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		handleErrorResponse(c, err)
 		return
 	}
 
@@ -1348,4 +1322,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func handleErrorResponse(c *gin.Context, err error) {
+	if errors.Is(err, context.Canceled) {
+		c.JSON(499, gin.H{"error": "request canceled"})
+		return
+	}
+	if errors.Is(err, ErrMaxQueue) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 }

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -25,9 +26,10 @@ const (
 )
 
 var (
-	ErrInvalidImageFormat = errors.New("invalid image format")
-	ErrInvalidProtocol    = errors.New("invalid protocol scheme")
-	ErrInsecureProtocol   = errors.New("insecure protocol http")
+	ErrInvalidImageFormat  = errors.New("invalid image format")
+	ErrInvalidProtocol     = errors.New("invalid protocol scheme")
+	ErrInsecureProtocol    = errors.New("insecure protocol http")
+	ErrInvalidDigestFormat = errors.New("invalid digest format")
 )
 
 func ParseModelPath(name string) ModelPath {
@@ -147,6 +149,17 @@ func GetBlobsPath(digest string) (string, error) {
 	dir, err := modelsDir()
 	if err != nil {
 		return "", err
+	}
+
+	// only accept actual sha256 digests
+	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
+	re := regexp.MustCompile(pattern)
+	if err != nil {
+		return "", err
+	}
+
+	if digest != "" && !re.MatchString(digest) {
+		return "", ErrInvalidDigestFormat
 	}
 
 	digest = strings.ReplaceAll(digest, ":", "-")

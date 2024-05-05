@@ -43,10 +43,13 @@ type Scheduler struct {
 	getGpuFn    func() gpu.GpuInfoList
 }
 
-// TODO set this to zero after a release or two, to enable multiple models by default
-var loadedMax = 1          // Maximum runners; < 1 maps to as many as will fit in VRAM (unlimited for CPU runners)
-var maxQueuedRequests = 10 // TODO configurable
-var numParallel = 1
+var (
+	// TODO set this to zero after a release or two, to enable multiple models by default
+	loadedMax         = 1 // Maximum runners; < 1 maps to as many as will fit in VRAM (unlimited for CPU runners)
+	maxQueuedRequests = 512
+	numParallel       = 1
+	ErrMaxQueue       = fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
+)
 
 func InitScheduler(ctx context.Context) *Scheduler {
 	maxRunners := os.Getenv("OLLAMA_MAX_LOADED_MODELS")
@@ -64,6 +67,14 @@ func InitScheduler(ctx context.Context) *Scheduler {
 			slog.Error("invalid parallel setting, must be greater than zero", "OLLAMA_NUM_PARALLEL", onp, "error", err)
 		} else {
 			numParallel = p
+		}
+	}
+	if onp := os.Getenv("OLLAMA_MAX_QUEUE"); onp != "" {
+		p, err := strconv.Atoi(onp)
+		if err != nil || p <= 0 {
+			slog.Error("invalid setting", "OLLAMA_MAX_QUEUE", onp, "error", err)
+		} else {
+			maxQueuedRequests = p
 		}
 	}
 
@@ -95,7 +106,7 @@ func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options,
 	select {
 	case s.pendingReqCh <- req:
 	default:
-		req.errCh <- fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
+		req.errCh <- ErrMaxQueue
 	}
 	return req.successCh, req.errCh
 }

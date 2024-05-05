@@ -29,7 +29,6 @@ import (
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -63,46 +62,74 @@ func (m *Model) IsEmbedding() bool {
 	return slices.Contains(m.Config.ModelFamilies, "bert") || slices.Contains(m.Config.ModelFamilies, "nomic-bert")
 }
 
-func (m *Model) Commands() (cmds []parser.Command) {
-	cmds = append(cmds, parser.Command{Name: "model", Args: m.ModelPath})
+func (m *Model) String() string {
+	var modelfile model.File
+
+	modelfile.Commands = append(modelfile.Commands, model.Command{
+		Name: "model",
+		Args: m.ModelPath,
+	})
 
 	if m.Template != "" {
-		cmds = append(cmds, parser.Command{Name: "template", Args: m.Template})
+		modelfile.Commands = append(modelfile.Commands, model.Command{
+			Name: "template",
+			Args: m.Template,
+		})
 	}
 
 	if m.System != "" {
-		cmds = append(cmds, parser.Command{Name: "system", Args: m.System})
+		modelfile.Commands = append(modelfile.Commands, model.Command{
+			Name: "system",
+			Args: m.System,
+		})
 	}
 
 	for _, adapter := range m.AdapterPaths {
-		cmds = append(cmds, parser.Command{Name: "adapter", Args: adapter})
+		modelfile.Commands = append(modelfile.Commands, model.Command{
+			Name: "adapter",
+			Args: adapter,
+		})
 	}
 
 	for _, projector := range m.ProjectorPaths {
-		cmds = append(cmds, parser.Command{Name: "projector", Args: projector})
+		modelfile.Commands = append(modelfile.Commands, model.Command{
+			Name: "projector",
+			Args: projector,
+		})
 	}
 
 	for k, v := range m.Options {
 		switch v := v.(type) {
 		case []any:
 			for _, s := range v {
-				cmds = append(cmds, parser.Command{Name: k, Args: fmt.Sprintf("%v", s)})
+				modelfile.Commands = append(modelfile.Commands, model.Command{
+					Name: k,
+					Args: fmt.Sprintf("%v", s),
+				})
 			}
 		default:
-			cmds = append(cmds, parser.Command{Name: k, Args: fmt.Sprintf("%v", v)})
+			modelfile.Commands = append(modelfile.Commands, model.Command{
+				Name: k,
+				Args: fmt.Sprintf("%v", v),
+			})
 		}
 	}
 
 	for _, license := range m.License {
-		cmds = append(cmds, parser.Command{Name: "license", Args: license})
+		modelfile.Commands = append(modelfile.Commands, model.Command{
+			Name: "license",
+			Args: license,
+		})
 	}
 
 	for _, msg := range m.Messages {
-		cmds = append(cmds, parser.Command{Name: "message", Args: fmt.Sprintf("%s %s", msg.Role, msg.Content)})
+		modelfile.Commands = append(modelfile.Commands, model.Command{
+			Name: "message",
+			Args: fmt.Sprintf("%s %s", msg.Role, msg.Content),
+		})
 	}
 
-	return cmds
-
+	return modelfile.String()
 }
 
 type Message struct {
@@ -329,7 +356,7 @@ func realpath(mfDir, from string) string {
 	return abspath
 }
 
-func CreateModel(ctx context.Context, name, modelFileDir, quantization string, commands []parser.Command, fn func(resp api.ProgressResponse)) error {
+func CreateModel(ctx context.Context, name, modelFileDir, quantization string, modelfile *model.File, fn func(resp api.ProgressResponse)) error {
 	deleteMap := make(map[string]struct{})
 	if manifest, _, err := GetManifest(ParseModelPath(name)); err == nil {
 		for _, layer := range append(manifest.Layers, manifest.Config) {
@@ -351,7 +378,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, c
 	params := make(map[string][]string)
 	fromParams := make(map[string]any)
 
-	for _, c := range commands {
+	for _, c := range modelfile.Commands {
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
 		switch c.Name {
