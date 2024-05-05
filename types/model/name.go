@@ -161,7 +161,7 @@ func ParseNameBare(s string) Name {
 	}
 
 	scheme, host, ok := strings.Cut(s, "://")
-	if ! ok {
+	if !ok {
 		host = scheme
 	}
 	n.Host = host
