@@ -23,7 +23,7 @@ func TestCPUMemInfo(t *testing.T) {
 	switch runtime.GOOS {
 	case "darwin":
 		t.Skip("CPU memory not populated on darwin")
-	case "openbsd", "netbsd", "freebsd", "dragonfly":
+	case "dragonfly", "freebsd", "netbsd", "openbsd":
 		t.Skip("CPU memory not populated on BSD")
 	case "linux", "windows":
 		assert.Greater(t, info.TotalMemory, uint64(0))
