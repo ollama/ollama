@@ -194,8 +194,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--numa")
 	}
 
-	// "--cont-batching", // TODO - doesn't seem to have any noticeable perf change for multiple requests
 	numParallel := envconfig.NumParallel
+
+	// TODO (jmorganca): multimodal models don't support parallel yet
+	// see https://github.com/ollama/ollama/issues/4165
+	if len(projectors) > 0 {
+		numParallel = 1
+		slog.Warn("multimodal models don't support parallel requests yet")
+	}
+
 	params = append(params, "--parallel", fmt.Sprintf("%d", numParallel))
 
 	for i := 0; i < len(servers); i++ {
