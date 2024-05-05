@@ -7,10 +7,10 @@ package llm
 // #cgo windows,arm64 LDFLAGS: ${SRCDIR}/build/windows/arm64_static/libllama.a -static -lstdc++
 // #cgo linux,amd64 LDFLAGS: ${SRCDIR}/build/linux/x86_64_static/libllama.a -lstdc++
 // #cgo linux,arm64 LDFLAGS: ${SRCDIR}/build/linux/arm64_static/libllama.a -lstdc++
-// #cgo openbsd,amd64 LDFLAGS: ${SRCDIR}/build/bsd/x86_64_static/libllama.a -lstdc++ -lm
-// #cgo netbsd,amd64 LDFLAGS: ${SRCDIR}/build/bsd/x86_64_static/libllama.a -lstdc++ -lm
-// #cgo freebsd,amd64 LDFLAGS: ${SRCDIR}/build/bsd/x86_64_static/libllama.a -lstdc++ -lm
 // #cgo dragonfly,amd64 LDFLAGS: ${SRCDIR}/build/bsd/x86_64_static/libllama.a -lstdc++ -lm
+// #cgo freebsd,amd64 LDFLAGS: ${SRCDIR}/build/bsd/x86_64_static/libllama.a -lstdc++ -lm
+// #cgo netbsd,amd64 LDFLAGS: ${SRCDIR}/build/bsd/x86_64_static/libllama.a -lstdc++ -lm
+// #cgo openbsd,amd64 LDFLAGS: ${SRCDIR}/build/bsd/x86_64_static/libllama.a -lstdc++ -lm
 // #include <stdlib.h>
 // #include "llama.h"
 import "C"
