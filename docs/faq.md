@@ -140,7 +140,7 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 
 - macOS: `~/.ollama/models`
 - Linux: `/usr/share/ollama/.ollama/models`
-- Windows: `C:\Users\<username>\.ollama\models`
+- Windows: `C:\Users\%username%\.ollama\models`
 
 ### How do I set them to a different location?
 
