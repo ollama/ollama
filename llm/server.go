@@ -406,6 +406,29 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	}
 }
 
+// getServerStatusRetry will retry if ServerStatusNoSlotsAvailable is received
+func (s *llmServer) getServerStatusRetry(ctx context.Context) (ServerStatus, error) {
+	var retries int
+	for {
+		status, err := s.getServerStatus(ctx)
+		if err != nil {
+			return status, err
+		}
+
+		if status == ServerStatusNoSlotsAvailable {
+			retries++
+			if retries > 10 {
+				return status, fmt.Errorf("no slots available after %d retries", retries)
+			}
+
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+
+		return status, nil
+	}
+}
+
 func (s *llmServer) Ping(ctx context.Context) error {
 	_, err := s.getServerStatus(ctx)
 	if err != nil {
@@ -545,6 +568,14 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return err
 	}
 	defer s.sem.Release(1)
+
+	// Make sure the server is ready
+	status, err := s.getServerStatusRetry(ctx)
+	if err != nil {
+		return err
+	} else if status != ServerStatusReady {
+		return fmt.Errorf("unexpected server status: %s", status.ToString())
+	}
 
 	// only allow maximum 10 "context shifts" to avoid infinite generation
 	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
@@ -708,6 +739,14 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 	}
 	defer s.sem.Release(1)
 
+	// Make sure the server is ready
+	status, err := s.getServerStatusRetry(ctx)
+	if err != nil {
+		return nil, err
+	} else if status != ServerStatusReady {
+		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
+	}
+
 	data, err := json.Marshal(TokenizeRequest{Content: prompt})
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
@@ -752,6 +791,14 @@ type TokenizeResponse struct {
 }
 
 func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error) {
+	// Make sure the server is ready
+	status, err := s.getServerStatus(ctx)
+	if err != nil {
+		return nil, err
+	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvailable {
+		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
+	}
+
 	data, err := json.Marshal(TokenizeRequest{Content: content})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling encode data: %w", err)
@@ -796,6 +843,14 @@ type DetokenizeResponse struct {
 }
 
 func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
+	// Make sure the server is ready
+	status, err := s.getServerStatus(ctx)
+	if err != nil {
+		return "", err
+	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvailable {
+		return "", fmt.Errorf("unexpected server status: %s", status.ToString())
+	}
+
 	data, err := json.Marshal(DetokenizeRequest{Tokens: tokens})
 	if err != nil {
 		return "", fmt.Errorf("marshaling decode data: %w", err)
