@@ -266,6 +266,11 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 	patterns = append(patterns, defaultPatterns...)
 	slog.Debug("gpu library search", "globs", patterns)
 	for _, pattern := range patterns {
+
+		// Nvidia PhysX known to return bogus results
+		if strings.Contains(pattern, "PhysX") {
+			slog.Debug("skipping PhysX cuda library path", "path", pattern)
+		}
 		// Ignore glob discovery errors
 		matches, _ := filepath.Glob(pattern)
 		for _, match := range matches {
