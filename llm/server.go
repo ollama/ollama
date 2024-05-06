@@ -715,13 +715,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			if s.status != nil && s.status.LastErrMsg != "" {
 				msg = s.status.LastErrMsg
 			}
-
 			return fmt.Errorf("an unknown error was encountered while running the model %s", msg)
 		}
+
 		return fmt.Errorf("error reading llm response: %v", err)
 	}
 
-	return nil // success
+	return nil
 }
 
 type EmbeddingRequest struct {
@@ -738,6 +738,7 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 		return nil, err
 	}
 	defer s.sem.Release(1)
+
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
