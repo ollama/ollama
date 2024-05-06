@@ -166,6 +166,12 @@ func GetGPUInfo() GpuInfoList {
 		slog.Warn("CPU does not have AVX or AVX2, disabling GPU support.")
 	}
 
+	// On windows we bundle the nvidia library one level above the runner dir
+	depPath := ""
+	if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
+		depPath = filepath.Dir(envconfig.RunnersDir)
+	}
+
 	var memInfo C.mem_info_t
 	resp := []GpuInfo{}
 
@@ -198,6 +204,7 @@ func GetGPUInfo() GpuInfoList {
 		gpuInfo.Major = int(memInfo.major)
 		gpuInfo.Minor = int(memInfo.minor)
 		gpuInfo.MinimumMemory = cudaMinimumMemory
+		gpuInfo.DependencyPath = depPath
 
 		// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
 		resp = append(resp, gpuInfo)
