@@ -22,6 +22,11 @@ func TestKeepAliveParsingFromJSON(t *testing.T) {
 			exp:  &Duration{42 * time.Second},
 		},
 		{
+			name: "Positive Float",
+			req:  `{ "keep_alive": 42.5 }`,
+			exp:  &Duration{42 * time.Second},
+		},
+		{
 			name: "Positive Integer String",
 			req:  `{ "keep_alive": "42m" }`,
 			exp:  &Duration{42 * time.Minute},
@@ -29,6 +34,11 @@ func TestKeepAliveParsingFromJSON(t *testing.T) {
 		{
 			name: "Negative Integer",
 			req:  `{ "keep_alive": -1 }`,
+			exp:  &Duration{math.MaxInt64},
+		},
+		{
+			name: "Negative Float",
+			req:  `{ "keep_alive": -3.14 }`,
 			exp:  &Duration{math.MaxInt64},
 		},
 		{
@@ -45,6 +55,53 @@ func TestKeepAliveParsingFromJSON(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, test.exp, dec.KeepAlive)
+		})
+	}
+}
+
+func TestDurationMarshalUnmarshal(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    time.Duration
+		expected time.Duration
+	}{
+		{
+			"negative duration",
+			time.Duration(-1),
+			time.Duration(math.MaxInt64),
+		},
+		{
+			"positive duration",
+			time.Duration(42 * time.Second),
+			time.Duration(42 * time.Second),
+		},
+		{
+			"another positive duration",
+			time.Duration(42 * time.Minute),
+			time.Duration(42 * time.Minute),
+		},
+		{
+			"zero duration",
+			time.Duration(0),
+			time.Duration(0),
+		},
+		{
+			"max duration",
+			time.Duration(math.MaxInt64),
+			time.Duration(math.MaxInt64),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b, err := json.Marshal(Duration{test.input})
+			require.NoError(t, err)
+
+			var d Duration
+			err = json.Unmarshal(b, &d)
+			require.NoError(t, err)
+
+			assert.Equal(t, test.expected, d.Duration, "input %v, marshalled %v, got %v", test.input, string(b), d.Duration)
 		})
 	}
 }
