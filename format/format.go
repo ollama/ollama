@@ -24,7 +24,7 @@ func HumanNumber(b uint64) string {
 		if number == math.Floor(number) {
 			return fmt.Sprintf("%.0fM", number) // no decimals if whole number
 		}
-		return fmt.Sprintf("%.2fM", number) // ywo decimals if not a whole number
+		return fmt.Sprintf("%.2fM", number) // two decimals if not a whole number
 	case b >= Thousand:
 		return fmt.Sprintf("%.0fK", float64(b)/Thousand)
 	default:
