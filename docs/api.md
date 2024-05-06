@@ -95,7 +95,7 @@ The final response in the stream also includes additional data about the generat
 - `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
 
-To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration`.
+To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration` * `10^9`.
 
 ```json
 {
