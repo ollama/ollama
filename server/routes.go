@@ -1041,6 +1041,7 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
+		srvr.Close()
 		done()
 		sched.unloadAllRunners()
 		gpu.Cleanup()
