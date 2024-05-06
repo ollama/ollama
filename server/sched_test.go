@@ -352,11 +352,9 @@ func TestGetRunner(t *testing.T) {
 	scenario1c.req.model.ModelPath = "bad path"
 	slog.Info("scenario1c")
 	successCh1c, errCh1c := s.GetRunner(scenario1c.ctx, scenario1c.req.model, scenario1c.req.opts, scenario1c.req.sessionDuration)
-	require.Len(t, s.pendingReqCh, 0)
-	require.Len(t, successCh1c, 0)
-	require.Len(t, errCh1c, 0)
-
+	// Starts in pending channel, then should be quickly processsed to return an error
 	time.Sleep(5 * time.Millisecond)
+	require.Len(t, successCh1c, 0)
 	s.loadedMu.Lock()
 	require.Len(t, s.loaded, 0)
 	s.loadedMu.Unlock()
