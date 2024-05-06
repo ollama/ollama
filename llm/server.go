@@ -233,13 +233,13 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
-		// append the server directory to LD_LIBRARY_PATH/PATH
+		// prepend the server directory to LD_LIBRARY_PATH/PATH
 		libraryPaths := []string{dir}
 
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			// Append our runner directory to the path
 			// This will favor system libraries over our bundled library dependencies
-			libraryPaths = append(filepath.SplitList(libraryPath), libraryPaths...)
+			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
 		// Note: we always put the dependency path first
@@ -275,15 +275,31 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			sem:           semaphore.NewWeighted(int64(numParallel)),
 		}
 
-		libEnv := fmt.Sprintf("%s=%s", pathEnv, strings.Join(libraryPaths, string(filepath.ListSeparator)))
-		s.cmd.Env = append(os.Environ(), libEnv)
+		s.cmd.Env = os.Environ()
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 
-		// TODO - multiple GPU selection logic...
-		key, val := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv()
-		if key != "" {
-			s.cmd.Env = append(s.cmd.Env, key+"="+val)
+		visibleDevicesEnv, visibleDevicesEnvVal := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv()
+		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+		// Update or add the path and visible devices variable with our adjusted version
+		pathNeeded := true
+		devicesNeeded := visibleDevicesEnv != ""
+		for i := range s.cmd.Env {
+			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
+			if strings.EqualFold(cmp[0], pathEnv) {
+				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
+				pathNeeded = false
+			} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
+				s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
+				devicesNeeded = false
+			}
+		}
+		if pathNeeded {
+			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
+		}
+		if devicesNeeded {
+			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd.String())
@@ -300,13 +316,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			continue
 		}
 
-		// TODO - make sure this is all wired up correctly
-		// if err = s.WaitUntilRunning(); err != nil {
-		// 	slog.Error("error starting llama server", "server", servers[i], "error", err)
-		// 	s.Close()
-		// 	finalErr = err
-		// 	continue
-		// }
 		return s, nil
 	}
 
