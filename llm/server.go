@@ -427,13 +427,13 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	// TODO we need to wire up a better way to detect hangs during model load and startup of the server
 	timeout := 600
 	if timeoutEnv := os.Getenv("OLLAMA_LOAD_TIMEOUT"); timeoutEnv != "" {
-		var err error
-		timeout, err = strconv.Atoi(timeoutEnv)
-		if err != nil || timeout <= 0 {
-			return fmt.Errorf("invalid OLLAMA_LOAD_TIMEOUT=%s must be an integer greater than zero - %w", timeoutEnv, err)
+		timeoutInt, err := strconv.Atoi(timeoutEnv)
+		if err != nil || timeoutInt <= 0 {
+			slog.Info(fmt.Sprintf("invalid OLLAMA_LOAD_TIMEOUT=%s must be an integer greater than zero. Defaulting to %ds", timeoutEnv, timeout))
+		} else {
+			timeout = timeoutInt
 		}
 	}
-	print(timeout)
 	expiresAt := time.Now().Add(time.Duration(timeout) * time.Second) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
