@@ -100,11 +100,13 @@ func parseFromZipFile(_ context.Context, file *os.File, fn func(api.ProgressResp
 		if err != nil {
 			return nil, err
 		}
+		defer outfile.Close()
 
 		infile, err := f.Open()
 		if err != nil {
 			return nil, err
 		}
+		defer infile.Close()
 
 		if _, err = io.Copy(outfile, infile); err != nil {
 			return nil, err
