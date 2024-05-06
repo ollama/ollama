@@ -133,7 +133,7 @@ Next, copy your model to your username's namespace:
 ollama cp example <your username>/example
 ```
 
-(note that the name may only contain lowercase letters, digits, and the characters ., -, and _)
+> Note: model names may only contain lowercase letters, digits, and the characters `.`, `-`, and `_`.
 
 Then push the model:
 
