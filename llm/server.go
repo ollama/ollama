@@ -627,7 +627,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		buf := make([]byte, 0, maxBufferSize)
 		scanner.Buffer(buf, maxBufferSize)
 
-		retryNeeded := false
 		// keep track of the last token generated, this is used to abort if the model starts looping
 		var lastToken string
 		var tokenRepeat int
@@ -641,14 +640,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				line := scanner.Bytes()
 				if len(line) == 0 {
 					continue
-				}
-
-				fmt.Println("LINE", string(line))
-
-				// try again on slot unavailable
-				if bytes.Contains(line, []byte("slot unavailable")) {
-					retryNeeded = true
-					break
 				}
 
 				evt, ok := bytes.CutPrefix(line, []byte("data: "))
