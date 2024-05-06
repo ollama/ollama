@@ -1,0 +1,60 @@
+name: Bug report
+labels: [bug]
+description: Something isn't working right.
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What is the issue?
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      description: Which operating system are you using?
+      multiple: true
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Docker
+        - WSL2
+    validations:
+      required: false
+  - type: dropdown
+    id: gpu
+    attributes:
+      label: GPU
+      description: Which GPU are you using?
+      multiple: true
+      options:
+        - Nvidia
+        - AMD
+        - Intel
+        - Apple
+        - Other
+    validations:
+      required: false
+  - type: dropdown
+    id: cpu
+    attributes:
+      label: CPU
+      description: Which CPU are you using?
+      multiple: true
+      options:
+        - Intel
+        - AMD
+        - Apple
+        - Other
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Ollama version
+      description: What version of Ollama are you using? (`ollama --version`)
+      placeholder: e.g., 0.1.32
+    validations:
+      required: false

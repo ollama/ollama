@@ -39,6 +39,10 @@
 #include "httplib.h"
 #include "json.hpp"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include <cstddef>
 #include <thread>
 #include <chrono>
@@ -1028,7 +1032,7 @@ struct llama_server_context
             slot.has_next_token = false;
         }
 
-        if (!slot.cache_tokens.empty() && result.tok == llama_token_eos(model))
+        if (!slot.cache_tokens.empty() && llama_token_is_eog(model, result.tok))
         {
             slot.stopped_eos = true;
             slot.has_next_token = false;
@@ -1140,11 +1144,14 @@ struct llama_server_context
 
         res.result_json = json
         {
-            {"content",    tkn.text_to_send},
             {"stop",       false},
             {"slot_id",    slot.id},
             {"multimodal", multimodal}
         };
+
+        if (!llama_token_is_eog(model, tkn.tok)) {
+            res.result_json["content"] = tkn.text_to_send;
+        }
 
         if (slot.sparams.n_probs > 0)
         {
@@ -1179,8 +1186,6 @@ struct llama_server_context
             {"model",               params.model_alias},
             {"tokens_predicted",    slot.n_decoded},
             {"tokens_evaluated",    slot.n_prompt_tokens},
-            {"generation_settings", get_formated_generation(slot)},
-            {"prompt",              slot.prompt},
             {"truncated",           slot.truncated},
             {"stopped_eos",         slot.stopped_eos},
             {"stopped_word",        slot.stopped_word},
@@ -2640,18 +2645,18 @@ static void server_params_parse(int argc, char **argv, server_params &sparams,
             if (strncmp(sep, "int:", 4) == 0) {
                 sep += 4;
                 kvo.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
-                kvo.int_value = std::atol(sep);
+                kvo.val_i64 = std::atol(sep);
             } else if (strncmp(sep, "float:", 6) == 0) {
                 sep += 6;
                 kvo.tag = LLAMA_KV_OVERRIDE_TYPE_FLOAT;
-                kvo.float_value = std::atof(sep);
+                kvo.val_f64 = std::atof(sep);
             } else if (strncmp(sep, "bool:", 5) == 0) {
                 sep += 5;
                 kvo.tag = LLAMA_KV_OVERRIDE_TYPE_BOOL;
                 if (std::strcmp(sep, "true") == 0) {
-                    kvo.bool_value = true;
+                    kvo.val_bool = true;
                 } else if (std::strcmp(sep, "false") == 0) {
-                    kvo.bool_value = false;
+                    kvo.val_bool = false;
                 } else {
                     fprintf(stderr, "error: Invalid boolean value for KV override: %s\n", argv[i]);
                     invalid_param = true;
@@ -2770,8 +2775,28 @@ inline void signal_handler(int signal) {
     shutdown_handler(signal);
 }
 
-int main(int argc, char **argv)
-{
+#if defined(_WIN32)
+char* wchar_to_char(const wchar_t* wstr) {
+    if (wstr == nullptr) return nullptr;
+
+    // Determine the number of bytes needed for the UTF-8 string
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, nullptr, 0, nullptr, nullptr);
+    char* str = new char[bytes];
+
+    // Convert the wide-character string to a UTF-8 string
+    WideCharToMultiByte(CP_UTF8, 0, wstr, -1, str, bytes, nullptr, nullptr);
+    return str;
+}
+
+int wmain(int argc, wchar_t **wargv) {
+    char** argv = new char*[argc];
+    for (int i = 0; i < argc; ++i) {
+        argv[i] = wchar_to_char(wargv[i]);
+    }
+#else
+int main(int argc, char **argv) {
+#endif
+
 #if SERVER_VERBOSE != 1
     log_disable();
 #endif
@@ -3282,6 +3307,11 @@ int main(int argc, char **argv)
         return (ctrl_type == CTRL_C_EVENT) ? (signal_handler(SIGINT), true) : false;
     };
     SetConsoleCtrlHandler(reinterpret_cast<PHANDLER_ROUTINE>(console_ctrl_handler), true);
+
+    for (int i = 0; i < argc; ++i) {
+        delete[] argv[i];
+    }
+    delete[] argv;
 #endif
     llama.queue_tasks.start_loop();
     svr.stop();
