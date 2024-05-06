@@ -100,6 +100,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			return
 		case pending := <-s.pendingReqCh:
 			// Block other requests until we get this pending request running
+
+			if pending.ctx.Err() != nil {
+				slog.Debug("pending request cancelled or timed out, skipping scheduling")
+				continue
+			}
+
 			for {
 				var runnerToExpire *runnerRef
 				s.loadedMu.Lock()
@@ -433,6 +439,10 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	timeout := 10 * time.Second
 	if runner.loading {
 		timeout = 2 * time.Minute // Initial load can take a long time for big models on slow systems...
+	}
+
+	if runner.Options == nil {
+		return true
 	}
 
 	// Don't reload runner if num_gpu=-1 was provided
