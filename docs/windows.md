@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Ollama Windows Preview
 
 Welcome to the Ollama Windows preview.
