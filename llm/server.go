@@ -503,7 +503,6 @@ ws ::= ([ \t\n] ws)?
 `
 
 const maxBufferSize = 512 * format.KiloByte
-const maxRetries = 3
 
 type ImageData struct {
 	Data []byte `json:"data"`
