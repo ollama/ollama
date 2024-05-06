@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/server/envconfig"
 )
 
 type handles struct {
@@ -268,7 +269,7 @@ func LoadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string) {
 }
 
 func getVerboseState() C.uint16_t {
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+	if envconfig.Debug {
 		return C.uint16_t(1)
 	}
 	return C.uint16_t(0)

@@ -15,6 +15,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/server/envconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,34 +28,10 @@ func init() {
 func TestInitScheduler(t *testing.T) {
 	ctx, done := context.WithCancel(context.Background())
 	defer done()
-	initialMax := loadedMax
-	initialParallel := numParallel
 	s := InitScheduler(ctx)
-	require.Equal(t, initialMax, loadedMax)
 	s.loadedMu.Lock()
 	require.NotNil(t, s.loaded)
 	s.loadedMu.Unlock()
-
-	os.Setenv("OLLAMA_MAX_LOADED_MODELS", "blue")
-	s = InitScheduler(ctx)
-	require.Equal(t, initialMax, loadedMax)
-	s.loadedMu.Lock()
-	require.NotNil(t, s.loaded)
-	s.loadedMu.Unlock()
-
-	os.Setenv("OLLAMA_MAX_LOADED_MODELS", "0")
-	s = InitScheduler(ctx)
-	require.Equal(t, 0, loadedMax)
-	s.loadedMu.Lock()
-	require.NotNil(t, s.loaded)
-	s.loadedMu.Unlock()
-
-	os.Setenv("OLLAMA_NUM_PARALLEL", "blue")
-	_ = InitScheduler(ctx)
-	require.Equal(t, initialParallel, numParallel)
-	os.Setenv("OLLAMA_NUM_PARALLEL", "10")
-	_ = InitScheduler(ctx)
-	require.Equal(t, 10, numParallel)
 }
 
 func TestLoad(t *testing.T) {
@@ -249,7 +226,7 @@ func TestRequests(t *testing.T) {
 		t.Errorf("timeout")
 	}
 
-	loadedMax = 1
+	envconfig.MaxRunners = 1
 	s.newServerFn = scenario3a.newServer
 	slog.Info("scenario3a")
 	s.pendingReqCh <- scenario3a.req
@@ -268,7 +245,7 @@ func TestRequests(t *testing.T) {
 	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
 
-	loadedMax = 0
+	envconfig.MaxRunners = 0
 	s.newServerFn = scenario3b.newServer
 	slog.Info("scenario3b")
 	s.pendingReqCh <- scenario3b.req
@@ -339,7 +316,7 @@ func TestGetRunner(t *testing.T) {
 	scenario1b.req.sessionDuration = 0
 	scenario1c := newScenario(t, ctx, "ollama-model-1c", 10)
 	scenario1c.req.sessionDuration = 0
-	maxQueuedRequests = 1
+	envconfig.MaxQueuedRequests = 1
 	s := InitScheduler(ctx)
 	s.getGpuFn = func() gpu.GpuInfoList {
 		g := gpu.GpuInfo{Library: "metal"}

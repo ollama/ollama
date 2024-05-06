@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/server/envconfig"
 )
 
 type LlamaServer interface {
@@ -124,7 +125,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	} else {
 		servers = serversForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
 	}
-	demandLib := strings.Trim(os.Getenv("OLLAMA_LLM_LIBRARY"), "\"' ")
+	demandLib := envconfig.LLMLibrary
 	if demandLib != "" {
 		serverPath := availableServers[demandLib]
 		if serverPath == "" {
@@ -145,7 +146,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--embedding",
 	}
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+	if envconfig.Debug {
 		params = append(params, "--log-format", "json")
 	} else {
 		params = append(params, "--log-disable")
@@ -155,7 +156,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
 	}
 
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+	if envconfig.Debug {
 		params = append(params, "--verbose")
 	}
 
@@ -194,15 +195,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 
 	// "--cont-batching", // TODO - doesn't seem to have any noticeable perf change for multiple requests
-	numParallel := 1
-	if onp := os.Getenv("OLLAMA_NUM_PARALLEL"); onp != "" {
-		numParallel, err = strconv.Atoi(onp)
-		if err != nil || numParallel <= 0 {
-			err = fmt.Errorf("invalid OLLAMA_NUM_PARALLEL=%s must be greater than zero - %w", onp, err)
-			slog.Error("misconfiguration", "error", err)
-			return nil, err
-		}
-	}
+	numParallel := envconfig.NumParallel
 	params = append(params, "--parallel", fmt.Sprintf("%d", numParallel))
 
 	for i := 0; i < len(servers); i++ {
