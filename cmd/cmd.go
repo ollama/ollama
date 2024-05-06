@@ -898,7 +898,12 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	return server.Serve(ln)
+	err = server.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+
+	return err
 }
 
 func initializeKeypair() error {
