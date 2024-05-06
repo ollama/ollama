@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"regexp"
 	"strings"
 
@@ -159,11 +158,5 @@ func (m *LlamaModel) WriteGGUF(ws io.WriteSeeker) error {
 		"tokenizer.ggml.add_eos_token":    false,
 	}
 
-	f, err := os.CreateTemp("", "ollama-gguf")
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	return llm.NewGGUFV3(m.Params.ByteOrder).Encode(f, kv, m.Tensors)
+	return llm.NewGGUFV3(m.Params.ByteOrder).Encode(ws, kv, m.Tensors)
 }
