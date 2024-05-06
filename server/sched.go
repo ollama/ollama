@@ -116,7 +116,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 				} else if envconfig.MaxRunners > 0 && loadedCount >= envconfig.MaxRunners {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
-					runnerToExpire = s.findRunnerToUnload(pending)
+					runnerToExpire = s.findRunnerToUnload()
 				} else {
 					// Either no models are loaded or below envconfig.MaxRunners
 					// Get a refreshed GPU list
@@ -157,7 +157,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						s.loadFn(pending, ggml, gpus)
 						break
 					}
-					runnerToExpire = s.findRunnerToUnload(pending)
+					runnerToExpire = s.findRunnerToUnload()
 				}
 
 				if runnerToExpire == nil {
@@ -257,9 +257,9 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				continue
 			}
 
+			s.loadedMu.Lock()
 			slog.Debug("got lock to unload", "model", runner.model)
 			runner.unload()
-			s.loadedMu.Lock()
 			delete(s.loaded, runner.model)
 			s.loadedMu.Unlock()
 			slog.Debug("runner released", "model", runner.model)
@@ -504,7 +504,7 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) gpu.
 }
 
 // findRunnerToUnload finds a runner to unload to make room for a new model
-func (s *Scheduler) findRunnerToUnload(req *LlmRequest) *runnerRef {
+func (s *Scheduler) findRunnerToUnload() *runnerRef {
 	s.loadedMu.Lock()
 	runnerList := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {

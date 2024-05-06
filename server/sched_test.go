@@ -473,10 +473,7 @@ func TestUpdateFreeSpace(t *testing.T) {
 func TestFindRunnerToUnload(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
-	req := &LlmRequest{
-		ctx:  ctx,
-		opts: api.DefaultOptions(),
-	}
+
 	r1 := &runnerRef{refCount: 1, sessionDuration: 1}
 	r2 := &runnerRef{sessionDuration: 2}
 
@@ -486,10 +483,10 @@ func TestFindRunnerToUnload(t *testing.T) {
 	s.loaded["b"] = r2
 	s.loadedMu.Unlock()
 
-	resp := s.findRunnerToUnload(req)
+	resp := s.findRunnerToUnload()
 	require.Equal(t, r2, resp)
 	r2.refCount = 1
-	resp = s.findRunnerToUnload(req)
+	resp = s.findRunnerToUnload()
 	require.Equal(t, r1, resp)
 
 }
