@@ -331,7 +331,7 @@ type ServerStatus int
 
 const ( // iota is reset to 0
 	ServerStatusReady ServerStatus = iota
-	ServerStatusNoSlotsAvaialble
+	ServerStatusNoSlotsAvailable
 	ServerStatusLoadingModel
 	ServerStatusNotResponding
 	ServerStatusError
@@ -341,7 +341,7 @@ func (s ServerStatus) ToString() string {
 	switch s {
 	case ServerStatusReady:
 		return "llm server ready"
-	case ServerStatusNoSlotsAvaialble:
+	case ServerStatusNoSlotsAvailable:
 		return "llm busy - no slots available"
 	case ServerStatusLoadingModel:
 		return "llm server loading model"
@@ -398,7 +398,7 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	case "ok":
 		return ServerStatusReady, nil
 	case "no slot available":
-		return ServerStatusNoSlotsAvaialble, nil
+		return ServerStatusNoSlotsAvailable, nil
 	case "loading model":
 		return ServerStatusLoadingModel, nil
 	default:
@@ -578,14 +578,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"cache_prompt":      true,
 	}
 
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return err
-	} else if status != ServerStatusReady {
-		return fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
 	if req.Format == "json" {
 		request["grammar"] = jsonGrammar
 		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
@@ -650,6 +642,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				if len(line) == 0 {
 					continue
 				}
+
+				fmt.Println("LINE", string(line))
 
 				// try again on slot unavailable
 				if bytes.Contains(line, []byte("slot unavailable")) {
@@ -736,13 +730,6 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 		return nil, err
 	}
 	defer s.sem.Release(1)
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return nil, err
-	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
 
 	data, err := json.Marshal(TokenizeRequest{Content: prompt})
 	if err != nil {
@@ -788,14 +775,6 @@ type TokenizeResponse struct {
 }
 
 func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error) {
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return nil, err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvaialble {
-		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
 	data, err := json.Marshal(TokenizeRequest{Content: content})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling encode data: %w", err)
@@ -840,14 +819,6 @@ type DetokenizeResponse struct {
 }
 
 func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return "", err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvaialble {
-		return "", fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
 	data, err := json.Marshal(DetokenizeRequest{Tokens: tokens})
 	if err != nil {
 		return "", fmt.Errorf("marshaling decode data: %w", err)
