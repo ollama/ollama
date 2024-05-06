@@ -416,12 +416,12 @@ func (s *llmServer) getServerStatusRetry(ctx context.Context) (ServerStatus, err
 		}
 
 		if status == ServerStatusNoSlotsAvailable {
-			retries++
-			if retries > 10 {
+			if retries >= 10 {
 				return status, fmt.Errorf("no slots available after %d retries", retries)
 			}
 
 			time.Sleep(5 * time.Millisecond)
+			retries++
 			continue
 		}
 
@@ -569,21 +569,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 	defer s.sem.Release(1)
 
-	// Make sure the server is ready
-	status, err := s.getServerStatusRetry(ctx)
-	if err != nil {
-		return err
-	} else if status != ServerStatusReady {
-		return fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
 	// only allow maximum 10 "context shifts" to avoid infinite generation
 	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
 		req.Options.NumPredict = 10 * s.options.NumCtx
 		slog.Debug("setting token limit to 10x num_ctx", "num_ctx", s.options.NumCtx, "num_predict", req.Options.NumPredict)
 	}
 
-	params := map[string]any{
+	request := map[string]any{
 		"prompt":            req.Prompt,
 		"stream":            true,
 		"n_predict":         req.Options.NumPredict,
@@ -608,8 +600,16 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"cache_prompt":      true,
 	}
 
+	// Make sure the server is ready
+	status, err := s.getServerStatusRetry(ctx)
+	if err != nil {
+		return err
+	} else if status != ServerStatusReady {
+		return fmt.Errorf("unexpected server status: %s", status.ToString())
+	}
+
 	if req.Format == "json" {
-		params["grammar"] = jsonGrammar
+		request["grammar"] = jsonGrammar
 		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
 			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
 		}
@@ -620,7 +620,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	enc := json.NewEncoder(buffer)
 	enc.SetEscapeHTML(false)
 
-	if err := enc.Encode(params); err != nil {
+	if err := enc.Encode(request); err != nil {
 		return fmt.Errorf("failed to marshal data: %v", err)
 	}
 
@@ -738,7 +738,6 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 		return nil, err
 	}
 	defer s.sem.Release(1)
-
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
