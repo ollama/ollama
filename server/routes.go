@@ -702,72 +702,42 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 }
 
 func (s *Server) ListModelsHandler(c *gin.Context) {
-	manifests, err := GetManifestPath()
+	ms, err := Manifests()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	models := []api.ModelResponse{}
-	if err := filepath.Walk(manifests, func(path string, info os.FileInfo, _ error) error {
-		if !info.IsDir() {
-			rel, err := filepath.Rel(manifests, path)
-			if err != nil {
-				return err
-			}
+	for n, m := range ms {
+		f, err := m.Config.Open()
+		if err != nil {
+			slog.Warn("bad manifest filepath", "name", n, "error", err)
+			continue
+		}
+		defer f.Close()
 
-			if hidden, err := filepath.Match(".*", filepath.Base(rel)); err != nil {
-				return err
-			} else if hidden {
-				return nil
-			}
-
-			n := model.ParseNameFromFilepath(rel)
-			if !n.IsValid() {
-				slog.Warn("bad manifest filepath", "path", rel)
-				return nil
-			}
-
-			m, err := ParseNamedManifest(n)
-			if err != nil {
-				slog.Warn("bad manifest", "name", n, "error", err)
-				return nil
-			}
-
-			f, err := m.Config.Open()
-			if err != nil {
-				slog.Warn("bad manifest config filepath", "name", n, "error", err)
-				return nil
-			}
-			defer f.Close()
-
-			var c ConfigV2
-			if err := json.NewDecoder(f).Decode(&c); err != nil {
-				slog.Warn("bad manifest config", "name", n, "error", err)
-				return nil
-			}
-
-			// tag should never be masked
-			models = append(models, api.ModelResponse{
-				Model:      n.DisplayShortest(),
-				Name:       n.DisplayShortest(),
-				Size:       m.Size(),
-				Digest:     m.digest,
-				ModifiedAt: info.ModTime(),
-				Details: api.ModelDetails{
-					Format:            c.ModelFormat,
-					Family:            c.ModelFamily,
-					Families:          c.ModelFamilies,
-					ParameterSize:     c.ModelType,
-					QuantizationLevel: c.FileType,
-				},
-			})
+		var cf ConfigV2
+		if err := json.NewDecoder(f).Decode(&cf); err != nil {
+			slog.Warn("bad manifest config", "name", n, "error", err)
+			continue
 		}
 
-		return nil
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		// tag should never be masked
+		models = append(models, api.ModelResponse{
+			Model:      n.DisplayShortest(),
+			Name:       n.DisplayShortest(),
+			Size:       m.Size(),
+			Digest:     m.digest,
+			ModifiedAt: m.fi.ModTime(),
+			Details: api.ModelDetails{
+				Format:            cf.ModelFormat,
+				Family:            cf.ModelFamily,
+				Families:          cf.ModelFamilies,
+				ParameterSize:     cf.ModelType,
+				QuantizationLevel: cf.FileType,
+			},
+		})
 	}
 
 	slices.SortStableFunc(models, func(i, j api.ModelResponse) int {
