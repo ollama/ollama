@@ -1,8 +1,8 @@
 package server
 
 import (
-	"archive/zip"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -26,7 +25,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
-	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/server/envconfig"
@@ -156,36 +154,6 @@ type ConfigV2 struct {
 	Architecture string `json:"architecture"`
 	OS           string `json:"os"`
 	RootFS       RootFS `json:"rootfs"`
-}
-
-func (c *ConfigV2) SetModelFormat(format string) {
-	if c.ModelFormat == "" {
-		c.ModelFormat = format
-	}
-}
-
-func (c *ConfigV2) SetModelFamily(families ...string) {
-	for _, family := range families {
-		if c.ModelFamily == "" {
-			c.ModelFamily = family
-		}
-
-		if !slices.Contains(c.ModelFamilies, family) {
-			c.ModelFamilies = append(c.ModelFamilies, family)
-		}
-	}
-}
-
-func (c *ConfigV2) SetModelType(modelType string) {
-	if c.ModelType == "" {
-		c.ModelType = modelType
-	}
-}
-
-func (c *ConfigV2) SetFileType(fileType string) {
-	if c.FileType == "" {
-		c.FileType = fileType
-	}
 }
 
 type RootFS struct {
@@ -332,7 +300,7 @@ func GetModel(name string) (*Model, error) {
 	return model, nil
 }
 
-func realpath(mfDir, from string) string {
+func realpath(rel, from string) string {
 	abspath, err := filepath.Abs(from)
 	if err != nil {
 		return from
@@ -349,22 +317,15 @@ func realpath(mfDir, from string) string {
 		return filepath.Join(home, from[2:])
 	}
 
-	if _, err := os.Stat(filepath.Join(mfDir, from)); err == nil {
+	if _, err := os.Stat(filepath.Join(rel, from)); err == nil {
 		// this is a file relative to the Modelfile
-		return filepath.Join(mfDir, from)
+		return filepath.Join(rel, from)
 	}
 
 	return abspath
 }
 
-func CreateModel(ctx context.Context, name, modelFileDir, quantization string, modelfile *model.File, fn func(resp api.ProgressResponse)) error {
-	deleteMap := make(map[string]struct{})
-	if manifest, _, err := GetManifest(ParseModelPath(name)); err == nil {
-		for _, layer := range append(manifest.Layers, manifest.Config) {
-			deleteMap[layer.Digest] = struct{}{}
-		}
-	}
-
+func CreateModel(ctx context.Context, name, modelFileDir, quantization string, modelfile *model.File, fn func(resp api.ProgressResponse)) (err error) {
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
@@ -373,250 +334,181 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 		},
 	}
 
-	var layers Layers
-	messages := []string{}
+	var messages []*api.Message
+	parameters := make(map[string]any)
 
-	params := make(map[string][]string)
-	fromParams := make(map[string]any)
-
+	var layers []*Layer
 	for _, c := range modelfile.Commands {
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
 		switch c.Name {
-		case "model":
-			if strings.HasPrefix(c.Args, "@") {
-				blobPath, err := GetBlobsPath(strings.TrimPrefix(c.Args, "@"))
+		case "model", "adapter":
+			var baseLayers []*layerWithGGML
+			if name := model.ParseName(c.Args); name.IsValid() {
+				baseLayers, err = parseFromModel(ctx, name, fn)
+				if err != nil {
+					return err
+				}
+			} else if strings.HasPrefix(c.Args, "@") {
+				blobpath, err := GetBlobsPath(strings.TrimPrefix(c.Args, "@"))
 				if err != nil {
 					return err
 				}
 
-				c.Args = blobPath
-			}
-
-			pathName := realpath(modelFileDir, c.Args)
-
-			ggufName, err := convertModel(name, pathName, fn)
-			if err != nil {
-				var pathErr *fs.PathError
-				switch {
-				case errors.Is(err, zip.ErrFormat):
-					// it's not a safetensor archive
-				case errors.As(err, &pathErr):
-					// it's not a file on disk, could be a model reference
-				default:
-					return err
-				}
-			}
-
-			if ggufName != "" {
-				pathName = ggufName
-				defer os.RemoveAll(ggufName)
-
-				if quantization != "" {
-					quantization = strings.ToUpper(quantization)
-					fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", "F16", quantization)})
-					tempfile, err := os.CreateTemp(filepath.Dir(ggufName), quantization)
-					if err != nil {
-						return err
-					}
-					defer os.RemoveAll(tempfile.Name())
-
-					if err := llm.Quantize(ggufName, tempfile.Name(), quantization); err != nil {
-						return err
-					}
-
-					if err := tempfile.Close(); err != nil {
-						return err
-					}
-
-					pathName = tempfile.Name()
-				}
-			}
-
-			bin, err := os.Open(pathName)
-			if err != nil {
-				// not a file on disk so must be a model reference
-				modelpath := ParseModelPath(c.Args)
-				manifest, _, err := GetManifest(modelpath)
-				switch {
-				case errors.Is(err, os.ErrNotExist):
-					fn(api.ProgressResponse{Status: "pulling model"})
-					if err := PullModel(ctx, c.Args, &registryOptions{}, fn); err != nil {
-						return err
-					}
-
-					manifest, _, err = GetManifest(modelpath)
-					if err != nil {
-						return err
-					}
-				case err != nil:
-					return err
-				}
-
-				fn(api.ProgressResponse{Status: "reading model metadata"})
-				fromConfigPath, err := GetBlobsPath(manifest.Config.Digest)
+				blob, err := os.Open(blobpath)
 				if err != nil {
 					return err
 				}
+				defer blob.Close()
 
-				fromConfigFile, err := os.Open(fromConfigPath)
+				baseLayers, err = parseFromFile(ctx, blob, fn)
 				if err != nil {
 					return err
 				}
-				defer fromConfigFile.Close()
+			} else if file, err := os.Open(realpath(modelFileDir, c.Args)); err == nil {
+				defer file.Close()
 
-				var fromConfig ConfigV2
-				if err := json.NewDecoder(fromConfigFile).Decode(&fromConfig); err != nil {
+				baseLayers, err = parseFromFile(ctx, file, fn)
+				if err != nil {
 					return err
 				}
+			} else {
+				return fmt.Errorf("invalid model reference: %s", c.Args)
+			}
 
-				// if the model is still not in gguf format, error out
-				if fromConfig.ModelFormat != "gguf" {
-					return fmt.Errorf("%s is not in gguf format, this base model is not compatible with this version of ollama", c.Args)
-				}
-
-				config.SetModelFormat(fromConfig.ModelFormat)
-				config.SetModelFamily(append(fromConfig.ModelFamilies, fromConfig.ModelFamily)...)
-				config.SetModelType(fromConfig.ModelType)
-				config.SetFileType(fromConfig.FileType)
-
-				for _, layer := range manifest.Layers {
-					deleteMap[layer.Digest] = struct{}{}
-					if layer.MediaType == "application/vnd.ollama.image.params" {
-						fromParamsPath, err := GetBlobsPath(layer.Digest)
-						if err != nil {
-							return err
-						}
-
-						fromParamsFile, err := os.Open(fromParamsPath)
-						if err != nil {
-							return err
-						}
-						defer fromParamsFile.Close()
-
-						if err := json.NewDecoder(fromParamsFile).Decode(&fromParams); err != nil {
-							return err
-						}
-					}
-
-					layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, modelpath.GetShortTagname())
+			for _, baseLayer := range baseLayers {
+				if quantization != "" &&
+					baseLayer.MediaType == "application/vnd.ollama.image.model" &&
+					baseLayer.GGML != nil &&
+					baseLayer.GGML.Name() == "gguf" {
+					ftype, err := llm.ParseFileType(quantization)
 					if err != nil {
 						return err
 					}
 
-					layers.Add(layer)
+					filetype := baseLayer.GGML.KV().FileType()
+					if !slices.Contains([]string{"F16", "F32"}, filetype) {
+						return errors.New("quantization is only supported for F16 and F32 models")
+					}
+
+					fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", filetype, quantization)})
+
+					blob, err := GetBlobsPath(baseLayer.Digest)
+					if err != nil {
+						return err
+					}
+
+					temp, err := os.CreateTemp(filepath.Dir(blob), quantization)
+					if err != nil {
+						return err
+					}
+					defer temp.Close()
+					defer os.Remove(temp.Name())
+
+					if err := llm.Quantize(blob, temp.Name(), ftype); err != nil {
+						return err
+					}
+
+					baseLayer.Layer, err = NewLayer(temp, baseLayer.Layer.MediaType)
+					if err != nil {
+						return err
+					}
 				}
 
-				deleteMap[manifest.Config.Digest] = struct{}{}
-				continue
+				if baseLayer.GGML != nil {
+					config.ModelFormat = cmp.Or(config.ModelFormat, baseLayer.GGML.Name())
+					config.ModelFamily = cmp.Or(config.ModelFamily, baseLayer.GGML.KV().Architecture())
+					config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(baseLayer.GGML.KV().ParameterCount()))
+					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType())
+					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
+				}
+
+				layers = append(layers, baseLayer.Layer)
 			}
-			defer bin.Close()
-
-			var offset int64
-			for {
-				fn(api.ProgressResponse{Status: "creating model layer"})
-				if _, err := bin.Seek(offset, io.SeekStart); err != nil {
-					return err
-				}
-
-				ggml, size, err := llm.DecodeGGML(bin)
-				if errors.Is(err, io.EOF) {
-					break
-				} else if errors.Is(err, llm.ErrUnsupportedFormat) {
-					return fmt.Errorf("model binary specified in FROM field is not a valid gguf format model, %w", err)
-				} else if err != nil {
-					return err
-				}
-
-				config.SetModelFormat(ggml.Name())
-				config.SetModelFamily(ggml.KV().Architecture())
-				config.SetModelType(format.HumanNumber(ggml.KV().ParameterCount()))
-				config.SetFileType(ggml.KV().FileType())
-
-				mediatype := mediatype
-				if ggml.KV().Architecture() == "clip" {
-					mediatype = "application/vnd.ollama.image.projector"
-				}
-
-				sr := io.NewSectionReader(bin, offset, size)
-				layer, err := NewLayer(sr, mediatype)
-				if err != nil {
-					return err
-				}
-
-				layers.Add(layer)
-
-				offset += size
-			}
-		case "adapter":
-			if strings.HasPrefix(c.Args, "@") {
-				blobPath, err := GetBlobsPath(strings.TrimPrefix(c.Args, "@"))
-				if err != nil {
-					return err
-				}
-
-				c.Args = blobPath
-			}
-
-			fn(api.ProgressResponse{Status: "creating adapter layer"})
-			bin, err := os.Open(realpath(modelFileDir, c.Args))
-			if err != nil {
-				return err
-			}
-			defer bin.Close()
-
-			_, size, err := llm.DecodeGGML(bin)
+		case "license", "template", "system":
+			blob := strings.NewReader(c.Args)
+			layer, err := NewLayer(blob, mediatype)
 			if err != nil {
 				return err
 			}
 
-			sr := io.NewSectionReader(bin, 0, size)
-			layer, err := NewLayer(sr, mediatype)
-			if err != nil {
-				return err
+			if c.Name != "license" {
+				// replace
+				layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+					return layer.MediaType == mediatype
+				})
 			}
 
-			layers.Add(layer)
-		case "license":
-			fn(api.ProgressResponse{Status: "creating license layer"})
-
-			bin := strings.NewReader(c.Args)
-			layer, err := NewLayer(bin, mediatype)
-			if err != nil {
-				return err
-			}
-
-			layers.Add(layer)
-		case "template", "system":
-			fn(api.ProgressResponse{Status: fmt.Sprintf("creating %s layer", c.Name)})
-
-			bin := strings.NewReader(c.Args)
-			layer, err := NewLayer(bin, mediatype)
-			if err != nil {
-				return err
-			}
-
-			layers.Replace(layer)
+			layers = append(layers, layer)
 		case "message":
-			messages = append(messages, c.Args)
+			role, content, ok := strings.Cut(c.Args, ": ")
+			if !ok {
+				return fmt.Errorf("invalid message: %s", c.Args)
+			}
+
+			messages = append(messages, &api.Message{Role: role, Content: content})
 		default:
-			params[c.Name] = append(params[c.Name], c.Args)
+			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
+			if err != nil {
+				return err
+			}
+
+			for k, v := range ps {
+				if ks, ok := parameters[k].([]string); ok {
+					parameters[k] = append(ks, v.([]string)...)
+				} else if vs, ok := v.([]string); ok {
+					parameters[k] = vs
+				} else {
+					parameters[k] = v
+				}
+			}
 		}
 	}
 
-	if len(messages) > 0 {
-		fn(api.ProgressResponse{Status: "creating parameters layer"})
+	var err2 error
+	layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+		switch layer.MediaType {
+		case "application/vnd.ollama.image.message":
+			// if there are new messages, remove the inherited ones
+			if len(messages) > 0 {
+				return true
+			}
 
-		msgs := make([]api.Message, 0)
+			return false
+		case "application/vnd.ollama.image.params":
+			// merge inherited parameters with new ones
+			r, err := layer.Open()
+			if err != nil {
+				err2 = err
+				return false
+			}
+			defer r.Close()
 
-		for _, m := range messages {
-			// todo: handle images
-			msg := strings.SplitN(m, ": ", 2)
-			msgs = append(msgs, api.Message{Role: msg[0], Content: msg[1]})
+			var ps map[string]any
+			if err := json.NewDecoder(r).Decode(&ps); err != nil {
+				err2 = err
+				return false
+			}
+
+			for k, v := range ps {
+				if _, ok := parameters[k]; !ok {
+					parameters[k] = v
+				}
+			}
+
+			return true
+		default:
+			return false
 		}
+	})
 
+	if err2 != nil {
+		return err2
+	}
+
+	if len(messages) > 0 {
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(msgs); err != nil {
+		if err := json.NewEncoder(&b).Encode(messages); err != nil {
 			return err
 		}
 
@@ -625,39 +517,25 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 			return err
 		}
 
-		layers.Replace(layer)
+		layers = append(layers, layer)
 	}
 
-	if len(params) > 0 {
-		fn(api.ProgressResponse{Status: "creating parameters layer"})
-
-		formattedParams, err := api.FormatParams(params)
-		if err != nil {
-			return err
-		}
-
-		for k, v := range fromParams {
-			if _, ok := formattedParams[k]; !ok {
-				formattedParams[k] = v
-			}
-		}
-
+	if len(parameters) > 0 {
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(formattedParams); err != nil {
+		if err := json.NewEncoder(&b).Encode(parameters); err != nil {
 			return err
 		}
 
-		fn(api.ProgressResponse{Status: "creating config layer"})
 		layer, err := NewLayer(&b, "application/vnd.ollama.image.params")
 		if err != nil {
 			return err
 		}
 
-		layers.Replace(layer)
+		layers = append(layers, layer)
 	}
 
-	digests := make([]string, len(layers.items))
-	for i, layer := range layers.items {
+	digests := make([]string, len(layers))
+	for i, layer := range layers {
 		digests[i] = layer.Digest
 	}
 
@@ -668,110 +546,43 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 		return err
 	}
 
-	configLayer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	layer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		return err
 	}
 
-	delete(deleteMap, configLayer.Digest)
+	for _, layer := range append(layers, layer) {
+		if layer.status != "" {
+			fn(api.ProgressResponse{Status: layer.status})
+		}
+	}
 
-	for _, layer := range append(layers.items, configLayer) {
-		committed, err := layer.Commit()
-		if err != nil {
-			return err
+	unref := make(map[string]struct{})
+	if manifest, _, err := GetManifest(ParseModelPath(name)); err == nil {
+		for _, layer := range manifest.Layers {
+			if !slices.Contains(digests, layer.Digest) {
+				unref[layer.Digest] = struct{}{}
+			}
 		}
 
-		status := "writing layer"
-		if !committed {
-			status = "using already created layer"
+		if manifest.Config.Digest != layer.Digest {
+			unref[manifest.Config.Digest] = struct{}{}
 		}
-
-		fn(api.ProgressResponse{Status: fmt.Sprintf("%s %s", status, layer.Digest)})
-
-		delete(deleteMap, layer.Digest)
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, configLayer, layers.items); err != nil {
+	if err := WriteManifest(name, layer, layers); err != nil {
 		return err
 	}
 
 	if !envconfig.NoPrune {
-		if err := deleteUnusedLayers(nil, deleteMap, false); err != nil {
+		if err := deleteUnusedLayers(nil, unref, false); err != nil {
 			return err
 		}
 	}
 
 	fn(api.ProgressResponse{Status: "success"})
 	return nil
-}
-
-func convertModel(name, path string, fn func(resp api.ProgressResponse)) (string, error) {
-	r, err := zip.OpenReader(path)
-	if err != nil {
-		return "", err
-	}
-	defer r.Close()
-
-	tempDir, err := os.MkdirTemp("", "ollama-convert")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(tempDir)
-
-	fn(api.ProgressResponse{Status: "unpacking model metadata"})
-	for _, f := range r.File {
-		fpath := filepath.Join(tempDir, f.Name)
-		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return "", err
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			return "", err
-		}
-
-		_, err = io.Copy(outFile, rc)
-		if err != nil {
-			return "", err
-		}
-
-		outFile.Close()
-		rc.Close()
-	}
-
-	mf, err := convert.GetModelFormat(tempDir)
-	if err != nil {
-		return "", err
-	}
-
-	params, err := mf.GetParams(tempDir)
-	if err != nil {
-		return "", err
-	}
-
-	mArch, err := mf.GetModelArch(name, tempDir, params)
-	if err != nil {
-		return "", err
-	}
-
-	fn(api.ProgressResponse{Status: "processing tensors"})
-	if err := mArch.GetTensors(); err != nil {
-		return "", err
-	}
-
-	if err := mArch.LoadVocab(); err != nil {
-		return "", err
-	}
-
-	fn(api.ProgressResponse{Status: "converting model"})
-	path, err = mArch.WriteGGUF()
-	if err != nil {
-		return "", err
-	}
-
-	return path, nil
 }
 
 func CopyModel(src, dst model.Name) error {

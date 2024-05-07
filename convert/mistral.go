@@ -132,7 +132,7 @@ func (m *MistralModel) LoadVocab() error {
 	return nil
 }
 
-func (m *MistralModel) WriteGGUF() (string, error) {
+func (m *MistralModel) WriteGGUF(ws io.WriteSeeker) error {
 	kv := llm.KV{
 		"general.architecture":                   "llama",
 		"general.name":                           m.Name,
@@ -158,16 +158,5 @@ func (m *MistralModel) WriteGGUF() (string, error) {
 		"tokenizer.ggml.unknown_token_id": uint32(0),
 	}
 
-	f, err := os.CreateTemp("", "ollama-gguf")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	mod := llm.NewGGUFV3(m.Params.ByteOrder)
-	if err := mod.Encode(f, kv, m.Tensors); err != nil {
-		return "", err
-	}
-
-	return f.Name(), nil
+	return llm.NewGGUFV3(m.Params.ByteOrder).Encode(ws, kv, m.Tensors)
 }
