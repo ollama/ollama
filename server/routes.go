@@ -948,7 +948,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
-	config.AllowHeaders = []string{"Authorization", "Content-Type", "User-Agent"}
+	config.AllowHeaders = []string{"Authorization", "Content-Type", "User-Agent", "Accept", "X-Requested-With"}
 	config.AllowOrigins = envconfig.AllowOrigins
 
 	r := gin.Default()
