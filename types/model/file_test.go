@@ -490,6 +490,10 @@ You are a store greeter. Always responsed with "Hello!".
 MESSAGE user Hey there!
 MESSAGE assistant Hello, I want to parse all the things!
 `,
+		`
+FROM foo
+SYSTEM ""
+`,
 	}
 
 	for _, c := range cases {
