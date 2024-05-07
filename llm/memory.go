@@ -85,18 +85,18 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		graphPartialOffload = graphFullOffload
 	}
 
+	layers := ggml.Tensors().Layers()
+
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
-	memoryRequiredTotal := memoryMinimum + graphFullOffload
+	memoryRequiredTotal := memoryMinimum + graphFullOffload + layers["blk.0"].size()
 
 	// memoryRequiredPartial represents the memory required for partial GPU offloading (n > 0, n < layers)
-	memoryRequiredPartial := memoryMinimum + graphPartialOffload
+	memoryRequiredPartial := memoryMinimum + graphPartialOffload + layers["blk.0"].size()
 
 	if memoryRequiredPartial > memoryAvailable {
 		slog.Debug("insufficient VRAM to load any model layers")
 		return 0, 0
 	}
-
-	layers := ggml.Tensors().Layers()
 
 	var memoryLayerOutput uint64
 	if layer, ok := layers["output_norm"]; ok {
