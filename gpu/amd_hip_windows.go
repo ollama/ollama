@@ -3,7 +3,6 @@ package gpu
 import (
 	"fmt"
 	"log/slog"
-	"strconv"
 	"syscall"
 	"unsafe"
 
@@ -74,16 +73,22 @@ func (hl *HipLib) Release() {
 	hl.dll = 0
 }
 
-func (hl *HipLib) AMDDriverVersion() (string, error) {
+func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	if hl.dll == 0 {
-		return "", fmt.Errorf("dll has been unloaded")
+		return 0, 0, fmt.Errorf("dll has been unloaded")
 	}
 	var version int
 	status, _, err := syscall.SyscallN(hl.hipDriverGetVersion, uintptr(unsafe.Pointer(&version)))
 	if status != hipSuccess {
-		return "", fmt.Errorf("failed call to hipDriverGetVersion: %d %s", status, err)
+		return 0, 0, fmt.Errorf("failed call to hipDriverGetVersion: %d %s", status, err)
 	}
-	return strconv.Itoa(version), nil
+
+	slog.Debug("hipDriverGetVersion", "version", version)
+	// TODO - this isn't actually right, but the docs claim hipDriverGetVersion isn't accurate anyway...
+	driverMajor = version / 1000
+	driverMinor = (version - (driverMajor * 1000)) / 10
+
+	return driverMajor, driverMinor, nil
 }
 
 func (hl *HipLib) HipGetDeviceCount() int {

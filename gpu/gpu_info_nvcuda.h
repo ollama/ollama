@@ -44,12 +44,15 @@ typedef void* CUcontext;
 typedef struct nvcuda_handle {
   void *handle;
   uint16_t verbose;
+  int driver_major;
+  int driver_minor;
   CUresult (*cuInit)(unsigned int Flags);
   CUresult (*cuDriverGetVersion)(int *driverVersion);
   CUresult (*cuDeviceGetCount)(int *);
   CUresult (*cuDeviceGet)(CUdevice* device, int ordinal);
   CUresult (*cuDeviceGetAttribute)(int* pi, CUdevice_attribute attrib, CUdevice dev);
   CUresult (*cuDeviceGetUuid)(CUuuid* uuid, CUdevice dev); // signature compatible with cuDeviceGetUuid_v2
+  CUresult (*cuDeviceGetName)(char *name, int len, CUdevice dev);
 
   // Context specific aspects
   CUresult (*cuCtxCreate_v3)(CUcontext* pctx, void *params, int len, unsigned int flags, CUdevice dev);
