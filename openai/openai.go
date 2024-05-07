@@ -109,7 +109,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 		Choices: []Choice{{
 			Index:        0,
 			Message:      Message{Role: r.Message.Role, Content: r.Message.Content},
-			FinishReason: &r.FinishReason,
+			FinishReason: &r.DoneReason,
 		}},
 		Usage: Usage{
 			// TODO: ollama returns 0 for prompt eval if the prompt was cached, but openai returns the actual count
@@ -131,7 +131,7 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 			{
 				Index:        0,
 				Delta:        Message{Role: "assistant", Content: r.Message.Content},
-				FinishReason: &r.FinishReason,
+				FinishReason: &r.DoneReason,
 			},
 		},
 	}

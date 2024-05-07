@@ -599,7 +599,7 @@ type CompletionRequest struct {
 
 type CompletionResponse struct {
 	Content            string
-	FinishReason       string
+	DoneReason         string
 	Done               bool
 	PromptEvalCount    int
 	PromptEvalDuration time.Duration
@@ -741,14 +741,14 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			}
 
 			if c.Stop {
-				finishReason := "stop"
+				doneReason := "stop"
 				if c.StoppedLimit {
-					finishReason = "length"
+					doneReason = "length"
 				}
 
 				fn(CompletionResponse{
 					Done:               true,
-					FinishReason:       finishReason,
+					DoneReason:         doneReason,
 					PromptEvalCount:    c.Timings.PromptN,
 					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 					EvalCount:          c.Timings.PredictedN,

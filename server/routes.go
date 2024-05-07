@@ -152,10 +152,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	// of `raw` mode so we need to check for it too
 	if req.Prompt == "" && req.Template == "" && req.System == "" {
 		c.JSON(http.StatusOK, api.GenerateResponse{
-			CreatedAt:    time.Now().UTC(),
-			Model:        req.Model,
-			Done:         true,
-			FinishReason: "load",
+			CreatedAt:  time.Now().UTC(),
+			Model:      req.Model,
+			Done:       true,
+			DoneReason: "load",
 		})
 		return
 	}
@@ -223,11 +223,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			resp := api.GenerateResponse{
-				Model:        req.Model,
-				CreatedAt:    time.Now().UTC(),
-				Done:         r.Done,
-				Response:     r.Content,
-				FinishReason: r.FinishReason,
+				Model:      req.Model,
+				CreatedAt:  time.Now().UTC(),
+				Done:       r.Done,
+				Response:   r.Content,
+				DoneReason: r.DoneReason,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
@@ -1212,11 +1212,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	// an empty request loads the model
 	if len(req.Messages) == 0 || prompt == "" {
 		resp := api.ChatResponse{
-			CreatedAt:    time.Now().UTC(),
-			Model:        req.Model,
-			Done:         true,
-			FinishReason: "load",
-			Message:      api.Message{Role: "assistant"},
+			CreatedAt:  time.Now().UTC(),
+			Model:      req.Model,
+			Done:       true,
+			DoneReason: "load",
+			Message:    api.Message{Role: "assistant"},
 		}
 		c.JSON(http.StatusOK, resp)
 		return
@@ -1249,11 +1249,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		fn := func(r llm.CompletionResponse) {
 
 			resp := api.ChatResponse{
-				Model:        req.Model,
-				CreatedAt:    time.Now().UTC(),
-				Message:      api.Message{Role: "assistant", Content: r.Content},
-				Done:         r.Done,
-				FinishReason: r.FinishReason,
+				Model:      req.Model,
+				CreatedAt:  time.Now().UTC(),
+				Message:    api.Message{Role: "assistant", Content: r.Content},
+				Done:       r.Done,
+				DoneReason: r.DoneReason,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
