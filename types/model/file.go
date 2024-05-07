@@ -249,10 +249,6 @@ func quote(s string) string {
 }
 
 func unquote(s string) (string, bool) {
-	if len(s) == 0 {
-		return "", false
-	}
-
 	// TODO: single quotes
 	if len(s) >= 3 && s[:3] == `"""` {
 		if len(s) >= 6 && s[len(s)-3:] == `"""` {
