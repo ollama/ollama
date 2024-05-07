@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Ollama: https://ollama.ai/download
+- Ollama: https://ollama.com/download
 - Fly.io account. Sign up for a free account: https://fly.io/app/sign-up
 
 ## Steps
