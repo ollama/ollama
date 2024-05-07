@@ -269,7 +269,7 @@ jobs:
           mkdir -p llm/build/darwin/$ARCH/stub/bin
           touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
-      - uses: golangci/golangci-lint-action@v5
+      - uses: golangci/golangci-lint-action@v4
         with:
           args: --timeout 8m0s -v
   test:

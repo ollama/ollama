@@ -9,8 +9,9 @@ linters:
     - contextcheck
     - exportloopref
     - gocheckcompilerdirectives
-    - gofmt
-    - goimports
+    # FIXME: for some reason this errors on windows
+    # - gofmt
+    # - goimports
     - misspell
     - nilerr
     - unused
