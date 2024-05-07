@@ -19,7 +19,7 @@ func main() {
 	}
 
 	defer resp.Body.Close()
-	
+
 	responseData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal(err)

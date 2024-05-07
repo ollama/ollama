@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +15,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/server/envconfig"
 	"golang.org/x/exp/slices"
 )
 
@@ -43,35 +42,14 @@ type Scheduler struct {
 	getGpuFn    func() gpu.GpuInfoList
 }
 
-// TODO set this to zero after a release or two, to enable multiple models by default
-var loadedMax = 1          // Maximum runners; < 1 maps to as many as will fit in VRAM (unlimited for CPU runners)
-var maxQueuedRequests = 10 // TODO configurable
-var numParallel = 1
+var ErrMaxQueue = fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
 
 func InitScheduler(ctx context.Context) *Scheduler {
-	maxRunners := os.Getenv("OLLAMA_MAX_LOADED_MODELS")
-	if maxRunners != "" {
-		m, err := strconv.Atoi(maxRunners)
-		if err != nil {
-			slog.Error("invalid setting", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "error", err)
-		} else {
-			loadedMax = m
-		}
-	}
-	if onp := os.Getenv("OLLAMA_NUM_PARALLEL"); onp != "" {
-		p, err := strconv.Atoi(onp)
-		if err != nil || p <= 0 {
-			slog.Error("invalid parallel setting, must be greater than zero", "OLLAMA_NUM_PARALLEL", onp, "error", err)
-		} else {
-			numParallel = p
-		}
-	}
-
 	sched := &Scheduler{
-		pendingReqCh:  make(chan *LlmRequest, maxQueuedRequests),
-		finishedReqCh: make(chan *LlmRequest, maxQueuedRequests),
-		expiredCh:     make(chan *runnerRef, maxQueuedRequests),
-		unloadedCh:    make(chan interface{}, maxQueuedRequests),
+		pendingReqCh:  make(chan *LlmRequest, envconfig.MaxQueuedRequests),
+		finishedReqCh: make(chan *LlmRequest, envconfig.MaxQueuedRequests),
+		expiredCh:     make(chan *runnerRef, envconfig.MaxQueuedRequests),
+		unloadedCh:    make(chan interface{}, envconfig.MaxQueuedRequests),
 		loaded:        make(map[string]*runnerRef),
 		newServerFn:   llm.NewLlamaServer,
 		getGpuFn:      gpu.GetGPUInfo,
@@ -82,6 +60,9 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration time.Duration) (chan *runnerRef, chan error) {
+	// allocate a large enough kv cache for all parallel requests
+	opts.NumCtx = opts.NumCtx * envconfig.NumParallel
+
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
@@ -90,12 +71,11 @@ func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options,
 		successCh:       make(chan *runnerRef),
 		errCh:           make(chan error, 1),
 	}
-	// context split across parallel threads
-	opts.NumCtx = opts.NumCtx * numParallel
+
 	select {
 	case s.pendingReqCh <- req:
 	default:
-		req.errCh <- fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
+		req.errCh <- ErrMaxQueue
 	}
 	return req.successCh, req.errCh
 }
@@ -120,6 +100,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			return
 		case pending := <-s.pendingReqCh:
 			// Block other requests until we get this pending request running
+
+			if pending.ctx.Err() != nil {
+				slog.Debug("pending request cancelled or timed out, skipping scheduling")
+				continue
+			}
+
 			for {
 				var runnerToExpire *runnerRef
 				s.loadedMu.Lock()
@@ -134,11 +120,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
-				} else if loadedMax > 0 && loadedCount >= loadedMax {
+				} else if envconfig.MaxRunners > 0 && loadedCount >= envconfig.MaxRunners {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
-					runnerToExpire = s.findRunnerToUnload(pending)
+					runnerToExpire = s.findRunnerToUnload()
 				} else {
-					// Either no models are loaded or below loadedMax
+					// Either no models are loaded or below envconfig.MaxRunners
 					// Get a refreshed GPU list
 					gpus := s.getGpuFn()
 
@@ -149,7 +135,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
-					// If we're CPU only mode, just limit by loadedMax above
+					// If we're CPU only mode, just limit by envconfig.MaxRunners above
 					// TODO handle system memory exhaustion
 					if (len(gpus) == 1 && gpus[0].Library == "cpu") || pending.opts.NumGPU == 0 {
 						slog.Debug("cpu mode with existing models, loading")
@@ -177,7 +163,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						s.loadFn(pending, ggml, gpus)
 						break
 					}
-					runnerToExpire = s.findRunnerToUnload(pending)
+					runnerToExpire = s.findRunnerToUnload()
 				}
 
 				if runnerToExpire == nil {
@@ -250,6 +236,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 						defer runner.refMu.Unlock()
 						if runner.expireTimer != nil {
 							runner.expireTimer.Stop()
+							runner.expireTimer = nil
 						}
 						s.expiredCh <- runner
 					})
@@ -276,9 +263,9 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				continue
 			}
 
+			s.loadedMu.Lock()
 			slog.Debug("got lock to unload", "model", runner.model)
 			runner.unload()
-			s.loadedMu.Lock()
 			delete(s.loaded, runner.model)
 			s.loadedMu.Unlock()
 			slog.Debug("runner released", "model", runner.model)
@@ -296,6 +283,10 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 	runner.refCount++
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	runner.sessionDuration = pending.sessionDuration
 	pending.successCh <- runner
 	go func() {
@@ -426,6 +417,10 @@ type runnerRef struct {
 
 // The refMu must already be held when calling unload
 func (runner *runnerRef) unload() {
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	if runner.llama != nil {
 		runner.llama.Close()
 	}
@@ -444,6 +439,10 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	timeout := 10 * time.Second
 	if runner.loading {
 		timeout = 2 * time.Minute // Initial load can take a long time for big models on slow systems...
+	}
+
+	if runner.Options == nil {
+		return true
 	}
 
 	// Don't reload runner if num_gpu=-1 was provided
@@ -515,7 +514,7 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) gpu.
 }
 
 // findRunnerToUnload finds a runner to unload to make room for a new model
-func (s *Scheduler) findRunnerToUnload(req *LlmRequest) *runnerRef {
+func (s *Scheduler) findRunnerToUnload() *runnerRef {
 	s.loadedMu.Lock()
 	runnerList := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {

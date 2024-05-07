@@ -3,12 +3,11 @@ package llm
 import (
 	"fmt"
 	"log/slog"
-	"os"
-	"strconv"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/server/envconfig"
 )
 
 // This algorithm looks for a complete fit to determine if we need to unload other models
@@ -50,15 +49,8 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	for _, info := range gpus {
 		memoryAvailable += info.FreeMemory
 	}
-	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
-	if userLimit != "" {
-		avail, err := strconv.ParseUint(userLimit, 10, 64)
-		if err != nil {
-			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_VRAM", userLimit, "error", err)
-		} else {
-			slog.Info("user override memory limit", "OLLAMA_MAX_VRAM", avail, "actual", memoryAvailable)
-			memoryAvailable = avail
-		}
+	if envconfig.MaxVRAM > 0 {
+		memoryAvailable = envconfig.MaxVRAM
 	}
 
 	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", format.HumanBytes2(memoryAvailable))
@@ -88,18 +80,23 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	graphFullOffload *= uint64(len(gpus))
 	graphPartialOffload *= uint64(len(gpus))
 
+	// on metal there's no partial offload overhead
+	if gpus[0].Library == "metal" {
+		graphPartialOffload = graphFullOffload
+	}
+
+	layers := ggml.Tensors().Layers()
+
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
-	memoryRequiredTotal := memoryMinimum + graphFullOffload
+	memoryRequiredTotal := memoryMinimum + graphFullOffload + layers["blk.0"].size()
 
 	// memoryRequiredPartial represents the memory required for partial GPU offloading (n > 0, n < layers)
-	memoryRequiredPartial := memoryMinimum + graphPartialOffload
+	memoryRequiredPartial := memoryMinimum + graphPartialOffload + layers["blk.0"].size()
 
 	if memoryRequiredPartial > memoryAvailable {
 		slog.Debug("insufficient VRAM to load any model layers")
 		return 0, 0
 	}
-
-	layers := ggml.Tensors().Layers()
 
 	var memoryLayerOutput uint64
 	if layer, ok := layers["output_norm"]; ok {

@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+ <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
 
 # Ollama
@@ -51,7 +51,7 @@ Here are some example models that can be downloaded:
 | ------------------ | ---------- | ----- | ------------------------------ |
 | Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
 | Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
-| Phi-3              | 3,8B       | 2.3GB | `ollama run phi3`              |
+| Phi-3              | 3.8B       | 2.3GB | `ollama run phi3`              |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
 | Starling           | 7B         | 4.1GB | `ollama run starling-lm`       |
@@ -173,7 +173,7 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
-### Pass in prompt as arguments
+### Pass the prompt as an argument
 
 ```
 $ ollama run llama3 "Summarize this file: $(cat README.md)"
@@ -258,6 +258,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
+- [Hollama](https://github.com/fmaclen/hollama)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
 - [LibreChat](https://github.com/danny-avila/LibreChat)
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
@@ -284,17 +285,20 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [OllamaGUI](https://github.com/enoch1118/ollamaGUI)
 - [OpenAOE](https://github.com/InternLM/OpenAOE)
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
-- [LLM-X: Progressive Web App](https://github.com/mrdjohnson/llm-x)
+- [LLM-X](https://github.com/mrdjohnson/llm-x) (Progressive Web App)
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
-- [QA-Pilot: Chat with Code Repository](https://github.com/reid41/QA-Pilot)
-- [ChatOllama: Open Source Chatbot based on Ollama with Knowledge Bases](https://github.com/sugarforever/chat-ollama)
-- [CRAG Ollama Chat: Simple Web Search with Corrective RAG](https://github.com/Nagi-ovo/CRAG-Ollama-Chat)
-- [RAGFlow: Open-source Retrieval-Augmented Generation engine based on deep document understanding](https://github.com/infiniflow/ragflow)
-- [chat: chat web app for teams](https://github.com/swuecho/chat)
+- [QA-Pilot](https://github.com/reid41/QA-Pilot) (Chat with Code Repository)
+- [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
+- [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
+- [RAGFlow](https://github.com/infiniflow/ragflow) (Open-source Retrieval-Augmented Generation engine based on deep document understanding)
+- [StreamDeploy](https://github.com/StreamDeploy-DevRel/streamdeploy-llm-app-scaffold) (LLM Application Scaffold)
+- [chat](https://github.com/swuecho/chat) (chat web app for teams)
 - [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
-- [Ollama RAG Chatbot: Local Chat with multiples PDFs using Ollama and RAG.](https://github.com/datvodinh/rag-chatbot.git)
+- [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) (Local Chat with multiple PDFs using Ollama and RAG)
+- [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
+- [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
 
 ### Terminal
 
@@ -348,9 +352,11 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
 - [Elixir LangChain](https://github.com/brainlid/langchain)
 - [Ollama for R - rollama](https://github.com/JBGruber/rollama)
+- [Ollama for R - ollama-r](https://github.com/hauselin/ollama-r)
 - [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
 - [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
 - [Testcontainers](https://testcontainers.com/modules/ollama/)
+- [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
 
 ### Mobile
 
@@ -370,12 +376,13 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
-- [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
 - [Cliobot](https://github.com/herval/cliobot) (Telegram bot with Ollama support)
 - [Copilot for Obsidian plugin](https://github.com/logancyang/obsidian-copilot)
 - [Obsidian Local GPT plugin](https://github.com/pfrankov/obsidian-local-gpt)
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)
+- [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
+- [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) (Proxy that allows you to use ollama as a copilot like Github copilot)
 - [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
 - [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
@@ -384,4 +391,5 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
 
 ### Supported backends 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov. 
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
+

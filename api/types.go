@@ -438,6 +438,13 @@ type Duration struct {
 	time.Duration
 }
 
+func (d Duration) MarshalJSON() ([]byte, error) {
+	if d.Duration < 0 {
+		return []byte("-1"), nil
+	}
+	return []byte("\"" + d.Duration.String() + "\""), nil
+}
+
 func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	var v any
 	if err := json.Unmarshal(b, &v); err != nil {
@@ -451,7 +458,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 		if t < 0 {
 			d.Duration = time.Duration(math.MaxInt64)
 		} else {
-			d.Duration = time.Duration(t * float64(time.Second))
+			d.Duration = time.Duration(int(t) * int(time.Second))
 		}
 	case string:
 		d.Duration, err = time.ParseDuration(t)
@@ -461,6 +468,8 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 		if d.Duration < 0 {
 			d.Duration = time.Duration(math.MaxInt64)
 		}
+	default:
+		return fmt.Errorf("Unsupported type: '%s'", reflect.TypeOf(v))
 	}
 
 	return nil

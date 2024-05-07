@@ -1,6 +1,7 @@
 package model
 
 import (
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
@@ -15,8 +16,19 @@ func TestParseNameParts(t *testing.T) {
 	cases := []struct {
 		in              string
 		want            Name
+		wantFilepath    string
 		wantValidDigest bool
 	}{
+		{
+			in: "scheme://host:port/namespace/model:tag",
+			want: Name{
+				Host:      "host:port",
+				Namespace: "namespace",
+				Model:     "model",
+				Tag:       "tag",
+			},
+			wantFilepath: filepath.Join("host:port", "namespace", "model", "tag"),
+		},
 		{
 			in: "host/namespace/model:tag",
 			want: Name{
@@ -25,6 +37,17 @@ func TestParseNameParts(t *testing.T) {
 				Model:     "model",
 				Tag:       "tag",
 			},
+			wantFilepath: filepath.Join("host", "namespace", "model", "tag"),
+		},
+		{
+			in: "host:port/namespace/model:tag",
+			want: Name{
+				Host:      "host:port",
+				Namespace: "namespace",
+				Model:     "model",
+				Tag:       "tag",
+			},
+			wantFilepath: filepath.Join("host:port", "namespace", "model", "tag"),
 		},
 		{
 			in: "host/namespace/model",
@@ -33,6 +56,16 @@ func TestParseNameParts(t *testing.T) {
 				Namespace: "namespace",
 				Model:     "model",
 			},
+			wantFilepath: filepath.Join("host", "namespace", "model", "latest"),
+		},
+		{
+			in: "host:port/namespace/model",
+			want: Name{
+				Host:      "host:port",
+				Namespace: "namespace",
+				Model:     "model",
+			},
+			wantFilepath: filepath.Join("host:port", "namespace", "model", "latest"),
 		},
 		{
 			in: "namespace/model",
@@ -40,12 +73,14 @@ func TestParseNameParts(t *testing.T) {
 				Namespace: "namespace",
 				Model:     "model",
 			},
+			wantFilepath: filepath.Join("registry.ollama.ai", "namespace", "model", "latest"),
 		},
 		{
 			in: "model",
 			want: Name{
 				Model: "model",
 			},
+			wantFilepath: filepath.Join("registry.ollama.ai", "library", "model", "latest"),
 		},
 		{
 			in: "h/nn/mm:t",
@@ -55,6 +90,7 @@ func TestParseNameParts(t *testing.T) {
 				Model:     "mm",
 				Tag:       "t",
 			},
+			wantFilepath: filepath.Join("h", "nn", "mm", "t"),
 		},
 		{
 			in: part80 + "/" + part80 + "/" + part80 + ":" + part80,
@@ -64,6 +100,7 @@ func TestParseNameParts(t *testing.T) {
 				Model:     part80,
 				Tag:       part80,
 			},
+			wantFilepath: filepath.Join(part80, part80, part80, part80),
 		},
 		{
 			in: part350 + "/" + part80 + "/" + part80 + ":" + part80,
@@ -73,6 +110,7 @@ func TestParseNameParts(t *testing.T) {
 				Model:     part80,
 				Tag:       part80,
 			},
+			wantFilepath: filepath.Join(part350, part80, part80, part80),
 		},
 		{
 			in: "@digest",
@@ -96,6 +134,11 @@ func TestParseNameParts(t *testing.T) {
 			got := ParseNameBare(tt.in)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("parseName(%q) = %v; want %v", tt.in, got, tt.want)
+			}
+
+			got = ParseName(tt.in)
+			if tt.wantFilepath != "" && got.Filepath() != tt.wantFilepath {
+				t.Errorf("parseName(%q).Filepath() = %q; want %q", tt.in, got.Filepath(), tt.wantFilepath)
 			}
 		})
 	}
@@ -229,6 +272,40 @@ func TestFilepathAllocs(t *testing.T) {
 	}
 	if allocs > allowedAllocs {
 		t.Errorf("allocs = %v; allowed %v", allocs, allowedAllocs)
+	}
+}
+
+const (
+	validSha256    = "sha256-1000000000000000000000000000000000000000000000000000000000000000"
+	validSha256Old = "sha256:1000000000000000000000000000000000000000000000000000000000000000"
+)
+
+func TestParseDigest(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},           // empty
+		{"sha123-12", ""},  // invalid type
+		{"sha256-", ""},    // invalid sum
+		{"sha256-123", ""}, // invalid odd length sum
+
+		{validSha256, validSha256},
+		{validSha256Old, validSha256},
+	}
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := ParseDigest(tt.in)
+			if err != nil {
+				if tt.want != "" {
+					t.Errorf("parseDigest(%q) = %v; want %v", tt.in, err, tt.want)
+				}
+				return
+			}
+			if got.String() != tt.want {
+				t.Errorf("parseDigest(%q).String() = %q; want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,7 +29,7 @@ import (
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/server/envconfig"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -146,12 +147,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
-		if errors.Is(err, context.Canceled) {
-			c.JSON(499, gin.H{"error": "request canceled"})
-			return
-		}
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		handleErrorResponse(c, err)
 		return
 	}
 
@@ -394,12 +390,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
-		if errors.Is(err, context.Canceled) {
-			c.JSON(499, gin.H{"error": "request canceled"})
-			return
-		}
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		handleErrorResponse(c, err)
 		return
 	}
 
@@ -522,28 +513,17 @@ func (s *Server) PushModelHandler(c *gin.Context) {
 
 func (s *Server) CreateModelHandler(c *gin.Context) {
 	var req api.CreateRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	var model string
-	if req.Model != "" {
-		model = req.Model
-	} else if req.Name != "" {
-		model = req.Name
-	} else {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
-	}
-
-	if err := ParseModelPath(model).Validate(); err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	name := model.ParseName(cmp.Or(req.Model, req.Name))
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid model name"})
 		return
 	}
 
@@ -552,19 +532,19 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	var modelfile io.Reader = strings.NewReader(req.Modelfile)
+	var r io.Reader = strings.NewReader(req.Modelfile)
 	if req.Path != "" && req.Modelfile == "" {
-		mf, err := os.Open(req.Path)
+		f, err := os.Open(req.Path)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("error reading modelfile: %s", err)})
 			return
 		}
-		defer mf.Close()
+		defer f.Close()
 
-		modelfile = mf
+		r = f
 	}
 
-	commands, err := parser.Parse(modelfile)
+	modelfile, err := model.ParseFile(r)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -580,7 +560,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, model, filepath.Dir(req.Path), req.Quantization, commands, fn); err != nil {
+		if err := CreateModel(ctx, name.String(), filepath.Dir(req.Path), req.Quantization, modelfile, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -728,12 +708,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		}
 	}
 
-	mf, err := ShowModelfile(model)
-	if err != nil {
-		return nil, err
-	}
-
-	resp.Modelfile = mf
+	var sb strings.Builder
+	fmt.Fprintln(&sb, "# Modelfile generate by \"ollama show\"")
+	fmt.Fprintln(&sb, "# To build a new Modelfile based on this, replace FROM with:")
+	fmt.Fprintf(&sb, "# FROM %s\n\n", model.ShortName)
+	fmt.Fprint(&sb, model.String())
+	resp.Modelfile = sb.String()
 
 	return resp, nil
 }
@@ -810,16 +790,13 @@ func (s *Server) CopyModelHandler(c *gin.Context) {
 
 	src := model.ParseName(r.Source)
 	if !src.IsValid() {
-		_ = c.Error(fmt.Errorf("source %q is invalid", r.Source))
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("source %q is invalid", r.Source)})
+		return
 	}
 
 	dst := model.ParseName(r.Destination)
 	if !dst.IsValid() {
-		_ = c.Error(fmt.Errorf("destination %q is invalid", r.Destination))
-	}
-
-	if len(c.Errors) > 0 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": c.Errors.Errors()})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Source)})
 		return
 	}
 
@@ -881,12 +858,6 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 	}
 
 	c.Status(http.StatusCreated)
-}
-
-var defaultAllowOrigins = []string{
-	"localhost",
-	"127.0.0.1",
-	"0.0.0.0",
 }
 
 func isLocalIP(ip netip.Addr) bool {
@@ -972,19 +943,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
-
-	if allowedOrigins := strings.Trim(os.Getenv("OLLAMA_ORIGINS"), "\"'"); allowedOrigins != "" {
-		config.AllowOrigins = strings.Split(allowedOrigins, ",")
-	}
-
-	for _, allowOrigin := range defaultAllowOrigins {
-		config.AllowOrigins = append(config.AllowOrigins,
-			fmt.Sprintf("http://%s", allowOrigin),
-			fmt.Sprintf("https://%s", allowOrigin),
-			fmt.Sprintf("http://%s:*", allowOrigin),
-			fmt.Sprintf("https://%s:*", allowOrigin),
-		)
-	}
+	config.AllowOrigins = envconfig.AllowOrigins
 
 	r := gin.Default()
 	r.Use(
@@ -1023,10 +982,11 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 func Serve(ln net.Listener) error {
 	level := slog.LevelInfo
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+	if envconfig.Debug {
 		level = slog.LevelDebug
 	}
 
+	slog.Info("server config", "env", envconfig.AsMap())
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level:     level,
 		AddSource: true,
@@ -1050,7 +1010,7 @@ func Serve(ln net.Listener) error {
 		return err
 	}
 
-	if noprune := os.Getenv("OLLAMA_NOPRUNE"); noprune == "" {
+	if !envconfig.NoPrune {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
 			return err
@@ -1081,6 +1041,7 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
+		srvr.Close()
 		done()
 		sched.unloadAllRunners()
 		gpu.Cleanup()
@@ -1226,12 +1187,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	select {
 	case runner = <-rCh:
 	case err = <-eCh:
-		if errors.Is(err, context.Canceled) {
-			c.JSON(499, gin.H{"error": "request canceled"})
-			return
-		}
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		handleErrorResponse(c, err)
 		return
 	}
 
@@ -1351,4 +1307,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func handleErrorResponse(c *gin.Context, err error) {
+	if errors.Is(err, context.Canceled) {
+		c.JSON(499, gin.H{"error": "request canceled"})
+		return
+	}
+	if errors.Is(err, ErrMaxQueue) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 }
