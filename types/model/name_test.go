@@ -309,6 +309,49 @@ func TestParseDigest(t *testing.T) {
 	}
 }
 
+func TestParseNameFromFilepath(t *testing.T) {
+	cases := map[string]Name{
+		filepath.Join("host", "namespace", "model", "tag"):      {Host: "host", Namespace: "namespace", Model: "model", Tag: "tag"},
+		filepath.Join("host:port", "namespace", "model", "tag"): {Host: "host:port", Namespace: "namespace", Model: "model", Tag: "tag"},
+		filepath.Join("namespace", "model", "tag"):              {},
+		filepath.Join("model", "tag"):                           {},
+		filepath.Join("model"):                                  {},
+		filepath.Join("..", "..", "model", "tag"):               {},
+		filepath.Join("", "namespace", ".", "tag"):              {},
+		filepath.Join(".", ".", ".", "."):                       {},
+		filepath.Join("/", "path", "to", "random", "file"):      {},
+	}
+
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			got := ParseNameFromFilepath(in)
+
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("parseNameFromFilepath(%q) = %v; want %v", in, got, want)
+			}
+		})
+	}
+}
+
+func TestDisplayShortest(t *testing.T) {
+	cases := map[string]string{
+		"registry.ollama.ai/library/model:latest": "model:latest",
+		"registry.ollama.ai/library/model:tag":    "model:tag",
+		"registry.ollama.ai/namespace/model:tag":  "namespace/model:tag",
+		"host/namespace/model:tag":                "host/namespace/model:tag",
+		"host/library/model:tag":                  "host/library/model:tag",
+	}
+
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			got := ParseNameBare(in).DisplayShortest()
+			if got != want {
+				t.Errorf("parseName(%q).DisplayShortest() = %q; want %q", in, got, want)
+			}
+		})
+	}
+}
+
 func FuzzName(f *testing.F) {
 	for s := range testCases {
 		f.Add(s)
