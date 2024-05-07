@@ -576,10 +576,11 @@ type ImageData struct {
 }
 
 type completion struct {
-	Content string `json:"content"`
-	Model   string `json:"model"`
-	Prompt  string `json:"prompt"`
-	Stop    bool   `json:"stop"`
+	Content      string `json:"content"`
+	Model        string `json:"model"`
+	Prompt       string `json:"prompt"`
+	Stop         bool   `json:"stop"`
+	StoppedLimit bool   `json:"stopped_limit"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -598,6 +599,7 @@ type CompletionRequest struct {
 
 type CompletionResponse struct {
 	Content            string
+	FinishReason       string
 	Done               bool
 	PromptEvalCount    int
 	PromptEvalDuration time.Duration
@@ -739,8 +741,14 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			}
 
 			if c.Stop {
+				finishReason := "stop"
+				if c.StoppedLimit {
+					finishReason = "length"
+				}
+
 				fn(CompletionResponse{
 					Done:               true,
+					FinishReason:       finishReason,
 					PromptEvalCount:    c.Timings.PromptN,
 					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 					EvalCount:          c.Timings.PredictedN,

@@ -114,9 +114,10 @@ type Message struct {
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Message   Message   `json:"message"`
+	Model        string    `json:"model"`
+	CreatedAt    time.Time `json:"created_at"`
+	Message      Message   `json:"message"`
+	FinishReason string    `json:"finish_reason,omitempty"`
 
 	Done bool `json:"done"`
 
