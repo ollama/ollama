@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// StatusError is an error with and HTTP status code.
 type StatusError struct {
 	StatusCode   int
 	Status       string
@@ -32,6 +33,7 @@ func (e StatusError) Error() string {
 	}
 }
 
+// ImageData represents the raw binary data of an image file.
 type ImageData []byte
 
 // GenerateRequest describes a request sent by [Client.Generate]. While you
@@ -77,22 +79,39 @@ type GenerateRequest struct {
 	Options map[string]interface{} `json:"options"`
 }
 
+// ChatRequest describes a request sent by [Client.Chat].
 type ChatRequest struct {
-	Model     string    `json:"model"`
-	Messages  []Message `json:"messages"`
-	Stream    *bool     `json:"stream,omitempty"`
-	Format    string    `json:"format"`
+	// Model is the model name, as in [GenerateRequest].
+	Model string `json:"model"`
+
+	// Messages is the messages of the chat - can be used to keep a chat memory.
+	Messages []Message `json:"messages"`
+
+	// Stream enable streaming of returned response; true by default.
+	Stream *bool `json:"stream,omitempty"`
+
+	// Format is the format to return the response in (e.g. "json").
+	Format string `json:"format"`
+
+	// KeepAlive controls how long the model will stay loaded into memory
+	// followin the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
 }
 
+// Message is a single message in a chat sequence. The message contains the
+// role ("system", "user", or "assistant"), the content and an optional list
+// of images.
 type Message struct {
-	Role    string      `json:"role"` // one of ["system", "user", "assistant"]
+	Role    string      `json:"role"`
 	Content string      `json:"content"`
 	Images  []ImageData `json:"images,omitempty"`
 }
 
+// ChatResponse is the response returned by [Client.Chat]. Its fields are
+// similar to [GenerateResponse].
 type ChatResponse struct {
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
@@ -112,7 +131,8 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specified in GenerateRequest, if you add a new option here add it to the API docs also
+// Options specified in [GenerateRequest], if you add a new option here add it
+// to the API docs also.
 type Options struct {
 	Runner
 
@@ -158,18 +178,28 @@ type Runner struct {
 	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 }
 
+// EmbeddingRequest is the request passed to [Client.Embeddings].
 type EmbeddingRequest struct {
-	Model     string    `json:"model"`
-	Prompt    string    `json:"prompt"`
+	// Model is the model name.
+	Model string `json:"model"`
+
+	// Prompt is the textual prompt to embed.
+	Prompt string `json:"prompt"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
 }
 
+// EmbeddingResponse is the response from [Client.Embeddings].
 type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+// CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model        string `json:"model"`
 	Path         string `json:"path"`
@@ -181,6 +211,7 @@ type CreateRequest struct {
 	Name string `json:"name"`
 }
 
+// DeleteRequest is the request passed to [Client.Delete].
 type DeleteRequest struct {
 	Model string `json:"model"`
 
@@ -188,6 +219,7 @@ type DeleteRequest struct {
 	Name string `json:"name"`
 }
 
+// ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
 	Model    string `json:"model"`
 	System   string `json:"system"`
@@ -199,6 +231,7 @@ type ShowRequest struct {
 	Name string `json:"name"`
 }
 
+// ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
 	License    string       `json:"license,omitempty"`
 	Modelfile  string       `json:"modelfile,omitempty"`
@@ -209,11 +242,13 @@ type ShowResponse struct {
 	Messages   []Message    `json:"messages,omitempty"`
 }
 
+// CopyRequest is the request passed to [Client.Copy].
 type CopyRequest struct {
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
 }
 
+// PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
@@ -225,6 +260,8 @@ type PullRequest struct {
 	Name string `json:"name"`
 }
 
+// ProgressResponse is the response passed to progress functions like
+// [PullProgressFunc] and [PushProgressFunc].
 type ProgressResponse struct {
 	Status    string `json:"status"`
 	Digest    string `json:"digest,omitempty"`
@@ -232,6 +269,7 @@ type ProgressResponse struct {
 	Completed int64  `json:"completed,omitempty"`
 }
 
+// PushRequest is the request passed to [Client.Push].
 type PushRequest struct {
 	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
@@ -243,10 +281,12 @@ type PushRequest struct {
 	Name string `json:"name"`
 }
 
+// ListResponse is the response from [Client.List].
 type ListResponse struct {
 	Models []ModelResponse `json:"models"`
 }
 
+// ModelResponse is a single model description in [ListResponse].
 type ModelResponse struct {
 	Name       string       `json:"name"`
 	Model      string       `json:"model"`
@@ -260,17 +300,28 @@ type TokenResponse struct {
 	Token string `json:"token"`
 }
 
+// GenerateResponse is the response passed into [GenerateResponseFunc].
 type GenerateResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response"`
+	// Model is the model name that generated the response.
+	Model string `json:"model"`
 
-	Done    bool  `json:"done"`
+	//CreatedAt is the timestamp of the response.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Response is the textual response itself.
+	Response string `json:"response"`
+
+	// Done specifies if the response is complete.
+	Done bool `json:"done"`
+
+	// Context is an encoding of the conversation used in this response; this
+	// can be sent in the next request to keep a conversational memory.
 	Context []int `json:"context,omitempty"`
 
 	Metrics
 }
 
+// ModelDetails provides details about a model.
 type ModelDetails struct {
 	ParentModel       string   `json:"parent_model"`
 	Format            string   `json:"format"`
@@ -308,6 +359,7 @@ func (m *Metrics) Summary() {
 	}
 }
 
+// ErrInvalidOpts is returned when invalid options are passed to the client.
 var ErrInvalidOpts = errors.New("invalid options")
 var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
@@ -394,6 +446,8 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 	return nil
 }
 
+// DefaultOptions is the default set of options for [GenerateRequest]; these
+// values are used unless the user specifies other values explicitly.
 func DefaultOptions() Options {
 	return Options{
 		// options set on request to runner
