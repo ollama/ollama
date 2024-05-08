@@ -38,7 +38,42 @@ func (m *Manifest) Remove() error {
 		return err
 	}
 
-	return PruneDirectory(manifests)
+	return pruneEmptyDirectory(manifests)
+}
+
+func pruneEmptyDirectory(p string) error {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+
+	if fi.Mode()&os.ModeSymlink == 0 {
+		entries, err := os.ReadDir(p)
+		if err != nil {
+			return err
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				if err := pruneEmptyDirectory(filepath.Join(p, entry.Name())); err != nil {
+					return err
+				}
+			}
+		}
+
+		entries, err = os.ReadDir(p)
+		if err != nil {
+			return err
+		}
+
+		if len(entries) == 0 {
+			if err := os.Remove(p); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (m *Manifest) RemoveLayers() error {
