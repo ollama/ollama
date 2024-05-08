@@ -733,6 +733,12 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 				return err
 			}
 
+			if hidden, err := filepath.Match(".*", filepath.Base(rel)); err != nil {
+				return err
+			} else if hidden {
+				return nil
+			}
+
 			n := model.ParseNameFromFilepath(rel)
 			m, err := ParseNamedManifest(n)
 			if err != nil {
