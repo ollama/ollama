@@ -935,6 +935,11 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 		}
 
 		if allowedHost(host) {
+			if c.Request.Method == "OPTIONS" {
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+
 			c.Next()
 			return
 		}
@@ -947,6 +952,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
+	config.AllowHeaders = []string{"Authorization", "Content-Type", "User-Agent", "Accept", "X-Requested-With"}
 	config.AllowOrigins = envconfig.AllowOrigins
 
 	r := gin.Default()
