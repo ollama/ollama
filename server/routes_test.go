@@ -19,6 +19,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
@@ -54,6 +55,8 @@ func Test_Routes(t *testing.T) {
 	}
 
 	createTestModel := func(t *testing.T, name string) {
+		t.Helper()
+
 		fname := createTestFile(t, "ollama-model")
 
 		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
@@ -62,7 +65,7 @@ func Test_Routes(t *testing.T) {
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
 		}
-		err = CreateModel(context.TODO(), name, "", "", modelfile, fn)
+		err = CreateModel(context.TODO(), model.ParseName(name), "", "", modelfile, fn)
 		require.NoError(t, err)
 	}
 
