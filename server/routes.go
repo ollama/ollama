@@ -733,6 +733,11 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 				return err
 			}
 
+			if strings.HasPrefix(filepath.Base(path), ".") {
+				// hidden system files
+				return nil
+			}
+
 			n := model.ParseNameFromFilepath(rel)
 			m, err := ParseNamedManifest(n)
 			if err != nil {
