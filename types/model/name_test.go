@@ -20,6 +20,16 @@ func TestParseNameParts(t *testing.T) {
 		wantValidDigest bool
 	}{
 		{
+			in: "registry.ollama.ai/library/dolphin-mistral:7b-v2.6-dpo-laser-q6_K",
+			want: Name{
+				Host:      "registry.ollama.ai",
+				Namespace: "library",
+				Model:     "dolphin-mistral",
+				Tag:       "7b-v2.6-dpo-laser-q6_K",
+			},
+			wantFilepath: filepath.Join("registry.ollama.ai", "library", "dolphin-mistral", "7b-v2.6-dpo-laser-q6_K"),
+		},
+		{
 			in: "scheme://host:port/namespace/model:tag",
 			want: Name{
 				Host:      "host:port",
@@ -266,9 +276,9 @@ func TestFilepathAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		n.Filepath()
 	})
-	allowedAllocs := 2.0
+	var allowedAllocs float64 = 3
 	if runtime.GOOS == "windows" {
-		allowedAllocs = 4
+		allowedAllocs = 5
 	}
 	if allocs > allowedAllocs {
 		t.Errorf("allocs = %v; allowed %v", allocs, allowedAllocs)

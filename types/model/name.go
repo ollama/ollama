@@ -290,12 +290,14 @@ func (n Name) Filepath() string {
 	if !n.IsFullyQualified() {
 		panic("illegal attempt to get filepath of invalid name")
 	}
-	return strings.ToLower(filepath.Join(
-		n.Host,
-		n.Namespace,
-		n.Model,
+	return filepath.Join(
+		strings.ToLower(filepath.Join(
+			n.Host,
+			n.Namespace,
+			n.Model,
+		)),
 		n.Tag,
-	))
+	)
 }
 
 // LogValue returns a slog.Value that represents the name as a string.
