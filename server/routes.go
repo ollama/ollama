@@ -799,7 +799,7 @@ func (s *Server) CopyModelHandler(c *gin.Context) {
 
 	dst := model.ParseName(r.Destination)
 	if !dst.IsValid() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Source)})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Destination)})
 		return
 	}
 
