@@ -733,7 +733,11 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 				return err
 			}
 
-			if strings.HasPrefix(filepath.Base(path), ".") {
+			if hidden, err := filepath.Match(".*", filepath.Base(rel); err != nil {
+				return err
+			} else if hidden {
+				return nil
+			}
 				// hidden system files
 				return nil
 			}
