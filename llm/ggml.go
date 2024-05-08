@@ -45,12 +45,12 @@ func (kv KV) ParameterCount() uint64 {
 	return kv.u64("general.parameter_count")
 }
 
-func (kv KV) FileType() string {
+func (kv KV) FileType() fileType {
 	if u64 := kv.u64("general.file_type"); u64 > 0 {
-		return fileType(uint32(u64)).String()
+		return fileType(uint32(u64))
 	}
 
-	return "unknown"
+	return fileTypeUnknown
 }
 
 func (kv KV) BlockCount() uint64 {
