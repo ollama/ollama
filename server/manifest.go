@@ -118,7 +118,7 @@ func Manifests() (map[model.Name]*Manifest, error) {
 	}
 
 	// TODO(mxyng): use something less brittle
-	matches, err := filepath.Glob(fmt.Sprintf("%s/*/*/*/*", manifests))
+	matches, err := filepath.Glob(filepath.Join(manifests, "*", "*", "*", "*"))
 	if err != nil {
 		return nil, err
 	}
