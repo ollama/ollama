@@ -53,6 +53,8 @@ var (
 	NumParallel int
 	// Set via OLLAMA_RUNNERS_DIR in the environment
 	RunnersDir string
+	// Set via OLLAMA_SCHED_SPREAD in the environment
+	SchedSpread bool
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
 )
@@ -79,6 +81,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
+		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread, "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
 	}
 }
@@ -189,6 +192,15 @@ func LoadConfig() {
 
 	if nohistory := clean("OLLAMA_NOHISTORY"); nohistory != "" {
 		NoHistory = true
+	}
+
+	if spread := clean("OLLAMA_SCHED_SPREAD"); spread != "" {
+		s, err := strconv.ParseBool(spread)
+		if err == nil {
+			SchedSpread = s
+		} else {
+			SchedSpread = true
+		}
 	}
 
 	if noprune := clean("OLLAMA_NOPRUNE"); noprune != "" {
