@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
@@ -53,7 +54,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	}
 
 	var supported []string
-	gfxOverride := os.Getenv("HSA_OVERRIDE_GFX_VERSION")
+	gfxOverride := envconfig.HsaOverrideGfxVersion
 	if gfxOverride == "" {
 		supported, err = GetSupportedGFX(libDir)
 		if err != nil {
