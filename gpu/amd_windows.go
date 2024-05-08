@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+
+	"github.com/ollama/ollama/format"
 )
 
 const (
-	RocmStandardLocation = "C:\\Program Files\\AMD\\ROCm\\5.7\\bin" // TODO glob?
 
 	// TODO  We're lookinng for this exact name to detect iGPUs since hipGetDeviceProperties never reports integrated==true
 	iGPUName = "AMD Radeon(TM) Graphics"
@@ -19,39 +21,36 @@ const (
 
 var (
 	// Used to validate if the given ROCm lib is usable
-	ROCmLibGlobs = []string{"hipblas.dll", "rocblas"} // TODO - probably include more coverage of files here...
+	ROCmLibGlobs          = []string{"hipblas.dll", "rocblas"}                 // TODO - probably include more coverage of files here...
+	RocmStandardLocations = []string{"C:\\Program Files\\AMD\\ROCm\\5.7\\bin"} // TODO glob?
 )
 
-func AMDGetGPUInfo(resp *GpuInfo) {
+func AMDGetGPUInfo() []GpuInfo {
+	resp := []GpuInfo{}
 	hl, err := NewHipLib()
 	if err != nil {
 		slog.Debug(err.Error())
-		return
+		return nil
 	}
 	defer hl.Release()
-	skip := map[int]interface{}{}
-	ids := []int{}
-	resp.memInfo.DeviceCount = 0
-	resp.memInfo.TotalMemory = 0
-	resp.memInfo.FreeMemory = 0
 
 	ver, err := hl.AMDDriverVersion()
 	if err == nil {
 		slog.Info("AMD Driver: " + ver)
 	} else {
 		// For now this is benign, but we may eventually need to fail compatibility checks
-		slog.Debug(fmt.Sprintf("error looking up amd driver version: %s", err))
+		slog.Debug("error looking up amd driver version", "error", err)
 	}
 
-	// Note: the HIP library automatically handles HIP_VISIBLE_DEVICES
+	// Note: the HIP library automatically handles subsetting to any HIP_VISIBLE_DEVICES the user specified
 	count := hl.HipGetDeviceCount()
 	if count == 0 {
-		return
+		return nil
 	}
 	libDir, err := AMDValidateLibDir()
 	if err != nil {
-		slog.Warn(fmt.Sprintf("unable to verify rocm library, will use cpu: %s", err))
-		return
+		slog.Warn("unable to verify rocm library, will use cpu", "error", err)
+		return nil
 	}
 
 	var supported []string
@@ -59,95 +58,120 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 	if gfxOverride == "" {
 		supported, err = GetSupportedGFX(libDir)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("failed to lookup supported GFX types, falling back to CPU mode: %s", err))
-			return
+			slog.Warn("failed to lookup supported GFX types, falling back to CPU mode", "error", err)
+			return nil
 		}
 	} else {
 		slog.Debug("skipping rocm gfx compatibility check with HSA_OVERRIDE_GFX_VERSION=" + gfxOverride)
 	}
 
-	slog.Info(fmt.Sprintf("detected %d hip devices", count))
+	slog.Info("detected hip devices", "count", count)
+	// TODO how to determine the underlying device ID when visible devices is causing this to subset?
 	for i := 0; i < count; i++ {
-		ids = append(ids, i)
 		err = hl.HipSetDevice(i)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("[%d] %s", i, err))
-			skip[i] = struct{}{}
+			slog.Warn("set device", "id", i, "error", err)
 			continue
 		}
 
 		props, err := hl.HipGetDeviceProperties(i)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("[%d] %s", i, err))
-			skip[i] = struct{}{}
+			slog.Warn("get properties", "id", i, "error", err)
 			continue
 		}
 		n := bytes.IndexByte(props.Name[:], 0)
 		name := string(props.Name[:n])
-		slog.Info(fmt.Sprintf("[%d] Name: %s", i, name))
+		// TODO is UUID actually populated on windows?
+		// Can luid be used on windows for setting visible devices (and is it actually set?)
 		n = bytes.IndexByte(props.GcnArchName[:], 0)
 		gfx := string(props.GcnArchName[:n])
-		slog.Info(fmt.Sprintf("[%d] GcnArchName: %s", i, gfx))
+		slog.Info("hip device", "id", i, "name", name, "gfx", gfx)
+		var major, minor, patch string
+		switch len(gfx) {
+		case 6:
+			major, minor, patch = gfx[3:4], gfx[4:5], gfx[5:]
+		case 7:
+			major, minor, patch = gfx[3:5], gfx[5:6], gfx[6:]
+		}
 		//slog.Info(fmt.Sprintf("[%d] Integrated: %d", i, props.iGPU)) // DOESN'T REPORT CORRECTLY!  Always 0
 		// TODO  Why isn't props.iGPU accurate!?
 		if strings.EqualFold(name, iGPUName) {
-			slog.Info(fmt.Sprintf("iGPU detected [%d] skipping", i))
-			skip[i] = struct{}{}
+			slog.Info("iGPU detected skipping", "id", i)
 			continue
 		}
 		if gfxOverride == "" {
 			if !slices.Contains[[]string, string](supported, gfx) {
-				slog.Warn(fmt.Sprintf("amdgpu [%d] %s is not supported by %s %v", i, gfx, libDir, supported))
+				slog.Warn("amdgpu is not supported", "gpu", i, "gpu_type", gfx, "library", libDir, "supported_types", supported)
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
 				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
-				skip[i] = struct{}{}
 				continue
 			} else {
-				slog.Info(fmt.Sprintf("amdgpu [%d] %s is supported", i, gfx))
+				slog.Info("amdgpu is supported", "gpu", i, "gpu_type", gfx)
 			}
 		}
 
-		totalMemory, freeMemory, err := hl.HipMemGetInfo()
+		freeMemory, totalMemory, err := hl.HipMemGetInfo()
 		if err != nil {
-			slog.Warn(fmt.Sprintf("[%d] %s", i, err))
+			slog.Warn("get mem info", "id", i, "error", err)
 			continue
 		}
 
-		// TODO according to docs, freeMem may lie on windows!
-		slog.Info(fmt.Sprintf("[%d] Total Mem: %d", i, totalMemory))
-		slog.Info(fmt.Sprintf("[%d] Free Mem:  %d", i, freeMemory))
-		resp.memInfo.DeviceCount++
-		resp.memInfo.TotalMemory += totalMemory
-		resp.memInfo.FreeMemory += freeMemory
+		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
+		if totalMemory < IGPUMemLimit {
+			slog.Info("amdgpu appears to be an iGPU, skipping", "gpu", i, "total", format.HumanBytes2(totalMemory))
+			continue
+		}
+
+		// TODO revisit this once ROCm v6 is available on windows.
+		// v5.7 only reports VRAM used by this process, so it's completely wrong and unusable
+		slog.Info("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
+		slog.Info("amdgpu memory", "gpu", i, "available", format.HumanBytes2(freeMemory))
+		gpuInfo := GpuInfo{
+			Library: "rocm",
+			memInfo: memInfo{
+				TotalMemory: totalMemory,
+				FreeMemory:  freeMemory,
+			},
+			ID:             fmt.Sprintf("%d", i), // TODO this is probably wrong if we specify visible devices
+			DependencyPath: libDir,
+			MinimumMemory:  rocmMinimumMemory,
+		}
+		if major != "" {
+			gpuInfo.Major, err = strconv.Atoi(major)
+			if err != nil {
+				slog.Info("failed to parse version", "version", gfx, "error", err)
+			}
+		}
+		if minor != "" {
+			gpuInfo.Minor, err = strconv.Atoi(minor)
+			if err != nil {
+				slog.Info("failed to parse version", "version", gfx, "error", err)
+			}
+		}
+		if patch != "" {
+			// Patch rev is hex; e.g. gfx90a
+			p, err := strconv.ParseInt(patch, 16, 0)
+			if err != nil {
+				slog.Info("failed to parse version", "version", gfx, "error", err)
+			} else {
+				gpuInfo.Patch = int(p)
+			}
+		}
+		if gpuInfo.Major < RocmComputeMin {
+			slog.Warn(fmt.Sprintf("amdgpu [%s] too old gfx%d%d%x", gpuInfo.ID, gpuInfo.Major, gpuInfo.Minor, gpuInfo.Patch))
+			continue
+		}
+
+		resp = append(resp, gpuInfo)
 	}
-	if resp.memInfo.DeviceCount > 0 {
-		resp.Library = "rocm"
-	}
-	// Abort if all GPUs are skipped
-	if len(skip) >= count {
-		slog.Info("all detected amdgpus are skipped, falling back to CPU")
-		return
-	}
-	if len(skip) > 0 {
-		amdSetVisibleDevices(ids, skip)
-	}
-	UpdatePath(libDir)
+
+	return resp
 }
 
 func AMDValidateLibDir() (string, error) {
-	// On windows non-admins typically can't create links
-	// so instead of trying to rely on rpath and a link in
-	// $LibDir/rocm, we instead rely on setting PATH to point
-	// to the location of the ROCm library
-
-	// Installer payload location if we're running the installed binary
-	exe, err := os.Executable()
+	libDir, err := commonAMDValidateLibDir()
 	if err == nil {
-		rocmTargetDir := filepath.Join(filepath.Dir(exe), "rocm")
-		if rocmLibUsable(rocmTargetDir) {
-			slog.Debug("detected ROCM next to ollama executable " + rocmTargetDir)
-			return rocmTargetDir, nil
-		}
+		return libDir, nil
 	}
 
 	// Installer payload (if we're running from some other location)
@@ -157,21 +181,6 @@ func AMDValidateLibDir() (string, error) {
 	if rocmLibUsable(rocmTargetDir) {
 		slog.Debug("detected ollama installed ROCm at " + rocmTargetDir)
 		return rocmTargetDir, nil
-	}
-
-	// Prefer explicit HIP env var
-	hipPath := os.Getenv("HIP_PATH")
-	if hipPath != "" {
-		hipLibDir := filepath.Join(hipPath, "bin")
-		if rocmLibUsable(hipLibDir) {
-			slog.Debug("detected ROCM via HIP_PATH=" + hipPath)
-			return hipLibDir, nil
-		}
-	}
-
-	// Well known location(s)
-	if rocmLibUsable(RocmStandardLocation) {
-		return RocmStandardLocation, nil
 	}
 
 	// Should not happen on windows since we include it in the installer, but stand-alone binary might hit this
