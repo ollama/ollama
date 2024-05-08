@@ -370,37 +370,37 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 					baseLayer.MediaType == "application/vnd.ollama.image.model" &&
 					baseLayer.GGML != nil &&
 					baseLayer.GGML.Name() == "gguf" {
-					ftype, err := llm.ParseFileType(quantization)
+					want, err := llm.ParseFileType(quantization)
 					if err != nil {
 						return err
 					}
 
-					filetype := baseLayer.GGML.KV().FileType()
-					if !slices.Contains([]string{"F16", "F32"}, filetype) {
+					ft := baseLayer.GGML.KV().FileType()
+					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
 						return errors.New("quantization is only supported for F16 and F32 models")
-					}
+					} else if want != ft {
+						fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantization)})
 
-					fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", filetype, quantization)})
+						blob, err := GetBlobsPath(baseLayer.Digest)
+						if err != nil {
+							return err
+						}
 
-					blob, err := GetBlobsPath(baseLayer.Digest)
-					if err != nil {
-						return err
-					}
+						temp, err := os.CreateTemp(filepath.Dir(blob), quantization)
+						if err != nil {
+							return err
+						}
+						defer temp.Close()
+						defer os.Remove(temp.Name())
 
-					temp, err := os.CreateTemp(filepath.Dir(blob), quantization)
-					if err != nil {
-						return err
-					}
-					defer temp.Close()
-					defer os.Remove(temp.Name())
+						if err := llm.Quantize(blob, temp.Name(), want); err != nil {
+							return err
+						}
 
-					if err := llm.Quantize(blob, temp.Name(), ftype); err != nil {
-						return err
-					}
-
-					baseLayer.Layer, err = NewLayer(temp, baseLayer.Layer.MediaType)
-					if err != nil {
-						return err
+						baseLayer.Layer, err = NewLayer(temp, baseLayer.Layer.MediaType)
+						if err != nil {
+							return err
+						}
 					}
 				}
 
@@ -408,7 +408,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 					config.ModelFormat = cmp.Or(config.ModelFormat, baseLayer.GGML.Name())
 					config.ModelFamily = cmp.Or(config.ModelFamily, baseLayer.GGML.KV().Architecture())
 					config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(baseLayer.GGML.KV().ParameterCount()))
-					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType())
+					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType().String())
 					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
 				}
 
