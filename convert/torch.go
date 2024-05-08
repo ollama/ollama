@@ -33,11 +33,15 @@ type TorchFormat struct{}
 func (tf *TorchFormat) GetTensors(dirpath string, params *Params) ([]llm.Tensor, error) {
 	slog.Debug("getting torch tensors")
 
-	//files, err := filepath.Glob(filepath.Join(dirpath, "pytorch_model-*.bin"))
-	files, err := filepath.Glob(filepath.Join(dirpath, "consolidatedr.*.pth"))
+	var files []string
+	var err error
+	files, err = filepath.Glob(filepath.Join(dirpath, "consolidated.*.pth"))
 	if err != nil {
-		slog.Error("didn't find any torch files")
-		return nil, err
+		files, err = filepath.Glob(filepath.Join(dirpath, "pytorch_model-*.bin"))
+		if err != nil {
+			slog.Error("didn't find any torch files")
+			return nil, err
+		}
 	}
 
 	var offset uint64
@@ -78,7 +82,7 @@ func (tf *TorchFormat) GetTensors(dirpath string, params *Params) ([]llm.Tensor,
 				slog.Error(err.Error())
 				return nil, err
 			}
-			slog.Debug(fmt.Sprintf("finding name for '%s' -> '%s'", k.(string), ggufName))
+			slog.Debug(fmt.Sprintf("'%35s': '%30s' %10d [%#v]", k.(string), ggufName, size, tshape))
 
 			shape := []uint64{0, 0, 0, 0}
 			for i := range tshape {
@@ -236,7 +240,7 @@ func (r torchWriterTo) WriteTo(w io.Writer) (n int64, err error) {
 		return 0, r.handler(w, r)
 	}
 
-	switch r.storage.(type) {
+	switch storage := r.storage.(type) {
 	case *pytorch.FloatStorage:
 		slog.Warn(fmt.Sprintf("unexpected storage found for layer '%s'; skipping", r.t.Name))
 		return 0, nil
@@ -259,6 +263,28 @@ func (r torchWriterTo) WriteTo(w io.Writer) (n int64, err error) {
 				return 0, err
 			}
 		}
+	case *pytorch.BFloat16Storage:
+		data := r.storage.(*pytorch.BFloat16Storage).Data
+		switch r.t.Kind {
+		case 0:
+			if err = binary.Write(w, r.bo, data); err != nil {
+				return 0, err
+			}
+		case 1:
+			tData := make([]uint16, len(data))
+
+			for cnt, v := range data {
+				tData[cnt] = uint16(float16.Fromfloat32(v))
+			}
+
+			if err = binary.Write(w, r.bo, tData); err != nil {
+				return 0, err
+			}
+		default:
+			return 0, fmt.Errorf("unknown storage kind: %d", r.t.Kind)
+		}
+	default:
+		return 0, fmt.Errorf("unknown storage type: %T", storage)
 	}
 
 	return 0, nil

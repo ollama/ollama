@@ -131,6 +131,8 @@ func (m *SafetensorFormat) readTensors(fn string, offset uint64, params *Params)
 			shape[i] = uint64(data.Shape[i])
 		}
 
+		slog.Debug(fmt.Sprintf("'%45s': '%30s' %10d [%#v]", k, ggufName, size, data.Shape))
+
 		t := llm.Tensor{
 			Name:   ggufName,
 			Kind:   kind,
