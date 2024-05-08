@@ -68,6 +68,20 @@ func (m *Model) String() string {
 		Args: m.ModelPath,
 	})
 
+	for _, adapter := range m.AdapterPaths {
+		modelfile.Commands = append(modelfile.Commands, model.Command{
+			Name: "adapter",
+			Args: adapter,
+		})
+	}
+
+	for _, projector := range m.ProjectorPaths {
+		modelfile.Commands = append(modelfile.Commands, model.Command{
+			Name: "model",
+			Args: projector,
+		})
+	}
+
 	if m.Template != "" {
 		modelfile.Commands = append(modelfile.Commands, model.Command{
 			Name: "template",
@@ -79,20 +93,6 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, model.Command{
 			Name: "system",
 			Args: m.System,
-		})
-	}
-
-	for _, adapter := range m.AdapterPaths {
-		modelfile.Commands = append(modelfile.Commands, model.Command{
-			Name: "adapter",
-			Args: adapter,
-		})
-	}
-
-	for _, projector := range m.ProjectorPaths {
-		modelfile.Commands = append(modelfile.Commands, model.Command{
-			Name: "projector",
-			Args: projector,
 		})
 	}
 
