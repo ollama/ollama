@@ -55,6 +55,9 @@ func checkError(resp *http.Response, body []byte) error {
 	return apiError
 }
 
+// _defaultApiClient the default api client for reuse
+var _defaultApiClient *Client
+
 // ClientFromEnvironment creates a new [Client] using configuration from the
 // environment variable OLLAMA_HOST, which points to the network host and
 // port on which the ollama service is listenting. The format of this variable
@@ -65,18 +68,24 @@ func checkError(resp *http.Response, body []byte) error {
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
+	if _defaultApiClient != nil {
+		return _defaultApiClient, nil
+	}
+
 	ollamaHost, err := GetOllamaHost()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Client{
+	_defaultApiClient = &Client{
 		base: &url.URL{
 			Scheme: ollamaHost.Scheme,
 			Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
 		},
 		http: http.DefaultClient,
-	}, nil
+	}
+
+	return _defaultApiClient, nil
 }
 
 type OllamaHost struct {
