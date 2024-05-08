@@ -314,7 +314,7 @@ func realpath(rel, from string) string {
 	return abspath
 }
 
-func CreateModel(ctx context.Context, name, modelFileDir, quantization string, modelfile *model.File, fn func(resp api.ProgressResponse)) (err error) {
+func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantization string, modelfile *model.File, fn func(resp api.ProgressResponse)) (err error) {
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
@@ -546,28 +546,16 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 		}
 	}
 
-	unref := make(map[string]struct{})
-	if manifest, _, err := GetManifest(ParseModelPath(name)); err == nil {
-		for _, layer := range manifest.Layers {
-			if !slices.Contains(digests, layer.Digest) {
-				unref[layer.Digest] = struct{}{}
-			}
-		}
-
-		if manifest.Config.Digest != layer.Digest {
-			unref[manifest.Config.Digest] = struct{}{}
+	if !envconfig.NoPrune {
+		if old, err := ParseNamedManifest(name); err == nil {
+			//nolint:errcheck
+			defer old.RemoveLayers()
 		}
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 	if err := WriteManifest(name, layer, layers); err != nil {
 		return err
-	}
-
-	if !envconfig.NoPrune {
-		if err := deleteUnusedLayers(nil, unref); err != nil {
-			return err
-		}
 	}
 
 	fn(api.ProgressResponse{Status: "success"})
@@ -637,7 +625,7 @@ func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{})
 		// save (i.e. delete from the deleteMap) any files used in other manifests
 		manifest, _, err := GetManifest(fmp)
 		if err != nil {
-			// nolint: nilerr
+			//nolint:nilerr
 			return nil
 		}
 
