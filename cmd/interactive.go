@@ -94,6 +94,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
+		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
@@ -161,7 +162,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set parameter repeat_penalty <float> How strongly to penalize repetitions")
 		fmt.Fprintln(os.Stderr, "  /set parameter repeat_last_n <int>    Set how far back to look for repetitions")
 		fmt.Fprintln(os.Stderr, "  /set parameter num_gpu <int>          The number of layers to send to the GPU")
-		fmt.Fprintln(os.Stderr, "  /set parameter stop \"<string>\", ...   Set the stop parameters")
+		fmt.Fprintln(os.Stderr, "  /set parameter stop <string> <string> ...   Set the stop parameters")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -279,6 +280,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 			fmt.Printf("Created new model '%s'\n", args[1])
+			continue
+		case strings.HasPrefix(line, "/clear"):
+			opts.Messages = []api.Message{}
+			fmt.Println("Cleared session context")
 			continue
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)

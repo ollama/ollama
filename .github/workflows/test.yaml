@@ -1,5 +1,15 @@
 name: test
 
+concurrency:
+  # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
+  # cancels running CI jobs and starts all new ones.
+  #
+  # For non-PR pushes, concurrency.group needs to be unique for every distinct
+  # CI run we want to have happen. Use run_id, which in practice means all
+  # non-PR CI runs will be allowed to run without preempting each other.
+  group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths:
@@ -21,7 +31,9 @@ jobs:
       - id: changes
         run: |
           changed() {
-            git diff-tree -r --no-commit-id --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} \
+            git diff-tree -r --no-commit-id --name-only \
+              $(git merge-base ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}) \
+              ${{ github.event.pull_request.head.sha }} \
               | xargs python3 -c "import sys; print(any([x.startswith('$1') for x in sys.argv[1:]]))"
           }
 
@@ -103,7 +115,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cuda-${{ matrix.cuda-version }}-libraries
-          path: llm/build/**/bin/*
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
   generate-rocm:
     needs: [changes]
     if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
@@ -134,7 +148,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rocm-${{ matrix.rocm-version }}-libraries
-          path: llm/build/**/bin/*
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
 
   # ROCm generation step
   generate-windows-rocm:
@@ -253,14 +269,9 @@ jobs:
           mkdir -p llm/build/darwin/$ARCH/stub/bin
           touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
-      - run: |
-          mkdir -p llm/build/windows/$ARCH/stub/bin
-          touch llm/build/windows/$ARCH/stub/bin/ollama_llama_server
-        if: ${{ startsWith(matrix.os, 'windows-') }}
-        shell: bash
       - uses: golangci/golangci-lint-action@v4
         with:
-          args: --timeout 8m0s
+          args: --timeout 8m0s -v
   test:
     strategy:
       matrix:
@@ -284,7 +295,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go get
       - run: |
           case ${{ matrix.arch }} in
             amd64) echo ARCH=x86_64 ;;
@@ -299,10 +309,6 @@ jobs:
           mkdir -p llm/build/darwin/$ARCH/stub/bin
           touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
-      - run: |
-          mkdir -p llm/build/windows/$ARCH/stub/bin
-          touch llm/build/windows/$ARCH/stub/bin/ollama_llama_server
-        if: ${{ startsWith(matrix.os, 'windows-') }}
         shell: bash
       - run: go generate ./...
       - run: go build

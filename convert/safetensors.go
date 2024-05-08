@@ -53,7 +53,7 @@ func (m *SafetensorFormat) GetTensors(dirpath string, params *Params) ([]llm.Ten
 		var err error
 		t, offset, err = m.readTensors(f, offset, params)
 		if err != nil {
-			slog.Error("%v", err)
+			slog.Error(err.Error())
 			return nil, err
 		}
 		tensors = append(tensors, t...)
@@ -93,7 +93,6 @@ func (m *SafetensorFormat) readTensors(fn string, offset uint64, params *Params)
 	}
 
 	slices.Sort(keys)
-
 	slog.Info("converting layers")
 
 	var tensors []llm.Tensor
@@ -105,7 +104,6 @@ func (m *SafetensorFormat) readTensors(fn string, offset uint64, params *Params)
 			return nil, 0, err
 		}
 
-		slog.Debug(fmt.Sprintf("metadata = %#v", data))
 		var size uint64
 		var kind uint32
 		switch len(data.Shape) {
@@ -124,7 +122,7 @@ func (m *SafetensorFormat) readTensors(fn string, offset uint64, params *Params)
 
 		ggufName, err := m.GetLayerName(k)
 		if err != nil {
-			slog.Error("%v", err)
+			slog.Error(err.Error())
 			return nil, 0, err
 		}
 
@@ -150,11 +148,13 @@ func (m *SafetensorFormat) readTensors(fn string, offset uint64, params *Params)
 			padding:  8 + jsonSize,
 		}
 
-		tensors = append(tensors, t)
 		offset += size
+		tensors = append(tensors, t)
 	}
+
 	slog.Debug(fmt.Sprintf("total tensors for file = %d", len(tensors)))
 	slog.Debug(fmt.Sprintf("offset = %d", offset))
+
 	return tensors, offset, nil
 }
 
@@ -185,15 +185,19 @@ func (m *SafetensorFormat) GetLayerName(n string) (string, error) {
 	}
 
 	tMap := map[string]string{
-		"model.layers.(\\d+).input_layernorm.weight":          "blk.$1.attn_norm.weight",
-		"model.layers.(\\d+).mlp.down_proj.weight":            "blk.$1.ffn_down.weight",
-		"model.layers.(\\d+).mlp.gate_proj.weight":            "blk.$1.ffn_gate.weight",
-		"model.layers.(\\d+).mlp.up_proj.weight":              "blk.$1.ffn_up.weight",
-		"model.layers.(\\d+).post_attention_layernorm.weight": "blk.$1.ffn_norm.weight",
-		"model.layers.(\\d+).self_attn.k_proj.weight":         "blk.$1.attn_k.weight",
-		"model.layers.(\\d+).self_attn.o_proj.weight":         "blk.$1.attn_output.weight",
-		"model.layers.(\\d+).self_attn.q_proj.weight":         "blk.$1.attn_q.weight",
-		"model.layers.(\\d+).self_attn.v_proj.weight":         "blk.$1.attn_v.weight",
+		"model.layers.(\\d+).input_layernorm.weight":                    "blk.$1.attn_norm.weight",
+		"model.layers.(\\d+).mlp.down_proj.weight":                      "blk.$1.ffn_down.weight",
+		"model.layers.(\\d+).mlp.gate_proj.weight":                      "blk.$1.ffn_gate.weight",
+		"model.layers.(\\d+).mlp.up_proj.weight":                        "blk.$1.ffn_up.weight",
+		"model.layers.(\\d+).post_attention_layernorm.weight":           "blk.$1.ffn_norm.weight",
+		"model.layers.(\\d+).self_attn.k_proj.weight":                   "blk.$1.attn_k.weight",
+		"model.layers.(\\d+).self_attn.o_proj.weight":                   "blk.$1.attn_output.weight",
+		"model.layers.(\\d+).self_attn.q_proj.weight":                   "blk.$1.attn_q.weight",
+		"model.layers.(\\d+).self_attn.v_proj.weight":                   "blk.$1.attn_v.weight",
+		"model.layers.(\\d+).block_sparse_moe.gate.weight":              "blk.$1.ffn_gate_inp.weight",
+		"model.layers.(\\d+).block_sparse_moe.experts.(\\d+).w1.weight": "blk.$1.ffn_gate.$2.weight",
+		"model.layers.(\\d+).block_sparse_moe.experts.(\\d+).w2.weight": "blk.$1.ffn_down.$2.weight",
+		"model.layers.(\\d+).block_sparse_moe.experts.(\\d+).w3.weight": "blk.$1.ffn_up.$2.weight",
 	}
 
 	v, ok := directMap[n]
@@ -279,6 +283,15 @@ func (m *SafetensorFormat) GetModelArch(name, dirPath string, params *Params) (M
 		switch params.Architectures[0] {
 		case "MistralForCausalLM":
 			return &MistralModel{
+				ModelData{
+					Name:   name,
+					Path:   dirPath,
+					Params: params,
+					Format: m,
+				},
+			}, nil
+		case "MixtralForCausalLM":
+			return &MixtralModel{
 				ModelData{
 					Name:   name,
 					Path:   dirPath,

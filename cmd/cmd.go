@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -31,10 +32,12 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
+	"github.com/ollama/ollama/types/errtypes"
+	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
@@ -53,14 +56,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
-	bars := make(map[string]*progress.Bar)
-
-	modelfile, err := os.ReadFile(filename)
+	f, err := os.Open(filename)
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 
-	commands, err := parser.Parse(bytes.NewReader(modelfile))
+	modelfile, err := model.ParseFile(f)
 	if err != nil {
 		return err
 	}
@@ -74,10 +76,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
-	for _, c := range commands {
-		switch c.Name {
+	for i := range modelfile.Commands {
+		switch modelfile.Commands[i].Name {
 		case "model", "adapter":
-			path := c.Args
+			path := modelfile.Commands[i].Args
 			if path == "~" {
 				path = home
 			} else if strings.HasPrefix(path, "~/") {
@@ -89,101 +91,22 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			fi, err := os.Stat(path)
-			if errors.Is(err, os.ErrNotExist) && c.Name == "model" {
+			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
 				continue
 			} else if err != nil {
 				return err
 			}
 
-			// TODO make this work w/ adapters
 			if fi.IsDir() {
-				tf, err := os.CreateTemp("", "ollama-tf")
+				// this is likely a safetensors or pytorch directory
+				// TODO make this work w/ adapters
+				tempfile, err := tempZipFiles(path)
 				if err != nil {
 					return err
 				}
-				defer os.RemoveAll(tf.Name())
+				defer os.RemoveAll(tempfile)
 
-				zf := zip.NewWriter(tf)
-
-				files := []string{}
-
-				tfiles, err := filepath.Glob(filepath.Join(path, "pytorch_model-*.bin"))
-				if err != nil {
-					return err
-				} else if len(tfiles) == 0 {
-					tfiles, err = filepath.Glob(filepath.Join(path, "model-*.safetensors"))
-					if err != nil {
-						return err
-					}
-				}
-
-				files = append(files, tfiles...)
-
-				if len(files) == 0 {
-					return fmt.Errorf("no models were found in '%s'", path)
-				}
-
-				// add the safetensor/torch config file + tokenizer
-				files = append(files, filepath.Join(path, "config.json"))
-				files = append(files, filepath.Join(path, "params.json"))
-				files = append(files, filepath.Join(path, "added_tokens.json"))
-				files = append(files, filepath.Join(path, "tokenizer.model"))
-
-				for _, fn := range files {
-					f, err := os.Open(fn)
-
-					// just skip whatever files aren't there
-					if os.IsNotExist(err) {
-						if strings.HasSuffix(fn, "tokenizer.model") {
-							// try the parent dir before giving up
-							parentDir := filepath.Dir(path)
-							newFn := filepath.Join(parentDir, "tokenizer.model")
-							f, err = os.Open(newFn)
-							if os.IsNotExist(err) {
-								continue
-							} else if err != nil {
-								return err
-							}
-						} else {
-							continue
-						}
-					} else if err != nil {
-						return err
-					}
-
-					fi, err := f.Stat()
-					if err != nil {
-						return err
-					}
-
-					h, err := zip.FileInfoHeader(fi)
-					if err != nil {
-						return err
-					}
-
-					h.Name = filepath.Base(fn)
-					h.Method = zip.Store
-
-					w, err := zf.CreateHeader(h)
-					if err != nil {
-						return err
-					}
-
-					_, err = io.Copy(w, f)
-					if err != nil {
-						return err
-					}
-
-				}
-
-				if err := zf.Close(); err != nil {
-					return err
-				}
-
-				if err := tf.Close(); err != nil {
-					return err
-				}
-				path = tf.Name()
+				path = tempfile
 			}
 
 			digest, err := createBlob(cmd, client, path)
@@ -191,10 +114,11 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			modelfile = bytes.ReplaceAll(modelfile, []byte(c.Args), []byte("@"+digest))
+			modelfile.Commands[i].Args = "@" + digest
 		}
 	}
 
+	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
 			spinner.Stop()
@@ -220,12 +144,120 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	quantization, _ := cmd.Flags().GetString("quantization")
 
-	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile), Quantization: quantization}
+	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantization: quantization}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func tempZipFiles(path string) (string, error) {
+	tempfile, err := os.CreateTemp("", "ollama-tf")
+	if err != nil {
+		return "", err
+	}
+	defer tempfile.Close()
+
+	zipfile := zip.NewWriter(tempfile)
+	defer zipfile.Close()
+
+	detectContentType := func(path string) (string, error) {
+		f, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+
+		var b bytes.Buffer
+		b.Grow(512)
+
+		if _, err := io.CopyN(&b, f, 512); err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+
+		contentType, _, _ := strings.Cut(http.DetectContentType(b.Bytes()), ";")
+		return contentType, nil
+	}
+
+	glob := func(pattern, contentType string) ([]string, error) {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, safetensor := range matches {
+			if ct, err := detectContentType(safetensor); err != nil {
+				return nil, err
+			} else if ct != contentType {
+				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safetensor)
+			}
+		}
+
+		return matches, nil
+	}
+
+	var files []string
+	if st, _ := glob(filepath.Join(path, "model*.safetensors"), "application/octet-stream"); len(st) > 0 {
+		// safetensors files might be unresolved git lfs references; skip if they are
+		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
+		files = append(files, st...)
+	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
+		// pytorch files might also be unresolved git lfs references; skip if they are
+		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
+		files = append(files, pt...)
+	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/octet-stream"); len(pt) > 0 {
+		// pytorch files might also be unresolved git lfs references; skip if they are
+		// covers consolidated.x.pth, consolidated.pth
+		files = append(files, pt...)
+	} else {
+		return "", errors.New("no safetensors or torch files found")
+	}
+
+	// add configuration files, json files are detected as text/plain
+	js, err := glob(filepath.Join(path, "*.json"), "text/plain")
+	if err != nil {
+		return "", err
+	}
+	files = append(files, js...)
+
+	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
+		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
+		// tokenizer.model might be a unresolved git lfs reference; error if it is
+		files = append(files, tks...)
+	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
+		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
+		files = append(files, tks...)
+	}
+
+	for _, file := range files {
+		f, err := os.Open(file)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+
+		fi, err := f.Stat()
+		if err != nil {
+			return "", err
+		}
+
+		zfi, err := zip.FileInfoHeader(fi)
+		if err != nil {
+			return "", err
+		}
+
+		zf, err := zipfile.CreateHeader(zfi)
+		if err != nil {
+			return "", err
+		}
+
+		if _, err := io.Copy(zf, f); err != nil {
+			return "", err
+		}
+	}
+
+	return tempfile.Name(), nil
 }
 
 func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, error) {
@@ -322,6 +354,47 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	return generateInteractive(cmd, opts)
 }
 
+func errFromUnknownKey(unknownKeyErr error) error {
+	// find SSH public key in the error message
+	sshKeyPattern := `ssh-\w+ [^\s"]+`
+	re := regexp.MustCompile(sshKeyPattern)
+	matches := re.FindStringSubmatch(unknownKeyErr.Error())
+
+	if len(matches) > 0 {
+		serverPubKey := matches[0]
+
+		localPubKey, err := auth.GetPublicKey()
+		if err != nil {
+			return unknownKeyErr
+		}
+
+		if runtime.GOOS == "linux" && serverPubKey != localPubKey {
+			// try the ollama service public key
+			svcPubKey, err := os.ReadFile("/usr/share/ollama/.ollama/id_ed25519.pub")
+			if err != nil {
+				return unknownKeyErr
+			}
+			localPubKey = strings.TrimSpace(string(svcPubKey))
+		}
+
+		// check if the returned public key matches the local public key, this prevents adding a remote key to the user's account
+		if serverPubKey != localPubKey {
+			return unknownKeyErr
+		}
+
+		var msg strings.Builder
+		msg.WriteString(unknownKeyErr.Error())
+		msg.WriteString("\n\nYour ollama key is:\n")
+		msg.WriteString(localPubKey)
+		msg.WriteString("\nAdd your key at:\n")
+		msg.WriteString("https://ollama.com/settings/keys")
+
+		return errors.New(msg.String())
+	}
+
+	return unknownKeyErr
+}
+
 func PushHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -369,6 +442,20 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
+		if spinner != nil {
+			spinner.Stop()
+		}
+		if strings.Contains(err.Error(), "access denied") {
+			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
+		}
+		host := model.ParseName(args[0]).Host
+		isOllamaHost := strings.HasSuffix(host, ".ollama.ai") || strings.HasSuffix(host, ".ollama.com")
+		if strings.Contains(err.Error(), errtypes.UnknownOllamaKeyErrMsg) && isOllamaHost {
+			// the user has not added their ollama key to ollama.com
+			// re-throw an error with a more user-friendly message
+			return errFromUnknownKey(err)
+		}
+
 		return err
 	}
 
@@ -796,24 +883,27 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
-	host, port, err := net.SplitHostPort(strings.Trim(os.Getenv("OLLAMA_HOST"), "\"'"))
+	// retrieve the OLLAMA_HOST environment variable
+	ollamaHost, err := api.GetOllamaHost()
 	if err != nil {
-		host, port = "127.0.0.1", "11434"
-		if ip := net.ParseIP(strings.Trim(os.Getenv("OLLAMA_HOST"), "[]")); ip != nil {
-			host = ip.String()
-		}
+		return err
 	}
 
 	if err := initializeKeypair(); err != nil {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(host, port))
+	ln, err := net.Listen("tcp", net.JoinHostPort(ollamaHost.Host, ollamaHost.Port))
 	if err != nil {
 		return err
 	}
 
-	return server.Serve(ln)
+	err = server.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+
+	return err
 }
 
 func initializeKeypair() error {
@@ -1034,7 +1124,7 @@ Environment Variables:
 		RunE:    ListHandler,
 	}
 	copyCmd := &cobra.Command{
-		Use:     "cp SOURCE TARGET",
+		Use:     "cp SOURCE DESTINATION",
 		Short:   "Copy a model",
 		Args:    cobra.ExactArgs(2),
 		PreRunE: checkServerHeartbeat,

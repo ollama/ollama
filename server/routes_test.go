@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
@@ -55,13 +55,13 @@ func Test_Routes(t *testing.T) {
 	createTestModel := func(t *testing.T, name string) {
 		fname := createTestFile(t, "ollama-model")
 
-		modelfile := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
-		commands, err := parser.Parse(modelfile)
+		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
+		modelfile, err := model.ParseFile(r)
 		assert.Nil(t, err)
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
 		}
-		err = CreateModel(context.TODO(), name, "", "", commands, fn)
+		err = CreateModel(context.TODO(), name, "", "", modelfile, fn)
 		assert.Nil(t, err)
 	}
 
@@ -124,14 +124,12 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodPost,
 			Path:   "/api/create",
 			Setup: func(t *testing.T, req *http.Request) {
-				f, err := os.CreateTemp(t.TempDir(), "ollama-model")
-				assert.Nil(t, err)
-				defer f.Close()
+				fname := createTestFile(t, "ollama-model")
 
 				stream := false
 				createReq := api.CreateRequest{
 					Name:      "t-bone",
-					Modelfile: fmt.Sprintf("FROM %s", f.Name()),
+					Modelfile: fmt.Sprintf("FROM %s", fname),
 					Stream:    &stream,
 				}
 				jsonData, err := json.Marshal(createReq)
@@ -216,28 +214,25 @@ func Test_Routes(t *testing.T) {
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)
 
-	workDir, err := os.MkdirTemp("", "ollama-test")
-	assert.Nil(t, err)
-	defer os.RemoveAll(workDir)
-	os.Setenv("OLLAMA_MODELS", workDir)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	for _, tc := range testCases {
-		t.Logf("Running Test: [%s]", tc.Name)
-		u := httpSrv.URL + tc.Path
-		req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
-		assert.Nil(t, err)
+		t.Run(tc.Name, func(t *testing.T) {
+			u := httpSrv.URL + tc.Path
+			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			assert.Nil(t, err)
 
-		if tc.Setup != nil {
-			tc.Setup(t, req)
-		}
+			if tc.Setup != nil {
+				tc.Setup(t, req)
+			}
 
-		resp, err := httpSrv.Client().Do(req)
-		assert.Nil(t, err)
-		defer resp.Body.Close()
+			resp, err := httpSrv.Client().Do(req)
+			assert.Nil(t, err)
+			defer resp.Body.Close()
 
-		if tc.Expected != nil {
-			tc.Expected(t, resp)
-		}
-
+			if tc.Expected != nil {
+				tc.Expected(t, resp)
+			}
+		})
 	}
 }
