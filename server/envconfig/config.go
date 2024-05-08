@@ -29,6 +29,8 @@ var (
 	NumParallel int
 	// Set via OLLAMA_RUNNERS_DIR in the environment
 	RunnersDir string
+	// Set via OLLAMA_SCHED_SPREAD in the environment
+	SchedSpread bool
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
 )
@@ -44,6 +46,7 @@ func AsMap() map[string]string {
 		"OLLAMA_NOPRUNE":           fmt.Sprintf("%v", NoPrune),
 		"OLLAMA_NUM_PARALLEL":      fmt.Sprintf("%v", NumParallel),
 		"OLLAMA_RUNNERS_DIR":       fmt.Sprintf("%v", RunnersDir),
+		"OLLAMA_SCHED_SPREAD":      fmt.Sprintf("%v", SchedSpread),
 		"OLLAMA_TMPDIR":            fmt.Sprintf("%v", TmpDir),
 	}
 }
@@ -134,6 +137,15 @@ func LoadConfig() {
 			slog.Error("invalid setting must be greater than zero", "OLLAMA_NUM_PARALLEL", onp, "error", err)
 		} else {
 			NumParallel = val
+		}
+	}
+
+	if spread := clean("OLLAMA_SCHED_SPREAD"); spread != "" {
+		s, err := strconv.ParseBool(spread)
+		if err == nil {
+			SchedSpread = s
+		} else {
+			SchedSpread = true
 		}
 	}
 
