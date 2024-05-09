@@ -310,6 +310,9 @@ type GenerateResponse struct {
 	// Done specifies if the response is complete.
 	Done bool `json:"done"`
 
+	// DoneReason is the reason the model stopped generating text.
+	DoneReason string `json:"done_reason,omitempty"`
+
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
 	Context []int `json:"context,omitempty"`
