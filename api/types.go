@@ -117,7 +117,7 @@ type ChatResponse struct {
 	Model      string    `json:"model"`
 	CreatedAt  time.Time `json:"created_at"`
 	Message    Message   `json:"message"`
-	DoneReason string    `json:"done_reason"`
+	DoneReason string    `json:"done_reason,omitempty"`
 
 	Done bool `json:"done"`
 
@@ -311,7 +311,7 @@ type GenerateResponse struct {
 	Done bool `json:"done"`
 
 	// DoneReason is the reason the model stopped generating text.
-	DoneReason string `json:"done_reason"`
+	DoneReason string `json:"done_reason,omitempty"`
 
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
