@@ -157,11 +157,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--embedding",
 	}
-	if envconfig.Debug {
-		params = append(params, "--log-format", "json")
-	} else {
-		params = append(params, "--log-disable")
-	}
+
+	params = append(params, "--log-disable")
 
 	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
