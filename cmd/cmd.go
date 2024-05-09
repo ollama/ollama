@@ -26,7 +26,6 @@ import (
 	"github.com/uppercaveman/ollama-server/api"
 	"github.com/uppercaveman/ollama-server/auth"
 	"github.com/uppercaveman/ollama-server/format"
-	"github.com/uppercaveman/ollama-server/parser"
 	"github.com/uppercaveman/ollama-server/progress"
 	"github.com/uppercaveman/ollama-server/server"
 	"github.com/uppercaveman/ollama-server/types/errtypes"
@@ -56,12 +55,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
-	modelfile, err := os.ReadFile(filename)
+	f, err := os.Open(filename)
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 
-	commands, err := parser.Parse(bytes.NewReader(modelfile))
+	modelfile, err := model.ParseFile(f)
 	if err != nil {
 		return err
 	}
@@ -75,10 +75,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
-	for _, c := range commands {
-		switch c.Name {
+	for i := range modelfile.Commands {
+		switch modelfile.Commands[i].Name {
 		case "model", "adapter":
-			path := c.Args
+			path := modelfile.Commands[i].Args
 			if path == "~" {
 				path = home
 			} else if strings.HasPrefix(path, "~/") {
@@ -90,7 +90,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			fi, err := os.Stat(path)
-			if errors.Is(err, os.ErrNotExist) && c.Name == "model" {
+			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
 				continue
 			} else if err != nil {
 				return err
@@ -113,13 +113,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			name := c.Name
-			if c.Name == "model" {
-				name = "from"
-			}
-
-			re := regexp.MustCompile(fmt.Sprintf(`(?im)^(%s)\s+%s\s*$`, name, c.Args))
-			modelfile = re.ReplaceAll(modelfile, []byte("$1 @"+digest))
+			modelfile.Commands[i].Args = "@" + digest
 		}
 	}
 
@@ -149,7 +143,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	quantization, _ := cmd.Flags().GetString("quantization")
 
-	request := api.CreateRequest{Name: args[0], Modelfile: string(modelfile), Quantization: quantization}
+	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantization: quantization}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -903,7 +897,12 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	return server.Serve(ln)
+	err = server.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+
+	return err
 }
 
 func initializeKeypair() error {

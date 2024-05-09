@@ -26,6 +26,7 @@ import (
 	"github.com/uppercaveman/ollama-server/api"
 	"github.com/uppercaveman/ollama-server/format"
 	"github.com/uppercaveman/ollama-server/gpu"
+	"github.com/uppercaveman/ollama-server/server/envconfig"
 )
 
 type LlamaServer interface {
@@ -48,7 +49,10 @@ type llmServer struct {
 	options api.Options
 
 	// TODO - this should be broken down by GPU
-	estimatedVRAM uint64 // Estimated usage of VRAM by the loaded model
+	estimatedVRAM  uint64 // Estimated usage of VRAM by the loaded model
+	estimatedTotal uint64 // Total size of model
+	totalLayers    uint64
+	gpuCount       int
 
 	sem *semaphore.Weighted
 }
@@ -82,12 +86,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	cpuRunner := ""
 	var estimatedVRAM uint64
+	var estimatedTotal uint64
 	var systemMemory uint64
+	gpuCount := len(gpus)
 	if (len(gpus) == 1 && gpus[0].Library == "cpu") || opts.NumGPU == 0 {
 
 		// TODO evaluate system memory to see if we should block the load, or force an unload of another CPU runner
 
 		cpuRunner = serverForCpu()
+		gpuCount = 0
 	} else {
 		if gpus[0].Library == "metal" {
 			memInfo, err := gpu.GetCPUMem()
@@ -99,7 +106,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			}
 		}
 		var layers int
-		layers, estimatedVRAM = EstimateGPULayers(gpus, ggml, projectors, opts)
+		layers, estimatedVRAM, estimatedTotal = EstimateGPULayers(gpus, ggml, projectors, opts)
 
 		if gpus[0].Library == "metal" && estimatedVRAM > systemMemory {
 			// disable partial offloading when model is greater than total system memory as this
@@ -124,7 +131,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	} else {
 		servers = serversForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
 	}
-	demandLib := strings.Trim(os.Getenv("OLLAMA_LLM_LIBRARY"), "\"' ")
+	demandLib := envconfig.LLMLibrary
 	if demandLib != "" {
 		serverPath := availableServers[demandLib]
 		if serverPath == "" {
@@ -132,6 +139,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		} else {
 			slog.Info("user override", "OLLAMA_LLM_LIBRARY", demandLib, "path", serverPath)
 			servers = []string{demandLib}
+			if strings.HasPrefix(demandLib, "cpu") {
+				// Omit the GPU flag to silence the warning
+				opts.NumGPU = -1
+			}
 		}
 	}
 
@@ -145,7 +156,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--embedding",
 	}
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+	if envconfig.Debug {
 		params = append(params, "--log-format", "json")
 	} else {
 		params = append(params, "--log-disable")
@@ -155,7 +166,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
 	}
 
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+	if envconfig.Debug {
 		params = append(params, "--verbose")
 	}
 
@@ -193,16 +204,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--numa")
 	}
 
-	// "--cont-batching", // TODO - doesn't seem to have any noticeable perf change for multiple requests
-	numParallel := 1
-	if onp := os.Getenv("OLLAMA_NUM_PARALLEL"); onp != "" {
-		numParallel, err = strconv.Atoi(onp)
-		if err != nil || numParallel <= 0 {
-			err = fmt.Errorf("invalid OLLAMA_NUM_PARALLEL=%s must be greater than zero - %w", onp, err)
-			slog.Error("misconfiguration", "error", err)
-			return nil, err
-		}
+	numParallel := envconfig.NumParallel
+
+	// TODO (jmorganca): multimodal models don't support parallel yet
+	// see https://github.com/uppercaveman/ollama-server/issues/4165
+	if len(projectors) > 0 {
+		numParallel = 1
+		slog.Warn("multimodal models don't support parallel requests yet")
 	}
+
 	params = append(params, "--parallel", fmt.Sprintf("%d", numParallel))
 
 	for i := 0; i < len(servers); i++ {
@@ -212,6 +222,11 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)
 			slog.Error("sever list inconsistent", "error", finalErr)
 			continue
+		}
+
+		if strings.HasPrefix(servers[i], "cpu") {
+			// TODO if we tried a gpu runner first, and it failed, record the error and bubble that back up
+			gpuCount = 0
 		}
 
 		// Find an availableServers  port, retry on each iterration in case the failure was a port conflict race
@@ -233,13 +248,13 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
-		// append the server directory to LD_LIBRARY_PATH/PATH
+		// prepend the server directory to LD_LIBRARY_PATH/PATH
 		libraryPaths := []string{dir}
 
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			// Append our runner directory to the path
 			// This will favor system libraries over our bundled library dependencies
-			libraryPaths = append(filepath.SplitList(libraryPath), libraryPaths...)
+			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
 		// Note: we always put the dependency path first
@@ -267,23 +282,42 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		s := &llmServer{
-			port:          port,
-			cmd:           exec.Command(server, finalParams...),
-			status:        NewStatusWriter(os.Stderr),
-			options:       opts,
-			estimatedVRAM: estimatedVRAM,
-			sem:           semaphore.NewWeighted(int64(numParallel)),
+			port:           port,
+			cmd:            exec.Command(server, finalParams...),
+			status:         NewStatusWriter(os.Stderr),
+			options:        opts,
+			estimatedVRAM:  estimatedVRAM,
+			estimatedTotal: estimatedTotal,
+			sem:            semaphore.NewWeighted(int64(numParallel)),
+			totalLayers:    ggml.KV().BlockCount() + 1,
+			gpuCount:       gpuCount,
 		}
 
-		libEnv := fmt.Sprintf("%s=%s", pathEnv, strings.Join(libraryPaths, string(filepath.ListSeparator)))
-		s.cmd.Env = append(os.Environ(), libEnv)
+		s.cmd.Env = os.Environ()
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 
-		// TODO - multiple GPU selection logic...
-		key, val := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv()
-		if key != "" {
-			s.cmd.Env = append(s.cmd.Env, key+"="+val)
+		visibleDevicesEnv, visibleDevicesEnvVal := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv()
+		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+		// Update or add the path and visible devices variable with our adjusted version
+		pathNeeded := true
+		devicesNeeded := visibleDevicesEnv != ""
+		for i := range s.cmd.Env {
+			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
+			if strings.EqualFold(cmp[0], pathEnv) {
+				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
+				pathNeeded = false
+			} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
+				s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
+				devicesNeeded = false
+			}
+		}
+		if pathNeeded {
+			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
+		}
+		if devicesNeeded {
+			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd.String())
@@ -291,6 +325,11 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		slog.Debug("subprocess", "environment", s.cmd.Env)
 
 		if err = s.cmd.Start(); err != nil {
+			// Detect permission denied and augment them essage about noexec
+			if errors.Is(err, os.ErrPermission) {
+				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, dir)
+				continue
+			}
 			msg := ""
 			if s.status != nil && s.status.LastErrMsg != "" {
 				msg = s.status.LastErrMsg
@@ -300,13 +339,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			continue
 		}
 
-		// TODO - make sure this is all wired up correctly
-		// if err = s.WaitUntilRunning(); err != nil {
-		// 	slog.Error("error starting llama server", "server", servers[i], "error", err)
-		// 	s.Close()
-		// 	finalErr = err
-		// 	continue
-		// }
 		return s, nil
 	}
 
@@ -338,7 +370,7 @@ type ServerStatus int
 
 const ( // iota is reset to 0
 	ServerStatusReady ServerStatus = iota
-	ServerStatusNoSlotsAvaialble
+	ServerStatusNoSlotsAvailable
 	ServerStatusLoadingModel
 	ServerStatusNotResponding
 	ServerStatusError
@@ -348,7 +380,7 @@ func (s ServerStatus) ToString() string {
 	switch s {
 	case ServerStatusReady:
 		return "llm server ready"
-	case ServerStatusNoSlotsAvaialble:
+	case ServerStatusNoSlotsAvailable:
 		return "llm busy - no slots available"
 	case ServerStatusLoadingModel:
 		return "llm server loading model"
@@ -372,6 +404,10 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 		msg := ""
 		if s.status != nil && s.status.LastErrMsg != "" {
 			msg = s.status.LastErrMsg
+		}
+		if s.cmd.ProcessState.ExitCode() == -1 {
+			// Most likely a signal killed it, log some more details to try to help troubleshoot
+			slog.Warn("llama runner process no longer running", "sys", s.cmd.ProcessState.Sys(), "string", s.cmd.ProcessState.String())
 		}
 		return ServerStatusError, fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
 	}
@@ -405,11 +441,34 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	case "ok":
 		return ServerStatusReady, nil
 	case "no slot available":
-		return ServerStatusNoSlotsAvaialble, nil
+		return ServerStatusNoSlotsAvailable, nil
 	case "loading model":
 		return ServerStatusLoadingModel, nil
 	default:
 		return ServerStatusError, fmt.Errorf("server error: %+v", status)
+	}
+}
+
+// getServerStatusRetry will retry if ServerStatusNoSlotsAvailable is received
+func (s *llmServer) getServerStatusRetry(ctx context.Context) (ServerStatus, error) {
+	var retries int
+	for {
+		status, err := s.getServerStatus(ctx)
+		if err != nil {
+			return status, err
+		}
+
+		if status == ServerStatusNoSlotsAvailable {
+			if retries >= 10 {
+				return status, fmt.Errorf("no slots available after %d retries", retries)
+			}
+
+			time.Sleep(5 * time.Millisecond)
+			retries++
+			continue
+		}
+
+		return status, nil
 	}
 }
 
@@ -510,7 +569,6 @@ ws ::= ([ \t\n] ws)?
 `
 
 const maxBufferSize = 512 * format.KiloByte
-const maxRetries = 3
 
 type ImageData struct {
 	Data []byte `json:"data"`
@@ -586,7 +644,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
+	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
 		return err
 	} else if status != ServerStatusReady {
@@ -600,133 +658,113 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		}
 	}
 
-	retryDelay := 100 * time.Microsecond
-	for retries := 0; retries < maxRetries; retries++ {
-		if retries > 0 {
-			time.Sleep(retryDelay) // wait before retrying
-			retryDelay *= 2        // exponential backoff
-		}
+	// Handling JSON marshaling with special characters unescaped.
+	buffer := &bytes.Buffer{}
+	enc := json.NewEncoder(buffer)
+	enc.SetEscapeHTML(false)
 
-		// Handling JSON marshaling with special characters unescaped.
-		buffer := &bytes.Buffer{}
-		enc := json.NewEncoder(buffer)
-		enc.SetEscapeHTML(false)
+	if err := enc.Encode(request); err != nil {
+		return fmt.Errorf("failed to marshal data: %v", err)
+	}
 
-		if err := enc.Encode(request); err != nil {
-			return fmt.Errorf("failed to marshal data: %v", err)
-		}
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
+	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
+	if err != nil {
+		return fmt.Errorf("error creating POST request: %v", err)
+	}
+	serverReq.Header.Set("Content-Type", "application/json")
 
-		endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
+	res, err := http.DefaultClient.Do(serverReq)
+	if err != nil {
+		return fmt.Errorf("POST predict: %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode >= 400 {
+		bodyBytes, err := io.ReadAll(res.Body)
 		if err != nil {
-			return fmt.Errorf("error creating POST request: %v", err)
+			return fmt.Errorf("failed reading llm error response: %w", err)
 		}
-		req.Header.Set("Content-Type", "application/json")
+		log.Printf("llm predict error: %s", bodyBytes)
+		return fmt.Errorf("%s", bodyBytes)
+	}
 
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("POST predict: %v", err)
-		}
-		defer resp.Body.Close()
+	scanner := bufio.NewScanner(res.Body)
+	buf := make([]byte, 0, maxBufferSize)
+	scanner.Buffer(buf, maxBufferSize)
 
-		if resp.StatusCode >= 400 {
-			bodyBytes, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return fmt.Errorf("failed reading llm error response: %w", err)
+	// keep track of the last token generated, this is used to abort if the model starts looping
+	var lastToken string
+	var tokenRepeat int
+
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			// This handles the request cancellation
+			return ctx.Err()
+		default:
+			line := scanner.Bytes()
+			if len(line) == 0 {
+				continue
 			}
-			log.Printf("llm predict error: %s", bodyBytes)
-			return fmt.Errorf("%s", bodyBytes)
-		}
 
-		scanner := bufio.NewScanner(resp.Body)
-		buf := make([]byte, 0, maxBufferSize)
-		scanner.Buffer(buf, maxBufferSize)
+			evt, ok := bytes.CutPrefix(line, []byte("data: "))
+			if !ok {
+				return fmt.Errorf("error parsing llm response stream: %s", line)
+			}
 
-		retryNeeded := false
-		// keep track of the last token generated, this is used to abort if the model starts looping
-		var lastToken string
-		var tokenRepeat int
+			var c completion
+			if err := json.Unmarshal(evt, &c); err != nil {
+				return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
+			}
 
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				// This handles the request cancellation
-				return ctx.Err()
+			switch {
+			case strings.TrimSpace(c.Content) == lastToken:
+				tokenRepeat++
 			default:
-				line := scanner.Bytes()
-				if len(line) == 0 {
-					continue
-				}
-
-				// try again on slot unavailable
-				if bytes.Contains(line, []byte("slot unavailable")) {
-					retryNeeded = true
-					break
-				}
-
-				evt, ok := bytes.CutPrefix(line, []byte("data: "))
-				if !ok {
-					return fmt.Errorf("error parsing llm response stream: %s", line)
-				}
-
-				var c completion
-				if err := json.Unmarshal(evt, &c); err != nil {
-					return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
-				}
-
-				switch {
-				case strings.TrimSpace(c.Content) == lastToken:
-					tokenRepeat++
-				default:
-					lastToken = strings.TrimSpace(c.Content)
-					tokenRepeat = 0
-				}
-
-				// 30 picked as an arbitrary max token repeat limit, modify as needed
-				if tokenRepeat > 30 {
-					slog.Debug("prediction aborted, token repeat limit reached")
-					return ctx.Err()
-				}
-
-				if c.Content != "" {
-					fn(CompletionResponse{
-						Content: c.Content,
-					})
-				}
-
-				if c.Stop {
-					fn(CompletionResponse{
-						Done:               true,
-						PromptEvalCount:    c.Timings.PromptN,
-						PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
-						EvalCount:          c.Timings.PredictedN,
-						EvalDuration:       parseDurationMs(c.Timings.PredictedMS),
-					})
-					return nil
-				}
+				lastToken = strings.TrimSpace(c.Content)
+				tokenRepeat = 0
 			}
-		}
 
-		if err := scanner.Err(); err != nil {
-			if strings.Contains(err.Error(), "unexpected EOF") {
-				s.Close()
-				msg := ""
-				if s.status != nil && s.status.LastErrMsg != "" {
-					msg = s.status.LastErrMsg
-				}
-
-				return fmt.Errorf("an unknown error was encountered while running the model %s", msg)
+			// 30 picked as an arbitrary max token repeat limit, modify as needed
+			if tokenRepeat > 30 {
+				slog.Debug("prediction aborted, token repeat limit reached")
+				return ctx.Err()
 			}
-			return fmt.Errorf("error reading llm response: %v", err)
-		}
 
-		if !retryNeeded {
-			return nil // success
+			if c.Content != "" {
+				fn(CompletionResponse{
+					Content: c.Content,
+				})
+			}
+
+			if c.Stop {
+				fn(CompletionResponse{
+					Done:               true,
+					PromptEvalCount:    c.Timings.PromptN,
+					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
+					EvalCount:          c.Timings.PredictedN,
+					EvalDuration:       parseDurationMs(c.Timings.PredictedMS),
+				})
+				return nil
+			}
 		}
 	}
 
-	// should never reach here ideally
-	return fmt.Errorf("max retries exceeded")
+	if err := scanner.Err(); err != nil {
+		if strings.Contains(err.Error(), "unexpected EOF") {
+			s.Close()
+			msg := ""
+			if s.status != nil && s.status.LastErrMsg != "" {
+				msg = s.status.LastErrMsg
+			}
+			return fmt.Errorf("an unknown error was encountered while running the model %s", msg)
+		}
+
+		return fmt.Errorf("error reading llm response: %v", err)
+	}
+
+	return nil
 }
 
 type EmbeddingRequest struct {
@@ -743,8 +781,9 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 		return nil, err
 	}
 	defer s.sem.Release(1)
+
 	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
+	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
 		return nil, err
 	} else if status != ServerStatusReady {
@@ -799,7 +838,7 @@ func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error)
 	status, err := s.getServerStatus(ctx)
 	if err != nil {
 		return nil, err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvaialble {
+	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvailable {
 		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
@@ -851,7 +890,7 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 	status, err := s.getServerStatus(ctx)
 	if err != nil {
 		return "", err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvaialble {
+	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvailable {
 		return "", fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 

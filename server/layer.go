@@ -5,39 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
-
-	"golang.org/x/exp/slices"
 )
-
-type Layers struct {
-	items []*Layer
-}
-
-func (ls *Layers) Add(layer *Layer) {
-	if layer.Size > 0 {
-		ls.items = append(ls.items, layer)
-	}
-}
-
-func (ls *Layers) Replace(layer *Layer) {
-	if layer.Size > 0 {
-		mediatype := layer.MediaType
-		layers := slices.DeleteFunc(ls.items, func(l *Layer) bool {
-			return l.MediaType == mediatype
-		})
-
-		ls.items = append(layers, layer)
-	}
-}
 
 type Layer struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
 	Size      int64  `json:"size"`
 	From      string `json:"from,omitempty"`
-
-	tempFileName string
+	status    string
 }
 
 func NewLayer(r io.Reader, mediatype string) (*Layer, error) {
@@ -46,14 +21,12 @@ func NewLayer(r io.Reader, mediatype string) (*Layer, error) {
 		return nil, err
 	}
 
-	const delimiter = "-"
-
-	pattern := strings.Join([]string{"sha256", "*-partial"}, delimiter)
-	temp, err := os.CreateTemp(blobs, pattern)
+	temp, err := os.CreateTemp(blobs, "sha256-")
 	if err != nil {
 		return nil, err
 	}
 	defer temp.Close()
+	defer os.Remove(temp.Name())
 
 	sha256sum := sha256.New()
 	n, err := io.Copy(io.MultiWriter(temp, sha256sum), r)
@@ -61,11 +34,29 @@ func NewLayer(r io.Reader, mediatype string) (*Layer, error) {
 		return nil, err
 	}
 
+	if err := temp.Close(); err != nil {
+		return nil, err
+	}
+
+	digest := fmt.Sprintf("sha256:%x", sha256sum.Sum(nil))
+	blob, err := GetBlobsPath(digest)
+	if err != nil {
+		return nil, err
+	}
+
+	status := "using existing layer"
+	if _, err := os.Stat(blob); err != nil {
+		status = "creating new layer"
+		if err := os.Rename(temp.Name(), blob); err != nil {
+			return nil, err
+		}
+	}
+
 	return &Layer{
-		MediaType:    mediatype,
-		Digest:       fmt.Sprintf("sha256:%x", sha256sum.Sum(nil)),
-		Size:         n,
-		tempFileName: temp.Name(),
+		MediaType: mediatype,
+		Digest:    digest,
+		Size:      n,
+		status:    fmt.Sprintf("%s %s", status, digest),
 	}, nil
 }
 
@@ -85,21 +76,15 @@ func NewLayerFromLayer(digest, mediatype, from string) (*Layer, error) {
 		Digest:    digest,
 		Size:      fi.Size(),
 		From:      from,
+		status:    fmt.Sprintf("using existing layer %s", digest),
 	}, nil
 }
 
-func (l *Layer) Commit() (bool, error) {
-	// always remove temp
-	defer os.Remove(l.tempFileName)
-
+func (l *Layer) Open() (io.ReadCloser, error) {
 	blob, err := GetBlobsPath(l.Digest)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
-	if _, err := os.Stat(blob); err != nil {
-		return true, os.Rename(l.tempFileName, blob)
-	}
-
-	return false, nil
+	return os.Open(blob)
 }

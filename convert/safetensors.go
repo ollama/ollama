@@ -53,7 +53,7 @@ func (m *SafetensorFormat) GetTensors(dirpath string, params *Params) ([]llm.Ten
 		var err error
 		t, offset, err = m.readTensors(f, offset, params)
 		if err != nil {
-			slog.Error("%v", err)
+			slog.Error(err.Error())
 			return nil, err
 		}
 		tensors = append(tensors, t...)
@@ -122,7 +122,7 @@ func (m *SafetensorFormat) readTensors(fn string, offset uint64, params *Params)
 
 		ggufName, err := m.GetLayerName(k)
 		if err != nil {
-			slog.Error("%v", err)
+			slog.Error(err.Error())
 			return nil, 0, err
 		}
 

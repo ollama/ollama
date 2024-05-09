@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"regexp"
 	"strings"
 
@@ -132,7 +131,7 @@ func (m *LlamaModel) LoadVocab() error {
 	return nil
 }
 
-func (m *LlamaModel) WriteGGUF() (string, error) {
+func (m *LlamaModel) WriteGGUF(ws io.WriteSeeker) error {
 	kv := llm.KV{
 		"general.architecture":                   "llama",
 		"general.name":                           m.Name,
@@ -159,18 +158,5 @@ func (m *LlamaModel) WriteGGUF() (string, error) {
 		"tokenizer.ggml.add_eos_token":    false,
 	}
 
-	f, err := os.CreateTemp("", "ollama-gguf")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	mod := llm.NewGGUFV3(m.Params.ByteOrder)
-	if err := mod.Encode(f, kv, m.Tensors); err != nil {
-		return "", err
-	}
-
-	slog.Debug(fmt.Sprintf("gguf file = %s", f.Name()))
-
-	return f.Name(), nil
+	return llm.NewGGUFV3(m.Params.ByteOrder).Encode(ws, kv, m.Tensors)
 }
