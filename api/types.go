@@ -114,9 +114,10 @@ type Message struct {
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Message   Message   `json:"message"`
+	Model      string    `json:"model"`
+	CreatedAt  time.Time `json:"created_at"`
+	Message    Message   `json:"message"`
+	DoneReason string    `json:"done_reason"`
 
 	Done bool `json:"done"`
 
@@ -308,6 +309,9 @@ type GenerateResponse struct {
 
 	// Done specifies if the response is complete.
 	Done bool `json:"done"`
+
+	// DoneReason is the reason the model stopped generating text.
+	DoneReason string `json:"done_reason"`
 
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
