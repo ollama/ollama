@@ -21,6 +21,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/types/model"
 )
 
 var blobUploadManager sync.Map
@@ -108,7 +109,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *reg
 		offset += size
 	}
 
-	slog.Info(fmt.Sprintf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
+	slog.Info("uploading blob", "digest", b.Digest, "size", format.HumanBytes(b.Total), "parts", len(b.Parts), "size per part", format.HumanBytes(b.Parts[0].Size))
 
 	requestURL, err = url.Parse(location)
 	if err != nil {
@@ -362,40 +363,46 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
-	requestURL := mp.BaseURL()
-	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
+type uploadOptions struct {
+	name    model.Name
+	baseURL *url.URL
+	layer   Layer
+	regOpts *registryOptions
+	fn      func(api.ProgressResponse)
+}
 
-	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
+func uploadBlob(ctx context.Context, opts uploadOptions) error {
+	requestURL := opts.baseURL.JoinPath("blobs", opts.layer.Digest)
+
+	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts.regOpts)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
 		return err
 	default:
 		defer resp.Body.Close()
-		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("pushing %s", layer.Digest[7:19]),
-			Digest:    layer.Digest,
-			Total:     layer.Size,
-			Completed: layer.Size,
+		opts.fn(api.ProgressResponse{
+			Status:    fmt.Sprintf("pushing %s", opts.layer.Digest[7:19]),
+			Digest:    opts.layer.Digest,
+			Total:     opts.layer.Size,
+			Completed: opts.layer.Size,
 		})
 
 		return nil
 	}
 
-	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})
+	data, ok := blobUploadManager.LoadOrStore(opts.layer.Digest, &blobUpload{Layer: opts.layer})
 	upload := data.(*blobUpload)
 	if !ok {
-		requestURL := mp.BaseURL()
-		requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs/uploads/")
-		if err := upload.Prepare(ctx, requestURL, opts); err != nil {
-			blobUploadManager.Delete(layer.Digest)
+		requestURL := opts.baseURL.JoinPath("blobs", "uploads", "/")
+		if err := upload.Prepare(ctx, requestURL, opts.regOpts); err != nil {
+			blobUploadManager.Delete(opts.layer.Digest)
 			return err
 		}
 
 		//nolint:contextcheck
-		go upload.Run(context.Background(), opts)
+		go upload.Run(context.Background(), opts.regOpts)
 	}
 
-	return upload.Wait(ctx, fn)
+	return upload.Wait(ctx, opts.fn)
 }
