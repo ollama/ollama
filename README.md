@@ -300,7 +300,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
 - [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
 
-### Model/Prompt Evaluation and Optimization
+### Evaluation
 
 - [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search) (Multi-platform desktop application)
 
