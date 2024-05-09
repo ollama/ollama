@@ -565,7 +565,7 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 	}
 
 	if !envconfig.NoPrune {
-		if err := deleteUnusedLayers(nil, unref, false); err != nil {
+		if err := deleteUnusedLayers(nil, unref); err != nil {
 			return err
 		}
 	}
@@ -613,7 +613,7 @@ func CopyModel(src, dst model.Name) error {
 	return err
 }
 
-func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{}, dryRun bool) error {
+func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{}) error {
 	fp, err := GetManifestPath()
 	if err != nil {
 		return err
@@ -660,13 +660,9 @@ func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{},
 			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
 			continue
 		}
-		if !dryRun {
-			if err := os.Remove(fp); err != nil {
-				slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
-				continue
-			}
-		} else {
-			slog.Info(fmt.Sprintf("wanted to remove: %s", fp))
+		if err := os.Remove(fp); err != nil {
+			slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
+			continue
 		}
 	}
 
@@ -689,14 +685,25 @@ func PruneLayers() error {
 	for _, blob := range blobs {
 		name := blob.Name()
 		name = strings.ReplaceAll(name, "-", ":")
-		if strings.HasPrefix(name, "sha256:") {
-			deleteMap[name] = struct{}{}
+
+		_, err := GetBlobsPath(name)
+		if err != nil {
+			if errors.Is(err, ErrInvalidDigestFormat) {
+				// remove invalid blobs (e.g. partial downloads)
+				if err := os.Remove(filepath.Join(p, blob.Name())); err != nil {
+					slog.Error("couldn't remove blob", "blob", blob.Name(), "error", err)
+				}
+			}
+
+			continue
 		}
+
+		deleteMap[name] = struct{}{}
 	}
 
 	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
 
-	err = deleteUnusedLayers(nil, deleteMap, false)
+	err = deleteUnusedLayers(nil, deleteMap)
 	if err != nil {
 		return err
 	}
@@ -752,7 +759,7 @@ func DeleteModel(name string) error {
 	}
 	deleteMap[manifest.Config.Digest] = struct{}{}
 
-	err = deleteUnusedLayers(&mp, deleteMap, false)
+	err = deleteUnusedLayers(&mp, deleteMap)
 	if err != nil {
 		return err
 	}
@@ -912,7 +919,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	if noprune == "" {
 		fn(api.ProgressResponse{Status: "removing any unused layers"})
-		err = deleteUnusedLayers(nil, deleteMap, false)
+		err = deleteUnusedLayers(nil, deleteMap)
 		if err != nil {
 			return err
 		}
