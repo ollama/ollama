@@ -313,7 +313,6 @@ curl http://localhost:11434/api/generate -d '{
     "numa": false,
     "num_ctx": 1024,
     "num_batch": 2,
-    "num_gqa": 1,
     "num_gpu": 1,
     "main_gpu": 0,
     "low_vram": false,
@@ -321,8 +320,6 @@ curl http://localhost:11434/api/generate -d '{
     "vocab_only": false,
     "use_mmap": true,
     "use_mlock": false,
-    "rope_frequency_base": 1.1,
-    "rope_frequency_scale": 0.8,
     "num_thread": 8
   }
 }'
