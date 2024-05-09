@@ -300,6 +300,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
 - [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
 
+### Model/Prompt Evaluation and Optimization
+
+- [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search) (Multi-platform desktop application)
+
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
@@ -392,6 +396,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
 
-### Supported backends 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
+### Supported backends
 
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
