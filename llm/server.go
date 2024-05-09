@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -281,9 +282,17 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			}
 		}
 
+		cmd := exec.Command(server, finalParams...)
+		if runtime.GOOS == "windows" {
+			// suppress the ollama_llama_server.exe blank command window that gets displayed in some cases
+			cmd_path := "c:\\Windows\\system32\\cmd.exe"
+			args := append([]string{"/c", server}, finalParams...)
+			cmd = exec.Command(cmd_path, args...)
+			cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000, HideWindow: true}
+		}
 		s := &llmServer{
 			port:           port,
-			cmd:            exec.Command(server, finalParams...),
+			cmd:            cmd,
 			status:         NewStatusWriter(os.Stderr),
 			options:        opts,
 			estimatedVRAM:  estimatedVRAM,
