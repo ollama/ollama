@@ -25,7 +25,7 @@ func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors 
 	// Split up the GPUs by type and try them
 	for _, gpus := range allGpus.ByLibrary() {
 		var layerCount int
-		layerCount, estimatedVRAM = EstimateGPULayers(gpus, ggml, projectors, opts)
+		layerCount, estimatedVRAM, _ = EstimateGPULayers(gpus, ggml, projectors, opts)
 		if opts.NumGPU < 0 {
 			if layerCount > 0 && layerCount >= int(ggml.KV().BlockCount()+1) {
 				return true, estimatedVRAM
@@ -39,12 +39,9 @@ func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors 
 	return false, estimatedVRAM
 }
 
-// Given a model and one or more GPU targets, predict how many layers and bytes we can load
+// Given a model and one or more GPU targets, predict how many layers and bytes we can load, and the total size
 // The GPUs provided must all be the same Library
-func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) (int, uint64) {
-	if gpus[0].Library == "cpu" {
-		return 0, 0
-	}
+func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) (int, uint64, uint64) {
 	var memoryAvailable uint64
 	for _, info := range gpus {
 		memoryAvailable += info.FreeMemory
@@ -92,11 +89,6 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 
 	// memoryRequiredPartial represents the memory required for partial GPU offloading (n > 0, n < layers)
 	memoryRequiredPartial := memoryMinimum + graphPartialOffload + layers["blk.0"].size()
-
-	if memoryRequiredPartial > memoryAvailable {
-		slog.Debug("insufficient VRAM to load any model layers")
-		return 0, 0
-	}
 
 	var memoryLayerOutput uint64
 	if layer, ok := layers["output_norm"]; ok {
@@ -181,5 +173,13 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 			),
 		),
 	)
-	return layerCount, uint64(memoryRequiredPartial)
+	if gpus[0].Library == "cpu" {
+		return 0, 0, memoryRequiredTotal
+	}
+	if memoryRequiredPartial > memoryAvailable {
+		slog.Debug("insufficient VRAM to load any model layers")
+		return 0, 0, memoryRequiredTotal
+	}
+
+	return layerCount, memoryRequiredPartial, memoryRequiredTotal
 }

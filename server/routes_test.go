@@ -124,14 +124,12 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodPost,
 			Path:   "/api/create",
 			Setup: func(t *testing.T, req *http.Request) {
-				f, err := os.CreateTemp(t.TempDir(), "ollama-model")
-				assert.Nil(t, err)
-				defer f.Close()
+				fname := createTestFile(t, "ollama-model")
 
 				stream := false
 				createReq := api.CreateRequest{
 					Name:      "t-bone",
-					Modelfile: fmt.Sprintf("FROM %s", f.Name()),
+					Modelfile: fmt.Sprintf("FROM %s", fname),
 					Stream:    &stream,
 				}
 				jsonData, err := json.Marshal(createReq)
@@ -216,27 +214,25 @@ func Test_Routes(t *testing.T) {
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)
 
-	workDir, err := os.MkdirTemp("", "ollama-test")
-	assert.Nil(t, err)
-	defer os.RemoveAll(workDir)
-	os.Setenv("OLLAMA_MODELS", workDir)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	for _, tc := range testCases {
-		t.Logf("Running Test: [%s]", tc.Name)
-		u := httpSrv.URL + tc.Path
-		req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
-		assert.Nil(t, err)
+		t.Run(tc.Name, func(t *testing.T) {
+			u := httpSrv.URL + tc.Path
+			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			assert.Nil(t, err)
 
-		if tc.Setup != nil {
-			tc.Setup(t, req)
-		}
+			if tc.Setup != nil {
+				tc.Setup(t, req)
+			}
 
-		resp, err := httpSrv.Client().Do(req)
-		assert.Nil(t, err)
-		defer resp.Body.Close()
+			resp, err := httpSrv.Client().Do(req)
+			assert.Nil(t, err)
+			defer resp.Body.Close()
 
-		if tc.Expected != nil {
-			tc.Expected(t, resp)
-		}
+			if tc.Expected != nil {
+				tc.Expected(t, resp)
+			}
+		})
 	}
 }

@@ -218,7 +218,7 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlZ:
 			fd := int(syscall.Stdin)
 			return handleCharCtrlZ(fd, i.Terminal.termios)
-		case CharEnter:
+		case CharEnter, CharCtrlJ:
 			output := buf.String()
 			if output != "" {
 				i.History.Add([]rune(output))
@@ -232,7 +232,7 @@ func (i *Instance) Readline() (string, error) {
 				metaDel = false
 				continue
 			}
-			if r >= CharSpace || r == CharEnter {
+			if r >= CharSpace || r == CharEnter || r == CharCtrlJ {
 				buf.Add(r)
 			}
 		}
