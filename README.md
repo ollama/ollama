@@ -357,6 +357,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
 - [Testcontainers](https://testcontainers.com/modules/ollama/)
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
+- [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
 
 ### Mobile
 
