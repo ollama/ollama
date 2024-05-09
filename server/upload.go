@@ -18,6 +18,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/types/model"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -360,40 +361,46 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
-	requestURL := mp.BaseURL()
-	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
+type uploadOptions struct {
+	name    model.Name
+	baseURL *url.URL
+	layer   *Layer
+	regOpts *registryOptions
+	fn      func(api.ProgressResponse)
+}
 
-	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
+func uploadBlob(ctx context.Context, opts uploadOptions) error {
+	requestURL := opts.baseURL.JoinPath("v2", opts.name.Namespace, opts.name.Model, "blobs", opts.layer.Digest)
+
+	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts.regOpts)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
 		return err
 	default:
 		defer resp.Body.Close()
-		fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("pushing %s", layer.Digest[7:19]),
-			Digest:    layer.Digest,
-			Total:     layer.Size,
-			Completed: layer.Size,
+		opts.fn(api.ProgressResponse{
+			Status:    fmt.Sprintf("pushing %s", opts.layer.Digest[7:19]),
+			Digest:    opts.layer.Digest,
+			Total:     opts.layer.Size,
+			Completed: opts.layer.Size,
 		})
 
 		return nil
 	}
 
-	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})
+	data, ok := blobUploadManager.LoadOrStore(opts.layer.Digest, &blobUpload{Layer: opts.layer})
 	upload := data.(*blobUpload)
 	if !ok {
-		requestURL := mp.BaseURL()
-		requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs/uploads/")
-		if err := upload.Prepare(ctx, requestURL, opts); err != nil {
-			blobUploadManager.Delete(layer.Digest)
+		requestURL := opts.baseURL.JoinPath("v2", opts.name.Namespace, opts.name.Model, "blobs/uploads/")
+		if err := upload.Prepare(ctx, requestURL, opts.regOpts); err != nil {
+			blobUploadManager.Delete(opts.layer.Digest)
 			return err
 		}
 
 		//nolint:contextcheck
-		go upload.Run(context.Background(), opts)
+		go upload.Run(context.Background(), opts.regOpts)
 	}
 
-	return upload.Wait(ctx, fn)
+	return upload.Wait(ctx, opts.fn)
 }
