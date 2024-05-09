@@ -56,6 +56,10 @@ func TestManifests(t *testing.T) {
 			filepath.Join("host", "namespace", "model", "tag"),
 			filepath.Join("host", "namespace", "model", ".hidden"),
 		},
+		"subdir": {
+			filepath.Join("host", "namespace", "model", "tag", "one"),
+			filepath.Join("host", "namespace", "model", "tag", "another", "one"),
+		},
 	}
 
 	for n, wants := range cases {

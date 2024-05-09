@@ -125,13 +125,24 @@ func Manifests() (map[model.Name]*Manifest, error) {
 
 	ms := make(map[model.Name]*Manifest)
 	for _, match := range matches {
-		rel, err := filepath.Rel(manifests, match)
+		fi, err := os.Stat(match)
 		if err != nil {
 			return nil, err
 		}
 
-		n := model.ParseNameFromFilepath(rel)
-		if n.IsValid() {
+		if !fi.IsDir() {
+			rel, err := filepath.Rel(manifests, match)
+			if err != nil {
+				slog.Warn("bad filepath", "path", match, "error", err)
+				continue
+			}
+
+			n := model.ParseNameFromFilepath(rel)
+			if !n.IsValid() {
+				slog.Warn("bad manifest name", "path", rel, "error", err)
+				continue
+			}
+
 			m, err := ParseNamedManifest(n)
 			if err != nil {
 				slog.Warn("bad manifest", "name", n, "error", err)
