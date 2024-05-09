@@ -331,6 +331,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
+- [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
 
 ### Libraries
 
