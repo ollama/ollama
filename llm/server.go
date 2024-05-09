@@ -53,6 +53,7 @@ type llmServer struct {
 	estimatedTotal uint64 // Total size of model
 	totalLayers    uint64
 	gpuCount       int
+	loadDuration   time.Duration // Record how long it took the model to load
 
 	sem *semaphore.Weighted
 }
@@ -156,11 +157,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
 		"--embedding",
 	}
-	if envconfig.Debug {
-		params = append(params, "--log-format", "json")
-	} else {
-		params = append(params, "--log-disable")
-	}
+
+	params = append(params, "--log-disable")
 
 	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
@@ -291,33 +289,28 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			sem:            semaphore.NewWeighted(int64(numParallel)),
 			totalLayers:    ggml.KV().BlockCount() + 1,
 			gpuCount:       gpuCount,
+			done:           make(chan error, 1),
 		}
 
-		s.cmd.Env = os.Environ()
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 
-		visibleDevicesEnv, visibleDevicesEnvVal := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv()
-		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+		if v := strings.Join(libraryPaths, string(filepath.ListSeparator)); v != "" {
+			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+v)
+		}
 
-		// Update or add the path and visible devices variable with our adjusted version
-		pathNeeded := true
-		devicesNeeded := visibleDevicesEnv != ""
-		for i := range s.cmd.Env {
-			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
-			if strings.EqualFold(cmp[0], pathEnv) {
-				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
-				pathNeeded = false
-			} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
-				s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
-				devicesNeeded = false
+		if k, v := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv(); k != "" {
+			s.cmd.Env = append(s.cmd.Env, k+"="+v)
+		}
+
+		for _, ev := range os.Environ() {
+			if strings.HasPrefix(ev, "CUDA_") ||
+				strings.HasPrefix(ev, "ROCM_") ||
+				strings.HasPrefix(ev, "HIP_") ||
+				strings.HasPrefix(ev, "HSA_") ||
+				strings.HasPrefix(ev, "GGML_") {
+				s.cmd.Env = append(s.cmd.Env, ev)
 			}
-		}
-		if pathNeeded {
-			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
-		}
-		if devicesNeeded {
-			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd.String())
@@ -338,6 +331,11 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			finalErr = err
 			continue
 		}
+
+		// reap subprocess when it exits
+		go func() {
+			s.done <- s.cmd.Wait()
+		}()
 
 		return s, nil
 	}
@@ -483,13 +481,11 @@ func (s *llmServer) Ping(ctx context.Context) error {
 
 func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	start := time.Now()
-	// TODO we need to wire up a better way to detect hangs during model load and startup of the server
 	expiresAt := time.Now().Add(10 * time.Minute) // be generous with timeout, large models can take a while to load
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
 
 	slog.Info("waiting for llama runner to start responding")
 	var lastStatus ServerStatus = -1
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -501,41 +497,39 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 				msg = s.status.LastErrMsg
 			}
 			return fmt.Errorf("llama runner process has terminated: %v %s", err, msg)
-		case <-ticker.C:
-			if time.Now().After(expiresAt) {
-				// timeout
-				msg := ""
-				if s.status != nil && s.status.LastErrMsg != "" {
-					msg = s.status.LastErrMsg
-				}
-				return fmt.Errorf("timed out waiting for llama runner to start: %s", msg)
+		default:
+		}
+		if time.Now().After(expiresAt) {
+			// timeout
+			msg := ""
+			if s.status != nil && s.status.LastErrMsg != "" {
+				msg = s.status.LastErrMsg
 			}
-			if s.cmd.ProcessState != nil {
-				msg := ""
-				if s.status != nil && s.status.LastErrMsg != "" {
-					msg = s.status.LastErrMsg
-				}
-				return fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
+			return fmt.Errorf("timed out waiting for llama runner to start: %s", msg)
+		}
+		if s.cmd.ProcessState != nil {
+			msg := ""
+			if s.status != nil && s.status.LastErrMsg != "" {
+				msg = s.status.LastErrMsg
 			}
-
-			c, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-			defer cancel()
-			status, err := s.getServerStatus(c)
-			if err != nil && lastStatus != status {
-				slog.Debug("server not yet available", "error", err)
-				lastStatus = status
-				continue
-			}
-
-			switch status {
-			case ServerStatusLoadingModel:
-				// TODO - this state never seems to happen with the current server.cpp code (bug?)
-				// it doesn't respond to the health endpoint until after the model is loaded
-				slog.Debug("loading model")
-			case ServerStatusReady:
-				slog.Debug(fmt.Sprintf("llama runner started in %f seconds", time.Since(start).Seconds()))
-				return nil
-			}
+			return fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
+		}
+		ctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer cancel()
+		status, _ := s.getServerStatus(ctx)
+		if lastStatus != status && status != ServerStatusReady {
+			// Only log on status changes
+			slog.Info("waiting for server to become available", "status", status.ToString())
+		}
+		switch status {
+		case ServerStatusReady:
+			s.loadDuration = time.Since(start)
+			slog.Info(fmt.Sprintf("llama runner started in %0.2f seconds", s.loadDuration.Seconds()))
+			return nil
+		default:
+			lastStatus = status
+			time.Sleep(time.Millisecond * 250)
+			continue
 		}
 	}
 }
@@ -576,10 +570,11 @@ type ImageData struct {
 }
 
 type completion struct {
-	Content string `json:"content"`
-	Model   string `json:"model"`
-	Prompt  string `json:"prompt"`
-	Stop    bool   `json:"stop"`
+	Content      string `json:"content"`
+	Model        string `json:"model"`
+	Prompt       string `json:"prompt"`
+	Stop         bool   `json:"stop"`
+	StoppedLimit bool   `json:"stopped_limit"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -598,6 +593,7 @@ type CompletionRequest struct {
 
 type CompletionResponse struct {
 	Content            string
+	DoneReason         string
 	Done               bool
 	PromptEvalCount    int
 	PromptEvalDuration time.Duration
@@ -741,8 +737,14 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			}
 
 			if c.Stop {
+				doneReason := "stop"
+				if c.StoppedLimit {
+					doneReason = "length"
+				}
+
 				fn(CompletionResponse{
 					Done:               true,
+					DoneReason:         doneReason,
 					PromptEvalCount:    c.Timings.PromptN,
 					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 					EvalCount:          c.Timings.PredictedN,
@@ -937,8 +939,11 @@ func (s *llmServer) Close() error {
 		if err := s.cmd.Process.Kill(); err != nil {
 			return err
 		}
-
-		_ = s.cmd.Wait()
+		// if ProcessState is already populated, Wait already completed, no need to wait again
+		if s.cmd.ProcessState == nil {
+			slog.Debug("waiting for llama server to exit")
+			<-s.done
+		}
 
 		slog.Debug("llama server stopped")
 	}

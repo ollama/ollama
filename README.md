@@ -331,6 +331,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
+- [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
 
 ### Libraries
 
@@ -357,7 +358,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
 - [Testcontainers](https://testcontainers.com/modules/ollama/)
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
-
+- [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
+- [LlamaScript](https://github.com/WolfTheDeveloper/llamascript)
 ### Mobile
 
 - [Enchanted](https://github.com/AugustDev/enchanted)

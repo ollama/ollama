@@ -119,12 +119,12 @@ func initGPUHandles() *handles {
 		return gpuHandles
 	}
 
-	slog.Info("Detecting GPUs")
+	slog.Debug("Detecting GPUs")
 	nvcudaLibPaths := FindGPULibs(nvcudaMgmtName, nvcudaMgmtPatterns)
 	if len(nvcudaLibPaths) > 0 {
 		deviceCount, nvcuda, libPath := LoadNVCUDAMgmt(nvcudaLibPaths)
 		if nvcuda != nil {
-			slog.Info("detected GPUs", "count", deviceCount, "library", libPath)
+			slog.Debug("detected GPUs", "count", deviceCount, "library", libPath)
 			gpuHandles.nvcuda = nvcuda
 			gpuHandles.deviceCount = deviceCount
 			return gpuHandles
@@ -135,7 +135,7 @@ func initGPUHandles() *handles {
 	if len(cudartLibPaths) > 0 {
 		deviceCount, cudart, libPath := LoadCUDARTMgmt(cudartLibPaths)
 		if cudart != nil {
-			slog.Info("detected GPUs", "library", libPath, "count", deviceCount)
+			slog.Debug("detected GPUs", "library", libPath, "count", deviceCount)
 			gpuHandles.cudart = cudart
 			gpuHandles.deviceCount = deviceCount
 			return gpuHandles
@@ -184,10 +184,14 @@ func GetGPUInfo() GpuInfoList {
 		gpuInfo := GpuInfo{
 			Library: "cuda",
 		}
+		var driverMajor int
+		var driverMinor int
 		if gpuHandles.cudart != nil {
 			C.cudart_check_vram(*gpuHandles.cudart, C.int(i), &memInfo)
 		} else {
 			C.nvcuda_check_vram(*gpuHandles.nvcuda, C.int(i), &memInfo)
+			driverMajor = int(gpuHandles.nvcuda.driver_major)
+			driverMinor = int(gpuHandles.nvcuda.driver_minor)
 		}
 		if memInfo.err != nil {
 			slog.Info("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
@@ -201,10 +205,12 @@ func GetGPUInfo() GpuInfoList {
 		gpuInfo.TotalMemory = uint64(memInfo.total)
 		gpuInfo.FreeMemory = uint64(memInfo.free)
 		gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
-		gpuInfo.Major = int(memInfo.major)
-		gpuInfo.Minor = int(memInfo.minor)
+		gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
 		gpuInfo.MinimumMemory = cudaMinimumMemory
 		gpuInfo.DependencyPath = depPath
+		gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+		gpuInfo.DriverMajor = int(driverMajor)
+		gpuInfo.DriverMinor = int(driverMinor)
 
 		// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
 		resp = append(resp, gpuInfo)
