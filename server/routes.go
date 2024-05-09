@@ -732,6 +732,11 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 			}
 
 			n := model.ParseNameFromFilepath(rel)
+			if !n.IsValid() {
+				slog.Info("invalid model filepath", "path", rel)
+				return nil
+			}
+
 			m, err := ParseNamedManifest(n)
 			if err != nil {
 				return err
