@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -56,9 +57,10 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *reg
 	}
 
 	if b.From != "" {
+		n := model.ParseName(b.From)
 		values := requestURL.Query()
 		values.Add("mount", b.Digest)
-		values.Add("from", ParseModelPath(b.From).GetNamespaceRepository())
+		values.Add("from", path.Join(n.Namespace, n.Model))
 		requestURL.RawQuery = values.Encode()
 	}
 

@@ -194,3 +194,17 @@ func Manifests() (map[model.Name]*Manifest, error) {
 
 	return ms, nil
 }
+
+func GetManifestPath() (string, error) {
+	dir, err := modelsDir()
+	if err != nil {
+		return "", err
+	}
+
+	path := filepath.Join(dir, "manifests")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return "", err
+	}
+
+	return path, nil
+}

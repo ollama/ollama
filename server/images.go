@@ -4,14 +4,11 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -42,9 +39,8 @@ type registryOptions struct {
 }
 
 type Model struct {
-	Name           string `json:"name"`
+	Name           model.Name
 	Config         ConfigV2
-	ShortName      string
 	ModelPath      string
 	ParentModel    string
 	AdapterPaths   []string
@@ -161,46 +157,17 @@ type RootFS struct {
 	DiffIDs []string `json:"diff_ids"`
 }
 
-func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
-	fp, err := mp.GetManifestPath()
-	if err != nil {
-		return nil, "", err
-	}
-
-	if _, err = os.Stat(fp); err != nil {
-		return nil, "", err
-	}
-
-	var manifest *ManifestV2
-
-	bts, err := os.ReadFile(fp)
-	if err != nil {
-		return nil, "", fmt.Errorf("couldn't open file '%s'", fp)
-	}
-
-	shaSum := sha256.Sum256(bts)
-	shaStr := hex.EncodeToString(shaSum[:])
-
-	if err := json.Unmarshal(bts, &manifest); err != nil {
-		return nil, "", err
-	}
-
-	return manifest, shaStr, nil
-}
-
-func GetModel(name string) (*Model, error) {
-	mp := ParseModelPath(name)
-	manifest, digest, err := GetManifest(mp)
+func GetModel(name model.Name) (*Model, error) {
+	manifest, err := ParseNamedManifest(name)
 	if err != nil {
 		return nil, err
 	}
 
 	model := &Model{
-		Name:      mp.GetFullTagname(),
-		ShortName: mp.GetShortTagname(),
-		Digest:    digest,
-		Template:  "{{ .Prompt }}",
-		License:   []string{},
+		Name:     name,
+		Digest:   manifest.digest,
+		Template: "{{ .Prompt }}",
+		License:  []string{},
 	}
 
 	filename, err := GetBlobsPath(manifest.Config.Digest)
@@ -688,18 +655,8 @@ func PullModel(ctx context.Context, name model.Name, opts registryOptions, fn fu
 
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
 	for _, layer := range layers {
-		if err := verifyBlob(layer.Digest); err != nil {
-			if errors.Is(err, errDigestMismatch) {
-				// something went wrong, delete the blob
-				fp, err := GetBlobsPath(layer.Digest)
-				if err != nil {
-					return err
-				}
-				if err := os.Remove(fp); err != nil {
-					// log this, but return the original error
-					slog.Info(fmt.Sprintf("couldn't remove file with digest mismatch '%s': %v", fp, err))
-				}
-			}
+		if err := layer.Verify(); err != nil {
+			_ = layer.Remove()
 			return err
 		}
 	}
@@ -735,17 +692,6 @@ func pullModelManifest(ctx context.Context, name model.Name, baseURL *url.URL, o
 	}
 
 	return m, err
-}
-
-// GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer
-func GetSHA256Digest(r io.Reader) (string, int64) {
-	h := sha256.New()
-	n, err := io.Copy(h, r)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
 var errUnauthorized = fmt.Errorf("unauthorized: access denied")
@@ -906,26 +852,4 @@ func parseRegistryChallenge(authStr string) registryChallenge {
 		Service: getValue(authStr, "service"),
 		Scope:   getValue(authStr, "scope"),
 	}
-}
-
-var errDigestMismatch = errors.New("digest mismatch, file must be downloaded again")
-
-func verifyBlob(digest string) error {
-	fp, err := GetBlobsPath(digest)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Open(fp)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	fileDigest, _ := GetSHA256Digest(f)
-	if digest != fileDigest {
-		return fmt.Errorf("%w: want %s, got %s", errDigestMismatch, digest, fileDigest)
-	}
-
-	return nil
 }

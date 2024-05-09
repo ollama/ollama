@@ -310,7 +310,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) 
 		// show a generalized compatibility error until there is a better way to
 		// check for model compatibility
 		if errors.Is(llm.ErrUnsupportedFormat, err) || strings.Contains(err.Error(), "failed to load model") {
-			err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
+			err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.Name.DisplayShortest())
 		}
 		slog.Info("NewLlamaServer failed", "model", req.model.ModelPath, "error", err)
 		req.errCh <- err

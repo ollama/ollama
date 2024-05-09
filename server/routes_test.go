@@ -146,9 +146,9 @@ func Test_Routes(t *testing.T) {
 				assert.Nil(t, err)
 				assert.Equal(t, resp.StatusCode, 200)
 
-				model, err := GetModel("t-bone")
+				m, err := GetModel(model.ParseName("t-bone"))
 				assert.Nil(t, err)
-				assert.Equal(t, "t-bone:latest", model.ShortName)
+				assert.Equal(t, "t-bone:latest", m.Name.DisplayShortest())
 			},
 		},
 		{
@@ -167,9 +167,9 @@ func Test_Routes(t *testing.T) {
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
-				model, err := GetModel("beefsteak")
+				m, err := GetModel(model.ParseName("beefsteak"))
 				assert.Nil(t, err)
-				assert.Equal(t, "beefsteak:latest", model.ShortName)
+				assert.Equal(t, "beefsteak:latest", m.Name.DisplayShortest())
 			},
 		},
 		{

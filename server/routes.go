@@ -75,45 +75,43 @@ func isSupportedImageType(image []byte) bool {
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
-
 	checkpointStart := time.Now()
-	var req api.GenerateRequest
-	err := c.ShouldBindJSON(&req)
-
-	switch {
-	case errors.Is(err, io.EOF):
+	var r api.GenerateRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	n := model.ParseName(r.Model)
+
 	// validate the request
 	switch {
-	case req.Model == "":
+	case !n.IsValid():
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
-	case len(req.Format) > 0 && req.Format != "json":
+	case len(r.Format) > 0 && r.Format != "json":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
 		return
-	case req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0):
+	case r.Raw && (r.Template != "" || r.System != "" || len(r.Context) > 0):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
 		return
 	}
 
-	for _, img := range req.Images {
+	for _, img := range r.Images {
 		if !isSupportedImageType(img) {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unsupported image format"})
 			return
 		}
 	}
 
-	model, err := GetModel(req.Model)
+	model, err := GetModel(n)
 	if err != nil {
 		var pErr *fs.PathError
 		if errors.As(err, &pErr) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", r.Model)})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -125,17 +123,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	opts, err := modelOptions(model, req.Options)
+	opts, err := modelOptions(model, r.Options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	var sessionDuration time.Duration
-	if req.KeepAlive == nil {
+	if r.KeepAlive == nil {
 		sessionDuration = getDefaultSessionDuration()
 	} else {
-		sessionDuration = req.KeepAlive.Duration
+		sessionDuration = r.KeepAlive.Duration
 	}
 
 	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, sessionDuration)
@@ -150,10 +148,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	// an empty request loads the model
 	// note: for a short while template was used in lieu
 	// of `raw` mode so we need to check for it too
-	if req.Prompt == "" && req.Template == "" && req.System == "" {
+	if r.Prompt == "" && r.Template == "" && r.System == "" {
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			CreatedAt:  time.Now().UTC(),
-			Model:      req.Model,
+			Model:      r.Model,
 			Done:       true,
 			DoneReason: "load",
 		})
@@ -164,37 +162,37 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	var prompt string
 	switch {
-	case req.Raw:
-		prompt = req.Prompt
-	case req.Prompt != "":
-		if req.Template == "" {
-			req.Template = model.Template
+	case r.Raw:
+		prompt = r.Prompt
+	case r.Prompt != "":
+		if r.Template == "" {
+			r.Template = model.Template
 		}
 
-		if req.System == "" {
-			req.System = model.System
+		if r.System == "" {
+			r.System = model.System
 		}
 
-		slog.Debug("generate handler", "prompt", req.Prompt)
-		slog.Debug("generate handler", "template", req.Template)
-		slog.Debug("generate handler", "system", req.System)
+		slog.Debug("generate handler", "prompt", r.Prompt)
+		slog.Debug("generate handler", "template", r.Template)
+		slog.Debug("generate handler", "system", r.System)
 
 		var sb strings.Builder
-		for i := range req.Images {
+		for i := range r.Images {
 			fmt.Fprintf(&sb, "[img-%d] ", i)
 		}
 
-		sb.WriteString(req.Prompt)
+		sb.WriteString(r.Prompt)
 
-		p, err := Prompt(req.Template, req.System, sb.String(), "", true)
+		p, err := Prompt(r.Template, r.System, sb.String(), "", true)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
 		sb.Reset()
-		if req.Context != nil {
-			prev, err := runner.llama.Detokenize(c.Request.Context(), req.Context)
+		if r.Context != nil {
+			prev, err := runner.llama.Detokenize(c.Request.Context(), r.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -215,33 +213,33 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 
-		fn := func(r llm.CompletionResponse) {
+		fn := func(comp llm.CompletionResponse) {
 			// Build up the full response
-			if _, err := generated.WriteString(r.Content); err != nil {
+			if _, err := generated.WriteString(comp.Content); err != nil {
 				ch <- gin.H{"error": err.Error()}
 				return
 			}
 
 			resp := api.GenerateResponse{
-				Model:      req.Model,
+				Model:      r.Model,
 				CreatedAt:  time.Now().UTC(),
-				Done:       r.Done,
-				Response:   r.Content,
-				DoneReason: r.DoneReason,
+				Done:       comp.Done,
+				DoneReason: comp.DoneReason,
+				Response:   comp.Content,
 				Metrics: api.Metrics{
-					PromptEvalCount:    r.PromptEvalCount,
-					PromptEvalDuration: r.PromptEvalDuration,
-					EvalCount:          r.EvalCount,
-					EvalDuration:       r.EvalDuration,
+					PromptEvalCount:    comp.PromptEvalCount,
+					PromptEvalDuration: comp.PromptEvalDuration,
+					EvalCount:          comp.EvalCount,
+					EvalDuration:       comp.EvalDuration,
 				},
 			}
 
-			if r.Done {
+			if comp.Done {
 				resp.TotalDuration = time.Since(checkpointStart)
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
-				if !req.Raw {
-					p, err := Prompt(req.Template, req.System, req.Prompt, generated.String(), false)
+				if !r.Raw {
+					p, err := Prompt(r.Template, r.System, r.Prompt, generated.String(), false)
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 						return
@@ -254,7 +252,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 						return
 					}
 
-					resp.Context = append(req.Context, tokens...)
+					resp.Context = append(r.Context, tokens...)
 				}
 			}
 
@@ -262,17 +260,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		var images []llm.ImageData
-		for i := range req.Images {
+		for i := range r.Images {
 			images = append(images, llm.ImageData{
 				ID:   i,
-				Data: req.Images[i],
+				Data: r.Images[i],
 			})
 		}
 
 		// Start prediction
 		req := llm.CompletionRequest{
 			Prompt:  prompt,
-			Format:  req.Format,
+			Format:  r.Format,
 			Images:  images,
 			Options: opts,
 		}
@@ -281,7 +279,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if r.Stream != nil && !*r.Stream {
 		// Accumulate responses into the final response
 		var final api.GenerateResponse
 		var sb strings.Builder
@@ -339,44 +337,43 @@ func getDefaultSessionDuration() time.Duration {
 }
 
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
-	var req api.EmbeddingRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
+	var r api.EmbeddingRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if req.Model == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+	n := model.ParseName(r.Model)
+	if !n.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("name %q is invalid", r.Model)})
 		return
 	}
 
-	model, err := GetModel(req.Model)
+	model, err := GetModel(n)
 	if err != nil {
 		var pErr *fs.PathError
 		if errors.As(err, &pErr) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", r.Model)})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	opts, err := modelOptions(model, req.Options)
+	opts, err := modelOptions(model, r.Options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	var sessionDuration time.Duration
-	if req.KeepAlive == nil {
+	if r.KeepAlive == nil {
 		sessionDuration = getDefaultSessionDuration()
 	} else {
-		sessionDuration = req.KeepAlive.Duration
+		sessionDuration = r.KeepAlive.Duration
 	}
 
 	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, sessionDuration)
@@ -389,12 +386,12 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	}
 
 	// an empty request loads the model
-	if req.Prompt == "" {
+	if r.Prompt == "" {
 		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
-	embedding, err := runner.llama.Embedding(c.Request.Context(), req.Prompt)
+	embedding, err := runner.llama.Embedding(c.Request.Context(), r.Prompt)
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
@@ -497,7 +494,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 
 	name := model.ParseName(cmp.Or(r.Model, r.Name))
 	if !name.IsValid() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid model name"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("name %q is invalid", cmp.Or(r.Model, r.Name))})
 		return
 	}
 
@@ -582,30 +579,25 @@ func (s *Server) DeleteModelHandler(c *gin.Context) {
 }
 
 func (s *Server) ShowModelHandler(c *gin.Context) {
-	var req api.ShowRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
+	var r api.ShowRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if req.Model != "" {
-		// noop
-	} else if req.Name != "" {
-		req.Model = req.Name
-	} else {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+	n := model.ParseName(cmp.Or(r.Model, r.Name))
+	if !n.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("name %q is invalid", cmp.Or(r.Model, r.Name))})
 		return
 	}
 
-	resp, err := GetModelInfo(req)
+	resp, err := GetModelInfo(n, r)
 	if err != nil {
 		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", r.Model)})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
@@ -615,8 +607,8 @@ func (s *Server) ShowModelHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
-	model, err := GetModel(req.Model)
+func GetModelInfo(name model.Name, req api.ShowRequest) (*api.ShowResponse, error) {
+	model, err := GetModel(name)
 	if err != nil {
 		return nil, err
 	}
@@ -674,7 +666,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	var sb strings.Builder
 	fmt.Fprintln(&sb, "# Modelfile generate by \"ollama show\"")
 	fmt.Fprintln(&sb, "# To build a new Modelfile based on this, replace FROM with:")
-	fmt.Fprintf(&sb, "# FROM %s\n\n", model.ShortName)
+	fmt.Fprintf(&sb, "# FROM %s\n\n", name.DisplayShortest())
 	fmt.Fprint(&sb, model.String())
 	resp.Modelfile = sb.String()
 
@@ -1087,27 +1079,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
 	var req api.ChatRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// validate the request
-	switch {
-	case req.Model == "":
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
-	case len(req.Format) > 0 && req.Format != "json":
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
+	n := model.ParseName(req.Model)
+	if !n.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("name %q is invalid", req.Model)})
 		return
 	}
 
-	model, err := GetModel(req.Model)
+	model, err := GetModel(n)
 	if err != nil {
 		var pErr *fs.PathError
 		if errors.As(err, &pErr) {

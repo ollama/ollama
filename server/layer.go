@@ -115,6 +115,26 @@ func (l *Layer) Remove() error {
 	return os.Remove(filepath.Join(p, l.Digest))
 }
 
+func (l *Layer) Verify() error {
+	rc, err := l.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+
+	sha256sum := sha256.New()
+	if _, err := io.Copy(sha256sum, rc); err != nil {
+		return err
+	}
+
+	digest := fmt.Sprintf("sha256:%x", sha256sum.Sum(nil))
+	if digest != l.Digest {
+		return fmt.Errorf("digest mismatch: %s != %s", digest, l.Digest)
+	}
+
+	return nil
+}
+
 func Layers() (map[string]*Layer, error) {
 	blobs, err := GetBlobsPath("")
 	if err != nil {

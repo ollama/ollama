@@ -16,6 +16,7 @@ import (
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/server/envconfig"
+	"github.com/ollama/ollama/types/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -107,12 +108,12 @@ func (scenario *bundle) newServer(gpus gpu.GpuInfoList, model string, ggml *llm.
 	return scenario.srv, nil
 }
 
-func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedVRAM uint64) *bundle {
+func newScenario(t *testing.T, ctx context.Context, name model.Name, estimatedVRAM uint64) *bundle {
 	scenario := &bundle{}
 	scenario.ctx, scenario.ctxDone = context.WithCancel(ctx)
 	t.Helper()
 
-	f, err := os.CreateTemp(t.TempDir(), modelName)
+	f, err := os.CreateTemp(t.TempDir(), name.Model)
 	assert.Nil(t, err)
 	defer f.Close()
 
@@ -134,7 +135,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 	assert.Nil(t, err)
 
 	fname := f.Name()
-	model := &Model{Name: modelName, ModelPath: fname}
+	model := &Model{Name: name, ModelPath: fname}
 	scenario.ggml, err = llm.LoadModel(model.ModelPath)
 	require.NoError(t, err)
 
@@ -155,24 +156,24 @@ func TestRequests(t *testing.T) {
 	defer done()
 
 	// Same model, same request
-	scenario1a := newScenario(t, ctx, "ollama-model-1", 10)
+	scenario1a := newScenario(t, ctx, model.ParseName("ollama-model-1"), 10)
 	scenario1a.req.sessionDuration = 0
-	scenario1b := newScenario(t, ctx, "ollama-model-1", 11)
+	scenario1b := newScenario(t, ctx, model.ParseName("ollama-model-1"), 11)
 	scenario1b.req.model = scenario1a.req.model
 	scenario1b.ggml = scenario1a.ggml
 	scenario1b.req.sessionDuration = 0
 
 	// simple reload of same model
-	scenario2a := newScenario(t, ctx, "ollama-model-1", 20)
+	scenario2a := newScenario(t, ctx, model.ParseName("ollama-model-1"), 20)
 	scenario2a.req.model = scenario1a.req.model
 	scenario2a.ggml = scenario1a.ggml
 
 	// Multiple loaded models
-	scenario3a := newScenario(t, ctx, "ollama-model-3a", 1*format.GigaByte)
-	scenario3b := newScenario(t, ctx, "ollama-model-3b", 24*format.GigaByte)
-	scenario3c := newScenario(t, ctx, "ollama-model-4a", 30)
+	scenario3a := newScenario(t, ctx, model.ParseName("ollama-model-3a"), 1*format.GigaByte)
+	scenario3b := newScenario(t, ctx, model.ParseName("ollama-model-3b"), 24*format.GigaByte)
+	scenario3c := newScenario(t, ctx, model.ParseName("ollama-model-4a"), 30)
 	scenario3c.req.opts.NumGPU = 0                           // CPU load, will be allowed
-	scenario3d := newScenario(t, ctx, "ollama-model-3c", 30) // Needs prior unloaded
+	scenario3d := newScenario(t, ctx, model.ParseName("ollama-model-3c"), 30) // Needs prior unloaded
 
 	s := InitScheduler(ctx)
 	s.getGpuFn = func() gpu.GpuInfoList {
@@ -310,11 +311,11 @@ func TestGetRunner(t *testing.T) {
 	defer done()
 
 	// Same model, same request
-	scenario1a := newScenario(t, ctx, "ollama-model-1a", 10)
+	scenario1a := newScenario(t, ctx, model.ParseName("ollama-model-1a"), 10)
 	scenario1a.req.sessionDuration = 0
-	scenario1b := newScenario(t, ctx, "ollama-model-1b", 10)
+	scenario1b := newScenario(t, ctx, model.ParseName("ollama-model-1b"), 10)
 	scenario1b.req.sessionDuration = 0
-	scenario1c := newScenario(t, ctx, "ollama-model-1c", 10)
+	scenario1c := newScenario(t, ctx, model.ParseName("ollama-model-1c"), 10)
 	scenario1c.req.sessionDuration = 0
 	envconfig.MaxQueuedRequests = 1
 	s := InitScheduler(ctx)
@@ -370,7 +371,7 @@ func TestPrematureExpired(t *testing.T) {
 	defer done()
 
 	// Same model, same request
-	scenario1a := newScenario(t, ctx, "ollama-model-1a", 10)
+	scenario1a := newScenario(t, ctx, model.ParseName("ollama-model-1a"), 10)
 	s := InitScheduler(ctx)
 	s.getGpuFn = func() gpu.GpuInfoList {
 		g := gpu.GpuInfo{Library: "metal"}
