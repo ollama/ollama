@@ -324,6 +324,19 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.Format = format
 
+	keepAlive, err := cmd.Flags().GetString("keepalive")
+	if err != nil {
+		return err
+	}
+	if keepAlive != "" {
+		d, err := time.ParseDuration(keepAlive)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("duration = %q\n", d)
+		opts.KeepAlive = &api.Duration{d}
+	}
+
 	prompts := args[1:]
 	// prepend stdin to the prompt if provided
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
@@ -705,6 +718,7 @@ type runOptions struct {
 	Images      []api.ImageData
 	Options     map[string]interface{}
 	MultiModal  bool
+	KeepAlive   *api.Duration
 }
 
 type displayResponseState struct {
@@ -797,6 +811,10 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		Messages: opts.Messages,
 		Format:   opts.Format,
 		Options:  opts.Options,
+	}
+
+	if opts.KeepAlive != nil {
+		req.KeepAlive = opts.KeepAlive
 	}
 
 	if err := client.Chat(cancelCtx, req, fn); err != nil {
@@ -1108,6 +1126,7 @@ func NewCLI() *cobra.Command {
 		RunE:    RunHandler,
 	}
 
+	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
