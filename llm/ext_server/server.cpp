@@ -66,7 +66,7 @@ struct server_params {
 };
 
 bool server_verbose = false;
-bool server_log_json = true;
+bool server_log_json = false;
 
 enum stop_type {
     STOP_FULL,
@@ -266,7 +266,7 @@ struct server_slot {
         sprintf(buffer, "prompt eval time     = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)",
                 t_prompt_processing, n_prompt_tokens_processed,
                 t_token, n_tokens_second);
-        LOG_INFO(buffer, {
+        LOG_DEBUG(buffer, {
             {"slot_id",                   id},
             {"task_id",                   task_id},
             {"t_prompt_processing",       t_prompt_processing},
@@ -280,7 +280,7 @@ struct server_slot {
         sprintf(buffer, "generation eval time = %10.2f ms / %5d runs   (%8.2f ms per token, %8.2f tokens per second)",
                 t_token_generation, n_decoded,
                 t_token, n_tokens_second);
-        LOG_INFO(buffer, {
+        LOG_DEBUG(buffer, {
             {"slot_id",            id},
             {"task_id",            task_id},
             {"t_token_generation", t_token_generation},
@@ -290,7 +290,7 @@ struct server_slot {
         });
 
         sprintf(buffer, "          total time = %10.2f ms", t_prompt_processing + t_token_generation);
-        LOG_INFO(buffer, {
+        LOG_DEBUG(buffer, {
             {"slot_id",             id},
             {"task_id",             task_id},
             {"t_prompt_processing", t_prompt_processing},
@@ -371,7 +371,7 @@ struct llama_server_context
     {
         if (clp_ctx)
         {
-            LOG_INFO("freeing clip model", {});
+            LOG_DEBUG("freeing clip model", {});
             clip_free(clp_ctx);
             clp_ctx = nullptr;
         }
@@ -392,7 +392,7 @@ struct llama_server_context
         params = params_;
         if (!params.mmproj.empty()) {
             multimodal = true;
-            LOG_INFO("Multi Modal Mode Enabled", {});
+            LOG_DEBUG("Multi Modal Mode Enabled", {});
             clp_ctx = clip_model_load(params.mmproj.c_str(), /*verbosity=*/ 1);
             if(clp_ctx == nullptr) {
                 LOG_ERROR("unable to load clip model", {{"model", params.mmproj}});
@@ -445,7 +445,7 @@ struct llama_server_context
 
         const int32_t n_ctx_slot = n_ctx / params.n_parallel;
 
-        LOG_INFO("initializing slots", {{"n_slots", params.n_parallel}});
+        LOG_DEBUG("initializing slots", {{"n_slots", params.n_parallel}});
         for (int i = 0; i < params.n_parallel; i++)
         {
             server_slot slot;
@@ -454,7 +454,7 @@ struct llama_server_context
             slot.n_ctx = n_ctx_slot;
             slot.n_predict = params.n_predict;
 
-            LOG_INFO("new slot", {
+            LOG_DEBUG("new slot", {
                 {"slot_id",    slot.id},
                 {"n_ctx_slot", slot.n_ctx}
             });
@@ -468,7 +468,7 @@ struct llama_server_context
                 //GGML_ASSERT(n_ctx_train % ga_w == 0     && "n_ctx_train must be a multiple of ga_w");    // NOLINT
                 //GGML_ASSERT(n_ctx >= n_ctx_train * ga_n && "n_ctx must be at least n_ctx_train * ga_n"); // NOLINT
 
-                LOG_INFO("slot self-extend", {
+                LOG_DEBUG("slot self-extend", {
                     {"slot_id",   slot.id},
                     {"ga_n",      ga_n},
                     {"ga_w",      ga_w}
@@ -827,7 +827,7 @@ struct llama_server_context
 
         all_slots_are_idle = false;
 
-        LOG_INFO("slot is processing task", {
+        LOG_DEBUG("slot is processing task", {
             {"slot_id", slot->id},
             {"task_id", slot->task_id},
         });
@@ -1504,7 +1504,7 @@ struct llama_server_context
                     }
                     slots_data.push_back(slot_data);
                 }
-                LOG_INFO("slot data", {
+                LOG_DEBUG("slot data", {
                     {"task_id",            task.id},
                     {"n_idle_slots",       n_idle_slots},
                     {"n_processing_slots", n_processing_slots}
@@ -1566,7 +1566,7 @@ struct llama_server_context
     bool update_slots() {
         if (system_need_update)
         {
-            LOG_INFO("updating system prompt", {});
+            LOG_DEBUG("updating system prompt", {});
             system_prompt_update();
         }
 
@@ -1576,7 +1576,7 @@ struct llama_server_context
         {
             if (system_prompt.empty() && clean_kv_cache)
             {
-                LOG_INFO("all slots are idle and system prompt is empty, clear the KV cache", {});
+                LOG_DEBUG("all slots are idle and system prompt is empty, clear the KV cache", {});
                 kv_cache_clear();
             }
             return true;
@@ -1599,7 +1599,7 @@ struct llama_server_context
                     const int n_left    = (int) system_tokens.size() + slot.n_past - n_keep;
                     const int n_discard = n_left / 2;
 
-                    LOG_INFO("slot context shift", {
+                    LOG_DEBUG("slot context shift", {
                         {"slot_id",         slot.id},
                         {"task_id",         slot.task_id},
                         {"n_keep",          n_keep},
@@ -1638,7 +1638,7 @@ struct llama_server_context
                 slot.command = NONE;
                 slot.t_last_used = ggml_time_us();
 
-                LOG_INFO("slot released", {
+                LOG_DEBUG("slot released", {
                     {"slot_id",         slot.id},
                     {"task_id",         slot.task_id},
                     {"n_ctx",           n_ctx},
@@ -1807,7 +1807,7 @@ struct llama_server_context
                             slot.ga_i = ga_i;
                         }
 
-                        LOG_INFO("slot progression", {
+                        LOG_DEBUG("slot progression", {
                             { "slot_id",    slot.id },
                             { "task_id",    slot.task_id },
                             { "n_past",     slot.n_past },
@@ -1822,7 +1822,7 @@ struct llama_server_context
                     if (slot.n_past == slot.n_prompt_tokens && slot.n_past > 0)
                     {
                         // we have to evaluate at least 1 token to generate logits.
-                        LOG_INFO("we have to evaluate at least 1 token to generate logits", {
+                        LOG_DEBUG("we have to evaluate at least 1 token to generate logits", {
                             { "slot_id", slot.id },
                             { "task_id", slot.task_id }
                         });
@@ -1834,7 +1834,7 @@ struct llama_server_context
                     }
 
                     int p0 = (int) system_tokens.size() + slot.n_past;
-                    LOG_INFO("kv cache rm [p0, end)", {
+                    LOG_DEBUG("kv cache rm [p0, end)", {
                         { "slot_id", slot.id },
                         { "task_id", slot.task_id },
                         { "p0",      p0 }
@@ -2491,11 +2491,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams,
         }
         else if (arg == "-v" || arg == "--verbose")
         {
-#if SERVER_VERBOSE != 1
-            LOG_WARNING("server.cpp is not built with verbose logging.", {});
-#else
             server_verbose = true;
-#endif
         }
         else if (arg == "--mlock")
         {
@@ -2601,7 +2597,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams,
         else if (arg == "--log-disable")
         {
             log_set_target(stdout);
-            LOG_INFO("logging to file is disabled.", {});
+            LOG_DEBUG("logging to file is disabled.", {});
         }
         else if (arg == "--slots-endpoint-disable")
         {
@@ -2732,7 +2728,7 @@ static void log_server_request(const httplib::Request &req, const httplib::Respo
         return;
     }
 
-    LOG_INFO("request", {
+    LOG_DEBUG("request", {
         {"remote_addr", req.remote_addr},
         {"remote_port", req.remote_port},
         {"status",      res.status},
