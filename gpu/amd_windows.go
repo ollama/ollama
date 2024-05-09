@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -34,13 +33,12 @@ func AMDGetGPUInfo() []GpuInfo {
 	}
 	defer hl.Release()
 
-	ver, err := hl.AMDDriverVersion()
-	if err == nil {
-		slog.Info("AMD Driver: " + ver)
-	} else {
-		// For now this is benign, but we may eventually need to fail compatibility checks
-		slog.Debug("error looking up amd driver version", "error", err)
-	}
+	// TODO - this reports incorrect version information, so omitting for now
+	// driverMajor, driverMinor, err := hl.AMDDriverVersion()
+	// if err != nil {
+	// 	// For now this is benign, but we may eventually need to fail compatibility checks
+	// 	slog.Debug("error looking up amd driver version", "error", err)
+	// }
 
 	// Note: the HIP library automatically handles subsetting to any HIP_VISIBLE_DEVICES the user specified
 	count := hl.HipGetDeviceCount()
@@ -62,10 +60,10 @@ func AMDGetGPUInfo() []GpuInfo {
 			return nil
 		}
 	} else {
-		slog.Debug("skipping rocm gfx compatibility check with HSA_OVERRIDE_GFX_VERSION=" + gfxOverride)
+		slog.Info("skipping rocm gfx compatibility check", "HSA_OVERRIDE_GFX_VERSION", gfxOverride)
 	}
 
-	slog.Info("detected hip devices", "count", count)
+	slog.Debug("detected hip devices", "count", count)
 	// TODO how to determine the underlying device ID when visible devices is causing this to subset?
 	for i := 0; i < count; i++ {
 		err = hl.HipSetDevice(i)
@@ -85,18 +83,11 @@ func AMDGetGPUInfo() []GpuInfo {
 		// Can luid be used on windows for setting visible devices (and is it actually set?)
 		n = bytes.IndexByte(props.GcnArchName[:], 0)
 		gfx := string(props.GcnArchName[:n])
-		slog.Info("hip device", "id", i, "name", name, "gfx", gfx)
-		var major, minor, patch string
-		switch len(gfx) {
-		case 6:
-			major, minor, patch = gfx[3:4], gfx[4:5], gfx[5:]
-		case 7:
-			major, minor, patch = gfx[3:5], gfx[5:6], gfx[6:]
-		}
+		slog.Debug("hip device", "id", i, "name", name, "gfx", gfx)
 		//slog.Info(fmt.Sprintf("[%d] Integrated: %d", i, props.iGPU)) // DOESN'T REPORT CORRECTLY!  Always 0
 		// TODO  Why isn't props.iGPU accurate!?
 		if strings.EqualFold(name, iGPUName) {
-			slog.Info("iGPU detected skipping", "id", i)
+			slog.Info("unsupported Radeon iGPU detected skipping", "id", i, "name", name, "gfx", gfx)
 			continue
 		}
 		if gfxOverride == "" {
@@ -106,7 +97,7 @@ func AMDGetGPUInfo() []GpuInfo {
 				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
 				continue
 			} else {
-				slog.Info("amdgpu is supported", "gpu", i, "gpu_type", gfx)
+				slog.Debug("amdgpu is supported", "gpu", i, "gpu_type", gfx)
 			}
 		}
 
@@ -124,8 +115,8 @@ func AMDGetGPUInfo() []GpuInfo {
 
 		// TODO revisit this once ROCm v6 is available on windows.
 		// v5.7 only reports VRAM used by this process, so it's completely wrong and unusable
-		slog.Info("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
-		slog.Info("amdgpu memory", "gpu", i, "available", format.HumanBytes2(freeMemory))
+		slog.Debug("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
+		slog.Debug("amdgpu memory", "gpu", i, "available", format.HumanBytes2(freeMemory))
 		gpuInfo := GpuInfo{
 			Library: "rocm",
 			memInfo: memInfo{
@@ -135,31 +126,12 @@ func AMDGetGPUInfo() []GpuInfo {
 			ID:             fmt.Sprintf("%d", i), // TODO this is probably wrong if we specify visible devices
 			DependencyPath: libDir,
 			MinimumMemory:  rocmMinimumMemory,
-		}
-		if major != "" {
-			gpuInfo.Major, err = strconv.Atoi(major)
-			if err != nil {
-				slog.Info("failed to parse version", "version", gfx, "error", err)
-			}
-		}
-		if minor != "" {
-			gpuInfo.Minor, err = strconv.Atoi(minor)
-			if err != nil {
-				slog.Info("failed to parse version", "version", gfx, "error", err)
-			}
-		}
-		if patch != "" {
-			// Patch rev is hex; e.g. gfx90a
-			p, err := strconv.ParseInt(patch, 16, 0)
-			if err != nil {
-				slog.Info("failed to parse version", "version", gfx, "error", err)
-			} else {
-				gpuInfo.Patch = int(p)
-			}
-		}
-		if gpuInfo.Major < RocmComputeMin {
-			slog.Warn(fmt.Sprintf("amdgpu [%s] too old gfx%d%d%x", gpuInfo.ID, gpuInfo.Major, gpuInfo.Minor, gpuInfo.Patch))
-			continue
+			Name:           name,
+			Compute:        gfx,
+
+			// TODO - this information isn't accurate on windows, so don't report it until we find the right way to retrieve
+			// DriverMajor:    driverMajor,
+			// DriverMinor:    driverMinor,
 		}
 
 		resp = append(resp, gpuInfo)
