@@ -144,7 +144,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	quantize, _ := cmd.Flags().GetString("quantize")
 
-	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantization: quantize}
+	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantize: quantize}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
