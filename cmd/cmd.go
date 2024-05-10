@@ -334,7 +334,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		opts.KeepAlive = &api.Duration{d}
+		opts.KeepAlive = &api.Duration{Duration: d}
 	}
 
 	prompts := args[1:]
