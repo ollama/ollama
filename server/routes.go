@@ -554,7 +554,12 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, name.String(), filepath.Dir(req.Path), strings.ToUpper(req.Quantization), modelfile, fn); err != nil {
+		quantization := req.Quantization
+		if req.Quantize != "" {
+			quantization = req.Quantize
+		}
+
+		if err := CreateModel(ctx, name.String(), filepath.Dir(req.Path), strings.ToUpper(quantization), modelfile, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
