@@ -31,8 +31,8 @@ type handles struct {
 }
 
 const (
-	cudaMinimumMemory = 256 * format.MebiByte
-	rocmMinimumMemory = 256 * format.MebiByte
+	cudaMinimumMemory = 457 * format.MebiByte
+	rocmMinimumMemory = 457 * format.MebiByte
 )
 
 var gpuMutex sync.Mutex

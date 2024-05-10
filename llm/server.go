@@ -218,7 +218,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if dir == "" {
 			// Shouldn't happen
 			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)
-			slog.Error("sever list inconsistent", "error", finalErr)
+			slog.Error("server list inconsistent", "error", finalErr)
 			continue
 		}
 
