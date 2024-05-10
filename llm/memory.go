@@ -12,17 +12,8 @@ import (
 
 // This algorithm looks for a complete fit to determine if we need to unload other models
 func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors []string, opts api.Options) (bool, uint64) {
-	var estimatedVRAM uint64
-	if opts.NumCtx > int(ggml.KV().ContextLength()) {
-		slog.Warn("requested context length is greater than model max context length", "requested", opts.NumCtx, "model", ggml.KV().ContextLength())
-		opts.NumCtx = int(ggml.KV().ContextLength())
-	}
-
-	if opts.NumCtx < 4 {
-		opts.NumCtx = 4
-	}
-
 	// Split up the GPUs by type and try them
+	var estimatedVRAM uint64
 	for _, gpus := range allGpus.ByLibrary() {
 		var layerCount int
 		layerCount, estimatedVRAM, _ = EstimateGPULayers(gpus, ggml, projectors, opts)
