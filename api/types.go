@@ -206,7 +206,7 @@ type CreateRequest struct {
 	// Name is deprecated, see Model
 	Name string `json:"name"`
 
-	// Quantization is deprecated, see Quatnize
+	// Quantization is deprecated, see Quantize
 	Quantization string `json:"quantization,omitempty"`
 }
 
