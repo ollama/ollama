@@ -35,6 +35,12 @@ func Unqualified(n Name) error {
 // spot in logs.
 const MissingPart = "!MISSING!"
 
+const (
+	defaultHost      = "registry.ollama.ai"
+	defaultNamespace = "library"
+	defaultTag       = "latest"
+)
+
 // DefaultName returns a name with the default values for the host, namespace,
 // and tag parts. The model and digest parts are empty.
 //
@@ -43,9 +49,9 @@ const MissingPart = "!MISSING!"
 //   - The default tag is ("latest")
 func DefaultName() Name {
 	return Name{
-		Host:      "registry.ollama.ai",
-		Namespace: "library",
-		Tag:       "latest",
+		Host:      defaultHost,
+		Namespace: defaultNamespace,
+		Tag:       defaultTag,
 	}
 }
 
@@ -161,10 +167,31 @@ func ParseNameBare(s string) Name {
 	}
 
 	scheme, host, ok := strings.Cut(s, "://")
-	if ! ok {
+	if !ok {
 		host = scheme
 	}
 	n.Host = host
+
+	return n
+}
+
+// ParseNameFromFilepath parses a 4-part filepath as a Name. The parts are
+// expected to be in the form:
+//
+// { host } "/" { namespace } "/" { model } "/" { tag }
+func ParseNameFromFilepath(s string) (n Name) {
+	parts := strings.Split(s, string(filepath.Separator))
+	if len(parts) != 4 {
+		return Name{}
+	}
+
+	n.Host = parts[0]
+	n.Namespace = parts[1]
+	n.Model = parts[2]
+	n.Tag = parts[3]
+	if !n.IsFullyQualified() {
+		return Name{}
+	}
 
 	return n
 }
@@ -201,6 +228,27 @@ func (n Name) String() string {
 		b.WriteString(n.RawDigest)
 	}
 	return b.String()
+}
+
+// DisplayShort returns a short string version of the name.
+func (n Name) DisplayShortest() string {
+	var sb strings.Builder
+
+	if n.Host != defaultHost {
+		sb.WriteString(n.Host)
+		sb.WriteByte('/')
+		sb.WriteString(n.Namespace)
+		sb.WriteByte('/')
+	} else if n.Namespace != defaultNamespace {
+		sb.WriteString(n.Namespace)
+		sb.WriteByte('/')
+	}
+
+	// always include model and tag
+	sb.WriteString(n.Model)
+	sb.WriteString(":")
+	sb.WriteString(n.Tag)
+	return sb.String()
 }
 
 // IsValid reports whether all parts of the name are present and valid. The
@@ -242,12 +290,14 @@ func (n Name) Filepath() string {
 	if !n.IsFullyQualified() {
 		panic("illegal attempt to get filepath of invalid name")
 	}
-	return strings.ToLower(filepath.Join(
-		n.Host,
-		n.Namespace,
-		n.Model,
+	return filepath.Join(
+		strings.ToLower(filepath.Join(
+			n.Host,
+			n.Namespace,
+			n.Model,
+		)),
 		n.Tag,
-	))
+	)
 }
 
 // LogValue returns a slog.Value that represents the name as a string.

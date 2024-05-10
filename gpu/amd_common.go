@@ -81,8 +81,10 @@ func commonAMDValidateLibDir() (string, error) {
 	}
 
 	// Well known location(s)
-	if rocmLibUsable(RocmStandardLocation) {
-		return RocmStandardLocation, nil
+	for _, path := range RocmStandardLocations {
+		if rocmLibUsable(path) {
+			return path, nil
+		}
 	}
 
 	// Installer payload location if we're running the installed binary

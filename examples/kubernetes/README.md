@@ -7,11 +7,23 @@
 
 ## Steps
 
-1. Create the Ollama namespace, daemon set, and service
+1. Create the Ollama namespace, deployment, and service
 
    ```bash
    kubectl apply -f cpu.yaml
    ```
+
+## (Optional) Hardware Acceleration
+
+Hardware acceleration in Kubernetes requires NVIDIA's [`k8s-device-plugin`](https://github.com/NVIDIA/k8s-device-plugin) which is deployed in Kubernetes in form of daemonset. Follow the link for more details.
+
+Once configured, create a GPU enabled Ollama deployment.
+
+```bash
+kubectl apply -f gpu.yaml
+```
+
+## Test
 
 1. Port forward the Ollama service to connect and use it locally
 
@@ -24,13 +36,3 @@
    ```bash
    ollama run orca-mini:3b
    ```
-
-## (Optional) Hardware Acceleration
-
-Hardware acceleration in Kubernetes requires NVIDIA's [`k8s-device-plugin`](https://github.com/NVIDIA/k8s-device-plugin). Follow the link for more details.
-
-Once configured, create a GPU enabled Ollama deployment.
-
-```bash
-kubectl apply -f gpu.yaml
-```

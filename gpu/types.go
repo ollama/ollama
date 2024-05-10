@@ -1,5 +1,12 @@
 package gpu
 
+import (
+	"fmt"
+	"log/slog"
+
+	"github.com/ollama/ollama/format"
+)
+
 type memInfo struct {
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 	FreeMemory  uint64 `json:"free_memory,omitempty"`
@@ -20,11 +27,13 @@ type GpuInfo struct {
 	DependencyPath string `json:"lib_path,omitempty"`
 
 	// GPU information
-	ID    string `json:"gpu_id"`          // string to use for selection of this specific GPU
-	Name  string `json:"name"`            // user friendly name if available
-	Major int    `json:"major,omitempty"` // Major compatibility version (CC or gfx)
-	Minor int    `json:"minor,omitempty"` // Minor compatibility version (CC or gfx)
-	Patch int    `json:"patch,omitempty"` // Patch compatibility only matters on AMD
+	ID      string `json:"gpu_id"`  // string to use for selection of this specific GPU
+	Name    string `json:"name"`    // user friendly name if available
+	Compute string `json:"compute"` // Compute Capability or gfx
+
+	// Driver Information - TODO no need to put this on each GPU
+	DriverMajor int `json:"driver_major,omitempty"`
+	DriverMinor int `json:"driver_minor,omitempty"`
 
 	// TODO other performance capability info to help in scheduling decisions
 }
@@ -54,6 +63,21 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 		}
 	}
 	return resp
+}
+
+// Report the GPU information into the log an Info level
+func (l GpuInfoList) LogDetails() {
+	for _, g := range l {
+		slog.Info("inference compute",
+			"id", g.ID,
+			"library", g.Library,
+			"compute", g.Compute,
+			"driver", fmt.Sprintf("%d.%d", g.DriverMajor, g.DriverMinor),
+			"name", g.Name,
+			"total", format.HumanBytes2(g.TotalMemory),
+			"available", format.HumanBytes2(g.FreeMemory),
+		)
+	}
 }
 
 // Sort by Free Space
