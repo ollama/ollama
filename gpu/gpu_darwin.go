@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	metalMinimumMemory = 384 * format.MebiByte
+	metalMinimumMemory = 512 * format.MebiByte
 )
 
 func GetGPUInfo() GpuInfoList {
