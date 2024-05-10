@@ -61,6 +61,10 @@ func InitScheduler(ctx context.Context) *Scheduler {
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration time.Duration) (chan *runnerRef, chan error) {
 	// allocate a large enough kv cache for all parallel requests
+	if opts.NumCtx < 4 {
+		opts.NumCtx = 4
+	}
+
 	opts.NumCtx = opts.NumCtx * envconfig.NumParallel
 
 	req := &LlmRequest{
