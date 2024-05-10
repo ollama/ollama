@@ -105,6 +105,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
+		} else if gpus[0].Library != "metal" && layers == 0 {
+			// Don't bother loading into the GPU if no layers can fit
+			cpuRunner = serverForCpu()
+			gpuCount = 0
 		} else if opts.NumGPU < 0 && layers > 0 && gpus[0].Library != "cpu" {
 			opts.NumGPU = layers
 		}
