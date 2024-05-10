@@ -164,7 +164,8 @@ func TestRequests(t *testing.T) {
 
 	// simple reload of same model
 	scenario2a := newScenario(t, ctx, "ollama-model-1", 20)
-	scenario2a.req.model = scenario1a.req.model
+	tmpModel := *scenario1a.req.model
+	scenario2a.req.model = &tmpModel
 	scenario2a.ggml = scenario1a.ggml
 
 	// Multiple loaded models
@@ -496,10 +497,9 @@ func TestNeedsReload(t *testing.T) {
 	llm := &mockLlm{}
 	do := api.DefaultOptions()
 	runner := &runnerRef{
-		adapters:   []string{"adapter1"},
-		projectors: []string{"projector1"},
-		Options:    &do,
-		llama:      llm,
+		model:   &Model{AdapterPaths: []string{"adapter1"}, ProjectorPaths: []string{"projector1"}},
+		Options: &do,
+		llama:   llm,
 	}
 	req := &LlmRequest{
 		model: &Model{
@@ -510,10 +510,10 @@ func TestNeedsReload(t *testing.T) {
 	}
 	resp := runner.needsReload(ctx, req)
 	require.True(t, resp)
-	req.model.AdapterPaths = runner.adapters
+	req.model.AdapterPaths = runner.model.AdapterPaths
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
-	req.model.ProjectorPaths = runner.projectors
+	req.model.ProjectorPaths = runner.model.ProjectorPaths
 	runner.loading = true
 	req.opts.NumBatch = 1234
 	resp = runner.needsReload(ctx, req)
@@ -558,11 +558,11 @@ func TestUnloadAllRunners(t *testing.T) {
 func TestUnload(t *testing.T) {
 	llm1 := &mockLlm{}
 	r1 := &runnerRef{llama: llm1}
-	r2 := &runnerRef{adapters: []string{"A"}}
+	r2 := &runnerRef{model: &Model{AdapterPaths: []string{"A"}}}
 	r1.unload()
 	require.True(t, llm1.closeCalled)
 	r2.unload()
-	require.Nil(t, r2.adapters)
+	require.Nil(t, r2.model)
 }
 
 type mockLlm struct {
@@ -578,6 +578,7 @@ type mockLlm struct {
 	closeResp         error
 	closeCalled       bool
 	estimatedVRAM     uint64
+	estimatedTotal    uint64
 }
 
 func (s *mockLlm) Ping(ctx context.Context) error             { return s.pingResp }
@@ -598,4 +599,5 @@ func (s *mockLlm) Close() error {
 	s.closeCalled = true
 	return s.closeResp
 }
-func (s *mockLlm) EstimatedVRAM() uint64 { return s.estimatedVRAM }
+func (s *mockLlm) EstimatedVRAM() uint64  { return s.estimatedVRAM }
+func (s *mockLlm) EstimatedTotal() uint64 { return s.estimatedTotal }
