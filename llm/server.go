@@ -77,15 +77,7 @@ func LoadModel(model string) (*GGML, error) {
 // The gpu list must be a single family.
 func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options) (LlamaServer, error) {
 	var err error
-	if opts.NumCtx > int(ggml.KV().ContextLength()) {
-		slog.Warn("requested context length is greater than the model's training context window size", "requested", opts.NumCtx, "training size", ggml.KV().ContextLength())
-	}
-
-	if opts.NumCtx < 4 {
-		opts.NumCtx = 4
-	}
-
-	cpuRunner := ""
+	var cpuRunner string
 	var estimatedVRAM uint64
 	var estimatedTotal uint64
 	var systemMemory uint64
