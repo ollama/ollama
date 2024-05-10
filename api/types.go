@@ -294,6 +294,7 @@ type ModelResponse struct {
 	Digest     string       `json:"digest"`
 	Details    ModelDetails `json:"details,omitempty"`
 	ExpiresAt  time.Time    `json:"expires_at,omitempty"`
+	SizeVRAM   int64        `json:"size_vram,omitempty"`
 }
 
 type TokenResponse struct {

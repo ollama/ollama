@@ -1154,7 +1154,8 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 		mr := api.ModelResponse{
 			Model:     model.ShortName,
 			Name:      model.ShortName,
-			//Size:      model.Size,
+			Size:      int64(v.estimatedTotal),
+			SizeVRAM:  int64(v.estimatedVRAM),
 			Digest:    model.Digest,
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,

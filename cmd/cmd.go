@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -333,7 +334,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("duration = %q\n", d)
 		opts.KeepAlive = &api.Duration{d}
 	}
 
@@ -524,12 +524,25 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 
 	for _, m := range models.Models {
 		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ExpiresAt, "Never")})
+			var procStr string
+			switch {
+			case m.SizeVRAM == 0:
+				procStr = "100% CPU"
+			case m.SizeVRAM == m.Size:
+				procStr = "100% GPU"
+			case m.SizeVRAM > m.Size || m.Size == 0:
+				procStr = "Unknown"
+			default:
+				sizeCPU := m.Size - m.SizeVRAM
+				cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
+				procStr = fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
+			}
+			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, format.HumanTime(m.ExpiresAt, "Never")})
 		}
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "UNTIL"})
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "UNTIL"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)

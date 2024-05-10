@@ -321,13 +321,12 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) 
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
-		adapters:        req.model.AdapterPaths,
-		projectors:      req.model.ProjectorPaths,
 		llama:           llama,
 		Options:         &req.opts,
 		sessionDuration: req.sessionDuration,
 		gpus:            gpus,
 		estimatedVRAM:   llama.EstimatedVRAM(),
+		estimatedTotal:  llama.EstimatedTotal(),
 		loading:         true,
 		refCount:        1,
 	}
@@ -413,19 +412,18 @@ type runnerRef struct {
 	refCount uint // prevent unloading if > 0
 	// unloading bool      // set to true when we are trying to unload the runner
 
-	llama         llm.LlamaServer
-	loading       bool            // True only during initial load, then false forever
-	gpus          gpu.GpuInfoList // Recorded at time of provisioning
-	estimatedVRAM uint64
+	llama          llm.LlamaServer
+	loading        bool            // True only during initial load, then false forever
+	gpus           gpu.GpuInfoList // Recorded at time of provisioning
+	estimatedVRAM  uint64
+	estimatedTotal uint64
 
 	sessionDuration time.Duration
 	expireTimer     *time.Timer
 	expiresAt       time.Time
 
-	model      *Model
-	modelPath  string
-	adapters   []string
-	projectors []string
+	model     *Model
+	modelPath string
 	*api.Options
 }
 
@@ -440,8 +438,6 @@ func (runner *runnerRef) unload() {
 	}
 	runner.model = nil
 	runner.llama = nil
-	runner.adapters = nil
-	runner.projectors = nil
 	runner.Options = nil
 	runner.gpus = nil
 }
@@ -470,8 +466,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if !reflect.DeepEqual(runner.adapters, req.model.AdapterPaths) || // have the adapters changed?
-		!reflect.DeepEqual(runner.projectors, req.model.ProjectorPaths) || // have the projectors changed?
+	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
+		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
