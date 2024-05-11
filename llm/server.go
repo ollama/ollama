@@ -288,25 +288,31 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			done:           make(chan error, 1),
 		}
 
+		s.cmd.Env = os.Environ()
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 
-		if v := strings.Join(libraryPaths, string(filepath.ListSeparator)); v != "" {
-			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+v)
-		}
+		visibleDevicesEnv, visibleDevicesEnvVal := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv()
+		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
-		if k, v := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv(); k != "" {
-			s.cmd.Env = append(s.cmd.Env, k+"="+v)
-		}
-
-		for _, ev := range os.Environ() {
-			if strings.HasPrefix(ev, "CUDA_") ||
-				strings.HasPrefix(ev, "ROCM_") ||
-				strings.HasPrefix(ev, "HIP_") ||
-				strings.HasPrefix(ev, "HSA_") ||
-				strings.HasPrefix(ev, "GGML_") {
-				s.cmd.Env = append(s.cmd.Env, ev)
+		// Update or add the path and visible devices variable with our adjusted version
+		pathNeeded := true
+		devicesNeeded := visibleDevicesEnv != ""
+		for i := range s.cmd.Env {
+			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
+			if strings.EqualFold(cmp[0], pathEnv) {
+				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
+				pathNeeded = false
+			} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
+				s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
+				devicesNeeded = false
 			}
+		}
+		if pathNeeded {
+			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
+		}
+		if devicesNeeded {
+			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd.String())
