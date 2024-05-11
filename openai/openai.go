@@ -100,22 +100,22 @@ func NewError(code int, message string) ErrorResponse {
 }
 
 func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	choice := Choice{
-		Index:   0,
-		Message: Message{Role: r.Message.Role, Content: r.Message.Content},
-	}
-
-	if r.DoneReason != "" {
-		choice.FinishReason = &r.DoneReason
-	}
-
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
 		Created:           r.CreatedAt.Unix(),
 		Model:             r.Model,
 		SystemFingerprint: "fp_ollama",
-		Choices:           []Choice{choice},
+		Choices: []Choice{{
+			Index:   0,
+			Message: Message{Role: r.Message.Role, Content: r.Message.Content},
+			FinishReason: func(reason string) *string {
+				if len(reason) > 0 {
+					return &reason
+				}
+				return nil
+			}(r.DoneReason),
+		}},
 		Usage: Usage{
 			// TODO: ollama returns 0 for prompt eval if the prompt was cached, but openai returns the actual count
 			PromptTokens:     r.PromptEvalCount,
@@ -126,22 +126,22 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
-	choice := ChunkChoice{
-		Index: 0,
-		Delta: Message{Role: r.Message.Role, Content: r.Message.Content},
-	}
-
-	if r.DoneReason != "" {
-		choice.FinishReason = &r.DoneReason
-	}
-
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
 		Created:           time.Now().Unix(),
 		Model:             r.Model,
 		SystemFingerprint: "fp_ollama",
-		Choices:           []ChunkChoice{choice},
+		Choices: []ChunkChoice{{
+			Index: 0,
+			Delta: Message{Role: "assistant", Content: r.Message.Content},
+			FinishReason: func(reason string) *string {
+				if len(reason) > 0 {
+					return &reason
+				}
+				return nil
+			}(r.DoneReason),
+		}},
 	}
 }
 
