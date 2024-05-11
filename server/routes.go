@@ -34,7 +34,11 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-var mode string = gin.DebugMode
+var (
+	mode                   string = gin.DebugMode
+	defaultSessionDuration        = 5 * time.Minute
+	allowedTypes                  = []string{"image/jpeg", "image/jpg", "image/png"}
+)
 
 type Server struct {
 	addr  net.Addr
@@ -53,8 +57,6 @@ func init() {
 	gin.SetMode(mode)
 }
 
-var defaultSessionDuration = 5 * time.Minute
-
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
 	if err := opts.FromMap(model.Options); err != nil {
@@ -69,13 +71,10 @@ func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options
 }
 
 func isSupportedImageType(image []byte) bool {
-	contentType := http.DetectContentType(image)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
-	return slices.Contains(allowedTypes, contentType)
+	return slices.Contains(allowedTypes, http.DetectContentType(image))
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
-
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
 	err := c.ShouldBindJSON(&req)
@@ -94,7 +93,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	case req.Model == "":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
-	case len(req.Format) > 0 && req.Format != "json":
+	case req.Format != "json":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be json"})
 		return
 	case req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0):
@@ -901,7 +900,7 @@ func allowedHost(host string) bool {
 		return true
 	}
 
-	var tlds = []string{
+	tlds := []string{
 		"localhost",
 		"local",
 		"internal",
@@ -1269,7 +1268,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		fn := func(r llm.CompletionResponse) {
-
 			resp := api.ChatResponse{
 				Model:      req.Model,
 				CreatedAt:  time.Now().UTC(),

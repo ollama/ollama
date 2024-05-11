@@ -116,6 +116,7 @@ func Test_Routes(t *testing.T) {
 				assert.Nil(t, err)
 
 				assert.Equal(t, 1, len(modelList.Models))
+				assert.Len(t, modelList.Models, 1)
 				assert.Equal(t, modelList.Models[0].Name, "test-model:latest")
 			},
 		},

@@ -32,6 +32,9 @@ var (
 	ErrInvalidDigestFormat = errors.New("invalid digest format")
 )
 
+// blobDigestRegEx only accept actual sha256 digests
+var blobDigestRegEx = regexp.MustCompile("^sha256[:-][0-9a-fA-F]{64}$")
+
 func ParseModelPath(name string) ModelPath {
 	mp := ModelPath{
 		ProtocolScheme: DefaultProtocolScheme,
@@ -145,28 +148,25 @@ func GetManifestPath() (string, error) {
 	return path, nil
 }
 
-func GetBlobsPath(digest string) (string, error) {
+// GetBlobsPath returns the path to a file in the model directory given its SHA256 digest
+// It returns ErrInvalidDigestFormat if the digest is not valid.
+func GetBlobsPath(digest string) (path string, err error) {
 	dir, err := modelsDir()
 	if err != nil {
 		return "", err
 	}
-
-	// only accept actual sha256 digests
-	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
-	re := regexp.MustCompile(pattern)
-
-	if digest != "" && !re.MatchString(digest) {
-		return "", ErrInvalidDigestFormat
+	dir = filepath.Join(dir, "blobs")
+	if digest != "" {
+		if !blobDigestRegEx.MatchString(digest) {
+			return "", ErrInvalidDigestFormat
+		}
+		digest = strings.ReplaceAll(digest, ":", "-")
+		path = filepath.Join(dir, digest)
+	} else {
+		path = dir
 	}
 
-	digest = strings.ReplaceAll(digest, ":", "-")
-	path := filepath.Join(dir, "blobs", digest)
-	dirPath := filepath.Dir(path)
-	if digest == "" {
-		dirPath = path
-	}
-
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 

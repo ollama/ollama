@@ -62,7 +62,6 @@ func (m *Model) IsEmbedding() bool {
 
 func (m *Model) String() string {
 	var modelfile model.File
-
 	modelfile.Commands = append(modelfile.Commands, model.Command{
 		Name: "model",
 		Args: m.ModelPath,
@@ -155,6 +154,24 @@ type ConfigV2 struct {
 	RootFS       RootFS `json:"rootfs"`
 }
 
+// ParseConfigFromFile Parse configuration from a file by specifying it digest.
+func ParseConfigFromFile(digest string) (cfg ConfigV2, _ error) {
+	filename, err := GetBlobsPath(digest)
+	if err != nil {
+		return cfg, fmt.Errorf("path: %w", err)
+	}
+	configFile, err := os.Open(filename)
+	if err != nil {
+		return cfg, fmt.Errorf("open : %w", err)
+	}
+	defer configFile.Close()
+
+	if err := json.NewDecoder(configFile).Decode(&cfg); err != nil {
+		return cfg, fmt.Errorf("decode : %w", err)
+	}
+	return
+}
+
 type RootFS struct {
 	Type    string   `json:"type"`
 	DiffIDs []string `json:"diff_ids"`
@@ -193,6 +210,10 @@ func GetModel(name string) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg, err := ParseConfigFromFile(manifest.Config.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("parse config from file: %w", err)
+	}
 
 	model := &Model{
 		Name:      mp.GetFullTagname(),
@@ -200,21 +221,7 @@ func GetModel(name string) (*Model, error) {
 		Digest:    digest,
 		Template:  "{{ .Prompt }}",
 		License:   []string{},
-	}
-
-	filename, err := GetBlobsPath(manifest.Config.Digest)
-	if err != nil {
-		return nil, err
-	}
-
-	configFile, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer configFile.Close()
-
-	if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
-		return nil, err
+		Config:    cfg,
 	}
 
 	for _, layer := range manifest.Layers {
