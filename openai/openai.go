@@ -33,13 +33,13 @@ type Message struct {
 type Choice struct {
 	Index        int     `json:"index"`
 	Message      Message `json:"message"`
-	FinishReason *string `json:"finish_reason"`
+	FinishReason *string `json:"finish_reason,omitempty"`
 }
 
 type ChunkChoice struct {
 	Index        int     `json:"index"`
 	Delta        Message `json:"delta"`
-	FinishReason *string `json:"finish_reason"`
+	FinishReason *string `json:"finish_reason,omitempty"`
 }
 
 type Usage struct {
