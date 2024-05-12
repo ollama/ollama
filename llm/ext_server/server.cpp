@@ -140,7 +140,6 @@ struct server_slot {
     std::vector<llama_token> cache_tokens;
     std::vector<completion_token_output> generated_token_probs;
 
-    bool infill = false;
     bool embedding = false;
     bool has_next_token = true;
     bool truncated = false;
@@ -187,7 +186,6 @@ struct server_slot {
         n_past                 = 0;
         n_sent_text            = 0;
         n_sent_token_probs     = 0;
-        infill                 = false;
         ga_i                   = 0;
         n_past_se              = 0;
 
@@ -598,16 +596,6 @@ struct llama_server_context
                 {"slot.n_predict", slot->n_predict},
             });
             slot->params.n_predict = slot->n_predict;
-        }
-
-        // infill
-        if (data.count("input_prefix") != 0)
-        {
-            slot->params.input_prefix = data["input_prefix"];
-        }
-        else
-        {
-            slot->params.input_prefix = "";
         }
 
         if (data.count("input_suffix") != 0)
@@ -1254,13 +1242,12 @@ struct llama_server_context
         queue_results.send(res);
     }
 
-    void request_completion(int task_id, json data, bool infill, bool embedding, int multitask_id)
+    void request_completion(int task_id, json data, bool embedding, int multitask_id)
     {
         task_server task;
         task.id = task_id;
         task.target_id = 0;
         task.data = std::move(data);
-        task.infill_mode = infill;
         task.embedding_mode = embedding;
         task.type = TASK_TYPE_COMPLETION;
         task.multitask_id = multitask_id;
@@ -1406,8 +1393,8 @@ struct llama_server_context
             json subtask_data = multiprompt_task.data;
             subtask_data["prompt"] = subtask_data["prompt"][i];
 
-            // subtasks inherit everything else (infill mode, embedding mode, etc.)
-            request_completion(subtask_ids[i], subtask_data, multiprompt_task.infill_mode, multiprompt_task.embedding_mode, multitask_id);
+            // subtasks inherit everything else (embedding mode, etc.)
+            request_completion(subtask_ids[i], subtask_data, multiprompt_task.embedding_mode, multitask_id);
         }
     }
 
@@ -1427,7 +1414,6 @@ struct llama_server_context
 
                 slot->reset();
 
-                slot->infill       = task.infill_mode;
                 slot->embedding    = task.embedding_mode;
                 slot->task_id      = task.id;
                 slot->multitask_id = task.multitask_id;
@@ -1653,8 +1639,7 @@ struct llama_server_context
                 const bool has_prompt = slot.prompt.is_array() || (slot.prompt.is_string() && !slot.prompt.get<std::string>().empty()) || !slot.images.empty();
 
                 // empty prompt passed -> release the slot and send empty response
-                // note: infill mode allows empty prompt
-                if (slot.state == IDLE && slot.command == LOAD_PROMPT && !has_prompt && !slot.infill)
+                if (slot.state == IDLE && slot.command == LOAD_PROMPT && !has_prompt)
                 {
                     slot.release();
                     slot.print_timings();
@@ -1671,33 +1656,7 @@ struct llama_server_context
                     slot.t_start_process_prompt = ggml_time_us();
                     slot.t_start_genereration = 0;
 
-                    if (slot.infill)
-                    {
-                        bool suff_rm_leading_spc = true;
-                        if (params.input_suffix.find_first_of(' ') == 0 && params.input_suffix.size() > 1)
-                        {
-                            params.input_suffix.erase(0, 1);
-                            suff_rm_leading_spc = false;
-                        }
-                        auto prefix_tokens = tokenize(slot.params.input_prefix, false);
-                        auto suffix_tokens = tokenize(slot.params.input_suffix, false);
-
-                        const int space_token = 29871; // TODO: this should not be hardcoded
-                        if (suff_rm_leading_spc && !suffix_tokens.empty() && suffix_tokens[0] == space_token) {
-                            suffix_tokens.erase(suffix_tokens.begin());
-                        }
-
-                        prefix_tokens.insert(prefix_tokens.begin(), llama_token_prefix(model));
-                        prefix_tokens.insert(prefix_tokens.begin(), llama_token_bos(model)); // always add BOS
-                        prefix_tokens.insert(prefix_tokens.end(),   llama_token_suffix(model));
-                        prefix_tokens.insert(prefix_tokens.end(),   suffix_tokens.begin(), suffix_tokens.end());
-                        prefix_tokens.push_back(llama_token_middle(model));
-                        prompt_tokens = prefix_tokens;
-                    }
-                    else
-                    {
-                        prompt_tokens = tokenize(slot.prompt, system_prompt.empty() && add_bos_token);  // add BOS if there isn't system prompt
-                    }
+                    prompt_tokens = tokenize(slot.prompt, system_prompt.empty() && add_bos_token);  // add BOS if there isn't system prompt
 
                     slot.n_prompt_tokens = prompt_tokens.size();
 
@@ -3087,7 +3046,7 @@ int main(int argc, char **argv) {
                 json data = json::parse(req.body);
                 const int task_id = llama.queue_tasks.get_new_id();
                 llama.queue_results.add_waiting_task_id(task_id);
-                llama.request_completion(task_id, data, false, false, -1);
+                llama.request_completion(task_id, data, false, -1);
                 if (!json_value(data, "stream", false)) {
                     std::string completion_text;
                     task_result result = llama.queue_results.recv(task_id);
@@ -3181,7 +3140,7 @@ int main(int argc, char **argv) {
                 // create and queue the task
                 const int task_id = llama.queue_tasks.get_new_id();
                 llama.queue_results.add_waiting_task_id(task_id);
-                llama.request_completion(task_id, { {"prompt", prompt}, { "n_predict", 0}, {"image_data", image_data} }, false, true, -1);
+                llama.request_completion(task_id, { {"prompt", prompt}, { "n_predict", 0}, {"image_data", image_data} }, true, -1);
 
                 // get the result
                 task_result result = llama.queue_results.recv(task_id);
