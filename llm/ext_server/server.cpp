@@ -897,15 +897,6 @@ struct llama_server_context
         system_need_update = true;
     }
 
-    void system_prompt_process(const json &sys_props) {
-        system_prompt  = sys_props.value("prompt", "");
-        name_user      = sys_props.value("anti_prompt", "");
-        name_assistant = sys_props.value("assistant_name", "");
-
-
-        system_prompt_notify();
-    }
-
     static size_t find_stopping_strings(const std::string &text, const size_t last_token_size,
                                         const stop_type type, server_slot &slot)
     {
@@ -1432,23 +1423,6 @@ struct llama_server_context
                     LOG_VERBOSE("no slot is available", {{"task_id", task.id}});
                     queue_tasks.defer(task);
                     break;
-                }
-
-                if (task.data.contains("system_prompt"))
-                {
-                    if (!all_slots_are_idle) {
-                        send_error(task, "system prompt can only be updated when all slots are idle");
-                        break;
-                    }
-                    system_prompt_process(task.data["system_prompt"]);
-
-                    // reset cache_tokens for all slots
-                    for (server_slot &slot : slots)
-                    {
-                        slot.cache_tokens.clear();
-                        slot.n_past    = 0;
-                        slot.n_past_se = 0;
-                    }
                 }
 
                 slot->reset();
@@ -2130,8 +2104,7 @@ static void server_print_usage(const char *argv0, const gpt_params &params,
     printf("\n");
 }
 
-static void server_params_parse(int argc, char **argv, server_params &sparams,
-                                gpt_params &params, llama_server_context& llama)
+static void server_params_parse(int argc, char **argv, server_params &sparams, gpt_params &params)
 {
     gpt_params default_params;
     server_params default_sparams;
@@ -2546,27 +2519,6 @@ static void server_params_parse(int argc, char **argv, server_params &sparams,
             }
             params.n_predict = std::stoi(argv[i]);
         }
-        else if (arg == "-spf" || arg == "--system-prompt-file")
-        {
-            if (++i >= argc)
-            {
-                invalid_param = true;
-                break;
-            }
-            std::ifstream file(argv[i]);
-            if (!file) {
-                fprintf(stderr, "error: failed to open file '%s'\n", argv[i]);
-                invalid_param = true;
-                break;
-            }
-            std::string systm_content;
-            std::copy(
-                std::istreambuf_iterator<char>(file),
-                std::istreambuf_iterator<char>(),
-                std::back_inserter(systm_content)
-            );
-            llama.system_prompt_process(json::parse(systm_content));
-        }
         else if (arg == "-ctk" || arg == "--cache-type-k") {
             params.cache_type_k = argv[++i];
         }
@@ -2803,7 +2755,7 @@ int main(int argc, char **argv) {
     // struct that contains llama context and inference
     llama_server_context llama;
 
-    server_params_parse(argc, argv, sparams, params, llama);
+    server_params_parse(argc, argv, sparams, params);
 
     if (params.model_alias == "unknown")
     {
