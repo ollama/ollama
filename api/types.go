@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"reflect"
@@ -11,6 +13,7 @@ import (
 	"time"
 )
 
+// StatusError is an error with and HTTP status code.
 type StatusError struct {
 	StatusCode   int
 	Status       string
@@ -31,43 +34,90 @@ func (e StatusError) Error() string {
 	}
 }
 
+// ImageData represents the raw binary data of an image file.
 type ImageData []byte
 
+// GenerateRequest describes a request sent by [Client.Generate]. While you
+// have to specify the Model and Prompt fields, all the other fields have
+// reasonable defaults for basic uses.
 type GenerateRequest struct {
-	Model     string      `json:"model"`
-	Prompt    string      `json:"prompt"`
-	System    string      `json:"system"`
-	Template  string      `json:"template"`
-	Context   []int       `json:"context,omitempty"`
-	Stream    *bool       `json:"stream,omitempty"`
-	Raw       bool        `json:"raw,omitempty"`
-	Format    string      `json:"format"`
-	KeepAlive *Duration   `json:"keep_alive,omitempty"`
-	Images    []ImageData `json:"images,omitempty"`
+	// Model is the model name; it should be a name familiar to Ollama from
+	// the library at https://ollama.com/library
+	Model string `json:"model"`
 
-	Options map[string]interface{} `json:"options"`
-}
+	// Prompt is the textual prompt to send to the model.
+	Prompt string `json:"prompt"`
 
-type ChatRequest struct {
-	Model     string    `json:"model"`
-	Messages  []Message `json:"messages"`
-	Stream    *bool     `json:"stream,omitempty"`
-	Format    string    `json:"format"`
+	// System overrides the model's default system message/prompt.
+	System string `json:"system"`
+
+	// Template overrides the model's default prompt template.
+	Template string `json:"template"`
+
+	// Context is the context parameter returned from a previous call to
+	// Generate call. It can be used to keep a short conversational memory.
+	Context []int `json:"context,omitempty"`
+
+	// Stream specifies whether the response is streaming; it is true by default.
+	Stream *bool `json:"stream,omitempty"`
+
+	// Raw set to true means that no formatting will be applied to the prompt.
+	Raw bool `json:"raw,omitempty"`
+
+	// Format specifies the format to return a response in.
+	Format string `json:"format"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// Images is an optional list of base64-encoded images accompanying this
+	// request, for multimodal models.
+	Images []ImageData `json:"images,omitempty"`
+
+	// Options lists model-specific options. For example, temperature can be
+	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
 }
 
+// ChatRequest describes a request sent by [Client.Chat].
+type ChatRequest struct {
+	// Model is the model name, as in [GenerateRequest].
+	Model string `json:"model"`
+
+	// Messages is the messages of the chat - can be used to keep a chat memory.
+	Messages []Message `json:"messages"`
+
+	// Stream enable streaming of returned response; true by default.
+	Stream *bool `json:"stream,omitempty"`
+
+	// Format is the format to return the response in (e.g. "json").
+	Format string `json:"format"`
+
+	// KeepAlive controls how long the model will stay loaded into memory
+	// followin the request.
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Options lists model-specific options.
+	Options map[string]interface{} `json:"options"`
+}
+
+// Message is a single message in a chat sequence. The message contains the
+// role ("system", "user", or "assistant"), the content and an optional list
+// of images.
 type Message struct {
-	Role    string      `json:"role"` // one of ["system", "user", "assistant"]
+	Role    string      `json:"role"`
 	Content string      `json:"content"`
 	Images  []ImageData `json:"images,omitempty"`
 }
 
+// ChatResponse is the response returned by [Client.Chat]. Its fields are
+// similar to [GenerateResponse].
 type ChatResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Message   Message   `json:"message"`
+	Model      string    `json:"model"`
+	CreatedAt  time.Time `json:"created_at"`
+	Message    Message   `json:"message"`
+	DoneReason string    `json:"done_reason,omitempty"`
 
 	Done bool `json:"done"`
 
@@ -91,7 +141,8 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specified in GenerateRequest, if you add a new option here add it to the API docs also
+// Options specified in [GenerateRequest], if you add a new option here add it
+// to the API docs also.
 type Options struct {
 	Runner
 
@@ -118,43 +169,57 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA            bool    `json:"numa,omitempty"`
-	NumCtx             int     `json:"num_ctx,omitempty"`
-	NumBatch           int     `json:"num_batch,omitempty"`
-	NumGQA             int     `json:"num_gqa,omitempty"`
-	NumGPU             int     `json:"num_gpu,omitempty"`
-	MainGPU            int     `json:"main_gpu,omitempty"`
-	LowVRAM            bool    `json:"low_vram,omitempty"`
-	F16KV              bool    `json:"f16_kv,omitempty"`
-	LogitsAll          bool    `json:"logits_all,omitempty"`
-	VocabOnly          bool    `json:"vocab_only,omitempty"`
-	UseMMap            bool    `json:"use_mmap,omitempty"`
-	UseMLock           bool    `json:"use_mlock,omitempty"`
-	NumThread          int     `json:"num_thread,omitempty"`
+	UseNUMA   bool `json:"numa,omitempty"`
+	NumCtx    int  `json:"num_ctx,omitempty"`
+	NumBatch  int  `json:"num_batch,omitempty"`
+	NumGPU    int  `json:"num_gpu,omitempty"`
+	MainGPU   int  `json:"main_gpu,omitempty"`
+	LowVRAM   bool `json:"low_vram,omitempty"`
+	F16KV     bool `json:"f16_kv,omitempty"`
+	LogitsAll bool `json:"logits_all,omitempty"`
+	VocabOnly bool `json:"vocab_only,omitempty"`
+	UseMMap   bool `json:"use_mmap,omitempty"`
+	UseMLock  bool `json:"use_mlock,omitempty"`
+	NumThread int  `json:"num_thread,omitempty"`
 }
 
+// EmbeddingRequest is the request passed to [Client.Embeddings].
 type EmbeddingRequest struct {
-	Model     string    `json:"model"`
-	Prompt    string    `json:"prompt"`
+	// Model is the model name.
+	Model string `json:"model"`
+
+	// Prompt is the textual prompt to embed.
+	Prompt string `json:"prompt"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
 }
 
+// EmbeddingResponse is the response from [Client.Embeddings].
 type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+// CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model     string `json:"model"`
 	Path      string `json:"path"`
 	Modelfile string `json:"modelfile"`
 	Stream    *bool  `json:"stream,omitempty"`
+	Quantize  string `json:"quantize,omitempty"`
 
 	// Name is deprecated, see Model
 	Name string `json:"name"`
+
+	// Quantization is deprecated, see Quantize
+	Quantization string `json:"quantization,omitempty"`
 }
 
+// DeleteRequest is the request passed to [Client.Delete].
 type DeleteRequest struct {
 	Model string `json:"model"`
 
@@ -162,6 +227,7 @@ type DeleteRequest struct {
 	Name string `json:"name"`
 }
 
+// ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
 	Model    string `json:"model"`
 	System   string `json:"system"`
@@ -173,6 +239,7 @@ type ShowRequest struct {
 	Name string `json:"name"`
 }
 
+// ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
 	License    string       `json:"license,omitempty"`
 	Modelfile  string       `json:"modelfile,omitempty"`
@@ -183,11 +250,13 @@ type ShowResponse struct {
 	Messages   []Message    `json:"messages,omitempty"`
 }
 
+// CopyRequest is the request passed to [Client.Copy].
 type CopyRequest struct {
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
 }
 
+// PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
@@ -199,6 +268,8 @@ type PullRequest struct {
 	Name string `json:"name"`
 }
 
+// ProgressResponse is the response passed to progress functions like
+// [PullProgressFunc] and [PushProgressFunc].
 type ProgressResponse struct {
 	Status    string `json:"status"`
 	Digest    string `json:"digest,omitempty"`
@@ -206,6 +277,7 @@ type ProgressResponse struct {
 	Completed int64  `json:"completed,omitempty"`
 }
 
+// PushRequest is the request passed to [Client.Push].
 type PushRequest struct {
 	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
@@ -217,10 +289,12 @@ type PushRequest struct {
 	Name string `json:"name"`
 }
 
+// ListResponse is the response from [Client.List].
 type ListResponse struct {
 	Models []ModelResponse `json:"models"`
 }
 
+// ModelResponse is a single model description in [ListResponse].
 type ModelResponse struct {
 	Name       string       `json:"name"`
 	Model      string       `json:"model"`
@@ -234,12 +308,25 @@ type TokenResponse struct {
 	Token string `json:"token"`
 }
 
+// GenerateResponse is the response passed into [GenerateResponseFunc].
 type GenerateResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response"`
+	// Model is the model name that generated the response.
+	Model string `json:"model"`
 
-	Done    bool  `json:"done"`
+	//CreatedAt is the timestamp of the response.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Response is the textual response itself.
+	Response string `json:"response"`
+
+	// Done specifies if the response is complete.
+	Done bool `json:"done"`
+
+	// DoneReason is the reason the model stopped generating text.
+	DoneReason string `json:"done_reason,omitempty"`
+
+	// Context is an encoding of the conversation used in this response; this
+	// can be sent in the next request to keep a conversational memory.
 	Context []int `json:"context,omitempty"`
 	CompletionProbabilities []struct {
 		Content string `json:"content"`
@@ -252,6 +339,7 @@ type GenerateResponse struct {
 	Metrics
 }
 
+// ModelDetails provides details about a model.
 type ModelDetails struct {
 	ParentModel       string   `json:"parent_model"`
 	Format            string   `json:"format"`
@@ -289,7 +377,7 @@ func (m *Metrics) Summary() {
 	}
 }
 
-var ErrInvalidOpts = fmt.Errorf("invalid options")
+var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
@@ -304,81 +392,83 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 		}
 	}
 
-	invalidOpts := []string{}
 	for key, val := range m {
-		if opt, ok := jsonOpts[key]; ok {
-			field := valueOpts.FieldByName(opt.Name)
-			if field.IsValid() && field.CanSet() {
-				if val == nil {
-					continue
-				}
+		opt, ok := jsonOpts[key]
+		if !ok {
+			slog.Warn("invalid option provided", "option", opt.Name)
+			continue
+		}
 
-				switch field.Kind() {
-				case reflect.Int:
-					switch t := val.(type) {
-					case int64:
-						field.SetInt(t)
-					case float64:
-						// when JSON unmarshals numbers, it uses float64, not int
-						field.SetInt(int64(t))
-					default:
-						return fmt.Errorf("option %q must be of type integer", key)
-					}
-				case reflect.Bool:
-					val, ok := val.(bool)
-					if !ok {
-						return fmt.Errorf("option %q must be of type boolean", key)
-					}
-					field.SetBool(val)
-				case reflect.Float32:
-					// JSON unmarshals to float64
-					val, ok := val.(float64)
-					if !ok {
-						return fmt.Errorf("option %q must be of type float32", key)
-					}
-					field.SetFloat(val)
-				case reflect.String:
-					val, ok := val.(string)
-					if !ok {
-						return fmt.Errorf("option %q must be of type string", key)
-					}
-					field.SetString(val)
-				case reflect.Slice:
-					// JSON unmarshals to []interface{}, not []string
-					val, ok := val.([]interface{})
-					if !ok {
-						return fmt.Errorf("option %q must be of type array", key)
-					}
-					// convert []interface{} to []string
-					slice := make([]string, len(val))
-					for i, item := range val {
-						str, ok := item.(string)
-						if !ok {
-							return fmt.Errorf("option %q must be of an array of strings", key)
-						}
-						slice[i] = str
-					}
-					field.Set(reflect.ValueOf(slice))
-				default:
-					return fmt.Errorf("unknown type loading config params: %v", field.Kind())
-				}
+		field := valueOpts.FieldByName(opt.Name)
+		if field.IsValid() && field.CanSet() {
+			if val == nil {
+				continue
 			}
-		} else {
-			invalidOpts = append(invalidOpts, key)
+
+			switch field.Kind() {
+			case reflect.Int:
+				switch t := val.(type) {
+				case int64:
+					field.SetInt(t)
+				case float64:
+					// when JSON unmarshals numbers, it uses float64, not int
+					field.SetInt(int64(t))
+				default:
+					return fmt.Errorf("option %q must be of type integer", key)
+				}
+			case reflect.Bool:
+				val, ok := val.(bool)
+				if !ok {
+					return fmt.Errorf("option %q must be of type boolean", key)
+				}
+				field.SetBool(val)
+			case reflect.Float32:
+				// JSON unmarshals to float64
+				val, ok := val.(float64)
+				if !ok {
+					return fmt.Errorf("option %q must be of type float32", key)
+				}
+				field.SetFloat(val)
+			case reflect.String:
+				val, ok := val.(string)
+				if !ok {
+					return fmt.Errorf("option %q must be of type string", key)
+				}
+				field.SetString(val)
+			case reflect.Slice:
+				// JSON unmarshals to []interface{}, not []string
+				val, ok := val.([]interface{})
+				if !ok {
+					return fmt.Errorf("option %q must be of type array", key)
+				}
+				// convert []interface{} to []string
+				slice := make([]string, len(val))
+				for i, item := range val {
+					str, ok := item.(string)
+					if !ok {
+						return fmt.Errorf("option %q must be of an array of strings", key)
+					}
+					slice[i] = str
+				}
+				field.Set(reflect.ValueOf(slice))
+			default:
+				return fmt.Errorf("unknown type loading config params: %v", field.Kind())
+			}
 		}
 	}
 
-	if len(invalidOpts) > 0 {
-		return fmt.Errorf("%w: %v", ErrInvalidOpts, strings.Join(invalidOpts, ", "))
-	}
 	return nil
 }
 
+// DefaultOptions is the default set of options for [GenerateRequest]; these
+// values are used unless the user specifies other values explicitly.
 func DefaultOptions() Options {
 	return Options{
 		// options set on request to runner
-		NumPredict:       -1,
-		NumKeep:          0,
+		NumPredict: -1,
+
+		// set a minimal num_keep to avoid issues on context shifts
+		NumKeep:          4,
 		Temperature:      0.8,
 		NProbs: 		  0,
 		TopK:             40,
@@ -397,22 +487,28 @@ func DefaultOptions() Options {
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:             2048,
-			NumBatch:           512,
-			NumGPU:             -1, // -1 here indicates that NumGPU should be set dynamically
-			NumGQA:             1,
-			NumThread:          0, // let the runtime decide
-			LowVRAM:            false,
-			F16KV:              true,
-			UseMLock:           false,
-			UseMMap:            true,
-			UseNUMA:            false,
+			NumCtx:    2048,
+			NumBatch:  512,
+			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
+			NumThread: 0,  // let the runtime decide
+			LowVRAM:   false,
+			F16KV:     true,
+			UseMLock:  false,
+			UseMMap:   true,
+			UseNUMA:   false,
 		},
 	}
 }
 
 type Duration struct {
 	time.Duration
+}
+
+func (d Duration) MarshalJSON() ([]byte, error) {
+	if d.Duration < 0 {
+		return []byte("-1"), nil
+	}
+	return []byte("\"" + d.Duration.String() + "\""), nil
 }
 
 func (d *Duration) UnmarshalJSON(b []byte) (err error) {
@@ -428,7 +524,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 		if t < 0 {
 			d.Duration = time.Duration(math.MaxInt64)
 		} else {
-			d.Duration = time.Duration(t * float64(time.Second))
+			d.Duration = time.Duration(int(t) * int(time.Second))
 		}
 	case string:
 		d.Duration, err = time.ParseDuration(t)
@@ -438,6 +534,8 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 		if d.Duration < 0 {
 			d.Duration = time.Duration(math.MaxInt64)
 		}
+	default:
+		return fmt.Errorf("Unsupported type: '%s'", reflect.TypeOf(v))
 	}
 
 	return nil

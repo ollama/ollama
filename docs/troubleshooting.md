@@ -83,3 +83,22 @@ If your system is configured with the "noexec" flag where Ollama stores its
 temporary executable files, you can specify an alternate location by setting
 OLLAMA_TMPDIR to a location writable by the user ollama runs as.  For example
 OLLAMA_TMPDIR=/usr/share/ollama/
+
+## Container fails to run on NVIDIA GPU
+
+Make sure you've set up the conatiner runtime first as described in [docker.md](./docker.md)
+
+Sometimes the container runtime can have difficulties initializing the GPU.
+When you check the server logs, this can show up as various error codes, such
+as "3" (not initialized), "46" (device unavailable), "100" (no device), "999"
+(unknown), or others.  The following troubleshooting techniques may help resolve
+the problem
+
+- Is the uvm driver not loaded? `sudo nvidia-modprobe -u`
+- Try reloading the nvidia_uvm driver - `sudo rmmod nvidia_uvm` then `sudo modprobe nvidia_uvm`
+- Try rebooting
+- Make sure you're running the latest nvidia drivers
+
+If none of those resolve the problem, gather additional information and file an issue:
+- Set `CUDA_ERROR_LEVEL=50` and try again to get more diagnostic logs
+- Check dmesg for any errors `sudo dmesg | grep -i nvrm` and `sudo dmesg | grep -i nvidia`

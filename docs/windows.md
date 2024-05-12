@@ -12,9 +12,9 @@ terminal application. As usual the Ollama [api](./api.md) will be served on
 
 As this is a preview release, you should expect a few bugs here and there.  If
 you run into a problem you can reach out on
-[Discord](https://discord.gg/ollama), or file an 
+[Discord](https://discord.gg/ollama), or file an
 [issue](https://github.com/ollama/ollama/issues).
-Logs will often be helpful in dianosing the problem (see
+Logs will often be helpful in diagnosing the problem (see
 [Troubleshooting](#troubleshooting) below)
 
 ## System Requirements
@@ -27,7 +27,7 @@ Logs will often be helpful in dianosing the problem (see
 
 Here's a quick example showing API access from `powershell`
 ```powershell
-(Invoke-WebRequest -method POST -Body '{"model":"llama2", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
+(Invoke-WebRequest -method POST -Body '{"model":"llama3", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
 ```
 
 ## Troubleshooting
@@ -45,3 +45,17 @@ the explorer window by hitting `<cmd>+R` and type in:
 - `explorer %LOCALAPPDATA%\Programs\Ollama` contains the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` contains models and configuration
 - `explorer %TEMP%` contains temporary executable files in one or more `ollama*` directories
+
+
+## Standalone CLI
+
+The easiest way to install Ollama on Windows is to use the `OllamaSetup.exe`
+installer. It installs in your account without requiring Administrator rights.
+We update Ollama regularly to support the latest models, and this installer will
+help you keep up to date.
+
+If you'd like to install or integrate Ollama as a service, a standalone
+`ollama-windows-amd64.zip` zip file is available containing only the Ollama CLI
+and GPU library dependencies for Nvidia and AMD. This allows for embedding
+Ollama in existing applications, or running it as a system service via `ollama
+serve` with tools such as [NSSM](https://nssm.cc/).

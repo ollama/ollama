@@ -13,95 +13,9 @@ type GGML struct {
 	model
 }
 
-func (ggml *GGML) LayerSize(prefix string) (n int64) {
-	for _, t := range ggml.Tensors() {
-		if strings.HasPrefix(t.Name, prefix) {
-			n += int64(t.size())
-		}
-	}
-
-	return
-}
-
-const (
-	fileTypeF32 uint32 = iota
-	fileTypeF16
-	fileTypeQ4_0
-	fileTypeQ4_1
-	fileTypeQ4_1_F16
-	fileTypeQ8_0 uint32 = iota + 2
-	fileTypeQ5_0
-	fileTypeQ5_1
-	fileTypeQ2_K
-	fileTypeQ3_K_S
-	fileTypeQ3_K_M
-	fileTypeQ3_K_L
-	fileTypeQ4_K_S
-	fileTypeQ4_K_M
-	fileTypeQ5_K_S
-	fileTypeQ5_K_M
-	fileTypeQ6_K
-	fileTypeIQ2_XXS
-	fileTypeIQ2_XS
-	fileTypeQ2_K_S
-	fileTypeQ3_K_XS
-	fileTypeIQ3_XXS
-)
-
-func fileType(fileType uint32) string {
-	switch fileType {
-	case fileTypeF32:
-		return "F32"
-	case fileTypeF16:
-		return "F16"
-	case fileTypeQ4_0:
-		return "Q4_0"
-	case fileTypeQ4_1:
-		return "Q4_1"
-	case fileTypeQ4_1_F16:
-		return "Q4_1_F16"
-	case fileTypeQ8_0:
-		return "Q8_0"
-	case fileTypeQ5_0:
-		return "Q5_0"
-	case fileTypeQ5_1:
-		return "Q5_1"
-	case fileTypeQ2_K:
-		return "Q2_K"
-	case fileTypeQ3_K_S:
-		return "Q3_K_S"
-	case fileTypeQ3_K_M:
-		return "Q3_K_M"
-	case fileTypeQ3_K_L:
-		return "Q3_K_L"
-	case fileTypeQ4_K_S:
-		return "Q4_K_S"
-	case fileTypeQ4_K_M:
-		return "Q4_K_M"
-	case fileTypeQ5_K_S:
-		return "Q5_K_S"
-	case fileTypeQ5_K_M:
-		return "Q5_K_M"
-	case fileTypeQ6_K:
-		return "Q6_K"
-	case fileTypeIQ2_XXS:
-		return "IQ2_XXS"
-	case fileTypeIQ2_XS:
-		return "IQ2_XS"
-	case fileTypeQ2_K_S:
-		return "Q2_K_S"
-	case fileTypeQ3_K_XS:
-		return "Q3_K_XS"
-	case fileTypeIQ3_XXS:
-		return "IQ3_XXS"
-	default:
-		return "unknown"
-	}
-}
-
 type model interface {
 	KV() KV
-	Tensors() []*Tensor
+	Tensors() Tensors
 }
 
 type KV map[string]any
@@ -131,12 +45,12 @@ func (kv KV) ParameterCount() uint64 {
 	return kv.u64("general.parameter_count")
 }
 
-func (kv KV) FileType() string {
+func (kv KV) FileType() fileType {
 	if u64 := kv.u64("general.file_type"); u64 > 0 {
 		return fileType(uint32(u64))
 	}
 
-	return "unknown"
+	return fileTypeUnknown
 }
 
 func (kv KV) BlockCount() uint64 {
@@ -165,6 +79,37 @@ func (kv KV) EmbeddingLength() uint64 {
 
 func (kv KV) ContextLength() uint64 {
 	return kv.u64(fmt.Sprintf("%s.context_length", kv.Architecture()))
+}
+
+type Tensors []*Tensor
+
+func (ts Tensors) Layers() map[string]Layer {
+	layers := make(map[string]Layer)
+	for _, t := range ts {
+		parts := strings.Split(t.Name, ".")
+		if parts[0] == "blk" {
+			// join first and second part, e.g. blk.%d
+			parts = append([]string{fmt.Sprintf("%s.%s", parts[0], parts[1])}, parts[2:]...)
+		}
+
+		if _, ok := layers[parts[0]]; !ok {
+			layers[parts[0]] = make(Layer)
+		}
+
+		layers[parts[0]][strings.Join(parts[1:], ".")] = t
+	}
+
+	return layers
+}
+
+type Layer map[string]*Tensor
+
+func (l Layer) size() (size uint64) {
+	for _, t := range l {
+		size += t.size()
+	}
+
+	return size
 }
 
 type Tensor struct {
@@ -265,6 +210,23 @@ const (
 
 var ErrUnsupportedFormat = errors.New("unsupported model format")
 
+func DetectGGMLType(b []byte) string {
+	switch binary.LittleEndian.Uint32(b[:4]) {
+	case FILE_MAGIC_GGML:
+		return "ggml"
+	case FILE_MAGIC_GGMF:
+		return "ggmf"
+	case FILE_MAGIC_GGJT:
+		return "ggjt"
+	case FILE_MAGIC_GGLA:
+		return "ggla"
+	case FILE_MAGIC_GGUF_LE, FILE_MAGIC_GGUF_BE:
+		return "gguf"
+	default:
+		return ""
+	}
+}
+
 func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
@@ -304,49 +266,80 @@ func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
 	}, offset, nil
 }
 
-func (llm GGML) GraphSize(context, batch int) (int64, bool) {
-	embeddingLength := llm.KV().EmbeddingLength()
-	headCount := llm.KV().HeadCount()
-	headCountKV := llm.KV().HeadCountKV()
-	vocabLength := len(llm.KV()["tokenizer.ggml.tokens"].([]any))
+func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload uint64) {
+	embedding := llm.KV().EmbeddingLength()
+	heads := llm.KV().HeadCount()
+	headsKV := llm.KV().HeadCountKV()
+	vocab := uint64(len(llm.KV()["tokenizer.ggml.tokens"].([]any)))
 
-	var attnQKVWeight1 uint64 = 0
-	for _, t := range llm.Tensors() {
-		if strings.HasSuffix(t.Name, ".attn_qkv.weight") && len(t.Shape) >= 2 {
-			attnQKVWeight1 = t.Shape[1]
-			break
-		}
-	}
-
-	var ffnGate1 uint64 = 0
-	for _, t := range llm.Tensors() {
-		if strings.Index(t.Name, ".ffn_gate") > 0 && len(t.Shape) >= 2 {
-			ffnGate1 = t.Shape[1]
-			break
-		}
-	}
+	layers := llm.Tensors().Layers()
 
 	switch llm.KV().Architecture() {
-	case "gemma", "command-r":
-		return 4 * int64(batch) * int64(embeddingLength+uint64(vocabLength)), true
-	case "phi2":
-		return max(
-			4*int64(batch)*int64(embeddingLength+uint64(vocabLength)),
-			4*int64(batch)*int64(1+4*embeddingLength+uint64(context)+attnQKVWeight1+uint64(context)*headCount),
-		), true
-	case "qwen2":
-		return max(
-			4*int64(batch)*int64(embeddingLength+uint64(vocabLength)),
-			4*int64(batch)*int64(1+2*embeddingLength+uint64(context)+uint64(context)*headCount),
-		), true
 	case "llama":
-		if ffnGate1 > 0 {
-			// moe
-			return 4 * int64(batch) * int64(2+3*embeddingLength+uint64(context)+uint64(context)*headCount+2*headCountKV+ffnGate1), true
+		fullOffload = 4 * batch * (1 + 4*embedding + context*(1+heads))
+
+		partialOffload = 4 * batch * embedding
+		partialOffload += max(
+			4*batch*(1+embedding+max(context, embedding))+embedding*embedding*9/16+4*context*(batch*heads+embedding/heads*headsKV),
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+		)
+
+		if ffnGateExpsWeight, ok := layers["blk.0"]["ffn_gate_exps.weight"]; ok {
+			// mixtral 8x22b
+			ff := uint64(llm.KV()["llama.feed_forward_length"].(uint32))
+			partialOffload = max(
+				3*ffnGateExpsWeight.size()+4*batch*(2*ff+headsKV+embedding+context+embedding/heads*headsKV),
+				4*(context*batch*heads+context*embedding/heads*headsKV+batch*1024+embedding/heads*headsKV*batch),
+			)
+		} else if ffnGateWeight, ok := layers["blk.0"]["ffn_gate.0.weight"]; ok {
+			// mixtral 8x7b
+			ffnGateWeight1 := ffnGateWeight.Shape[1]
+			fullOffload = 4 * batch * (2 + 3*embedding + context*(1+heads) + 2*headsKV + ffnGateWeight1)
+			partialOffload = max(
+				4*batch*(3+embedding/heads*headsKV+embedding+context*(1+heads)+ffnGateWeight1)+(embedding*embedding+3*embedding*headsKV*ffnGateWeight1)*9/16,
+				4*batch*(1+2*embedding+context*(1+heads))+embedding*(6*context*headsKV/heads+embedding*9/16),
+			)
 		}
-	
-		return 4 * int64(batch) * int64(1+4*embeddingLength+uint64(context)+uint64(context)*headCount), true
+	case "gemma":
+		fullOffload = 4 * batch * (embedding + vocab)
+		partialOffload = 4*batch*(2*embedding+vocab+1) + embedding*vocab*105/128
+	case "command-r":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(2+4*embedding+context*(1+heads)),
+		)
+
+		partialOffload = max(
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(1+2*embedding+context*(1+heads))+4*embedding*context+embedding*embedding*9/16,
+		)
+	case "qwen2":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(1+2*embedding+context+context*heads),
+		)
+
+		partialOffload = max(
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+			4*(batch*(1+2*embedding+context*(1+heads))+embedding*(1+context)),
+		)
+	case "phi2":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(1+4*embedding+context+context*heads),
+		)
+
+		partialOffload = max(
+			4*batch*(2*embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(2+3*embedding+context+context*heads),
+		)
+	case "stablelm":
+		fullOffload = 4 * batch * (context*(1+heads) + 3*embedding + 2)
+		partialOffload = max(
+			4*batch*(vocab+2*embedding),
+			fullOffload,
+		)
 	}
 
-	return 0, false
+	return
 }

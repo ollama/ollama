@@ -12,15 +12,17 @@ So let's figure out how we can use **LangChain** with Ollama to ask our question
 
 Let's start by asking a simple question that we can get an answer to from the **Llama2** model using **Ollama**. First, we need to install the **LangChain** package:
 
-`pip install langchain`
+`pip install langchain_community`
 
 Then we can create a model and ask the question:
 
 ```python
-from langchain.llms import Ollama
-ollama = Ollama(base_url='http://localhost:11434',
-model="llama2")
-print(ollama("why is the sky blue"))
+from langchain_community.llms import Ollama
+ollama = Ollama(
+    base_url='http://localhost:11434',
+    model="llama3"
+)
+print(ollama.invoke("why is the sky blue"))
 ```
 
 Notice that we are defining the model and the base URL for Ollama.

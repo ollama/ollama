@@ -25,7 +25,7 @@ chat_completion = client.chat.completions.create(
             'content': 'Say this is a test',
         }
     ],
-    model='llama2',
+    model='llama3',
 )
 ```
 
@@ -43,7 +43,7 @@ const openai = new OpenAI({
 
 const chatCompletion = await openai.chat.completions.create({
   messages: [{ role: 'user', content: 'Say this is a test' }],
-  model: 'llama2',
+  model: 'llama3',
 })
 ```
 
@@ -53,7 +53,7 @@ const chatCompletion = await openai.chat.completions.create({
 curl http://localhost:11434/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "llama2",
+        "model": "llama3",
         "messages": [
             {
                 "role": "system",
@@ -113,7 +113,7 @@ curl http://localhost:11434/v1/chat/completions \
 Before using a model, pull it locally `ollama pull`:
 
 ```shell
-ollama pull llama2
+ollama pull llama3
 ```
 
 ### Default model names
@@ -121,7 +121,7 @@ ollama pull llama2
 For tooling that relies on default OpenAI model names such as `gpt-3.5-turbo`, use `ollama cp` to copy an existing model name to a temporary name:
 
 ```
-ollama cp llama2 gpt-3.5-turbo
+ollama cp llama3 gpt-3.5-turbo
 ```
 
 Afterwards, this new model name can be specified the `model` field:

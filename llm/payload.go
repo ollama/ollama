@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"golang.org/x/exp/slices"
@@ -17,7 +18,7 @@ import (
 	"github.com/ollama/ollama/gpu"
 )
 
-var errPayloadMissing = fmt.Errorf("expected payloads not included in this build of ollama")
+var errPayloadMissing = errors.New("expected payloads not included in this build of ollama")
 
 func Init() error {
 	payloadsDir, err := gpu.PayloadsDir()
@@ -25,13 +26,15 @@ func Init() error {
 		return err
 	}
 
-	slog.Info("extracting embedded files", "dir", payloadsDir)
-	binGlob := "build/*/*/*/bin/*"
+	if runtime.GOOS != "windows" {
+		slog.Info("extracting embedded files", "dir", payloadsDir)
+		binGlob := "build/*/*/*/bin/*"
 
-	// extract server libraries
-	err = extractFiles(payloadsDir, binGlob)
-	if err != nil {
-		return fmt.Errorf("extract binaries: %v", err)
+		// extract server libraries
+		err = extractFiles(payloadsDir, binGlob)
+		if err != nil {
+			return fmt.Errorf("extract binaries: %v", err)
+		}
 	}
 
 	var variants []string
@@ -136,6 +139,23 @@ func serversForGpu(info gpu.GpuInfo) []string {
 	}
 
 	return servers
+}
+
+// Return the optimal server for this CPU architecture
+func serverForCpu() string {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return "metal"
+	}
+	variant := gpu.GetCPUVariant()
+	availableServers := availableServers()
+	if variant != "" {
+		for cmp := range availableServers {
+			if cmp == "cpu_"+variant {
+				return cmp
+			}
+		}
+	}
+	return "cpu"
 }
 
 // extract extracts the embedded files to the target directory

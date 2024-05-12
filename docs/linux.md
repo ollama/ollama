@@ -105,7 +105,7 @@ sudo chmod +x /usr/bin/ollama
 To view logs of Ollama running as a startup service, run:
 
 ```bash
-journalctl -u ollama
+journalctl -e -u ollama
 ```
 
 ## Uninstall

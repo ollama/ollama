@@ -1,3 +1,16 @@
+// Package api implements the client-side API for code wishing to interact
+// with the ollama service. The methods of the [Client] type correspond to
+// the ollama REST API as described in [the API documentation].
+// The ollama command-line client itself uses this package to interact with
+// the backend service.
+//
+// # Examples
+//
+// Several examples of using this package are available [in the GitHub
+// repository].
+//
+// [the API documentation]: https://github.com/ollama/ollama/blob/main/docs/api.md
+// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/examples
 package api
 
 import (
@@ -5,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,12 +25,15 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/version"
 )
 
+// Client encapsulates client state for interacting with the ollama
+// service. Use [ClientFromEnvironment] to create new Clients.
 type Client struct {
 	base *url.URL
 	http *http.Client
@@ -40,13 +55,46 @@ func checkError(resp *http.Response, body []byte) error {
 	return apiError
 }
 
+// ClientFromEnvironment creates a new [Client] using configuration from the
+// environment variable OLLAMA_HOST, which points to the network host and
+// port on which the ollama service is listenting. The format of this variable
+// is:
+//
+//	<scheme>://<host>:<port>
+//
+// If the variable is not specified, a default ollama host and port will be
+// used.
 func ClientFromEnvironment() (*Client, error) {
+	ollamaHost, err := GetOllamaHost()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		base: &url.URL{
+			Scheme: ollamaHost.Scheme,
+			Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
+		},
+		http: http.DefaultClient,
+	}, nil
+}
+
+type OllamaHost struct {
+	Scheme string
+	Host   string
+	Port   string
+}
+
+func GetOllamaHost() (OllamaHost, error) {
 	defaultPort := "11434"
 
-	scheme, hostport, ok := strings.Cut(os.Getenv("OLLAMA_HOST"), "://")
+	hostVar := os.Getenv("OLLAMA_HOST")
+	hostVar = strings.TrimSpace(strings.Trim(strings.TrimSpace(hostVar), "\"'"))
+
+	scheme, hostport, ok := strings.Cut(hostVar, "://")
 	switch {
 	case !ok:
-		scheme, hostport = "http", os.Getenv("OLLAMA_HOST")
+		scheme, hostport = "http", hostVar
 	case scheme == "http":
 		defaultPort = "80"
 	case scheme == "https":
@@ -66,13 +114,22 @@ func ClientFromEnvironment() (*Client, error) {
 		}
 	}
 
-	return &Client{
-		base: &url.URL{
-			Scheme: scheme,
-			Host:   net.JoinHostPort(host, port),
-		},
-		http: http.DefaultClient,
+	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 0 {
+		return OllamaHost{}, ErrInvalidHostPort
+	}
+
+	return OllamaHost{
+		Scheme: scheme,
+		Host:   host,
+		Port:   port,
 	}, nil
+}
+
+func NewClient(base *url.URL, http *http.Client) *Client {
+	return &Client{
+		base: base,
+		http: http,
+	}
 }
 
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
@@ -191,8 +248,14 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	return nil
 }
 
+// GenerateResponseFunc is a function that [Client.Generate] invokes every time
+// a response is received from the service. If this function returns an error,
+// [Client.Generate] will stop generating and return this error.
 type GenerateResponseFunc func(GenerateResponse) error
 
+// Generate generates a response for a given prompt. The req parameter should
+// be populated with prompt details. fn is called for each response (there may
+// be multiple responses, e.g. in case streaming is enabled).
 func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn GenerateResponseFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/generate", req, func(bts []byte) error {
 		var resp GenerateResponse
@@ -204,8 +267,15 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn Generate
 	})
 }
 
+// ChatResponseFunc is a function that [Client.Chat] invokes every time
+// a response is received from the service. If this function returns an error,
+// [Client.Chat] will stop generating and return this error.
 type ChatResponseFunc func(ChatResponse) error
 
+// Chat generates the next message in a chat. [ChatRequest] may contain a
+// sequence of messages which can be used to maintain chat history with a model.
+// fn is called for each response (there may be multiple responses, e.g. if case
+// streaming is enabled).
 func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/chat", req, func(bts []byte) error {
 		var resp ChatResponse
@@ -217,8 +287,14 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc
 	})
 }
 
+// PullProgressFunc is a function that [Client.Pull] invokes every time there
+// is progress with a "pull" request sent to the service. If this function
+// returns an error, [Client.Pull] will stop the process and return this error.
 type PullProgressFunc func(ProgressResponse) error
 
+// Pull downloads a model from the ollama library. fn is called each time
+// progress is made on the request and can be used to display a progress bar,
+// etc.
 func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/pull", req, func(bts []byte) error {
 		var resp ProgressResponse
@@ -230,8 +306,14 @@ func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc
 	})
 }
 
+// PushProgressFunc is a function that [Client.Push] invokes when progress is
+// made.
+// It's similar to other progress function types like [PullProgressFunc].
 type PushProgressFunc func(ProgressResponse) error
 
+// Push uploads a model to the model library; requires registering for ollama.ai
+// and adding a public key first. fn is called each time progress is made on
+// the request and can be used to display a progress bar, etc.
 func (c *Client) Push(ctx context.Context, req *PushRequest, fn PushProgressFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/push", req, func(bts []byte) error {
 		var resp ProgressResponse
@@ -243,8 +325,15 @@ func (c *Client) Push(ctx context.Context, req *PushRequest, fn PushProgressFunc
 	})
 }
 
+// CreateProgressFunc is a function that [Client.Create] invokes when progress
+// is made.
+// It's similar to other progress function types like [PullProgressFunc].
 type CreateProgressFunc func(ProgressResponse) error
 
+// Create creates a model from a [Modelfile]. fn is a progress function that
+// behaves similarly to other methods (see [Client.Pull]).
+//
+// [Modelfile]: https://github.com/ollama/ollama/blob/main/docs/modelfile.md
 func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgressFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/create", req, func(bts []byte) error {
 		var resp ProgressResponse
@@ -256,6 +345,7 @@ func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgre
 	})
 }
 
+// List lists models that are available locally.
 func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	var lr ListResponse
 	if err := c.do(ctx, http.MethodGet, "/api/tags", nil, &lr); err != nil {
@@ -264,6 +354,8 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	return &lr, nil
 }
 
+// Copy copies a model - creating a model with another name from an existing
+// model.
 func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
 	if err := c.do(ctx, http.MethodPost, "/api/copy", req, nil); err != nil {
 		return err
@@ -271,6 +363,7 @@ func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
 	return nil
 }
 
+// Delete deletes a model and its data.
 func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
 	if err := c.do(ctx, http.MethodDelete, "/api/delete", req, nil); err != nil {
 		return err
@@ -278,6 +371,7 @@ func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
 	return nil
 }
 
+// Show obtains model information, including details, modelfile, license etc.
 func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, error) {
 	var resp ShowResponse
 	if err := c.do(ctx, http.MethodPost, "/api/show", req, &resp); err != nil {
@@ -286,12 +380,16 @@ func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, err
 	return &resp, nil
 }
 
+// Hearbeat checks if the server has started and is responsive; if yes, it
+// returns nil, otherwise an error.
 func (c *Client) Heartbeat(ctx context.Context) error {
 	if err := c.do(ctx, http.MethodHead, "/", nil, nil); err != nil {
 		return err
 	}
 	return nil
 }
+
+// Embeddings generates embeddings from a model.
 func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
 	var resp EmbeddingResponse
 	if err := c.do(ctx, http.MethodPost, "/api/embeddings", req, &resp); err != nil {
@@ -300,21 +398,13 @@ func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*Embedd
 	return &resp, nil
 }
 
+// CreateBlob creates a blob from a file on the server. digest is the
+// expected SHA256 digest of the file, and r represents the file.
 func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {
-	if err := c.do(ctx, http.MethodHead, fmt.Sprintf("/api/blobs/%s", digest), nil, nil); err != nil {
-		var statusError StatusError
-		if !errors.As(err, &statusError) || statusError.StatusCode != http.StatusNotFound {
-			return err
-		}
-
-		if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil)
 }
 
+// Version returns the Ollama server version as a string.
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var version struct {
 		Version string `json:"version"`
