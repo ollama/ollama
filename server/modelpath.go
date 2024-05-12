@@ -111,6 +111,13 @@ func modelsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	defaultOllamaPath := filepath.Join(home, ".ollama")
+	dataHome, dataHomeExists := os.LookupEnv("XDG_DATA_HOME")
+
+	if _, err := os.Stat(defaultOllamaPath); errors.Is(err, os.ErrNotExist) && dataHomeExists {
+		return filepath.Join(dataHome, "ollama", "models"), nil
+	}
 	return filepath.Join(home, ".ollama", "models"), nil
 }
 

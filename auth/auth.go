@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"errors"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -21,6 +22,13 @@ func keyPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
+	}
+
+	defaultOllamaPath := filepath.Join(home, ".ollama")
+	dataHome, dataHomeExists := os.LookupEnv("XDG_DATA_HOME")
+
+	if _, err := os.Stat(defaultOllamaPath); errors.Is(err, os.ErrNotExist) && dataHomeExists {
+		return filepath.Join(dataHome, "ollama", defaultPrivateKey), nil
 	}
 
 	return filepath.Join(home, ".ollama", defaultPrivateKey), nil

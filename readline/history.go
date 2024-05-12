@@ -42,7 +42,17 @@ func (h *History) Init() error {
 		return err
 	}
 
-	path := filepath.Join(home, ".ollama", "history")
+	var path string
+
+	defaultOllamaPath := filepath.Join(home, ".ollama")
+	dataHome, dataHomeExists := os.LookupEnv("XDG_DATA_HOME")
+
+	if _, err := os.Stat(defaultOllamaPath); errors.Is(err, os.ErrNotExist) && dataHomeExists {
+		path = filepath.Join(dataHome, "ollama", "history")
+	} else {
+		path = filepath.Join(home, ".ollama", "history")
+	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
