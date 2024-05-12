@@ -56,13 +56,13 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	query.Add("nonce", nonce)
 	requestURL.RawQuery = query.Encode()
 
-	data := []byte(fmt.Sprintf("%s,%s", http.MethodGet, requestURL.RequestURI()))
+	data := []byte(fmt.Sprintf("%s,%s", http.MethodPost, requestURL.RequestURI()))
 	signature, err := auth.Sign(ctx, data)
 	if err != nil {
 		return false, updateResp
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), nil)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to check for update: %s", err))
 		return false, updateResp

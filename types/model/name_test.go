@@ -276,9 +276,9 @@ func TestFilepathAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		n.Filepath()
 	})
-	var allowedAllocs float64 = 3
+	var allowedAllocs float64 = 1
 	if runtime.GOOS == "windows" {
-		allowedAllocs = 5
+		allowedAllocs = 3
 	}
 	if allocs > allowedAllocs {
 		t.Errorf("allocs = %v; allowed %v", allocs, allowedAllocs)
