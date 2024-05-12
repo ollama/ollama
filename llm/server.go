@@ -572,18 +572,12 @@ type ImageData struct {
 }
 
 type completion struct {
-	Content      string `json:"content"`
-	CompletionProbabilities []struct {
-		Content string `json:"content"`
-		Probs   []struct {
-			Prob   float64 `json:"prob"`
-			TokStr string  `json:"tok_str"`
-		} `json:"probs"`
-	} `json:"completion_probabilities,omitempty"`
-	Model        string `json:"model"`
-	Prompt       string `json:"prompt"`
-	Stop         bool   `json:"stop"`
-	StoppedLimit bool   `json:"stopped_limit"`
+	Content                 string                      `json:"content"`
+	CompletionProbabilities []api.CompletionProbability `json:"completion_probabilities,omitempty"`
+	Model                   string                      `json:"model"`
+	Prompt                  string                      `json:"prompt"`
+	Stop                    bool                        `json:"stop"`
+	StoppedLimit            bool                        `json:"stopped_limit"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -601,20 +595,14 @@ type CompletionRequest struct {
 }
 
 type CompletionResponse struct {
-	Content            string
-	CompletionProbabilities []struct {
-		Content string `json:"content"`
-		Probs   []struct {
-			Prob   float64 `json:"prob"`
-			TokStr string  `json:"tok_str"`
-		} `json:"probs"`
-	} `json:"completion_probabilities,omitempty"`
-	DoneReason         string
-	Done               bool
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalCount          int
-	EvalDuration       time.Duration
+	Content                 string
+	CompletionProbabilities []api.CompletionProbability
+	DoneReason              string
+	Done                    bool
+	PromptEvalCount         int
+	PromptEvalDuration      time.Duration
+	EvalCount               int
+	EvalDuration            time.Duration
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -745,12 +733,10 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return ctx.Err()
 			}
 
-				log.Printf("%v", c);
-
 			if c.Content != "" {
 				fn(CompletionResponse{
-					Content: c.Content,
-						CompletionProbabilities: c.CompletionProbabilities,
+					Content:                 c.Content,
+					CompletionProbabilities: c.CompletionProbabilities,
 				})
 			}
 
@@ -761,13 +747,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				}
 
 				fn(CompletionResponse{
-					Done:               true,
+					Done:                    true,
 					CompletionProbabilities: c.CompletionProbabilities,
-					DoneReason:         doneReason,
-					PromptEvalCount:    c.Timings.PromptN,
-					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
-					EvalCount:          c.Timings.PredictedN,
-					EvalDuration:       parseDurationMs(c.Timings.PredictedMS),
+					DoneReason:              doneReason,
+					PromptEvalCount:         c.Timings.PromptN,
+					PromptEvalDuration:      parseDurationMs(c.Timings.PromptMS),
+					EvalCount:               c.Timings.PredictedN,
+					EvalDuration:            parseDurationMs(c.Timings.PredictedMS),
 				})
 				return nil
 			}
