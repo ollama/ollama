@@ -54,8 +54,10 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	}
 
 	layers := ggml.Tensors().Layers()
-	// add one layer worth of memorr as a buffer
-	memoryMinimum += layers["blk.0"].size()
+	// add one layer worth of memory as a buffer
+	if blk0, ok := layers["blk.0"]; ok {
+		memoryMinimum += blk0.size()
+	}
 
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
 	var kv uint64 = 2 * 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * ggml.KV().EmbeddingLength() / ggml.KV().HeadCount() * ggml.KV().HeadCountKV()
@@ -102,15 +104,17 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 
 	var layerCount int
 	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
-		memoryLayer := layers[fmt.Sprintf("blk.%d", i)].size()
+		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
+			memoryLayer := blk.size()
 
-		// KV is proportional to the number of layers
-		memoryLayer += kv / ggml.KV().BlockCount()
+			// KV is proportional to the number of layers
+			memoryLayer += kv / ggml.KV().BlockCount()
 
-		memoryRequiredTotal += memoryLayer
-		if (opts.NumGPU >= 0 && layerCount+1 <= opts.NumGPU) || (opts.NumGPU < 0 && memoryAvailable > memoryRequiredPartial+memoryLayer) {
-			memoryRequiredPartial += memoryLayer
-			layerCount++
+			memoryRequiredTotal += memoryLayer
+			if (opts.NumGPU >= 0 && layerCount+1 <= opts.NumGPU) || (opts.NumGPU < 0 && memoryAvailable > memoryRequiredPartial+memoryLayer) {
+				memoryRequiredPartial += memoryLayer
+				layerCount++
+			}
 		}
 	}
 
