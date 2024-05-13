@@ -89,3 +89,8 @@ Sometimes the Ollama can have difficulties initializing the GPU. When you check 
 If none of those resolve the problem, gather additional information and file an issue:
 - Set `CUDA_ERROR_LEVEL=50` and try again to get more diagnostic logs
 - Check dmesg for any errors `sudo dmesg | grep -i nvrm` and `sudo dmesg | grep -i nvidia`
+
+
+## Windows Terminal Errors
+
+Older versions of Windows 10 (e.g., 21H1) are known to have a bug where the standard terminal program does not display control characters correctly.  This can result in a long string of strings like `←[?25h←[?25l` being displayed, sometimes erroring with `The parameter is incorrect`  To resolve this problem, please update to Win 10 22H1 or newer.
