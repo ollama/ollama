@@ -21,6 +21,28 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+func createTestFile(t *testing.T, name string) string {
+	t.Helper()
+
+	f, err := os.CreateTemp(t.TempDir(), name)
+	assert.Nil(t, err)
+	defer f.Close()
+
+	err = binary.Write(f, binary.LittleEndian, []byte("GGUF"))
+	assert.Nil(t, err)
+
+	err = binary.Write(f, binary.LittleEndian, uint32(3))
+	assert.Nil(t, err)
+
+	err = binary.Write(f, binary.LittleEndian, uint64(0))
+	assert.Nil(t, err)
+
+	err = binary.Write(f, binary.LittleEndian, uint64(0))
+	assert.Nil(t, err)
+
+	return f.Name()
+}
+
 func Test_Routes(t *testing.T) {
 	type testCase struct {
 		Name     string
@@ -28,28 +50,6 @@ func Test_Routes(t *testing.T) {
 		Path     string
 		Setup    func(t *testing.T, req *http.Request)
 		Expected func(t *testing.T, resp *http.Response)
-	}
-
-	createTestFile := func(t *testing.T, name string) string {
-		t.Helper()
-
-		f, err := os.CreateTemp(t.TempDir(), name)
-		assert.Nil(t, err)
-		defer f.Close()
-
-		err = binary.Write(f, binary.LittleEndian, []byte("GGUF"))
-		assert.Nil(t, err)
-
-		err = binary.Write(f, binary.LittleEndian, uint32(3))
-		assert.Nil(t, err)
-
-		err = binary.Write(f, binary.LittleEndian, uint64(0))
-		assert.Nil(t, err)
-
-		err = binary.Write(f, binary.LittleEndian, uint64(0))
-		assert.Nil(t, err)
-
-		return f.Name()
 	}
 
 	createTestModel := func(t *testing.T, name string) {
@@ -234,6 +234,85 @@ func Test_Routes(t *testing.T) {
 			if tc.Expected != nil {
 				tc.Expected(t, resp)
 			}
+		})
+	}
+}
+
+func TestCase(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cases := []string{
+		"mistral",
+		"llama3:latest",
+		"library/phi3:q4_0",
+		"registry.ollama.ai/library/gemma:q5_K_M",
+		// TODO: host:port currently fails on windows (#4107)
+		// "localhost:5000/alice/bob:latest",
+	}
+
+	var s Server
+	for _, tt := range cases {
+		t.Run(tt, func(t *testing.T) {
+			w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+				Name:      tt,
+				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t)),
+				Stream:    &stream,
+			})
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200 got %d", w.Code)
+			}
+
+			expect, err := json.Marshal(map[string]string{"error": "a model with that name already exists"})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			t.Run("create", func(t *testing.T) {
+				w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+					Name:      strings.ToUpper(tt),
+					Modelfile: fmt.Sprintf("FROM %s", createBinFile(t)),
+					Stream:    &stream,
+				})
+
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("expected status 500 got %d", w.Code)
+				}
+
+				if !bytes.Equal(w.Body.Bytes(), expect) {
+					t.Fatalf("expected error %s got %s", expect, w.Body.String())
+				}
+			})
+
+			t.Run("pull", func(t *testing.T) {
+				w := createRequest(t, s.PullModelHandler, api.PullRequest{
+					Name:   strings.ToUpper(tt),
+					Stream: &stream,
+				})
+
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("expected status 500 got %d", w.Code)
+				}
+
+				if !bytes.Equal(w.Body.Bytes(), expect) {
+					t.Fatalf("expected error %s got %s", expect, w.Body.String())
+				}
+			})
+
+			t.Run("copy", func(t *testing.T) {
+				w := createRequest(t, s.CopyModelHandler, api.CopyRequest{
+					Source:      tt,
+					Destination: strings.ToUpper(tt),
+				})
+
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("expected status 500 got %d", w.Code)
+				}
+
+				if !bytes.Equal(w.Body.Bytes(), expect) {
+					t.Fatalf("expected error %s got %s", expect, w.Body.String())
+				}
+			})
 		})
 	}
 }
