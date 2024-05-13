@@ -30,35 +30,76 @@ func createManifest(t *testing.T, path, name string) {
 }
 
 func TestManifests(t *testing.T) {
-	cases := map[string][]string{
+	cases := map[string]struct {
+		ps               []string
+		wantValidCount   int
+		wantInvalidCount int
+	}{
 		"empty": {},
 		"single": {
-			filepath.Join("host", "namespace", "model", "tag"),
+			ps: []string{
+				filepath.Join("host", "namespace", "model", "tag"),
+			},
+			wantValidCount: 1,
 		},
 		"multiple": {
-			filepath.Join("registry.ollama.ai", "library", "llama3", "latest"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q4_0"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q4_1"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q8_0"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q5_0"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q5_1"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q2_K"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q3_K_S"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q3_K_M"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q3_K_L"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q4_K_S"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q4_K_M"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q5_K_S"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q5_K_M"),
-			filepath.Join("registry.ollama.ai", "library", "llama3", "q6_K"),
+			ps: []string{
+				filepath.Join("registry.ollama.ai", "library", "llama3", "latest"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q4_0"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q4_1"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q8_0"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q5_0"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q5_1"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q2_K"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q3_K_S"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q3_K_M"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q3_K_L"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q4_K_S"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q4_K_M"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q5_K_S"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q5_K_M"),
+				filepath.Join("registry.ollama.ai", "library", "llama3", "q6_K"),
+			},
+			wantValidCount: 15,
 		},
 		"hidden": {
-			filepath.Join("host", "namespace", "model", "tag"),
-			filepath.Join("host", "namespace", "model", ".hidden"),
+			ps: []string{
+				filepath.Join("host", "namespace", "model", "tag"),
+				filepath.Join("host", "namespace", "model", ".hidden"),
+			},
+			wantValidCount:   1,
+			wantInvalidCount: 1,
 		},
 		"subdir": {
-			filepath.Join("host", "namespace", "model", "tag", "one"),
-			filepath.Join("host", "namespace", "model", "tag", "another", "one"),
+			ps: []string{
+				filepath.Join("host", "namespace", "model", "tag", "one"),
+				filepath.Join("host", "namespace", "model", "tag", "another", "one"),
+			},
+			wantInvalidCount: 2,
+		},
+		"upper tag": {
+			ps: []string{
+				filepath.Join("host", "namespace", "model", "TAG"),
+			},
+			wantValidCount: 1,
+		},
+		"upper model": {
+			ps: []string{
+				filepath.Join("host", "namespace", "MODEL", "tag"),
+			},
+			wantValidCount: 1,
+		},
+		"upper namespace": {
+			ps: []string{
+				filepath.Join("host", "NAMESPACE", "model", "tag"),
+			},
+			wantValidCount: 1,
+		},
+		"upper host": {
+			ps: []string{
+				filepath.Join("HOST", "namespace", "model", "tag"),
+			},
+			wantValidCount: 1,
 		},
 	}
 
@@ -67,8 +108,8 @@ func TestManifests(t *testing.T) {
 			d := t.TempDir()
 			t.Setenv("OLLAMA_MODELS", d)
 
-			for _, want := range wants {
-				createManifest(t, d, want)
+			for _, p := range wants.ps {
+				createManifest(t, d, p)
 			}
 
 			ms, err := Manifests()
@@ -81,13 +122,28 @@ func TestManifests(t *testing.T) {
 				ns = append(ns, k)
 			}
 
-			for _, want := range wants {
-				n := model.ParseNameFromFilepath(want)
-				if !n.IsValid() && slices.Contains(ns, n) {
-					t.Errorf("unexpected invalid name: %s", want)
-				} else if n.IsValid() && !slices.Contains(ns, n) {
-					t.Errorf("missing valid name: %s", want)
+			var gotValidCount, gotInvalidCount int
+			for _, p := range wants.ps {
+				n := model.ParseNameFromFilepath(p)
+				if n.IsValid() {
+					gotValidCount++
+				} else {
+					gotInvalidCount++
 				}
+
+				if !n.IsValid() && slices.Contains(ns, n) {
+					t.Errorf("unexpected invalid name: %s", p)
+				} else if n.IsValid() && !slices.Contains(ns, n) {
+					t.Errorf("missing valid name: %s", p)
+				}
+			}
+
+			if gotValidCount != wants.wantValidCount {
+				t.Errorf("got valid count %d, want %d", gotValidCount, wants.wantValidCount)
+			}
+
+			if gotInvalidCount != wants.wantInvalidCount {
+				t.Errorf("got invalid count %d, want %d", gotInvalidCount, wants.wantInvalidCount)
 			}
 		})
 	}
