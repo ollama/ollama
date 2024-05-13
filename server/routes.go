@@ -1046,14 +1046,6 @@ func Serve(ln net.Listener) error {
 
 	slog.SetDefault(slog.New(handler))
 
-	blobsDir, err := GetBlobsPath("")
-	if err != nil {
-		return err
-	}
-	if err := fixBlobs(blobsDir); err != nil {
-		return err
-	}
-
 	if !envconfig.NoPrune {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
@@ -1070,12 +1062,23 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
+	// MIGRATION
+	blobsDir, err := GetBlobsPath("")
+	if err != nil {
+		return err
+	}
+
+	if err := fixBlobs(blobsDir); err != nil {
+		return err
+	}
+
 	// migrate registry.ollama.ai to ollama.com
 	if err := migrateRegistryDomain(); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
+	// END MIGRATION
 
 	ctx, done := context.WithCancel(context.Background())
 	schedCtx, schedDone := context.WithCancel(ctx)
