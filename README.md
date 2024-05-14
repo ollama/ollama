@@ -299,7 +299,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) (Local Chat with multiple PDFs using Ollama and RAG)
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
 - [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
-
+- [QOllama](https://github.com/farleyrunkel/qollama) (Qt-based client for Ollama)
+  
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
