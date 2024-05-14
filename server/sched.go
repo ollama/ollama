@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,13 +15,13 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/server/envconfig"
 	"golang.org/x/exp/slices"
 )
 
 type LlmRequest struct {
 	ctx             context.Context //nolint:containedctx
 	model           *Model
-	ggml            *llm.GGML // TODO - how large is this, and do we need to free it after we've finished loading?
 	opts            api.Options
 	sessionDuration time.Duration
 	successCh       chan *runnerRef
@@ -39,31 +37,19 @@ type Scheduler struct {
 	loaded   map[string]*runnerRef
 	loadedMu sync.Mutex
 
-	loadFn      func(req *LlmRequest, gpus gpu.GpuInfoList)
+	loadFn      func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList)
 	newServerFn func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options) (llm.LlamaServer, error)
 	getGpuFn    func() gpu.GpuInfoList
 }
 
-// TODO set this to zero after a release or two, to enable multiple models by default
-var loadedMax = 1          // Maximum runners; < 1 maps to as many as will fit in VRAM (unlimited for CPU runners)
-var maxQueuedRequests = 10 // TODO configurable
+var ErrMaxQueue = fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
 
 func InitScheduler(ctx context.Context) *Scheduler {
-	maxRunners := os.Getenv("OLLAMA_MAX_LOADED_MODELS")
-	if maxRunners != "" {
-		m, err := strconv.Atoi(maxRunners)
-		if err != nil {
-			slog.Error("invalid setting", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "error", err)
-		} else {
-			loadedMax = m
-		}
-	}
-
 	sched := &Scheduler{
-		pendingReqCh:  make(chan *LlmRequest, maxQueuedRequests),
-		finishedReqCh: make(chan *LlmRequest, maxQueuedRequests),
-		expiredCh:     make(chan *runnerRef, maxQueuedRequests),
-		unloadedCh:    make(chan interface{}, maxQueuedRequests),
+		pendingReqCh:  make(chan *LlmRequest, envconfig.MaxQueuedRequests),
+		finishedReqCh: make(chan *LlmRequest, envconfig.MaxQueuedRequests),
+		expiredCh:     make(chan *runnerRef, envconfig.MaxQueuedRequests),
+		unloadedCh:    make(chan interface{}, envconfig.MaxQueuedRequests),
 		loaded:        make(map[string]*runnerRef),
 		newServerFn:   llm.NewLlamaServer,
 		getGpuFn:      gpu.GetGPUInfo,
@@ -74,24 +60,26 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration time.Duration) (chan *runnerRef, chan error) {
-	ggml, err := llm.LoadModel(model.ModelPath)
+	// allocate a large enough kv cache for all parallel requests
+	if opts.NumCtx < 4 {
+		opts.NumCtx = 4
+	}
+
+	opts.NumCtx = opts.NumCtx * envconfig.NumParallel
+
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
-		ggml:            ggml,
 		opts:            opts,
 		sessionDuration: sessionDuration,
 		successCh:       make(chan *runnerRef),
 		errCh:           make(chan error, 1),
 	}
-	if err != nil {
-		req.errCh <- err
-		return req.successCh, req.errCh
-	}
+
 	select {
 	case s.pendingReqCh <- req:
 	default:
-		req.errCh <- fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
+		req.errCh <- ErrMaxQueue
 	}
 	return req.successCh, req.errCh
 }
@@ -116,6 +104,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			return
 		case pending := <-s.pendingReqCh:
 			// Block other requests until we get this pending request running
+
+			if pending.ctx.Err() != nil {
+				slog.Debug("pending request cancelled or timed out, skipping scheduling")
+				continue
+			}
+
 			for {
 				var runnerToExpire *runnerRef
 				s.loadedMu.Lock()
@@ -130,31 +124,50 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
-				} else if loadedCount == 0 {
-					slog.Debug("loading first model", "model", pending.model.ModelPath)
-					gpus := s.getGpuFn()
-					g := pickBestFitGPUs(pending, gpus)
-					if g != nil {
-						gpus = g
-					}
-					s.loadFn(pending, gpus)
-					break
-				} else if loadedMax > 0 && loadedCount >= loadedMax {
+				} else if envconfig.MaxRunners > 0 && loadedCount >= envconfig.MaxRunners {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
-					runnerToExpire = s.findRunnerToUnload(pending)
+					runnerToExpire = s.findRunnerToUnload()
 				} else {
-					// More than one loaded model, so we have to see if the new one fits
+					// Either no models are loaded or below envconfig.MaxRunners
 					// Get a refreshed GPU list
 					gpus := s.getGpuFn()
-					// Update free memory from currently loaded models
-					s.updateFreeSpace(gpus)
-					gpus = pickBestFitGPUs(pending, gpus)
-					if gpus != nil {
-						slog.Debug("new model fits with existing models, loading")
-						s.loadFn(pending, gpus)
+
+					// Load model for fitting
+					ggml, err := llm.LoadModel(pending.model.ModelPath)
+					if err != nil {
+						pending.errCh <- err
 						break
 					}
-					runnerToExpire = s.findRunnerToUnload(pending)
+
+					// If we're CPU only mode, just limit by envconfig.MaxRunners above
+					// TODO handle system memory exhaustion
+					if (len(gpus) == 1 && gpus[0].Library == "cpu") || pending.opts.NumGPU == 0 {
+						slog.Debug("cpu mode with existing models, loading")
+						s.loadFn(pending, ggml, gpus)
+						break
+					}
+
+					// No models loaded. Load the model but prefer the best fit.
+					if loadedCount == 0 {
+						slog.Debug("loading first model", "model", pending.model.ModelPath)
+						g := pickBestFitGPUs(pending, ggml, gpus)
+						if g != nil {
+							gpus = g
+						}
+						s.loadFn(pending, ggml, gpus)
+						break
+					}
+
+					// More than one loaded model, so we have to see if the new one fits
+					// Update free memory from currently loaded models
+					s.updateFreeSpace(gpus)
+					gpus = pickBestFitGPUs(pending, ggml, gpus)
+					if gpus != nil {
+						slog.Debug("new model fits with existing models, loading")
+						s.loadFn(pending, ggml, gpus)
+						break
+					}
+					runnerToExpire = s.findRunnerToUnload()
 				}
 
 				if runnerToExpire == nil {
@@ -164,7 +177,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				}
 				// Trigger an expiration to unload once it's done
 				runnerToExpire.refMu.Lock()
-				slog.Debug("resetting model to expire immediately to make room", "model", runnerToExpire.model, "refCount", runnerToExpire.refCount)
+				slog.Debug("resetting model to expire immediately to make room", "modelPath", runnerToExpire.modelPath, "refCount", runnerToExpire.refCount)
 				if runnerToExpire.expireTimer != nil {
 					runnerToExpire.expireTimer.Stop()
 					runnerToExpire.expireTimer = nil
@@ -177,13 +190,13 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				// Wait for the unload to happen
 				// Note: at this point we're queueing up all incoming requests, even if they were for
 				// a different model that's loaded and not scheduled to be removed.
-				slog.Debug("waiting for pending requests to complete and unload to occur", "model", runnerToExpire.model)
+				slog.Debug("waiting for pending requests to complete and unload to occur", "modelPath", runnerToExpire.modelPath)
 				select {
 				case <-ctx.Done():
 					slog.Debug("shutting down scheduler pending loop")
 					return
 				case <-s.unloadedCh:
-					slog.Debug("unload completed", "model", runnerToExpire.model)
+					slog.Debug("unload completed", "modelPath", runnerToExpire.modelPath)
 					continue
 				}
 			}
@@ -206,43 +219,46 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			runner := s.loaded[finished.model.ModelPath]
 			s.loadedMu.Unlock()
 			if runner == nil {
-				slog.Error("finished requeset signal received after model unloaded", "model", finished.model.ModelPath)
+				slog.Error("finished requeset signal received after model unloaded", "modelPath", finished.model.ModelPath)
 				continue
 			}
 			runner.refMu.Lock()
 			runner.refCount--
 			if runner.refCount <= 0 {
 				if runner.sessionDuration <= 0 {
-					slog.Debug("runner with zero duration has gone idle, expiring to unload", "model", runner.model)
+					slog.Debug("runner with zero duration has gone idle, expiring to unload", "modelPath", runner.modelPath)
 					if runner.expireTimer != nil {
 						runner.expireTimer.Stop()
 						runner.expireTimer = nil
 					}
 					s.expiredCh <- runner
 				} else if runner.expireTimer == nil {
-					slog.Debug("runner with non-zero duration has gone idle, adding timer", "model", runner.model, "duration", runner.sessionDuration)
+					slog.Debug("runner with non-zero duration has gone idle, adding timer", "modelPath", runner.modelPath, "duration", runner.sessionDuration)
 					runner.expireTimer = time.AfterFunc(runner.sessionDuration, func() {
-						slog.Debug("timer expired, expiring to unload", "model", runner.model)
+						slog.Debug("timer expired, expiring to unload", "modelPath", runner.modelPath)
 						runner.refMu.Lock()
 						defer runner.refMu.Unlock()
 						if runner.expireTimer != nil {
 							runner.expireTimer.Stop()
+							runner.expireTimer = nil
 						}
 						s.expiredCh <- runner
 					})
+					runner.expiresAt = time.Now().Add(runner.sessionDuration)
 				} else {
-					slog.Debug("runner with non-zero duration has gone idle, resetting timer", "model", runner.model, "duration", runner.sessionDuration)
+					slog.Debug("runner with non-zero duration has gone idle, resetting timer", "modelPath", runner.modelPath, "duration", runner.sessionDuration)
 					runner.expireTimer.Reset(runner.sessionDuration)
+					runner.expiresAt = time.Now().Add(runner.sessionDuration)
 				}
 			}
-			slog.Debug("after processing request finished event", "model", runner.model, "refCount", runner.refCount)
+			slog.Debug("after processing request finished event", "modelPath", runner.modelPath, "refCount", runner.refCount)
 			runner.refMu.Unlock()
 		case runner := <-s.expiredCh:
-			slog.Debug("runner expired event received", "model", runner.model)
+			slog.Debug("runner expired event received", "modelPath", runner.modelPath)
 			runner.refMu.Lock()
 			if runner.refCount > 0 {
 				// Shouldn't happen, but safeguard to ensure no leaked runners
-				slog.Debug("expired event with positive ref count, retrying", "model", runner.model, "refCount", runner.refCount)
+				slog.Debug("expired event with positive ref count, retrying", "modelPath", runner.modelPath, "refCount", runner.refCount)
 				go func(runner *runnerRef) {
 					// We can't unload yet, but want to as soon as the current request completes
 					// So queue up another expired event
@@ -253,14 +269,17 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				continue
 			}
 
-			slog.Debug("got lock to unload", "model", runner.model)
-			runner.unload()
 			s.loadedMu.Lock()
-			delete(s.loaded, runner.model)
+			slog.Debug("got lock to unload", "modelPath", runner.modelPath)
+			finished := runner.waitForVRAMRecovery()
+			runner.unload()
+			delete(s.loaded, runner.modelPath)
 			s.loadedMu.Unlock()
-			slog.Debug("runner released", "model", runner.model)
+			slog.Debug("runner released", "modelPath", runner.modelPath)
 			runner.refMu.Unlock()
-			slog.Debug("sending an unloaded event", "model", runner.model)
+
+			<-finished
+			slog.Debug("sending an unloaded event", "modelPath", runner.modelPath)
 			s.unloadedCh <- struct{}{}
 		}
 	}
@@ -273,6 +292,10 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 	runner.refCount++
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	runner.sessionDuration = pending.sessionDuration
 	pending.successCh <- runner
 	go func() {
@@ -282,8 +305,8 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	}()
 }
 
-func (s *Scheduler) load(req *LlmRequest, gpus gpu.GpuInfoList) {
-	llama, err := s.newServerFn(gpus, req.model.ModelPath, req.ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts)
+func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) {
+	llama, err := s.newServerFn(gpus, req.model.ModelPath, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts)
 	if err != nil {
 		// some older models are not compatible with newer versions of llama.cpp
 		// show a generalized compatibility error until there is a better way to
@@ -295,18 +318,20 @@ func (s *Scheduler) load(req *LlmRequest, gpus gpu.GpuInfoList) {
 		req.errCh <- err
 		return
 	}
-	runner := &runnerRef{}
-	runner.model = req.model.ModelPath
-	runner.adapters = req.model.AdapterPaths
-	runner.projectors = req.model.ProjectorPaths
-	runner.llama = llama
-	runner.Options = &req.opts
-	runner.sessionDuration = req.sessionDuration
-	runner.gpus = gpus
-	runner.estimatedVRAM = llama.EstimatedVRAM()
-	runner.loading = true
-	runner.refCount = 1
+	runner := &runnerRef{
+		model:           req.model,
+		modelPath:       req.model.ModelPath,
+		llama:           llama,
+		Options:         &req.opts,
+		sessionDuration: req.sessionDuration,
+		gpus:            gpus,
+		estimatedVRAM:   llama.EstimatedVRAM(),
+		estimatedTotal:  llama.EstimatedTotal(),
+		loading:         true,
+		refCount:        1,
+	}
 	runner.refMu.Lock()
+
 	s.loadedMu.Lock()
 	s.loaded[req.model.ModelPath] = runner
 	slog.Info("loaded runners", "count", len(s.loaded))
@@ -318,7 +343,7 @@ func (s *Scheduler) load(req *LlmRequest, gpus gpu.GpuInfoList) {
 			slog.Error("error loading llama server", "error", err)
 			runner.refCount--
 			req.errCh <- err
-			slog.Debug("triggering expiration for failed load", "model", runner.model)
+			slog.Debug("triggering expiration for failed load", "model", runner.modelPath)
 			s.expiredCh <- runner
 			return
 		}
@@ -387,28 +412,32 @@ type runnerRef struct {
 	refCount uint // prevent unloading if > 0
 	// unloading bool      // set to true when we are trying to unload the runner
 
-	llama         llm.LlamaServer
-	loading       bool            // True only during initial load, then false forever
-	gpus          gpu.GpuInfoList // Recorded at time of provisioning
-	estimatedVRAM uint64
+	llama          llm.LlamaServer
+	loading        bool            // True only during initial load, then false forever
+	gpus           gpu.GpuInfoList // Recorded at time of provisioning
+	estimatedVRAM  uint64
+	estimatedTotal uint64
 
 	sessionDuration time.Duration
 	expireTimer     *time.Timer
+	expiresAt       time.Time
 
-	model      string
-	adapters   []string
-	projectors []string
+	model     *Model
+	modelPath string
 	*api.Options
 }
 
 // The refMu must already be held when calling unload
 func (runner *runnerRef) unload() {
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
 	if runner.llama != nil {
 		runner.llama.Close()
 	}
+	runner.model = nil
 	runner.llama = nil
-	runner.adapters = nil
-	runner.projectors = nil
 	runner.Options = nil
 	runner.gpus = nil
 }
@@ -417,24 +446,89 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	slog.Debug("evaluating already loaded", "model", req.model.ModelPath)
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
-	// Ignore the NumGPU settings for comparison
-	optsExisting := runner.Options.Runner
-	optsExisting.NumGPU = -1
-	optsNew := req.opts.Runner
-	optsNew.NumGPU = -1
+
 	timeout := 10 * time.Second
 	if runner.loading {
 		timeout = 2 * time.Minute // Initial load can take a long time for big models on slow systems...
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout) // BUG -
+
+	if runner.Options == nil {
+		return true
+	}
+
+	// Don't reload runner if num_gpu=-1 was provided
+	optsExisting := runner.Options.Runner
+	optsNew := req.opts.Runner
+	if optsNew.NumGPU < 0 {
+		optsExisting.NumGPU = -1
+		optsNew.NumGPU = -1
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if !reflect.DeepEqual(runner.adapters, req.model.AdapterPaths) || // have the adapters changed?
-		!reflect.DeepEqual(runner.projectors, req.model.ProjectorPaths) || // have the projectors changed?
+	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
+		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}
+
 	return false
+}
+
+// Free memory reporting on GPUs can lag for a while even after the runner
+// exits, so we have to keep checking until we see the available memory recover,
+// otherwise subsequent model loads will get far less layers loaded or worse
+// case, may completely fall back to CPU mode.
+// This routine must be called before the runner unloads so it can establish
+// a before and after GPU memory allocation.  The returned channel
+// will be notified when we're done waiting, or have timed out and should
+// proceed anyway
+func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
+	finished := make(chan interface{}, 1)
+
+	// CPU or Metal don't need checking, so no waiting required
+	if len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal") {
+		finished <- struct{}{}
+		return finished
+	}
+	start := time.Now()
+
+	// Establish a baseline before we unload
+	gpusBefore := gpu.GetGPUInfo()
+	var totalMemoryBefore, freeMemoryBefore uint64
+	for _, gpu := range gpusBefore {
+		totalMemoryBefore += gpu.TotalMemory
+		freeMemoryBefore += gpu.FreeMemory
+	}
+	go func() {
+		expiresAt := start.Add(5 * time.Second) // typical convergence is 0.5-1.5s
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			if time.Now().After(expiresAt) {
+				slog.Warn("gpu VRAM usage didn't recover within timeout", "seconds", time.Since(start).Seconds())
+				finished <- struct{}{}
+			}
+
+			// Query GPUs, look for free to go back up
+			gpusNow := gpu.GetGPUInfo()
+			var totalMemoryNow, freeMemoryNow uint64
+			for _, gpu := range gpusNow {
+				totalMemoryNow += gpu.TotalMemory
+				freeMemoryNow += gpu.FreeMemory
+			}
+			// If we're within ~80% of the estimated memory usage recovered, bail out
+			if float32(freeMemoryNow-freeMemoryBefore) > float32(runner.estimatedVRAM)*0.8 {
+				slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()))
+				finished <- struct{}{}
+				return
+			}
+		}
+	}()
+	return finished
+
 }
 
 type ByDuration []*runnerRef
@@ -454,7 +548,7 @@ func (a ByDuration) Less(i, j int) bool {
 
 // pickBestFitGPUs will try to find the optimal placement of the model in the available GPUs where the model fully fits
 // If the model can not be fit fully within the available GPU(s) nil is returned
-func pickBestFitGPUs(req *LlmRequest, gpus gpu.GpuInfoList) gpu.GpuInfoList {
+func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) gpu.GpuInfoList {
 	var estimatedVRAM uint64
 	for _, gl := range gpus.ByLibrary() {
 		var ok bool
@@ -466,7 +560,7 @@ func pickBestFitGPUs(req *LlmRequest, gpus gpu.GpuInfoList) gpu.GpuInfoList {
 
 		// First attempt to fit the model into a single GPU
 		for _, g := range sgl {
-			if ok, estimatedVRAM = llm.PredictServerFit([]gpu.GpuInfo{g}, req.ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
+			if ok, estimatedVRAM = llm.PredictServerFit([]gpu.GpuInfo{g}, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
 				slog.Debug("new model will fit in available VRAM in single GPU, loading", "model", req.model.ModelPath, "gpu", g.ID, "available", g.FreeMemory, "required", format.HumanBytes2(estimatedVRAM))
 				return []gpu.GpuInfo{g}
 			}
@@ -477,16 +571,16 @@ func pickBestFitGPUs(req *LlmRequest, gpus gpu.GpuInfoList) gpu.GpuInfoList {
 		// - try subsets of GPUs instead of just falling back to 1 or all in a family
 
 		// Now try all the GPUs
-		if ok, estimatedVRAM = llm.PredictServerFit(gl, req.ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
-			slog.Debug("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", gl[0].Library, "required", format.HumanBytes2(estimatedVRAM))
-			return gl
+		if ok, estimatedVRAM = llm.PredictServerFit(sgl, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
+			slog.Debug("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", sgl[0].Library, "required", format.HumanBytes2(estimatedVRAM))
+			return sgl
 		}
 	}
 	return nil
 }
 
 // findRunnerToUnload finds a runner to unload to make room for a new model
-func (s *Scheduler) findRunnerToUnload(req *LlmRequest) *runnerRef {
+func (s *Scheduler) findRunnerToUnload() *runnerRef {
 	s.loadedMu.Lock()
 	runnerList := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {

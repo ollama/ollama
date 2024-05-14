@@ -7,6 +7,8 @@
 $ErrorActionPreference = "Stop"
 
 function checkEnv() {
+    $script:TARGET_ARCH=$Env:PROCESSOR_ARCHITECTURE.ToLower()
+    Write-host "Building for ${script:TARGET_ARCH}"
     write-host "Locating required tools and paths"
     $script:SRC_DIR=$PWD
     if (!$env:VCToolsRedistDir) {
@@ -30,7 +32,7 @@ function checkEnv() {
     
     $script:INNO_SETUP_DIR=(get-item "C:\Program Files*\Inno Setup*\")[0]
 
-    $script:DEPS_DIR="${script:SRC_DIR}\dist\windows-amd64"
+    $script:DEPS_DIR="${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}"
     $env:CGO_ENABLED="1"
     echo "Checking version"
     if (!$env:VERSION) {
@@ -81,8 +83,8 @@ function buildOllama() {
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
-    New-Item -ItemType Directory -Path .\dist\windows-amd64\ -Force
-    cp .\ollama.exe .\dist\windows-amd64\ollama-windows-amd64.exe
+    New-Item -ItemType Directory -Path .\dist\windows-${script:TARGET_ARCH}\ -Force
+    cp .\ollama.exe .\dist\windows-${script:TARGET_ARCH}\
 }
 
 function buildApp() {
@@ -109,9 +111,6 @@ function gatherDependencies() {
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DEPS_DIR}\"
     cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DEPS_DIR}\"
 
-    cp "${script:NVIDIA_DIR}\cudart64_*.dll" "${script:DEPS_DIR}\"
-    cp "${script:NVIDIA_DIR}\cublas64_*.dll" "${script:DEPS_DIR}\"
-    cp "${script:NVIDIA_DIR}\cublasLt64_*.dll" "${script:DEPS_DIR}\"
 
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
     if ("${env:KEY_CONTAINER}") {
@@ -123,15 +122,6 @@ function gatherDependencies() {
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
-    if ($null -ne $env:HIP_PATH) {
-        # Assumes v5.7, may need adjustments for v6
-        rm -ea 0 -recurse -force -path "${script:DEPS_DIR}\rocm\"
-        md "${script:DEPS_DIR}\rocm\rocblas\library\" -ea 0 > $null
-        cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:DEPS_DIR}\rocm\"
-        cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:DEPS_DIR}\rocm\"
-        # amdhip64.dll dependency comes from the driver and must be installed on the host to use AMD GPUs
-        cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:DEPS_DIR}\rocm\rocblas\library\"
-    }
 }
 
 function buildInstaller() {
@@ -139,16 +129,16 @@ function buildInstaller() {
     cd "${script:SRC_DIR}\app"
     $env:PKG_VERSION=$script:PKG_VERSION
     if ("${env:KEY_CONTAINER}") {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\ollama.iss
+        & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\ollama.iss
     } else {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" .\ollama.iss
+        & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH .\ollama.iss
     }
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
 function distZip() {
-    write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
-    Compress-Archive -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
+    write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-${script:TARGET_ARCH}.zip"
+    Compress-Archive -Path "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-${script:TARGET_ARCH}.zip" -Force
 }
 
 try {

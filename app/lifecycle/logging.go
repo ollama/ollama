@@ -5,12 +5,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/ollama/ollama/server/envconfig"
 )
 
 func InitLogging() {
 	level := slog.LevelInfo
 
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+	if envconfig.Debug {
 		level = slog.LevelDebug
 	}
 

@@ -125,7 +125,7 @@ Publishing models is in early alpha. If you'd like to publish your model to shar
 
 1. Create [an account](https://ollama.com/signup)
 2. Copy your Ollama public key:
-  - macOS: `cat ~/.ollama/id_ed25519.pub`
+  - macOS: `cat ~/.ollama/id_ed25519.pub | pbcopy`
   - Windows: `type %USERPROFILE%\.ollama\id_ed25519.pub`
   - Linux: `cat /usr/share/ollama/.ollama/id_ed25519.pub`
 3. Add your public key to your [Ollama account](https://ollama.com/settings/keys)
@@ -135,6 +135,8 @@ Next, copy your model to your username's namespace:
 ```
 ollama cp example <your username>/example
 ```
+
+> Note: model names may only contain lowercase letters, digits, and the characters `.`, `-`, and `_`.
 
 Then push the model:
 
