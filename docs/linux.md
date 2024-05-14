@@ -100,6 +100,16 @@ sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
 sudo chmod +x /usr/bin/ollama
 ```
 
+## installing specific versions
+
+You can run the install script after setting the `OLLAMA_VERSION` environment variable to whatever version you want to install. You can find the version numbers in the [Github's release page](https://github.com/ollama/ollama/releases). 
+
+For example:
+
+```
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.1.32 sh
+```
+
 ## Viewing logs
 
 To view logs of Ollama running as a startup service, run:
