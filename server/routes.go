@@ -725,7 +725,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 		return
 	}
 
-	models := make([]api.ModelResponse, 0)
+	models := []api.ModelResponse{}
 	if err := filepath.Walk(manifests, func(path string, info os.FileInfo, _ error) error {
 		if !info.IsDir() {
 			rel, err := filepath.Rel(manifests, path)
