@@ -56,6 +56,11 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 		Model:    opts.Model,
 		Messages: []api.Message{},
 	}
+
+	if opts.KeepAlive != nil {
+		chatReq.KeepAlive = opts.KeepAlive
+	}
+
 	err = client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
 		p.StopAndClear()
 		if len(opts.Messages) > 0 {

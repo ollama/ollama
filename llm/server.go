@@ -38,6 +38,7 @@ type LlamaServer interface {
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
 	EstimatedVRAM() uint64
+	EstimatedTotal() uint64
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -953,6 +954,10 @@ func (s *llmServer) Close() error {
 
 func (s *llmServer) EstimatedVRAM() uint64 {
 	return s.estimatedVRAM
+}
+
+func (s *llmServer) EstimatedTotal() uint64 {
+	return s.estimatedTotal
 }
 
 func parseDurationMs(ms float64) time.Duration {

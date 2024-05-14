@@ -177,7 +177,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				}
 				// Trigger an expiration to unload once it's done
 				runnerToExpire.refMu.Lock()
-				slog.Debug("resetting model to expire immediately to make room", "model", runnerToExpire.model, "refCount", runnerToExpire.refCount)
+				slog.Debug("resetting model to expire immediately to make room", "modelPath", runnerToExpire.modelPath, "refCount", runnerToExpire.refCount)
 				if runnerToExpire.expireTimer != nil {
 					runnerToExpire.expireTimer.Stop()
 					runnerToExpire.expireTimer = nil
@@ -190,13 +190,13 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				// Wait for the unload to happen
 				// Note: at this point we're queueing up all incoming requests, even if they were for
 				// a different model that's loaded and not scheduled to be removed.
-				slog.Debug("waiting for pending requests to complete and unload to occur", "model", runnerToExpire.model)
+				slog.Debug("waiting for pending requests to complete and unload to occur", "modelPath", runnerToExpire.modelPath)
 				select {
 				case <-ctx.Done():
 					slog.Debug("shutting down scheduler pending loop")
 					return
 				case <-s.unloadedCh:
-					slog.Debug("unload completed", "model", runnerToExpire.model)
+					slog.Debug("unload completed", "modelPath", runnerToExpire.modelPath)
 					continue
 				}
 			}
@@ -219,23 +219,23 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			runner := s.loaded[finished.model.ModelPath]
 			s.loadedMu.Unlock()
 			if runner == nil {
-				slog.Error("finished requeset signal received after model unloaded", "model", finished.model.ModelPath)
+				slog.Error("finished requeset signal received after model unloaded", "modelPath", finished.model.ModelPath)
 				continue
 			}
 			runner.refMu.Lock()
 			runner.refCount--
 			if runner.refCount <= 0 {
 				if runner.sessionDuration <= 0 {
-					slog.Debug("runner with zero duration has gone idle, expiring to unload", "model", runner.model)
+					slog.Debug("runner with zero duration has gone idle, expiring to unload", "modelPath", runner.modelPath)
 					if runner.expireTimer != nil {
 						runner.expireTimer.Stop()
 						runner.expireTimer = nil
 					}
 					s.expiredCh <- runner
 				} else if runner.expireTimer == nil {
-					slog.Debug("runner with non-zero duration has gone idle, adding timer", "model", runner.model, "duration", runner.sessionDuration)
+					slog.Debug("runner with non-zero duration has gone idle, adding timer", "modelPath", runner.modelPath, "duration", runner.sessionDuration)
 					runner.expireTimer = time.AfterFunc(runner.sessionDuration, func() {
-						slog.Debug("timer expired, expiring to unload", "model", runner.model)
+						slog.Debug("timer expired, expiring to unload", "modelPath", runner.modelPath)
 						runner.refMu.Lock()
 						defer runner.refMu.Unlock()
 						if runner.expireTimer != nil {
@@ -244,19 +244,21 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 						}
 						s.expiredCh <- runner
 					})
+					runner.expiresAt = time.Now().Add(runner.sessionDuration)
 				} else {
-					slog.Debug("runner with non-zero duration has gone idle, resetting timer", "model", runner.model, "duration", runner.sessionDuration)
+					slog.Debug("runner with non-zero duration has gone idle, resetting timer", "modelPath", runner.modelPath, "duration", runner.sessionDuration)
 					runner.expireTimer.Reset(runner.sessionDuration)
+					runner.expiresAt = time.Now().Add(runner.sessionDuration)
 				}
 			}
-			slog.Debug("after processing request finished event", "model", runner.model, "refCount", runner.refCount)
+			slog.Debug("after processing request finished event", "modelPath", runner.modelPath, "refCount", runner.refCount)
 			runner.refMu.Unlock()
 		case runner := <-s.expiredCh:
-			slog.Debug("runner expired event received", "model", runner.model)
+			slog.Debug("runner expired event received", "modelPath", runner.modelPath)
 			runner.refMu.Lock()
 			if runner.refCount > 0 {
 				// Shouldn't happen, but safeguard to ensure no leaked runners
-				slog.Debug("expired event with positive ref count, retrying", "model", runner.model, "refCount", runner.refCount)
+				slog.Debug("expired event with positive ref count, retrying", "modelPath", runner.modelPath, "refCount", runner.refCount)
 				go func(runner *runnerRef) {
 					// We can't unload yet, but want to as soon as the current request completes
 					// So queue up another expired event
@@ -268,16 +270,16 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			}
 
 			s.loadedMu.Lock()
-			slog.Debug("got lock to unload", "model", runner.model)
+			slog.Debug("got lock to unload", "modelPath", runner.modelPath)
 			finished := runner.waitForVRAMRecovery()
 			runner.unload()
-			delete(s.loaded, runner.model)
+			delete(s.loaded, runner.modelPath)
 			s.loadedMu.Unlock()
-			slog.Debug("runner released", "model", runner.model)
+			slog.Debug("runner released", "modelPath", runner.modelPath)
 			runner.refMu.Unlock()
 
 			<-finished
-			slog.Debug("sending an unloaded event", "model", runner.model)
+			slog.Debug("sending an unloaded event", "modelPath", runner.modelPath)
 			s.unloadedCh <- struct{}{}
 		}
 	}
@@ -316,18 +318,20 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) 
 		req.errCh <- err
 		return
 	}
-	runner := &runnerRef{}
-	runner.model = req.model.ModelPath
-	runner.adapters = req.model.AdapterPaths
-	runner.projectors = req.model.ProjectorPaths
-	runner.llama = llama
-	runner.Options = &req.opts
-	runner.sessionDuration = req.sessionDuration
-	runner.gpus = gpus
-	runner.estimatedVRAM = llama.EstimatedVRAM()
-	runner.loading = true
-	runner.refCount = 1
+	runner := &runnerRef{
+		model:           req.model,
+		modelPath:       req.model.ModelPath,
+		llama:           llama,
+		Options:         &req.opts,
+		sessionDuration: req.sessionDuration,
+		gpus:            gpus,
+		estimatedVRAM:   llama.EstimatedVRAM(),
+		estimatedTotal:  llama.EstimatedTotal(),
+		loading:         true,
+		refCount:        1,
+	}
 	runner.refMu.Lock()
+
 	s.loadedMu.Lock()
 	s.loaded[req.model.ModelPath] = runner
 	slog.Info("loaded runners", "count", len(s.loaded))
@@ -339,7 +343,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) 
 			slog.Error("error loading llama server", "error", err)
 			runner.refCount--
 			req.errCh <- err
-			slog.Debug("triggering expiration for failed load", "model", runner.model)
+			slog.Debug("triggering expiration for failed load", "model", runner.modelPath)
 			s.expiredCh <- runner
 			return
 		}
@@ -408,17 +412,18 @@ type runnerRef struct {
 	refCount uint // prevent unloading if > 0
 	// unloading bool      // set to true when we are trying to unload the runner
 
-	llama         llm.LlamaServer
-	loading       bool            // True only during initial load, then false forever
-	gpus          gpu.GpuInfoList // Recorded at time of provisioning
-	estimatedVRAM uint64
+	llama          llm.LlamaServer
+	loading        bool            // True only during initial load, then false forever
+	gpus           gpu.GpuInfoList // Recorded at time of provisioning
+	estimatedVRAM  uint64
+	estimatedTotal uint64
 
 	sessionDuration time.Duration
 	expireTimer     *time.Timer
+	expiresAt       time.Time
 
-	model      string
-	adapters   []string
-	projectors []string
+	model     *Model
+	modelPath string
 	*api.Options
 }
 
@@ -431,9 +436,8 @@ func (runner *runnerRef) unload() {
 	if runner.llama != nil {
 		runner.llama.Close()
 	}
+	runner.model = nil
 	runner.llama = nil
-	runner.adapters = nil
-	runner.projectors = nil
 	runner.Options = nil
 	runner.gpus = nil
 }
@@ -462,8 +466,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if !reflect.DeepEqual(runner.adapters, req.model.AdapterPaths) || // have the adapters changed?
-		!reflect.DeepEqual(runner.projectors, req.model.ProjectorPaths) || // have the projectors changed?
+	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
+		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
