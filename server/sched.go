@@ -499,7 +499,7 @@ func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 	}
 	go func() {
 		expiresAt := start.Add(5 * time.Second) // typical convergence is 0.5-1.5s
-		ticker := time.NewTicker(250 * time.Millisecond)
+		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			<-ticker.C

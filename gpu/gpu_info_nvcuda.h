@@ -53,6 +53,10 @@ typedef struct nvcuda_handle {
   CUresult (*cuDeviceGetAttribute)(int* pi, CUdevice_attribute attrib, CUdevice dev);
   CUresult (*cuDeviceGetUuid)(CUuuid* uuid, CUdevice dev); // signature compatible with cuDeviceGetUuid_v2
   CUresult (*cuDeviceGetName)(char *name, int len, CUdevice dev);
+  CUresult (*cuDevicePrimaryCtxRetain)(CUcontext* pctx, CUdevice dev);
+  CUresult (*cuCtxSynchronize)();
+  CUresult (*cuCtxSetCurrent)(CUcontext pctx);
+  CUresult (*cuDevicePrimaryCtxRelease)(CUcontext ctx);
 
   // Context specific aspects
   CUresult (*cuCtxCreate_v3)(CUcontext* pctx, void *params, int len, unsigned int flags, CUdevice dev);

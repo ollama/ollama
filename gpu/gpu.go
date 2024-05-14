@@ -28,6 +28,7 @@ type handles struct {
 	deviceCount int
 	cudart      *C.cudart_handle_t
 	nvcuda      *C.nvcuda_handle_t
+	nvml        *C.nvml_handle_t
 }
 
 const (
@@ -80,6 +81,23 @@ var NvcudaWindowsGlobs = []string{
 	"c:\\windows\\system*\\nvcuda.dll",
 }
 
+var NvmlLinuxGlobs = []string{
+	"/usr/local/cuda*/targets/*/lib/libnvidia-ml.so*",
+	"/usr/lib/*-linux-gnu/nvidia*/libnvidia-ml.so*",
+	"/usr/lib/*-linux-gnu/libnvidia-ml.so*",
+	"/usr/lib/wsl/lib/libnvidia-ml.so*",
+	"/usr/lib/wsl/drivers/*/libnvidia-ml.so*",
+	"/opt/cuda/lib*/libnvidia-ml.so*",
+	"/usr/local/cuda/lib*/libnvidia-ml.so*",
+	"/usr/lib/libnvidia-ml.so*",
+	"/usr/local/lib/libnvidia-ml.so*",
+	"/usr/lib/x86_64-linux-gnu/libnvidia-ml.so*",
+}
+
+var NvmlWindowsGlobs = []string{
+	"c:\\windows\\system*\\nvml.dll",
+}
+
 // Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
@@ -94,6 +112,8 @@ func initGPUHandles() *handles {
 	var cudartMgmtPatterns []string
 	var nvcudaMgmtName string
 	var nvcudaMgmtPatterns []string
+	var nvmlMgmtName string
+	var nvmlMgmtPatterns []string
 
 	tmpDir, _ := PayloadsDir()
 	switch runtime.GOOS {
@@ -105,6 +125,9 @@ func initGPUHandles() *handles {
 		// Aligned with driver, we can't carry as payloads
 		nvcudaMgmtName = "nvcuda.dll"
 		nvcudaMgmtPatterns = NvcudaWindowsGlobs
+
+		nvmlMgmtName = "nvml.dll"
+		nvmlMgmtPatterns = NvmlWindowsGlobs
 	case "linux":
 		cudartMgmtName = "libcudart.so*"
 		if tmpDir != "" {
@@ -119,13 +142,12 @@ func initGPUHandles() *handles {
 		return gpuHandles
 	}
 
-	slog.Debug("Detecting GPUs")
-	nvcudaLibPaths := FindGPULibs(nvcudaMgmtName, nvcudaMgmtPatterns)
-	if len(nvcudaLibPaths) > 0 {
-		deviceCount, nvcuda, libPath := LoadNVCUDAMgmt(nvcudaLibPaths)
-		if nvcuda != nil {
-			slog.Debug("detected GPUs", "count", deviceCount, "library", libPath)
-			gpuHandles.nvcuda = nvcuda
+	nvmlLibPaths := FindGPULibs(nvmlMgmtName, nvmlMgmtPatterns)
+	if len(nvmlLibPaths) > 0 {
+		deviceCount, nvml, libPath := LoadNVML(nvmlLibPaths)
+		if nvml != nil {
+			slog.Debug("detected MVML GPUs", "library", libPath, "count", deviceCount)
+			gpuHandles.nvml = nvml
 			gpuHandles.deviceCount = deviceCount
 			return gpuHandles
 		}
@@ -141,6 +163,19 @@ func initGPUHandles() *handles {
 			return gpuHandles
 		}
 	}
+
+	slog.Debug("Detecting GPUs")
+	nvcudaLibPaths := FindGPULibs(nvcudaMgmtName, nvcudaMgmtPatterns)
+	if len(nvcudaLibPaths) > 0 {
+		deviceCount, nvcuda, libPath := LoadNVCUDAMgmt(nvcudaLibPaths)
+		if nvcuda != nil {
+			slog.Debug("detected GPUs", "count", deviceCount, "library", libPath)
+			gpuHandles.nvcuda = nvcuda
+			gpuHandles.deviceCount = deviceCount
+			return gpuHandles
+		}
+	}
+
 	return gpuHandles
 }
 
@@ -186,7 +221,9 @@ func GetGPUInfo() GpuInfoList {
 		}
 		var driverMajor int
 		var driverMinor int
-		if gpuHandles.cudart != nil {
+		if gpuHandles.nvml != nil {
+			C.nvml_check_vram(*gpuHandles.nvml, C.int(i), &memInfo)
+		} else if gpuHandles.cudart != nil {
 			C.cudart_check_vram(*gpuHandles.cudart, C.int(i), &memInfo)
 		} else {
 			C.nvcuda_check_vram(*gpuHandles.nvcuda, C.int(i), &memInfo)
@@ -312,6 +349,23 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 	}
 	slog.Debug("discovered GPU libraries", "paths", gpuLibPaths)
 	return gpuLibPaths
+}
+
+func LoadNVML(libPaths []string) (int, *C.nvml_handle_t, string) {
+	var resp C.nvml_init_resp_t
+	resp.nh.verbose = getVerboseState()
+	for _, libPath := range libPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.nvml_init(lib, &resp)
+		if resp.err != nil {
+			slog.Debug("Unable to load nvml", "library", libPath, "error", C.GoString(resp.err))
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			return int(resp.num_devices), &resp.nh, libPath
+		}
+	}
+	return 0, nil, ""
 }
 
 func LoadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string) {

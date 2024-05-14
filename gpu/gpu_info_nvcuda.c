@@ -26,6 +26,10 @@ void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp) {
       {"cuCtxCreate_v3", (void *)&resp->ch.cuCtxCreate_v3},
       {"cuMemGetInfo_v2", (void *)&resp->ch.cuMemGetInfo_v2},
       {"cuCtxDestroy", (void *)&resp->ch.cuCtxDestroy},
+      {"cuDevicePrimaryCtxRetain", (void *)&resp->ch.cuDevicePrimaryCtxRetain},
+      {"cuCtxSynchronize", (void *)&resp->ch.cuCtxSynchronize},
+      {"cuCtxSetCurrent", (void *)&resp->ch.cuCtxSetCurrent},
+      {"cuDevicePrimaryCtxRelease", (void *)&resp->ch.cuDevicePrimaryCtxRelease},
       {NULL, NULL},
   };
 
@@ -165,12 +169,29 @@ void nvcuda_check_vram(nvcuda_handle_t h, int i, mem_info_t *resp) {
     resp->gpu_name[0] = '\0';
   }
 
-  // To get memory we have to set (and release) a context
-  ret = (*h.cuCtxCreate_v3)(&ctx, NULL, 0, 0, device);
+  // Use primary context
+  ret = (*h.cuDevicePrimaryCtxRetain)(&ctx, device);
   if (ret != CUDA_SUCCESS) {
-    snprintf(buf, buflen, "nvcuda failed to get primary device context %d", ret);
-    resp->err = strdup(buf);
-    return;
+      snprintf(buf, buflen, "nvcuda failed to retain primary device context %d", ret);
+      resp->err = strdup(buf);
+      return;
+  }
+
+  ret = (*h.cuCtxSetCurrent)(ctx);
+  if (ret != CUDA_SUCCESS) {
+      snprintf(buf, buflen, "nvcuda failed to set current context %d", ret);
+      resp->err = strdup(buf);
+      (*h.cuDevicePrimaryCtxRelease)(ctx);  // Clean up context
+      return;
+  }
+
+  // Synchronize context
+  ret = (*h.cuCtxSynchronize)();
+  if (ret != CUDA_SUCCESS) {
+      snprintf(buf, buflen, "nvcuda context synchronization failed %d", ret);
+      resp->err = strdup(buf);
+      (*h.cuDevicePrimaryCtxRelease)(ctx);  // Clean up context
+      return;
   }
 
   ret = (*h.cuMemGetInfo_v2)(&memInfo.free, &memInfo.total);
@@ -178,7 +199,7 @@ void nvcuda_check_vram(nvcuda_handle_t h, int i, mem_info_t *resp) {
     snprintf(buf, buflen, "nvcuda device memory info lookup failure %d", ret);
     resp->err = strdup(buf);
     // Best effort on failure...
-    (*h.cuCtxDestroy)(ctx);
+    (*h.cuDevicePrimaryCtxRelease)(ctx);
     return;
   }
 
@@ -191,7 +212,7 @@ void nvcuda_check_vram(nvcuda_handle_t h, int i, mem_info_t *resp) {
 
   
 
-  ret = (*h.cuCtxDestroy)(ctx);
+  ret = (*h.cuDevicePrimaryCtxRelease)(ctx);
   if (ret != CUDA_SUCCESS) {
     LOG(1, "nvcuda failed to release primary device context %d", ret);
   }
