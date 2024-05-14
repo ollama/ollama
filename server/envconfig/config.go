@@ -31,6 +31,8 @@ var (
 	RunnersDir string
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
+	// set via OLLAMA_LOAD_TIMEOUT in the environment
+	LoadTimeout int
 )
 
 func AsMap() map[string]string {
@@ -45,6 +47,7 @@ func AsMap() map[string]string {
 		"OLLAMA_NUM_PARALLEL":      fmt.Sprintf("%v", NumParallel),
 		"OLLAMA_RUNNERS_DIR":       fmt.Sprintf("%v", RunnersDir),
 		"OLLAMA_TMPDIR":            fmt.Sprintf("%v", TmpDir),
+		"OLLAMA_LOAD_TIMEOUT":      fmt.Sprintf("%v", LoadTimeout),
 	}
 }
 
@@ -169,6 +172,15 @@ func LoadConfig() {
 			slog.Error("invalid setting", "OLLAMA_MAX_QUEUE", onp, "error", err)
 		} else {
 			MaxQueuedRequests = p
+		}
+	}
+
+	if timeOut := os.Getenv("OLLAMA_LOAD_TIMEOUT"); timeOut != "" {
+		t, err := strconv.Atoi(timeOut)
+		if err != nil {
+			slog.Error("invalid setting", "OLLAMA_LOAD_TIMEOUT", timeOut, "error", err)
+		} else {
+			LoadTimeout = t
 		}
 	}
 }

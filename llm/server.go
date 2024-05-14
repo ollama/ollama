@@ -484,7 +484,12 @@ func (s *llmServer) Ping(ctx context.Context) error {
 
 func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	start := time.Now()
-	expiresAt := time.Now().Add(10 * time.Minute) // be generous with timeout, large models can take a while to load
+	timeout := envconfig.LoadTimeout
+	if timeout == 0 {
+		// default to 10 minutes
+		timeout = 10
+	}
+	expiresAt := time.Now().Add(time.Duration(timeout) * time.Minute)
 
 	slog.Info("waiting for llama runner to start responding")
 	var lastStatus ServerStatus = -1

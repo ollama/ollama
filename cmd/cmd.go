@@ -1159,6 +1159,7 @@ Environment Variables:
     OLLAMA_MODELS       The path to the models directory (default "~/.ollama/models")
     OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default "5m")
     OLLAMA_DEBUG        Set to 1 to enable additional debug logging
+	OLLAMA_LOAD_TIMEOUT The duration to wait for a model to load (default is "10m")
 `)
 
 	pullCmd := &cobra.Command{
