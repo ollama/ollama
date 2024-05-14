@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -492,6 +493,13 @@ func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 		finished <- struct{}{}
 		return finished
 	}
+
+	// Windows GPU info isn't always correct - skip recovery for now
+	if runtime.GOOS == "windows" {
+		finished <- struct{}{}
+		return finished
+	}
+
 	start := time.Now()
 
 	// Establish a baseline before we unload
