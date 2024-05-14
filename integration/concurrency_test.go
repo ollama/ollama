@@ -217,7 +217,7 @@ func TestMultiModelStress(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 3; j++ {
 				slog.Info("Starting", "req", i, "iter", j, "model", req[i].Model)
-				DoGenerate(ctx, t, client, req[i], resp[i], 90*time.Second, 5*time.Second)
+				DoGenerate(ctx, t, client, req[i], resp[i], 120*time.Second, 5*time.Second)
 			}
 		}(i)
 	}

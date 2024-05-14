@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -47,7 +48,7 @@ type ByteOrder interface {
 type ModelArch interface {
 	GetTensors() error
 	LoadVocab() error
-	WriteGGUF() (string, error)
+	WriteGGUF(io.WriteSeeker) error
 }
 
 type ModelFormat interface {

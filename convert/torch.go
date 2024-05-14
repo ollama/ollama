@@ -74,7 +74,7 @@ func (tf *TorchFormat) GetTensors(dirpath string, params *Params) ([]llm.Tensor,
 
 			ggufName, err := tf.GetLayerName(k.(string))
 			if err != nil {
-				slog.Error("%v", err)
+				slog.Error(err.Error())
 				return nil, err
 			}
 			slog.Debug(fmt.Sprintf("finding name for '%s' -> '%s'", k.(string), ggufName))

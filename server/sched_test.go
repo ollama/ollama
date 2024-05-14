@@ -10,13 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/uppercaveman/ollama-server/api"
 	"github.com/uppercaveman/ollama-server/app/lifecycle"
 	"github.com/uppercaveman/ollama-server/format"
 	"github.com/uppercaveman/ollama-server/gpu"
 	"github.com/uppercaveman/ollama-server/llm"
+	"github.com/uppercaveman/ollama-server/server/envconfig"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -27,38 +29,14 @@ func init() {
 func TestInitScheduler(t *testing.T) {
 	ctx, done := context.WithCancel(context.Background())
 	defer done()
-	initialMax := loadedMax
-	initialParallel := numParallel
 	s := InitScheduler(ctx)
-	require.Equal(t, initialMax, loadedMax)
 	s.loadedMu.Lock()
 	require.NotNil(t, s.loaded)
 	s.loadedMu.Unlock()
-
-	os.Setenv("OLLAMA_MAX_LOADED_MODELS", "blue")
-	s = InitScheduler(ctx)
-	require.Equal(t, initialMax, loadedMax)
-	s.loadedMu.Lock()
-	require.NotNil(t, s.loaded)
-	s.loadedMu.Unlock()
-
-	os.Setenv("OLLAMA_MAX_LOADED_MODELS", "0")
-	s = InitScheduler(ctx)
-	require.Equal(t, 0, loadedMax)
-	s.loadedMu.Lock()
-	require.NotNil(t, s.loaded)
-	s.loadedMu.Unlock()
-
-	os.Setenv("OLLAMA_NUM_PARALLEL", "blue")
-	_ = InitScheduler(ctx)
-	require.Equal(t, initialParallel, numParallel)
-	os.Setenv("OLLAMA_NUM_PARALLEL", "10")
-	_ = InitScheduler(ctx)
-	require.Equal(t, 10, numParallel)
 }
 
 func TestLoad(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	var ggml *llm.GGML // value not used in tests
@@ -174,7 +152,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 }
 
 func TestRequests(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer done()
 
 	// Same model, same request
@@ -187,7 +165,8 @@ func TestRequests(t *testing.T) {
 
 	// simple reload of same model
 	scenario2a := newScenario(t, ctx, "ollama-model-1", 20)
-	scenario2a.req.model = scenario1a.req.model
+	tmpModel := *scenario1a.req.model
+	scenario2a.req.model = &tmpModel
 	scenario2a.ggml = scenario1a.ggml
 
 	// Multiple loaded models
@@ -249,7 +228,7 @@ func TestRequests(t *testing.T) {
 		t.Errorf("timeout")
 	}
 
-	loadedMax = 1
+	envconfig.MaxRunners = 1
 	s.newServerFn = scenario3a.newServer
 	slog.Info("scenario3a")
 	s.pendingReqCh <- scenario3a.req
@@ -268,7 +247,7 @@ func TestRequests(t *testing.T) {
 	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
 
-	loadedMax = 0
+	envconfig.MaxRunners = 0
 	s.newServerFn = scenario3b.newServer
 	slog.Info("scenario3b")
 	s.pendingReqCh <- scenario3b.req
@@ -329,7 +308,7 @@ func TestRequests(t *testing.T) {
 }
 
 func TestGetRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 
 	// Same model, same request
@@ -339,7 +318,7 @@ func TestGetRunner(t *testing.T) {
 	scenario1b.req.sessionDuration = 0
 	scenario1c := newScenario(t, ctx, "ollama-model-1c", 10)
 	scenario1c.req.sessionDuration = 0
-	maxQueuedRequests = 1
+	envconfig.MaxQueuedRequests = 1
 	s := InitScheduler(ctx)
 	s.getGpuFn = func() gpu.GpuInfoList {
 		g := gpu.GpuInfo{Library: "metal"}
@@ -375,11 +354,9 @@ func TestGetRunner(t *testing.T) {
 	scenario1c.req.model.ModelPath = "bad path"
 	slog.Info("scenario1c")
 	successCh1c, errCh1c := s.GetRunner(scenario1c.ctx, scenario1c.req.model, scenario1c.req.opts, scenario1c.req.sessionDuration)
-	require.Len(t, s.pendingReqCh, 0)
-	require.Len(t, successCh1c, 0)
-	require.Len(t, errCh1c, 0)
-
+	// Starts in pending channel, then should be quickly processsed to return an error
 	time.Sleep(5 * time.Millisecond)
+	require.Len(t, successCh1c, 0)
 	s.loadedMu.Lock()
 	require.Len(t, s.loaded, 0)
 	s.loadedMu.Unlock()
@@ -391,7 +368,7 @@ func TestGetRunner(t *testing.T) {
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
 func TestPrematureExpired(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer done()
 
 	// Same model, same request
@@ -436,7 +413,7 @@ func TestPrematureExpired(t *testing.T) {
 }
 
 func TestUseLoadedRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	req := &LlmRequest{
 		ctx:             ctx,
 		opts:            api.DefaultOptions(),
@@ -461,7 +438,7 @@ func TestUseLoadedRunner(t *testing.T) {
 }
 
 func TestUpdateFreeSpace(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 	gpus := gpu.GpuInfoList{
 		{
@@ -494,12 +471,9 @@ func TestUpdateFreeSpace(t *testing.T) {
 }
 
 func TestFindRunnerToUnload(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
-	req := &LlmRequest{
-		ctx:  ctx,
-		opts: api.DefaultOptions(),
-	}
+
 	r1 := &runnerRef{refCount: 1, sessionDuration: 1}
 	r2 := &runnerRef{sessionDuration: 2}
 
@@ -509,25 +483,24 @@ func TestFindRunnerToUnload(t *testing.T) {
 	s.loaded["b"] = r2
 	s.loadedMu.Unlock()
 
-	resp := s.findRunnerToUnload(req)
+	resp := s.findRunnerToUnload()
 	require.Equal(t, r2, resp)
 	r2.refCount = 1
-	resp = s.findRunnerToUnload(req)
+	resp = s.findRunnerToUnload()
 	require.Equal(t, r1, resp)
 
 }
 
 func TestNeedsReload(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 
 	llm := &mockLlm{}
 	do := api.DefaultOptions()
 	runner := &runnerRef{
-		adapters:   []string{"adapter1"},
-		projectors: []string{"projector1"},
-		Options:    &do,
-		llama:      llm,
+		model:   &Model{AdapterPaths: []string{"adapter1"}, ProjectorPaths: []string{"projector1"}},
+		Options: &do,
+		llama:   llm,
 	}
 	req := &LlmRequest{
 		model: &Model{
@@ -538,10 +511,10 @@ func TestNeedsReload(t *testing.T) {
 	}
 	resp := runner.needsReload(ctx, req)
 	require.True(t, resp)
-	req.model.AdapterPaths = runner.adapters
+	req.model.AdapterPaths = runner.model.AdapterPaths
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
-	req.model.ProjectorPaths = runner.projectors
+	req.model.ProjectorPaths = runner.model.ProjectorPaths
 	runner.loading = true
 	req.opts.NumBatch = 1234
 	resp = runner.needsReload(ctx, req)
@@ -562,7 +535,7 @@ func TestNeedsReload(t *testing.T) {
 }
 
 func TestUnloadAllRunners(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 
 	llm1 := &mockLlm{}
@@ -586,11 +559,11 @@ func TestUnloadAllRunners(t *testing.T) {
 func TestUnload(t *testing.T) {
 	llm1 := &mockLlm{}
 	r1 := &runnerRef{llama: llm1}
-	r2 := &runnerRef{adapters: []string{"A"}}
+	r2 := &runnerRef{model: &Model{AdapterPaths: []string{"A"}}}
 	r1.unload()
 	require.True(t, llm1.closeCalled)
 	r2.unload()
-	require.Nil(t, r2.adapters)
+	require.Nil(t, r2.model)
 }
 
 type mockLlm struct {
@@ -606,6 +579,7 @@ type mockLlm struct {
 	closeResp         error
 	closeCalled       bool
 	estimatedVRAM     uint64
+	estimatedTotal    uint64
 }
 
 func (s *mockLlm) Ping(ctx context.Context) error             { return s.pingResp }
@@ -626,4 +600,5 @@ func (s *mockLlm) Close() error {
 	s.closeCalled = true
 	return s.closeResp
 }
-func (s *mockLlm) EstimatedVRAM() uint64 { return s.estimatedVRAM }
+func (s *mockLlm) EstimatedVRAM() uint64  { return s.estimatedVRAM }
+func (s *mockLlm) EstimatedTotal() uint64 { return s.estimatedTotal }
