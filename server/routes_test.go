@@ -95,6 +95,7 @@ func Test_Routes(t *testing.T) {
 				err = json.Unmarshal(body, &modelList)
 				assert.Nil(t, err)
 
+				assert.NotNil(t, modelList.Models)
 				assert.Equal(t, 0, len(modelList.Models))
 			},
 		},
