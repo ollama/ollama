@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -141,9 +142,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	quantization, _ := cmd.Flags().GetString("quantization")
+	quantize, _ := cmd.Flags().GetString("quantize")
 
-	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantization: quantization}
+	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantize: quantize}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -323,6 +324,18 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.Format = format
 
+	keepAlive, err := cmd.Flags().GetString("keepalive")
+	if err != nil {
+		return err
+	}
+	if keepAlive != "" {
+		d, err := time.ParseDuration(keepAlive)
+		if err != nil {
+			return err
+		}
+		opts.KeepAlive = &api.Duration{Duration: d}
+	}
+
 	prompts := args[1:]
 	// prepend stdin to the prompt if provided
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
@@ -483,6 +496,52 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("\t")
+	table.AppendBulk(data)
+	table.Render()
+
+	return nil
+}
+
+func ListRunningHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	models, err := client.ListRunning(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	var data [][]string
+
+	for _, m := range models.Models {
+		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
+			var procStr string
+			switch {
+			case m.SizeVRAM == 0:
+				procStr = "100% CPU"
+			case m.SizeVRAM == m.Size:
+				procStr = "100% GPU"
+			case m.SizeVRAM > m.Size || m.Size == 0:
+				procStr = "Unknown"
+			default:
+				sizeCPU := m.Size - m.SizeVRAM
+				cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
+				procStr = fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
+			}
+			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, format.HumanTime(m.ExpiresAt, "Never")})
+		}
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "UNTIL"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
@@ -671,6 +730,7 @@ type runOptions struct {
 	Images      []api.ImageData
 	Options     map[string]interface{}
 	MultiModal  bool
+	KeepAlive   *api.Duration
 }
 
 type displayResponseState struct {
@@ -763,6 +823,10 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		Messages: opts.Messages,
 		Format:   opts.Format,
 		Options:  opts.Options,
+	}
+
+	if opts.KeepAlive != nil {
+		req.KeepAlive = opts.KeepAlive
 	}
 
 	if err := client.Chat(cancelCtx, req, fn); err != nil {
@@ -1049,8 +1113,8 @@ func NewCLI() *cobra.Command {
 		RunE:    CreateHandler,
 	}
 
-	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile (default \"Modelfile\")")
-	createCmd.Flags().StringP("quantization", "q", "", "Quantization level.")
+	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile")
+	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -1074,6 +1138,7 @@ func NewCLI() *cobra.Command {
 		RunE:    RunHandler,
 	}
 
+	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
@@ -1089,9 +1154,9 @@ func NewCLI() *cobra.Command {
 Environment Variables:
 
     OLLAMA_HOST         The host:port to bind to (default "127.0.0.1:11434")
-    OLLAMA_ORIGINS      A comma separated list of allowed origins.
-    OLLAMA_MODELS       The path to the models directory (default is "~/.ollama/models")
-    OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default is "5m")
+    OLLAMA_ORIGINS      A comma separated list of allowed origins
+    OLLAMA_MODELS       The path to the models directory (default "~/.ollama/models")
+    OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default "5m")
     OLLAMA_DEBUG        Set to 1 to enable additional debug logging
 `)
 
@@ -1122,6 +1187,14 @@ Environment Variables:
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
+
+	psCmd := &cobra.Command{
+		Use:     "ps",
+		Short:   "List running models",
+		PreRunE: checkServerHeartbeat,
+		RunE:    ListRunningHandler,
+	}
+
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
 		Short:   "Copy a model",
@@ -1145,6 +1218,7 @@ Environment Variables:
 		pullCmd,
 		pushCmd,
 		listCmd,
+		psCmd,
 		copyCmd,
 		deleteCmd,
 	} {
@@ -1159,6 +1233,7 @@ Environment Variables:
 		pullCmd,
 		pushCmd,
 		listCmd,
+		psCmd,
 		copyCmd,
 		deleteCmd,
 	)

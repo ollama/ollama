@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"reflect"
@@ -113,9 +114,10 @@ type Message struct {
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Message   Message   `json:"message"`
+	Model      string    `json:"model"`
+	CreatedAt  time.Time `json:"created_at"`
+	Message    Message   `json:"message"`
+	DoneReason string    `json:"done_reason,omitempty"`
 
 	Done bool `json:"done"`
 
@@ -161,7 +163,6 @@ type Runner struct {
 	UseNUMA   bool `json:"numa,omitempty"`
 	NumCtx    int  `json:"num_ctx,omitempty"`
 	NumBatch  int  `json:"num_batch,omitempty"`
-	NumGQA    int  `json:"num_gqa,omitempty"`
 	NumGPU    int  `json:"num_gpu,omitempty"`
 	MainGPU   int  `json:"main_gpu,omitempty"`
 	LowVRAM   bool `json:"low_vram,omitempty"`
@@ -171,11 +172,6 @@ type Runner struct {
 	UseMMap   bool `json:"use_mmap,omitempty"`
 	UseMLock  bool `json:"use_mlock,omitempty"`
 	NumThread int  `json:"num_thread,omitempty"`
-
-	// Unused: RopeFrequencyBase is ignored. Instead the value in the model will be used
-	RopeFrequencyBase float32 `json:"rope_frequency_base,omitempty"`
-	// Unused: RopeFrequencyScale is ignored. Instead the value in the model will be used
-	RopeFrequencyScale float32 `json:"rope_frequency_scale,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -201,14 +197,17 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model        string `json:"model"`
-	Path         string `json:"path"`
-	Modelfile    string `json:"modelfile"`
-	Stream       *bool  `json:"stream,omitempty"`
-	Quantization string `json:"quantization,omitempty"`
+	Model     string `json:"model"`
+	Path      string `json:"path"`
+	Modelfile string `json:"modelfile"`
+	Stream    *bool  `json:"stream,omitempty"`
+	Quantize  string `json:"quantize,omitempty"`
 
 	// Name is deprecated, see Model
 	Name string `json:"name"`
+
+	// Quantization is deprecated, see Quantize
+	Quantization string `json:"quantization,omitempty"`
 }
 
 // DeleteRequest is the request passed to [Client.Delete].
@@ -290,10 +289,12 @@ type ListResponse struct {
 type ModelResponse struct {
 	Name       string       `json:"name"`
 	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at"`
+	ModifiedAt time.Time    `json:"modified_at,omitempty"`
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
 	Details    ModelDetails `json:"details,omitempty"`
+	ExpiresAt  time.Time    `json:"expires_at,omitempty"`
+	SizeVRAM   int64        `json:"size_vram,omitempty"`
 }
 
 type TokenResponse struct {
@@ -313,6 +314,9 @@ type GenerateResponse struct {
 
 	// Done specifies if the response is complete.
 	Done bool `json:"done"`
+
+	// DoneReason is the reason the model stopped generating text.
+	DoneReason string `json:"done_reason,omitempty"`
 
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
@@ -359,8 +363,6 @@ func (m *Metrics) Summary() {
 	}
 }
 
-// ErrInvalidOpts is returned when invalid options are passed to the client.
-var ErrInvalidOpts = errors.New("invalid options")
 var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
@@ -376,73 +378,71 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 		}
 	}
 
-	invalidOpts := []string{}
 	for key, val := range m {
-		if opt, ok := jsonOpts[key]; ok {
-			field := valueOpts.FieldByName(opt.Name)
-			if field.IsValid() && field.CanSet() {
-				if val == nil {
-					continue
-				}
+		opt, ok := jsonOpts[key]
+		if !ok {
+			slog.Warn("invalid option provided", "option", opt.Name)
+			continue
+		}
 
-				switch field.Kind() {
-				case reflect.Int:
-					switch t := val.(type) {
-					case int64:
-						field.SetInt(t)
-					case float64:
-						// when JSON unmarshals numbers, it uses float64, not int
-						field.SetInt(int64(t))
-					default:
-						return fmt.Errorf("option %q must be of type integer", key)
-					}
-				case reflect.Bool:
-					val, ok := val.(bool)
-					if !ok {
-						return fmt.Errorf("option %q must be of type boolean", key)
-					}
-					field.SetBool(val)
-				case reflect.Float32:
-					// JSON unmarshals to float64
-					val, ok := val.(float64)
-					if !ok {
-						return fmt.Errorf("option %q must be of type float32", key)
-					}
-					field.SetFloat(val)
-				case reflect.String:
-					val, ok := val.(string)
-					if !ok {
-						return fmt.Errorf("option %q must be of type string", key)
-					}
-					field.SetString(val)
-				case reflect.Slice:
-					// JSON unmarshals to []interface{}, not []string
-					val, ok := val.([]interface{})
-					if !ok {
-						return fmt.Errorf("option %q must be of type array", key)
-					}
-					// convert []interface{} to []string
-					slice := make([]string, len(val))
-					for i, item := range val {
-						str, ok := item.(string)
-						if !ok {
-							return fmt.Errorf("option %q must be of an array of strings", key)
-						}
-						slice[i] = str
-					}
-					field.Set(reflect.ValueOf(slice))
-				default:
-					return fmt.Errorf("unknown type loading config params: %v", field.Kind())
-				}
+		field := valueOpts.FieldByName(opt.Name)
+		if field.IsValid() && field.CanSet() {
+			if val == nil {
+				continue
 			}
-		} else {
-			invalidOpts = append(invalidOpts, key)
+
+			switch field.Kind() {
+			case reflect.Int:
+				switch t := val.(type) {
+				case int64:
+					field.SetInt(t)
+				case float64:
+					// when JSON unmarshals numbers, it uses float64, not int
+					field.SetInt(int64(t))
+				default:
+					return fmt.Errorf("option %q must be of type integer", key)
+				}
+			case reflect.Bool:
+				val, ok := val.(bool)
+				if !ok {
+					return fmt.Errorf("option %q must be of type boolean", key)
+				}
+				field.SetBool(val)
+			case reflect.Float32:
+				// JSON unmarshals to float64
+				val, ok := val.(float64)
+				if !ok {
+					return fmt.Errorf("option %q must be of type float32", key)
+				}
+				field.SetFloat(val)
+			case reflect.String:
+				val, ok := val.(string)
+				if !ok {
+					return fmt.Errorf("option %q must be of type string", key)
+				}
+				field.SetString(val)
+			case reflect.Slice:
+				// JSON unmarshals to []interface{}, not []string
+				val, ok := val.([]interface{})
+				if !ok {
+					return fmt.Errorf("option %q must be of type array", key)
+				}
+				// convert []interface{} to []string
+				slice := make([]string, len(val))
+				for i, item := range val {
+					str, ok := item.(string)
+					if !ok {
+						return fmt.Errorf("option %q must be of an array of strings", key)
+					}
+					slice[i] = str
+				}
+				field.Set(reflect.ValueOf(slice))
+			default:
+				return fmt.Errorf("unknown type loading config params: %v", field.Kind())
+			}
 		}
 	}
 
-	if len(invalidOpts) > 0 {
-		return fmt.Errorf("%w: %v", ErrInvalidOpts, strings.Join(invalidOpts, ", "))
-	}
 	return nil
 }
 
@@ -475,8 +475,7 @@ func DefaultOptions() Options {
 			NumCtx:    2048,
 			NumBatch:  512,
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
-			NumGQA:    1,
-			NumThread: 0, // let the runtime decide
+			NumThread: 0,  // let the runtime decide
 			LowVRAM:   false,
 			F16KV:     true,
 			UseMLock:  false,

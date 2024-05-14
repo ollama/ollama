@@ -291,11 +291,9 @@ func (n Name) Filepath() string {
 		panic("illegal attempt to get filepath of invalid name")
 	}
 	return filepath.Join(
-		strings.ToLower(filepath.Join(
-			n.Host,
-			n.Namespace,
-			n.Model,
-		)),
+		n.Host,
+		n.Namespace,
+		n.Model,
 		n.Tag,
 	)
 }

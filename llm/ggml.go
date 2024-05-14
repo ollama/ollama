@@ -329,7 +329,10 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 			4*batch*(1+4*embedding+context+context*heads),
 		)
 
-		partialOffload = 4*batch*(2*embedding+vocab) + embedding*vocab*105/128
+		partialOffload = max(
+			4*batch*(2*embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(2+3*embedding+context+context*heads),
+		)
 	case "stablelm":
 		fullOffload = 4 * batch * (context*(1+heads) + 3*embedding + 2)
 		partialOffload = max(

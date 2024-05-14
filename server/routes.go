@@ -30,6 +30,7 @@ import (
 	"github.com/uppercaveman/ollama-server/llm"
 	"github.com/uppercaveman/ollama-server/openai"
 	"github.com/uppercaveman/ollama-server/server/envconfig"
+	"github.com/uppercaveman/ollama-server/types/errtypes"
 	"github.com/uppercaveman/ollama-server/types/model"
 	"github.com/uppercaveman/ollama-server/version"
 )
@@ -127,10 +128,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
-		if errors.Is(err, api.ErrInvalidOpts) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -156,9 +153,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	// of `raw` mode so we need to check for it too
 	if req.Prompt == "" && req.Template == "" && req.System == "" {
 		c.JSON(http.StatusOK, api.GenerateResponse{
-			CreatedAt: time.Now().UTC(),
-			Model:     req.Model,
-			Done:      true,
+			CreatedAt:  time.Now().UTC(),
+			Model:      req.Model,
+			Done:       true,
+			DoneReason: "load",
 		})
 		return
 	}
@@ -226,10 +224,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			resp := api.GenerateResponse{
-				Model:     req.Model,
-				CreatedAt: time.Now().UTC(),
-				Done:      r.Done,
-				Response:  r.Content,
+				Model:      req.Model,
+				CreatedAt:  time.Now().UTC(),
+				Done:       r.Done,
+				Response:   r.Content,
+				DoneReason: r.DoneReason,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
@@ -370,10 +369,6 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
-		if errors.Is(err, api.ErrInvalidOpts) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -523,7 +518,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 
 	name := model.ParseName(cmp.Or(req.Model, req.Name))
 	if !name.IsValid() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid model name"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errtypes.InvalidModelNameErrMsg})
 		return
 	}
 
@@ -560,7 +555,12 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := CreateModel(ctx, name.String(), filepath.Dir(req.Path), strings.ToUpper(req.Quantization), modelfile, fn); err != nil {
+		quantization := req.Quantization
+		if req.Quantize != "" {
+			quantization = req.Quantize
+		}
+
+		if err := CreateModel(ctx, name.String(), filepath.Dir(req.Path), strings.ToUpper(quantization), modelfile, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -740,20 +740,28 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 			}
 
 			n := model.ParseNameFromFilepath(rel)
+			if !n.IsValid() {
+				slog.Warn("bad manifest filepath", "path", rel)
+				return nil
+			}
+
 			m, err := ParseNamedManifest(n)
 			if err != nil {
-				return err
+				slog.Warn("bad manifest", "name", n, "error", err)
+				return nil
 			}
 
 			f, err := m.Config.Open()
 			if err != nil {
-				return err
+				slog.Warn("bad manifest config filepath", "name", n, "error", err)
+				return nil
 			}
 			defer f.Close()
 
 			var c ConfigV2
 			if err := json.NewDecoder(f).Decode(&c); err != nil {
-				return err
+				slog.Warn("bad manifest config", "name", n, "error", err)
+				return nil
 			}
 
 			// tag should never be masked
@@ -972,6 +980,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/show", s.ShowModelHandler)
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
+	r.GET("/api/ps", s.ProcessHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.Middleware(), s.ChatHandler)
@@ -1037,7 +1046,8 @@ func Serve(ln net.Listener) error {
 	}
 
 	ctx, done := context.WithCancel(context.Background())
-	sched := InitScheduler(ctx)
+	schedCtx, schedDone := context.WithCancel(ctx)
+	sched := InitScheduler(schedCtx)
 	s := &Server{addr: ln.Addr(), sched: sched}
 	r := s.GenerateRoutes()
 
@@ -1052,23 +1062,31 @@ func Serve(ln net.Listener) error {
 	go func() {
 		<-signals
 		srvr.Close()
-		done()
+		schedDone()
 		sched.unloadAllRunners()
 		gpu.Cleanup()
-		os.Exit(0)
+		done()
 	}()
 
 	if err := llm.Init(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
 
-	s.sched.Run(ctx)
+	s.sched.Run(schedCtx)
 
 	// At startup we retrieve GPU information so we can get log messages before loading a model
 	// This will log warnings to the log in case we have problems with detected GPUs
-	_ = gpu.GetGPUInfo()
+	gpus := gpu.GetGPUInfo()
+	gpus.LogDetails()
 
-	return srvr.Serve(ln)
+	err = srvr.Serve(ln)
+	// If server is closed from the signal handler, wait for the ctx to be done
+	// otherwise error out quickly
+	if !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	<-ctx.Done()
+	return err
 }
 
 func waitForStream(c *gin.Context, ch chan interface{}) {
@@ -1119,6 +1137,34 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 		return true
 	})
+}
+
+func (s *Server) ProcessHandler(c *gin.Context) {
+	models := []api.ModelResponse{}
+
+	for _, v := range s.sched.loaded {
+		model := v.model
+		modelDetails := api.ModelDetails{
+			Format:            model.Config.ModelFormat,
+			Family:            model.Config.ModelFamily,
+			Families:          model.Config.ModelFamilies,
+			ParameterSize:     model.Config.ModelType,
+			QuantizationLevel: model.Config.FileType,
+		}
+
+		mr := api.ModelResponse{
+			Model:     model.ShortName,
+			Name:      model.ShortName,
+			Size:      int64(v.estimatedTotal),
+			SizeVRAM:  int64(v.estimatedVRAM),
+			Digest:    model.Digest,
+			Details:   modelDetails,
+			ExpiresAt: v.expiresAt,
+		}
+		models = append(models, mr)
+	}
+
+	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
@@ -1177,10 +1223,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	opts, err := modelOptions(model, req.Options)
 	if err != nil {
-		if errors.Is(err, api.ErrInvalidOpts) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1222,10 +1264,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	// an empty request loads the model
 	if len(req.Messages) == 0 || prompt == "" {
 		resp := api.ChatResponse{
-			CreatedAt: time.Now().UTC(),
-			Model:     req.Model,
-			Done:      true,
-			Message:   api.Message{Role: "assistant"},
+			CreatedAt:  time.Now().UTC(),
+			Model:      req.Model,
+			Done:       true,
+			DoneReason: "load",
+			Message:    api.Message{Role: "assistant"},
 		}
 		c.JSON(http.StatusOK, resp)
 		return
@@ -1258,10 +1301,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		fn := func(r llm.CompletionResponse) {
 
 			resp := api.ChatResponse{
-				Model:     req.Model,
-				CreatedAt: time.Now().UTC(),
-				Message:   api.Message{Role: "assistant", Content: r.Content},
-				Done:      r.Done,
+				Model:      req.Model,
+				CreatedAt:  time.Now().UTC(),
+				Message:    api.Message{Role: "assistant", Content: r.Content},
+				Done:       r.Done,
+				DoneReason: r.DoneReason,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,

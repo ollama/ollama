@@ -354,6 +354,15 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	return &lr, nil
 }
 
+// List running models.
+func (c *Client) ListRunning(ctx context.Context) (*ListResponse, error) {
+	var lr ListResponse
+	if err := c.do(ctx, http.MethodGet, "/api/ps", nil, &lr); err != nil {
+		return nil, err
+	}
+	return &lr, nil
+}
+
 // Copy copies a model - creating a model with another name from an existing
 // model.
 func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {

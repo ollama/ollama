@@ -22,6 +22,7 @@ void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp) {
       {"cuDeviceGet", (void *)&resp->ch.cuDeviceGet},
       {"cuDeviceGetAttribute", (void *)&resp->ch.cuDeviceGetAttribute},
       {"cuDeviceGetUuid", (void *)&resp->ch.cuDeviceGetUuid},
+      {"cuDeviceGetName", (void *)&resp->ch.cuDeviceGetName},
       {"cuCtxCreate_v3", (void *)&resp->ch.cuCtxCreate_v3},
       {"cuMemGetInfo_v2", (void *)&resp->ch.cuMemGetInfo_v2},
       {"cuCtxDestroy", (void *)&resp->ch.cuCtxDestroy},
@@ -70,18 +71,17 @@ void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp) {
   }
 
   int version = 0;
-  nvcudaDriverVersion_t driverVersion;
-  driverVersion.major = 0;
-  driverVersion.minor = 0;
+  resp->ch.driver_major = 0;
+  resp->ch.driver_minor = 0;
 
   // Report driver version if we're in verbose mode, ignore errors
   ret = (*resp->ch.cuDriverGetVersion)(&version);
   if (ret != CUDA_SUCCESS) {
     LOG(resp->ch.verbose, "cuDriverGetVersion failed: %d\n", ret);
   } else {
-    driverVersion.major = version / 1000;
-    driverVersion.minor = (version - (driverVersion.major * 1000)) / 10;
-    LOG(resp->ch.verbose, "CUDA driver version: %d-%d\n", driverVersion.major, driverVersion.minor);
+    resp->ch.driver_major = version / 1000;
+    resp->ch.driver_minor = (version - (resp->ch.driver_major * 1000)) / 10;
+    LOG(resp->ch.verbose, "CUDA driver version: %d.%d\n", resp->ch.driver_major, resp->ch.driver_minor);
   }
 
   ret = (*resp->ch.cuDeviceGetCount)(&resp->num_devices);
@@ -117,8 +117,6 @@ void nvcuda_check_vram(nvcuda_handle_t h, int i, mem_info_t *resp) {
     return;
   }
 
-  resp->major = 0;
-  resp->minor = 0;
   int major = 0;
   int minor = 0;
   ret = (*h.cuDeviceGetAttribute)(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
@@ -159,6 +157,12 @@ void nvcuda_check_vram(nvcuda_handle_t h, int i, mem_info_t *resp) {
         uuid.bytes[14],
         uuid.bytes[15]
       );
+  }
+
+  ret = (*h.cuDeviceGetName)(&resp->gpu_name[0], GPU_NAME_LEN, device);
+  if (ret != CUDA_SUCCESS) {
+    LOG(h.verbose, "[%d] device name lookup failure: %d\n", i, ret);
+    resp->gpu_name[0] = '\0';
   }
 
   // To get memory we have to set (and release) a context

@@ -80,17 +80,19 @@ If Ollama is run as a systemd service, environment variables should be set using
 
 ### Setting environment variables on Windows
 
-On windows, Ollama inherits your user and system environment variables.
+On Windows, Ollama inherits your user and system environment variables.
 
-1. First Quit Ollama by clicking on it in the task bar
+1. First Quit Ollama by clicking on it in the task bar.
 
-2. Edit system environment variables from the control panel
+2. Start the Settings (Windows 11) or Control Panel (Windows 10) application and search for _environment variables_.
 
-3. Edit or create New variable(s) for your user account for `OLLAMA_HOST`, `OLLAMA_MODELS`, etc.
+3. Click on _Edit environment variables for your account_.
 
-4. Click OK/Apply to save
+4. Edit or create a new variable for your user account for `OLLAMA_HOST`, `OLLAMA_MODELS`, etc.
 
-5. Run `ollama` from a new terminal window
+5. Click OK/Apply to save.
+
+6. Start the Ollama application from the Windows Start menu.
 
 
 ## How can I expose Ollama on my network?

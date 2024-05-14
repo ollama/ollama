@@ -17,6 +17,7 @@ import (
 	"github.com/uppercaveman/ollama-server/api"
 	"github.com/uppercaveman/ollama-server/progress"
 	"github.com/uppercaveman/ollama-server/readline"
+	"github.com/uppercaveman/ollama-server/types/errtypes"
 )
 
 type MultilineState int
@@ -56,6 +57,11 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 		Model:    opts.Model,
 		Messages: []api.Message{},
 	}
+
+	if opts.KeepAlive != nil {
+		chatReq.KeepAlive = opts.KeepAlive
+	}
+
 	err = client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
 		p.StopAndClear()
 		if len(opts.Messages) > 0 {
@@ -276,7 +282,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			fn := func(resp api.ProgressResponse) error { return nil }
 			err = client.Create(cmd.Context(), req, fn)
 			if err != nil {
-				fmt.Println("error: couldn't save model")
+				if strings.Contains(err.Error(), errtypes.InvalidModelNameErrMsg) {
+					fmt.Printf("error: The model name '%s' is invalid\n", args[1])
+					continue
+				}
 				return err
 			}
 			fmt.Printf("Created new model '%s'\n", args[1])
