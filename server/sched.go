@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -487,8 +488,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 	finished := make(chan interface{}, 1)
 
-	// CPU or Metal don't need checking, so no waiting required
-	if len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal") {
+	// CPU or Metal don't need checking, so no waiting required, windows can page VRAM, and the APIs we query tend to be optimistic on free space
+	if (len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal")) || runtime.GOOS == "windows" {
 		finished <- struct{}{}
 		return finished
 	}
