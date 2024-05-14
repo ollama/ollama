@@ -111,11 +111,13 @@ type Message struct {
 	Images  []ImageData `json:"images,omitempty"`
 }
 
+// CompletionProbability is returned by llama.cpp if n_probs is set.
 type CompletionProbability struct {
 	Content string            `json:"content"`
 	Probs   []CompletionProbs `json:"probs"`
 }
 
+// CompletionProbs is a tuple of a human readable next token and the according probability.
 type CompletionProbs struct {
 	Prob    float64 `json:"prob"`
 	Content string  `json:"content"`
