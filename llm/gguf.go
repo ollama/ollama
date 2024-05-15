@@ -480,6 +480,7 @@ var ggufKVOrder = map[string][]string{
 		"gemma.attention.key_length",
 		"gemma.attention.value_length",
 		"general.file_type",
+		"tokenizer.ggml.pre",
 		"tokenizer.ggml.model",
 		"tokenizer.ggml.tokens",
 		"tokenizer.ggml.scores",

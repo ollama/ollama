@@ -2,9 +2,9 @@ package convert
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -134,44 +134,27 @@ func (m *LlamaModel) GetTensors() error {
 }
 
 func (m *LlamaModel) LoadVocab() error {
-	v := &Vocab{
-		Tokens: []string{},
-		Types:  []int32{},
-		Merges: []string{},
-	}
+	v := &Vocab{}
 
 	tokpath := filepath.Join(m.Path, "tokenizer.json")
-	slog.Debug(fmt.Sprintf("looking for %s", tokpath))
-	if _, err := os.Stat(tokpath); !os.IsNotExist(err) {
-		t, err := newTokenizer(tokpath)
-		if err != nil {
-			return err
-		}
-
-		for _, tok := range t.Model.Tokens {
-			v.Tokens = append(v.Tokens, tok.Content)
-			var tokType int32
-			switch {
-			case tok.Special:
-				tokType = 3
-			case tok.UserDefined:
-				tokType = 4
-			default:
-				tokType = 1
-			}
-			v.Types = append(v.Types, tokType)
-		}
-		v.Merges = t.Model.Merges
-	} else {
-		slog.Debug("loading sentence piece vocab")
+	pre, ts, merges, err := parseTokens(tokpath)
+	if errors.Is(err, os.ErrNotExist) {
 		v, err = LoadSentencePieceTokens(m.Path, m.Params)
 		if err != nil {
 			return err
 		}
+	} else if err != nil {
+		return err
+	} else {
+		for _, t := range ts {
+			v.Tokens = append(v.Tokens, t.Content)
+			v.Types = append(v.Types, t.Type())
+		}
 
-		slog.Debug("vocab loaded")
-
+		m.Params.PreTokenizer = pre
+		v.Merges = merges
 	}
+
 	m.Vocab = v
 
 	return nil
@@ -194,6 +177,7 @@ func (m *LlamaModel) WriteGGUF(ws io.WriteSeeker) error {
 		"general.file_type":                      uint32(2),
 		"tokenizer.ggml.model":                   "gpt2",
 
+		"tokenizer.ggml.pre":        m.Params.PreTokenizer,
 		"tokenizer.ggml.tokens":     m.Vocab.Tokens,
 		"tokenizer.ggml.token_type": m.Vocab.Types,
 

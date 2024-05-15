@@ -37,6 +37,8 @@ type Params struct {
 	Experts     int `json:"num_local_experts"`
 	ExpertsUsed int `json:"num_experts_per_tok"`
 
+	PreTokenizer string
+
 	ByteOrder
 }
 
