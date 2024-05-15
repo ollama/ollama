@@ -44,11 +44,11 @@ type Token struct {
 func (t *Token) Type() int32 {
 	switch {
 	case t.Special:
-		return 3
+		return tokenTypeControl
 	case t.UserDefined:
-		return 4
+		return tokenTypeUserDefined
 	default:
-		return 1
+		return tokenTypeNormal
 	}
 }
 

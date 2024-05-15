@@ -18,6 +18,16 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
+const (
+	_ int32 = iota
+	tokenTypeNormal
+	tokenTypeUnknown
+	tokenTypeControl
+	tokenTypeUserDefined
+	tokenTypeUnused
+	tokenTypeByte
+)
+
 type Params struct {
 	Architectures     []string `json:"architectures"`
 	VocabSize         int      `json:"vocab_size"`
@@ -172,7 +182,7 @@ func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
 		}
 		v.Tokens = append(v.Tokens, t.key)
 		v.Scores = append(v.Scores, -1000.0)
-		v.Types = append(v.Types, int32(llm.GGUFTokenUserDefined))
+		v.Types = append(v.Types, tokenTypeUserDefined)
 	}
 	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
 
@@ -182,7 +192,7 @@ func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
 		for cnt := 0; cnt < missingTokens; cnt++ {
 			v.Tokens = append(v.Tokens, fmt.Sprintf("<dummy%05d>", cnt+1))
 			v.Scores = append(v.Scores, -1)
-			v.Types = append(v.Types, int32(llm.GGUFTokenUserDefined))
+			v.Types = append(v.Types, tokenTypeUserDefined)
 		}
 	}
 

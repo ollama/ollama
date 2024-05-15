@@ -63,16 +63,6 @@ func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
 }
 
 const (
-	_ uint32 = iota
-	GGUFTokenNormal
-	GGUFTokenUnknown
-	GGUFTokenControl
-	GGUFTokenUserDefined
-	GGUFTokenUnused
-	GGUFTokenByte
-)
-
-const (
 	ggufTypeUint8 uint32 = iota
 	ggufTypeInt8
 	ggufTypeUint16

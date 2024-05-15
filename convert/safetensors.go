@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/d4l3k/go-bfloat16"
 	"github.com/mitchellh/mapstructure"
@@ -97,6 +98,10 @@ func (m *SafetensorFormat) readTensors(fn string, offset uint64, params *Params)
 
 	var tensors []llm.Tensor
 	for _, k := range keys {
+		if strings.HasSuffix(k, "self_attn.rotary_emb.inv_freq") {
+			continue
+		}
+
 		vals := parsed[k].(map[string]interface{})
 		var data tensorMetaData
 		if err = mapstructure.Decode(vals, &data); err != nil {

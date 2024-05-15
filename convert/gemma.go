@@ -71,8 +71,6 @@ func (m *GemmaModel) GetTensors() error {
 	}
 
 	slog.Debug(fmt.Sprintf("Total tensors: %d", len(t)))
-
-	m.Tensors = []llm.Tensor{}
 	for _, l := range t {
 		if strings.HasSuffix(l.Name, "norm.weight") {
 			wt := l.WriterTo.(safetensorWriterTo)

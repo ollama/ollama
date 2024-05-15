@@ -102,8 +102,6 @@ func (m *MistralModel) GetTensors() error {
 		return err
 	}
 
-	m.Tensors = []llm.Tensor{}
-
 	pattern := `^blk\.[0-9]+\.attn_(?P<layer>q|k)\.weight$`
 	re, err := regexp.Compile(pattern)
 	if err != nil {

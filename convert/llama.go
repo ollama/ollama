@@ -105,8 +105,6 @@ func (m *LlamaModel) GetTensors() error {
 		return err
 	}
 
-	m.Tensors = []llm.Tensor{}
-
 	pattern := `^blk\.[0-9]+\.attn_(?P<layer>q|k)\.weight$`
 	re, err := regexp.Compile(pattern)
 	if err != nil {
@@ -133,30 +131,22 @@ func (m *LlamaModel) GetTensors() error {
 	return nil
 }
 
-func (m *LlamaModel) LoadVocab() error {
-	v := &Vocab{}
-
-	tokpath := filepath.Join(m.Path, "tokenizer.json")
-	pre, ts, merges, err := parseTokens(tokpath)
+func (m *LlamaModel) LoadVocab() (err error) {
+	pre, ts, merges, err := parseTokens(filepath.Join(m.Path, "tokenizer.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		v, err = LoadSentencePieceTokens(m.Path, m.Params)
-		if err != nil {
-			return err
-		}
+		return nil
 	} else if err != nil {
 		return err
-	} else {
-		for _, t := range ts {
-			v.Tokens = append(v.Tokens, t.Content)
-			v.Types = append(v.Types, t.Type())
-		}
-
-		m.Params.PreTokenizer = pre
-		v.Merges = merges
 	}
 
-	m.Vocab = v
+	m.Vocab = &Vocab{}
+	for _, t := range ts {
+		m.Vocab.Tokens = append(m.Vocab.Tokens, t.Content)
+		m.Vocab.Types = append(m.Vocab.Types, t.Type())
+	}
 
+	m.Vocab.Merges = merges
+	m.Params.PreTokenizer = pre
 	return nil
 }
 
@@ -174,7 +164,7 @@ func (m *LlamaModel) WriteGGUF(ws io.WriteSeeker) error {
 		"llama.attention.head_count":             uint32(m.Params.AttentionHeads),
 		"llama.attention.head_count_kv":          uint32(m.Params.KeyValHeads),
 		"llama.attention.layer_norm_rms_epsilon": float32(m.Params.NormEPS),
-		"general.file_type":                      uint32(2),
+		"general.file_type":                      uint32(1),
 		"tokenizer.ggml.model":                   "gpt2",
 
 		"tokenizer.ggml.pre":        m.Params.PreTokenizer,
