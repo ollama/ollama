@@ -44,8 +44,8 @@ var (
 )
 
 // Gather GPU information from the amdgpu driver if any supported GPUs are detected
-func AMDGetGPUInfo() []GpuInfo {
-	resp := []GpuInfo{}
+func AMDGetGPUInfo() []RocmGPUInfo {
+	resp := []RocmGPUInfo{}
 	if !AMDDetected() {
 		return resp
 	}
@@ -178,7 +178,7 @@ func AMDGetGPUInfo() []GpuInfo {
 		// Shouldn't happen, but just in case...
 		if gpuID < 0 {
 			slog.Error("unexpected amdgpu sysfs data resulted in negative GPU ID, please set OLLAMA_DEBUG=1 and report an issue")
-			return []GpuInfo{}
+			return []RocmGPUInfo{}
 		}
 
 		if int(major) < RocmComputeMin {
@@ -189,6 +189,7 @@ func AMDGetGPUInfo() []GpuInfo {
 		// Look up the memory for the current node
 		totalMemory := uint64(0)
 		usedMemory := uint64(0)
+		var usedFile string
 		mapping := []struct {
 			id       uint64
 			filename string
@@ -255,22 +256,10 @@ func AMDGetGPUInfo() []GpuInfo {
 				break
 			}
 
-			usedFile := filepath.Join(devDir, DRMUsedMemoryFile)
-			usedFp, err := os.Open(usedFile)
+			usedFile = filepath.Join(devDir, DRMUsedMemoryFile)
+			usedMemory, err = getFreeMemory(usedFile)
 			if err != nil {
-				slog.Debug("failed to open sysfs node", "file", usedFile, "error", err)
-				break
-			}
-			defer totalFp.Close()
-			buf, err = io.ReadAll(usedFp)
-			if err != nil {
-				slog.Debug("failed to read sysfs node", "file", usedFile, "error", err)
-				break
-			}
-			usedMemory, err = strconv.ParseUint(strings.TrimSpace(string(buf)), 10, 64)
-			if err != nil {
-				slog.Debug("failed to parse sysfs node", "file", usedFile, "error", err)
-				break
+				slog.Debug("failed to update used memory", "error", err)
 			}
 			break
 		}
@@ -288,18 +277,21 @@ func AMDGetGPUInfo() []GpuInfo {
 
 		slog.Debug("amdgpu memory", "gpu", gpuID, "total", format.HumanBytes2(totalMemory))
 		slog.Debug("amdgpu memory", "gpu", gpuID, "available", format.HumanBytes2(totalMemory-usedMemory))
-		gpuInfo := GpuInfo{
-			Library: "rocm",
-			memInfo: memInfo{
-				TotalMemory: totalMemory,
-				FreeMemory:  (totalMemory - usedMemory),
+		gpuInfo := RocmGPUInfo{
+			GpuInfo: GpuInfo{
+				Library: "rocm",
+				memInfo: memInfo{
+					TotalMemory: totalMemory,
+					FreeMemory:  (totalMemory - usedMemory),
+				},
+				ID:            fmt.Sprintf("%d", gpuID),
+				Name:          name,
+				Compute:       fmt.Sprintf("gfx%d%x%x", major, minor, patch),
+				MinimumMemory: rocmMinimumMemory,
+				DriverMajor:   driverMajor,
+				DriverMinor:   driverMinor,
 			},
-			ID:            fmt.Sprintf("%d", gpuID),
-			Name:          name,
-			Compute:       fmt.Sprintf("gfx%d%x%x", major, minor, patch),
-			MinimumMemory: rocmMinimumMemory,
-			DriverMajor:   driverMajor,
-			DriverMinor:   driverMinor,
+			usedFilepath: usedFile,
 		}
 
 		// If the user wants to filter to a subset of devices, filter out if we aren't a match
@@ -323,7 +315,7 @@ func AMDGetGPUInfo() []GpuInfo {
 			libDir, err = AMDValidateLibDir()
 			if err != nil {
 				slog.Warn("unable to verify rocm library, will use cpu", "error", err)
-				return []GpuInfo{}
+				return []RocmGPUInfo{}
 			}
 		}
 		gpuInfo.DependencyPath = libDir
@@ -334,7 +326,7 @@ func AMDGetGPUInfo() []GpuInfo {
 				supported, err = GetSupportedGFX(libDir)
 				if err != nil {
 					slog.Warn("failed to lookup supported GFX types, falling back to CPU mode", "error", err)
-					return []GpuInfo{}
+					return []RocmGPUInfo{}
 				}
 				slog.Debug("rocm supported GPUs", "types", supported)
 			}
@@ -424,4 +416,37 @@ func AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 		return 0, 0, err
 	}
 	return driverMajor, driverMinor, nil
+}
+
+func (gpus RocmGPUInfoList) RefreshFreeMemory() error {
+	if len(gpus) == 0 {
+		return nil
+	}
+	for i := range gpus {
+		usedMemory, err := getFreeMemory(gpus[i].usedFilepath)
+		if err != nil {
+			return err
+		}
+		slog.Debug("updating rocm free memory", "gpu", gpus[i].ID, "name", gpus[i].Name, "before", format.HumanBytes2(gpus[i].FreeMemory), "now", format.HumanBytes2(gpus[i].TotalMemory-usedMemory))
+		gpus[i].FreeMemory = gpus[i].TotalMemory - usedMemory
+	}
+	return nil
+}
+
+func getFreeMemory(usedFile string) (uint64, error) {
+	usedFp, err := os.Open(usedFile)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open sysfs node %s %w", usedFile, err)
+	}
+	defer usedFp.Close()
+	buf, err := io.ReadAll(usedFp)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read sysfs node %s %w", usedFile, err)
+	}
+	usedMemory, err := strconv.ParseUint(strings.TrimSpace(string(buf)), 10, 64)
+	if err != nil {
+		slog.Debug("failed to parse sysfs node", "file", usedFile, "error", err)
+		return 0, fmt.Errorf("failed to parse sysfs node %s %w", usedFile, err)
+	}
+	return usedMemory, nil
 }

@@ -38,6 +38,29 @@ type GpuInfo struct {
 	// TODO other performance capability info to help in scheduling decisions
 }
 
+type CPUInfo struct {
+	GpuInfo
+}
+
+type CudaGPUInfo struct {
+	GpuInfo
+	index int // device index
+}
+type CudaGPUInfoList []CudaGPUInfo
+
+type RocmGPUInfo struct {
+	GpuInfo
+	usedFilepath string // linux
+	index        int    // device index on windows
+}
+type RocmGPUInfoList []RocmGPUInfo
+
+type OneapiGPUInfo struct {
+	GpuInfo
+	index int // device index
+}
+type OneapiGPUInfoList []OneapiGPUInfo
+
 type GpuInfoList []GpuInfo
 
 // Split up the set of gpu info's by Library and variant
@@ -86,3 +109,37 @@ type ByFreeMemory []GpuInfo
 func (a ByFreeMemory) Len() int           { return len(a) }
 func (a ByFreeMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByFreeMemory) Less(i, j int) bool { return a[i].FreeMemory < a[j].FreeMemory }
+
+type CPUCapability uint32
+
+// Override at build time when building base GPU runners
+var GPURunnerCPUCapability = CPUCapabilityAVX
+
+const (
+	CPUCapabilityBase CPUCapability = iota
+	CPUCapabilityAVX
+	CPUCapabilityAVX2
+	// TODO AVX512
+)
+
+func (c CPUCapability) ToString() string {
+	switch c {
+	case CPUCapabilityAVX:
+		return "AVX"
+	case CPUCapabilityAVX2:
+		return "AVX2"
+	default:
+		return "no vector extensions"
+	}
+}
+
+func (c CPUCapability) ToVariant() string {
+	switch c {
+	case CPUCapabilityAVX:
+		return "avx"
+	case CPUCapabilityAVX2:
+		return "avx2"
+	default:
+		return ""
+	}
+}

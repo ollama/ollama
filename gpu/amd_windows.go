@@ -24,8 +24,8 @@ var (
 	RocmStandardLocations = []string{"C:\\Program Files\\AMD\\ROCm\\5.7\\bin"} // TODO glob?
 )
 
-func AMDGetGPUInfo() []GpuInfo {
-	resp := []GpuInfo{}
+func AMDGetGPUInfo() []RocmGPUInfo {
+	resp := []RocmGPUInfo{}
 	hl, err := NewHipLib()
 	if err != nil {
 		slog.Debug(err.Error())
@@ -117,21 +117,24 @@ func AMDGetGPUInfo() []GpuInfo {
 		// v5.7 only reports VRAM used by this process, so it's completely wrong and unusable
 		slog.Debug("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
 		slog.Debug("amdgpu memory", "gpu", i, "available", format.HumanBytes2(freeMemory))
-		gpuInfo := GpuInfo{
-			Library: "rocm",
-			memInfo: memInfo{
-				TotalMemory: totalMemory,
-				FreeMemory:  freeMemory,
-			},
-			ID:             fmt.Sprintf("%d", i), // TODO this is probably wrong if we specify visible devices
-			DependencyPath: libDir,
-			MinimumMemory:  rocmMinimumMemory,
-			Name:           name,
-			Compute:        gfx,
+		gpuInfo := RocmGPUInfo{
+			GpuInfo: GpuInfo{
+				Library: "rocm",
+				memInfo: memInfo{
+					TotalMemory: totalMemory,
+					FreeMemory:  freeMemory,
+				},
+				ID:             fmt.Sprintf("%d", i), // TODO this is probably wrong if we specify visible devices
+				DependencyPath: libDir,
+				MinimumMemory:  rocmMinimumMemory,
+				Name:           name,
+				Compute:        gfx,
 
-			// TODO - this information isn't accurate on windows, so don't report it until we find the right way to retrieve
-			// DriverMajor:    driverMajor,
-			// DriverMinor:    driverMinor,
+				// TODO - this information isn't accurate on windows, so don't report it until we find the right way to retrieve
+				// DriverMajor:    driverMajor,
+				// DriverMinor:    driverMinor,
+			},
+			index: i,
 		}
 
 		resp = append(resp, gpuInfo)
@@ -158,4 +161,31 @@ func AMDValidateLibDir() (string, error) {
 	// Should not happen on windows since we include it in the installer, but stand-alone binary might hit this
 	slog.Warn("amdgpu detected, but no compatible rocm library found.  Please install ROCm")
 	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
+}
+
+func (gpus RocmGPUInfoList) RefreshFreeMemory() error {
+	if len(gpus) == 0 {
+		return nil
+	}
+	hl, err := NewHipLib()
+	if err != nil {
+		slog.Debug(err.Error())
+		return nil
+	}
+	defer hl.Release()
+
+	for i := range gpus {
+		err := hl.HipSetDevice(gpus[i].index)
+		if err != nil {
+			return err
+		}
+		freeMemory, _, err := hl.HipMemGetInfo()
+		if err != nil {
+			slog.Warn("get mem info", "id", i, "error", err)
+			continue
+		}
+		slog.Debug("updating rocm free memory", "gpu", gpus[i].ID, "name", gpus[i].Name, "before", format.HumanBytes2(gpus[i].FreeMemory), "now", format.HumanBytes2(freeMemory))
+		gpus[i].FreeMemory = freeMemory
+	}
+	return nil
 }
