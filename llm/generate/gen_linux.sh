@@ -156,7 +156,7 @@ if [ -z "${CUDART_LIB_DIR}" ]; then
     CUDART_LIB_DIR="${CUDA_LIB_DIR}"
 fi
 
-if [ -d "${CUDA_LIB_DIR}" ]; then
+if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
     CUDA_MAJOR=$(ls "${CUDA_LIB_DIR}"/libcudart.so.* | head -1 | cut -f3 -d. || true)
@@ -218,7 +218,7 @@ if [ -z "${CLBlast_DIR}" ]; then
     fi
 fi
 
-if [ -d "${ROCM_PATH}" ]; then
+if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
     if [ -f ${ROCM_PATH}/lib/librocblas.so.*.*.????? ]; then
         ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocblas.so.*.*.????? | cut -f5 -d. || true)
