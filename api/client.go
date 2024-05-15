@@ -33,7 +33,7 @@ import (
 )
 
 // Client encapsulates client state for interacting with the ollama
-// service. Use [ClientFromEnvironment] to create new Clients.
+// service. Use [ClientFromEnvironment] or [CreateClient] to create new Clients.
 type Client struct {
 	base *url.URL
 	http *http.Client
@@ -74,6 +74,19 @@ func ClientFromEnvironment() (*Client, error) {
 		base: &url.URL{
 			Scheme: ollamaHost.Scheme,
 			Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
+		},
+		http: http.DefaultClient,
+	}, nil
+}
+
+// CreateClient creates a new [Client] using the specified host, scheme, and port
+//
+//	<scheme>://<host>:<port>
+func CreateClient(ollamaHost string, ollamaScheme string, ollamaPort string) (*Client, error) {
+	return &Client{
+		base: &url.URL{
+			Scheme: ollamaScheme,
+			Host:   net.JoinHostPort(ollamaHost, ollamaPort),
 		},
 		http: http.DefaultClient,
 	}, nil
