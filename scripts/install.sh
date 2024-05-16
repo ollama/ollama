@@ -116,6 +116,19 @@ ExecStartPre=/bin/bash -c 'if [ -f /etc/default/ollama ]; then echo "Loaded envi
 [Install]
 WantedBy=default.target
 EOF
+
+    # create /etc/default/ollama if doesn't already exist
+    FILE="/etc/default/ollama"
+    if [ ! -f "$FILE" ]; then
+        echo "Creating default environment file: $FILE"
+        sudo bash -c "cat <<EOF > $FILE
+# OLLAMA_MODELS=/path/to/model/location
+# OLLAMA_HOST=0.0.0.0:11434
+# OLLAMA_ORIGINS=*
+# OLLAMA_MAX_LOADED_MODEL=3
+# OLLAMA_NUM_PARALLEL=6
+EOF"
+    fi
     SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
