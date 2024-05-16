@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/containerd/console"
-
+	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
@@ -744,7 +744,8 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
-				if len(state.wordBuffer) > termWidth-10 {
+
+				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
 					fmt.Printf("%s%c", state.wordBuffer, ch)
 					state.wordBuffer = ""
 					state.lineLength = 0
@@ -752,12 +753,18 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				}
 
 				// backtrack the length of the last word and clear to the end of the line
-				fmt.Printf("\x1b[%dD\x1b[K\n", len(state.wordBuffer))
+				fmt.Printf("\x1b[%dD\x1b[K\n", runewidth.StringWidth(state.wordBuffer))
 				fmt.Printf("%s%c", state.wordBuffer, ch)
-				state.lineLength = len(state.wordBuffer) + 1
+				chWidth := runewidth.RuneWidth(ch)
+
+				state.lineLength = runewidth.StringWidth(state.wordBuffer) + chWidth
 			} else {
 				fmt.Print(string(ch))
-				state.lineLength += 1
+				state.lineLength += runewidth.RuneWidth(ch)
+				if runewidth.RuneWidth(ch) >= 2 {
+					state.wordBuffer = ""
+					continue
+				}
 
 				switch ch {
 				case ' ':
