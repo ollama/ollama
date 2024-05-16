@@ -150,7 +150,7 @@ func (b *Buffer) MoveToEnd() {
 
 func (b *Buffer) Size() int {
 	sum := 0
-	for i := 0; i < b.Buf.Size(); i-- {
+	for i := 0; i < b.Buf.Size(); i++ {
 		if e, ok := b.Buf.Get(i); ok {
 			if r, ok := e.(rune); ok {
 				sum += runewidth.RuneWidth(r)
@@ -169,9 +169,11 @@ func (b *Buffer) Add(r rune) {
 		b.Buf.Add(r)
 		b.Pos += 1
 		b.DisplayPos += rLength
-
-		if b.Pos > 0 && b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth {
+		if b.Pos > 0 && (b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth || b.DisplayPos%b.LineWidth == 0) {
 			fmt.Printf("\n%s", b.Prompt.AltPrompt)
+			if b.DisplayPos%b.LineWidth == 1 {
+				b.DisplayPos -= 1
+			}
 		}
 	} else {
 		fmt.Printf("%c", r)
@@ -179,8 +181,11 @@ func (b *Buffer) Add(r rune) {
 		b.Pos += 1
 		b.DisplayPos += rLength
 
-		if b.Pos > 0 && b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth {
+		if b.Pos > 0 && b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth || b.DisplayPos%b.LineWidth == 0 {
 			fmt.Printf("\n%s", b.Prompt.AltPrompt)
+			if b.DisplayPos%b.LineWidth == 1 {
+				b.DisplayPos -= 1
+			}
 		}
 		b.drawRemaining()
 	}
@@ -188,14 +193,14 @@ func (b *Buffer) Add(r rune) {
 
 func (b *Buffer) drawRemaining() {
 	var place int
-	remainingText := b.StringN(b.DisplayPos)
+	remainingText := b.StringN(b.Pos)
 	if b.Pos > 0 {
 		place = b.DisplayPos % b.LineWidth
 	}
 	fmt.Print(CursorHide)
 
 	// render the rest of the current line
-	currLine := remainingText[:min(b.LineWidth-place, len(remainingText))]
+	currLine := remainingText[:min(b.LineWidth-place, runewidth.StringWidth(remainingText))]
 	if len(currLine) > 0 {
 		fmt.Printf(ClearToEOL + currLine)
 		fmt.Print(cursorLeftN(runewidth.StringWidth(currLine)))
@@ -230,46 +235,58 @@ func (b *Buffer) drawRemaining() {
 
 func (b *Buffer) Remove() {
 	if b.Buf.Size() > 0 && b.Pos > 0 {
-		if b.Pos%b.LineWidth == 0 {
-			// if the user backspaces over the word boundary, do this magic to clear the line
-			// and move to the end of the previous line
-			fmt.Printf(CursorBOL + ClearToEOL)
-			fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width) + " " + CursorLeft)
-		} else {
-			fmt.Printf(CursorLeft + " " + CursorLeft)
-		}
 
-		var eraseExtraLine bool
-		if (b.Size()-1)%b.LineWidth == 0 {
-			eraseExtraLine = true
-		}
+		if e, ok := b.Buf.Get(b.Pos - 1); ok {
+			if r, ok := e.(rune); ok {
+				rLength := runewidth.RuneWidth(r)
 
-		b.Pos -= 1
-		b.Buf.Remove(b.Pos)
+				if b.DisplayPos%b.LineWidth == 0 {
+					// if the user backspaces over the word boundary, do this magic to clear the line
+					// and move to the end of the previous line
+					fmt.Printf(CursorBOL + ClearToEOL)
+					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width) + " " + CursorLeft) //maybe check this (if last char in prev line is dbl width)
+				} else {
+					fmt.Print(cursorLeftN(rLength))
+					for i := 0; i < rLength; i++ {
+						fmt.Print(" ")
+					}
+					fmt.Print(cursorLeftN(rLength))
+				}
 
-		if b.Pos < b.Size() {
-			b.drawRemaining()
-			// this erases a line which is left over when backspacing in the middle of a line and there
-			// are trailing characters which go over the line width boundary
-			if eraseExtraLine {
-				remainingLines := (b.Size() - b.Pos) / b.LineWidth
-				fmt.Printf(cursorDownN(remainingLines+1) + CursorBOL + ClearToEOL)
-				place := b.Pos % b.LineWidth
-				fmt.Printf(cursorUpN(remainingLines+1) + cursorRightN(place+len(b.Prompt.prompt())))
+				var eraseExtraLine bool
+				if (b.Size()-1)%b.LineWidth == 0 {
+					eraseExtraLine = true
+				}
+
+				b.Pos -= 1
+				b.DisplayPos -= rLength
+				b.Buf.Remove(b.Pos)
+
+				if b.Pos < b.Buf.Size() {
+					b.drawRemaining()
+					// this erases a line which is left over when backspacing in the middle of a line and there
+					// are trailing characters which go over the line width boundary
+					if eraseExtraLine {
+						remainingLines := (b.Size() - b.DisplayPos) / b.LineWidth
+						fmt.Printf(cursorDownN(remainingLines+1) + CursorBOL + ClearToEOL)
+						place := b.DisplayPos % b.LineWidth
+						fmt.Printf(cursorUpN(remainingLines+1) + cursorRightN(place+len(b.Prompt.prompt())))
+					}
+				}
 			}
 		}
 	}
 }
 
 func (b *Buffer) Delete() {
-	if b.Size() > 0 && b.Pos < b.Size() {
+	if b.Buf.Size() > 0 && b.Pos < b.Buf.Size() {
 		b.Buf.Remove(b.Pos)
 		b.drawRemaining()
 		if b.Size()%b.LineWidth == 0 {
-			if b.Pos != b.Size() {
-				remainingLines := (b.Size() - b.Pos) / b.LineWidth
+			if b.DisplayPos != b.Size() {
+				remainingLines := (b.Size() - b.DisplayPos) / b.LineWidth
 				fmt.Printf(cursorDownN(remainingLines) + CursorBOL + ClearToEOL)
-				place := b.Pos % b.LineWidth
+				place := b.DisplayPos % b.LineWidth
 				fmt.Printf(cursorUpN(remainingLines) + cursorRightN(place+len(b.Prompt.prompt())))
 			}
 		}
@@ -286,7 +303,7 @@ func (b *Buffer) DeleteBefore() {
 
 func (b *Buffer) DeleteRemaining() {
 	if b.Size() > 0 && b.Pos < b.Size() {
-		charsToDel := b.Size() - b.Pos
+		charsToDel := b.Buf.Size() - b.Pos
 		for cnt := 0; cnt < charsToDel; cnt++ {
 			b.Delete()
 		}
