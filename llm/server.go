@@ -202,14 +202,18 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	// Only enable flash_attn if all GPUs support it (CUDA 7+ or Metal)
 	flashAttnSupported := false
-	for _, g := range gpus {
-		if g.Library == "cuda" && g.DriverMajor >= 7 {
-			flashAttnSupported = true
-		} else if g.Library == "metal" {
-			flashAttnSupported = true
-		} else {
-			flashAttnSupported = false
-			break
+	if cpuRunner != "" {
+		flashAttnSupported = false
+	} else {
+		for _, g := range gpus {
+			if g.Library == "cuda" && g.DriverMajor >= 7 {
+				flashAttnSupported = true
+			} else if g.Library == "metal" {
+				flashAttnSupported = true
+			} else {
+				flashAttnSupported = false
+				break
+			}
 		}
 	}
 	if flashAttnSupported {
