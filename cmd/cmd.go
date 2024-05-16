@@ -739,7 +739,6 @@ type displayResponseState struct {
 	wordBuffer string
 }
 
-// using runewidth instead of len (cus length is number of bytes, we want display length)
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
 	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
 	if wordWrap && termWidth >= 10 {
