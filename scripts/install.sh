@@ -110,6 +110,8 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
+EnvironmentFile=/etc/default/ollama
+ExecStartPre=/bin/bash -c 'if [ -f /etc/default/ollama ]; then echo "Loaded environment file: /etc/default/ollama"; fi'
 
 [Install]
 WantedBy=default.target
