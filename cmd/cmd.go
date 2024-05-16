@@ -744,9 +744,9 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
-			if state.lineLength+1 > termWidth - 5 {
+			if state.lineLength+1 > termWidth-5 {
 
-				if runewidth.StringWidth(state.wordBuffer) > termWidth - 10 {
+				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
 					fmt.Printf("%s%c", state.wordBuffer, ch)
 					state.wordBuffer = ""
 					state.lineLength = 0
@@ -765,7 +765,7 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				if runewidth.RuneWidth(ch) >= 2 {
 					state.wordBuffer = ""
 					continue
-				}	
+				}
 
 				switch ch {
 				case ' ':
