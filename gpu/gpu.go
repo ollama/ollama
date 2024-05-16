@@ -273,8 +273,8 @@ func GetGPUInfo() GpuInfoList {
 		gpuInfo.TotalMemory = uint64(memInfo.total)
 		gpuInfo.FreeMemory = uint64(memInfo.free)
 		gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
-		gpuInfo.Major = int(memInfo.major)
-		gpuInfo.Minor = int(memInfo.minor)
+		gpuInfo.DriverMajor = int(memInfo.major)
+		gpuInfo.DriverMinor = int(memInfo.minor)
 
 		resp = append(resp, gpuInfo)
 	}

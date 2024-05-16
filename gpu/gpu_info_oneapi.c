@@ -216,12 +216,6 @@ ze_result_t oneapi_device_info(oneapi_init_resp_t *resp) {
         snprintf(buf, buflen, "unable to get device properties: %d", ret);
         continue;
       }
-      // skip all the integrated gpus from the devices
-      if (props.core.flags && ZES_DEVICE_PROPERTY_FLAG_INTEGRATED) {
-        LOG(resp->oh.verbose, "discovered an integrated GPU %s\n",
-            props.modelName);
-        //  continue;
-      }
 
       resp->num_devices++;
       resp->oh.device_info = (oneapi_device_info_t *)realloc(
