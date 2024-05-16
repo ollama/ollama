@@ -6,9 +6,9 @@
 // Just enough typedef's to dlopen/dlsym for memory information
 typedef enum cudartReturn_enum {
   CUDART_SUCCESS = 0,
-  CUDA_ERROR_INVALID_VALUE = 1,
-  CUDA_ERROR_MEMORY_ALLOCATION = 2,
-  CUDA_ERROR_INSUFFICIENT_DRIVER = 35,
+  CUDART_ERROR_INVALID_VALUE = 1,
+  CUDART_ERROR_MEMORY_ALLOCATION = 2,
+  CUDART_ERROR_INSUFFICIENT_DRIVER = 35,
   // Other values omitted for now...
 } cudartReturn_t;
 

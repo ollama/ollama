@@ -3,30 +3,20 @@ package llm
 import (
 	"fmt"
 	"log/slog"
-	"os"
-	"strconv"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/server/envconfig"
 )
 
 // This algorithm looks for a complete fit to determine if we need to unload other models
 func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors []string, opts api.Options) (bool, uint64) {
-	var estimatedVRAM uint64
-	if opts.NumCtx > int(ggml.KV().ContextLength()) {
-		slog.Warn("requested context length is greater than model max context length", "requested", opts.NumCtx, "model", ggml.KV().ContextLength())
-		opts.NumCtx = int(ggml.KV().ContextLength())
-	}
-
-	if opts.NumCtx < 4 {
-		opts.NumCtx = 4
-	}
-
 	// Split up the GPUs by type and try them
+	var estimatedVRAM uint64
 	for _, gpus := range allGpus.ByLibrary() {
 		var layerCount int
-		layerCount, estimatedVRAM = EstimateGPULayers(gpus, ggml, projectors, opts)
+		layerCount, estimatedVRAM, _ = EstimateGPULayers(gpus, ggml, projectors, opts)
 		if opts.NumGPU < 0 {
 			if layerCount > 0 && layerCount >= int(ggml.KV().BlockCount()+1) {
 				return true, estimatedVRAM
@@ -40,25 +30,15 @@ func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors 
 	return false, estimatedVRAM
 }
 
-// Given a model and one or more GPU targets, predict how many layers and bytes we can load
+// Given a model and one or more GPU targets, predict how many layers and bytes we can load, and the total size
 // The GPUs provided must all be the same Library
-func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) (int, uint64) {
-	if gpus[0].Library == "cpu" {
-		return 0, 0
-	}
+func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) (int, uint64, uint64) {
 	var memoryAvailable uint64
 	for _, info := range gpus {
 		memoryAvailable += info.FreeMemory
 	}
-	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
-	if userLimit != "" {
-		avail, err := strconv.ParseUint(userLimit, 10, 64)
-		if err != nil {
-			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_VRAM", userLimit, "error", err)
-		} else {
-			slog.Info("user override memory limit", "OLLAMA_MAX_VRAM", avail, "actual", memoryAvailable)
-			memoryAvailable = avail
-		}
+	if envconfig.MaxVRAM > 0 {
+		memoryAvailable = envconfig.MaxVRAM
 	}
 
 	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", format.HumanBytes2(memoryAvailable))
@@ -71,6 +51,12 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
+	}
+
+	layers := ggml.Tensors().Layers()
+	// add one layer worth of memory as a buffer
+	if blk0, ok := layers["blk.0"]; ok {
+		memoryMinimum += blk0.size()
 	}
 
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
@@ -99,13 +85,6 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	// memoryRequiredPartial represents the memory required for partial GPU offloading (n > 0, n < layers)
 	memoryRequiredPartial := memoryMinimum + graphPartialOffload
 
-	if memoryRequiredPartial > memoryAvailable {
-		slog.Debug("insufficient VRAM to load any model layers")
-		return 0, 0
-	}
-
-	layers := ggml.Tensors().Layers()
-
 	var memoryLayerOutput uint64
 	if layer, ok := layers["output_norm"]; ok {
 		memoryLayerOutput += layer.size()
@@ -125,15 +104,17 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 
 	var layerCount int
 	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
-		memoryLayer := layers[fmt.Sprintf("blk.%d", i)].size()
+		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
+			memoryLayer := blk.size()
 
-		// KV is proportional to the number of layers
-		memoryLayer += kv / ggml.KV().BlockCount()
+			// KV is proportional to the number of layers
+			memoryLayer += kv / ggml.KV().BlockCount()
 
-		memoryRequiredTotal += memoryLayer
-		if memoryAvailable > memoryRequiredPartial+memoryLayer {
-			memoryRequiredPartial += memoryLayer
-			layerCount++
+			memoryRequiredTotal += memoryLayer
+			if (opts.NumGPU >= 0 && layerCount+1 <= opts.NumGPU) || (opts.NumGPU < 0 && memoryAvailable > memoryRequiredPartial+memoryLayer) {
+				memoryRequiredPartial += memoryLayer
+				layerCount++
+			}
 		}
 	}
 
@@ -142,7 +123,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		memoryRequiredTotal += memoryLayerOutput
 	}
 
-	if memoryAvailable > memoryRequiredTotal {
+	if (opts.NumGPU >= 0 && layerCount+1 <= opts.NumGPU) || (opts.NumGPU < 0 && memoryAvailable > memoryRequiredTotal) {
 		layerCount = int(ggml.KV().BlockCount()) + 1
 		memoryRequiredPartial = memoryRequiredTotal
 	}
@@ -153,10 +134,10 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		"offload to gpu",
 		slog.Group(
 			"layers",
-			// actual number of layers offloaded
-			"real", opts.NumGPU,
+			// requested number of layers to offload
+			"requested", opts.NumGPU,
 			// estimated number of layers that can be offloaded
-			"estimate", layerCount,
+			"real", layerCount,
 		),
 		slog.Group(
 			"memory",
@@ -189,5 +170,13 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 			),
 		),
 	)
-	return layerCount, uint64(memoryRequiredPartial)
+	if gpus[0].Library == "cpu" {
+		return 0, 0, memoryRequiredTotal
+	}
+	if memoryRequiredPartial > memoryAvailable {
+		slog.Debug("insufficient VRAM to load any model layers")
+		return 0, 0, memoryRequiredTotal
+	}
+
+	return layerCount, memoryRequiredPartial, memoryRequiredTotal
 }

@@ -85,7 +85,7 @@ func GetTestEndpoint() (*api.Client, string) {
 var serverMutex sync.Mutex
 var serverReady bool
 
-func startServer(ctx context.Context, ollamaHost string) error {
+func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 	// Make sure the server has been built
 	CLIName, err := filepath.Abs("../ollama")
 	if err != nil {
@@ -107,7 +107,7 @@ func startServer(ctx context.Context, ollamaHost string) error {
 
 	if tmp := os.Getenv("OLLAMA_HOST"); tmp != ollamaHost {
 		slog.Info("setting env", "OLLAMA_HOST", ollamaHost)
-		os.Setenv("OLLAMA_HOST", ollamaHost)
+		t.Setenv("OLLAMA_HOST", ollamaHost)
 	}
 
 	slog.Info("starting server", "url", ollamaHost)
@@ -200,7 +200,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 		}
 		lifecycle.ServerLogFile = fp.Name()
 		fp.Close()
-		require.NoError(t, startServer(ctx, testEndpoint))
+		require.NoError(t, startServer(t, ctx, testEndpoint))
 	}
 
 	return client, testEndpoint, func() {
