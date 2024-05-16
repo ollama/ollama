@@ -200,6 +200,22 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--numa")
 	}
 
+	// Only enable flash_attn if all GPUs support it (CUDA 7+ or Metal)
+	flashAttnSupported := false
+	for _, g := range gpus {
+		if g.Library == "cuda" && g.DriverMajor >= 7 {
+			flashAttnSupported = true
+		} else if g.Library == "metal" {
+			flashAttnSupported = true
+		} else {
+			flashAttnSupported = false
+			break
+		}
+	}
+	if flashAttnSupported {
+		params = append(params, "--flash-attn")
+	}
+
 	numParallel := envconfig.NumParallel
 
 	// TODO (jmorganca): multimodal models don't support parallel yet
