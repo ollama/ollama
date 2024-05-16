@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
+	"github.com/ollama/ollama/types/errtypes"
 )
 
 type MultilineState int
@@ -56,6 +57,11 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 		Model:    opts.Model,
 		Messages: []api.Message{},
 	}
+
+	if opts.KeepAlive != nil {
+		chatReq.KeepAlive = opts.KeepAlive
+	}
+
 	err = client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
 		p.StopAndClear()
 		if len(opts.Messages) > 0 {
@@ -276,13 +282,20 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			fn := func(resp api.ProgressResponse) error { return nil }
 			err = client.Create(cmd.Context(), req, fn)
 			if err != nil {
-				fmt.Println("error: couldn't save model")
+				if strings.Contains(err.Error(), errtypes.InvalidModelNameErrMsg) {
+					fmt.Printf("error: The model name '%s' is invalid\n", args[1])
+					continue
+				}
 				return err
 			}
 			fmt.Printf("Created new model '%s'\n", args[1])
 			continue
 		case strings.HasPrefix(line, "/clear"):
 			opts.Messages = []api.Message{}
+			if opts.System != "" {
+				newMessage := api.Message{Role: "system", Content: opts.System}
+				opts.Messages = append(opts.Messages, newMessage)
+			}
 			fmt.Println("Cleared session context")
 			continue
 		case strings.HasPrefix(line, "/set"):

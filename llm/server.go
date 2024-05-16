@@ -38,6 +38,7 @@ type LlamaServer interface {
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
 	EstimatedVRAM() uint64
+	EstimatedTotal() uint64
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -88,6 +89,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 		cpuRunner = serverForCpu()
 		gpuCount = 0
+		_, _, estimatedTotal = EstimateGPULayers(gpus, ggml, projectors, opts)
 	} else {
 		if gpus[0].Library == "metal" {
 			memInfo, err := gpu.GetCPUMem()
@@ -105,6 +107,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
+		} else if gpus[0].Library != "metal" && layers == 0 {
+			// Don't bother loading into the GPU if no layers can fit
+			cpuRunner = serverForCpu()
+			gpuCount = 0
 		} else if opts.NumGPU < 0 && layers > 0 && gpus[0].Library != "cpu" {
 			opts.NumGPU = layers
 		}
@@ -284,30 +290,50 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			done:           make(chan error, 1),
 		}
 
+		s.cmd.Env = os.Environ()
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 
-		if v := strings.Join(libraryPaths, string(filepath.ListSeparator)); v != "" {
-			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+v)
-		}
+		visibleDevicesEnv, visibleDevicesEnvVal := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv()
+		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
-		if k, v := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv(); k != "" {
-			s.cmd.Env = append(s.cmd.Env, k+"="+v)
-		}
-
-		for _, ev := range os.Environ() {
-			if strings.HasPrefix(ev, "CUDA_") ||
-				strings.HasPrefix(ev, "ROCM_") ||
-				strings.HasPrefix(ev, "HIP_") ||
-				strings.HasPrefix(ev, "HSA_") ||
-				strings.HasPrefix(ev, "GGML_") {
-				s.cmd.Env = append(s.cmd.Env, ev)
+		// Update or add the path and visible devices variable with our adjusted version
+		pathNeeded := true
+		devicesNeeded := visibleDevicesEnv != ""
+		for i := range s.cmd.Env {
+			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
+			if strings.EqualFold(cmp[0], pathEnv) {
+				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
+				pathNeeded = false
+			} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
+				s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
+				devicesNeeded = false
 			}
+		}
+		if pathNeeded {
+			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
+		}
+		if devicesNeeded {
+			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd.String())
-		// Log at debug as the environment is inherited and might contain sensitive information
-		slog.Debug("subprocess", "environment", s.cmd.Env)
+		if envconfig.Debug {
+			filteredEnv := []string{}
+			for _, ev := range s.cmd.Env {
+				if strings.HasPrefix(ev, "CUDA_") ||
+					strings.HasPrefix(ev, "ROCM_") ||
+					strings.HasPrefix(ev, "HIP_") ||
+					strings.HasPrefix(ev, "HSA_") ||
+					strings.HasPrefix(ev, "GGML_") ||
+					strings.HasPrefix(ev, "PATH=") ||
+					strings.HasPrefix(ev, "LD_LIBRARY_PATH=") {
+					filteredEnv = append(filteredEnv, ev)
+				}
+			}
+			// Log at debug as the environment is inherited and might contain sensitive information
+			slog.Debug("subprocess", "environment", filteredEnv)
+		}
 
 		if err = s.cmd.Start(); err != nil {
 			// Detect permission denied and augment them essage about noexec
@@ -945,6 +971,10 @@ func (s *llmServer) Close() error {
 
 func (s *llmServer) EstimatedVRAM() uint64 {
 	return s.estimatedVRAM
+}
+
+func (s *llmServer) EstimatedTotal() uint64 {
+	return s.estimatedTotal
 }
 
 func parseDurationMs(ms float64) time.Duration {

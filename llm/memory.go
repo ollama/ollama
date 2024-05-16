@@ -53,6 +53,12 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 
+	layers := ggml.Tensors().Layers()
+	// add one layer worth of memory as a buffer
+	if blk0, ok := layers["blk.0"]; ok {
+		memoryMinimum += blk0.size()
+	}
+
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
 	var kv uint64 = 2 * 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * ggml.KV().EmbeddingLength() / ggml.KV().HeadCount() * ggml.KV().HeadCountKV()
 
@@ -73,13 +79,11 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		graphPartialOffload = graphFullOffload
 	}
 
-	layers := ggml.Tensors().Layers()
-
 	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
-	memoryRequiredTotal := memoryMinimum + graphFullOffload + layers["blk.0"].size()
+	memoryRequiredTotal := memoryMinimum + graphFullOffload
 
 	// memoryRequiredPartial represents the memory required for partial GPU offloading (n > 0, n < layers)
-	memoryRequiredPartial := memoryMinimum + graphPartialOffload + layers["blk.0"].size()
+	memoryRequiredPartial := memoryMinimum + graphPartialOffload
 
 	var memoryLayerOutput uint64
 	if layer, ok := layers["output_norm"]; ok {
@@ -100,15 +104,17 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 
 	var layerCount int
 	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
-		memoryLayer := layers[fmt.Sprintf("blk.%d", i)].size()
+		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
+			memoryLayer := blk.size()
 
-		// KV is proportional to the number of layers
-		memoryLayer += kv / ggml.KV().BlockCount()
+			// KV is proportional to the number of layers
+			memoryLayer += kv / ggml.KV().BlockCount()
 
-		memoryRequiredTotal += memoryLayer
-		if memoryAvailable > memoryRequiredPartial+memoryLayer {
-			memoryRequiredPartial += memoryLayer
-			layerCount++
+			memoryRequiredTotal += memoryLayer
+			if (opts.NumGPU >= 0 && layerCount+1 <= opts.NumGPU) || (opts.NumGPU < 0 && memoryAvailable > memoryRequiredPartial+memoryLayer) {
+				memoryRequiredPartial += memoryLayer
+				layerCount++
+			}
 		}
 	}
 
@@ -117,7 +123,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		memoryRequiredTotal += memoryLayerOutput
 	}
 
-	if memoryAvailable > memoryRequiredTotal {
+	if (opts.NumGPU >= 0 && layerCount+1 <= opts.NumGPU) || (opts.NumGPU < 0 && memoryAvailable > memoryRequiredTotal) {
 		layerCount = int(ggml.KV().BlockCount()) + 1
 		memoryRequiredPartial = memoryRequiredTotal
 	}
@@ -128,10 +134,10 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		"offload to gpu",
 		slog.Group(
 			"layers",
-			// actual number of layers offloaded
-			"real", opts.NumGPU,
+			// requested number of layers to offload
+			"requested", opts.NumGPU,
 			// estimated number of layers that can be offloaded
-			"estimate", layerCount,
+			"real", layerCount,
 		),
 		slog.Group(
 			"memory",
