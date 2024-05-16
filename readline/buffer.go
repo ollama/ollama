@@ -200,7 +200,7 @@ func (b *Buffer) drawRemaining() {
 	fmt.Print(CursorHide)
 
 	// render the rest of the current line
-	currLine := remainingText[:min(b.LineWidth-place, runewidth.StringWidth(remainingText))]
+	currLine := remainingText[:min(b.LineWidth-place, len(remainingText))]
 	if len(currLine) > 0 {
 		fmt.Printf(ClearToEOL + currLine)
 		fmt.Print(cursorLeftN(runewidth.StringWidth(currLine)))
@@ -209,7 +209,7 @@ func (b *Buffer) drawRemaining() {
 	}
 
 	// render the other lines
-	if len(remainingText) > len(currLine) {
+	if runewidth.StringWidth(remainingText) > runewidth.StringWidth(currLine) {
 		remaining := []rune(remainingText[len(currLine):])
 		var totalLines int
 		var displayLength int
@@ -367,9 +367,21 @@ func (b *Buffer) IsEmpty() bool {
 }
 
 func (b *Buffer) Replace(r []rune) {
+	b.DisplayPos = 0
 	b.Pos = 0
+	lineNums := b.Size() / b.LineWidth
+
 	b.Buf.Clear()
-	fmt.Printf(ClearLine + CursorBOL + b.Prompt.prompt())
+
+	//clear line once (always)
+	fmt.Printf(CursorBOL + ClearToEOL)
+
+	for i := 0; i < lineNums; i++ {
+		fmt.Print(CursorUp + CursorBOL + ClearToEOL)
+	}
+
+	fmt.Printf(CursorBOL + b.Prompt.prompt())
+
 	for _, c := range r {
 		b.Add(c)
 	}
