@@ -49,6 +49,9 @@ func (b *Buffer) MoveLeft() {
 
 				if b.DisplayPos%b.LineWidth == 0 {
 					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width))
+					if rLength == 2 {
+						fmt.Print(CursorLeft)
+					}
 				} else {
 					fmt.Print(cursorLeftN(rLength))
 				}
@@ -165,7 +168,30 @@ func (b *Buffer) Add(r rune) {
 	rLength := runewidth.RuneWidth(r)
 
 	if b.Pos == b.Buf.Size() {
-		fmt.Printf("%c", r)
+
+		b.DisplayPos += rLength
+
+		if b.Pos > 0 {
+			if b.DisplayPos%b.LineWidth == 0 {
+				fmt.Printf("%c", r)
+				fmt.Printf("\n%s", b.Prompt.AltPrompt)
+
+			} else if b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth {
+				fmt.Printf("\n%s", b.Prompt.AltPrompt)
+				b.DisplayPos += 1
+				fmt.Printf("%c", r)
+
+			} else {
+				fmt.Printf("%c", r)
+			}
+		} else {
+			fmt.Printf("%c", r)
+		}
+
+		b.Buf.Add(r)
+		b.Pos += 1
+
+		/*fmt.Printf("%c", r)
 		b.Buf.Add(r)
 		b.Pos += 1
 		b.DisplayPos += rLength
@@ -174,9 +200,33 @@ func (b *Buffer) Add(r rune) {
 			if b.DisplayPos%b.LineWidth == 1 {
 				b.DisplayPos -= 1
 			}
-		}
+		}*/
+
 	} else {
-		fmt.Printf("%c", r)
+
+		b.DisplayPos += rLength
+		if b.Pos > 0 {
+
+			if b.DisplayPos%b.LineWidth == 0 {
+				fmt.Printf("%c", r)
+				fmt.Printf("\n%s", b.Prompt.AltPrompt)
+
+			} else if b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth {
+				fmt.Print(ClearToEOL)
+				fmt.Printf("\n%s", b.Prompt.AltPrompt)
+				b.DisplayPos += 1
+				fmt.Printf("%c", r)
+
+			} else {
+				fmt.Printf("%c", r)
+			}
+		} else {
+			fmt.Printf("%c", r)
+		}
+		b.Buf.Insert(b.Pos, r)
+		b.Pos += 1
+
+		/*fmt.Printf("%c", r)
 		b.Buf.Insert(b.Pos, r)
 		b.Pos += 1
 		b.DisplayPos += rLength
@@ -186,7 +236,8 @@ func (b *Buffer) Add(r rune) {
 			if b.DisplayPos%b.LineWidth == 1 {
 				b.DisplayPos -= 1
 			}
-		}
+		}*/
+
 		b.drawRemaining()
 	}
 }
@@ -244,7 +295,13 @@ func (b *Buffer) Remove() {
 					// if the user backspaces over the word boundary, do this magic to clear the line
 					// and move to the end of the previous line
 					fmt.Printf(CursorBOL + ClearToEOL)
-					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width) + " " + CursorLeft) //maybe check this (if last char in prev line is dbl width)
+					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width)) //maybe check this (if last char in prev line is dbl width)
+
+					if rLength == 2 {
+						fmt.Print(CursorLeft + "  " + cursorLeftN(2))
+					} else {
+						fmt.Print(" " + cursorLeftN(1))
+					}
 				} else {
 					fmt.Print(cursorLeftN(rLength))
 					for i := 0; i < rLength; i++ {
@@ -254,7 +311,8 @@ func (b *Buffer) Remove() {
 				}
 
 				var eraseExtraLine bool
-				if (b.Size()-1)%b.LineWidth == 0 {
+				// -1 is if single width character is deleted at the end of a line -- use -2 if doublewidth
+				if (b.Size()-1)%b.LineWidth == 0 || (rLength == 2 && ((b.Size()-2)%b.LineWidth == 0)) {
 					eraseExtraLine = true
 				}
 
