@@ -200,21 +200,17 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--numa")
 	}
 
-	// Only enable flash_attn if all GPUs support it (CUDA 7+ or Metal)
-	// and if all layers are on the GPU
-	flashAttnSupported := false
-	if uint64(opts.NumGPU) != ggml.KV().BlockCount() + 1 {
+	flashAttnSupported := true
+
+	// partial offloading does not support flash attention
+	if uint64(opts.NumGPU) < ggml.KV().BlockCount() + 1 {
 		flashAttnSupported = false
-	} else {
-		for _, g := range gpus {
-			if g.Library == "cuda" && g.DriverMajor >= 7 {
-				flashAttnSupported = true
-			} else if g.Library == "metal" {
-				flashAttnSupported = true
-			} else {
-				flashAttnSupported = false
-				break
-			}
+	}
+
+	// only cuda (compute capability 7+) and metal support flash attention
+	for _, g := range gpus {
+		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
+			flashAttnSupported = false
 		}
 	}
 	if flashAttnSupported {
