@@ -201,8 +201,9 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 
 	// Only enable flash_attn if all GPUs support it (CUDA 7+ or Metal)
+	// and if all layers are on the GPU
 	flashAttnSupported := false
-	if cpuRunner != "" {
+	if uint64(opts.NumGPU) != ggml.KV().BlockCount() + 1 {
 		flashAttnSupported = false
 	} else {
 		for _, g := range gpus {
