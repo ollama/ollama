@@ -27,7 +27,7 @@ func (m *MixtralModel) GetTensors() error {
 		matches := re.FindAllStringSubmatch(l.Name, -1)
 		if len(matches) > 0 {
 			wt := l.WriterTo.(safetensorWriterTo)
-			wt.handler = mistralLayerHandler
+			wt.repacker = m.Repack
 			l.WriterTo = wt
 		}
 		m.Tensors = append(m.Tensors, l)
@@ -80,4 +80,8 @@ func (m *MixtralModel) WriteGGUF(ws io.WriteSeeker) error {
 	}
 
 	return llm.NewGGUFV3(m.Params.ByteOrder).Encode(ws, kv, m.Tensors)
+}
+
+func (m *MixtralModel) Repack(name string, data []float32, shape []uint64) ([]float32, error) {
+	return llamaRepack(name, m.Params, data, shape)
 }

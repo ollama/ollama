@@ -1,7 +1,7 @@
 package convert
 
 import (
-	"encoding/binary"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -10,93 +10,14 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/nlpodyssey/gopickle/pytorch"
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
-	"github.com/x448/float16"
 
 	"github.com/ollama/ollama/llm"
 )
 
 type LlamaModel struct {
 	ModelData
-}
-
-func llamaTorchLayerHandler(w io.Writer, r torchWriterTo) error {
-
-	var tData []uint16
-	switch r.storage.(type) {
-	case *pytorch.HalfStorage:
-		data := r.storage.(*pytorch.HalfStorage).Data
-		tData = make([]uint16, len(data))
-		for cnt, v := range data {
-			tData[cnt] = uint16(float16.Fromfloat32(v))
-		}
-	case *pytorch.BFloat16Storage:
-		data := r.storage.(*pytorch.BFloat16Storage).Data
-		tData = make([]uint16, len(data))
-
-		for cnt, v := range data {
-			tData[cnt] = uint16(float16.Fromfloat32(v))
-		}
-	default:
-		return fmt.Errorf("unknown storage type for torch")
-	}
-
-	var err error
-	var heads uint32
-	if strings.Contains(r.t.Name, "attn_q") {
-		heads = uint32(r.params.AttentionHeads)
-	} else if strings.Contains(r.t.Name, "attn_k") {
-		heads = uint32(r.params.KeyValHeads)
-		if heads == 0 {
-			heads = uint32(r.params.AttentionHeads)
-		}
-	} else {
-		return fmt.Errorf("unknown layer type")
-	}
-
-	tData, err = llamaRepack(tData, int(heads), r.t.Shape)
-	if err != nil {
-		return err
-	}
-
-	if err = binary.Write(w, r.bo, tData); err != nil {
-		return err
-	}
-	return nil
-}
-
-func llamaRepack(data []uint16, heads int, shape []uint64) ([]uint16, error) {
-	n := tensor.New(tensor.WithShape(int(shape[0]), int(shape[1])), tensor.WithBacking(data))
-	origShape := n.Shape().Clone()
-
-	// reshape the tensor and swap axes 1 and 2 to unpack the layer for gguf
-	if err := n.Reshape(heads, 2, origShape[0]/heads/2, origShape[1]); err != nil {
-		return nil, err
-	}
-
-	if err := n.T(0, 2, 1, 3); err != nil {
-		return nil, err
-	}
-
-	if err := n.Reshape(origShape...); err != nil {
-		return nil, err
-	}
-
-	if err := n.Transpose(); err != nil {
-		return nil, err
-	}
-	newN, err := native.SelectU16(n, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	var fullTensor []uint16
-	for _, v := range newN {
-		fullTensor = append(fullTensor, v...)
-	}
-	return fullTensor, nil
 }
 
 func (m *LlamaModel) GetTensors() error {
@@ -117,11 +38,11 @@ func (m *LlamaModel) GetTensors() error {
 			switch m.Format.(type) {
 			case *TorchFormat:
 				wt := l.WriterTo.(torchWriterTo)
-				wt.handler = llamaTorchLayerHandler
+				wt.repacker = m.Repack
 				l.WriterTo = wt
 			case *SafetensorFormat:
 				wt := l.WriterTo.(safetensorWriterTo)
-				wt.handler = mistralLayerHandler
+				wt.repacker = m.Repack
 				l.WriterTo = wt
 			}
 		}
@@ -183,4 +104,55 @@ func (m *LlamaModel) WriteGGUF(ws io.WriteSeeker) error {
 	}
 
 	return llm.NewGGUFV3(m.Params.ByteOrder).Encode(ws, kv, m.Tensors)
+}
+
+func (m *LlamaModel) Repack(name string, data []float32, shape []uint64) ([]float32, error) {
+	return llamaRepack(name, m.Params, data, shape)
+}
+
+func llamaRepack(name string, params *Params, data []float32, shape []uint64) ([]float32, error) {
+	var dims []int
+	for _, dim := range shape {
+		if dim != 0 {
+			dims = append(dims, int(dim))
+		}
+	}
+
+	var heads int
+	if strings.HasSuffix(name, "attn_q.weight") {
+		heads = params.AttentionHeads
+	} else if strings.HasSuffix(name, "attn_k.weight") {
+		heads = cmp.Or(params.KeyValHeads, params.AttentionHeads)
+	} else {
+		return nil, fmt.Errorf("unknown tensor name: %s", name)
+	}
+
+	n := tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
+	if err := n.Reshape(append([]int{heads, 2, dims[0] / heads / 2}, dims[1:]...)...); err != nil {
+		return nil, err
+	}
+
+	if err := n.T(0, 2, 1, 3); err != nil {
+		return nil, err
+	}
+
+	if err := n.Reshape(dims...); err != nil {
+		return nil, err
+	}
+
+	if err := n.Transpose(); err != nil {
+		return nil, err
+	}
+
+	ts, err := native.SelectF32(n, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	var f32s []float32
+	for _, t := range ts {
+		f32s = append(f32s, t...)
+	}
+
+	return f32s, nil
 }
