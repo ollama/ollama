@@ -29,6 +29,7 @@ import (
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/server/envconfig"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -539,7 +540,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		r = f
 	}
 
-	modelfile, err := model.ParseFile(r)
+	modelfile, err := parser.ParseFile(r)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
