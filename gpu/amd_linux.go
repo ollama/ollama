@@ -27,7 +27,7 @@ const (
 	GPUTotalMemoryFileGlob = "mem_banks/*/properties" // size_in_bytes line
 
 	// Direct Rendering Manager sysfs location
-	DRMDeviceDirGlob   = "/sys/class/drm/card[0-9]/device"
+	DRMDeviceDirGlob   = "/sys/class/drm/card*/device"
 	DRMTotalMemoryFile = "mem_info_vram_total"
 	DRMUsedMemoryFile  = "mem_info_vram_used"
 

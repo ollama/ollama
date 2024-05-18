@@ -44,14 +44,14 @@ type CPUInfo struct {
 
 type CudaGPUInfo struct {
 	GpuInfo
-	index int // device index
+	index int // nolint: unused
 }
 type CudaGPUInfoList []CudaGPUInfo
 
 type RocmGPUInfo struct {
 	GpuInfo
-	usedFilepath string // linux
-	index        int    // device index on windows
+	usedFilepath string // nolint: unused
+	index        int    // nolint: unused
 }
 type RocmGPUInfoList []RocmGPUInfo
 

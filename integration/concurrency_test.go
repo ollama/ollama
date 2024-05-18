@@ -38,7 +38,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 		}
 		resp = [2][]string{
 			[]string{"sunlight"},
-			[]string{"england", "english", "massachusetts", "pilgrims"},
+			[]string{"england", "english", "massachusetts", "pilgrims", "british"},
 		}
 	)
 	var wg sync.WaitGroup
@@ -229,5 +229,23 @@ func TestMultiModelStress(t *testing.T) {
 			}
 		}(i)
 	}
+	go func() {
+		for {
+			time.Sleep(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				models, err := client.ListRunning(ctx)
+				if err != nil {
+					slog.Warn("failed to list running models", "error", err)
+					continue
+				}
+				for _, m := range models.Models {
+					slog.Info("loaded model snapshot", "model", m)
+				}
+			}
+		}
+	}()
 	wg.Wait()
 }

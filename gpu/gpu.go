@@ -246,10 +246,6 @@ func GetGPUInfo() GpuInfoList {
 			return GpuInfoList{cpus[0].GpuInfo}
 		}
 
-		// TODO - implement
-
-		// TODO refine the discovery to only gather total memory
-
 		// On windows we bundle the nvidia library one level above the runner dir
 		depPath := ""
 		if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
