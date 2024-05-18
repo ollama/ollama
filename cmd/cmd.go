@@ -63,7 +63,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	defer f.Close()
 
-	modelfile, err := model.ParseFile(f)
+	modelFile, err := model.ParseFile(f)
 	if err != nil {
 		return err
 	}
@@ -77,10 +77,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
-	for i := range modelfile.Commands {
-		switch modelfile.Commands[i].Name {
+	for i := range modelFile.Commands {
+		switch modelFile.Commands[i].Name {
 		case "model", "adapter":
-			path := modelfile.Commands[i].Args
+			path := modelFile.Commands[i].Args
 			if path == "~" {
 				path = home
 			} else if strings.HasPrefix(path, "~/") {
@@ -92,7 +92,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			fi, err := os.Stat(path)
-			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
+			if errors.Is(err, os.ErrNotExist) && modelFile.Commands[i].Name == "model" {
 				continue
 			} else if err != nil {
 				return err
@@ -101,13 +101,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			if fi.IsDir() {
 				// this is likely a safetensors or pytorch directory
 				// TODO make this work w/ adapters
-				tempfile, err := tempZipFiles(path)
+				tempFile, err := tempZipFiles(path)
 				if err != nil {
 					return err
 				}
-				defer os.RemoveAll(tempfile)
+				defer os.RemoveAll(tempFile)
 
-				path = tempfile
+				path = tempFile
 			}
 
 			digest, err := createBlob(cmd, client, path)
@@ -115,7 +115,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			modelfile.Commands[i].Args = "@" + digest
+			modelFile.Commands[i].Args = "@" + digest
 		}
 	}
 
@@ -145,7 +145,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	quantize, _ := cmd.Flags().GetString("quantize")
 
-	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantize: quantize}
+	request := api.CreateRequest{Name: args[0], Modelfile: modelFile.String(), Quantize: quantize}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -187,11 +187,11 @@ func tempZipFiles(path string) (string, error) {
 			return nil, err
 		}
 
-		for _, safetensor := range matches {
-			if ct, err := detectContentType(safetensor); err != nil {
+		for _, safeTensor := range matches {
+			if ct, err := detectContentType(safeTensor); err != nil {
 				return nil, err
 			} else if ct != contentType {
-				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safetensor)
+				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safeTensor)
 			}
 		}
 
@@ -319,11 +319,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		ParentModel: show.Details.ParentModel,
 	}
 
-	format, err := cmd.Flags().GetString("format")
+	outputFormat, err := cmd.Flags().GetString("Format")
 	if err != nil {
 		return err
 	}
-	opts.Format = format
+	opts.Format = outputFormat
 
 	keepAlive, err := cmd.Flags().GetString("keepalive")
 	if err != nil {
