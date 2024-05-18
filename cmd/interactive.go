@@ -182,6 +182,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		return err
 	}
 
+	if os.Getenv("OLLAMA_NOHISTORY") != "" {
+		scanner.HistoryDisable()
+	}
+
 	fmt.Print(readline.StartBracketedPaste)
 	defer fmt.Printf(readline.EndBracketedPaste)
 
