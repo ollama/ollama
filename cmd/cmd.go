@@ -1078,12 +1078,24 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
-func appendHostEnvDocs(cmd *cobra.Command) {
-	const hostEnvDocs = `
+type EnvironmentVar struct {
+	Name        string
+	Description string
+}
+
+func appendEnvDocs(cmd *cobra.Command, envs []EnvironmentVar) {
+	if len(envs) == 0 {
+		return
+	}
+
+	envUsage := `
 Environment Variables:
-      OLLAMA_HOST        The host:port or base URL of the Ollama server (e.g. http://localhost:11434)
 `
-	cmd.SetUsageTemplate(cmd.UsageTemplate() + hostEnvDocs)
+	for _, e := range envs {
+		envUsage += fmt.Sprintf("      %-16s   %s\n", e.Name, e.Description)
+	}
+
+	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
 func NewCLI() *cobra.Command {
@@ -1220,6 +1232,10 @@ Environment Variables:
 		RunE:    DeleteHandler,
 	}
 
+	ollamaHostEnv := EnvironmentVar{"OLLAMA_HOST", "The host:port or base URL of the Ollama server (e.g. http://localhost:11434)"}
+	ollamaNoHistoryEnv := EnvironmentVar{"OLLAMA_NOHISTORY", "Disable readline history"}
+	envs := []EnvironmentVar{ollamaHostEnv}
+
 	for _, cmd := range []*cobra.Command{
 		createCmd,
 		showCmd,
@@ -1231,7 +1247,12 @@ Environment Variables:
 		copyCmd,
 		deleteCmd,
 	} {
-		appendHostEnvDocs(cmd)
+		switch cmd {
+		case runCmd:
+			appendEnvDocs(cmd, []EnvironmentVar{ollamaHostEnv, ollamaNoHistoryEnv})
+		default:
+			appendEnvDocs(cmd, envs)
+		}
 	}
 
 	rootCmd.AddCommand(
