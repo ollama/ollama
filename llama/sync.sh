@@ -39,20 +39,6 @@ mkdir -p $dst_dir/ggml-cuda
 cp $src_dir/ggml-cuda/*.cu $dst_dir/ggml-cuda/
 cp $src_dir/ggml-cuda/*.cuh $dst_dir/ggml-cuda/
 
-# ggml-metal
-sed -i '' '1s;^;//go:build darwin,arm64\n;' ggml-metal.m
-sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < ggml-metal.metal > temp.metal
-TEMP_ASSEMBLY=$(mktemp)
-echo ".section __DATA, __ggml_metallib"   >  $TEMP_ASSEMBLY
-echo ".globl _ggml_metallib_start"        >> $TEMP_ASSEMBLY
-echo "_ggml_metallib_start:"              >> $TEMP_ASSEMBLY
-echo ".incbin \"temp.metal\"" >> $TEMP_ASSEMBLY
-echo ".globl _ggml_metallib_end"          >> $TEMP_ASSEMBLY
-echo "_ggml_metallib_end:"                >> $TEMP_ASSEMBLY
-as -mmacosx-version-min=11.3 $TEMP_ASSEMBLY -o ggml-metal.o
-rm -f $TEMP_ASSEMBLY
-rm -rf temp.metal
-
 # apply patches
 for patch in patches/*.patch; do
   git apply "$patch"
@@ -84,3 +70,17 @@ for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
     cat $tempdir $IN >$TMP
     mv $TMP $IN
 done
+
+# ggml-metal
+sed -i '' '1s;^;//go:build darwin,arm64\n\n;' ggml-metal.m
+sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < ggml-metal.metal > temp.metal
+TEMP_ASSEMBLY=$(mktemp)
+echo ".section __DATA, __ggml_metallib"   >  $TEMP_ASSEMBLY
+echo ".globl _ggml_metallib_start"        >> $TEMP_ASSEMBLY
+echo "_ggml_metallib_start:"              >> $TEMP_ASSEMBLY
+echo ".incbin \"temp.metal\"" >> $TEMP_ASSEMBLY
+echo ".globl _ggml_metallib_end"          >> $TEMP_ASSEMBLY
+echo "_ggml_metallib_end:"                >> $TEMP_ASSEMBLY
+as -mmacosx-version-min=11.3 $TEMP_ASSEMBLY -o ggml-metal.o
+rm -f $TEMP_ASSEMBLY
+rm -rf temp.metal
