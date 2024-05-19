@@ -1,4 +1,4 @@
-// go:build darwin,arm64
+// go:build darwin arm64
 
 /**
  * llama.cpp - git 059031b8c40e1f4ba60586842c5b1ed3ddf61842
