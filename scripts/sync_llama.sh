@@ -77,7 +77,7 @@ for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
 done
 
 # ggml-metal
-sed -i '' '1s;^;// go:build darwin arm64\n\n;' $dst_dir/ggml-metal.m
+sed -i '' '1s;^;// go:build darwin && arm64\n\n;' $dst_dir/ggml-metal.m
 sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < $dst_dir/ggml-metal.metal > temp.metal
 TEMP_ASSEMBLY=$(mktemp)
 echo ".section __DATA, __ggml_metallib"   >  $TEMP_ASSEMBLY
