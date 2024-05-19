@@ -20,14 +20,18 @@ const (
 // such as a password.
 func setFromEnvString(name string, dest *string, sensitive bool) bool {
 	if value := os.Getenv(name); value != "" {
-		// store the environment variable name to place in the logging details
-		debug_info := []string{"evironment_varialbe_name", name}
-		// store info about the value change if it is not sensitive information
-		if !sensitive {
-			debug_info = append(debug_info, "new_value", value, "old_value", *dest)
+		// handle debugging output for sensitive values
+		if sensitive {
+			// log only the environment variable name in the debug message
+			slog.Debug("setFromEnvString", "evironment_varialbe_name", name)
+
+			// set the value and return true to indicate the mutation happened
+			*dest = value
+			return true
 		}
-		// only log at the debug level
-		slog.Debug("setFromEnvString", debug_info)
+
+		// log all the details in the debug message
+		slog.Debug("setFromEnvString", "evironment_varialbe_name", name, "new_value", value, "old_value", *dest)
 
 		// set the value and return true to indicate the mutation happened
 		*dest = value
