@@ -28,7 +28,7 @@ cp $src_dir/ggml-quants.c $dst_dir/ggml-quants.c
 cp $src_dir/ggml-quants.h $dst_dir/ggml-quants.h
 cp $src_dir/ggml-metal.metal $dst_dir/ggml-metal.metal
 cp $src_dir/ggml-metal.h $dst_dir/ggml-metal.h
-cp $src_dir/ggml-metal.m $dst_dir/ggml-metal.m
+cp $src_dir/ggml-metal.m $dst_dir/ggml-metal-darwin_arm64.m
 cp $src_dir/ggml-impl.h $dst_dir/ggml-impl.h
 cp $src_dir/ggml-cuda.h $dst_dir/ggml-cuda.h
 cp $src_dir/ggml-cuda.cu $dst_dir/ggml-cuda.cu
