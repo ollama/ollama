@@ -1,7 +1,7 @@
 package llama
 
-// #cgo darwin,arm64 CFLAGS: -std=c11 -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-// #cgo darwin,arm64 CXXFLAGS: -std=c++11 -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+// #cgo darwin,arm64 CFLAGS: -std=c11 -DNDEBUG -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+// #cgo darwin,arm64 CXXFLAGS: -std=c++11 -DNDEBUG -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,arm64 LDFLAGS: -ld_classic ${SRCDIR}/ggml-metal.o -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
 // #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 // #cgo darwin,amd64 CXXFLAGS: -std=c++11 -Wno-incompatible-pointer-types-discards-qualifiers
@@ -18,6 +18,8 @@ package llama
 // #cgo windows,rocm LDFLAGS: -L. -L"C:/Program Files/AMD/ROCm/5.7/lib" -lggml-hipblas -lhipblas -lamdhip64 -lrocblas
 // #include <stdlib.h>
 // #include "llama.h"
+// #include "clip.h"
+// #include "llava.h"
 import "C"
 import (
 	"fmt"
@@ -86,12 +88,12 @@ func (c *Context) Decode(batch Batch) error {
 	return nil
 }
 
-func (c *Context) getModel() *Model {
+func (c *Context) GetModel() *Model {
 	return &Model{c: C.llama_get_model(c.c)}
 }
 
 func (c *Context) SampleTokenGreedy(batch Batch) Token {
-	nv := c.getModel().NumVocab()
+	nv := c.GetModel().NumVocab()
 
 	// TODO(jmorganca): split this up into different functions
 	candidates := (*C.struct_llama_token_data)(C.malloc(C.size_t(nv) * C.size_t(unsafe.Sizeof(C.struct_llama_token_data{}))))
@@ -133,8 +135,8 @@ type Batch struct {
 	c C.struct_llama_batch
 }
 
-func NewBatch(nTokens int, nSeqs int, nCtx int) Batch {
-	return Batch{c: C.llama_batch_init(C.int(nTokens), C.int(nSeqs), C.int(nCtx))}
+func NewBatch(nTokens int, embd int, maxSeq int) Batch {
+	return Batch{c: C.llama_batch_init(C.int(nTokens), C.int(embd), C.int(maxSeq))}
 }
 
 func (b *Batch) NumTokens() int {
@@ -159,6 +161,16 @@ func (b *Batch) Add(token Token, pos Pos, seqIds []SeqId, logits bool) {
 
 func (b *Batch) Clear() {
 	b.c.n_tokens = 0
+}
+
+// LLAMA_API struct llama_batch llama_batch_get_one(
+//
+//		llama_token * tokens,
+//			int32_t   n_tokens,
+//		  llama_pos   pos_0,
+//	   llama_seq_id   seq_id);
+func BatchGetOne(tokens []Token, pos0 Pos, seqId SeqId) Batch {
+	return Batch{c: C.llama_batch_get_one((*C.int)(unsafe.Pointer(&tokens[0])), C.int32_t(len(tokens)), C.int(pos0), C.int(seqId))}
 }
 
 type Model struct {
@@ -220,4 +232,31 @@ func Quantize(infile, outfile string, ftype llm.FileType) error {
 	}
 
 	return nil
+}
+
+type ClipContext struct {
+	c *C.struct_clip_ctx
+}
+
+func NewClipContext(modelPath string) *ClipContext {
+	mp := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(mp))
+	cc := C.clip_model_load(mp, 1)
+	return &ClipContext{c: cc}
+}
+
+type LlavaContext struct {
+	c *C.struct_llava_context
+}
+
+type LlavaImageEmbed struct {
+	c *C.struct_llava_image_embed
+}
+
+func NewLlavaImageEmbed(clipContext *ClipContext, data []byte) *LlavaImageEmbed {
+	return &LlavaImageEmbed{c: C.llava_image_embed_make_with_bytes(clipContext.c, C.int(runtime.NumCPU()), (*C.uchar)(unsafe.Pointer(&data[0])), C.int(len(data)))}
+}
+
+func LlavaEvalImageEmbed(llamaContext *Context, embed *LlavaImageEmbed, nBatch int, nPast *int) {
+	C.llava_eval_image_embed(llamaContext.c, embed.c, C.int(nBatch), (*C.int)(unsafe.Pointer(nPast)))
 }
