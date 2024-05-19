@@ -1,10 +1,12 @@
 package llama
 
-// #cgo darwin,arm64 CFLAGS: -std=c11 -DNDEBUG -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-// #cgo darwin,arm64 CXXFLAGS: -std=c++11 -DNDEBUG -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+// #cgo CFLAGS: -std=c11 -DNDEBUG -DLOG_DISABLE_LOGS
+// #cgo CXXFLAGS: -std=c++11 -DNDEBUG -DLOG_DISABLE_LOGS
+// #cgo darwin,arm64 CFLAGS: -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+// #cgo darwin,arm64 CXXFLAGS: -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,arm64 LDFLAGS: -ld_classic ${SRCDIR}/ggml-metal.o -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
 // #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
-// #cgo darwin,amd64 CXXFLAGS: -std=c++11 -Wno-incompatible-pointer-types-discards-qualifiers
+// #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 // #cgo darwin,amd64 LDFLAGS: -ld_classic -framework Foundation -framework Accelerate
 // #cgo windows LDFLAGS: -lmsvcrt
 // #cgo avx CFLAGS: -mavx
@@ -12,8 +14,8 @@ package llama
 // #cgo avx2 CFLAGS: -mavx2 -mfma
 // #cgo avx2 CXXFLAGS: -mavx2 -mfma
 // #cgo cuda CFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-// #cgo cuda CXXFLAGS: -std=c++11 -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-// #cgo rocm CXXFLAGS: -std=c++11 -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+// #cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+// #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 // #cgo windows,cuda LDFLAGS: -L. -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.3/lib/x64" -lggml-cuda -lcuda -lcudart -lcublas -lcublasLt
 // #cgo windows,rocm LDFLAGS: -L. -L"C:/Program Files/AMD/ROCm/5.7/lib" -lggml-hipblas -lhipblas -lamdhip64 -lrocblas
 // #include <stdlib.h>
