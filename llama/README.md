@@ -44,12 +44,13 @@ go build -tags=avx2 .
 
 Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-download-archive) then build ggml-cuda:
 
+Build `ggml-cuda.dll`:
+
 ```shell
-# builds ggml-cuda.dll
 ./cuda.sh
 ```
 
-Then build this package with the `cuda` tag:
+Then build the package with the `cuda` tag:
 
 ```shell
 go build -tags=cuda .
@@ -57,16 +58,23 @@ go build -tags=cuda .
 
 ### ROCm
 
+Install [ROCm 5.7.1](https://rocm.docs.amd.com/en/docs-5.7.1/) and [Strawberry Perl](https://strawberryperl.com/):
+
+Build `ggml-hipblas.dll`:
+
 ```shell
-# builds ggml-hipblas.dll
 ./hipblas.sh
 ```
+
+Then build the package with the `rocm` tag:
 
 ```shell
 go build -tags=rocm .
 ```
 
 ## Syncing with llama.cpp
+
+To update this package to the latest llama.cpp code, use the `sync.sh` script.
 
 ```
 ./sync.sh ../../llama.cpp
