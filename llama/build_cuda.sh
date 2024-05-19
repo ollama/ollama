@@ -14,6 +14,7 @@ nvcc \
     -DGGML_SHARED=1 \
     -DGGML_BUILD=1 \
     -DGGML_USE_LLAMAFILE \
+    -Wno-deprecated-gpu-targets \
     --forward-unknown-to-host-compiler \
     -use_fast_math \
     -link \
@@ -22,4 +23,4 @@ nvcc \
     -lcuda -lcublas -lcudart -lcublasLt \
     -O3 \
     -o ggml-cuda.dll \
-    ggml-cuda.cu ggml-cuda/*.cu ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c
+    ggml-cuda.cu ggml-cuda/*.cu ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c sgemm.cpp
