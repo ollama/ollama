@@ -3,8 +3,13 @@
 # Set the source directory
 src_dir=$1
 
+if [ -z "$src_dir" ]; then
+  echo "Usage: $0 LLAMA_CPP_DIR"
+  exit 1
+fi
+
 # Set the destination directory (current directory)
-dst_dir="."
+dst_dir=./llama
 
 # llama.cpp
 cp $src_dir/unicode.cpp $dst_dir/unicode.cpp
@@ -40,20 +45,20 @@ cp $src_dir/ggml-cuda/*.cu $dst_dir/ggml-cuda/
 cp $src_dir/ggml-cuda/*.cuh $dst_dir/ggml-cuda/
 
 # apply patches
-for patch in patches/*.patch; do
+for patch in $dst_dir/patches/*.patch; do
   git apply "$patch"
 done
 
 # add license
 sha1=$(git -C $src_dir rev-parse @)
 
-tempdir=$(mktemp)
+TEMP_LICENSE=$(mktemp)
 cleanup() {
-    rm -f $tempdir
+    rm -f $TEMP_LICENSE
 }
 trap cleanup 0
 
-cat <<EOF | sed 's/ *$//' >$tempdir
+cat <<EOF | sed 's/ *$//' >$TEMP_LICENSE
 /**
  * llama.cpp - git $sha1
  *
@@ -67,13 +72,13 @@ for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
         continue
     fi
     TMP=$(mktemp)
-    cat $tempdir $IN >$TMP
+    cat $TEMP_LICENSE $IN >$TMP
     mv $TMP $IN
 done
 
 # ggml-metal
-sed -i '' '1s;^;//go:build darwin,arm64\n\n;' ggml-metal.m
-sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < ggml-metal.metal > temp.metal
+sed -i '' '1s;^;// go:build darwin,arm64\n\n;' $dst_dir/ggml-metal.m
+sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < $dst_dir/ggml-metal.metal > temp.metal
 TEMP_ASSEMBLY=$(mktemp)
 echo ".section __DATA, __ggml_metallib"   >  $TEMP_ASSEMBLY
 echo ".globl _ggml_metallib_start"        >> $TEMP_ASSEMBLY
