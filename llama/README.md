@@ -16,7 +16,7 @@ Extra build steps are required for CUDA and ROCm on Windows since `nvcc` and `hi
 - `ggml-cuda.dll`
 - `ggml-hipblas.dll`
 
-> Note: it's important that memory is allocated and freed by the same compiler (e.g. msvc or mingw code). Issues from this should be rare, but there are some places where pointers are returned by the CUDA or HIP runtimes and freed elsewhere, causing a a crash. In a future change the same runtime should be used in both cases to avoid crashes.
+> Note: it's important that memory is allocated and freed by the same compiler (e.g. entirely by code compiled with msvc or mingw). Issues from this should be rare, but there are some places where pointers are returned by the CUDA or HIP runtimes and freed elsewhere, causing a a crash. In a future change the same runtime should be used in both cases to avoid crashes.
 
 ## Building
 
