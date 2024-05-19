@@ -47,7 +47,7 @@ Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-down
 Build `ggml-cuda.dll`:
 
 ```shell
-./cuda.sh
+./build_cuda.sh
 ```
 
 Then build the package with the `cuda` tag:
@@ -63,7 +63,7 @@ Install [ROCm 5.7.1](https://rocm.docs.amd.com/en/docs-5.7.1/) and [Strawberry P
 Then, build `ggml-hipblas.dll`:
 
 ```shell
-./hipblas.sh
+./build_hipblas.sh
 ```
 
 Then build the package with the `rocm` tag:
