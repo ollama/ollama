@@ -1,6 +1,6 @@
 # `llama`
 
-This package integrates llama.cpp a Go package.
+This package integrates llama.cpp as a Go package that's easy to build with different tags for different CPU and GPU processors.
 
 - [x] CPU
 - [x] avx, avx2
