@@ -1,3 +1,4 @@
+//go:build darwin,arm64
 #import "ggml-metal.h"
 
 #import "ggml-backend-impl.h"
