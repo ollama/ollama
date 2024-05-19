@@ -2,6 +2,8 @@
 
 This package integrates llama.cpp as a Go package that's easy to build with tags for different CPU and GPU processors.
 
+Supported:
+
 - [x] CPU
 - [x] avx, avx2
 - [ ] avx512
@@ -10,6 +12,8 @@ This package integrates llama.cpp as a Go package that's easy to build with tags
 - [x] Windows ROCm
 - [ ] Linux CUDA
 - [ ] Linux ROCm
+- [ ] Clip
+- [ ] Parallel Requests
 
 Extra build steps are required for CUDA and ROCm on Windows since `nvcc` and `hipcc` both require using msvc as the host compiler. For these small dlls are created:
 
