@@ -274,6 +274,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		req := llm.CompletionRequest{
 			Prompt:  prompt,
 			Format:  req.Format,
+			Grammar: req.Grammar,
 			Images:  images,
 			Options: opts,
 		}
@@ -1333,6 +1334,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if err := runner.llama.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Format:  req.Format,
+			Grammar: req.Grammar,
 			Images:  images,
 			Options: opts,
 		}, fn); err != nil {
