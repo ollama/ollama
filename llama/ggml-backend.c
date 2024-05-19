@@ -87,12 +87,7 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
     if (buffer->iface.free_buffer != NULL) {
         buffer->iface.free_buffer(buffer);
     }
-
-// TODO: this needs to be freed in cuda and hipblas backends because
-// the cuda backend implementation compiled with msvc
-#if !defined(GGML_USE_CUDA) && !defined(GGML_USE_HIPBLAS)
     free(buffer);
-#endif
 }
 
 size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
