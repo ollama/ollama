@@ -10,9 +10,9 @@ mkdir -p dist
 # amd64 runners
 export CGO_CFLAGS_ALLOW=-mfma
 export CGO_CXXFLAGS_ALLOW=-mfma
-CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -x -ldflags="-s -w" -trimpath -o dist/ollama_llama_runner_darwin_amd64 ./runner &
-CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -x -ldflags="-s -w" -tags avx -trimpath -o dist/ollama_llama_runner_darwin_amd64_avx ./runner &
-CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -x -ldflags="-s -w" -tags avx,avx2 -trimpath -o dist/ollama_llama_runner_darwin_amd64_avx2 ./runner &
+CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -x -ldflags="-s -w" -trimpath -o dist/ollama_llama_runner_darwin_amd64 ./llama/runner &
+CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -x -ldflags="-s -w" -tags avx -trimpath -o dist/ollama_llama_runner_darwin_amd64_avx ./llama/runner &
+CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -x -ldflags="-s -w" -tags avx,avx2 -trimpath -o dist/ollama_llama_runner_darwin_amd64_avx2 ./llama/runner &
 wait
 
 # amd64
