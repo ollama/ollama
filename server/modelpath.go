@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/ollama/ollama/types/defaults"
 )
 
 type ModelPath struct {
@@ -18,13 +20,6 @@ type ModelPath struct {
 	Tag            string
 }
 
-const (
-	DefaultRegistry       = "registry.ollama.ai"
-	DefaultNamespace      = "library"
-	DefaultTag            = "latest"
-	DefaultProtocolScheme = "https"
-)
-
 var (
 	ErrInvalidImageFormat  = errors.New("invalid image format")
 	ErrInvalidProtocol     = errors.New("invalid protocol scheme")
@@ -34,11 +29,11 @@ var (
 
 func ParseModelPath(name string) ModelPath {
 	mp := ModelPath{
-		ProtocolScheme: DefaultProtocolScheme,
-		Registry:       DefaultRegistry,
-		Namespace:      DefaultNamespace,
+		ProtocolScheme: defaults.REGISTRY_PROTOCOL_SCHEME,
+		Registry:       defaults.REGISTRY_ENDPOINT,
+		Namespace:      defaults.REGISTRY_NAMESPACE,
 		Repository:     "",
-		Tag:            DefaultTag,
+		Tag:            defaults.REGISTRY_TAG,
 	}
 
 	before, after, found := strings.Cut(name, "://")
@@ -92,8 +87,8 @@ func (mp ModelPath) GetFullTagname() string {
 }
 
 func (mp ModelPath) GetShortTagname() string {
-	if mp.Registry == DefaultRegistry {
-		if mp.Namespace == DefaultNamespace {
+	if mp.Registry == defaults.REGISTRY_ENDPOINT {
+		if mp.Namespace == defaults.REGISTRY_NAMESPACE {
 			return fmt.Sprintf("%s:%s", mp.Repository, mp.Tag)
 		}
 		return fmt.Sprintf("%s/%s:%s", mp.Namespace, mp.Repository, mp.Tag)
