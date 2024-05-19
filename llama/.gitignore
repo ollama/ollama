@@ -2,3 +2,4 @@
 *.gguf
 *.lib
 *.exp
+*.dll
