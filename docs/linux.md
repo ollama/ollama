@@ -18,6 +18,13 @@ recommend you install the latest driver from
 https://www.amd.com/en/support/linux-drivers for best support of your Radeon
 GPU.
 
+Fedora 40 [packages](https://fedoraproject.org/wiki/Changes/ROCm6Release) ROCm,
+and you should be able to install everything needed with:
+
+```bash
+sudo dnf install "hipblas rocm-*"
+```
+
 ## Manual install
 
 ### Download the `ollama` binary
