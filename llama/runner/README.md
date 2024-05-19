@@ -5,5 +5,5 @@
 ```
 
 ```
-curl POST -H "Content-Type: application/json" -d '{"prompt": "hi"}' http://localhost:8080/
+curl -X POST -H "Content-Type: application/json" -d '{"prompt": "hi"}' http://localhost:8080/
 ```

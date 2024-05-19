@@ -3,14 +3,13 @@ package llama
 // #cgo darwin,arm64 CFLAGS: -std=c11 -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,arm64 CXXFLAGS: -std=c++11 -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,amd64 CXXFLAGS: -std=c++11
-// #cgo darwin,arm64 LDFLAGS: ggml-metal.o -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
-// #cgo darwin,amd64 LDFLAGS: -framework Foundation -framework Accelerate
+// #cgo darwin,arm64 LDFLAGS: -ld_classic ${SRCDIR}/ggml-metal.o -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
+// #cgo darwin,amd64 LDFLAGS: -ld_classic -framework Foundation -framework Accelerate
 // #cgo windows LDFLAGS: -lmsvcrt
 // #cgo avx CFLAGS: -mavx
 // #cgo avx CXXFLAGS: -mavx
 // #cgo avx2 CFLAGS: -mavx -mavx2 -mfma
 // #cgo avx2 CXXFLAGS: -mavx -mavx2 -mfma
-// #cgo avx2 LDFLAGS: -lm
 // #cgo cuda CFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 // #cgo cuda CXXFLAGS: -std=c++11 -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 // #cgo rocm CXXFLAGS: -std=c++11 -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
@@ -24,6 +23,8 @@ import (
 	"runtime"
 	"strings"
 	"unsafe"
+
+	"github.com/ollama/ollama/llm"
 )
 
 type Token int32
@@ -200,4 +201,22 @@ func (m *Model) Tokenize(text string, maxTokens int, addSpecial bool, parseSpeci
 	}
 
 	return tokens, nil
+}
+
+func Quantize(infile, outfile string, ftype llm.FileType) error {
+	cinfile := C.CString(infile)
+	defer C.free(unsafe.Pointer(cinfile))
+
+	coutfile := C.CString(outfile)
+	defer C.free(unsafe.Pointer(coutfile))
+
+	params := C.llama_model_quantize_default_params()
+	params.nthread = -1
+	params.ftype = ftype.Value()
+
+	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
+		return fmt.Errorf("llama_model_quantize: %d", rc)
+	}
+
+	return nil
 }

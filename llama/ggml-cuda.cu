@@ -715,9 +715,6 @@ static bool ggml_backend_buffer_is_cuda_split(ggml_backend_buffer_t buffer) {
 GGML_CALL static void ggml_backend_cuda_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     ggml_backend_cuda_split_buffer_context * ctx = (ggml_backend_cuda_split_buffer_context *)buffer->context;
     delete ctx;
-    
-    // HACK: this needs to be freed in msvc
-    free(buffer);
 }
 
 GGML_CALL static void * ggml_backend_cuda_split_buffer_get_base(ggml_backend_buffer_t buffer) {
@@ -3031,7 +3028,7 @@ GGML_CALL static ggml_backend_t ggml_backend_reg_cuda_init(const char * params, 
     GGML_UNUSED(params);
 }
 
-// extern "C" GGML_CALL int ggml_backend_cuda_reg_devices();
+extern "C" GGML_CALL int ggml_backend_cuda_reg_devices();
 
 GGML_CALL int ggml_backend_cuda_reg_devices() {
     int device_count = ggml_backend_cuda_get_device_count();
