@@ -1,7 +1,7 @@
-# `llama/server`
+# `runner`
 
 ```
-./server -model <model binary>
+./runner -model <model binary>
 ```
 
 ```
