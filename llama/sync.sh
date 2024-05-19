@@ -54,30 +54,33 @@ rm -f $TEMP_ASSEMBLY
 rm -rf temp.metal
 
 # apply patches
+for patch in patches/*.patch; do
+  git apply "$patch"
+done
 
 # add license
-# sha1=$(git -C $src_dir rev-parse @)
+sha1=$(git -C $src_dir rev-parse @)
 
-# tempdir=$(mktemp)
-# cleanup() {
-#     rm -f $tempdir
-# }
-# trap cleanup 0
+tempdir=$(mktemp)
+cleanup() {
+    rm -f $tempdir
+}
+trap cleanup 0
 
-# cat <<EOF | sed 's/ *$//' >$tempdir
-# /**
-#  * llama.cpp - git $sha1
-#  *
-# $(sed 's/^/ * /' <$src_dir/LICENSE)
-#  */
+cat <<EOF | sed 's/ *$//' >$tempdir
+/**
+ * llama.cpp - git $sha1
+ *
+$(sed 's/^/ * /' <$src_dir/LICENSE)
+ */
 
-# EOF
+EOF
 
-# for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
-#     if [[ "$IN" == *"sgemm.cpp" || "$IN" == *"sgemm.h" ]]; then
-#         continue
-#     fi
-#     TMP=$(mktemp)
-#     cat $tempdir $IN >$TMP
-#     mv $TMP $IN
-# done
+for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
+    if [[ "$IN" == *"sgemm.cpp" || "$IN" == *"sgemm.h" ]]; then
+        continue
+    fi
+    TMP=$(mktemp)
+    cat $tempdir $IN >$TMP
+    mv $TMP $IN
+done
