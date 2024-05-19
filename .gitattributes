@@ -4,5 +4,5 @@ llama/*.h linguist-vendored
 llama/*.c linguist-vendored
 llama/*.cu linguist-vendored
 llama/*.cuh linguist-vendored
-llama/ggml/*.cu linguist-vendored
-llama/ggml/*.cuh linguist-vendored
+llama/ggml-cuda/*.cu linguist-vendored
+llama/ggml-cuda/*.cuh linguist-vendored
