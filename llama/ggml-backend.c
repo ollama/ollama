@@ -56,6 +56,7 @@ bool ggml_backend_buft_is_host(ggml_backend_buffer_type_t buft) {
 }
 
 // backend buffer
+
 GGML_CALL ggml_backend_buffer_t ggml_backend_buffer_init(
                ggml_backend_buffer_type_t      buft,
         struct ggml_backend_buffer_i           iface,
@@ -78,10 +79,6 @@ const char * ggml_backend_buffer_name(ggml_backend_buffer_t buffer) {
     return buffer->iface.get_name(buffer);
 }
 
-#define ggml_assert_aligned(ptr) \
-    GGML_ASSERT(((uintptr_t) (ptr))%GGML_MEM_ALIGN == 0)
-
-
 void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
     if (buffer == NULL) {
         return;
@@ -90,9 +87,9 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
     if (buffer->iface.free_buffer != NULL) {
         buffer->iface.free_buffer(buffer);
     }
-    
-    // TODO: this needs to be freed in cuda and hipblas backends because
-    // the cuda backend implementation compiled with msvc
+
+// TODO: this needs to be freed in cuda and hipblas backends because
+// the cuda backend implementation compiled with msvc
 #if !defined(GGML_USE_CUDA) && !defined(GGML_USE_HIPBLAS)
     free(buffer);
 #endif
