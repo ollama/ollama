@@ -44,11 +44,32 @@ mkdir -p $dst_dir/ggml-cuda
 cp $src_dir/ggml-cuda/*.cu $dst_dir/ggml-cuda/
 cp $src_dir/ggml-cuda/*.cuh $dst_dir/ggml-cuda/
 
-# clip
+# llava
 cp $src_dir/examples/llava/clip.cpp $dst_dir/clip.cpp
 cp $src_dir/examples/llava/clip.h $dst_dir/clip.h
+cp $src_dir/examples/llava/llava.cpp $dst_dir/llava.cpp
+cp $src_dir/examples/llava/llava.h $dst_dir/llava.h
 cp $src_dir/common/log.h $dst_dir/log.h
 cp $src_dir/common/stb_image.h $dst_dir/stb_image.h
+
+# These files are mostly used by the llava code
+# and shouldn't be necessary once we use clip.cpp directly
+cp $src_dir/common/common.cpp $dst_dir/common.cpp
+cp $src_dir/common/common.h $dst_dir/common.h
+cp $src_dir/common/sampling.cpp $dst_dir/sampling.cpp
+cp $src_dir/common/sampling.h $dst_dir/sampling.h
+cp $src_dir/common/grammar-parser.cpp $dst_dir/grammar-parser.cpp
+cp $src_dir/common/grammar-parser.h $dst_dir/grammar-parser.h
+cp $src_dir/common/json.hpp $dst_dir/json.hpp
+cp $src_dir/common/json-schema-to-grammar.cpp $dst_dir/json-schema-to-grammar.cpp
+cp $src_dir/common/json-schema-to-grammar.h $dst_dir/json-schema-to-grammar.h
+cp $src_dir/common/base64.hpp $dst_dir/base64.hpp
+cat <<EOF > $dst_dir/build-info.cpp
+int LLAMA_BUILD_NUMBER = 0;
+char const *LLAMA_COMMIT = "$sha1";
+char const *LLAMA_COMPILER = "";
+char const *LLAMA_BUILD_TARGET = "";
+EOF
 
 # apply patches
 for patch in $dst_dir/patches/*.patch; do
