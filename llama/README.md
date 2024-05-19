@@ -78,8 +78,9 @@ go build -tags=rocm .
 
 ## Syncing with llama.cpp
 
-To update this package to the latest llama.cpp code, use the `sync.sh` script.
+To update this package to the latest llama.cpp code, use the `scripts/sync_llama.sh` script from the root of this repo:
 
 ```
-./sync.sh ../../llama.cpp
+cd ollama
+./scripts/sync_llama.sh ../llama.cpp
 ```
