@@ -1,16 +1,43 @@
+#!/bin/bash
+
+archs=(
+    gfx900
+    gfx940
+    gfx941
+    gfx942
+    gfx1010
+    gfx1012
+    gfx1030
+    gfx1100
+    gfx1101
+    gfx1102
+)
+
+linux_archs=(
+    gfx906:xnack-
+    gfx908:xnack-
+    gfx90a:xnack+
+    gfx90a:xnack-
+)
+
+os="$(uname -s)"
+
+if [[ "$os" == "Windows_NT" || "$os" == "MINGW64_NT"* ]]; then
+    output="ggml-hipblas.dll"
+else
+    output="libggml-hipblas.so"
+    archs+=("${linux_archs[@]}")
+fi
+
+offload_arch_flags=""
+for arch in "${archs[@]}"; do
+    offload_arch_flags+=" --offload-arch=$arch"
+done
+
 hipcc \
     -parallel-jobs=12 \
     -O3 \
-    --offload-arch=gfx900 \
-    --offload-arch=gfx940 \
-    --offload-arch=gfx941 \
-    --offload-arch=gfx942 \
-    --offload-arch=gfx1010 \
-    --offload-arch=gfx1012 \
-    --offload-arch=gfx1030 \
-    --offload-arch=gfx1100 \
-    --offload-arch=gfx1101 \
-    --offload-arch=gfx1102 \
+    $offload_arch_flags \
     -DGGML_USE_CUDA \
     -DGGML_BUILD=1 \
     -DGGML_SHARED=1 \
@@ -23,6 +50,7 @@ hipcc \
     -DNDEBUG \
     -DK_QUANTS_PER_ITERATION=2 \
     -D_CRT_SECURE_NO_WARNINGS \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=on \
     -Xclang --dependent-lib=msvcrt -Wl,/subsystem:console \
     -Wno-expansion-to-defined \
     -Wno-invalid-noreturn \
@@ -35,10 +63,6 @@ hipcc \
     -o ggml-hipblas.dll \
     ggml-cuda.cu ggml-cuda/*.cu ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c sgemm.cpp
 
-    # --offload-arch='gfx906:xnack-' \
-    # --offload-arch='gfx908:xnack-' \
-    # --offload-arch='gfx90a:xnack+' \
-    # --offload-arch='gfx90a:xnack-' \
     # -D_DLL \
     # -D_MT \
     # -D_XOPEN_SOURCE=600 \
