@@ -6,11 +6,10 @@ Supported:
 
 - [x] CPU
 - [x] avx, avx2
-- [ ] avx512
 - [x] macOS Metal
 - [x] Windows CUDA
 - [x] Windows ROCm
-- [ ] Linux CUDA
+- [x] Linux CUDA
 - [ ] Linux ROCm
 - [x] Llava
 - [ ] Parallel Requests
@@ -44,14 +43,32 @@ go env -w "CGO_CXXFLAGS_ALLOW=-mfma|-mf16c"
 go build -tags=avx,avx2 .
 ```
 
+## Linux
+
 ### CUDA
 
-Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-download-archive) then build ggml-cuda:
+Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-download-archive) then build `libggml-cuda.so`:
+
+```shell
+./build_cuda.sh
+```
+
+Then build the package with the `cuda` tag:
+
+```shell
+go build -tags=cuda .
+```
+
+## Windows
+
+### CUDA
+
+Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-download-archive) then build the cuda code:
 
 Build `ggml-cuda.dll`:
 
 ```shell
-./build_cuda.sh
+./build_cuda.ps1
 ```
 
 Then build the package with the `cuda` tag:
