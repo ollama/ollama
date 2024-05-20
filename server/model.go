@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
@@ -18,7 +17,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-var intermediateBlobs sync.Map
+var intermediateBlobs map[string]string = make(map[string]string)
 
 type layerWithGGML struct {
 	*Layer
@@ -169,7 +168,7 @@ func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(a
 
 	layer, err := NewLayer(temp, "application/vnd.ollama.image.model")
 	if err != nil {
-		return nil, fmt.Errorf("aaa: %w", err)
+		return nil, err
 	}
 
 	bin, err := layer.Open()
@@ -185,7 +184,7 @@ func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(a
 
 	layers = append(layers, &layerWithGGML{layer, ggml})
 
-	intermediateBlobs.Store(digest, layer.Digest)
+	intermediateBlobs[digest] = layer.Digest
 	return layers, nil
 }
 
