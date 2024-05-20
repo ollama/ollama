@@ -13,10 +13,14 @@ type Buffer struct {
 	DisplayPos int
 	Pos        int
 	Buf        *arraylist.List
-	Prompt     *Prompt
-	LineWidth  int
-	Width      int
-	Height     int
+	//bools to store whether a line has an extra space at the end or not
+	//must be updated in Add, Remove, Insert, and Replace
+	//access by DisplayPos/LineWidth
+	LineFlags *arraylist.List
+	Prompt    *Prompt
+	LineWidth int
+	Width     int
+	Height    int
 }
 
 func NewBuffer(prompt *Prompt) (*Buffer, error) {
@@ -32,6 +36,7 @@ func NewBuffer(prompt *Prompt) (*Buffer, error) {
 		DisplayPos: 0,
 		Pos:        0,
 		Buf:        arraylist.New(),
+		LineFlags:  arraylist.New(),
 		Prompt:     prompt,
 		Width:      width,
 		Height:     height,
@@ -52,6 +57,14 @@ func (b *Buffer) MoveLeft() {
 					if rLength == 2 {
 						fmt.Print(CursorLeft)
 					}
+
+					line := b.DisplayPos/b.LineWidth - 1
+					cmp, _ := b.LineFlags.Get(line)
+					if cmp.(bool) {
+						fmt.Print(CursorLeft)
+						b.DisplayPos -= 1
+					}
+
 				} else {
 					fmt.Print(cursorLeftN(rLength))
 				}
@@ -96,6 +109,9 @@ func (b *Buffer) MoveRight() {
 
 				if b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth {
 					fmt.Printf(CursorDown + CursorBOL + cursorRightN(len(b.Prompt.prompt())))
+				} else if cmp, _ := b.LineFlags.Get(b.DisplayPos / b.LineWidth); b.LineFlags.Size() > 0 && b.DisplayPos%b.LineWidth == b.LineWidth-1 && cmp.(bool) {
+					fmt.Printf(CursorDown + CursorBOL + cursorRightN(len(b.Prompt.prompt())))
+					b.DisplayPos += 1
 				} else {
 					fmt.Print(cursorRightN(rLength))
 				}
@@ -172,14 +188,18 @@ func (b *Buffer) Add(r rune) {
 		b.DisplayPos += rLength
 
 		if b.Pos > 0 {
+
+			//next two if/elif statements indicate a new line
 			if b.DisplayPos%b.LineWidth == 0 {
 				fmt.Printf("%c", r)
 				fmt.Printf("\n%s", b.Prompt.AltPrompt)
+				b.LineFlags.Add(false)
 
 			} else if b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth {
 				fmt.Printf("\n%s", b.Prompt.AltPrompt)
 				b.DisplayPos += 1
 				fmt.Printf("%c", r)
+				b.LineFlags.Add(true)
 
 			} else {
 				fmt.Printf("%c", r)
@@ -210,12 +230,14 @@ func (b *Buffer) Add(r rune) {
 			if b.DisplayPos%b.LineWidth == 0 {
 				fmt.Printf("%c", r)
 				fmt.Printf("\n%s", b.Prompt.AltPrompt)
+				b.LineFlags.Set(b.DisplayPos/b.LineWidth-1, false)
 
 			} else if b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth {
 				fmt.Print(ClearToEOL)
 				fmt.Printf("\n%s", b.Prompt.AltPrompt)
 				b.DisplayPos += 1
 				fmt.Printf("%c", r)
+				b.LineFlags.Set(b.DisplayPos/b.LineWidth-1, true)
 
 			} else {
 				fmt.Printf("%c", r)
@@ -242,6 +264,33 @@ func (b *Buffer) Add(r rune) {
 	}
 }
 
+func (b *Buffer) countCurrLength(place int) int {
+	var sum int
+	var counter int = -1
+	var prevLen int
+
+	for place <= b.LineWidth {
+
+		counter += 1
+		sum += prevLen
+		if e, ok := b.Buf.Get(b.Pos + counter); ok {
+			if r, ok := e.(rune); ok {
+				place += runewidth.RuneWidth(r)
+				prevLen = len(string(r))
+			}
+		} else {
+			break
+		}
+
+		if b.Pos+counter == b.Buf.Size() {
+			sum += prevLen
+			break
+		}
+	}
+
+	return sum
+}
+
 func (b *Buffer) drawRemaining() {
 	var place int
 	remainingText := b.StringN(b.Pos)
@@ -251,7 +300,12 @@ func (b *Buffer) drawRemaining() {
 	fmt.Print(CursorHide)
 
 	// render the rest of the current line
-	currLine := remainingText[:min(b.LineWidth-place, len(remainingText))]
+	// issue with (b.LineWidth - place): doesn't count multi-byte characters correctly
+	// solution may be to iterate to end of line and sum bytes
+
+	currLineLength := b.countCurrLength(place)
+
+	currLine := remainingText[:min(currLineLength, len(remainingText))]
 	if len(currLine) > 0 {
 		fmt.Printf(ClearToEOL + currLine)
 		fmt.Print(cursorLeftN(runewidth.StringWidth(currLine)))
@@ -302,6 +356,15 @@ func (b *Buffer) Remove() {
 					} else {
 						fmt.Print(" " + cursorLeftN(1))
 					}
+
+					b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
+
+				} else if cmp, _ := b.LineFlags.Get(b.DisplayPos/b.LineWidth - 1); b.DisplayPos-rLength%b.LineWidth == 0 && cmp.(bool) {
+					fmt.Printf(CursorBOL + ClearToEOL)
+					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width)) //maybe check this (if last char in prev line is dbl width)
+					fmt.Print(CursorLeft)
+					b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
+
 				} else {
 					fmt.Print(cursorLeftN(rLength))
 					for i := 0; i < rLength; i++ {
