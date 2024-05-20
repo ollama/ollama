@@ -241,11 +241,11 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	}
 
 	for _, tensor := range llm.tensors {
-		if _, err := rs.Seek(int64(tensor.size()), io.SeekCurrent); err != nil {
+		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
 			return err
 		}
 
-		padding := llm.padding(int64(tensor.size()), int64(alignment))
+		padding := llm.padding(int64(tensor.Size()), int64(alignment))
 		if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
 			return err
 		}
