@@ -518,7 +518,7 @@ PARAMETER param1 1
 PARAMETER param2 4096
 SYSTEM You are a utf16 file.
 `
-	// simulate a utf16 file
+	// simulate a utf16 le file
 	utf16File := utf16.Encode(append([]rune{'\ufffe'}, []rune(data)...))
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, utf16File)
@@ -534,5 +534,14 @@ SYSTEM You are a utf16 file.
 		{Name: "system", Args: "You are a utf16 file."},
 	}
 
+	assert.Equal(t, expected, actual.Commands)
+
+	// simulate a utf16 be file
+	buf = new(bytes.Buffer)
+	err = binary.Write(buf, binary.BigEndian, utf16File)
+	assert.NoError(t, err)
+
+	actual, err = ParseFile(buf)
+	assert.NoError(t, err)
 	assert.Equal(t, expected, actual.Commands)
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type File struct {
@@ -309,7 +310,7 @@ func isNewline(r rune) bool {
 }
 
 func isUnreadable(r rune) bool {
-	return r == 65533
+	return r == unicode.ReplacementChar
 }
 
 func isValidMessageRole(role string) bool {
