@@ -22,8 +22,11 @@ linux_archs=(
 
 os="$(uname -s)"
 
+additional_flags=""
+
 if [[ "$os" == "Windows_NT" || "$os" == "MINGW64_NT"* ]]; then
     output="ggml-hipblas.dll"
+    additional_flags="-Xclang --dependent-lib=msvcrt -Wl,/subsystem:console"
 else
     output="libggml-hipblas.so"
     archs+=("${linux_archs[@]}")
@@ -37,7 +40,6 @@ done
 hipcc \
     -parallel-jobs=12 \
     -O3 \
-    $offload_arch_flags \
     -DGGML_USE_CUDA \
     -DGGML_BUILD=1 \
     -DGGML_SHARED=1 \
@@ -51,7 +53,9 @@ hipcc \
     -DK_QUANTS_PER_ITERATION=2 \
     -D_CRT_SECURE_NO_WARNINGS \
     -DCMAKE_POSITION_INDEPENDENT_CODE=on \
-    -Xclang --dependent-lib=msvcrt -Wl,/subsystem:console \
+    -D_GNU_SOURCE \
+    $offload_arch_flags \
+    $additional_flags \
     -Wno-expansion-to-defined \
     -Wno-invalid-noreturn \
     -Wno-ignored-attributes \
