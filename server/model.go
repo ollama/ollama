@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/types/model"
 )
+
+var intermediateBlobs sync.Map
 
 type layerWithGGML struct {
 	*Layer
@@ -76,7 +79,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 	return layers, nil
 }
 
-func parseFromZipFile(_ context.Context, file *os.File, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
+func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
 	stat, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -169,12 +172,7 @@ func parseFromZipFile(_ context.Context, file *os.File, fn func(api.ProgressResp
 		return nil, fmt.Errorf("aaa: %w", err)
 	}
 
-	blobpath, err := GetBlobsPath(layer.Digest)
-	if err != nil {
-		return nil, err
-	}
-
-	bin, err := os.Open(blobpath)
+	bin, err := layer.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -185,16 +183,13 @@ func parseFromZipFile(_ context.Context, file *os.File, fn func(api.ProgressResp
 		return nil, err
 	}
 
-	layer, err = NewLayerFromLayer(layer.Digest, layer.MediaType, "")
-	if err != nil {
-		return nil, err
-	}
-
 	layers = append(layers, &layerWithGGML{layer, ggml})
+
+	intermediateBlobs.Store(digest, layer.Digest)
 	return layers, nil
 }
 
-func parseFromFile(ctx context.Context, file *os.File, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
+func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
 	sr := io.NewSectionReader(file, 0, 512)
 	contentType, err := detectContentType(sr)
 	if err != nil {
@@ -205,7 +200,7 @@ func parseFromFile(ctx context.Context, file *os.File, fn func(api.ProgressRespo
 	case "gguf", "ggla":
 		// noop
 	case "application/zip":
-		return parseFromZipFile(ctx, file, fn)
+		return parseFromZipFile(ctx, file, digest, fn)
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}

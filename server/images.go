@@ -340,7 +340,24 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 					return err
 				}
 			} else if strings.HasPrefix(c.Args, "@") {
-				blobpath, err := GetBlobsPath(strings.TrimPrefix(c.Args, "@"))
+				digest := strings.TrimPrefix(c.Args, "@")
+				if ib, ok := intermediateBlobs.Load(digest); ok {
+					p, err := GetBlobsPath(ib.(string))
+					if err != nil {
+						return err
+					}
+
+					if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+						// pass
+					} else if err != nil {
+						return err
+					} else {
+						fn(api.ProgressResponse{Status: fmt.Sprintf("using cached layer %s", ib.(string))})
+						digest = ib.(string)
+					}
+				}
+
+				blobpath, err := GetBlobsPath(digest)
 				if err != nil {
 					return err
 				}
@@ -351,14 +368,14 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 				}
 				defer blob.Close()
 
-				baseLayers, err = parseFromFile(ctx, blob, fn)
+				baseLayers, err = parseFromFile(ctx, blob, digest, fn)
 				if err != nil {
 					return err
 				}
 			} else if file, err := os.Open(realpath(modelFileDir, c.Args)); err == nil {
 				defer file.Close()
 
-				baseLayers, err = parseFromFile(ctx, file, fn)
+				baseLayers, err = parseFromFile(ctx, file, "", fn)
 				if err != nil {
 					return err
 				}
@@ -398,10 +415,14 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 							return err
 						}
 
+						f16digest := baseLayer.Layer.Digest
+
 						baseLayer.Layer, err = NewLayer(temp, baseLayer.Layer.MediaType)
 						if err != nil {
 							return err
 						}
+
+						intermediateBlobs.Store(f16digest, baseLayer.Layer.Digest)
 					}
 				}
 
