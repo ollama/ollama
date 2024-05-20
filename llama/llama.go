@@ -8,16 +8,19 @@ package llama
 // #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 // #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 // #cgo darwin,amd64 LDFLAGS: -ld_classic -framework Foundation -framework Accelerate
+// #cgo linux CFLAGS: -D_GNU_SOURCE
+// #cgo linux CXXFLAGS: -D_GNU_SOURCE
 // #cgo windows LDFLAGS: -lmsvcrt
 // #cgo avx CFLAGS: -mavx
 // #cgo avx CXXFLAGS: -mavx
 // #cgo avx2 CFLAGS: -mavx2 -mfma
 // #cgo avx2 CXXFLAGS: -mavx2 -mfma
-// #cgo cuda CFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-// #cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+// #cgo cuda CFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+// #cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 // #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_MULTIPLATFORM -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 // #cgo windows,cuda LDFLAGS: -L. -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.3/lib/x64" -lggml-cuda -lcuda -lcudart -lcublas -lcublasLt
 // #cgo windows,rocm LDFLAGS: -L. -L"C:/Program Files/AMD/ROCm/5.7/lib" -lggml-hipblas -lhipblas -lamdhip64 -lrocblas
+// #cgo linux,cuda LDFLAGS: -L${SRCDIR} -L/usr/local/cuda/lib64 -lggml-cuda -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt
 // #include <stdlib.h>
 // #include "llama.h"
 // #include "clip.h"
