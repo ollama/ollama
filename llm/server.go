@@ -200,6 +200,23 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--numa")
 	}
 
+	flashAttnSupported := true
+
+	// partial offloading does not support flash attention
+	if uint64(opts.NumGPU) < ggml.KV().BlockCount() + 1 {
+		flashAttnSupported = false
+	}
+
+	// only cuda (compute capability 7+) and metal support flash attention
+	for _, g := range gpus {
+		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
+			flashAttnSupported = false
+		}
+	}
+	if flashAttnSupported {
+		params = append(params, "--flash-attn")
+	}
+
 	numParallel := envconfig.NumParallel
 
 	// TODO (jmorganca): multimodal models don't support parallel yet
