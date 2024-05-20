@@ -86,7 +86,7 @@ OLLAMA_TMPDIR=/usr/share/ollama/
 
 ## Container fails to run on NVIDIA GPU
 
-Make sure you've set up the conatiner runtime first as described in [docker.md](./docker.md)
+Make sure you've set up the container runtime first as described in [docker.md](./docker.md)
 
 Sometimes the container runtime can have difficulties initializing the GPU.
 When you check the server logs, this can show up as various error codes, such
