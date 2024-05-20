@@ -359,11 +359,11 @@ func (b *Buffer) Remove() {
 
 					b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
 
-				} else if cmp, _ := b.LineFlags.Get(b.DisplayPos/b.LineWidth - 1); b.DisplayPos-rLength%b.LineWidth == 0 && cmp.(bool) {
+				} else if cmp, _ := b.LineFlags.Get(b.DisplayPos/b.LineWidth - 1); (b.DisplayPos-rLength)%b.LineWidth == 0 && cmp.(bool) {
 					fmt.Printf(CursorBOL + ClearToEOL)
 					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width)) //maybe check this (if last char in prev line is dbl width)
-					fmt.Print(CursorLeft)
 					b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
+					b.DisplayPos -= 1
 
 				} else {
 					fmt.Print(cursorLeftN(rLength))
