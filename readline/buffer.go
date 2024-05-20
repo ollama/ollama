@@ -222,6 +222,7 @@ func (b *Buffer) Add(r rune) {
 			}
 		}*/
 
+		//INSERTING
 	} else {
 
 		b.DisplayPos += rLength
