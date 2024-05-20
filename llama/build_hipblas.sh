@@ -65,7 +65,7 @@ hipcc \
     -lhipblas -lamdhip64 -lrocblas \
     -shared \
     $additional_flags \
-    -o ggml-hipblas.dll \
+    -o $output \
     ggml-cuda.cu ggml-cuda/*.cu ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c sgemm.cpp
 
     # -D_DLL \
