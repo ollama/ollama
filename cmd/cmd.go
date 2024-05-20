@@ -35,6 +35,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/errtypes"
@@ -63,7 +64,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	defer f.Close()
 
-	modelfile, err := model.ParseFile(f)
+	modelfile, err := parser.ParseFile(f)
 	if err != nil {
 		return err
 	}
