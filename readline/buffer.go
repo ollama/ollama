@@ -314,20 +314,39 @@ func (b *Buffer) drawRemaining() {
 		fmt.Print(ClearToEOL)
 	}
 
+	if currLineLength != b.LineWidth-place {
+		b.LineFlags.Set(b.DisplayPos/b.LineWidth, true)
+	} else {
+		b.LineFlags.Set(b.DisplayPos/b.LineWidth, false)
+	}
+
 	// render the other lines
 	if runewidth.StringWidth(remainingText) > runewidth.StringWidth(currLine) {
 		remaining := []rune(remainingText[len(currLine):])
 		var totalLines int
 		var displayLength int
+		var lineLength int = runewidth.StringWidth(currLine)
 
 		for _, c := range remaining {
 
 			if displayLength == 0 || (displayLength+runewidth.RuneWidth(c))%b.LineWidth < displayLength%b.LineWidth {
 				fmt.Printf("\n%s", b.Prompt.AltPrompt)
 				totalLines += 1
+
+				if displayLength != 0 {
+					if lineLength == b.LineWidth {
+						b.LineFlags.Set(b.DisplayPos/b.LineWidth+totalLines-1, false)
+					} else {
+						b.LineFlags.Set(b.DisplayPos/b.LineWidth+totalLines-1, true)
+					}
+				}
+
+				lineLength = 0
+
 			}
 
 			displayLength += runewidth.RuneWidth(c)
+			lineLength += runewidth.RuneWidth(c)
 
 			fmt.Printf("%c", c)
 		}
@@ -360,7 +379,7 @@ func (b *Buffer) Remove() {
 
 					b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
 
-				} else if cmp, _ := b.LineFlags.Get(b.DisplayPos/b.LineWidth - 1); (b.DisplayPos-rLength)%b.LineWidth == 0 && cmp.(bool) {
+				} else if cmp, _ := b.LineFlags.Get(b.DisplayPos/b.LineWidth - 1); (b.DisplayPos-rLength)%b.LineWidth == 0 && cmp != nil && cmp.(bool) {
 					fmt.Printf(CursorBOL + ClearToEOL)
 					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width)) //maybe check this (if last char in prev line is dbl width)
 					b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
@@ -376,7 +395,7 @@ func (b *Buffer) Remove() {
 
 				var eraseExtraLine bool
 				// -1 is if single width character is deleted at the end of a line -- use -2 if doublewidth
-				if (b.Size()-1)%b.LineWidth == 0 || (rLength == 2 && ((b.Size()-2)%b.LineWidth == 0)) {
+				if (b.Size()-1)%b.LineWidth == 0 || (rLength == 2 && ((b.Size()-2)%b.LineWidth == 0)) || b.Size()%b.LineWidth == 0 {
 					eraseExtraLine = true
 				}
 
