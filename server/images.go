@@ -341,8 +341,8 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 				}
 			} else if strings.HasPrefix(c.Args, "@") {
 				digest := strings.TrimPrefix(c.Args, "@")
-				if ib, ok := intermediateBlobs.Load(digest); ok {
-					p, err := GetBlobsPath(ib.(string))
+				if ib, ok := intermediateBlobs[digest]; ok {
+					p, err := GetBlobsPath(ib)
 					if err != nil {
 						return err
 					}
@@ -352,8 +352,8 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 					} else if err != nil {
 						return err
 					} else {
-						fn(api.ProgressResponse{Status: fmt.Sprintf("using cached layer %s", ib.(string))})
-						digest = ib.(string)
+						fn(api.ProgressResponse{Status: fmt.Sprintf("using cached layer %s", ib)})
+						digest = ib
 					}
 				}
 
@@ -415,14 +415,17 @@ func CreateModel(ctx context.Context, name, modelFileDir, quantization string, m
 							return err
 						}
 
-						f16digest := baseLayer.Layer.Digest
-
-						baseLayer.Layer, err = NewLayer(temp, baseLayer.Layer.MediaType)
+						layers, err := parseFromFile(ctx, temp, "", fn)
 						if err != nil {
 							return err
 						}
 
-						intermediateBlobs.Store(f16digest, baseLayer.Layer.Digest)
+						if len(layers) != 1 {
+							return errors.New("quantization failed")
+						}
+
+						baseLayer.Layer = layers[0].Layer
+						baseLayer.GGML = layers[0].GGML
 					}
 				}
 

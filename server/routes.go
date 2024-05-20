@@ -841,16 +841,16 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 }
 
 func (s *Server) CreateBlobHandler(c *gin.Context) {
-	ib, ok := intermediateBlobs.Load(c.Param("digest"))
-	if ok {
-		p, err := GetBlobsPath(ib.(string))
+	if ib, ok := intermediateBlobs[c.Param("digest")]; ok {
+		p, err := GetBlobsPath(ib)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
 		if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
-			intermediateBlobs.Delete(c.Param("digest"))
+			slog.Info("evicting intermediate blob which no longer exists", "digest", ib)
+			delete(intermediateBlobs, c.Param("digest"))
 		} else if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
