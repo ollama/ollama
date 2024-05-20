@@ -1,13 +1,16 @@
-from langchain.document_loaders import OnlinePDFLoader
-from langchain.vectorstores import Chroma
-from langchain.embeddings import GPT4AllEmbeddings
-from langchain import PromptTemplate
-from langchain.llms import Ollama
-from langchain.callbacks.manager import CallbackManager
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
-from langchain.chains import RetrievalQA
-import sys
 import os
+import sys
+
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.embeddings import GPT4AllEmbeddings
+from langchain_community.llms import Ollama
+from langchain_community.vectorstores import Chroma
+from langchain_core.callbacks import CallbackManager, StreamingStdOutCallbackHandler
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 
 class SuppressStdout:
     def __enter__(self):
@@ -21,16 +24,22 @@ class SuppressStdout:
         sys.stdout = self._original_stdout
         sys.stderr = self._original_stderr
 
+
 # load the pdf and split it into chunks
-loader = OnlinePDFLoader("https://d18rn0p25nwr6d.cloudfront.net/CIK-0001813756/975b3e9b-268e-4798-a9e4-2a9a7c92dc10.pdf")
+loader = PyPDFLoader("https://d18rn0p25nwr6d.cloudfront.net/CIK-0001813756/975b3e9b-268e-4798-a9e4-2a9a7c92dc10.pdf")
 data = loader.load()
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
 all_splits = text_splitter.split_documents(data)
 
+model_name = "all-MiniLM-L6-v2.gguf2.f16.gguf"
+gpt4all_kwargs = {'allow_download': 'True'}
+embeddings = GPT4AllEmbeddings(
+    model_name=model_name,
+    gpt4all_kwargs=gpt4all_kwargs
+)
 with SuppressStdout():
-    vectorstore = Chroma.from_documents(documents=all_splits, embedding=GPT4AllEmbeddings())
+    vectorstore = Chroma.from_documents(documents=all_splits, embedding=embeddings)
 
 while True:
     query = input("\nQuery: ")
@@ -40,22 +49,17 @@ while True:
         continue
 
     # Prompt
-    template = """Use the following pieces of context to answer the question at the end.
+    prompt = ChatPromptTemplate.from_template("""Use the following pieces of context to answer the question at the end.
     If you don't know the answer, just say that you don't know, don't try to make up an answer.
     Use three sentences maximum and keep the answer as concise as possible.
     {context}
-    Question: {question}
-    Helpful Answer:"""
-    QA_CHAIN_PROMPT = PromptTemplate(
-        input_variables=["context", "question"],
-        template=template,
-    )
+    Question: {input}
+    Helpful Answer:""")
 
     llm = Ollama(model="llama3:8b", callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]))
-    qa_chain = RetrievalQA.from_chain_type(
-        llm,
-        retriever=vectorstore.as_retriever(),
-        chain_type_kwargs={"prompt": QA_CHAIN_PROMPT},
-    )
 
-    result = qa_chain({"query": query})
+    retrieval_chain = create_retrieval_chain(
+        retriever=vectorstore.as_retriever(),
+        combine_docs_chain=create_stuff_documents_chain(llm=llm, prompt=prompt)
+    )
+    response = retrieval_chain.invoke({"input": query})
