@@ -1,14 +1,11 @@
 package convert
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"strings"
 
-	"github.com/d4l3k/go-bfloat16"
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
@@ -19,49 +16,27 @@ type GemmaModel struct {
 	ModelData
 }
 
-func gemmaLayerHandler(w io.Writer, r safetensorWriterTo, f *os.File) error {
-	slog.Debug(fmt.Sprintf("converting '%s'", r.t.Name))
-
-	data := make([]byte, r.end-r.start)
-	if err := binary.Read(f, r.bo, data); err != nil {
-		return err
-	}
-
-	tDataF32 := bfloat16.DecodeFloat32(data)
-
-	var err error
-	tDataF32, err = addOnes(tDataF32, int(r.t.Shape[0]))
-	if err != nil {
-		return err
-	}
-
-	if err := binary.Write(w, r.bo, tDataF32); err != nil {
-		return err
-	}
-	return nil
-}
-
 func addOnes(data []float32, vectorSize int) ([]float32, error) {
 	n := tensor.New(tensor.WithShape(vectorSize), tensor.WithBacking(data))
 	ones := tensor.Ones(tensor.Float32, vectorSize)
 
-	var err error
-	n, err = n.Add(ones)
+	n, err := n.Add(ones)
 	if err != nil {
-		return []float32{}, err
+		return nil, err
 	}
 
-	newN, err := native.SelectF32(n, 0)
+	ts, err := native.SelectF32(n, 0)
 	if err != nil {
-		return []float32{}, err
+		return nil, err
 	}
 
-	var fullTensor []float32
-	for _, v := range newN {
-		fullTensor = append(fullTensor, v...)
+	var f32s []float32
+	for _, t := range ts {
+		f32s = append(f32s, t...)
 	}
 
-	return fullTensor, nil
+
+	return f32s, nil
 }
 
 func (m *GemmaModel) GetTensors() error {
@@ -71,12 +46,10 @@ func (m *GemmaModel) GetTensors() error {
 	}
 
 	slog.Debug(fmt.Sprintf("Total tensors: %d", len(t)))
-
-	m.Tensors = []llm.Tensor{}
 	for _, l := range t {
 		if strings.HasSuffix(l.Name, "norm.weight") {
 			wt := l.WriterTo.(safetensorWriterTo)
-			wt.handler = gemmaLayerHandler
+			wt.repacker = m.Repack
 			l.WriterTo = wt
 		}
 		m.Tensors = append(m.Tensors, l)
@@ -92,6 +65,10 @@ func (m *GemmaModel) LoadVocab() error {
 	}
 	m.Vocab = v
 	return nil
+}
+
+func (m *GemmaModel) Repack(_ string, data []float32, shape []uint64) ([]float32, error) {
+	return addOnes(data, int(shape[0]))
 }
 
 func (m *GemmaModel) WriteGGUF(ws io.WriteSeeker) error {

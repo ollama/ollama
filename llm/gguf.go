@@ -63,16 +63,6 @@ func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
 }
 
 const (
-	_ uint32 = iota
-	GGUFTokenNormal
-	GGUFTokenUnknown
-	GGUFTokenControl
-	GGUFTokenUserDefined
-	GGUFTokenUnused
-	GGUFTokenByte
-)
-
-const (
 	ggufTypeUint8 uint32 = iota
 	ggufTypeInt8
 	ggufTypeUint16
@@ -480,9 +470,11 @@ var ggufKVOrder = map[string][]string{
 		"gemma.attention.key_length",
 		"gemma.attention.value_length",
 		"general.file_type",
+		"tokenizer.ggml.pre",
 		"tokenizer.ggml.model",
 		"tokenizer.ggml.tokens",
 		"tokenizer.ggml.scores",
+		"tokenizer.ggml.merges",
 		"tokenizer.ggml.token_type",
 		"tokenizer.ggml.bos_token_id",
 		"tokenizer.ggml.eos_token_id",
