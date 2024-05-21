@@ -61,8 +61,8 @@ func (b *Buffer) MoveLeft() {
 					line := b.DisplayPos/b.LineWidth - 1
 					cmp, _ := b.LineFlags.Get(line)
 					if cmp.(bool) {
-						fmt.Print(CursorLeft)
 						b.DisplayPos -= 1
+						fmt.Print(CursorLeft)
 					}
 
 				} else {
@@ -314,7 +314,7 @@ func (b *Buffer) drawRemaining() {
 		fmt.Print(ClearToEOL)
 	}
 
-	if currLineLength != b.LineWidth-place {
+	if runewidth.StringWidth(currLine) != b.LineWidth-place {
 		b.LineFlags.Set(b.DisplayPos/b.LineWidth, true)
 	} else {
 		b.LineFlags.Set(b.DisplayPos/b.LineWidth, false)
@@ -353,6 +353,10 @@ func (b *Buffer) drawRemaining() {
 		fmt.Print(ClearToEOL)
 		fmt.Print(cursorUpN(totalLines))
 		fmt.Printf(CursorBOL + cursorRightN(b.Width-runewidth.StringWidth(currLine)))
+
+		if cmp, _ := b.LineFlags.Get(b.DisplayPos / b.LineWidth); cmp.(bool) {
+			fmt.Print(CursorLeft)
+		}
 	}
 
 	fmt.Print(CursorShow)
@@ -364,6 +368,7 @@ func (b *Buffer) Remove() {
 		if e, ok := b.Buf.Get(b.Pos - 1); ok {
 			if r, ok := e.(rune); ok {
 				rLength := runewidth.RuneWidth(r)
+				cmp, _ := b.LineFlags.Get(b.DisplayPos/b.LineWidth - 1)
 
 				if b.DisplayPos%b.LineWidth == 0 {
 					// if the user backspaces over the word boundary, do this magic to clear the line
@@ -371,18 +376,27 @@ func (b *Buffer) Remove() {
 					fmt.Printf(CursorBOL + ClearToEOL)
 					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width)) //maybe check this (if last char in prev line is dbl width)
 
-					if rLength == 2 {
+					if b.Pos == b.Buf.Size() {
+						b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
+					}
+
+					if cmp != nil && cmp.(bool) {
+						b.DisplayPos -= 1
+					}
+
+					if rLength == 2 && b.Pos == b.Buf.Size() {
 						fmt.Print(CursorLeft + "  " + cursorLeftN(2))
 					} else {
 						fmt.Print(" " + cursorLeftN(1))
 					}
 
-					b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
-
-				} else if cmp, _ := b.LineFlags.Get(b.DisplayPos/b.LineWidth - 1); (b.DisplayPos-rLength)%b.LineWidth == 0 && cmp != nil && cmp.(bool) {
+				} else if (b.DisplayPos-rLength)%b.LineWidth == 0 && cmp != nil && cmp.(bool) {
 					fmt.Printf(CursorBOL + ClearToEOL)
 					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width)) //maybe check this (if last char in prev line is dbl width)
-					b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
+
+					if b.Pos == b.Buf.Size() {
+						b.LineFlags.Remove(b.DisplayPos/b.LineWidth - 1)
+					}
 					b.DisplayPos -= 1
 
 				} else {
