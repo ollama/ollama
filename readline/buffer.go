@@ -142,7 +142,7 @@ func (b *Buffer) MoveRightWord() {
 
 func (b *Buffer) MoveToStart() {
 	if b.Pos > 0 {
-		currLine := b.Pos / b.LineWidth
+		currLine := b.DisplayPos / b.LineWidth
 		if currLine > 0 {
 			for cnt := 0; cnt < currLine; cnt++ {
 				fmt.Print(CursorUp)
@@ -150,6 +150,7 @@ func (b *Buffer) MoveToStart() {
 		}
 		fmt.Printf(CursorBOL + cursorRightN(len(b.Prompt.prompt())))
 		b.Pos = 0
+		b.DisplayPos = 0
 	}
 }
 
@@ -368,9 +369,9 @@ func (b *Buffer) drawRemaining() {
 		fmt.Print(cursorUpN(totalLines))
 		fmt.Printf(CursorBOL + cursorRightN(b.Width-runewidth.StringWidth(currLine)))
 
-		/*if cmp, _ := b.LineFlags.Get(b.DisplayPos / b.LineWidth); cmp.(bool) {
+		if cmp, _ := b.LineFlags.Get(b.DisplayPos / b.LineWidth); cmp != nil && cmp.(bool) && b.DisplayPos%b.LineWidth != b.LineWidth-1 {
 			fmt.Print(CursorLeft)
-		}*/
+		}
 	}
 
 	fmt.Print(CursorShow)
