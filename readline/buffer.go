@@ -133,7 +133,7 @@ func (b *Buffer) MoveRightWord() {
 				break
 			}
 
-			if b.Pos == b.Size() {
+			if b.Pos == b.Buf.Size() {
 				break
 			}
 		}
