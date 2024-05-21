@@ -336,7 +336,7 @@ func (b *Buffer) drawRemaining() {
 
 	// render the other lines
 	if runewidth.StringWidth(remainingText) > currLineSpace {
-		remaining := []rune(remainingText[len(currLine):])
+		remaining := (remainingText[len(currLine):])
 		var totalLines int
 		var displayLength int
 		var lineLength int = runewidth.StringWidth(currLine)
