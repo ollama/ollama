@@ -118,9 +118,11 @@ RUN go build -trimpath .
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
 RUN apt-get update && apt-get install -y ca-certificates
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
+HEALTHCHECK CMD ollama --version || exit 1
 FROM --platform=linux/arm64 ubuntu:22.04 as runtime-arm64
 RUN apt-get update && apt-get install -y ca-certificates
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
+HEALTHCHECK CMD ollama --version || exit 1
 
 # Radeon images are much larger so we keep it distinct from the CPU/CUDA image
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete as runtime-rocm
@@ -128,6 +130,7 @@ RUN update-pciids
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 EXPOSE 11434
 ENV OLLAMA_HOST 0.0.0.0
+HEALTHCHECK CMD ollama --version || exit 1
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
