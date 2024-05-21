@@ -156,7 +156,7 @@ func (b *Buffer) MoveToStart() {
 
 func (b *Buffer) MoveToEnd() {
 	if b.Pos < b.Buf.Size() {
-		currLine := b.Pos / b.LineWidth
+		currLine := b.DisplayPos / b.LineWidth
 		totalLines := b.Size() / b.LineWidth
 		if currLine < totalLines {
 			for cnt := 0; cnt < totalLines-currLine; cnt++ {
@@ -165,10 +165,11 @@ func (b *Buffer) MoveToEnd() {
 			remainder := b.Size() % b.LineWidth
 			fmt.Printf(CursorBOL + cursorRightN(len(b.Prompt.prompt())+remainder))
 		} else {
-			fmt.Print(cursorRightN(b.Size() - b.Pos))
+			fmt.Print(cursorRightN(b.Size() - b.DisplayPos))
 		}
 
-		b.Pos = b.Size()
+		b.Pos = b.Buf.Size()
+		b.DisplayPos = b.Size()
 	}
 }
 
@@ -525,8 +526,10 @@ func (b *Buffer) ClearScreen() {
 		ph := b.Prompt.placeholder()
 		fmt.Printf(ColorGrey + ph + cursorLeftN(len(ph)) + ColorDefault)
 	} else {
-		currPos := b.Pos
+		currPos := b.DisplayPos
+		currIndex := b.Pos
 		b.Pos = 0
+		b.DisplayPos = 0
 		b.drawRemaining()
 		fmt.Printf(CursorReset + cursorRightN(len(b.Prompt.prompt())))
 		if currPos > 0 {
@@ -544,7 +547,8 @@ func (b *Buffer) ClearScreen() {
 				fmt.Printf(CursorBOL + b.Prompt.AltPrompt)
 			}
 		}
-		b.Pos = currPos
+		b.Pos = currIndex
+		b.DisplayPos = currPos
 	}
 }
 
