@@ -6,7 +6,7 @@ Ollama on macOS and Windows will automatically download updates. Click on the ta
 
 On Linux, re-run the install script:
 
-```
+```shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
@@ -30,7 +30,7 @@ To change this when using `ollama run`, use `/set parameter`:
 
 When using the API, specify the `num_ctx` parameter:
 
-```
+```shell
 curl http://localhost:11434/api/generate -d '{
   "model": "llama3",
   "prompt": "Why is the sky blue?",
@@ -39,6 +39,21 @@ curl http://localhost:11434/api/generate -d '{
   }
 }'
 ```
+
+## How can I tell if my model was loaded onto the GPU?
+
+Use the `ollama ps` command to see what models are currently loaded into memory.
+
+```shell
+ollama ps
+NAME      	ID          	SIZE 	PROCESSOR	UNTIL
+llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
+```
+
+The `Processor` column will show which memory the model was loaded in to:
+* `100% GPU` means the model was loaded entirely into the GPU
+* `100% CPU` means the model was loaded entirely in system memory
+* `48%/52% CPU/GPU` means the model was loaded partially onto both the GPU and into system memory
 
 ## How do I configure Ollama server?
 
@@ -148,7 +163,7 @@ server {
 
 Ollama can be accessed using a range of tools for tunneling tools. For example with Ngrok:
 
-```
+```shell
 ngrok http 11434 --host-header="localhost:11434"
 ```
 
@@ -156,7 +171,7 @@ ngrok http 11434 --host-header="localhost:11434"
 
 To use Ollama with Cloudflare Tunnel, use the `--url` and `--http-host-header` flags:
 
-```
+```shell
 cloudflared tunnel --url http://localhost:11434 --http-host-header="localhost:11434"
 ```
 
@@ -196,7 +211,7 @@ Open `Control Panel > Networking and Internet > View network status and tasks` a
 Click on `Configure` and open the `Advanced` tab. Search through each of the properties until you find `Large Send Offload Version 2 (IPv4)` and `Large Send Offload Version 2 (IPv6)`. *Disable* both of these
 properties.
 
-## How can I pre-load a model into Ollama to get faster response times?
+## How can I preload a model into Ollama to get faster response times?
 
 If you are using the API you can preload a model by sending the Ollama server an empty request. This works with both the `/api/generate` and `/api/chat` API endpoints.
 
@@ -208,6 +223,11 @@ curl http://localhost:11434/api/generate -d '{"model": "mistral"}'
 To use the chat completions endpoint, use:
 ```shell
 curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
+```
+
+To preload a model using the CLI, use the command:
+```shell
+ollama run llama3 ""
 ```
 
 ## How do I keep a model loaded in memory or make it unload immediately?
