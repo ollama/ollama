@@ -138,6 +138,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "   Alt + f            Move forward (right) one word")
 		fmt.Fprintln(os.Stderr, "  Ctrl + k            Delete the sentence after the cursor")
 		fmt.Fprintln(os.Stderr, "  Ctrl + u            Delete the sentence before the cursor")
+		fmt.Fprintln(os.Stderr, "  Ctrl + w            Delete the word before the cursor")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  Ctrl + l            Clear the screen")
 		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
