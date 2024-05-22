@@ -33,7 +33,7 @@ Here's a quick example showing API access from `powershell`
 ## Troubleshooting
 
 While we're in preview, `OLLAMA_DEBUG` is always enabled, which adds
-a "view logs" menu item to the app, and increses logging for the GUI app and
+a "view logs" menu item to the app, and increases logging for the GUI app and
 server.
 
 Ollama on Windows stores files in a few different locations.  You can view them in

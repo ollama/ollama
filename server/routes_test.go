@@ -14,11 +14,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/uppercaveman/ollama-server/api"
-	"github.com/uppercaveman/ollama-server/types/model"
+	"github.com/uppercaveman/ollama-server/parser"
 	"github.com/uppercaveman/ollama-server/version"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_Routes(t *testing.T) {
@@ -56,7 +56,7 @@ func Test_Routes(t *testing.T) {
 		fname := createTestFile(t, "ollama-model")
 
 		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
-		modelfile, err := model.ParseFile(r)
+		modelfile, err := parser.ParseFile(r)
 		assert.Nil(t, err)
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
@@ -95,6 +95,7 @@ func Test_Routes(t *testing.T) {
 				err = json.Unmarshal(body, &modelList)
 				assert.Nil(t, err)
 
+				assert.NotNil(t, modelList.Models)
 				assert.Equal(t, 0, len(modelList.Models))
 			},
 		},

@@ -27,6 +27,7 @@ import (
 	"github.com/uppercaveman/ollama-server/api"
 	"github.com/uppercaveman/ollama-server/auth"
 	"github.com/uppercaveman/ollama-server/format"
+	"github.com/uppercaveman/ollama-server/parser"
 	"github.com/uppercaveman/ollama-server/progress"
 	"github.com/uppercaveman/ollama-server/server"
 	"github.com/uppercaveman/ollama-server/types/errtypes"
@@ -34,6 +35,7 @@ import (
 	"github.com/uppercaveman/ollama-server/version"
 
 	"github.com/containerd/console"
+	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
@@ -62,7 +64,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	defer f.Close()
 
-	modelfile, err := model.ParseFile(f)
+	modelfile, err := parser.ParseFile(f)
 	if err != nil {
 		return err
 	}
@@ -206,7 +208,7 @@ func tempZipFiles(path string) (string, error) {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
 		files = append(files, pt...)
-	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/octet-stream"); len(pt) > 0 {
+	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers consolidated.x.pth, consolidated.pth
 		files = append(files, pt...)
@@ -743,7 +745,8 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
-				if len(state.wordBuffer) > termWidth-10 {
+
+				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
 					fmt.Printf("%s%c", state.wordBuffer, ch)
 					state.wordBuffer = ""
 					state.lineLength = 0
@@ -751,12 +754,18 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				}
 
 				// backtrack the length of the last word and clear to the end of the line
-				fmt.Printf("\x1b[%dD\x1b[K\n", len(state.wordBuffer))
+				fmt.Printf("\x1b[%dD\x1b[K\n", runewidth.StringWidth(state.wordBuffer))
 				fmt.Printf("%s%c", state.wordBuffer, ch)
-				state.lineLength = len(state.wordBuffer) + 1
+				chWidth := runewidth.RuneWidth(ch)
+
+				state.lineLength = runewidth.StringWidth(state.wordBuffer) + chWidth
 			} else {
 				fmt.Print(string(ch))
-				state.lineLength += 1
+				state.lineLength += runewidth.RuneWidth(ch)
+				if runewidth.RuneWidth(ch) >= 2 {
+					state.wordBuffer = ""
+					continue
+				}
 
 				switch ch {
 				case ' ':
@@ -904,14 +913,15 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	request := api.GenerateRequest{
-		Model:    opts.Model,
-		Prompt:   opts.Prompt,
-		Context:  generateContext,
-		Images:   opts.Images,
-		Format:   opts.Format,
-		System:   opts.System,
-		Template: opts.Template,
-		Options:  opts.Options,
+		Model:     opts.Model,
+		Prompt:    opts.Prompt,
+		Context:   generateContext,
+		Images:    opts.Images,
+		Format:    opts.Format,
+		System:    opts.System,
+		Template:  opts.Template,
+		Options:   opts.Options,
+		KeepAlive: opts.KeepAlive,
 	}
 
 	if err := client.Generate(ctx, &request, fn); err != nil {
@@ -1069,12 +1079,24 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
-func appendHostEnvDocs(cmd *cobra.Command) {
-	const hostEnvDocs = `
+type EnvironmentVar struct {
+	Name        string
+	Description string
+}
+
+func appendEnvDocs(cmd *cobra.Command, envs []EnvironmentVar) {
+	if len(envs) == 0 {
+		return
+	}
+
+	envUsage := `
 Environment Variables:
-      OLLAMA_HOST        The host:port or base URL of the Ollama server (e.g. http://localhost:11434)
 `
-	cmd.SetUsageTemplate(cmd.UsageTemplate() + hostEnvDocs)
+	for _, e := range envs {
+		envUsage += fmt.Sprintf("      %-16s   %s\n", e.Name, e.Description)
+	}
+
+	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
 func NewCLI() *cobra.Command {
@@ -1211,6 +1233,10 @@ Environment Variables:
 		RunE:    DeleteHandler,
 	}
 
+	ollamaHostEnv := EnvironmentVar{"OLLAMA_HOST", "The host:port or base URL of the Ollama server (e.g. http://localhost:11434)"}
+	ollamaNoHistoryEnv := EnvironmentVar{"OLLAMA_NOHISTORY", "Disable readline history"}
+	envs := []EnvironmentVar{ollamaHostEnv}
+
 	for _, cmd := range []*cobra.Command{
 		createCmd,
 		showCmd,
@@ -1222,7 +1248,12 @@ Environment Variables:
 		copyCmd,
 		deleteCmd,
 	} {
-		appendHostEnvDocs(cmd)
+		switch cmd {
+		case runCmd:
+			appendEnvDocs(cmd, []EnvironmentVar{ollamaHostEnv, ollamaNoHistoryEnv})
+		default:
+			appendEnvDocs(cmd, envs)
+		}
 	}
 
 	rootCmd.AddCommand(

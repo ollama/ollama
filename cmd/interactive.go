@@ -182,6 +182,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		return err
 	}
 
+	if os.Getenv("OLLAMA_NOHISTORY") != "" {
+		scanner.HistoryDisable()
+	}
+
 	fmt.Print(readline.StartBracketedPaste)
 	defer fmt.Printf(readline.EndBracketedPaste)
 
@@ -292,6 +296,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			continue
 		case strings.HasPrefix(line, "/clear"):
 			opts.Messages = []api.Message{}
+			if opts.System != "" {
+				newMessage := api.Message{Role: "system", Content: opts.System}
+				opts.Messages = append(opts.Messages, newMessage)
+			}
 			fmt.Println("Cleared session context")
 			continue
 		case strings.HasPrefix(line, "/set"):

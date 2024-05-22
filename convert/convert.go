@@ -18,6 +18,16 @@ import (
 	"github.com/uppercaveman/ollama-server/llm"
 )
 
+const (
+	_ int32 = iota
+	tokenTypeNormal
+	tokenTypeUnknown
+	tokenTypeControl
+	tokenTypeUserDefined
+	tokenTypeUnused
+	tokenTypeByte
+)
+
 type Params struct {
 	Architectures     []string `json:"architectures"`
 	VocabSize         int      `json:"vocab_size"`
@@ -36,6 +46,8 @@ type Params struct {
 
 	Experts     int `json:"num_local_experts"`
 	ExpertsUsed int `json:"num_experts_per_tok"`
+
+	PreTokenizer string
 
 	ByteOrder
 }
@@ -74,10 +86,9 @@ func GetModelFormat(dirname string) (ModelFormat, error) {
 	}
 
 	for _, fn := range files {
-		slog.Debug(fmt.Sprintf("file = %s", fn))
 		if strings.HasSuffix(fn, ".safetensors") {
 			return &SafetensorFormat{}, nil
-		} else if strings.HasSuffix(fn, ".bin") {
+		} else if strings.HasSuffix(fn, ".bin") || strings.HasSuffix(fn, ".pth") {
 			slog.Debug("model is torch")
 			return &TorchFormat{}, nil
 		}
@@ -92,6 +103,7 @@ type Vocab struct {
 	Tokens []string
 	Scores []float32
 	Types  []int32
+	Merges []string
 }
 
 func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
@@ -170,7 +182,7 @@ func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
 		}
 		v.Tokens = append(v.Tokens, t.key)
 		v.Scores = append(v.Scores, -1000.0)
-		v.Types = append(v.Types, int32(llm.GGUFTokenUserDefined))
+		v.Types = append(v.Types, tokenTypeUserDefined)
 	}
 	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
 
@@ -180,7 +192,7 @@ func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
 		for cnt := 0; cnt < missingTokens; cnt++ {
 			v.Tokens = append(v.Tokens, fmt.Sprintf("<dummy%05d>", cnt+1))
 			v.Scores = append(v.Scores, -1)
-			v.Types = append(v.Types, int32(llm.GGUFTokenUserDefined))
+			v.Types = append(v.Types, tokenTypeUserDefined)
 		}
 	}
 
