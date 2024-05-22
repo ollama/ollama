@@ -18,7 +18,7 @@ type Tokenizer struct {
 	Model       TokenizerModel `json:"model"`
 
 	PreTokenizer struct {
-		PreTokenziers []struct {
+		PreTokenizers []struct {
 			Type    string `json:"type"`
 			Pattern struct {
 				Regex string `json:"Regex"`
@@ -84,7 +84,7 @@ func parseTokens(dirpath string) (pre string, tokens []Token, merges []string, e
 	}
 
 	sha256sum := sha256.New()
-	for _, pt := range t.PreTokenizer.PreTokenziers {
+	for _, pt := range t.PreTokenizer.PreTokenizers {
 		switch pt.Type {
 		case "Split":
 			if pt.Pattern.Regex != "" {
