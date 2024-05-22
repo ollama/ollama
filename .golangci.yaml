@@ -14,4 +14,6 @@ linters:
     # - goimports
     - misspell
     - nilerr
+    - nolintlint
+    - nosprintfhostport
     - unused

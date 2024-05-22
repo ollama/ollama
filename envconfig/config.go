@@ -127,7 +127,7 @@ func LoadConfig() {
 		var paths []string
 		for _, root := range []string{filepath.Dir(appExe), cwd} {
 			paths = append(paths,
-				filepath.Join(root),
+				root,
 				filepath.Join(root, "windows-"+runtime.GOARCH),
 				filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
 			)

@@ -119,11 +119,12 @@ func llamaRepack(name string, params *Params, data []float32, shape []uint64) ([
 	}
 
 	var heads int
-	if strings.HasSuffix(name, "attn_q.weight") {
+	switch {
+	case strings.HasSuffix(name, "attn_q.weight"):
 		heads = params.AttentionHeads
-	} else if strings.HasSuffix(name, "attn_k.weight") {
+	case strings.HasSuffix(name, "attn_k.weight"):
 		heads = cmp.Or(params.KeyValHeads, params.AttentionHeads)
-	} else {
+	default:
 		return nil, fmt.Errorf("unknown tensor name: %s", name)
 	}
 

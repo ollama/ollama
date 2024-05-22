@@ -85,11 +85,8 @@ func parseTokens(dirpath string) (pre string, tokens []Token, merges []string, e
 
 	sha256sum := sha256.New()
 	for _, pt := range t.PreTokenizer.PreTokenizers {
-		switch pt.Type {
-		case "Split":
-			if pt.Pattern.Regex != "" {
-				sha256sum.Write([]byte(pt.Pattern.Regex))
-			}
+		if pt.Type == "Split" && pt.Pattern.Regex != "" {
+			sha256sum.Write([]byte(pt.Pattern.Regex))
 		}
 	}
 

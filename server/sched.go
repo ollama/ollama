@@ -66,7 +66,7 @@ func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options,
 		opts.NumCtx = 4
 	}
 
-	opts.NumCtx = opts.NumCtx * envconfig.NumParallel
+	opts.NumCtx *= envconfig.NumParallel
 
 	req := &LlmRequest{
 		ctx:             c,

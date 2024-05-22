@@ -104,21 +104,22 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		var layers int
 		layers, estimatedVRAM, estimatedTotal = EstimateGPULayers(gpus, ggml, projectors, opts)
 
-		if gpus[0].Library == "metal" && estimatedVRAM > systemMemory {
+		switch {
+		case gpus[0].Library == "metal" && estimatedVRAM > systemMemory:
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
-		} else if gpus[0].Library != "metal" && layers == 0 {
+		case gpus[0].Library != "metal" && layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
 			cpuRunner = serverForCpu()
 			gpuCount = 0
-		} else if opts.NumGPU < 0 && layers > 0 && gpus[0].Library != "cpu" {
+		case opts.NumGPU < 0 && layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = layers
 		}
 	}
 
 	// Loop through potential servers
-	finalErr := fmt.Errorf("no suitable llama servers found")
+	finalErr := errors.New("no suitable llama servers found")
 
 	if len(adapters) > 1 {
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
@@ -284,7 +285,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 		server := filepath.Join(dir, "ollama_llama_server")
 		if runtime.GOOS == "windows" {
-			server = server + ".exe"
+			server += ".exe"
 		}
 
 		// Detect tmp cleaners wiping out the file
@@ -459,7 +460,7 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return ServerStatusNotResponding, fmt.Errorf("server not responding")
+			return ServerStatusNotResponding, errors.New("server not responding")
 		}
 		return ServerStatusError, fmt.Errorf("health resp: %w", err)
 	}
