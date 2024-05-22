@@ -85,7 +85,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	var systemMemory uint64
 	gpuCount := len(gpus)
 	if (len(gpus) == 1 && gpus[0].Library == "cpu") || opts.NumGPU == 0 {
-
 		// TODO evaluate system memory to see if we should block the load, or force an unload of another CPU runner
 
 		cpuRunner = serverForCpu()
@@ -233,7 +232,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	params = append(params, "--parallel", fmt.Sprintf("%d", numParallel))
 
-	for i := 0; i < len(servers); i++ {
+	for i := range len(servers) {
 		dir := availableServers[servers[i]]
 		if dir == "" {
 			// Shouldn't happen
@@ -316,7 +315,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 
-		visibleDevicesEnv, visibleDevicesEnvVal := gpu.GpuInfoList(gpus).GetVisibleDevicesEnv()
+		visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
 		// Update or add the path and visible devices variable with our adjusted version

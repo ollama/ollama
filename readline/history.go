@@ -91,7 +91,7 @@ func (h *History) Add(l []rune) {
 func (h *History) Compact() {
 	s := h.Buf.Size()
 	if s > h.Limit {
-		for cnt := 0; cnt < s-h.Limit; cnt++ {
+		for range s - h.Limit {
 			h.Buf.Remove(0)
 		}
 	}
@@ -139,7 +139,7 @@ func (h *History) Save() error {
 	defer f.Close()
 
 	buf := bufio.NewWriter(f)
-	for cnt := 0; cnt < h.Size(); cnt++ {
+	for cnt := range h.Size() {
 		v, _ := h.Buf.Get(cnt)
 		line, _ := v.([]rune)
 		if _, err := buf.WriteString(string(line) + "\n"); err != nil {

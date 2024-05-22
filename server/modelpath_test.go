@@ -6,12 +6,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetBlobsPath(t *testing.T) {
 	// GetBlobsPath expects an actual directory to exist
 	dir, err := os.MkdirTemp("", "ollama-test")
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
 	tests := []struct {
@@ -63,7 +64,7 @@ func TestGetBlobsPath(t *testing.T) {
 
 			got, err := GetBlobsPath(tc.digest)
 
-			assert.ErrorIs(t, tc.err, err, tc.name)
+			require.ErrorIs(t, tc.err, err, tc.name)
 			assert.Equal(t, tc.expected, got, tc.name)
 		})
 	}

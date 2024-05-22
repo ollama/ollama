@@ -104,7 +104,6 @@ func (tf *TorchFormat) GetTensors(dirpath string, params *Params) ([]llm.Tensor,
 	}
 
 	return tensors, nil
-
 }
 
 func getAltParams(dirpath string) (*Params, error) {

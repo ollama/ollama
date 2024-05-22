@@ -154,7 +154,7 @@ func (b *Buffer) MoveToStart() {
 	if b.Pos > 0 {
 		currLine := b.DisplayPos / b.LineWidth
 		if currLine > 0 {
-			for cnt := 0; cnt < currLine; cnt++ {
+			for range currLine {
 				fmt.Print(CursorUp)
 			}
 		}
@@ -169,7 +169,7 @@ func (b *Buffer) MoveToEnd() {
 		currLine := b.DisplayPos / b.LineWidth
 		totalLines := b.DisplaySize() / b.LineWidth
 		if currLine < totalLines {
-			for cnt := 0; cnt < totalLines-currLine; cnt++ {
+			for range totalLines - currLine {
 				fmt.Print(CursorDown)
 			}
 			remainder := b.DisplaySize() % b.LineWidth
@@ -451,7 +451,7 @@ func (b *Buffer) DeleteBefore() {
 func (b *Buffer) DeleteRemaining() {
 	if b.DisplaySize() > 0 && b.Pos < b.DisplaySize() {
 		charsToDel := b.Buf.Size() - b.Pos
-		for cnt := 0; cnt < charsToDel; cnt++ {
+		for range charsToDel {
 			b.Delete()
 		}
 	}
@@ -495,7 +495,7 @@ func (b *Buffer) ClearScreen() {
 		if currPos > 0 {
 			targetLine := currPos / b.LineWidth
 			if targetLine > 0 {
-				for cnt := 0; cnt < targetLine; cnt++ {
+				for range targetLine {
 					fmt.Print(CursorDown)
 				}
 			}

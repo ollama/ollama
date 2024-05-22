@@ -103,7 +103,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	}
 
 	var layerCount int
-	for i := 0; i < int(ggml.KV().BlockCount()); i++ {
+	for i := range int(ggml.KV().BlockCount()) {
 		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
 			memoryLayer := blk.size()
 

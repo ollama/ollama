@@ -10,6 +10,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -25,7 +26,7 @@ TEMPLATE template1
 	reader := strings.NewReader(input)
 
 	modelfile, err := ParseFile(reader)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	expectedCommands := []Command{
 		{Name: "model", Args: "model1"},
@@ -88,7 +89,7 @@ func TestParseFileFrom(t *testing.T) {
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c.input))
-			assert.ErrorIs(t, err, c.err)
+			require.ErrorIs(t, err, c.err)
 			if modelfile != nil {
 				assert.Equal(t, c.expected, modelfile.Commands)
 			}
@@ -105,7 +106,7 @@ PARAMETER param1
 	reader := strings.NewReader(input)
 
 	_, err := ParseFile(reader)
-	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
 func TestParseFileBadCommand(t *testing.T) {
@@ -114,8 +115,7 @@ FROM foo
 BADCOMMAND param1 value1
 `
 	_, err := ParseFile(strings.NewReader(input))
-	assert.ErrorIs(t, err, errInvalidCommand)
-
+	require.ErrorIs(t, err, errInvalidCommand)
 }
 
 func TestParseFileMessages(t *testing.T) {
@@ -201,7 +201,7 @@ MESSAGE system`,
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c.input))
-			assert.ErrorIs(t, err, c.err)
+			require.ErrorIs(t, err, c.err)
 			if modelfile != nil {
 				assert.Equal(t, c.expected, modelfile.Commands)
 			}
@@ -355,7 +355,7 @@ TEMPLATE """
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c.multiline))
-			assert.ErrorIs(t, err, c.err)
+			require.ErrorIs(t, err, c.err)
 			if modelfile != nil {
 				assert.Equal(t, c.expected, modelfile.Commands)
 			}
@@ -413,7 +413,7 @@ func TestParseFileParameters(t *testing.T) {
 			fmt.Fprintln(&b, "FROM foo")
 			fmt.Fprintln(&b, "PARAMETER", k)
 			modelfile, err := ParseFile(&b)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			assert.Equal(t, []Command{
 				{Name: "model", Args: "foo"},
@@ -442,7 +442,7 @@ FROM foo
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c.input))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, c.expected, modelfile.Commands)
 		})
 	}
@@ -501,15 +501,14 @@ SYSTEM ""
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			modelfile2, err := ParseFile(strings.NewReader(modelfile.String()))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			assert.Equal(t, modelfile, modelfile2)
 		})
 	}
-
 }
 
 func TestParseFileUTF16ParseFile(t *testing.T) {
@@ -522,10 +521,10 @@ SYSTEM You are a utf16 file.
 	utf16File := utf16.Encode(append([]rune{'\ufffe'}, []rune(data)...))
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, utf16File)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	actual, err := ParseFile(buf)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	expected := []Command{
 		{Name: "model", Args: "bob"},
@@ -539,9 +538,9 @@ SYSTEM You are a utf16 file.
 	// simulate a utf16 be file
 	buf = new(bytes.Buffer)
 	err = binary.Write(buf, binary.BigEndian, utf16File)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	actual, err = ParseFile(buf)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, expected, actual.Commands)
 }

@@ -370,7 +370,6 @@ func (s *Scheduler) updateFreeSpace(allGpus gpu.GpuInfoList) {
 		r.refMu.Lock()
 		gpuIDs := make([]string, 0, len(r.gpus))
 		if r.llama != nil {
-
 			// TODO this should be broken down by GPU instead of assuming uniform spread
 			estimatedVRAMPerGPU := r.llama.EstimatedVRAM() / uint64(len(r.gpus))
 			for _, gpu := range r.gpus {
@@ -529,7 +528,6 @@ func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 		}
 	}()
 	return finished
-
 }
 
 type ByDuration []*runnerRef

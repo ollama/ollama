@@ -12,8 +12,14 @@ linters:
     # FIXME: for some reason this errors on windows
     # - gofmt
     # - goimports
+    - intrange
     - misspell
     - nilerr
     - nolintlint
     - nosprintfhostport
+    - testifylint
+    - unconvert
     - unused
+    - usestdlibvars
+    - wastedassign
+    - whitespace

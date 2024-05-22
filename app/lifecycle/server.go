@@ -15,7 +15,7 @@ import (
 )
 
 func getCLIFullPath(command string) string {
-	cmdPath := ""
+	var cmdPath string
 	appExe, err := os.Executable()
 	if err == nil {
 		cmdPath = filepath.Join(filepath.Dir(appExe), command)
@@ -65,7 +65,6 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("stat ollama server log dir %s: %v", logDir, err)
-
 		}
 
 		if err := os.MkdirAll(logDir, 0o755); err != nil {
