@@ -187,7 +187,7 @@ func GetGPUInfo() GpuInfoList {
 	resp := []GpuInfo{}
 
 	// NVIDIA first
-	for i := 0; i < gpuHandles.deviceCount; i++ {
+	for i := range gpuHandles.deviceCount {
 		// TODO once we support CPU compilation variants of GPU libraries refine this...
 		if cpuVariant == "" && runtime.GOARCH == "amd64" {
 			continue
@@ -221,8 +221,8 @@ func GetGPUInfo() GpuInfoList {
 			gpuInfo.MinimumMemory = cudaMinimumMemory
 			gpuInfo.DependencyPath = depPath
 			gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-			gpuInfo.DriverMajor = int(driverMajor)
-			gpuInfo.DriverMinor = int(driverMinor)
+			gpuInfo.DriverMajor = driverMajor
+			gpuInfo.DriverMinor = driverMinor
 
 			// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
 			resp = append(resp, gpuInfo)
