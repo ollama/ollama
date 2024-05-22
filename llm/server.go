@@ -202,8 +202,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	flashAttnEnabled := envconfig.FlashAttention
 
-	fmt.Println("flashAttnSupported", flashAttnEnabled)
-
 	// partial offloading does not support flash attention
 	if uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
 		flashAttnEnabled = false
