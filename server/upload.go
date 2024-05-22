@@ -391,7 +391,7 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *registryO
 			return err
 		}
 
-		// nolint: contextcheck
+		//nolint:contextcheck
 		go upload.Run(context.Background(), opts)
 	}
 
