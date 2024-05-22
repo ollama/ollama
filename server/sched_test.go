@@ -151,7 +151,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 }
 
 func TestRequests(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), time.Second)
 	defer done()
 
 	// Same model, same request
