@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 )
 
 type Prompt struct {
@@ -63,7 +62,7 @@ func New(prompt Prompt) (*Instance, error) {
 
 func (i *Instance) Readline() (string, error) {
 	if !i.Terminal.rawmode {
-		fd := syscall.Stdin
+		fd := os.Stdin.Fd()
 		termios, err := SetRawMode(fd)
 		if err != nil {
 			return "", err
@@ -80,7 +79,7 @@ func (i *Instance) Readline() (string, error) {
 	fmt.Print(prompt)
 
 	defer func() {
-		fd := syscall.Stdin
+		fd := os.Stdin.Fd()
 		//nolint:errcheck
 		UnsetRawMode(fd, i.Terminal.termios)
 		i.Terminal.rawmode = false
@@ -216,7 +215,7 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
-			fd := syscall.Stdin
+			fd := os.Stdin.Fd()
 			return handleCharCtrlZ(fd, i.Terminal.termios)
 		case CharEnter, CharCtrlJ:
 			output := buf.String()
@@ -248,7 +247,7 @@ func (i *Instance) HistoryDisable() {
 }
 
 func NewTerminal() (*Terminal, error) {
-	fd := syscall.Stdin
+	fd := os.Stdin.Fd()
 	termios, err := SetRawMode(fd)
 	if err != nil {
 		return nil, err
