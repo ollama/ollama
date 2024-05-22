@@ -18,10 +18,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
-
-	"golang.org/x/exp/slices"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
