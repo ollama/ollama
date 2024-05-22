@@ -31,6 +31,8 @@ var (
 	RunnersDir string
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
+	// Experimental flash attention
+	FlashAttention bool
 )
 
 func AsMap() map[string]string {
@@ -45,6 +47,7 @@ func AsMap() map[string]string {
 		"OLLAMA_NUM_PARALLEL":      fmt.Sprintf("%v", NumParallel),
 		"OLLAMA_RUNNERS_DIR":       fmt.Sprintf("%v", RunnersDir),
 		"OLLAMA_TMPDIR":            fmt.Sprintf("%v", TmpDir),
+		"OLLAMA_FLASH_ATTENTION":   fmt.Sprintf("%v", FlashAttention),
 	}
 }
 
@@ -75,6 +78,13 @@ func LoadConfig() {
 			Debug = d
 		} else {
 			Debug = true
+		}
+	}
+
+	if fa := clean("OLLAMA_FLASH_ATTENTION"); fa != "" {
+		d, err := strconv.ParseBool(fa)
+		if err == nil {
+			FlashAttention = d
 		}
 	}
 
