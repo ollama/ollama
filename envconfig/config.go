@@ -3,6 +3,7 @@ package envconfig
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -184,8 +185,8 @@ func LoadConfig() {
 		AllowOrigins = append(AllowOrigins,
 			fmt.Sprintf("http://%s", allowOrigin),
 			fmt.Sprintf("https://%s", allowOrigin),
-			fmt.Sprintf("http://%s:*", allowOrigin),
-			fmt.Sprintf("https://%s:*", allowOrigin),
+			fmt.Sprintf("http://%s", net.JoinHostPort(allowOrigin, "*")),
+			fmt.Sprintf("https://%s", net.JoinHostPort(allowOrigin, "*")),
 		)
 	}
 
