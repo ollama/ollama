@@ -238,7 +238,6 @@ func (b *Buffer) Add(r rune) {
 				b.DisplayPos += 1
 				fmt.Printf("%c", r)
 				b.LineFlags.Set(b.DisplayPos/b.LineWidth-1, true)
-
 			} else {
 				fmt.Printf("%c", r)
 			}
