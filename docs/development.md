@@ -6,6 +6,8 @@ Install required tools:
 - go version 1.22 or higher
 - gcc version 11.4.0 or higher
 
+### MacOS
+
 ```bash
 brew install go cmake gcc
 ```
