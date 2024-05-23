@@ -358,7 +358,6 @@ func (b *Buffer) drawRemaining() {
 
 			displayLength += runewidth.RuneWidth(c)
 			lineLength += runewidth.RuneWidth(c)
-
 			fmt.Printf("%c", c)
 		}
 		fmt.Print(ClearToEOL)
