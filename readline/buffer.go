@@ -354,7 +354,6 @@ func (b *Buffer) drawRemaining() {
 				}
 
 				lineLength = 0
-
 			}
 
 			displayLength += runewidth.RuneWidth(c)
