@@ -61,7 +61,6 @@ func (b *Buffer) MoveLeft() {
 						b.DisplayPos -= 1
 						fmt.Print(CursorLeft)
 					}
-
 				} else {
 					fmt.Print(cursorLeftN(rLength))
 				}
