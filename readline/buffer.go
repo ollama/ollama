@@ -340,7 +340,6 @@ func (b *Buffer) drawRemaining() {
 		var lineLength int = currLineSpace
 
 		for _, c := range remaining {
-
 			if displayLength == 0 || (displayLength+runewidth.RuneWidth(c))%b.LineWidth < displayLength%b.LineWidth {
 				fmt.Printf("\n%s", b.Prompt.AltPrompt)
 				totalLines += 1
