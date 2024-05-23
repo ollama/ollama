@@ -228,7 +228,6 @@ func (b *Buffer) Add(r rune) {
 	} else {
 		b.DisplayPos += rLength
 		if b.Pos > 0 {
-
 			if b.DisplayPos%b.LineWidth == 0 {
 				fmt.Printf("%c", r)
 				fmt.Printf("\n%s", b.Prompt.AltPrompt)
