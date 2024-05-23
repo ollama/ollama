@@ -68,7 +68,6 @@ func (b *Buffer) MoveLeft() {
 
 				b.Pos -= 1
 				b.DisplayPos -= rLength
-
 			}
 		}
 	}
