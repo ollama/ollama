@@ -20,6 +20,7 @@ linters:
     - testifylint
     - unconvert
     - unused
-    - usestdlibvars
+    # TODO: bmizerany says no :(
+    # - usestdlibvars
     - wastedassign
     - whitespace
