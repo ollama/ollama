@@ -45,10 +45,18 @@ func TestMultiModelConcurrency(t *testing.T) {
 	wg.Add(len(req))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 	defer cancel()
+
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	for i := 0; i < len(req); i++ {
+		require.NoError(t, PullIfMissing(ctx, client, req[i].Model))
+	}
+
 	for i := 0; i < len(req); i++ {
 		go func(i int) {
 			defer wg.Done()
-			GenerateTestHelper(ctx, t, req[i], resp[i])
+			DoGenerate(ctx, t, client, req[i], resp[i], 30*time.Second, 10*time.Second)
 		}(i)
 	}
 	wg.Wait()
