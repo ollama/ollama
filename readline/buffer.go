@@ -255,12 +255,6 @@ func (b *Buffer) countCurrLength(place int) int {
 		} else {
 			break
 		}
-
-		/*if b.Pos+counter == b.Buf.Size() {
-			sum += prevLen
-			break
-		}*/
-		//I think this is deleteable
 	}
 
 	return sum
