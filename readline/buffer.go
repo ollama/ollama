@@ -269,7 +269,6 @@ func (b *Buffer) countCurrLength(place int) int {
 	var prevLen int
 
 	for place <= b.LineWidth {
-
 		counter += 1
 		sum += prevLen
 		if e, ok := b.Buf.Get(b.Pos + counter); ok {
