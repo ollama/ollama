@@ -124,12 +124,12 @@ type Tensor struct {
 }
 
 func (t Tensor) blockSize() uint64 {
-	switch {
-	case t.Kind < 2:
+	switch t.Kind {
+	case 0, 1, 24, 25, 26, 27, 28, 31: // F32, F16, I8, I16, I32, I64, F64, BF16
 		return 1
-	case t.Kind < 10:
+	case 2, 3, 8, 9, 20: // Q4_0, Q4_1, Q8_0, Q8_1, IQ4_NL
 		return 32
-	default:
+	default: // All others
 		return 256
 	}
 }
@@ -171,7 +171,29 @@ func (t Tensor) typeSize() uint64 {
 	case 17: // IQ2_XS
 		return 2 + 2*blockSize/8 + blockSize/32
 	case 18: // IQ3_XXS
-		return 2 + 3*blockSize/8
+		return 2 + blockSize/4 + blockSize/8
+	case 19: // IQ1_S
+		return 2 + blockSize/8 + blockSize/16
+	case 20: // IQ4_NL
+		return 2 + blockSize/2
+	case 21: // IQ3_S
+		return 2 + blockSize/4 + blockSize/8 + blockSize/32 + 4
+	case 22: // IQ2_S
+		return 2 + blockSize/4 + blockSize/16
+	case 23: // IQ4_XS
+		return 2 + 2 + blockSize/2 + blockSize/64
+	case 24: // I8
+		return 1
+	case 25: // I16
+		return 2
+	case 26: // I32
+		return 4
+	case 27: // I64
+		return 8
+	case 28: // F64
+		return 8
+	case 29: // IQ1_M
+		return blockSize/8 + blockSize/16 + blockSize/32
 	default:
 		return 0
 	}

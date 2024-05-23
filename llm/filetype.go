@@ -27,8 +27,16 @@ const (
 	fileTypeIQ2_XXS
 	fileTypeIQ2_XS
 	fileTypeQ2_K_S
-	fileTypeQ3_K_XS
+	fileTypeIQ3_XS
 	fileTypeIQ3_XXS
+	fileTypeIQ1_S
+	fileTypeIQ4_NL
+	fileTypeIQ3_S
+	fileTypeIQ2_S
+	fileTypeIQ4_XS
+	fileTypeIQ2_M
+	fileTypeIQ1_M
+	fileTypeBF16
 
 	fileTypeUnknown
 )
@@ -75,10 +83,26 @@ func ParseFileType(s string) (fileType, error) {
 		return fileTypeIQ2_XS, nil
 	case "Q2_K_S":
 		return fileTypeQ2_K_S, nil
-	case "Q3_K_XS":
-		return fileTypeQ3_K_XS, nil
+	case "IQ3_XS":
+		return fileTypeIQ3_XS, nil
 	case "IQ3_XXS":
 		return fileTypeIQ3_XXS, nil
+	case "IQ1_S":
+		return fileTypeIQ1_S, nil
+	case "IQ4_NL":
+		return fileTypeIQ4_NL, nil
+	case "IQ3_S":
+		return fileTypeIQ3_S, nil
+	case "IQ2_S":
+		return fileTypeIQ2_S, nil
+	case "IQ4_XS":
+		return fileTypeIQ4_XS, nil
+	case "IQ2_M":
+		return fileTypeIQ2_M, nil
+	case "IQ1_M":
+		return fileTypeIQ1_M, nil
+	case "BF16":
+		return fileTypeBF16, nil
 	default:
 		return fileTypeUnknown, fmt.Errorf("unknown fileType: %s", s)
 	}
@@ -126,10 +150,26 @@ func (t fileType) String() string {
 		return "IQ2_XS"
 	case fileTypeQ2_K_S:
 		return "Q2_K_S"
-	case fileTypeQ3_K_XS:
-		return "Q3_K_XS"
+	case fileTypeIQ3_XS:
+		return "IQ3_XS"
 	case fileTypeIQ3_XXS:
 		return "IQ3_XXS"
+	case fileTypeIQ1_S:
+		return "IQ1_S"
+	case fileTypeIQ4_NL:
+		return "IQ4_NL"
+	case fileTypeIQ3_S:
+		return "IQ3_S"
+	case fileTypeIQ2_S:
+		return "IQ2_S"
+	case fileTypeIQ4_XS:
+		return "IQ4_XS"
+	case fileTypeIQ2_M:
+		return "IQ2_M"
+	case fileTypeIQ1_M:
+		return "IQ1_M"
+	case fileTypeBF16:
+		return "BF16"
 	default:
 		return "unknown"
 	}
