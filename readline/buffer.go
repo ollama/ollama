@@ -265,7 +265,7 @@ func (b *Buffer) Add(r rune) {
 
 func (b *Buffer) countCurrLength(place int) int {
 	var sum int
-	var counter int = -1
+	counter := -1
 	var prevLen int
 
 	for place <= b.LineWidth {
