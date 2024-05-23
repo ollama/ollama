@@ -97,7 +97,6 @@ func (b *Buffer) MoveRight() {
 	if b.Pos < b.Buf.Size() {
 		if e, ok := b.Buf.Get(b.Pos); ok {
 			if r, ok := e.(rune); ok {
-
 				rLength := runewidth.RuneWidth(r)
 				b.Pos += 1
 				cmp, _ := b.LineFlags.Get(b.DisplayPos / b.LineWidth)
