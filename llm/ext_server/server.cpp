@@ -334,6 +334,7 @@ struct server_metrics {
 struct llama_server_context
 {
     llama_model *model = nullptr;
+    float modelProgress = 0.0;
     llama_context *ctx = nullptr;
 
     clip_ctx *clp_ctx = nullptr;
@@ -2779,6 +2780,12 @@ inline void signal_handler(int signal) {
     shutdown_handler(signal);
 }
 
+static bool update_load_progress(float progress, void *data)
+{
+    ((llama_server_context*)data)->modelProgress = progress;
+    return true;
+}
+
 #if defined(_WIN32)
 char* wchar_to_char(const wchar_t* wstr) {
     if (wstr == nullptr) return nullptr;
@@ -2884,7 +2891,9 @@ int main(int argc, char **argv) {
                 break;
             }
             case SERVER_STATE_LOADING_MODEL:
-                res.set_content(R"({"status": "loading model"})", "application/json");
+                char buf[128];
+                snprintf(&buf[0], 128, R"({"status": "loading model", "progress": %0.2f})", llama.modelProgress);
+                res.set_content(buf, "application/json");
                 res.status = 503; // HTTP Service Unavailable
                 break;
             case SERVER_STATE_ERROR:
@@ -3079,6 +3088,9 @@ int main(int argc, char **argv) {
             });
 
     // load the model
+    params.progress_callback = update_load_progress;
+    params.progress_callback_user_data = (void*)&llama;
+
     if (!llama.load_model(params))
     {
         state.store(SERVER_STATE_ERROR);
