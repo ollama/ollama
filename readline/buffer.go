@@ -45,6 +45,7 @@ func NewBuffer(prompt *Prompt) (*Buffer, error) {
 
 func (b *Buffer) MoveLeft() {
 	if b.Pos > 0 {
+		//asserts that we retrieve a rune
 		if e, ok := b.Buf.Get(b.Pos - 1); ok {
 			if r, ok := e.(rune); ok {
 				rLength := runewidth.RuneWidth(r)
@@ -213,18 +214,6 @@ func (b *Buffer) Add(r rune) {
 		b.Buf.Add(r)
 		b.Pos += 1
 
-		/*fmt.Printf("%c", r)
-		b.Buf.Add(r)
-		b.Pos += 1
-		b.DisplayPos += rLength
-		if b.Pos > 0 && (b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth || b.DisplayPos%b.LineWidth == 0) {
-			fmt.Printf("\n%s", b.Prompt.AltPrompt)
-			if b.DisplayPos%b.LineWidth == 1 {
-				b.DisplayPos -= 1
-			}
-		}*/
-
-		//INSERTING
 	} else {
 		b.DisplayPos += rLength
 		if b.Pos > 0 {
@@ -246,19 +235,6 @@ func (b *Buffer) Add(r rune) {
 		}
 		b.Buf.Insert(b.Pos, r)
 		b.Pos += 1
-
-		/*fmt.Printf("%c", r)
-		b.Buf.Insert(b.Pos, r)
-		b.Pos += 1
-		b.DisplayPos += rLength
-
-		if b.Pos > 0 && b.DisplayPos%b.LineWidth < (b.DisplayPos-rLength)%b.LineWidth || b.DisplayPos%b.LineWidth == 0 {
-			fmt.Printf("\n%s", b.Prompt.AltPrompt)
-			if b.DisplayPos%b.LineWidth == 1 {
-				b.DisplayPos -= 1
-			}
-		}*/
-
 		b.drawRemaining()
 	}
 }
@@ -280,10 +256,11 @@ func (b *Buffer) countCurrLength(place int) int {
 			break
 		}
 
-		if b.Pos+counter == b.Buf.Size() {
+		/*if b.Pos+counter == b.Buf.Size() {
 			sum += prevLen
 			break
-		}
+		}*/
+		//I think this is deleteable
 	}
 
 	return sum
@@ -298,9 +275,6 @@ func (b *Buffer) drawRemaining() {
 	fmt.Print(CursorHide)
 
 	// render the rest of the current line
-	// issue with (b.LineWidth - place): doesn't count multi-byte characters correctly
-	// solution may be to iterate to end of line and sum bytes
-
 	currLineLength := b.countCurrLength(place)
 
 	currLine := remainingText[:min(currLineLength, len(remainingText))]
