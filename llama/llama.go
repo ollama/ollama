@@ -38,10 +38,6 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type Token int32
-type Pos int32
-type SeqId int32
-
 // SystemInfo is an unused example of calling llama.cpp functions using CGo
 func PrintSystemInfo() string {
 	return C.GoString(C.llama_print_system_info())
@@ -78,6 +74,10 @@ type Context struct {
 	c *C.struct_llama_context
 }
 
+func (c *Context) KvCacheClear() {
+	C.llama_kv_cache_clear(c.c)
+}
+
 func (c *Context) Decode(batch Batch) error {
 	// Positive return values does not mean a fatal error, but rather a warning.
 	//   0 - success
@@ -90,18 +90,18 @@ func (c *Context) Decode(batch Batch) error {
 	}
 
 	if code > 0 {
-		return fmt.Errorf("could not find a KV slot for the batch - try reducing the size of the batch or increase the context. code: %d\n", code)
+		return fmt.Errorf("could not find a KV slot for the batch - try reducing the size of the batch or increase the context. code: %d", code)
 	}
 
 	return nil
 }
 
-func (c *Context) GetModel() *Model {
+func (c *Context) Model() *Model {
 	return &Model{c: C.llama_get_model(c.c)}
 }
 
-func (c *Context) SampleTokenGreedy(batch Batch) Token {
-	nv := c.GetModel().NumVocab()
+func (c *Context) SampleTokenGreedy(batch Batch) int {
+	nv := c.Model().NumVocab()
 
 	// TODO(jmorganca): split this up into different functions
 	candidates := (*C.struct_llama_token_data)(C.malloc(C.size_t(nv) * C.size_t(unsafe.Sizeof(C.struct_llama_token_data{}))))
@@ -116,7 +116,7 @@ func (c *Context) SampleTokenGreedy(batch Batch) Token {
 		ptr.p = 0.0
 	}
 
-	return Token(C.llama_sample_token_greedy(c.c, &C.llama_token_data_array{
+	return int(C.llama_sample_token_greedy(c.c, &C.llama_token_data_array{
 		data:   candidates,
 		size:   C.size_t(nv),
 		sorted: C.bool(false),
@@ -135,7 +135,7 @@ func (m *Model) NumVocab() int {
 	return int(C.llama_n_vocab(m.c))
 }
 
-func (m *Model) TokenIsEog(token Token) bool {
+func (m *Model) TokenIsEog(token int) bool {
 	return bool(C.llama_token_is_eog(m.c, C.llama_token(token)))
 }
 
@@ -151,7 +151,7 @@ func (b *Batch) NumTokens() int {
 	return int(b.c.n_tokens)
 }
 
-func (b *Batch) Add(token Token, pos Pos, seqIds []SeqId, logits bool) {
+func (b *Batch) Add(token int, pos int, seqIds []int, logits bool) {
 	unsafe.Slice(b.c.token, 512)[b.c.n_tokens] = C.llama_token(token)
 	unsafe.Slice(b.c.pos, 512)[b.c.n_tokens] = C.llama_pos(pos)
 	unsafe.Slice(b.c.n_seq_id, 512)[b.c.n_tokens] = C.int(len(seqIds))
@@ -171,13 +171,17 @@ func (b *Batch) Clear() {
 	b.c.n_tokens = 0
 }
 
+func (b *Batch) Free() {
+	C.llama_batch_free(b.c)
+}
+
 // LLAMA_API struct llama_batch llama_batch_get_one(
 //
 //		llama_token * tokens,
 //			int32_t   n_tokens,
 //		  llama_pos   pos_0,
 //	   llama_seq_id   seq_id);
-func BatchGetOne(tokens []Token, pos0 Pos, seqId SeqId) Batch {
+func BatchGetOne(tokens []int, pos0 int, seqId int) Batch {
 	return Batch{c: C.llama_batch_get_one((*C.int)(unsafe.Pointer(&tokens[0])), C.int32_t(len(tokens)), C.int(pos0), C.int(seqId))}
 }
 
@@ -185,7 +189,7 @@ type Model struct {
 	c *C.struct_llama_model
 }
 
-func (m *Model) TokenToPiece(token Token) string {
+func (m *Model) TokenToPiece(token int) string {
 	buf := make([]byte, 12)
 	C.llama_token_to_piece(
 		m.c,
@@ -197,7 +201,7 @@ func (m *Model) TokenToPiece(token Token) string {
 	return strings.TrimRight(string(buf), "\x00")
 }
 
-func (m *Model) Tokenize(text string, maxTokens int, addSpecial bool, parseSpecial bool) ([]Token, error) {
+func (m *Model) Tokenize(text string, maxTokens int, addSpecial bool, parseSpecial bool) ([]int, error) {
 	cTokens := make([]C.llama_token, maxTokens)
 	cText := C.CString(text)
 	defer C.free(unsafe.Pointer(cText))
@@ -216,9 +220,9 @@ func (m *Model) Tokenize(text string, maxTokens int, addSpecial bool, parseSpeci
 		return nil, fmt.Errorf("tokenization failed, required %d tokens", -result)
 	}
 
-	tokens := make([]Token, result)
+	tokens := make([]int, result)
 	for i := 0; i < int(result); i++ {
-		tokens[i] = Token(cTokens[i])
+		tokens[i] = int(cTokens[i])
 	}
 
 	return tokens, nil
