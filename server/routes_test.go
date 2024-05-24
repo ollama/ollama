@@ -209,13 +209,13 @@ func Test_Routes(t *testing.T) {
 		},
 	}
 
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
 	s := &Server{}
 	router := s.GenerateRoutes()
 
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)
-
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {

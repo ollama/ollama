@@ -26,11 +26,11 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
-	"github.com/ollama/ollama/server/envconfig"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -315,10 +315,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 }
 
 func getDefaultSessionDuration() time.Duration {
-	if t, exists := os.LookupEnv("OLLAMA_KEEP_ALIVE"); exists {
-		v, err := strconv.Atoi(t)
+	if envconfig.KeepAlive != "" {
+		v, err := strconv.Atoi(envconfig.KeepAlive)
 		if err != nil {
-			d, err := time.ParseDuration(t)
+			d, err := time.ParseDuration(envconfig.KeepAlive)
 			if err != nil {
 				return defaultSessionDuration
 			}
@@ -1025,7 +1025,7 @@ func Serve(ln net.Listener) error {
 		level = slog.LevelDebug
 	}
 
-	slog.Info("server config", "env", envconfig.AsMap())
+	slog.Info("server config", "env", envconfig.Values())
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level:     level,
 		AddSource: true,

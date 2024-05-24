@@ -34,6 +34,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
@@ -1079,12 +1080,7 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
-type EnvironmentVar struct {
-	Name        string
-	Description string
-}
-
-func appendEnvDocs(cmd *cobra.Command, envs []EnvironmentVar) {
+func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
 	if len(envs) == 0 {
 		return
 	}
@@ -1093,7 +1089,7 @@ func appendEnvDocs(cmd *cobra.Command, envs []EnvironmentVar) {
 Environment Variables:
 `
 	for _, e := range envs {
-		envUsage += fmt.Sprintf("      %-16s   %s\n", e.Name, e.Description)
+		envUsage += fmt.Sprintf("      %-24s   %s\n", e.Name, e.Description)
 	}
 
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
@@ -1172,15 +1168,6 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
-	serveCmd.SetUsageTemplate(serveCmd.UsageTemplate() + `
-Environment Variables:
-
-    OLLAMA_HOST         The host:port to bind to (default "127.0.0.1:11434")
-    OLLAMA_ORIGINS      A comma separated list of allowed origins
-    OLLAMA_MODELS       The path to the models directory (default "~/.ollama/models")
-    OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default "5m")
-    OLLAMA_DEBUG        Set to 1 to enable additional debug logging
-`)
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
@@ -1233,9 +1220,9 @@ Environment Variables:
 		RunE:    DeleteHandler,
 	}
 
-	ollamaHostEnv := EnvironmentVar{"OLLAMA_HOST", "The host:port or base URL of the Ollama server (e.g. http://localhost:11434)"}
-	ollamaNoHistoryEnv := EnvironmentVar{"OLLAMA_NOHISTORY", "Disable readline history"}
-	envs := []EnvironmentVar{ollamaHostEnv}
+	envVars := envconfig.AsMap()
+
+	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
 
 	for _, cmd := range []*cobra.Command{
 		createCmd,
@@ -1247,10 +1234,24 @@ Environment Variables:
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		serveCmd,
 	} {
 		switch cmd {
 		case runCmd:
-			appendEnvDocs(cmd, []EnvironmentVar{ollamaHostEnv, ollamaNoHistoryEnv})
+			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
+		case serveCmd:
+			appendEnvDocs(cmd, []envconfig.EnvVar{
+				envVars["OLLAMA_DEBUG"],
+				envVars["OLLAMA_HOST"],
+				envVars["OLLAMA_KEEP_ALIVE"],
+				envVars["OLLAMA_MAX_LOADED_MODELS"],
+				envVars["OLLAMA_MAX_QUEUE"],
+				envVars["OLLAMA_MODELS"],
+				envVars["OLLAMA_NUM_PARALLEL"],
+				envVars["OLLAMA_NOPRUNE"],
+				envVars["OLLAMA_ORIGINS"],
+				envVars["OLLAMA_TMPDIR"],
+			})
 		default:
 			appendEnvDocs(cmd, envs)
 		}
