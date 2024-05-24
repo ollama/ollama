@@ -37,6 +37,7 @@ import (
 
 type registryOptions struct {
 	Insecure bool
+	HTTP     bool
 	Username string
 	Password string
 	Token    string
@@ -807,8 +808,8 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	mp := ParseModelPath(name)
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
-	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
+	if regOpts.HTTP {
+		mp.ProtocolScheme = "http"
 	}
 
 	manifest, _, err := GetManifest(mp)
@@ -874,8 +875,8 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		}
 	}
 
-	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
+	if regOpts.HTTP {
+		mp.ProtocolScheme = "http"
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
@@ -1078,6 +1079,9 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		tr = &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
+	}
+	if regOpts.HTTP {
+		requestURL.Scheme = "http"
 	}
 	client := &http.Client{Transport: tr}
 
