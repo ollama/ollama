@@ -66,8 +66,7 @@ func AsMap() map[string]EnvVar {
 }
 
 func Values() map[string]string {
-	var vals map[string]string
-	vals = make(map[string]string)
+	vals := make(map[string]string)
 	for k, v := range AsMap() {
 		vals[k] = fmt.Sprintf("%v", v.Value)
 	}
