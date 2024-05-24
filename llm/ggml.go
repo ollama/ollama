@@ -125,7 +125,7 @@ type Tensor struct {
 
 func (t Tensor) blockSize() uint64 {
 	switch t.Kind {
-	case 0, 1, 24, 25, 26, 27, 28, 31: // F32, F16, I8, I16, I32, I64, F64, BF16
+	case 0, 1, 24, 25, 26, 27, 28, 30: // F32, F16, I8, I16, I32, I64, F64, BF16
 		return 1
 	case 2, 3, 4, 5, 6, 7, 8, 9, 20: // Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q8_1, IQ4_NL
 		return 32
