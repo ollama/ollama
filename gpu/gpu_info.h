@@ -62,6 +62,7 @@ void cpu_check_ram(mem_info_t *resp);
 
 #include "gpu_info_cudart.h"
 #include "gpu_info_nvcuda.h"
+#include "gpu_info_oneapi.h"
 
 #endif  // __GPU_INFO_H__
 #endif  // __APPLE__

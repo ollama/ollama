@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -28,6 +29,7 @@ type handles struct {
 	deviceCount int
 	cudart      *C.cudart_handle_t
 	nvcuda      *C.nvcuda_handle_t
+	oneapi      *C.oneapi_handle_t
 }
 
 const (
@@ -80,6 +82,15 @@ var NvcudaWindowsGlobs = []string{
 	"c:\\windows\\system*\\nvcuda.dll",
 }
 
+var OneapiWindowsGlobs = []string{
+	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
+}
+
+var OneapiLinuxGlobs = []string{
+	"/usr/lib/x86_64-linux-gnu/libze_intel_gpu.so*",
+	"/usr/lib*/libze_intel_gpu.so*",
+}
+
 // Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
@@ -94,6 +105,8 @@ func initGPUHandles() *handles {
 	var cudartMgmtPatterns []string
 	var nvcudaMgmtName string
 	var nvcudaMgmtPatterns []string
+	var oneapiMgmtName string
+	var oneapiMgmtPatterns []string
 
 	tmpDir, _ := PayloadsDir()
 	switch runtime.GOOS {
@@ -105,6 +118,8 @@ func initGPUHandles() *handles {
 		// Aligned with driver, we can't carry as payloads
 		nvcudaMgmtName = "nvcuda.dll"
 		nvcudaMgmtPatterns = NvcudaWindowsGlobs
+		oneapiMgmtName = "ze_intel_gpu64.dll"
+		oneapiMgmtPatterns = OneapiWindowsGlobs
 	case "linux":
 		cudartMgmtName = "libcudart.so*"
 		if tmpDir != "" {
@@ -115,6 +130,8 @@ func initGPUHandles() *handles {
 		// Aligned with driver, we can't carry as payloads
 		nvcudaMgmtName = "libcuda.so*"
 		nvcudaMgmtPatterns = NvcudaLinuxGlobs
+		oneapiMgmtName = "libze_intel_gpu.so"
+		oneapiMgmtPatterns = OneapiLinuxGlobs
 	default:
 		return gpuHandles
 	}
@@ -141,6 +158,18 @@ func initGPUHandles() *handles {
 			return gpuHandles
 		}
 	}
+
+	oneapiLibPaths := FindGPULibs(oneapiMgmtName, oneapiMgmtPatterns)
+	if len(oneapiLibPaths) > 0 {
+		deviceCount, oneapi, libPath := LoadOneapiMgmt(oneapiLibPaths)
+		if oneapi != nil {
+			slog.Debug("detected Intel GPUs", "library", libPath, "count", deviceCount)
+			gpuHandles.oneapi = oneapi
+			gpuHandles.deviceCount = deviceCount
+			return gpuHandles
+		}
+	}
+
 	return gpuHandles
 }
 
@@ -181,39 +210,53 @@ func GetGPUInfo() GpuInfoList {
 		if cpuVariant == "" && runtime.GOARCH == "amd64" {
 			continue
 		}
-		gpuInfo := GpuInfo{
-			Library: "cuda",
-		}
-		var driverMajor int
-		var driverMinor int
-		if gpuHandles.cudart != nil {
-			C.cudart_check_vram(*gpuHandles.cudart, C.int(i), &memInfo)
-		} else {
-			C.nvcuda_check_vram(*gpuHandles.nvcuda, C.int(i), &memInfo)
-			driverMajor = int(gpuHandles.nvcuda.driver_major)
-			driverMinor = int(gpuHandles.nvcuda.driver_minor)
-		}
-		if memInfo.err != nil {
-			slog.Info("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
-			C.free(unsafe.Pointer(memInfo.err))
-			continue
-		}
-		if memInfo.major < CudaComputeMin[0] || (memInfo.major == CudaComputeMin[0] && memInfo.minor < CudaComputeMin[1]) {
-			slog.Info(fmt.Sprintf("[%d] CUDA GPU is too old. Compute Capability detected: %d.%d", i, memInfo.major, memInfo.minor))
-			continue
-		}
-		gpuInfo.TotalMemory = uint64(memInfo.total)
-		gpuInfo.FreeMemory = uint64(memInfo.free)
-		gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
-		gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
-		gpuInfo.MinimumMemory = cudaMinimumMemory
-		gpuInfo.DependencyPath = depPath
-		gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-		gpuInfo.DriverMajor = int(driverMajor)
-		gpuInfo.DriverMinor = int(driverMinor)
+		if gpuHandles.cudart != nil || gpuHandles.nvcuda != nil {
+			gpuInfo := GpuInfo{
+				Library: "cuda",
+			}
+			var driverMajor int
+			var driverMinor int
+			if gpuHandles.cudart != nil {
+				C.cudart_check_vram(*gpuHandles.cudart, C.int(i), &memInfo)
+			} else {
+				C.nvcuda_check_vram(*gpuHandles.nvcuda, C.int(i), &memInfo)
+				driverMajor = int(gpuHandles.nvcuda.driver_major)
+				driverMinor = int(gpuHandles.nvcuda.driver_minor)
+			}
+			if memInfo.err != nil {
+				slog.Info("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
+				C.free(unsafe.Pointer(memInfo.err))
+				continue
+			}
+			if memInfo.major < CudaComputeMin[0] || (memInfo.major == CudaComputeMin[0] && memInfo.minor < CudaComputeMin[1]) {
+				slog.Info(fmt.Sprintf("[%d] CUDA GPU is too old. Compute Capability detected: %d.%d", i, memInfo.major, memInfo.minor))
+				continue
+			}
+			gpuInfo.TotalMemory = uint64(memInfo.total)
+			gpuInfo.FreeMemory = uint64(memInfo.free)
+			gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+			gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
+			gpuInfo.MinimumMemory = cudaMinimumMemory
+			gpuInfo.DependencyPath = depPath
+			gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+			gpuInfo.DriverMajor = int(driverMajor)
+			gpuInfo.DriverMinor = int(driverMinor)
 
-		// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
-		resp = append(resp, gpuInfo)
+			// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
+			resp = append(resp, gpuInfo)
+		}
+		if gpuHandles.oneapi != nil {
+			gpuInfo := GpuInfo{
+				Library: "oneapi",
+			}
+			C.oneapi_check_vram(*gpuHandles.oneapi, &memInfo)
+			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+			memInfo.free = C.uint64_t(totalFreeMem)
+			gpuInfo.TotalMemory = uint64(memInfo.total)
+			gpuInfo.FreeMemory = uint64(memInfo.free)
+			gpuInfo.ID = strconv.Itoa(i)
+			resp = append(resp, gpuInfo)
+		}
 	}
 
 	// Then AMD
@@ -348,6 +391,23 @@ func LoadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string) {
 	return 0, nil, ""
 }
 
+func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
+	var resp C.oneapi_init_resp_t
+	resp.oh.verbose = getVerboseState()
+	for _, libPath := range oneapiLibPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.oneapi_init(lib, &resp)
+		if resp.err != nil {
+			slog.Debug("Unable to load oneAPI management library", "library", libPath, "error", C.GoString(resp.err))
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			return int(resp.num_devices), &resp.oh, libPath
+		}
+	}
+	return 0, nil, ""
+}
+
 func getVerboseState() C.uint16_t {
 	if envconfig.Debug {
 		return C.uint16_t(1)
@@ -368,6 +428,8 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 		return cudaGetVisibleDevicesEnv(l)
 	case "rocm":
 		return rocmGetVisibleDevicesEnv(l)
+	case "oneapi":
+		return oneapiGetVisibleDevicesEnv(l)
 	default:
 		slog.Debug("no filter required for library " + l[0].Library)
 		return "", ""
