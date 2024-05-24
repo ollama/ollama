@@ -38,13 +38,12 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-// SystemInfo is an unused example of calling llama.cpp functions using CGo
-func PrintSystemInfo() string {
-	return C.GoString(C.llama_print_system_info())
-}
-
 func BackendInit() {
 	C.llama_backend_init()
+}
+
+func PrintSystemInfo() string {
+	return C.GoString(C.llama_print_system_info())
 }
 
 type ContextParams struct {
@@ -100,7 +99,8 @@ func (c *Context) Model() *Model {
 	return &Model{c: C.llama_get_model(c.c)}
 }
 
-func (c *Context) SampleTokenGreedy(batch Batch) int {
+// TODO: break this up
+func (c *Context) SampleTokenGreedy(batch Batch, i int) int {
 	nv := c.Model().NumVocab()
 
 	// TODO(jmorganca): split this up into different functions
@@ -108,7 +108,7 @@ func (c *Context) SampleTokenGreedy(batch Batch) int {
 	defer C.free(unsafe.Pointer(candidates))
 
 	// get most recent logits
-	logits := C.llama_get_logits_ith(c.c, C.int(batch.NumTokens()-1))
+	logits := C.llama_get_logits_ith(c.c, C.int(i))
 	for i := 0; i < int(nv); i++ {
 		ptr := (*C.struct_llama_token_data)(unsafe.Pointer(uintptr(unsafe.Pointer(candidates)) + uintptr(i)*unsafe.Sizeof(C.struct_llama_token_data{})))
 		ptr.id = C.int(i)
@@ -121,6 +121,10 @@ func (c *Context) SampleTokenGreedy(batch Batch) int {
 		size:   C.size_t(nv),
 		sorted: C.bool(false),
 	}))
+}
+
+func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
+	return bool(C.llama_kv_cache_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
 }
 
 func LoadModelFromFile(modelPath string, params ModelParams) *Model {
