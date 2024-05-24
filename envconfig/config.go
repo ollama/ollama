@@ -15,6 +15,8 @@ var (
 	AllowOrigins []string
 	// Set via OLLAMA_DEBUG in the environment
 	Debug bool
+	// Experimental flash attention
+	FlashAttention bool
 	// Set via OLLAMA_KEEP_ALIVE in the environment
 	KeepAlive string
 	// Set via OLLAMA_LLM_LIBRARY in the environment
@@ -35,8 +37,6 @@ var (
 	RunnersDir string
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
-	// Experimental flash attention
-	FlashAttention bool
 )
 
 type EnvVar struct {
