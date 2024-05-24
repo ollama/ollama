@@ -55,6 +55,7 @@ type llmServer struct {
 	totalLayers    uint64
 	gpuCount       int
 	loadDuration   time.Duration // Record how long it took the model to load
+	loadProgress   float32
 
 	sem *semaphore.Weighted
 }
@@ -198,6 +199,23 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	if opts.UseNUMA {
 		params = append(params, "--numa")
+	}
+
+	flashAttnEnabled := envconfig.FlashAttention
+
+	// partial offloading does not support flash attention
+	if uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
+		flashAttnEnabled = false
+	}
+
+	// only cuda (compute capability 7+) and metal support flash attention
+	for _, g := range gpus {
+		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
+			flashAttnEnabled = false
+		}
+	}
+	if flashAttnEnabled {
+		params = append(params, "--flash-attn")
 	}
 
 	numParallel := envconfig.NumParallel
@@ -408,10 +426,11 @@ func (s ServerStatus) ToString() string {
 }
 
 type ServerStatusResp struct {
-	Status          string `json:"status"`
-	SlotsIdle       int    `json:"slots_idle"`
-	SlotsProcessing int    `json:"slots_processing"`
-	Error           string `json:"error"`
+	Status          string  `json:"status"`
+	SlotsIdle       int     `json:"slots_idle"`
+	SlotsProcessing int     `json:"slots_processing"`
+	Error           string  `json:"error"`
+	Progress        float32 `json:"progress"`
 }
 
 func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
@@ -459,6 +478,7 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	case "no slot available":
 		return ServerStatusNoSlotsAvailable, nil
 	case "loading model":
+		s.loadProgress = status.Progress
 		return ServerStatusLoadingModel, nil
 	default:
 		return ServerStatusError, fmt.Errorf("server error: %+v", status)
@@ -499,7 +519,8 @@ func (s *llmServer) Ping(ctx context.Context) error {
 
 func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	start := time.Now()
-	expiresAt := time.Now().Add(10 * time.Minute) // be generous with timeout, large models can take a while to load
+	stallDuration := 60 * time.Second
+	stallTimer := time.Now().Add(stallDuration) // give up if we stall for
 
 	slog.Info("waiting for llama runner to start responding")
 	var lastStatus ServerStatus = -1
@@ -517,13 +538,13 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			return fmt.Errorf("llama runner process has terminated: %v %s", err, msg)
 		default:
 		}
-		if time.Now().After(expiresAt) {
+		if time.Now().After(stallTimer) {
 			// timeout
 			msg := ""
 			if s.status != nil && s.status.LastErrMsg != "" {
 				msg = s.status.LastErrMsg
 			}
-			return fmt.Errorf("timed out waiting for llama runner to start: %s", msg)
+			return fmt.Errorf("timed out waiting for llama runner to start - progress %0.2f - %s", s.loadProgress, msg)
 		}
 		if s.cmd.ProcessState != nil {
 			msg := ""
@@ -534,6 +555,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		}
 		ctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 		defer cancel()
+		priorProgress := s.loadProgress
 		status, _ := s.getServerStatus(ctx)
 		if lastStatus != status && status != ServerStatusReady {
 			// Only log on status changes
@@ -546,6 +568,11 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			return nil
 		default:
 			lastStatus = status
+			// Reset the timer as long as we're making forward progress on the load
+			if priorProgress != s.loadProgress {
+				slog.Debug(fmt.Sprintf("model load progress %0.2f", s.loadProgress))
+				stallTimer = time.Now().Add(stallDuration)
+			}
 			time.Sleep(time.Millisecond * 250)
 			continue
 		}

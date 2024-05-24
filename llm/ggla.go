@@ -119,7 +119,7 @@ func (llm *ggla) decode(rs io.ReadSeeker) error {
 
 		t.Offset = uint64(offset)
 
-		if _, err := rs.Seek(int64(t.size()), io.SeekCurrent); err != nil {
+		if _, err := rs.Seek(int64(t.Size()), io.SeekCurrent); err != nil {
 			return err
 		}
 

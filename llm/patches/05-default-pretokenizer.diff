@@ -1,0 +1,35 @@
+From d02a06f3f45a09255ace8684a66590e06ce44605 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Thu, 23 May 2024 11:33:20 -0700
+Subject: [PATCH] default pretokenizer on unrecognized type
+
+---
+ llama.cpp | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/llama.cpp b/llama.cpp
+index 15c66077..af1aede3 100644
+--- a/llama.cpp
++++ b/llama.cpp
+@@ -4504,9 +4504,6 @@ static void llm_load_vocab(
+                 LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
+                 LLAMA_LOG_WARN("%s:                                             \n", __func__);
+                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+-            } else if (
+-                    tokenizer_pre == "default") {
+-                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+             } else if (
+                     tokenizer_pre == "llama3"   ||
+                     tokenizer_pre == "llama-v3" ||
+@@ -4553,7 +4550,7 @@ static void llm_load_vocab(
+                 tokenizer_pre == "dbrx") {
+                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DBRX;
+             } else {
+-                throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));
++                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+             }
+         } else {
+             vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+-- 
+2.45.1
+
