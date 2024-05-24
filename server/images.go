@@ -853,23 +853,27 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	layers = append(layers, manifest.Layers...)
 	layers = append(layers, manifest.Config)
 
+	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
-		if err := downloadBlob(
-			ctx,
-			downloadOpts{
-				mp:      mp,
-				digest:  layer.Digest,
-				regOpts: regOpts,
-				fn:      fn,
-			}); err != nil {
+		cacheHit, err := downloadBlob(ctx, downloadOpts{
+			mp:      mp,
+			digest:  layer.Digest,
+			regOpts: regOpts,
+			fn:      fn,
+		})
+		if err != nil {
 			return err
 		}
+		skipVerify[layer.Digest] = cacheHit
 		delete(deleteMap, layer.Digest)
 	}
 	delete(deleteMap, manifest.Config.Digest)
 
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
 	for _, layer := range layers {
+		if skipVerify[layer.Digest] {
+			continue
+		}
 		if err := verifyBlob(layer.Digest); err != nil {
 			if errors.Is(err, errDigestMismatch) {
 				// something went wrong, delete the blob
