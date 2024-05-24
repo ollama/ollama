@@ -56,12 +56,12 @@ func main() {
 }
 
 func eval(lc *llama.Context, before string, embedding *llama.LlavaImageEmbed, after string) error {
-	beforeTokens, err := lc.GetModel().Tokenize(before, 2048, true, true)
+	beforeTokens, err := lc.Model().Tokenize(before, 2048, true, true)
 	if err != nil {
 		return err
 	}
 
-	afterTokens, err := lc.GetModel().Tokenize(after, 2048, true, true)
+	afterTokens, err := lc.Model().Tokenize(after, 2048, true, true)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func eval(lc *llama.Context, before string, embedding *llama.LlavaImageEmbed, af
 
 	// prompt eval
 	for _, t := range beforeTokens {
-		batch.Add(t, llama.Pos(nPast), []llama.SeqId{0}, true)
+		batch.Add(t, nPast, []int{0}, true)
 		nPast++
 	}
 
@@ -88,7 +88,7 @@ func eval(lc *llama.Context, before string, embedding *llama.LlavaImageEmbed, af
 
 	batch = llama.NewBatch(512, 0, 1)
 	for _, t := range afterTokens {
-		batch.Add(t, llama.Pos(nPast), []llama.SeqId{0}, true)
+		batch.Add(t, nPast, []int{0}, true)
 	}
 
 	// main loop
@@ -102,15 +102,15 @@ func eval(lc *llama.Context, before string, embedding *llama.LlavaImageEmbed, af
 		token := lc.SampleTokenGreedy(batch)
 
 		// if it's an end of sequence token, break
-		if lc.GetModel().TokenIsEog(token) {
+		if lc.Model().TokenIsEog(token) {
 			break
 		}
 
 		// print the token
-		str := lc.GetModel().TokenToPiece(token)
+		str := lc.Model().TokenToPiece(token)
 		fmt.Print(str)
 		batch.Clear()
-		batch.Add(token, llama.Pos(n), []llama.SeqId{0}, true)
+		batch.Add(token, n, []int{0}, true)
 	}
 
 	return nil
