@@ -27,7 +27,7 @@ type ErrorResponse struct {
 
 type Message struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content interface{} `json:"content"`
 }
 
 type Choice struct {
@@ -148,7 +148,8 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
-		messages = append(messages, api.Message{Role: msg.Role, Content: msg.Content})
+		content, images := extractContent(msg.Content)
+		messages = append(messages, api.Message{Role: msg.Role, Content: content, Images: images})
 	}
 
 	options := make(map[string]interface{})
@@ -209,6 +210,33 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 		Options:  options,
 		Stream:   &r.Stream,
 	}
+}
+
+func extractContent(content interface{}) (string, []api.ImageData) {
+	var concatenatedText string
+	var imageDataList []api.ImageData
+
+	switch v := content.(type) {
+	case string:
+		concatenatedText = v
+	case []interface{}:
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				if itemType, exists := m["type"].(string); exists {
+					switch itemType {
+					case "text":
+						if text, exists := m["text"].(string); exists {
+							concatenatedText += text
+						}
+					case "image_url":
+						// TODO add images
+					}
+				}
+			}
+		}
+	}
+
+	return concatenatedText, imageDataList
 }
 
 type writer struct {
