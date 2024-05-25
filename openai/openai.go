@@ -152,8 +152,33 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
-		content, images := extractContent(msg.Content)
-		messages = append(messages, api.Message{Role: msg.Role, Content: content, Images: images})
+		switch content := msg.Content.(type) {
+			case string:
+				messages = append(messages, api.Message{Role: msg.Role, Content: content})
+			case []interface{}:
+				for _, item := range content {
+					if m, ok := item.(map[string]interface{}); ok {
+						if itemType, exists := m["type"].(string); exists {
+							switch itemType {
+								case "text":
+									if text, exists := m["text"].(string); exists {
+										messages = append(messages, api.Message{Role: msg.Role, Content: text})
+									}
+								case "image_url":
+									if imageUrlMap, exists := m["image_url"].(map[string]interface{}); exists {
+										if url, exists := imageUrlMap["url"].(string); exists {
+											imageData, err := fetchImageData(url)
+											if err != nil {
+												imageData = []byte{}
+											}
+											messages = append(messages, api.Message{Role: msg.Role, Content: "", Images: []api.ImageData{imageData}})
+										}
+									}
+							}
+						}
+					}
+				}
+		}
 	}
 
 	options := make(map[string]interface{})
@@ -216,69 +241,35 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	}
 }
 
-func extractContent(content interface{}) (string, []api.ImageData) {
-	var concatenatedText string
-	var imageDataList []api.ImageData
-
-	switch v := content.(type) {
-	case string:
-		concatenatedText = v
-	case []interface{}:
-		for _, item := range v {
-			if m, ok := item.(map[string]interface{}); ok {
-				if itemType, exists := m["type"].(string); exists {
-					switch itemType {
-					case "text":
-						if text, exists := m["text"].(string); exists {
-							concatenatedText += text
-						}
-					case "image_url":
-	if imageUrlMap, exists := m["image_url"].(map[string]interface{}); exists {
-	if url, exists := imageUrlMap["url"].(string); exists {
-	imageData, err := fetchImageData(url)
-	if err == nil {
-	imageDataList = append(imageDataList, imageData)
-	}
-	}
-	}
-					}
-				}
-			}
-		}
-	}
-
-	return concatenatedText, imageDataList
-}
 
 func fetchImageData(url string) (api.ImageData, error) {
 	// Assuming the URL is in the form "data:image/png;base64,<base64_encoded_data>"
 	if strings.HasPrefix(url, "data:image/") && strings.Contains(url, "base64,") {
-	parts := strings.SplitN(url, "base64,", 2)
-	if len(parts) == 2 {
-	decodedData, err := base64.StdEncoding.DecodeString(parts[1])
-	if err != nil {
-	return nil, err
-	}
-	return api.ImageData(decodedData), nil
-	}
+		parts := strings.SplitN(url, "base64,", 2)
+		if len(parts) == 2 {
+			decodedData, err := base64.StdEncoding.DecodeString(parts[1])
+			if err != nil {
+				return nil, err
+			}
+			return api.ImageData(decodedData), nil
+		}
 	} else if strings.HasPrefix(url, "http") {
-	resp, err := http.Get(url)
-	if err != nil {
-	return nil, err
-	}
-	defer resp.Body.Close()
+		resp, err := http.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
 
-	imageData, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-	return nil, err
-	}
+		imageData, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
 
-	return api.ImageData(imageData), nil
+		return api.ImageData(imageData), nil
 
 	}
 	return nil, errors.New("invalid image URL format")
 }
-
 
 type writer struct {
 	stream bool
