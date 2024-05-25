@@ -2,15 +2,11 @@
 # This script installs Ollama on Linux.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
 
-set -eu
-
 status() { echo ">>> $*" >&2; }
 error() { echo "ERROR $*"; exit 1; }
 warning() { echo "WARNING: $*"; }
 
-TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf $TEMP_DIR; }
-trap cleanup EXIT
 
 available() { command -v $1 >/dev/null; }
 require() {
@@ -24,61 +20,10 @@ require() {
     echo $MISSING
 }
 
-[ "$(uname -s)" = "Linux" ] || error 'This script is intended to run on Linux only.'
-
-ARCH=$(uname -m)
-case "$ARCH" in
-    x86_64) ARCH="amd64" ;;
-    aarch64|arm64) ARCH="arm64" ;;
-    *) error "Unsupported architecture: $ARCH" ;;
-esac
-
-KERN=$(uname -r)
-case "$KERN" in
-    *icrosoft*WSL2 | *icrosoft*wsl2) ;;
-    *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
-    *) ;;
-esac
-
-VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
-
-SUDO=
-if [ "$(id -u)" -ne 0 ]; then
-    # Running as root, no need for sudo
-    if ! available sudo; then
-        error "This script requires superuser permissions. Please re-run as root."
-    fi
-
-    SUDO="sudo"
-fi
-
-NEEDS=$(require curl awk grep sed tee xargs)
-if [ -n "$NEEDS" ]; then
-    status "ERROR: The following tools are required but missing:"
-    for NEED in $NEEDS; do
-        echo "  - $NEED"
-    done
-    exit 1
-fi
-
-status "Downloading ollama..."
-curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
-
-for BINDIR in /usr/local/bin /usr/bin /bin; do
-    echo $PATH | grep -q $BINDIR && break || continue
-done
-
-status "Installing ollama to $BINDIR..."
-$SUDO install -o0 -g0 -m755 -d $BINDIR
-$SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
-
-install_success() { 
+install_success() {
     status 'The Ollama API is now available at 127.0.0.1:11434.'
     status 'Install complete. Run "ollama" from the command line.'
 }
-trap install_success EXIT
-
-# Everything from this point onwards is optional.
 
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
@@ -127,24 +72,15 @@ EOF
     esac
 }
 
-if available systemctl; then
-    configure_systemd
-fi
-
-if ! available lspci && ! available lshw; then
-    warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
-    exit 0
-fi
-
 check_gpu() {
     # Look for devices based on vendor ID for NVIDIA and AMD
     case $1 in
-        lspci) 
+        lspci)
             case $2 in
                 nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
                 amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
             esac ;;
-        lshw) 
+        lshw)
             case $2 in
                 nvidia) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[1002\]' || return 1 ;;
@@ -152,38 +88,6 @@ check_gpu() {
         nvidia-smi) available nvidia-smi || return 1 ;;
     esac
 }
-
-if check_gpu nvidia-smi; then
-    status "NVIDIA GPU installed."
-    exit 0
-fi
-
-if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
-    install_success
-    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
-    exit 0
-fi
-
-if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    # Look for pre-existing ROCm v6 before downloading the dependencies
-    for search in "${HIP_PATH:-''}" "${ROCM_PATH:-''}" "/opt/rocm" "/usr/lib64"; do
-        if [ -n "${search}" ] && [ -e "${search}/libhipblas.so.2" -o -e "${search}/lib/libhipblas.so.2" ]; then
-            status "Compatible AMD GPU ROCm library detected at ${search}"
-            install_success
-            exit 0
-        fi
-    done
-
-    status "Downloading AMD GPU dependencies..."
-    $SUDO rm -rf /usr/share/ollama/lib
-    $SUDO chmod o+x /usr/share/ollama
-    $SUDO install -o ollama -g ollama -m 755 -d /usr/share/ollama/lib/rocm
-    curl --fail --show-error --location --progress-bar "https://ollama.com/download/ollama-linux-amd64-rocm.tgz${VER_PARAM}" \
-        | $SUDO tar zx --owner ollama --group ollama -C /usr/share/ollama/lib/rocm .
-    install_success
-    status "AMD GPU dependencies installed."
-    exit 0
-fi
 
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-7-centos-7
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-8-rocky-8
@@ -242,60 +146,159 @@ install_cuda_driver_apt() {
     DEBIAN_FRONTEND=noninteractive $SUDO_E apt-get -y install cuda-drivers -q
 }
 
-if [ ! -f "/etc/os-release" ]; then
-    error "Unknown distribution. Skipping CUDA installation."
-fi
+main() {
+    set -eu
+    TEMP_DIR=$(mktemp -d)
+    trap cleanup EXIT
 
-. /etc/os-release
+    [ "$(uname -s)" = "Linux" ] || error 'This script is intended to run on Linux only.'
 
-OS_NAME=$ID
-OS_VERSION=$VERSION_ID
-
-PACKAGE_MANAGER=
-for PACKAGE_MANAGER in dnf yum apt-get; do
-    if available $PACKAGE_MANAGER; then
-        break
-    fi
-done
-
-if [ -z "$PACKAGE_MANAGER" ]; then
-    error "Unknown package manager. Skipping CUDA installation."
-fi
-
-if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
-    case $OS_NAME in
-        centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
-        rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
-        fedora) [ $OS_VERSION -lt '37' ] && install_cuda_driver_yum $OS_NAME $OS_VERSION || install_cuda_driver_yum $OS_NAME '37';;
-        amzn) install_cuda_driver_yum 'fedora' '37' ;;
-        debian) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
-        ubuntu) install_cuda_driver_apt $OS_NAME $(echo $OS_VERSION | sed 's/\.//') ;;
-        *) exit ;;
-    esac
-fi
-
-if ! lsmod | grep -q nvidia; then
-    KERNEL_RELEASE="$(uname -r)"
-    case $OS_NAME in
-        rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
-        centos|rhel|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
-        fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
-        debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
-        *) exit ;;
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64) ARCH="amd64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+        *) error "Unsupported architecture: $ARCH" ;;
     esac
 
-    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
-    if [ -n "$NVIDIA_CUDA_VERSION" ]; then
-        $SUDO dkms install $NVIDIA_CUDA_VERSION
+    KERN=$(uname -r)
+    case "$KERN" in
+        *icrosoft*WSL2 | *icrosoft*wsl2) ;;
+        *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
+        *) ;;
+    esac
+
+    VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
+
+    SUDO=
+    if [ "$(id -u)" -ne 0 ]; then
+        # Running as root, no need for sudo
+        if ! available sudo; then
+            error "This script requires superuser permissions. Please re-run as root."
+        fi 
+
+        SUDO="sudo"
     fi
 
-    if lsmod | grep -q nouveau; then
-        status 'Reboot to complete NVIDIA CUDA driver install.'
+    NEEDS=$(require curl awk grep sed tee xargs)
+    if [ -n "$NEEDS" ]; then
+        status "ERROR: The following tools are required but missing:"
+        for NEED in $NEEDS; do
+            echo "  - $NEED"
+        done
+        exit 1
+    fi
+
+    status "Downloading ollama..."
+    curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
+
+    for BINDIR in /usr/local/bin /usr/bin /bin; do
+        echo $PATH | grep -q $BINDIR && break || continue
+    done
+
+    status "Installing ollama to $BINDIR..."
+    $SUDO install -o0 -g0 -m755 -d $BINDIR
+    $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
+
+    trap install_success EXIT
+
+    if available systemctl; then
+        configure_systemd
+    fi
+
+    if ! available lspci && ! available lshw; then
+        warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
         exit 0
     fi
 
-    $SUDO modprobe nvidia
-fi
+    if check_gpu nvidia-smi; then
+        status "NVIDIA GPU installed."
+        exit 0
+    fi
 
+    if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+        install_success
+        warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+        exit 0
+    fi
 
-status "NVIDIA CUDA drivers installed."
+    if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
+        # Look for pre-existing ROCm v6 before downloading the dependencies
+        for search in "${HIP_PATH:-''}" "${ROCM_PATH:-''}" "/opt/rocm" "/usr/lib64"; do
+            if [ -n "${search}" ] && [ -e "${search}/libhipblas.so.2" -o -e "${search}/lib/libhipblas.so.2" ]; then
+                status "Compatible AMD GPU ROCm library detected at ${search}"
+                install_success
+                exit 0
+            fi
+        done
+
+        status "Downloading AMD GPU dependencies..."
+        $SUDO rm -rf /usr/share/ollama/lib
+        $SUDO chmod o+x /usr/share/ollama
+        $SUDO install -o ollama -g ollama -m 755 -d /usr/share/ollama/lib/rocm
+        curl --fail --show-error --location --progress-bar "https://ollama.com/download/ollama-linux-amd64-rocm.tgz${VER_PARAM}" \
+            | $SUDO tar zx --owner ollama --group ollama -C /usr/share/ollama/lib/rocm .
+        install_success
+        status "AMD GPU dependencies installed."
+        exit 0
+    fi
+
+    if [ ! -f "/etc/os-release" ]; then
+        error "Unknown distribution. Skipping CUDA installation."
+    fi
+
+    . /etc/os-release
+
+    OS_NAME=$ID
+    OS_VERSION=$VERSION_ID
+
+    PACKAGE_MANAGER=
+    for PACKAGE_MANAGER in dnf yum apt-get; do
+        if available $PACKAGE_MANAGER; then
+            break
+        fi
+    done
+
+    if [ -z "$PACKAGE_MANAGER" ]; then
+        error "Unknown package manager. Skipping CUDA installation."
+    fi
+
+    if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
+        case $OS_NAME in
+            centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
+            rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
+            fedora) [ $OS_VERSION -lt '37' ] && install_cuda_driver_yum $OS_NAME $OS_VERSION || install_cuda_driver_yum $OS_NAME '37';;
+            amzn) install_cuda_driver_yum 'fedora' '37' ;;
+            debian) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
+            ubuntu) install_cuda_driver_apt $OS_NAME $(echo $OS_VERSION | sed 's/\.//') ;;
+            *) exit ;;
+        esac
+    fi
+
+    if ! lsmod | grep -q nvidia; then
+        KERNEL_RELEASE="$(uname -r)"
+        case $OS_NAME in
+            rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
+            centos|rhel|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+            fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
+            debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
+            *) exit ;;
+        esac
+
+        NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
+        if [ -n "$NVIDIA_CUDA_VERSION" ]; then
+            $SUDO dkms install $NVIDIA_CUDA_VERSION
+        fi
+
+        if lsmod | grep -q nouveau; then
+            status 'Reboot to complete NVIDIA CUDA driver install.'
+            exit 0
+        fi
+
+        $SUDO modprobe nvidia
+    fi
+
+    status "NVIDIA CUDA drivers installed."
+}
+
+main
+
