@@ -8,7 +8,11 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"io/ioutil"
 	"time"
+	"strings"
+	"encoding/base64"
+	"errors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
@@ -229,7 +233,14 @@ func extractContent(content interface{}) (string, []api.ImageData) {
 							concatenatedText += text
 						}
 					case "image_url":
-						// TODO add images
+	if imageUrlMap, exists := m["image_url"].(map[string]interface{}); exists {
+	if url, exists := imageUrlMap["url"].(string); exists {
+	imageData, err := fetchImageData(url)
+	if err == nil {
+	imageDataList = append(imageDataList, imageData)
+	}
+	}
+	}
 					}
 				}
 			}
@@ -238,6 +249,36 @@ func extractContent(content interface{}) (string, []api.ImageData) {
 
 	return concatenatedText, imageDataList
 }
+
+func fetchImageData(url string) (api.ImageData, error) {
+	// Assuming the URL is in the form "data:image/png;base64,<base64_encoded_data>"
+	if strings.HasPrefix(url, "data:image/") && strings.Contains(url, "base64,") {
+	parts := strings.SplitN(url, "base64,", 2)
+	if len(parts) == 2 {
+	decodedData, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil {
+	return nil, err
+	}
+	return api.ImageData(decodedData), nil
+	}
+	} else if strings.HasPrefix(url, "http") {
+	resp, err := http.Get(url)
+	if err != nil {
+	return nil, err
+	}
+	defer resp.Body.Close()
+
+	imageData, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+	return nil, err
+	}
+
+	return api.ImageData(imageData), nil
+
+	}
+	return nil, errors.New("invalid image URL format")
+}
+
 
 type writer struct {
 	stream bool
