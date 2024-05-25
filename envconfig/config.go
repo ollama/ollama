@@ -37,6 +37,8 @@ var (
 	RunnersDir string
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
+	// Set via OLLAMA_MAX_DOWNLOAD_PARTS in the environment
+	MaxDownloadParts int
 )
 
 type EnvVar struct {
@@ -47,21 +49,22 @@ type EnvVar struct {
 
 func AsMap() map[string]EnvVar {
 	return map[string]EnvVar{
-		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", "", "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
-		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
-		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models (default 1)"},
-		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
-		"OLLAMA_MAX_VRAM":          {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", "", "The path to the models directory"},
-		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
-		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
-		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
-		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
-		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
+		"OLLAMA_DEBUG":              {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_FLASH_ATTENTION":    {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
+		"OLLAMA_HOST":               {"OLLAMA_HOST", "", "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_KEEP_ALIVE":         {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_LLM_LIBRARY":        {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
+		"OLLAMA_MAX_LOADED_MODELS":  {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models (default 1)"},
+		"OLLAMA_MAX_QUEUE":          {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
+		"OLLAMA_MAX_VRAM":           {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
+		"OLLAMA_MODELS":             {"OLLAMA_MODELS", "", "The path to the models directory"},
+		"OLLAMA_NOHISTORY":          {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
+		"OLLAMA_NOPRUNE":            {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
+		"OLLAMA_NUM_PARALLEL":       {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
+		"OLLAMA_ORIGINS":            {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
+		"OLLAMA_RUNNERS_DIR":        {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
+		"OLLAMA_TMPDIR":             {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
+		"OLLAMA_MAX_DOWNLOAD_PARTS": {"OLLAMA_MAX_DOWNLOAD_PARTS", MaxDownloadParts, "Maximum parts to download model in parallel (default 64)"},
 	}
 }
 
@@ -89,6 +92,7 @@ func init() {
 	NumParallel = 1
 	MaxRunners = 1
 	MaxQueuedRequests = 512
+	MaxDownloadParts = 64
 
 	LoadConfig()
 }
@@ -180,6 +184,17 @@ func LoadConfig() {
 	if origins := clean("OLLAMA_ORIGINS"); origins != "" {
 		AllowOrigins = strings.Split(origins, ",")
 	}
+
+	maxDownloadPartsStr := clean("OLLAMA_MAX_DOWNLOAD_PARTS")
+	if maxDownloadPartsStr != "" {
+		m, err := strconv.Atoi(maxDownloadPartsStr)
+		if err != nil {
+			slog.Error("invalid setting", "OLLAMA_MAX_DOWNLOAD_PARTS", maxDownloadPartsStr, "error", err)
+		} else {
+			MaxDownloadParts = m
+		}
+	}
+
 	for _, allowOrigin := range defaultAllowOrigins {
 		AllowOrigins = append(AllowOrigins,
 			fmt.Sprintf("http://%s", allowOrigin),

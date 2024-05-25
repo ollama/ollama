@@ -1093,7 +1093,7 @@ func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
 Environment Variables:
 `
 	for _, e := range envs {
-		envUsage += fmt.Sprintf("      %-24s   %s\n", e.Name, e.Description)
+		envUsage += fmt.Sprintf("      %-25s   %s\n", e.Name, e.Description)
 	}
 
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
@@ -1258,6 +1258,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_MAX_VRAM"],
+				envVars["OLLAMA_MAX_DOWNLOAD_PARTS"],
 			})
 		default:
 			appendEnvDocs(cmd, envs)
