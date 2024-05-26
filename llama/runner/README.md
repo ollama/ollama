@@ -1,5 +1,7 @@
 # `runner`
 
+A subprocess runner for loading a model and running inference via a small http web server.
+
 ```
 ./runner -model <model binary>
 ```
