@@ -283,11 +283,6 @@ if ! lsmod | grep -q nvidia; then
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
-
-    if lsmod | grep -q nouveau; then
-        status 'Reboot to complete NVIDIA CUDA driver install.'
-        exit 0
-    fi
 fi
 
 $SUDO modprobe nvidia
@@ -302,6 +297,11 @@ if command -v nvidia-persistenced > /dev/null 2>&1; then
             echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
         fi
     done
+fi
+
+if lsmod | grep -q nouveau; then
+    status 'Reboot to complete NVIDIA CUDA driver install.'
+    exit 0
 fi
 
 status "NVIDIA GPU ready."
