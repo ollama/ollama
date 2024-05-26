@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
 )
 
@@ -131,7 +133,8 @@ func (s *Server) run(ctx context.Context) {
 				// sample a token
 				// TODO: sample based on the sequence
 				fmt.Println("Sampling token", i, ibatch[i])
-				token := s.lc.SampleTokenGreedy(batch, ibatch[i])
+				logits := s.lc.GetLogitsIth(ibatch[i])
+				token := s.lc.SampleTokenGreedy(logits)
 
 				// if it's an end of sequence token, break
 				// TODO: just end this sequence
@@ -155,6 +158,8 @@ func (s *Server) run(ctx context.Context) {
 type Request struct {
 	Prompt string   `json:"prompt"`
 	Images []string `json:"images"`
+
+	api.Options
 }
 
 type Response struct {
@@ -208,6 +213,7 @@ func main() {
 	mpath := flag.String("model", "", "Path to model binary file")
 	ppath := flag.String("projector", "", "Path to projector binary file")
 	parallel := flag.Int("parallel", 1, "Number of sequences to handle simultaneously")
+	port := flag.Int("port", 8080, "Port to expose the server on")
 	flag.Parse()
 
 	// load the model
@@ -241,7 +247,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	go server.run(ctx)
 
-	addr := "127.0.0.1:8080"
+	addr := "127.0.0.1:" + strconv.Itoa(*port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)
