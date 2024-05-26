@@ -295,6 +295,7 @@ if ! lsmod | grep -q nvidia; then
     fi
 
     $SUDO modprobe nvidia
+    $SUDO modprobe nvidia_uvm
 fi
 
 
