@@ -176,7 +176,7 @@ if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     curl --fail --show-error --location --progress-bar "https://ollama.com/download/ollama-linux-amd64-rocm.tgz${VER_PARAM}" \
         | $SUDO tar zx --owner ollama --group ollama -C /usr/share/ollama/lib/rocm .
     install_success
-    status "AMD GPU dependencies installed."
+    status "AMD GPU ready."
     exit 0
 fi
 
