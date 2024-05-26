@@ -295,7 +295,7 @@ $SUDO modprobe nvidia_uvm
 
 # make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
 if command -v nvidia-persistenced > /dev/null 2>&1; then
-    sudo touch /etc/modules-load.d/nvidia.conf
+    $SUDO touch /etc/modules-load.d/nvidia.conf
     MODULES="nvidia nvidia-uvm"
     for MODULE in $MODULES; do
         if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
