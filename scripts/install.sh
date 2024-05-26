@@ -298,9 +298,9 @@ if command -v nvidia-persistenced > /dev/null 2>&1; then
     sudo touch /etc/modules-load.d/nvidia.conf
     MODULES="nvidia nvidia-uvm"
     for MODULE in $MODULES; do
-    if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
-        echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
-    fi
+        if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
+            echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
+        fi
     done
 fi
 
