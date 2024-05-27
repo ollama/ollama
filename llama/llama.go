@@ -28,6 +28,7 @@ package llama
 // #include "llama.h"
 // #include "clip.h"
 // #include "llava.h"
+// #include "sampling_ext.h"
 import "C"
 import (
 	"fmt"
@@ -244,6 +245,7 @@ func Quantize(infile, outfile string, ftype llm.FileType) error {
 	return nil
 }
 
+// llava
 type ClipContext struct {
 	c *C.struct_clip_ctx
 }
@@ -269,4 +271,66 @@ func NewLlavaImageEmbed(clipContext *ClipContext, data []byte) *LlavaImageEmbed 
 
 func LlavaEvalImageEmbed(llamaContext *Context, embed *LlavaImageEmbed, nBatch int, nPast *int) {
 	C.llava_eval_image_embed(llamaContext.c, embed.c, C.int(nBatch), (*C.int)(unsafe.Pointer(nPast)))
+}
+
+// sampling
+// TODO: this is a temporary wrapper to allow calling C++ code from CGo
+type SamplingContext struct {
+	c *C.struct_llama_sampling_context
+}
+
+type SamplingParams struct {
+	TopK           int
+	TopP           float32
+	TfsZ           float32
+	TypicalP       float32
+	Temp           float32
+	PenaltyRepeat  float32
+	PenaltyFreq    float32
+	PenaltyPresent float32
+	Mirostat       int
+	MirostatTau    float32
+	MirostatEta    float32
+	PenalizeNl     bool
+	Seed           uint32
+}
+
+func NewSamplingContext(params SamplingParams) *SamplingContext {
+	var cparams C.struct_llama_sampling_cparams
+	cparams.top_k = C.int32_t(params.TopK)
+	cparams.top_p = C.float(params.TopP)
+	cparams.tfs_z = C.float(params.TfsZ)
+	cparams.typical_p = C.float(params.TypicalP)
+	cparams.temp = C.float(params.Temp)
+	cparams.penalty_repeat = C.float(params.PenaltyRepeat)
+	cparams.penalty_freq = C.float(params.PenaltyFreq)
+	cparams.penalty_present = C.float(params.PenaltyFreq)
+	cparams.mirostat = C.int32_t(params.Mirostat)
+	cparams.mirostat_tau = C.float(params.MirostatTau)
+	cparams.mirostat_eta = C.float(params.MirostatEta)
+	cparams.penalize_nl = C.bool(params.PenalizeNl)
+	cparams.seed = C.uint32_t(params.Seed)
+	return &SamplingContext{c: C.llama_sampling_cinit(&cparams)}
+}
+
+func (s *SamplingContext) Free() {
+	C.llama_sampling_cfree(s.c)
+}
+
+func (s *SamplingContext) Reset() {
+	C.llama_sampling_creset(s.c)
+}
+
+func (s *SamplingContext) Sample(ctxMain *Context, ctxConfig *Context, idx int) int {
+	// TODO (jmorganca): handle nil for all args
+	if ctxConfig == nil {
+		return int(C.llama_sampling_csample(s.c, ctxMain.c, nil, C.int(idx)))
+	}
+
+	return int(C.llama_sampling_csample(s.c, ctxMain.c, ctxConfig.c, C.int(idx)))
+
+}
+
+func (s *SamplingContext) Accept(ctxMain *Context, id int, applyGrammar bool) {
+	C.llama_sampling_caccept(s.c, ctxMain.c, C.llama_token(id), C.bool(applyGrammar))
 }
