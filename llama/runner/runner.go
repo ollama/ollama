@@ -23,9 +23,16 @@ type Sequence struct {
 	// tokens left to evaluate
 	tokens []int
 
+	// channel to send responses over
 	responses chan string
 
 	samplingCtx *llama.SamplingContext
+
+	// channel to send back the embedding if embedding only
+	embedding chan []float32
+
+	// true if an embedding are to be returned instead of text generation
+	embeddingOnly bool
 }
 
 // prompt returns true if the prompt is still being processed
@@ -33,38 +40,26 @@ func (s *Sequence) prompt() bool {
 	return s.nPast < len(s.tokens)-1
 }
 
-func (s *Server) NewSequence(r Request, w http.ResponseWriter) *Sequence {
-	var samplingParams llama.SamplingParams
-	samplingParams.TopK = r.TopK
-	samplingParams.TopP = r.TopP
-	samplingParams.TfsZ = r.TFSZ
-	samplingParams.TypicalP = r.TypicalP
-	samplingParams.Temp = r.Temperature
-	samplingParams.PenaltyRepeat = r.RepeatPenalty
-	samplingParams.PenaltyFreq = r.FrequencyPenalty
-	samplingParams.PenaltyPresent = r.PresencePenalty
-	samplingParams.Mirostat = r.Mirostat
-	samplingParams.MirostatTau = r.MirostatTau
-	samplingParams.MirostatEta = r.MirostatEta
-	samplingParams.PenalizeNl = r.PenalizeNewline
-	samplingParams.Seed = uint32(r.Seed)
-	samplingParams.Grammar = r.Grammar
-
-	tokens, err := s.lc.Model().Tokenize(r.Prompt, 2048, false, true)
+func (s *Server) NewSequence(prompt string, params *llama.SamplingParams, embedding bool) *Sequence {
+	tokens, err := s.lc.Model().Tokenize(prompt, 2048, false, true)
 	if err != nil {
 		panic(err)
 	}
 
-	sc := llama.NewSamplingContext(samplingParams)
-
-	for _, t := range tokens {
-		sc.Accept(s.lc, t, false)
+	var sc *llama.SamplingContext
+	if params != nil {
+		sc = llama.NewSamplingContext(*params)
+		for _, t := range tokens {
+			sc.Accept(s.lc, t, false)
+		}
 	}
 
 	return &Sequence{
-		tokens:      tokens,
-		responses:   make(chan string, 1),
-		samplingCtx: sc,
+		tokens:        tokens,
+		responses:     make(chan string, 1),
+		embedding:     make(chan []float32, 1),
+		samplingCtx:   sc,
+		embeddingOnly: embedding,
 	}
 }
 
@@ -152,6 +147,20 @@ func (s *Server) run(ctx context.Context) {
 					continue
 				}
 
+				// if done processing the prompt, generating an embedding and return
+				if seq.embeddingOnly {
+					embd := s.lc.GetEmbeddingsSeq(i)
+					if embd == nil {
+						embd = s.lc.GetEmbeddingsIth(ibatch[i])
+					}
+
+					seq.embedding <- embd
+					close(seq.embedding)
+					s.lc.KvCacheSeqRm(i, 0, -1)
+					s.seqs[i] = nil
+					continue
+				}
+
 				// sample a token
 				// logits := s.lc.GetLogitsIth(ibatch[i])
 				// token := s.lc.SampleTokenGreedy(logits)
@@ -178,7 +187,7 @@ func (s *Server) run(ctx context.Context) {
 	}
 }
 
-type Request struct {
+type CompletionRequest struct {
 	Prompt  string   `json:"prompt"`
 	Images  []string `json:"images"`
 	Grammar string   `json:"grammar"`
@@ -186,14 +195,14 @@ type Request struct {
 	api.Options
 }
 
-type Response struct {
+type CompletionResponse struct {
 	Token string `json:"token"`
 }
 
-func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
-	var request Request
-	request.Options = api.DefaultOptions()
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
+	var req CompletionRequest
+	req.Options = api.DefaultOptions()
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
@@ -203,8 +212,26 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.WriteHeader(http.StatusOK)
 
-	seq := s.NewSequence(request, w)
+	var samplingParams llama.SamplingParams
+	samplingParams.TopK = req.TopK
+	samplingParams.TopP = req.TopP
+	samplingParams.TfsZ = req.TFSZ
+	samplingParams.TypicalP = req.TypicalP
+	samplingParams.Temp = req.Temperature
+	samplingParams.PenaltyRepeat = req.RepeatPenalty
+	samplingParams.PenaltyFreq = req.FrequencyPenalty
+	samplingParams.PenaltyPresent = req.PresencePenalty
+	samplingParams.Mirostat = req.Mirostat
+	samplingParams.MirostatTau = req.MirostatTau
+	samplingParams.MirostatEta = req.MirostatEta
+	samplingParams.PenalizeNl = req.PenalizeNewline
+	samplingParams.Seed = uint32(req.Seed)
+	samplingParams.Grammar = req.Grammar
 
+	seq := s.NewSequence(req.Prompt, &samplingParams, false)
+
+	// TODO (jmorganca): add to sequence queue instead of
+	// failing if a slot isn't available
 	s.mu.Lock()
 	for i, sq := range s.seqs {
 		if sq == nil {
@@ -215,8 +242,9 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
+	// stream the response
 	for token := range seq.responses {
-		if err := json.NewEncoder(w).Encode(&Response{
+		if err := json.NewEncoder(w).Encode(&CompletionResponse{
 			Token: token,
 		}); err != nil {
 			log.Println("Failed to encode result:", err)
@@ -230,6 +258,46 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		flusher.Flush()
+	}
+}
+
+type EmbeddingRequest struct {
+	Prompt string `json:"prompt"`
+}
+
+type EmbeddingResponse struct {
+	Embedding []float32 `json:"embedding"`
+}
+
+// TODO (jmorganca): is it safe to do this concurrently with decoding?
+func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
+	var req EmbeddingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	seq := s.NewSequence(req.Prompt, nil, true)
+
+	s.mu.Lock()
+	for i, sq := range s.seqs {
+		if sq == nil {
+			s.seqs[i] = seq
+			s.cond.Signal()
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	embedding := <-seq.embedding
+
+	if err := json.NewEncoder(w).Encode(&EmbeddingResponse{
+		Embedding: embedding,
+	}); err != nil {
+		log.Println("Failed to encode result:", err)
+		return
 	}
 }
 
@@ -279,8 +347,12 @@ func main() {
 	}
 	defer listener.Close()
 
+	mux := http.NewServeMux()
+	mux.HandleFunc("/embeddings", server.embeddings)
+	mux.HandleFunc("/completion", server.completion)
+
 	httpServer := http.Server{
-		Handler: http.HandlerFunc(server.handler),
+		Handler: mux,
 	}
 
 	log.Println("Server listening on", addr)
