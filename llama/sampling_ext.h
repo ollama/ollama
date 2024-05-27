@@ -22,6 +22,7 @@ struct llama_sampling_cparams {
     float       mirostat_eta;
     bool        penalize_nl;
     uint32_t    seed;
+    char*       grammar;
 };
 
 struct llama_sampling_context* llama_sampling_cinit(struct llama_sampling_cparams *params);
