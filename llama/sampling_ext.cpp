@@ -17,7 +17,7 @@ struct llama_sampling_context* llama_sampling_cinit(struct llama_sampling_cparam
     sparams.mirostat_eta = params->mirostat_eta;
     sparams.penalize_nl = params->penalize_nl;
     sparams.seed = params->seed;
-    sparams.grammar = std::string(params->grammar);
+    sparams.grammar = params->grammar;
     return llama_sampling_init(sparams);
 }
 

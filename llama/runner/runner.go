@@ -209,7 +209,6 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	for i, sq := range s.seqs {
 		if sq == nil {
 			s.seqs[i] = seq
-			fmt.Println("signal")
 			s.cond.Signal()
 			break
 		}
