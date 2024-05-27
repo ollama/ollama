@@ -55,6 +55,7 @@ func NewContextParams() ContextParams {
 	params.n_ctx = C.uint(2048)
 	params.n_threads = C.uint(runtime.NumCPU())
 	params.n_threads_batch = params.n_threads
+	params.embeddings = C.bool(true)
 	return ContextParams{c: params}
 }
 
@@ -122,6 +123,20 @@ func (c *Context) SampleTokenGreedy(logits []float32) int {
 
 func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
 	return bool(C.llama_kv_cache_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
+}
+
+// Get the embeddings for a sequence id
+func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
+	embeddings := unsafe.Pointer(C.llama_get_embeddings_seq(c.c, C.int(seqId)))
+	if embeddings == nil {
+		return nil
+	}
+
+	return unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
+}
+
+func (c *Context) GetEmbeddingsIth(i int) []float32 {
+	return unsafe.Slice((*float32)(unsafe.Pointer(C.llama_get_embeddings_ith(c.c, C.int32_t(i)))), c.Model().NEmbd())
 }
 
 func LoadModelFromFile(modelPath string, params ModelParams) *Model {
@@ -223,6 +238,10 @@ func (m *Model) Tokenize(text string, maxTokens int, addSpecial bool, parseSpeci
 	}
 
 	return tokens, nil
+}
+
+func (m *Model) NEmbd() int {
+	return int(C.llama_n_embd(m.c))
 }
 
 func Quantize(infile, outfile string, ftype uint32) error {
