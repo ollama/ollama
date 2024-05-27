@@ -293,6 +293,7 @@ type SamplingParams struct {
 	MirostatEta    float32
 	PenalizeNl     bool
 	Seed           uint32
+	Grammar        string
 }
 
 func NewSamplingContext(params SamplingParams) *SamplingContext {
@@ -310,6 +311,11 @@ func NewSamplingContext(params SamplingParams) *SamplingContext {
 	cparams.mirostat_eta = C.float(params.MirostatEta)
 	cparams.penalize_nl = C.bool(params.PenalizeNl)
 	cparams.seed = C.uint32_t(params.Seed)
+
+	grammar := C.CString(params.Grammar)
+	defer C.free(unsafe.Pointer(grammar))
+
+	cparams.grammar = grammar
 	return &SamplingContext{c: C.llama_sampling_cinit(&cparams)}
 }
 
