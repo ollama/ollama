@@ -12,18 +12,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ollama/ollama/envconfig"
 	"golang.org/x/crypto/ssh"
 )
 
 const defaultPrivateKey = "id_ed25519"
 
 func keyPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := envconfig.HomeDir()
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Join(home, ".ollama", defaultPrivateKey), nil
+	return filepath.Join(home, defaultPrivateKey), nil
 }
 
 func GetPublicKey() (string, error) {
