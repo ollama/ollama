@@ -24,9 +24,9 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
-	"github.com/ollama/ollama/envconfig"
 )
 
 type LlamaServer interface {
@@ -243,7 +243,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			gpuCount = 0
 		}
 
-		// Find an availableServers  port, retry on each iterration in case the failure was a port conflict race
+		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
 		port := 0
 		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
 			var l *net.TCPListener
@@ -756,7 +756,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 			var c completion
 			if err := json.Unmarshal(evt, &c); err != nil {
-				return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
+				return fmt.Errorf("error unmarshalling llm prediction response: %v", err)
 			}
 
 			switch {
