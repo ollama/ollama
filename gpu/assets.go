@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ollama/ollama/server/envconfig"
+	"github.com/ollama/ollama/envconfig"
 )
 
 var (

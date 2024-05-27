@@ -17,4 +17,7 @@ func TestConfig(t *testing.T) {
 	t.Setenv("OLLAMA_DEBUG", "1")
 	LoadConfig()
 	require.True(t, Debug)
+	t.Setenv("OLLAMA_FLASH_ATTENTION", "1")
+	LoadConfig()
+	require.True(t, FlashAttention)
 }

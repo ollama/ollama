@@ -15,6 +15,10 @@ var (
 	AllowOrigins []string
 	// Set via OLLAMA_DEBUG in the environment
 	Debug bool
+	// Experimental flash attention
+	FlashAttention bool
+	// Set via OLLAMA_KEEP_ALIVE in the environment
+	KeepAlive string
 	// Set via OLLAMA_LLM_LIBRARY in the environment
 	LLMLibrary string
 	// Set via OLLAMA_MAX_LOADED_MODELS in the environment
@@ -23,6 +27,8 @@ var (
 	MaxQueuedRequests int
 	// Set via OLLAMA_MAX_VRAM in the environment
 	MaxVRAM uint64
+	// Set via OLLAMA_NOHISTORY in the environment
+	NoHistory bool
 	// Set via OLLAMA_NOPRUNE in the environment
 	NoPrune bool
 	// Set via OLLAMA_NUM_PARALLEL in the environment
@@ -33,19 +39,38 @@ var (
 	TmpDir string
 )
 
-func AsMap() map[string]string {
-	return map[string]string{
-		"OLLAMA_ORIGINS":           fmt.Sprintf("%v", AllowOrigins),
-		"OLLAMA_DEBUG":             fmt.Sprintf("%v", Debug),
-		"OLLAMA_LLM_LIBRARY":       fmt.Sprintf("%v", LLMLibrary),
-		"OLLAMA_MAX_LOADED_MODELS": fmt.Sprintf("%v", MaxRunners),
-		"OLLAMA_MAX_QUEUE":         fmt.Sprintf("%v", MaxQueuedRequests),
-		"OLLAMA_MAX_VRAM":          fmt.Sprintf("%v", MaxVRAM),
-		"OLLAMA_NOPRUNE":           fmt.Sprintf("%v", NoPrune),
-		"OLLAMA_NUM_PARALLEL":      fmt.Sprintf("%v", NumParallel),
-		"OLLAMA_RUNNERS_DIR":       fmt.Sprintf("%v", RunnersDir),
-		"OLLAMA_TMPDIR":            fmt.Sprintf("%v", TmpDir),
+type EnvVar struct {
+	Name        string
+	Value       any
+	Description string
+}
+
+func AsMap() map[string]EnvVar {
+	return map[string]EnvVar{
+		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
+		"OLLAMA_HOST":              {"OLLAMA_HOST", "", "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_ORIGINS", LLMLibrary, ""},
+		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models (default 1)"},
+		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
+		"OLLAMA_MAX_VRAM":          {"OLLAMA_MAX_VRAM", MaxVRAM, ""},
+		"OLLAMA_MODELS":            {"OLLAMA_MODELS", "", "The path to the models directory"},
+		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
+		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
+		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
+		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
+		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, ""},
+		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
 	}
+}
+
+func Values() map[string]string {
+	vals := make(map[string]string)
+	for k, v := range AsMap() {
+		vals[k] = fmt.Sprintf("%v", v.Value)
+	}
+	return vals
 }
 
 var defaultAllowOrigins = []string{
@@ -75,6 +100,13 @@ func LoadConfig() {
 			Debug = d
 		} else {
 			Debug = true
+		}
+	}
+
+	if fa := clean("OLLAMA_FLASH_ATTENTION"); fa != "" {
+		d, err := strconv.ParseBool(fa)
+		if err == nil {
+			FlashAttention = d
 		}
 	}
 
@@ -137,6 +169,10 @@ func LoadConfig() {
 		}
 	}
 
+	if nohistory := clean("OLLAMA_NOHISTORY"); nohistory != "" {
+		NoHistory = true
+	}
+
 	if noprune := clean("OLLAMA_NOPRUNE"); noprune != "" {
 		NoPrune = true
 	}
@@ -171,4 +207,6 @@ func LoadConfig() {
 			MaxQueuedRequests = p
 		}
 	}
+
+	KeepAlive = clean("OLLAMA_KEEP_ALIVE")
 }

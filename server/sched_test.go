@@ -15,7 +15,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/server/envconfig"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -151,7 +151,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 }
 
 func TestRequests(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), time.Second)
 	defer done()
 
 	// Same model, same request

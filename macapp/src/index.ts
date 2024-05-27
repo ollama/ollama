@@ -162,7 +162,7 @@ app.on('before-quit', () => {
   }
 })
 
-const updateURL = `https://ollama.ai/api/update?os=${process.platform}&arch=${
+const updateURL = `https://ollama.com/api/update?os=${process.platform}&arch=${
   process.arch
 }&version=${app.getVersion()}&id=${id()}`
 

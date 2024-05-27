@@ -26,10 +26,11 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/server/envconfig"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -314,10 +315,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 }
 
 func getDefaultSessionDuration() time.Duration {
-	if t, exists := os.LookupEnv("OLLAMA_KEEP_ALIVE"); exists {
-		v, err := strconv.Atoi(t)
+	if envconfig.KeepAlive != "" {
+		v, err := strconv.Atoi(envconfig.KeepAlive)
 		if err != nil {
-			d, err := time.ParseDuration(t)
+			d, err := time.ParseDuration(envconfig.KeepAlive)
 			if err != nil {
 				return defaultSessionDuration
 			}
@@ -539,7 +540,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		r = f
 	}
 
-	modelfile, err := model.ParseFile(r)
+	modelfile, err := parser.ParseFile(r)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -840,6 +841,25 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 }
 
 func (s *Server) CreateBlobHandler(c *gin.Context) {
+	if ib, ok := intermediateBlobs[c.Param("digest")]; ok {
+		p, err := GetBlobsPath(ib)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+			slog.Info("evicting intermediate blob which no longer exists", "digest", ib)
+			delete(intermediateBlobs, c.Param("digest"))
+		} else if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		} else {
+			c.Status(http.StatusOK)
+			return
+		}
+	}
+
 	path, err := GetBlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1005,7 +1025,7 @@ func Serve(ln net.Listener) error {
 		level = slog.LevelDebug
 	}
 
-	slog.Info("server config", "env", envconfig.AsMap())
+	slog.Info("server config", "env", envconfig.Values())
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level:     level,
 		AddSource: true,
@@ -1086,7 +1106,7 @@ func Serve(ln net.Listener) error {
 		return err
 	}
 	<-ctx.Done()
-	return err
+	return nil
 }
 
 func waitForStream(c *gin.Context, ch chan interface{}) {

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
@@ -138,6 +139,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "   Alt + f            Move forward (right) one word")
 		fmt.Fprintln(os.Stderr, "  Ctrl + k            Delete the sentence after the cursor")
 		fmt.Fprintln(os.Stderr, "  Ctrl + u            Delete the sentence before the cursor")
+		fmt.Fprintln(os.Stderr, "  Ctrl + w            Delete the word before the cursor")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  Ctrl + l            Clear the screen")
 		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
@@ -180,6 +182,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if envconfig.NoHistory {
+		scanner.HistoryDisable()
 	}
 
 	fmt.Print(readline.StartBracketedPaste)

@@ -16,7 +16,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/server/envconfig"
+	"github.com/ollama/ollama/envconfig"
 	"golang.org/x/exp/slices"
 )
 
@@ -220,7 +220,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			runner := s.loaded[finished.model.ModelPath]
 			s.loadedMu.Unlock()
 			if runner == nil {
-				slog.Error("finished requeset signal received after model unloaded", "modelPath", finished.model.ModelPath)
+				slog.Error("finished request signal received after model unloaded", "modelPath", finished.model.ModelPath)
 				continue
 			}
 			runner.refMu.Lock()
