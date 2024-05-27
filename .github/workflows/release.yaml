@@ -28,6 +28,7 @@ jobs:
           security unlock-keychain -p password build.keychain
           security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/containerd/console"
-
+	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
@@ -34,7 +34,9 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/errtypes"
@@ -63,7 +65,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	defer f.Close()
 
-	modelfile, err := model.ParseFile(f)
+	modelfile, err := parser.ParseFile(f)
 	if err != nil {
 		return err
 	}
@@ -207,7 +209,7 @@ func tempZipFiles(path string) (string, error) {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
 		files = append(files, pt...)
-	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/octet-stream"); len(pt) > 0 {
+	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers consolidated.x.pth, consolidated.pth
 		files = append(files, pt...)
@@ -744,7 +746,8 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
-				if len(state.wordBuffer) > termWidth-10 {
+
+				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
 					fmt.Printf("%s%c", state.wordBuffer, ch)
 					state.wordBuffer = ""
 					state.lineLength = 0
@@ -752,12 +755,18 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				}
 
 				// backtrack the length of the last word and clear to the end of the line
-				fmt.Printf("\x1b[%dD\x1b[K\n", len(state.wordBuffer))
+				fmt.Printf("\x1b[%dD\x1b[K\n", runewidth.StringWidth(state.wordBuffer))
 				fmt.Printf("%s%c", state.wordBuffer, ch)
-				state.lineLength = len(state.wordBuffer) + 1
+				chWidth := runewidth.RuneWidth(ch)
+
+				state.lineLength = runewidth.StringWidth(state.wordBuffer) + chWidth
 			} else {
 				fmt.Print(string(ch))
-				state.lineLength += 1
+				state.lineLength += runewidth.RuneWidth(ch)
+				if runewidth.RuneWidth(ch) >= 2 {
+					state.wordBuffer = ""
+					continue
+				}
 
 				switch ch {
 				case ' ':
@@ -1071,12 +1080,19 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
-func appendHostEnvDocs(cmd *cobra.Command) {
-	const hostEnvDocs = `
+func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
+	if len(envs) == 0 {
+		return
+	}
+
+	envUsage := `
 Environment Variables:
-      OLLAMA_HOST        The host:port or base URL of the Ollama server (e.g. http://localhost:11434)
 `
-	cmd.SetUsageTemplate(cmd.UsageTemplate() + hostEnvDocs)
+	for _, e := range envs {
+		envUsage += fmt.Sprintf("      %-24s   %s\n", e.Name, e.Description)
+	}
+
+	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
 func NewCLI() *cobra.Command {
@@ -1152,15 +1168,6 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
-	serveCmd.SetUsageTemplate(serveCmd.UsageTemplate() + `
-Environment Variables:
-
-    OLLAMA_HOST         The host:port to bind to (default "127.0.0.1:11434")
-    OLLAMA_ORIGINS      A comma separated list of allowed origins
-    OLLAMA_MODELS       The path to the models directory (default "~/.ollama/models")
-    OLLAMA_KEEP_ALIVE   The duration that models stay loaded in memory (default "5m")
-    OLLAMA_DEBUG        Set to 1 to enable additional debug logging
-`)
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
@@ -1213,6 +1220,10 @@ Environment Variables:
 		RunE:    DeleteHandler,
 	}
 
+	envVars := envconfig.AsMap()
+
+	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
+
 	for _, cmd := range []*cobra.Command{
 		createCmd,
 		showCmd,
@@ -1223,8 +1234,27 @@ Environment Variables:
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		serveCmd,
 	} {
-		appendHostEnvDocs(cmd)
+		switch cmd {
+		case runCmd:
+			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
+		case serveCmd:
+			appendEnvDocs(cmd, []envconfig.EnvVar{
+				envVars["OLLAMA_DEBUG"],
+				envVars["OLLAMA_HOST"],
+				envVars["OLLAMA_KEEP_ALIVE"],
+				envVars["OLLAMA_MAX_LOADED_MODELS"],
+				envVars["OLLAMA_MAX_QUEUE"],
+				envVars["OLLAMA_MODELS"],
+				envVars["OLLAMA_NUM_PARALLEL"],
+				envVars["OLLAMA_NOPRUNE"],
+				envVars["OLLAMA_ORIGINS"],
+				envVars["OLLAMA_TMPDIR"],
+			})
+		default:
+			appendEnvDocs(cmd, envs)
+		}
 	}
 
 	rootCmd.AddCommand(

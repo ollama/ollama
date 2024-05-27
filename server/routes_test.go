@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/version"
 )
 
@@ -56,7 +56,7 @@ func Test_Routes(t *testing.T) {
 		fname := createTestFile(t, "ollama-model")
 
 		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
-		modelfile, err := model.ParseFile(r)
+		modelfile, err := parser.ParseFile(r)
 		assert.Nil(t, err)
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
@@ -209,13 +209,13 @@ func Test_Routes(t *testing.T) {
 		},
 	}
 
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
 	s := &Server{}
 	router := s.GenerateRoutes()
 
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)
-
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {

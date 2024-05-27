@@ -80,7 +80,7 @@ func NewLayerFromLayer(digest, mediatype, from string) (*Layer, error) {
 	}, nil
 }
 
-func (l *Layer) Open() (io.ReadCloser, error) {
+func (l *Layer) Open() (io.ReadSeekCloser, error) {
 	blob, err := GetBlobsPath(l.Digest)
 	if err != nil {
 		return nil, err

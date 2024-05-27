@@ -21,7 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/server/envconfig"
+	"github.com/ollama/ollama/envconfig"
 )
 
 type handles struct {

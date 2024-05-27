@@ -72,7 +72,7 @@ status "Installing ollama to $BINDIR..."
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
 
-install_success() { 
+install_success() {
     status 'The Ollama API is now available at 127.0.0.1:11434.'
     status 'Install complete. Run "ollama" from the command line.'
 }
@@ -139,12 +139,12 @@ fi
 check_gpu() {
     # Look for devices based on vendor ID for NVIDIA and AMD
     case $1 in
-        lspci) 
+        lspci)
             case $2 in
                 nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
                 amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
             esac ;;
-        lshw) 
+        lshw)
             case $2 in
                 nvidia) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[1002\]' || return 1 ;;
@@ -152,11 +152,6 @@ check_gpu() {
         nvidia-smi) available nvidia-smi || return 1 ;;
     esac
 }
-
-if check_gpu nvidia-smi; then
-    status "NVIDIA GPU installed."
-    exit 0
-fi
 
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
     install_success
@@ -181,7 +176,7 @@ if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     curl --fail --show-error --location --progress-bar "https://ollama.com/download/ollama-linux-amd64-rocm.tgz${VER_PARAM}" \
         | $SUDO tar zx --owner ollama --group ollama -C /usr/share/ollama/lib/rocm .
     install_success
-    status "AMD GPU dependencies installed."
+    status "AMD GPU ready."
     exit 0
 fi
 
@@ -288,14 +283,25 @@ if ! lsmod | grep -q nvidia; then
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
-
-    if lsmod | grep -q nouveau; then
-        status 'Reboot to complete NVIDIA CUDA driver install.'
-        exit 0
-    fi
-
-    $SUDO modprobe nvidia
 fi
 
+$SUDO modprobe nvidia
+$SUDO modprobe nvidia_uvm
 
-status "NVIDIA CUDA drivers installed."
+# make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
+if command -v nvidia-persistenced > /dev/null 2>&1; then
+    $SUDO touch /etc/modules-load.d/nvidia.conf
+    MODULES="nvidia nvidia-uvm"
+    for MODULE in $MODULES; do
+        if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
+            echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
+        fi
+    done
+fi
+
+if lsmod | grep -q nouveau; then
+    status 'Reboot to complete NVIDIA CUDA driver install.'
+    exit 0
+fi
+
+status "NVIDIA GPU ready."
