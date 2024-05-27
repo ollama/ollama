@@ -35,8 +35,6 @@ import (
 	"runtime"
 	"strings"
 	"unsafe"
-
-	"github.com/ollama/ollama/llm"
 )
 
 func BackendInit() {
@@ -227,7 +225,7 @@ func (m *Model) Tokenize(text string, maxTokens int, addSpecial bool, parseSpeci
 	return tokens, nil
 }
 
-func Quantize(infile, outfile string, ftype llm.FileType) error {
+func Quantize(infile, outfile string, ftype uint32) error {
 	cinfile := C.CString(infile)
 	defer C.free(unsafe.Pointer(cinfile))
 
@@ -236,7 +234,7 @@ func Quantize(infile, outfile string, ftype llm.FileType) error {
 
 	params := C.llama_model_quantize_default_params()
 	params.nthread = -1
-	params.ftype = ftype.Value()
+	params.ftype = ftype
 
 	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
 		return fmt.Errorf("llama_model_quantize: %d", rc)
