@@ -24,6 +24,8 @@ type Sequence struct {
 	tokens []int
 
 	responses chan string
+
+	samplingCtx *llama.SamplingContext
 }
 
 // prompt returns true if the prompt is still being processed
@@ -31,15 +33,41 @@ func (s *Sequence) prompt() bool {
 	return s.nPast < len(s.tokens)-1
 }
 
-func (s *Server) NewSequence(text string, w http.ResponseWriter) *Sequence {
-	tokens, err := s.lc.Model().Tokenize(text, 2048, true, true)
+func DefaultParams() llama.SamplingParams {
+	return llama.SamplingParams{}
+}
+
+func (s *Server) NewSequence(r Request, w http.ResponseWriter) *Sequence {
+	var samplingParams llama.SamplingParams
+	samplingParams.TopK = r.TopK
+	samplingParams.TopP = r.TopP
+	samplingParams.TfsZ = r.TFSZ
+	samplingParams.TypicalP = r.TypicalP
+	samplingParams.Temp = r.Temperature
+	samplingParams.PenaltyRepeat = r.RepeatPenalty
+	samplingParams.PenaltyFreq = r.FrequencyPenalty
+	samplingParams.PenaltyPresent = r.PresencePenalty
+	samplingParams.Mirostat = r.Mirostat
+	samplingParams.MirostatTau = r.MirostatTau
+	samplingParams.MirostatEta = r.MirostatEta
+	samplingParams.PenalizeNl = r.PenalizeNewline
+	samplingParams.Seed = uint32(r.Seed)
+
+	tokens, err := s.lc.Model().Tokenize(r.Prompt, 2048, false, true)
 	if err != nil {
 		panic(err)
 	}
 
+	sc := llama.NewSamplingContext(samplingParams)
+
+	for _, t := range tokens {
+		sc.Accept(s.lc, t, false)
+	}
+
 	return &Sequence{
-		tokens:    tokens,
-		responses: make(chan string, 1),
+		tokens:      tokens,
+		responses:   make(chan string, 1),
+		samplingCtx: sc,
 	}
 }
 
@@ -80,7 +108,6 @@ func (s *Server) run(ctx context.Context) {
 			slog.Info("Processing batch", "seqs", len(s.seqs))
 			s.mu.Lock()
 			for s.allNil() {
-				fmt.Println("wait")
 				s.cond.Wait() // Wait until an item is added
 			}
 			s.mu.Unlock()
@@ -133,8 +160,16 @@ func (s *Server) run(ctx context.Context) {
 				// sample a token
 				// TODO: sample based on the sequence
 				fmt.Println("Sampling token", i, ibatch[i])
-				logits := s.lc.GetLogitsIth(ibatch[i])
-				token := s.lc.SampleTokenGreedy(logits)
+				fmt.Println("calling sample", s.lc, nil, ibatch[i])
+				token := seq.samplingCtx.Sample(s.lc, nil, ibatch[i])
+				seq.samplingCtx.Accept(s.lc, token, true)
+
+				// logits := s.lc.GetLogitsIth(ibatch[i])
+				// token := s.lc.SampleTokenGreedy(logits)
+				fmt.Println("sampled", token, s.model.TokenToPiece(token))
+
+				seq.responses <- s.model.TokenToPiece(token)
+				seq.tokens = []int{token}
 
 				// if it's an end of sequence token, break
 				// TODO: just end this sequence
@@ -145,9 +180,6 @@ func (s *Server) run(ctx context.Context) {
 					s.seqs[i] = nil
 					continue
 				}
-
-				seq.responses <- s.model.TokenToPiece(token)
-				seq.tokens = []int{token}
 			}
 
 			batch.Clear()
@@ -168,6 +200,7 @@ type Response struct {
 
 func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	var request Request
+	request.Options = api.DefaultOptions()
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -178,7 +211,7 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.WriteHeader(http.StatusOK)
 
-	seq := s.NewSequence(request.Prompt, w)
+	seq := s.NewSequence(request, w)
 
 	s.mu.Lock()
 	for i, sq := range s.seqs {
