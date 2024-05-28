@@ -153,6 +153,11 @@ check_gpu() {
     esac
 }
 
+if check_gpu nvidia-smi; then
+    status "NVIDIA GPU installed."
+    exit 0
+fi
+
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
     install_success
     warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
@@ -269,7 +274,7 @@ if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\
     esac
 fi
 
-if ! lsmod | grep -q nvidia; then
+if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
         rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
@@ -283,10 +288,15 @@ if ! lsmod | grep -q nvidia; then
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
-fi
 
-$SUDO modprobe nvidia
-$SUDO modprobe nvidia_uvm
+    if lsmod | grep -q nouveau; then
+        status 'Reboot to complete NVIDIA CUDA driver install.'
+        exit 0
+    fi
+
+    $SUDO modprobe nvidia
+    $SUDO modprobe nvidia_uvm
+fi
 
 # make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
 if command -v nvidia-persistenced > /dev/null 2>&1; then
@@ -297,11 +307,6 @@ if command -v nvidia-persistenced > /dev/null 2>&1; then
             echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
         fi
     done
-fi
-
-if lsmod | grep -q nouveau; then
-    status 'Reboot to complete NVIDIA CUDA driver install.'
-    exit 0
 fi
 
 status "NVIDIA GPU ready."
