@@ -360,7 +360,7 @@ func (b *Buffer) Remove() {
 		if e, ok := b.Buf.Get(b.Pos - 1); ok {
 			if r, ok := e.(rune); ok {
 				rLength := runewidth.RuneWidth(r)
-				cmp, _ := b.LineHasSpace.Get(b.DisplayPos/b.LineWidth - 1)
+				hasSpace := b.GetLineSpacing(b.DisplayPos/b.LineWidth - 1)
 
 				if b.DisplayPos%b.LineWidth == 0 {
 					// if the user backspaces over the word boundary, do this magic to clear the line
@@ -372,7 +372,7 @@ func (b *Buffer) Remove() {
 						b.LineHasSpace.Remove(b.DisplayPos/b.LineWidth - 1)
 					}
 
-					if cmp != nil && cmp.(bool) {
+					if hasSpace {
 						b.DisplayPos -= 1
 						fmt.Print(CursorLeft)
 					}
@@ -383,7 +383,7 @@ func (b *Buffer) Remove() {
 						fmt.Print(" " + CursorLeft)
 					}
 
-				} else if (b.DisplayPos-rLength)%b.LineWidth == 0 && cmp != nil && cmp.(bool) {
+				} else if (b.DisplayPos-rLength)%b.LineWidth == 0 && hasSpace {
 					fmt.Printf(CursorBOL + ClearToEOL)
 					fmt.Printf(CursorUp + CursorBOL + cursorRightN(b.Width))
 
