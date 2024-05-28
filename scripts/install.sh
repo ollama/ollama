@@ -134,7 +134,7 @@ fi
 # WSL2 only supports GPUs via nvidia passthrough
 # so check for nvidia-smi to determine if GPU is available
 if [ "$IS_WSL2" = true ]; then
-    if available nvidia-smi && [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
+    if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
         status "Nvidia GPU detected."
     fi
     install_success
