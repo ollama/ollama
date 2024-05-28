@@ -35,7 +35,7 @@ esac
 
 KERN=$(uname -r)
 case "$KERN" in
-    *icrosoft*WSL2 | *icrosoft*wsl2) ;;
+    *icrosoft*WSL2 | *icrosoft*wsl2) IS_WSL2=true;;
     *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
@@ -131,6 +131,17 @@ if available systemctl; then
     configure_systemd
 fi
 
+# WSL2 only supports GPUs via nvidia passthrough
+# so check for nvidia-smi to determine if GPU is available
+if [ "$IS_WSL2" = true ]; then
+    if available nvidia-smi && [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
+        status "Nvidia GPU detected."
+    fi
+    install_success
+    exit 0
+fi
+
+# Install GPU dependencies on Linux
 if ! available lspci && ! available lshw; then
     warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
     exit 0
@@ -310,3 +321,4 @@ if command -v nvidia-persistenced > /dev/null 2>&1; then
 fi
 
 status "NVIDIA GPU ready."
+install_success
