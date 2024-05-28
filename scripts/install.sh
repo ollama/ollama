@@ -33,6 +33,8 @@ case "$ARCH" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
+IS_WSL2=false
+
 KERN=$(uname -r)
 case "$KERN" in
     *icrosoft*WSL2 | *icrosoft*wsl2) IS_WSL2=true;;
