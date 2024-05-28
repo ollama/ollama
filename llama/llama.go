@@ -31,6 +31,7 @@ package llama
 // #include "sampling_ext.h"
 import "C"
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -49,13 +50,14 @@ type ContextParams struct {
 	c C.struct_llama_context_params
 }
 
-func NewContextParams() ContextParams {
+func NewContextParams(numCtx int, threads int, flashAttention bool) ContextParams {
 	params := C.llama_context_default_params()
-	params.seed = C.uint(1234)
-	params.n_ctx = C.uint(2048)
+	params.n_ctx = C.uint(numCtx)
 	params.n_threads = C.uint(runtime.NumCPU())
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
+	params.flash_attn = C.bool(flashAttention)
+	params.n_threads = C.uint(threads)
 	return ContextParams{c: params}
 }
 
@@ -63,9 +65,10 @@ type ModelParams struct {
 	c C.struct_llama_model_params
 }
 
-func NewModelParams() ModelParams {
+func NewModelParams(numGpuLayers int, mainGpu int) ModelParams {
 	params := C.llama_model_default_params()
-	params.n_gpu_layers = 999
+	params.n_gpu_layers = C.int(numGpuLayers)
+	params.main_gpu = C.int32_t(mainGpu)
 	return ModelParams{c: params}
 }
 
@@ -153,6 +156,23 @@ func (m *Model) NumVocab() int {
 
 func (m *Model) TokenIsEog(token int) bool {
 	return bool(C.llama_token_is_eog(m.c, C.llama_token(token)))
+}
+
+func (m *Model) ApplyLoraFromFile(loraPath string, scale float32, baseModelPath string, threads int) error {
+	cLoraPath := C.CString(loraPath)
+	defer C.free(unsafe.Pointer(cLoraPath))
+
+	var cBaseModelPath *C.char
+	if baseModelPath != "" {
+		cBaseModelPath = C.CString(baseModelPath)
+	}
+
+	code := int(C.llama_model_apply_lora_from_file(m.c, cLoraPath, C.float(scale), cBaseModelPath, C.int32_t(threads)))
+	if code != 0 {
+		return errors.New("error applying lora from file")
+	}
+
+	return nil
 }
 
 type Batch struct {
