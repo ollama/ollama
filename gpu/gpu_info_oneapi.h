@@ -175,6 +175,16 @@ typedef struct oneapi_handle
 {
   void *handle;
   uint16_t verbose;
+
+  uint32_t num_drivers;
+  zes_driver_handle_t *drivers; 
+  uint32_t *num_devices;
+  zes_device_handle_t **devices; 
+
+  // TODO Driver major, minor information
+  // int driver_major;
+  // int driver_minor;
+
   ze_result_t (*zesInit)(int);
   ze_result_t (*zesDriverGet)(uint32_t *pCount, zes_driver_handle_t *phDrivers);
   ze_result_t (*zesDeviceGet)(zes_driver_handle_t hDriver, uint32_t *pCount,
@@ -194,7 +204,6 @@ typedef struct oneapi_handle
 typedef struct oneapi_init_resp
 {
   char *err; // If err is non-null handle is invalid
-  int num_devices;
   oneapi_handle_t oh;
 } oneapi_init_resp_t;
 
@@ -205,7 +214,9 @@ typedef struct oneapi_version_resp
 } oneapi_version_resp_t;
 
 void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp);
-void oneapi_check_vram(oneapi_handle_t rh, mem_info_t *resp);
+void oneapi_check_vram(oneapi_handle_t h, int driver, int device, mem_info_t *resp);
+void oneapi_release(oneapi_handle_t h);
+int oneapi_get_device_count(oneapi_handle_t h, int driver);
 
 #endif // __GPU_INFO_INTEL_H__
 #endif // __APPLE__

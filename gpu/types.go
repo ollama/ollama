@@ -57,7 +57,8 @@ type RocmGPUInfoList []RocmGPUInfo
 
 type OneapiGPUInfo struct {
 	GpuInfo
-	index int // device index
+	driverIndex int // nolint: unused
+	gpuIndex    int // nolint: unused
 }
 type OneapiGPUInfoList []OneapiGPUInfo
 
