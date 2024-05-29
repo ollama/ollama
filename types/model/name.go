@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // Errors
@@ -318,14 +319,14 @@ func isValidPart(kind partKind, s string) bool {
 	if !isValidLen(kind, s) {
 		return false
 	}
-	for i := range s {
+	for i, c := range s {
 		if i == 0 {
-			if !isAlphanumericOrUnderscore(s[i]) {
+			if !isLetterorUnderscore(c) {
 				return false
 			}
 			continue
 		}
-		switch s[i] {
+		switch c {
 		case '_', '-':
 		case '.':
 			if kind == kindNamespace {
@@ -336,7 +337,7 @@ func isValidPart(kind partKind, s string) bool {
 				return false
 			}
 		default:
-			if !isAlphanumericOrUnderscore(s[i]) {
+			if !isLetterorUnderscore(c) {
 				return false
 			}
 		}
@@ -344,8 +345,8 @@ func isValidPart(kind partKind, s string) bool {
 	return true
 }
 
-func isAlphanumericOrUnderscore(c byte) bool {
-	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_'
+func isLetterorUnderscore(c rune) bool {
+	return unicode.IsLetter(c) || c == '_'
 }
 
 func cutLast(s, sep string) (before, after string, ok bool) {
