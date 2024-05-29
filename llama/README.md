@@ -10,9 +10,9 @@ Supported:
 - [x] Windows CUDA
 - [x] Windows ROCm
 - [x] Linux CUDA
-- [ ] Linux ROCm
+- [x] Linux ROCm
 - [x] Llava
-- [ ] Parallel Requests
+- [x] Parallel Requests
 
 Extra build steps are required for CUDA and ROCm on Windows since `nvcc` and `hipcc` both require using msvc as the host compiler. For these small dlls are created:
 
