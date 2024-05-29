@@ -4,10 +4,10 @@ package llama
 // #cgo CXXFLAGS: -std=c++11 -DNDEBUG -DLOG_DISABLE_LOGS
 // #cgo darwin,arm64 CFLAGS: -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,arm64 CXXFLAGS: -DGGML_USE_METAL -DGGML_METAL_EMBED_LIBRARY -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-// #cgo darwin,arm64 LDFLAGS: -ld_classic ${SRCDIR}/ggml-metal.o -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
+// #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/ggml-metal.o -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
 // #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 // #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
-// #cgo darwin,amd64 LDFLAGS: -ld_classic -framework Foundation -framework Accelerate
+// #cgo darwin,amd64 LDFLAGS: -framework Foundation -framework Accelerate
 // #cgo linux CFLAGS: -D_GNU_SOURCE
 // #cgo linux CXXFLAGS: -D_GNU_SOURCE
 // #cgo windows LDFLAGS: -lmsvcrt
@@ -29,11 +29,14 @@ package llama
 // #include "clip.h"
 // #include "llava.h"
 // #include "sampling_ext.h"
+//
+// bool llamaProgressCallback(float progress, void *user_data);
 import "C"
 import (
 	"errors"
 	"fmt"
 	"runtime"
+	"runtime/cgo"
 	"strings"
 	"unsafe"
 )
@@ -65,10 +68,26 @@ type ModelParams struct {
 	c C.struct_llama_model_params
 }
 
-func NewModelParams(numGpuLayers int, mainGpu int) ModelParams {
+//export llamaProgressCallback
+func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
+	handle := cgo.Handle(userData)
+	callback := handle.Value().(func(float32))
+	callback(float32(progress))
+	return true
+}
+
+func NewModelParams(numGpuLayers int, mainGpu int, callback func(float32)) ModelParams {
 	params := C.llama_model_default_params()
 	params.n_gpu_layers = C.int(numGpuLayers)
 	params.main_gpu = C.int32_t(mainGpu)
+
+	handle := cgo.NewHandle(callback)
+	params.progress_callback = C.llama_progress_callback(C.llamaProgressCallback)
+	params.progress_callback_user_data = unsafe.Pointer(handle)
+	runtime.SetFinalizer(&params, func(p *C.struct_llama_model_params) {
+		handle.Delete()
+	})
+
 	return ModelParams{c: params}
 }
 
@@ -233,7 +252,8 @@ func (m *Model) TokenToPiece(token int) string {
 	return strings.TrimRight(string(buf), "\x00")
 }
 
-func (m *Model) Tokenize(text string, maxTokens int, addSpecial bool, parseSpecial bool) ([]int, error) {
+func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int, error) {
+	maxTokens := len(text) + 2
 	cTokens := make([]C.llama_token, maxTokens)
 	cText := C.CString(text)
 	defer C.free(unsafe.Pointer(cText))
