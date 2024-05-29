@@ -771,37 +771,6 @@ func PruneDirectory(path string) error {
 	return nil
 }
 
-func DeleteModel(name string) error {
-	mp := ParseModelPath(name)
-	manifest, _, err := GetManifest(mp)
-	if err != nil {
-		return err
-	}
-
-	deleteMap := make(map[string]struct{})
-	for _, layer := range manifest.Layers {
-		deleteMap[layer.Digest] = struct{}{}
-	}
-	deleteMap[manifest.Config.Digest] = struct{}{}
-
-	err = deleteUnusedLayers(&mp, deleteMap)
-	if err != nil {
-		return err
-	}
-
-	fp, err := mp.GetManifestPath()
-	if err != nil {
-		return err
-	}
-	err = os.Remove(fp)
-	if err != nil {
-		slog.Info(fmt.Sprintf("couldn't remove manifest file '%s': %v", fp, err))
-		return err
-	}
-
-	return nil
-}
-
 func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
