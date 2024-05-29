@@ -321,7 +321,7 @@ func isValidPart(kind partKind, s string) bool {
 	}
 	for i, c := range s {
 		if i == 0 {
-			if !isLetterorUnderscore(c) {
+			if !isAlphanumericOrUnderscore(c) {
 				return false
 			}
 			continue
@@ -337,7 +337,7 @@ func isValidPart(kind partKind, s string) bool {
 				return false
 			}
 		default:
-			if !isLetterorUnderscore(c) {
+			if !isAlphanumericOrUnderscore(c) {
 				return false
 			}
 		}
@@ -345,8 +345,8 @@ func isValidPart(kind partKind, s string) bool {
 	return true
 }
 
-func isLetterorUnderscore(c rune) bool {
-	return unicode.IsLetter(c) || c == '_'
+func isAlphanumericOrUnderscore(c rune) bool {
+	return unicode.IsLetter(c) || unicode.IsDigit(c) || c == '_'
 }
 
 func cutLast(s, sep string) (before, after string, ok bool) {
