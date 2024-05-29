@@ -12,6 +12,7 @@ package llm
 import "C"
 import (
 	"fmt"
+	"strings"
 	"unsafe"
 )
 
@@ -36,4 +37,48 @@ func Quantize(infile, outfile string, ftype fileType) error {
 	}
 
 	return nil
+}
+
+type llamaModel struct {
+	m *C.struct_llama_model
+}
+
+func newLlamaModel(p string) *llamaModel {
+	cs := C.CString(p)
+	defer C.free(unsafe.Pointer(cs))
+
+	return &llamaModel{
+		C.llama_load_model_from_file(
+			cs,
+			C.llama_model_default_params(),
+		),
+	}
+}
+
+func (llm *llamaModel) Close() {
+	C.llama_free_model(llm.m)
+}
+
+func (llm *llamaModel) Tokenize(s string) []int {
+	cs := C.CString(s)
+	defer C.free(unsafe.Pointer(cs))
+
+	tokens := make([]int, len(s)+2)
+	if n := C.llama_tokenize(llm.m, cs, C.int(len(s)), (*C.llama_token)(unsafe.Pointer(&tokens[0])), C.int(len(s)+2), false, true); n > 0 {
+		return tokens[:n]
+	}
+
+	return nil
+}
+
+func (llm *llamaModel) Detokenize(i32s []int) string {
+	var sb strings.Builder
+	for _, i32 := range i32s {
+		c := make([]byte, 512)
+		if n := C.llama_token_to_piece(llm.m, C.llama_token(i32), (*C.char)(unsafe.Pointer(&c[0])), C.int(len(c)), false); n > 0 {
+			sb.WriteString(unsafe.String(&c[0], n))
+		}
+	}
+
+	return sb.String()
 }

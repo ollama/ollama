@@ -57,6 +57,8 @@ type llmServer struct {
 	loadDuration   time.Duration // Record how long it took the model to load
 	loadProgress   float32
 
+	*llamaModel
+
 	sem *semaphore.Weighted
 }
 
@@ -306,6 +308,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			totalLayers:    ggml.KV().BlockCount() + 1,
 			gpuCount:       gpuCount,
 			done:           make(chan error, 1),
+			llamaModel:     newLlamaModel(model),
 		}
 
 		s.cmd.Env = os.Environ()
@@ -843,12 +846,12 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	data, err := json.Marshal(TokenizeRequest{Content: prompt})
-	if err != nil {
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(EmbeddingRequest{Content: prompt}); err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), &b)
 	if err != nil {
 		return nil, fmt.Errorf("error creating embed request: %w", err)
 	}
@@ -878,108 +881,12 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 	return embedding.Embedding, nil
 }
 
-type TokenizeRequest struct {
-	Content string `json:"content"`
-}
-
-type TokenizeResponse struct {
-	Tokens []int `json:"tokens"`
-}
-
 func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error) {
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return nil, err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvailable {
-		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
-	data, err := json.Marshal(TokenizeRequest{Content: content})
-	if err != nil {
-		return nil, fmt.Errorf("marshaling encode data: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/tokenize", s.port), bytes.NewBuffer(data))
-	if err != nil {
-		return nil, fmt.Errorf("encode request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do encode request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read encode request: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		log.Printf("llm encode error: %s", body)
-		return nil, fmt.Errorf("%s", body)
-	}
-
-	var encoded TokenizeResponse
-	if err := json.Unmarshal(body, &encoded); err != nil {
-		return nil, fmt.Errorf("unmarshal encode response: %w", err)
-	}
-
-	return encoded.Tokens, nil
-}
-
-type DetokenizeRequest struct {
-	Tokens []int `json:"tokens"`
-}
-
-type DetokenizeResponse struct {
-	Content string `json:"content"`
+	return s.llamaModel.Tokenize(content), nil
 }
 
 func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return "", err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvailable {
-		return "", fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
-	data, err := json.Marshal(DetokenizeRequest{Tokens: tokens})
-	if err != nil {
-		return "", fmt.Errorf("marshaling decode data: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/detokenize", s.port), bytes.NewBuffer(data))
-	if err != nil {
-		return "", fmt.Errorf("decode request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("do decode request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read decode request: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		log.Printf("llm decode error: %s", body)
-		return "", fmt.Errorf("%s", body)
-	}
-
-	var decoded DetokenizeResponse
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		return "", fmt.Errorf("unmarshal encode response: %w", err)
-	}
-
-	return decoded.Content, nil
+	return s.llamaModel.Detokenize(tokens), nil
 }
 
 func (s *llmServer) Close() error {
@@ -995,6 +902,10 @@ func (s *llmServer) Close() error {
 		}
 
 		slog.Debug("llama server stopped")
+	}
+
+	if s.llamaModel != nil {
+		s.llamaModel.Close()
 	}
 
 	return nil
