@@ -47,11 +47,11 @@ func newLlamaModel(p string) *llamaModel {
 	cs := C.CString(p)
 	defer C.free(unsafe.Pointer(cs))
 
+	params := C.llama_model_default_params()
+	params.vocab_only = true
+
 	return &llamaModel{
-		C.llama_load_model_from_file(
-			cs,
-			C.llama_model_default_params(),
-		),
+		C.llama_load_model_from_file(cs, params),
 	}
 }
 
