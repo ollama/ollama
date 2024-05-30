@@ -588,6 +588,10 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 		runnerList = append(runnerList, r)
 	}
 	s.loadedMu.Unlock()
+	if len(runnerList) == 0 {
+		slog.Debug("no loaded runner to unload")
+		return nil
+	}
 
 	// In the future we can enhance the algorithm to be smarter about picking the optimal runner to unload
 	// e.g., if we have multiple options, will one make room for the request?
