@@ -26,20 +26,20 @@ func createTestFile(t *testing.T, name string) string {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), name)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer f.Close()
 
 	err = binary.Write(f, binary.LittleEndian, []byte("GGUF"))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = binary.Write(f, binary.LittleEndian, uint32(3))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = binary.Write(f, binary.LittleEndian, uint64(0))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = binary.Write(f, binary.LittleEndian, uint64(0))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	return f.Name()
 }
