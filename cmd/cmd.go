@@ -755,7 +755,11 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				}
 
 				// backtrack the length of the last word and clear to the end of the line
-				fmt.Printf("\x1b[%dD\x1b[K\n", runewidth.StringWidth(state.wordBuffer))
+				a := runewidth.StringWidth(state.wordBuffer)
+				if a > 0 {
+					fmt.Printf("\x1b[%dD", a)
+				}
+				fmt.Printf("\x1b[K\n")
 				fmt.Printf("%s%c", state.wordBuffer, ch)
 				chWidth := runewidth.RuneWidth(ch)
 
