@@ -207,6 +207,58 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, expectedParams, params)
 			},
 		},
+		{
+			Name:   "Delete Handler (multiple blob reference)",
+			Method: http.MethodDelete,
+			Path:   "/api/delete",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "delete-model-1")
+				createTestModel(t, "delete-model-2")
+				deleteReq := api.DeleteRequest{Model: "delete-model-1"}
+				jsonData, err := json.Marshal(deleteReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				_, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+				assert.Equal(t, resp.StatusCode, 200)
+
+				_, err = GetModel("delete-model-1")
+				assert.NotNil(t, err)
+				model, err := GetModel("delete-model-2")
+				assert.Nil(t, err)
+				assert.Equal(t, "delete-model-2:latest", model.ShortName)
+
+				_, err = GetBlobsPath(model.Digest)
+				assert.NotNil(t, err)
+			},
+		},
+		{
+			Name:   "Delete Handler (single blob reference)",
+			Method: http.MethodDelete,
+			Path:   "/api/delete",
+			Setup: func(t *testing.T, req *http.Request) {
+				deleteReq := api.DeleteRequest{Model: "delete-model-2"}
+				jsonData, err := json.Marshal(deleteReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				_, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+
+				_, err = GetModel("delete-model-2")
+				assert.Nil(t, err)
+
+				// TODO: check if blob is deleted
+
+			},
+		},
 	}
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
