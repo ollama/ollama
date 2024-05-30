@@ -150,7 +150,7 @@ func (i *Instance) Readline() (string, error) {
 					i.Pasting = false
 				}
 			case KeyDel:
-				if buf.Size() > 0 {
+				if buf.DisplaySize() > 0 {
 					buf.Delete()
 				}
 				metaDel = true
@@ -202,7 +202,7 @@ func (i *Instance) Readline() (string, error) {
 				buf.Add(' ')
 			}
 		case CharDelete:
-			if buf.Size() > 0 {
+			if buf.DisplaySize() > 0 {
 				buf.Delete()
 			} else {
 				return "", io.EOF

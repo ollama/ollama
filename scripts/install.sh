@@ -33,9 +33,11 @@ case "$ARCH" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
+IS_WSL2=false
+
 KERN=$(uname -r)
 case "$KERN" in
-    *icrosoft*WSL2 | *icrosoft*wsl2) ;;
+    *icrosoft*WSL2 | *icrosoft*wsl2) IS_WSL2=true;;
     *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
@@ -131,6 +133,17 @@ if available systemctl; then
     configure_systemd
 fi
 
+# WSL2 only supports GPUs via nvidia passthrough
+# so check for nvidia-smi to determine if GPU is available
+if [ "$IS_WSL2" = true ]; then
+    if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
+        status "Nvidia GPU detected."
+    fi
+    install_success
+    exit 0
+fi
+
+# Install GPU dependencies on Linux
 if ! available lspci && ! available lshw; then
     warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
     exit 0
@@ -152,6 +165,11 @@ check_gpu() {
         nvidia-smi) available nvidia-smi || return 1 ;;
     esac
 }
+
+if check_gpu nvidia-smi; then
+    status "NVIDIA GPU installed."
+    exit 0
+fi
 
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
     install_success
@@ -269,7 +287,7 @@ if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\
     esac
 fi
 
-if ! lsmod | grep -q nvidia; then
+if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
         rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
@@ -283,10 +301,15 @@ if ! lsmod | grep -q nvidia; then
     if [ -n "$NVIDIA_CUDA_VERSION" ]; then
         $SUDO dkms install $NVIDIA_CUDA_VERSION
     fi
-fi
 
-$SUDO modprobe nvidia
-$SUDO modprobe nvidia_uvm
+    if lsmod | grep -q nouveau; then
+        status 'Reboot to complete NVIDIA CUDA driver install.'
+        exit 0
+    fi
+
+    $SUDO modprobe nvidia
+    $SUDO modprobe nvidia_uvm
+fi
 
 # make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
 if command -v nvidia-persistenced > /dev/null 2>&1; then
@@ -299,9 +322,5 @@ if command -v nvidia-persistenced > /dev/null 2>&1; then
     done
 fi
 
-if lsmod | grep -q nouveau; then
-    status 'Reboot to complete NVIDIA CUDA driver install.'
-    exit 0
-fi
-
 status "NVIDIA GPU ready."
+install_success
