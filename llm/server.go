@@ -191,33 +191,36 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--memory-f32")
 	}
 
-	if opts.UseMLock {
-		params = append(params, "--mlock")
+	flashAttnEnabled := envconfig.FlashAttention
+
+	for _, g := range gpus {
+		// only cuda (compute capability 7+) and metal support flash attention
+		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
+			flashAttnEnabled = false
+		}
+
+		// mmap has issues with partial offloading on metal
+		if g.Library == "metal" &&
+			uint64(opts.NumGPU) > 0 &&
+			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
+			opts.UseMMap = false
+		}
+	}
+
+	if flashAttnEnabled {
+		params = append(params, "--flash-attn")
 	}
 
 	if !opts.UseMMap {
 		params = append(params, "--no-mmap")
 	}
 
+	if opts.UseMLock {
+		params = append(params, "--mlock")
+	}
+
 	if opts.UseNUMA {
 		params = append(params, "--numa")
-	}
-
-	flashAttnEnabled := envconfig.FlashAttention
-
-	// partial offloading does not support flash attention
-	if uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
-		flashAttnEnabled = false
-	}
-
-	// only cuda (compute capability 7+) and metal support flash attention
-	for _, g := range gpus {
-		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
-			flashAttnEnabled = false
-		}
-	}
-	if flashAttnEnabled {
-		params = append(params, "--flash-attn")
 	}
 
 	numParallel := envconfig.NumParallel
