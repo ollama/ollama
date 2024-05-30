@@ -252,13 +252,7 @@ func (n Name) DisplayShortest() string {
 }
 
 func IsValidNamespace(namespace string) bool {
-	name := Name{
-		Host:      "h",
-		Model:     "m",
-		Namespace: namespace,
-		Tag:       "t",
-	}
-	return name.IsValid()
+	return isValidPart(kindNamespace, namespace)
 }
 
 // IsValid reports whether all parts of the name are present and valid. The
