@@ -200,7 +200,9 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		// mmap has issues with partial offloading on metal
-		if g.Library == "metal" && uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
+		if g.Library == "metal" &&
+			uint64(opts.NumGPU) > 0 &&
+			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
 			opts.UseMMap = false
 		}
 	}
