@@ -251,6 +251,16 @@ func (n Name) DisplayShortest() string {
 	return sb.String()
 }
 
+func IsValidNamespace(namespace string) bool {
+	name := Name{
+		Host:      "h",
+		Model:     "m",
+		Namespace: namespace,
+		Tag:       "t",
+	}
+	return name.IsValid()
+}
+
 // IsValid reports whether all parts of the name are present and valid. The
 // digest is a special case, and is checked for validity only if present.
 func (n Name) IsValid() bool {
