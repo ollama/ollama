@@ -92,6 +92,11 @@ go build .
 
 ROCm requires elevated privileges to access the GPU at runtime. On most distros you can add your user account to the `render` group, or run as root.
 
+#### Linux oneAPI (Intel)
+
+To build Ollama with Intel GPU support, install the [oneAPI toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/toolkits.htm).
+
+
 #### Advanced CPU Settings
 
 By default, running `go generate ./...` will compile a few different variations
@@ -148,3 +153,7 @@ In addition to the common Windows development tools described above, install AMD
 - [Strawberry Perl](https://strawberryperl.com/)
 
 Lastly, add `ninja.exe` included with MSVC to the system path (e.g. `C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`).
+
+#### Windows oneAPI (Intel)
+
+To build Ollama with Intel GPU support, install the [oneAPI toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/toolkits.htm).

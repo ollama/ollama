@@ -24,6 +24,7 @@ jobs:
       GENERATE: ${{ steps.changes.outputs.GENERATE }}
       GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
       GENERATE_ROCM: ${{ steps.changes.outputs.GENERATE_ROCM }}
+      GENERATE_ONEAPI: ${{ steps.changes.outputs.GENERATE_ONEAPI }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +42,7 @@ jobs:
             echo GENERATE=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
             echo GENERATE_CUDA=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
             echo GENERATE_ROCM=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
+            echo GENERATE_ONEAPI=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
           } >>$GITHUB_OUTPUT
 
   generate:
@@ -153,6 +155,32 @@ jobs:
           path: |
             llm/build/**/bin/*
             dist/windows-amd64/**
+  generate-oneapi:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.GENERATE_ONEAPI == 'True' }}
+    runs-on: linux
+    container: intel/oneapi-basekit:2024.1.0-devel-rockylinux9
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh ./scripts/rh_linux_deps.sh
+        env:
+          CMAKE_VERSION: 3.22.1
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go get ./...
+      - run: |
+          git config --global --add safe.directory /__w/ollama/ollama
+          go generate -x ./...
+        env:
+          OLLAMA_SKIP_CPU_GENERATE: '1'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oneapi-libraries
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
 
   # ROCm generation step
   generate-windows-rocm:
@@ -232,6 +260,39 @@ jobs:
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       # TODO - do we need any artifacts?
+
+  generate-windows-oneapi:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.GENERATE_ONEAPI == 'True' }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 'Install oneAPI'
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading oneAPI Installer"
+          Invoke-WebRequest -Uri "https://registrationcenter-download.intel.com/akdlm/IRC_NAS/7dff44ba-e3af-4448-841c-0d616c8da6e7/w_BaseKit_p_2024.1.0.595.exe" -OutFile "${env:RUNNER_TEMP}\oneapi-install.exe"
+          write-host "Installing oneAPI"
+          Start-Process "${env:RUNNER_TEMP}\oneapi-install.exe" -ArgumentList '-s','-a','--silent','--eula','accept' -NoNewWindow -Wait
+          write-host "Completed oneAPI"
+      - name: 'Verify oneAPI'
+        run: |
+          & 'C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\icx.exe' --version
+      - run: go get ./...
+      - run: |
+          $gopath=(get-command go).source | split-path -parent
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:ONEAPI_ROOT="C:\Program Files (x86)\Intel\oneAPI"
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$env:PATH"
+          $env:OLLAMA_SKIP_CPU_GENERATE="1"
+          go generate -x ./...
+        name: go generate
 
   lint:
     strategy:
