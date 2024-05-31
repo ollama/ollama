@@ -21,6 +21,7 @@ for TARGETARCH in ${BUILD_ARCH}; do
         -t builder:$TARGETARCH \
         .
     docker create --platform linux/$TARGETARCH --name builder-$TARGETARCH builder:$TARGETARCH
+    rm -rf ./dist/linux-$TARGETARCH
     docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/dist/linux-$TARGETARCH ./dist
     docker rm builder-$TARGETARCH
     echo "Compressing final linux bundle..."

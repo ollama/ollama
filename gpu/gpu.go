@@ -15,7 +15,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -215,7 +217,7 @@ func GetGPUInfo() GpuInfoList {
 				GpuInfo: GpuInfo{
 					memInfo: mem,
 					Library: "cpu",
-					Variant: cpuCapability,
+					Variant: cpuCapability.String(),
 					ID:      "0",
 				},
 			},
@@ -231,6 +233,35 @@ func GetGPUInfo() GpuInfoList {
 
 		depPath := GetDepDir()
 
+		var cudaVariant string
+		if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
+			if CudaTegra != "" {
+				ver := strings.Split(CudaTegra, ".")
+				if len(ver) > 0 {
+					cudaVariant = "jetpack" + ver[0]
+				}
+			} else if data, err := os.ReadFile("/etc/nv_tegra_release"); err == nil {
+				r := regexp.MustCompile(` R(\d+) `)
+				m := r.FindSubmatch(data)
+				if len(m) != 2 {
+					slog.Info("Unexpected format for /etc/nv_tegra_release.  Set JETSON_JETPACK to select version")
+				} else {
+					if l4t, err := strconv.Atoi(string(m[1])); err == nil {
+						// Note: mapping from L4t -> JP is inconsistent (can't just subtract 30)
+						// https://developer.nvidia.com/embedded/jetpack-archive
+						switch l4t {
+						case 35:
+							cudaVariant = "jetpack5"
+						case 36:
+							cudaVariant = "jetpack6"
+						default:
+							slog.Info("unsupported L4T version", "nv_tegra_release", string(data))
+						}
+					}
+				}
+			}
+		}
+
 		// Load ALL libraries
 		cHandles = initCudaHandles()
 
@@ -240,6 +271,7 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo := CudaGPUInfo{
 					GpuInfo: GpuInfo{
 						Library: "cuda",
+						Variant: cudaVariant,
 					},
 					index: i,
 				}
@@ -266,7 +298,15 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 				gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
 				gpuInfo.MinimumMemory = cudaMinimumMemory
-				gpuInfo.DependencyPath = depPath
+				if depPath != "" {
+					gpuInfo.DependencyPath = depPath
+					// Check for variant specific directory
+					if cudaVariant != "" {
+						if _, err := os.Stat(filepath.Join(depPath, "cuda_"+cudaVariant)); err == nil {
+							gpuInfo.DependencyPath = filepath.Join(depPath, "cuda_"+cudaVariant)
+						}
+					}
+				}
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 				gpuInfo.DriverMajor = driverMajor
 				gpuInfo.DriverMinor = driverMinor
