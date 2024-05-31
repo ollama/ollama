@@ -65,7 +65,7 @@ func (llm *llamaModel) Tokenize(s string) []int {
 	cs := C.CString(s)
 	defer C.free(unsafe.Pointer(cs))
 
-	result := C.llama_tokenize(
+	n := C.llama_tokenize(
 		llm.m,
 		cs,
 		C.int32_t(len(s)),
@@ -75,12 +75,12 @@ func (llm *llamaModel) Tokenize(s string) []int {
 		true,
 	)
 
-	if result < 0 {
+	if n < 0 {
 		return nil
 	}
 
-	tokens := make([]int, result)
-	for i := 0; i < int(result); i++ {
+	tokens := make([]int, n)
+	for i := 0; i < int(n); i++ {
 		tokens[i] = int(cTokens[i])
 	}
 
