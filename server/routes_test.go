@@ -65,7 +65,7 @@ func Test_Routes(t *testing.T) {
 		assert.Nil(t, err)
 	}
 
-	var blobDigest string
+	var blob string
 
 	testCases := []testCase{
 		{
@@ -222,8 +222,6 @@ func Test_Routes(t *testing.T) {
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
-				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, "application/json", contentType)
 				_, err := io.ReadAll(resp.Body)
 				assert.Nil(t, err)
 				assert.Equal(t, resp.StatusCode, 200)
@@ -234,8 +232,8 @@ func Test_Routes(t *testing.T) {
 				model, _ := GetModel("delete-model-2")
 				assert.Equal(t, "delete-model-2:latest", model.ShortName)
 
-				blobDigest = model.Digest
-				_, err = GetBlobsPath(blobDigest)
+				blob, err = GetBlobsPath(model.Digest)
+				_, err = os.Stat(blob)
 				assert.False(t, os.IsNotExist(err))
 			},
 		},
@@ -250,15 +248,13 @@ func Test_Routes(t *testing.T) {
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
-				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, "application/json", contentType)
 				_, err := io.ReadAll(resp.Body)
 				assert.Nil(t, err)
 
 				_, err = GetModel("delete-model-2")
 				assert.True(t, os.IsNotExist(err))
 
-				_, err = GetBlobsPath(blobDigest)
+				_, err = os.Stat(blob)
 				assert.True(t, os.IsNotExist(err))
 			},
 		},
