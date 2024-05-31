@@ -233,6 +233,8 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, "delete-model-2:latest", model.ShortName)
 
 				blob, err = GetBlobsPath(model.Digest)
+				assert.Nil(t, err)
+
 				_, err = os.Stat(blob)
 				assert.False(t, os.IsNotExist(err))
 			},
