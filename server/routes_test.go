@@ -65,6 +65,8 @@ func Test_Routes(t *testing.T) {
 		assert.Nil(t, err)
 	}
 
+	var blobDigest string
+
 	testCases := []testCase{
 		{
 			Name:   "Version Handler",
@@ -229,12 +231,12 @@ func Test_Routes(t *testing.T) {
 				_, err = GetModel("delete-model-1")
 				assert.True(t, os.IsNotExist(err))
 
-				model, err := GetModel("delete-model-2")
-				assert.Nil(t, err)
+				model, _ := GetModel("delete-model-2")
 				assert.Equal(t, "delete-model-2:latest", model.ShortName)
 
-				_, err = GetBlobsPath(model.Digest)
-				assert.Nil(t, err)
+				blobDigest = model.Digest
+				_, err = GetBlobsPath(blobDigest)
+				assert.False(t, os.IsNotExist(err))
 			},
 		},
 		{
@@ -256,8 +258,8 @@ func Test_Routes(t *testing.T) {
 				_, err = GetModel("delete-model-2")
 				assert.True(t, os.IsNotExist(err))
 
-				// TODO: check if blob is deleted
-
+				_, err = GetBlobsPath(blobDigest)
+				assert.True(t, os.IsNotExist(err))
 			},
 		},
 	}
