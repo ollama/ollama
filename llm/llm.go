@@ -60,15 +60,31 @@ func (llm *llamaModel) Close() {
 }
 
 func (llm *llamaModel) Tokenize(s string) []int {
+	maxTokens := len(s) + 2
+	cTokens := make([]C.llama_token, maxTokens)
 	cs := C.CString(s)
 	defer C.free(unsafe.Pointer(cs))
 
-	tokens := make([]int, len(s)+2)
-	if n := C.llama_tokenize(llm.m, cs, C.int(len(s)), (*C.llama_token)(unsafe.Pointer(&tokens[0])), C.int(len(s)+2), false, true); n > 0 {
-		return tokens[:n]
+	result := C.llama_tokenize(
+		llm.m,
+		cs,
+		C.int32_t(len(s)),
+		&cTokens[0],
+		C.int32_t(maxTokens),
+		false,
+		true,
+	)
+
+	if result < 0 {
+		return nil
 	}
 
-	return nil
+	tokens := make([]int, result)
+	for i := 0; i < int(result); i++ {
+		tokens[i] = int(cTokens[i])
+	}
+
+	return tokens
 }
 
 func (llm *llamaModel) Detokenize(i32s []int) string {
