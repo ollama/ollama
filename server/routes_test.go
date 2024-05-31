@@ -227,13 +227,14 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, resp.StatusCode, 200)
 
 				_, err = GetModel("delete-model-1")
-				assert.NotNil(t, err)
+				assert.True(t, os.IsNotExist(err))
+
 				model, err := GetModel("delete-model-2")
 				assert.Nil(t, err)
 				assert.Equal(t, "delete-model-2:latest", model.ShortName)
 
 				_, err = GetBlobsPath(model.Digest)
-				assert.NotNil(t, err)
+				assert.Nil(t, err)
 			},
 		},
 		{
@@ -253,7 +254,7 @@ func Test_Routes(t *testing.T) {
 				assert.Nil(t, err)
 
 				_, err = GetModel("delete-model-2")
-				assert.Nil(t, err)
+				assert.True(t, os.IsNotExist(err))
 
 				// TODO: check if blob is deleted
 
