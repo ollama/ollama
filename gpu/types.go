@@ -26,6 +26,9 @@ type GpuInfo struct {
 	// Any extra PATH/LD_LIBRARY_PATH dependencies required for the Library to operate properly
 	DependencyPath string `json:"lib_path,omitempty"`
 
+	// Extra environment variables specific to the GPU as list of [key,value]
+	EnvWorkarounds [][2]string `json:"envs,omitempty"`
+
 	// GPU information
 	ID      string `json:"gpu_id"`  // string to use for selection of this specific GPU
 	Name    string `json:"name"`    // user friendly name if available

@@ -332,6 +332,11 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			slog.Info("skipping rocm gfx compatibility check", "HSA_OVERRIDE_GFX_VERSION", gfxOverride)
 		}
 
+		// Check for env var workarounds
+		if name == "1002:687f" { // Vega RX 56
+			gpuInfo.EnvWorkarounds = append(gpuInfo.EnvWorkarounds, [2]string{"HSA_ENABLE_SDMA", "0"})
+		}
+
 		// The GPU has passed all the verification steps and is supported
 		resp = append(resp, gpuInfo)
 	}
