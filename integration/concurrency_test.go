@@ -19,17 +19,19 @@ func TestMultiModelConcurrency(t *testing.T) {
 	var (
 		req = [2]api.GenerateRequest{
 			{
-				Model:  "orca-mini",
-				Prompt: "why is the ocean blue?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "why is the ocean blue?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "tinydolphin",
-				Prompt: "what is the origin of the us thanksgiving holiday?",
-				Stream: &stream,
+				Model:     "tinydolphin",
+				Prompt:    "what is the origin of the us thanksgiving holiday?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
@@ -43,7 +45,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 	)
 	var wg sync.WaitGroup
 	wg.Add(len(req))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*240)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -56,32 +58,46 @@ func TestMultiModelConcurrency(t *testing.T) {
 	for i := 0; i < len(req); i++ {
 		go func(i int) {
 			defer wg.Done()
-			DoGenerate(ctx, t, client, req[i], resp[i], 30*time.Second, 10*time.Second)
+			DoGenerate(ctx, t, client, req[i], resp[i], 60*time.Second, 10*time.Second)
 		}(i)
 	}
 	wg.Wait()
 }
 
 func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) // GTX 750 2G card takes ~9 minutes
+	req, resp := GenerateRequests()
+	reqLimit := len(req)
+	iterLimit := 5
+
+	vram := os.Getenv("OLLAMA_MAX_VRAM")
+	if vram != "" {
+		max, err := strconv.ParseUint(vram, 10, 64)
+		require.NoError(t, err)
+		// Don't hammer on small VRAM cards...
+		if max < 4*1024*1024*1024 {
+			reqLimit = min(reqLimit, 2)
+			iterLimit = 2
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 9*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	req, resp := GenerateRequests()
 	// Get the server running (if applicable) warm the model up with a single initial request
-	DoGenerate(ctx, t, client, req[0], resp[0], 60*time.Second, 5*time.Second)
+	DoGenerate(ctx, t, client, req[0], resp[0], 60*time.Second, 10*time.Second)
 
 	var wg sync.WaitGroup
-	wg.Add(len(req))
-	for i := 0; i < len(req); i++ {
+	wg.Add(reqLimit)
+	for i := 0; i < reqLimit; i++ {
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < 5; j++ {
+			for j := 0; j < iterLimit; j++ {
 				slog.Info("Starting", "req", i, "iter", j)
-				// On slower GPUs it can take a while to process the 4 concurrent requests
+				// On slower GPUs it can take a while to process the concurrent requests
 				// so we allow a much longer initial timeout
-				DoGenerate(ctx, t, client, req[i], resp[i], 90*time.Second, 5*time.Second)
+				DoGenerate(ctx, t, client, req[i], resp[i], 120*time.Second, 20*time.Second)
 			}
 		}(i)
 	}

@@ -140,7 +140,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 	showCtx, cancel := context.WithDeadlineCause(
 		ctx,
-		time.Now().Add(5*time.Second),
+		time.Now().Add(10*time.Second),
 		fmt.Errorf("show for existing model %s took too long", modelName),
 	)
 	defer cancel()
@@ -287,41 +287,46 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 	return []api.GenerateRequest{
 			{
-				Model:  "orca-mini",
-				Prompt: "why is the ocean blue?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "why is the ocean blue?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "orca-mini",
-				Prompt: "why is the color of dirt brown?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "why is the color of dirt brown?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "orca-mini",
-				Prompt: "what is the origin of the us thanksgiving holiday?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "what is the origin of the us thanksgiving holiday?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "orca-mini",
-				Prompt: "what is the origin of independence day?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "what is the origin of independence day?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "orca-mini",
-				Prompt: "what is the composition of air?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "what is the composition of air?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
