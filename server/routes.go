@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/exp/slices"
 
@@ -980,6 +981,10 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.ProcessHandler)
+
+	if envconfig.Pprof {
+		pprof.Register(r)
+	}
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.Middleware(), s.ChatHandler)

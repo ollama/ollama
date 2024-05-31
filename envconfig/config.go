@@ -15,6 +15,8 @@ var (
 	AllowOrigins []string
 	// Set via OLLAMA_DEBUG in the environment
 	Debug bool
+	// Enable golang pprof
+	Pprof bool
 	// Experimental flash attention
 	FlashAttention bool
 	// Set via OLLAMA_KEEP_ALIVE in the environment
@@ -48,6 +50,7 @@ type EnvVar struct {
 func AsMap() map[string]EnvVar {
 	return map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_PPROF":             {"OLLAMA_PPROF", Pprof, "Enable golang pprof (e.g. OLLAMA_Pprof=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", "", "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
@@ -100,6 +103,14 @@ func LoadConfig() {
 			Debug = d
 		} else {
 			Debug = true
+		}
+	}
+	if prof := clean("OLLAMA_PPROF"); prof != "" {
+		d, err := strconv.ParseBool(prof)
+		if err == nil {
+			Pprof = d
+		} else {
+			Pprof = true
 		}
 	}
 
