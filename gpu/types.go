@@ -19,7 +19,7 @@ type GpuInfo struct {
 	Library string `json:"library,omitempty"`
 
 	// Optional variant to select (e.g. versions, cpu feature flags)
-	Variant CPUCapability `json:"variant"`
+	Variant string `json:"variant"`
 
 	// MinimumMemory represents the minimum memory required to use the GPU
 	MinimumMemory uint64 `json:"-"`
@@ -81,8 +81,8 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	for _, info := range l {
 		found := false
 		requested := info.Library
-		if info.Variant != CPUCapabilityNone {
-			requested += "_" + info.Variant.String()
+		if info.Variant != CPUCapabilityNone.String() {
+			requested += "_" + info.Variant
 		}
 		for i, lib := range libs {
 			if lib == requested {

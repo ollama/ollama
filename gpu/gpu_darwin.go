@@ -24,7 +24,7 @@ func GetGPUInfo() GpuInfoList {
 		return []GpuInfo{
 			{
 				Library: "cpu",
-				Variant: GetCPUCapability(),
+				Variant: GetCPUCapability().String(),
 				memInfo: mem,
 			},
 		}
@@ -47,7 +47,7 @@ func GetCPUInfo() GpuInfoList {
 	return []GpuInfo{
 		{
 			Library: "cpu",
-			Variant: GetCPUCapability(),
+			Variant: GetCPUCapability().String(),
 			memInfo: mem,
 		},
 	}
