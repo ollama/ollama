@@ -165,7 +165,7 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
     CUDA_MAJOR=$(ls "${CUDA_LIB_DIR}"/libcudart.so.* | head -1 | cut -f3 -d. || true)
-    if [ -n "${CUDA_MAJOR}" ]; then
+    if [ -n "${CUDA_MAJOR}" -a -z "${CUDA_VARIANT}" ]; then
         CUDA_VARIANT=_v${CUDA_MAJOR}
     fi
     if [ "${ARCH}" == "arm64" ]; then
@@ -189,9 +189,10 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS} ${CMAKE_CUDA_DEFS} -DGGML_STATIC=off"
     BUILD_DIR="../build/linux/${ARCH}/cuda${CUDA_VARIANT}"
     export LLAMA_SERVER_LDFLAGS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
-    CUDA_DIST_DIR="${DIST_BASE}/ollama_libs"
+    CUDA_DIST_DIR="${CUDA_DIST_DIR:-${DIST_BASE}/ollama_libs}"
     build
     install
+    echo "Installing CUDA dependencies in ${CUDA_DIST_DIR}"
     mkdir -p "${CUDA_DIST_DIR}"
     for lib in ${CUDA_LIB_DIR}/libcudart.so* ${CUDA_LIB_DIR}/libcublas.so* ${CUDA_LIB_DIR}/libcublasLt.so* ; do
         cp -a "${lib}" "${CUDA_DIST_DIR}"
