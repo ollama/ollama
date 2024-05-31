@@ -287,6 +287,8 @@ jobs:
       GOARCH: ${{ matrix.arch }}
       CGO_ENABLED: '1'
       OLLAMA_CPU_TARGET: 'static'
+      OLLAMA_SKIP_CPU_GENERATE: '1'
+      OLLAMA_SKIP_METAL_GENERATE: '1'
     steps:
       - uses: actions/checkout@v4
         with:
