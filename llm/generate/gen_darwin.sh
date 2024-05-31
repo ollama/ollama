@@ -32,42 +32,43 @@ case "${GOARCH}" in
     echo "Building static library"
     build
 
+    if [ -z "$OLLAMA_SKIP_CPU_GENERATE" ]; then
+        #
+        # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
+        #
+        init_vars
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+        BUILD_DIR="../build/darwin/${ARCH}/cpu"
+        echo "Building LCD CPU"
+        build
+        sign ${BUILD_DIR}/bin/ollama_llama_server
+        compress
 
-    #
-    # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
-    #
-    init_vars
-    CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-    BUILD_DIR="../build/darwin/${ARCH}/cpu"
-    echo "Building LCD CPU"
-    build
-    sign ${BUILD_DIR}/bin/ollama_llama_server
-    compress
+        #
+        # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
+        # Approximately 400% faster than LCD on same CPU
+        #
+        init_vars
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+        BUILD_DIR="../build/darwin/${ARCH}/cpu_avx"
+        echo "Building AVX CPU"
+        build
+        sign ${BUILD_DIR}/bin/ollama_llama_server
+        compress
 
-    #
-    # ~2011 CPU Dynamic library with more capabilities turned on to optimize performance
-    # Approximately 400% faster than LCD on same CPU
-    #
-    init_vars
-    CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
-    BUILD_DIR="../build/darwin/${ARCH}/cpu_avx"
-    echo "Building AVX CPU"
-    build
-    sign ${BUILD_DIR}/bin/ollama_llama_server
-    compress
-
-    #
-    # ~2013 CPU Dynamic library
-    # Approximately 10% faster than AVX on same CPU
-    #
-    init_vars
-    CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=on -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
-    BUILD_DIR="../build/darwin/${ARCH}/cpu_avx2"
-    echo "Building AVX2 CPU"
-    EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation"
-    build
-    sign ${BUILD_DIR}/bin/ollama_llama_server
-    compress
+        #
+        # ~2013 CPU Dynamic library
+        # Approximately 10% faster than AVX on same CPU
+        #
+        init_vars
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=on -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
+        BUILD_DIR="../build/darwin/${ARCH}/cpu_avx2"
+        echo "Building AVX2 CPU"
+        EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation"
+        build
+        sign ${BUILD_DIR}/bin/ollama_llama_server
+        compress
+    fi
     ;;
 "arm64")
 
@@ -79,13 +80,15 @@ case "${GOARCH}" in
     echo "Building static library"
     build
 
-    init_vars
-    CMAKE_DEFS="${COMMON_DARWIN_DEFS} -DLLAMA_ACCELERATE=on -DCMAKE_SYSTEM_PROCESSOR=${ARCH} -DCMAKE_OSX_ARCHITECTURES=${ARCH} -DLLAMA_METAL=on ${CMAKE_DEFS}"
-    BUILD_DIR="../build/darwin/${ARCH}/metal"
-    EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders"
-    build
-    sign ${BUILD_DIR}/bin/ollama_llama_server
-    compress
+    if [ -z "$OLLAMA_SKIP_METAL_GENERATE" ]; then
+        init_vars
+        CMAKE_DEFS="${COMMON_DARWIN_DEFS} -DLLAMA_ACCELERATE=on -DCMAKE_SYSTEM_PROCESSOR=${ARCH} -DCMAKE_OSX_ARCHITECTURES=${ARCH} -DLLAMA_METAL=on ${CMAKE_DEFS}"
+        BUILD_DIR="../build/darwin/${ARCH}/metal"
+        EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders"
+        build
+        sign ${BUILD_DIR}/bin/ollama_llama_server
+        compress
+    fi
     ;;
 *)
     echo "GOARCH must be set"
