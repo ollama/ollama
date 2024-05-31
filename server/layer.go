@@ -1,10 +1,11 @@
 package server
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/minio/sha256-simd"
 )
 
 type Layer struct {

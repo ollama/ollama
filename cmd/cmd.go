@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -23,6 +22,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/minio/sha256-simd"
 
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"

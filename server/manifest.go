@@ -2,13 +2,14 @@ package server
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/minio/sha256-simd"
 
 	"github.com/ollama/ollama/types/model"
 )

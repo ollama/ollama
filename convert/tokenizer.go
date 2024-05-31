@@ -2,12 +2,13 @@ package convert
 
 import (
 	"cmp"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"slices"
+
+	"github.com/minio/sha256-simd"
 
 	"golang.org/x/exp/maps"
 )
