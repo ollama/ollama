@@ -79,8 +79,8 @@ func (llm *llamaModel) Tokenize(s string) []int {
 	}
 
 	tokens := make([]int, n)
-	for i, ct := range ltokens {
-		tokens[i] = int(ct)
+	for i := 0; i < int(n); i++ {
+		tokens[i] = int(ltokens[i])
 	}
 
 	return tokens
