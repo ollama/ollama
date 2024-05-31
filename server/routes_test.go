@@ -65,7 +65,12 @@ func Test_Routes(t *testing.T) {
 		assert.Nil(t, err)
 	}
 
-	var blob string
+	// Test Model Digests
+	blobs := []string{
+		"sha256:a4e5e156ddec27e286f75328784d7106b60a4eb1d246e950a001a3f944fbda99",
+		"sha256:4f9d252f34ae677363956ffc6dd2d10918a539c5c91f5ee2fe889d9178be6ae3",
+		"sha256:0f239b83e9e2aad7cd997a5bb44124937a32ac1f4e98e95a2f46e7b966bfc878",
+	}
 
 	testCases := []testCase{
 		{
@@ -214,9 +219,11 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodDelete,
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
-				createTestModel(t, "delete-model-1")
-				createTestModel(t, "delete-model-2")
-				deleteReq := api.DeleteRequest{Model: "delete-model-1"}
+				err := DeleteModel("test-model")
+				assert.Nil(t, err)
+				err = DeleteModel("hamshank")
+				assert.Nil(t, err)
+				deleteReq := api.DeleteRequest{Model: "beefsteak"}
 				jsonData, err := json.Marshal(deleteReq)
 				assert.Nil(t, err)
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
@@ -226,17 +233,17 @@ func Test_Routes(t *testing.T) {
 				assert.Nil(t, err)
 				assert.Equal(t, resp.StatusCode, 200)
 
-				_, err = GetModel("delete-model-1")
+				_, err = GetModel("beefsteak")
 				assert.True(t, os.IsNotExist(err))
 
-				model, _ := GetModel("delete-model-2")
-				assert.Equal(t, "delete-model-2:latest", model.ShortName)
+				model, _ := GetModel("show-model")
+				assert.Equal(t, "show-model:latest", model.ShortName)
 
-				blob, err = GetBlobsPath(model.Digest)
-				assert.Nil(t, err)
-
-				_, err = os.Stat(blob)
-				assert.False(t, os.IsNotExist(err))
+				for _, blob := range blobs {
+					blob, _ = GetBlobsPath(blob)
+					_, err := os.Stat(blob)
+					assert.False(t, os.IsNotExist(err))
+				}
 			},
 		},
 		{
@@ -244,7 +251,7 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodDelete,
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
-				deleteReq := api.DeleteRequest{Model: "delete-model-2"}
+				deleteReq := api.DeleteRequest{Model: "show-model"}
 				jsonData, err := json.Marshal(deleteReq)
 				assert.Nil(t, err)
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
@@ -253,11 +260,13 @@ func Test_Routes(t *testing.T) {
 				_, err := io.ReadAll(resp.Body)
 				assert.Nil(t, err)
 
-				_, err = GetModel("delete-model-2")
+				_, err = GetModel("show-model")
 				assert.True(t, os.IsNotExist(err))
 
-				_, err = os.Stat(blob)
-				assert.True(t, os.IsNotExist(err))
+				for _, blob := range blobs {
+					_, err := os.Stat(blob)
+					assert.True(t, os.IsNotExist(err))
+				}
 			},
 		},
 	}
