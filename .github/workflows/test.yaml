@@ -34,13 +34,13 @@ jobs:
             git diff-tree -r --no-commit-id --name-only \
               $(git merge-base ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}) \
               ${{ github.event.pull_request.head.sha }} \
-              | xargs python3 -c "import sys; print(any([x.startswith('$1') for x in sys.argv[1:]]))"
+              | xargs python3 -c "import sys; from pathlib import Path; print(any(Path(x).match(glob) for x in sys.argv[1:] for glob in '$*'.split(' ')))"
           }
 
           {
-            echo GENERATE=$(changed llm/)
-            echo GENERATE_CUDA=$(changed llm/)
-            echo GENERATE_ROCM=$(changed llm/)
+            echo GENERATE=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
+            echo GENERATE_CUDA=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
+            echo GENERATE_ROCM=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
           } >>$GITHUB_OUTPUT
 
   generate:
