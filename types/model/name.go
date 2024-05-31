@@ -251,6 +251,10 @@ func (n Name) DisplayShortest() string {
 	return sb.String()
 }
 
+func IsValidNamespace(namespace string) bool {
+	return isValidPart(kindNamespace, namespace)
+}
+
 // IsValid reports whether all parts of the name are present and valid. The
 // digest is a special case, and is checked for validity only if present.
 func (n Name) IsValid() bool {
