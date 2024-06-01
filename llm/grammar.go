@@ -4,7 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"strings"
+
+	"github.com/ollama/ollama/format"
 )
+
+var maxGrammarSize = 32 * format.KiloByte
+
+// a cache that stores max 100 grammars
+var grammarValidationCache = make(map[string]error)
 
 func findIndexOfTextNotInQuotesOrCharacterSet(input string, text string) int {
 	quoteBalance := 0
@@ -244,6 +251,11 @@ func validateCharacterClass(charClass string) error {
 func validateStringLiteral(strLiteral string) error {
 	validEscapeCharacters := "\\\"ntrxu"
 
+	// make sure the string literal starts and ends with a quote
+	if len(strLiteral) < 2 || strLiteral[0] != '"' || strLiteral[len(strLiteral)-1] != '"' {
+		return fmt.Errorf("string literal must start and end with a quote")
+	}
+
 	i := 0
 	for i < len(strLiteral) {
 		if strLiteral[i] == '\\' {
@@ -463,7 +475,29 @@ func parseGrammar(grammar string) (map[string]([]Token), error) {
 	return ruleTokens, nil
 }
 
+func addToCache(grammar string, err error) {
+	if len(grammarValidationCache) >= 100 {
+		// remove the first element
+		for key := range grammarValidationCache {
+			delete(grammarValidationCache, key)
+			break
+		}
+	}
+	grammarValidationCache[grammar] = err
+}
+
 func ValidateGrammar(grammar string) error {
+	// check to see if we've cached this before and if so return it
+	if err, ok := grammarValidationCache[grammar]; ok {
+		return err
+	}
+
+	if len(grammar) > maxGrammarSize {
+		err := fmt.Errorf("grammar size exceeds maximum size of %d bytes", maxGrammarSize)
+		addToCache(grammar, err)
+		return err
+	}
+
 	// Since GBNF is essentially just a list of rules, we can validate the grammar by
 	// removing all comments, removing all non-essential white space
 	// and then breaking the input into an array of rules
@@ -474,6 +508,7 @@ func ValidateGrammar(grammar string) error {
 
 	ruleTokens, err := parseGrammar(grammar)
 	if err != nil {
+		addToCache(grammar, err)
 		return err
 	}
 
@@ -484,13 +519,19 @@ func ValidateGrammar(grammar string) error {
 
 	// check that it has root rule
 	if _, ok := definedRules["root"]; !ok {
-		return fmt.Errorf("no root rule defined")
+		err := fmt.Errorf("no root rule defined")
+		addToCache(grammar, err)
+		return err
 	}
 
 	for key, value := range ruleTokens {
 		if err := validateRule(value, definedRules); err != nil {
-			return fmt.Errorf("error in rule \"%s\": %v", key, err)
+			err = fmt.Errorf("error in rule \"%s\": %v", key, err)
+			addToCache(grammar, err)
+			return err
 		}
 	}
+
+	addToCache(grammar, nil)
 	return nil
 }

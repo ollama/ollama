@@ -165,7 +165,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Request (GBNF mode)
 
-> When `grammar` is set to a [GBNF grammar](https://github.com/ggerganov/llama.cpp/tree/master/grammars) output will be constrained to the grammar's rules. This method does not rely upon the prompt containing references to how it should output.
+> When `grammar` is set to a [GBNF grammar](https://github.com/ggerganov/llama.cpp/tree/master/grammars) output will be constrained to the grammar's rules. This method does not rely upon the prompt containing references to how it should output. Before you call with this property, the environment variable `OLLAMA_GRAMMAR=true` must be set.
 
 ##### Request
 

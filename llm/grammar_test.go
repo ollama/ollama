@@ -246,6 +246,15 @@ func TestNoRoot(t *testing.T) {
 	}
 }
 
+func TestInvalidRoot(t *testing.T) {
+	// this is a common typo
+	input := `root ::= "yes`
+	err := ValidateGrammar(input)
+	if err == nil {
+		t.Errorf("Expected error validating grammar, got nil")
+	}
+}
+
 func TestBadLlama(t *testing.T) {
 	// this is a common typo
 	input := `root :== "yes" | "no"`

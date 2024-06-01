@@ -56,6 +56,7 @@ type llmServer struct {
 	gpuCount       int
 	loadDuration   time.Duration // Record how long it took the model to load
 	loadProgress   float32
+	grammarEnabled bool
 
 	sem *semaphore.Weighted
 }
@@ -306,6 +307,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			totalLayers:    ggml.KV().BlockCount() + 1,
 			gpuCount:       gpuCount,
 			done:           make(chan error, 1),
+			grammarEnabled: os.Getenv("OLLAMA_GRAMMAR") == "true",
 		}
 
 		s.cmd.Env = os.Environ()
@@ -703,6 +705,10 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	if req.Grammar != "" {
 		if req.Format == "json" {
 			return fmt.Errorf("grammar and format cannot be used together")
+		}
+
+		if !s.grammarEnabled {
+			return fmt.Errorf("grammar is specified, but OLLAMA_GRAMMAR is not enabled")
 		}
 
 		err := ValidateGrammar(req.Grammar)
