@@ -101,7 +101,7 @@ func TestGenerateChat(t *testing.T) {
 			"tokenizer.ggml.tokens":         []string{""},
 			"tokenizer.ggml.scores":         []float32{0},
 			"tokenizer.ggml.token_type":     []int32{0},
-		}, []llm.Tensor{
+		}, []*llm.Tensor{
 			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -149,7 +149,7 @@ func TestGenerateChat(t *testing.T) {
 			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
 				"general.architecture": "bert",
 				"bert.pooling_type":    uint32(0),
-			}, []llm.Tensor{})),
+			}, []*llm.Tensor{})),
 			Stream: &stream,
 		})
 
@@ -399,7 +399,7 @@ func TestGenerate(t *testing.T) {
 			"tokenizer.ggml.tokens":         []string{""},
 			"tokenizer.ggml.scores":         []float32{0},
 			"tokenizer.ggml.token_type":     []int32{0},
-		}, []llm.Tensor{
+		}, []*llm.Tensor{
 			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -447,7 +447,7 @@ func TestGenerate(t *testing.T) {
 			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
 				"general.architecture": "bert",
 				"bert.pooling_type":    uint32(0),
-			}, []llm.Tensor{})),
+			}, []*llm.Tensor{})),
 			Stream: &stream,
 		})
 

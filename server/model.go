@@ -143,30 +143,6 @@ func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(a
 		return nil, err
 	}
 
-	mf, err := convert.GetModelFormat(tempDir)
-	if err != nil {
-		return nil, err
-	}
-
-	params, err := mf.GetParams(tempDir)
-	if err != nil {
-		return nil, err
-	}
-
-	mArch, err := mf.GetModelArch("", tempDir, params)
-	if err != nil {
-		return nil, err
-	}
-
-	fn(api.ProgressResponse{Status: "processing tensors"})
-	if err := mArch.GetTensors(); err != nil {
-		return nil, err
-	}
-
-	if err := mArch.LoadVocab(); err != nil {
-		return nil, err
-	}
-
 	fn(api.ProgressResponse{Status: "converting model"})
 
 	// TODO(mxyng): this should write directly into a layer
@@ -178,7 +154,7 @@ func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(a
 	defer temp.Close()
 	defer os.Remove(temp.Name())
 
-	if err = mArch.WriteGGUF(temp); err != nil {
+	if err := convert.Convert(tempDir, temp); err != nil {
 		return nil, err
 	}
 
