@@ -128,6 +128,94 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
+			Name:   "Show Model Handler",
+			Method: http.MethodPost,
+			Path:   "/api/show",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "show-model")
+				showReq := api.ShowRequest{Model: "show-model"}
+				jsonData, err := json.Marshal(showReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, contentType, "application/json; charset=utf-8")
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+
+				var showResp api.ShowResponse
+				err = json.Unmarshal(body, &showResp)
+				assert.Nil(t, err)
+
+				var params []string
+				paramsSplit := strings.Split(showResp.Parameters, "\n")
+				for _, p := range paramsSplit {
+					params = append(params, strings.Join(strings.Fields(p), " "))
+				}
+				sort.Strings(params)
+				expectedParams := []string{
+					"seed 42",
+					"stop \"bar\"",
+					"stop \"foo\"",
+					"top_p 0.9",
+				}
+				assert.Equal(t, expectedParams, params)
+			},
+		},
+		{
+			Name:   "Delete Handler (multiple blob reference)",
+			Method: http.MethodDelete,
+			Path:   "/api/delete",
+			Setup: func(t *testing.T, req *http.Request) {
+				deleteReq := api.DeleteRequest{Model: "test-model"}
+				jsonData, err := json.Marshal(deleteReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				_, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+				assert.Equal(t, resp.StatusCode, 200)
+
+				_, err = GetModel("test-model")
+				assert.True(t, os.IsNotExist(err))
+
+				model, _ := GetModel("show-model")
+				assert.Equal(t, "show-model:latest", model.ShortName)
+
+				for i, blob := range blobs {
+					blobPath, _ := GetBlobsPath(blob)
+					_, err := os.Stat(blobPath)
+					assert.False(t, os.IsNotExist(err))
+					blobs[i] = blobPath
+				}
+			},
+		},
+		{
+			Name:   "Delete Handler (single blob reference)",
+			Method: http.MethodDelete,
+			Path:   "/api/delete",
+			Setup: func(t *testing.T, req *http.Request) {
+				deleteReq := api.DeleteRequest{Model: "show-model"}
+				jsonData, err := json.Marshal(deleteReq)
+				assert.Nil(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				_, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+
+				_, err = GetModel("show-model")
+				assert.True(t, os.IsNotExist(err))
+
+				for _, blob := range blobs {
+					_, err := os.Stat(blob)
+					assert.True(t, os.IsNotExist(err))
+				}
+			},
+		},
+		{
 			Name:   "Create Model Handler",
 			Method: http.MethodPost,
 			Path:   "/api/create",
@@ -176,97 +264,6 @@ func Test_Routes(t *testing.T) {
 				model, err := GetModel("beefsteak")
 				assert.Nil(t, err)
 				assert.Equal(t, "beefsteak:latest", model.ShortName)
-			},
-		},
-		{
-			Name:   "Show Model Handler",
-			Method: http.MethodPost,
-			Path:   "/api/show",
-			Setup: func(t *testing.T, req *http.Request) {
-				createTestModel(t, "show-model")
-				showReq := api.ShowRequest{Model: "show-model"}
-				jsonData, err := json.Marshal(showReq)
-				assert.Nil(t, err)
-				req.Body = io.NopCloser(bytes.NewReader(jsonData))
-			},
-			Expected: func(t *testing.T, resp *http.Response) {
-				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, contentType, "application/json; charset=utf-8")
-				body, err := io.ReadAll(resp.Body)
-				assert.Nil(t, err)
-
-				var showResp api.ShowResponse
-				err = json.Unmarshal(body, &showResp)
-				assert.Nil(t, err)
-
-				var params []string
-				paramsSplit := strings.Split(showResp.Parameters, "\n")
-				for _, p := range paramsSplit {
-					params = append(params, strings.Join(strings.Fields(p), " "))
-				}
-				sort.Strings(params)
-				expectedParams := []string{
-					"seed 42",
-					"stop \"bar\"",
-					"stop \"foo\"",
-					"top_p 0.9",
-				}
-				assert.Equal(t, expectedParams, params)
-			},
-		},
-		{
-			Name:   "Delete Handler (multiple blob reference)",
-			Method: http.MethodDelete,
-			Path:   "/api/delete",
-			Setup: func(t *testing.T, req *http.Request) {
-				err := DeleteModel("test-model")
-				assert.Nil(t, err)
-				err = DeleteModel("hamshank")
-				assert.Nil(t, err)
-				deleteReq := api.DeleteRequest{Model: "beefsteak"}
-				jsonData, err := json.Marshal(deleteReq)
-				assert.Nil(t, err)
-				req.Body = io.NopCloser(bytes.NewReader(jsonData))
-			},
-			Expected: func(t *testing.T, resp *http.Response) {
-				_, err := io.ReadAll(resp.Body)
-				assert.Nil(t, err)
-				assert.Equal(t, resp.StatusCode, 200)
-
-				_, err = GetModel("beefsteak")
-				assert.True(t, os.IsNotExist(err))
-
-				model, _ := GetModel("show-model")
-				assert.Equal(t, "show-model:latest", model.ShortName)
-
-				for _, blob := range blobs {
-					blob, _ = GetBlobsPath(blob)
-					_, err := os.Stat(blob)
-					assert.False(t, os.IsNotExist(err))
-				}
-			},
-		},
-		{
-			Name:   "Delete Handler (single blob reference)",
-			Method: http.MethodDelete,
-			Path:   "/api/delete",
-			Setup: func(t *testing.T, req *http.Request) {
-				deleteReq := api.DeleteRequest{Model: "show-model"}
-				jsonData, err := json.Marshal(deleteReq)
-				assert.Nil(t, err)
-				req.Body = io.NopCloser(bytes.NewReader(jsonData))
-			},
-			Expected: func(t *testing.T, resp *http.Response) {
-				_, err := io.ReadAll(resp.Body)
-				assert.Nil(t, err)
-
-				_, err = GetModel("show-model")
-				assert.True(t, os.IsNotExist(err))
-
-				for _, blob := range blobs {
-					_, err := os.Stat(blob)
-					assert.True(t, os.IsNotExist(err))
-				}
 			},
 		},
 	}
