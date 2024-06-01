@@ -4,7 +4,7 @@
   "general.quantization_version": "2",
   "llama.block_count": "32",
   "llama.context_length": "32768",
-  "llama.embedding_length": "",
+  "llama.embedding_length": "4096",
   "llama.feed_forward_length": "14336",
   "llama.attention.head_count": "32",
   "llama.attention.head_count_kv": "8",
