@@ -68,7 +68,8 @@ The next thing is to send the question and the relevant parts of the docs to the
 ```python
 from langchain.chains import RetrievalQA
 qachain=RetrievalQA.from_chain_type(ollama, retriever=vectorstore.as_retriever())
-print(qachain.invoke({"query": question})['result'])
+res = qachain.invoke({"query": question})
+print(res['result'])
 ```
 
 The answer received from this chain was:
