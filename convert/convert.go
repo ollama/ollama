@@ -1,200 +1,123 @@
 package convert
 
 import (
-	"cmp"
-	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 
-	"google.golang.org/protobuf/proto"
-
-	"github.com/ollama/ollama/convert/sentencepiece"
 	"github.com/ollama/ollama/llm"
 )
 
-const (
-	_ int32 = iota
-	tokenTypeNormal
-	tokenTypeUnknown
-	tokenTypeControl
-	tokenTypeUserDefined
-	tokenTypeUnused
-	tokenTypeByte
-)
-
-type Params struct {
-	Architectures     []string `json:"architectures"`
-	VocabSize         int      `json:"vocab_size"`
-	HiddenSize        int      `json:"hidden_size"`       // n_embd
-	HiddenLayers      int      `json:"num_hidden_layers"` // n_layer
-	ContextSize       int      `json:"max_position_embeddings"`
-	IntermediateSize  int      `json:"intermediate_size"`
-	AttentionHeads    int      `json:"num_attention_heads"` // n_head
-	KeyValHeads       int      `json:"num_key_value_heads"`
-	NormEPS           float64  `json:"rms_norm_eps"`
-	BoSTokenID        int      `json:"bos_token_id"`
-	EoSTokenID        int      `json:"eos_token_id"`
-	HeadDimension     int      `json:"head_dim"`
-	PaddingTokenID    int      `json:"pad_token_id"`
-	RopeFrequencyBase float64  `json:"rope_theta"`
-
-	Experts     int `json:"num_local_experts"`
-	ExpertsUsed int `json:"num_experts_per_tok"`
-
-	PreTokenizer string
-
-	ByteOrder
+type Parameters struct {
+	Architectures []string `json:"architectures"`
+	VocabSize     uint32   `json:"vocab_size"`
 }
 
-type ByteOrder interface {
-	binary.ByteOrder
-	binary.AppendByteOrder
+func (Parameters) KV(t *Tokenizer) llm.KV {
+	kv := llm.KV{
+		"general.file_type":            uint32(1),
+		"general.quantization_version": uint32(2),
+		"tokenizer.ggml.pre":           t.Pre,
+		"tokenizer.ggml.model":         t.Vocabulary.Model,
+		"tokenizer.ggml.tokens":        t.Vocabulary.Tokens,
+		"tokenizer.ggml.scores":        t.Vocabulary.Scores,
+		"tokenizer.ggml.token_type":    t.Vocabulary.Types,
+	}
+
+	if t.Template != "" {
+		kv["tokenizer.chat_template"] = t.Template
+	}
+
+	for _, sv := range t.SpecialVocabulary {
+		kv[fmt.Sprintf("tokenizer.ggml.%s_token_id", sv.Key())] = uint32(sv.ID)
+		kv[fmt.Sprintf("tokenizer.ggml.add_%s_token", sv.Key())] = sv.AddToken
+	}
+
+	return kv
 }
 
-type ModelArch interface {
-	GetTensors() error
-	LoadVocab() error
-	WriteGGUF(io.WriteSeeker) error
+func (Parameters) specialTypes() []string {
+	return []string{
+		"bos", "eos", "unk", "sep", "pad", "cls", "mask",
+	}
 }
 
-type ModelFormat interface {
-	GetLayerName(string) (string, error)
-	GetTensors(string, *Params) ([]llm.Tensor, error)
-	GetParams(string) (*Params, error)
-	GetModelArch(string, string, *Params) (ModelArch, error)
+func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []*llm.Tensor) error {
+	return llm.WriteGGUF(ws, kv, ts)
 }
 
-type ModelData struct {
-	Path    string
-	Name    string
-	Params  *Params
-	Vocab   *Vocab
-	Tensors []llm.Tensor
-	Format  ModelFormat
+type Converter interface {
+	// KV maps parameters to LLM key-values
+	KV(*Tokenizer) llm.KV
+	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
+	Tensors([]Tensor) []*llm.Tensor
+
+	// tensorName returns the LLM tensor name for a specific input name
+	tensorName(string) string
+	// specialTypes returns any special token types the model uses
+	specialTypes() []string
+	writeFile(io.WriteSeeker, llm.KV, []*llm.Tensor) error
 }
 
-func GetModelFormat(dirname string) (ModelFormat, error) {
-	files, err := filepath.Glob(filepath.Join(dirname, "*"))
+func Convert(d string, ws io.WriteSeeker) error {
+	f, err := os.Open(filepath.Join(d, "config.json"))
 	if err != nil {
-		return nil, err
+		return err
+	}
+	defer f.Close()
+
+	var p Parameters
+	if err := json.NewDecoder(f).Decode(&p); err != nil {
+		return err
 	}
 
-	for _, fn := range files {
-		if strings.HasSuffix(fn, ".safetensors") {
-			return &SafetensorFormat{}, nil
-		} else if strings.HasSuffix(fn, ".bin") || strings.HasSuffix(fn, ".pth") {
-			slog.Debug("model is torch")
-			return &TorchFormat{}, nil
-		}
+	if len(p.Architectures) < 1 {
+		return errors.New("unknown architecture")
 	}
 
-	return nil, fmt.Errorf("couldn't determine model format")
-}
+	var c Converter
+	switch p.Architectures[0] {
+	case "LlamaForCausalLM", "MistralForCausalLM":
+		c = &llama{}
+	case "MixtralForCausalLM":
+		c = &mixtral{}
+	case "GemmaForCausalLM":
+		c = &gemma{}
+	default:
+		return errors.New("unsupported architecture")
+	}
 
-// Details on gguf's tokenizer can be found at:
-// https://github.com/ggerganov/ggml/blob/master/docs/gguf.md#tokenizer
-type Vocab struct {
-	Tokens []string
-	Scores []float32
-	Types  []int32
-	Merges []string
-}
-
-func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
-	slog.Info(fmt.Sprintf("reading vocab from %s", filepath.Join(dirpath, "tokenizer.model")))
-	in, err := os.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
+	bts, err := os.ReadFile(filepath.Join(d, "config.json"))
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// To regenerate sentencepiece from the protobufs use:
-	// protoc -I=./ --go_out=./ sentencepiece_model.proto
-	modelProto := &sentencepiece.ModelProto{}
-	if err := proto.Unmarshal(in, modelProto); err != nil {
-		return nil, err
+	if err := json.Unmarshal(bts, c); err != nil {
+		return err
 	}
 
-	v := &Vocab{
-		Tokens: make([]string, 0),
-		Scores: make([]float32, 0),
-		Types:  make([]int32, 0),
+	t, err := parseTokenizer(d, c.specialTypes())
+	if err != nil {
+		return err
 	}
 
-	pieces := modelProto.GetPieces()
-	for _, p := range pieces {
-		v.Tokens = append(v.Tokens, p.GetPiece())
-		v.Scores = append(v.Scores, p.GetScore())
-		t := p.GetType()
-		switch t {
-		case sentencepiece.ModelProto_SentencePiece_UNKNOWN:
-		case sentencepiece.ModelProto_SentencePiece_CONTROL:
-		case sentencepiece.ModelProto_SentencePiece_UNUSED:
-		case sentencepiece.ModelProto_SentencePiece_BYTE:
-		default:
-			t = sentencepiece.ModelProto_SentencePiece_NORMAL
-		}
-		v.Types = append(v.Types, int32(t))
-	}
-
-	slog.Info(fmt.Sprintf("vocab size: %d", len(v.Tokens)))
-
-	// add any additional tokens
-	addIn, err := os.ReadFile(filepath.Join(dirpath, "added_tokens.json"))
-	if os.IsNotExist(err) {
-		return v, nil
-	} else if err != nil {
-		return nil, err
-	}
-
-	slog.Info("reading user defined tokens")
-
-	var extraTokenData map[string]int
-	if err := json.Unmarshal(addIn, &extraTokenData); err != nil {
-		return nil, err
-	}
-
-	type token struct {
-		key string
-		pos int
-	}
-
-	extraTokens := make([]token, 0)
-	for k, id := range extraTokenData {
-		extraTokens = append(extraTokens, token{k, id})
-	}
-
-	slices.SortFunc(extraTokens, func(a, b token) int {
-		return cmp.Compare(a.pos, b.pos)
-	})
-
-	numToks := len(v.Tokens)
-
-	for cnt, t := range extraTokens {
-		// the token id should match the specific index for the total number of tokens
-		if t.pos != cnt+numToks {
-			return nil, fmt.Errorf("token ID '%d' for '%s' doesn't match total token size", t.pos, t.key)
-		}
-		v.Tokens = append(v.Tokens, t.key)
-		v.Scores = append(v.Scores, -1000.0)
-		v.Types = append(v.Types, tokenTypeUserDefined)
-	}
-	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
-
-	if params.VocabSize > len(v.Tokens) {
-		missingTokens := params.VocabSize - len(v.Tokens)
-		slog.Warn(fmt.Sprintf("vocab is missing %d tokens", missingTokens))
-		for cnt := range missingTokens {
-			v.Tokens = append(v.Tokens, fmt.Sprintf("<dummy%05d>", cnt+1))
-			v.Scores = append(v.Scores, -1)
-			v.Types = append(v.Types, tokenTypeUserDefined)
+	if vocabSize := int(p.VocabSize); vocabSize > len(t.Vocabulary.Tokens) {
+		slog.Warn("vocabulary is smaller than expected, padding with dummy tokens", "expect", p.VocabSize, "actual", len(t.Vocabulary.Tokens))
+		for i := range vocabSize - len(t.Vocabulary.Tokens) {
+			t.Vocabulary.Tokens = append(t.Vocabulary.Tokens, fmt.Sprintf("[PAD%d]", i))
+			t.Vocabulary.Scores = append(t.Vocabulary.Scores, -1)
+			t.Vocabulary.Types = append(t.Vocabulary.Types, tokenTypeUserDefined)
 		}
 	}
 
-	return v, nil
+	ts, err := parseTensors(d)
+	if err != nil {
+		return err
+	}
+
+	return c.writeFile(ws, c.KV(t), c.Tensors(ts))
 }
