@@ -20,36 +20,13 @@ import (
 func convertFull(t *testing.T, d string) (*os.File, llm.KV, llm.Tensors) {
 	t.Helper()
 
-	mf, err := GetModelFormat(d)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	params, err := mf.GetParams(d)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	arch, err := mf.GetModelArch("", d, params)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := arch.LoadVocab(); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := arch.GetTensors(); err != nil {
-		t.Fatal(err)
-	}
-
 	f, err := os.CreateTemp(t.TempDir(), "f16")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
 
-	if err := arch.WriteGGUF(f); err != nil {
+	if err := Convert(d, f); err != nil {
 		t.Fatal(err)
 	}
 
