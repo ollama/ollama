@@ -2625,6 +2625,21 @@ static json format_partial_response(
     return res;
 }
 
+static json format_tokenizer_response(const std::vector<llama_token> &tokens)
+{
+    return json {
+        {"tokens", tokens}
+    };
+}
+
+static json format_detokenized_response(std::string content)
+{
+    return json {
+        {"content", content}
+    };
+}
+
+
 static void log_server_request(const httplib::Request &req, const httplib::Response &res)
 {
     // skip GH copilot requests when using default port
@@ -3112,6 +3127,34 @@ int main(int argc, char **argv) {
 
                     res.set_chunked_content_provider("text/event-stream", chunked_content_provider, on_complete);
                 }
+            });
+
+    svr.Post("/tokenize", [&llama](const httplib::Request &req, httplib::Response &res)
+            {
+                res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
+                const json body = json::parse(req.body);
+                std::vector<llama_token> tokens;
+                if (body.count("content") != 0)
+                {
+                    tokens = llama.tokenize(body["content"], false);
+                }
+                const json data = format_tokenizer_response(tokens);
+                return res.set_content(data.dump(), "application/json; charset=utf-8");
+            });
+
+    svr.Post("/detokenize", [&llama](const httplib::Request &req, httplib::Response &res)
+            {
+                res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
+                const json body = json::parse(req.body);
+                std::string content;
+                if (body.count("tokens") != 0)
+                {
+                    const std::vector<llama_token> tokens = body["tokens"];
+                    content = tokens_to_str(llama.ctx, tokens.cbegin(), tokens.cend());
+                }
+
+                const json data = format_detokenized_response(content);
+                return res.set_content(data.dump(), "application/json; charset=utf-8");
             });
 
     svr.Post("/embedding", [&llama](const httplib::Request &req, httplib::Response &res)
