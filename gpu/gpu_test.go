@@ -10,7 +10,7 @@ import (
 func TestBasicGetGPUInfo(t *testing.T) {
 	info := GetGPUInfo()
 	assert.Greater(t, len(info), 0)
-	assert.Contains(t, "cuda rocm cpu metal", info[0].Library)
+	assert.Contains(t, "cuda rocm cpu metal vulkan", info[0].Library)
 	if info[0].Library != "cpu" {
 		assert.Greater(t, info[0].TotalMemory, uint64(0))
 		assert.Greater(t, info[0].FreeMemory, uint64(0))
@@ -23,6 +23,8 @@ func TestCPUMemInfo(t *testing.T) {
 	switch runtime.GOOS {
 	case "darwin":
 		t.Skip("CPU memory not populated on darwin")
+	case "dragonfly", "freebsd", "netbsd", "openbsd":
+		t.Skip("CPU memory not populated on BSD")
 	case "linux", "windows":
 		assert.Greater(t, info.TotalMemory, uint64(0))
 		assert.Greater(t, info.FreeMemory, uint64(0))
