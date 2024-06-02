@@ -21,8 +21,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 )
 
 type handles struct {
@@ -154,17 +154,6 @@ func initGPUHandles() *handles {
 		if cudart != nil {
 			slog.Debug("detected GPUs", "library", libPath, "count", deviceCount)
 			gpuHandles.cudart = cudart
-			gpuHandles.deviceCount = deviceCount
-			return gpuHandles
-		}
-	}
-
-	oneapiLibPaths := FindGPULibs(oneapiMgmtName, oneapiMgmtPatterns)
-	if len(oneapiLibPaths) > 0 {
-		deviceCount, oneapi, libPath := LoadOneapiMgmt(oneapiLibPaths)
-		if oneapi != nil {
-			slog.Debug("detected Intel GPUs", "library", libPath, "count", deviceCount)
-			gpuHandles.oneapi = oneapi
 			gpuHandles.deviceCount = deviceCount
 			return gpuHandles
 		}
