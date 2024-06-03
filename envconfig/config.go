@@ -37,6 +37,8 @@ var (
 	RunnersDir string
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
+	// Set via OLLAMA_DISABLE_CACHE_PROMPT in the environment
+	DisableCachePrompt bool
 )
 
 type EnvVar struct {
@@ -47,21 +49,22 @@ type EnvVar struct {
 
 func AsMap() map[string]EnvVar {
 	return map[string]EnvVar{
-		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", "", "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
-		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
-		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models (default 1)"},
-		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
-		"OLLAMA_MAX_VRAM":          {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", "", "The path to the models directory"},
-		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
-		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
-		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
-		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
-		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
+		"OLLAMA_DEBUG":                {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
+		"OLLAMA_HOST":                 {"OLLAMA_HOST", "", "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
+		"OLLAMA_MAX_LOADED_MODELS":    {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models (default 1)"},
+		"OLLAMA_MAX_QUEUE":            {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
+		"OLLAMA_MAX_VRAM":             {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
+		"OLLAMA_MODELS":               {"OLLAMA_MODELS", "", "The path to the models directory"},
+		"OLLAMA_NOHISTORY":            {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
+		"OLLAMA_NOPRUNE":              {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
+		"OLLAMA_NUM_PARALLEL":         {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
+		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
+		"OLLAMA_RUNNERS_DIR":          {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
+		"OLLAMA_TMPDIR":               {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
+		"OLLAMA_DISABLE_CACHE_PROMPT": {"OLLAMA_DISABLE_CACHE_PROMPT", DisableCachePrompt, "Disable cache_prompt"},
 	}
 }
 
@@ -209,4 +212,13 @@ func LoadConfig() {
 	}
 
 	KeepAlive = clean("OLLAMA_KEEP_ALIVE")
+
+	if dcp := clean("OLLAMA_DISABLE_CACHE_PROMPT"); dcp != "" {
+		d, err := strconv.ParseBool(dcp)
+		if err == nil {
+			DisableCachePrompt = d
+		} else {
+			DisableCachePrompt = false
+		}
+	}
 }
