@@ -62,6 +62,7 @@ func TestConvertFull(t *testing.T) {
 		"Mistral-7B-Instruct-v0.2",
 		"Mixtral-8x7B-Instruct-v0.1",
 		"gemma-2b-it",
+		"Phi-3-mini-128k-instruct",
 	}
 
 	for i := range cases {

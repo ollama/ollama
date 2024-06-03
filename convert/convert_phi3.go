@@ -1,0 +1,118 @@
+package convert
+
+import (
+	"cmp"
+	"encoding/binary"
+	"io"
+	"math"
+	"strings"
+
+	"github.com/ollama/ollama/llm"
+)
+
+type phi3 struct {
+	Parameters
+	NumHiddenLayers   uint32  `json:"num_hidden_layers"`
+	NLayers           uint32  `json:"n_layers"`
+	HiddenSize        uint32  `json:"hidden_size"`
+	NEmbd             uint32  `json:"n_embd"`
+	IntermediateSize  uint32  `json:"intermediate_size"`
+	NumAttentionHeads uint32  `json:"num_attention_heads"`
+	NHead             uint32  `json:"n_head"`
+	NumKeyValueHeads  uint32  `json:"num_key_value_heads"`
+	NHeadKV           uint32  `json:"n_head_kv"`
+	RopeTheta         float32 `json:"rope_theta"`
+	RopeScaling       struct {
+		Type        string     `json:"type"`
+		LongFactor  ropeFactor `json:"long_factor"`
+		ShortFactor ropeFactor `json:"short_factor"`
+	} `json:"rope_scaling"`
+	RMSNormEPS                    float32 `json:"rms_norm_eps"`
+	NPositions                    uint32  `json:"n_positions"`
+	MaxPositionEmbeddings         uint32  `json:"max_position_embeddings"`
+	OriginalMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
+}
+
+var _ Converter = (*phi3)(nil)
+
+func (p *phi3) KV(t *Tokenizer) llm.KV {
+	kv := p.Parameters.KV(t)
+	kv["general.architecture"] = "phi3"
+	kv["general.name"] = "phi3"
+	kv["phi3.context_length"] = p.MaxPositionEmbeddings
+	kv["phi3.embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
+	kv["phi3.feed_forward_length"] = p.IntermediateSize
+	kv["phi3.block_count"] = cmp.Or(p.NumHiddenLayers, p.NLayers)
+	kv["phi3.attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
+	kv["phi3.attention.head_count_kv"] = cmp.Or(p.NumKeyValueHeads, p.NHeadKV)
+	kv["phi3.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
+	kv["phi3.rope.dimension_count"] = p.HiddenSize / cmp.Or(p.NumAttentionHeads, p.NHead)
+	kv["phi3.rope.freq_base"] = p.RopeTheta
+	kv["phi3.rope.scaling.original_context_length"] = p.OriginalMaxPositionEmbeddings
+
+	scale := float64(p.MaxPositionEmbeddings) / float64(p.OriginalMaxPositionEmbeddings)
+
+	switch p.RopeScaling.Type {
+	case "":
+		// no scaling
+	case "su":
+		kv["phi3.rope.scaling.attn_factor"] = float32(max(math.Sqrt(1+math.Log(scale)/math.Log(float64(p.OriginalMaxPositionEmbeddings))), 1.0))
+	case "yarn":
+		kv["phi3.rope.scaling.attn_factor"] = float32(max(0.1*math.Log(scale)+1.0, 1.0))
+	default:
+		panic("unknown rope scaling type")
+	}
+
+	return kv
+}
+
+func (p *phi3) Tensors(ts []Tensor) []*llm.Tensor {
+	out := []*llm.Tensor{
+		{
+			Name:     "rope_factors_long.weight",
+			Kind:     0,
+			Shape:    []uint64{uint64(len(p.RopeScaling.LongFactor))},
+			WriterTo: p.RopeScaling.LongFactor,
+		},
+		{
+			Name:     "rope_factors_short.weight",
+			Kind:     0,
+			Shape:    []uint64{uint64(len(p.RopeScaling.ShortFactor))},
+			WriterTo: p.RopeScaling.ShortFactor,
+		},
+	}
+
+	for _, t := range ts {
+		name := p.tensorName(t.Name())
+		out = append(out, &llm.Tensor{
+			Name:     name,
+			Kind:     t.Kind(),
+			Shape:    t.Shape(),
+			WriterTo: t,
+		})
+	}
+
+	return out
+}
+
+func (p *phi3) tensorName(n string) string {
+	return strings.NewReplacer(
+		"lm_head", "output",
+		"model.embed_tokens", "token_embd",
+		"model.norm", "output_norm",
+		"model.layers", "blk",
+		"input_layernorm", "attn_norm",
+		"self_attn.qkv_proj", "attn_qkv",
+		"self_attn.o_proj", "attn_output",
+		"mlp.down_proj", "ffn_down",
+		"mlp.gate_up_proj", "ffn_up",
+		"post_attention_layernorm", "ffn_norm",
+	).Replace(n)
+}
+
+type ropeFactor []float32
+
+func (r ropeFactor) WriteTo(w io.Writer) (int64, error) {
+	err := binary.Write(w, binary.LittleEndian, r)
+	return 0, err
+}
