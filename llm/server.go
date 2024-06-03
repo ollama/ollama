@@ -720,6 +720,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"cache_prompt":      true,
 	}
 
+	if req.Options.Grammar != "" {
+		request["grammar"] = req.Options.Grammar
+	}
+	if len(req.Options.JsonSchema) > 0 {
+		request["json_schema"] = json.RawMessage(req.Options.JsonSchema)
+	}
+
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
@@ -729,6 +736,9 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	if req.Format == "json" {
+		if request["grammar"] != "" {
+			return fmt.Errorf("format cannot be specified together with grammar or json_schema option")
+		}
 		request["grammar"] = jsonGrammar
 		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
 			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
