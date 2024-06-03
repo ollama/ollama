@@ -89,6 +89,7 @@ type gguf struct {
 	tensors []*Tensor
 
 	parameters uint64
+	tensorOffset uint64
 
 	scratch [16 << 10]byte
 }
@@ -109,7 +110,10 @@ func (llm *gguf) KV() KV {
 }
 
 func (llm *gguf) Tensors() Tensors {
-	return llm.tensors
+	return Tensors{
+		Items:  llm.tensors,
+		Offset: llm.tensorOffset,
+	}
 }
 
 func (llm *gguf) numTensor() uint64 {
@@ -235,6 +239,14 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	if !ok {
 		alignment = 32
 	}
+
+	offset, err := rs.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+
+	padding := llm.padding(offset, int64(alignment))
+	llm.tensorOffset = uint64(offset + padding)
 
 	for _, tensor := range llm.tensors {
 		offset, err := rs.Seek(0, io.SeekCurrent)
