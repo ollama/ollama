@@ -197,12 +197,12 @@ void nvcuda_bootstrap(nvcuda_handle_t h, int i, mem_info_t *resp) {
   }
 }
 
-void nvcuda_get_free(nvcuda_handle_t h, int i, uint64_t *free) {
+void nvcuda_get_free(nvcuda_handle_t h, int i, uint64_t *free, uint64_t *total) {
   CUresult ret;
   CUcontext ctx = NULL;
   CUdevice device = -1;
   *free = 0;
-  uint64_t total = 0;
+  *total = 0;
 
   ret = (*h.cuDeviceGet)(&device, i);
   if (ret != CUDA_SUCCESS) {
@@ -218,7 +218,7 @@ void nvcuda_get_free(nvcuda_handle_t h, int i, uint64_t *free) {
     return;
   }
 
-  ret = (*h.cuMemGetInfo_v2)(free, &total);
+  ret = (*h.cuMemGetInfo_v2)(free, total);
   if (ret != CUDA_SUCCESS) {
     LOG(1, "nvcuda device memory info lookup failure %d", ret);
     // Best effort on failure...

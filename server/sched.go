@@ -487,8 +487,10 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 	finished := make(chan interface{}, 1)
 
-	// CPU or Metal don't need checking, so no waiting required, windows can page VRAM, and the APIs we query tend to be optimistic on free space
-	if (len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal")) || runtime.GOOS == "windows" {
+	// CPU or Metal don't need checking, so no waiting required
+	// windows can page VRAM, only cuda currently can report accurate used vram usage
+	if (len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal")) ||
+		(runtime.GOOS == "windows" && runner.gpus[0].Library != "cuda") {
 		finished <- struct{}{}
 		return finished
 	}

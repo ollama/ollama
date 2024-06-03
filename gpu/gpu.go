@@ -28,6 +28,7 @@ type cudaHandles struct {
 	deviceCount int
 	cudart      *C.cudart_handle_t
 	nvcuda      *C.nvcuda_handle_t
+	nvml        *C.nvml_handle_t
 }
 
 type oneapiHandles struct {
@@ -50,6 +51,7 @@ var (
 	nvcudaLibPath string
 	cudartLibPath string
 	oneapiLibPath string
+	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
 )
@@ -79,6 +81,10 @@ var CudartLinuxGlobs = []string{
 
 var CudartWindowsGlobs = []string{
 	"c:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v*\\bin\\cudart64_*.dll",
+}
+
+var NvmlWindowsGlobs = []string{
+	"c:\\Windows\\System32\\nvml.dll",
 }
 
 var NvcudaLinuxGlobs = []string{
@@ -117,6 +123,10 @@ func initCudaHandles() *cudaHandles {
 
 	cHandles := &cudaHandles{}
 	// Short Circuit if we already know which library to use
+	if nvmlLibPath != "" {
+		cHandles.nvml, _ = LoadNVMLMgmt([]string{nvmlLibPath})
+		return cHandles
+	}
 	if nvcudaLibPath != "" {
 		cHandles.deviceCount, cHandles.nvcuda, _ = LoadNVCUDAMgmt([]string{nvcudaLibPath})
 		return cHandles
@@ -131,6 +141,8 @@ func initCudaHandles() *cudaHandles {
 	var cudartMgmtPatterns []string
 	var nvcudaMgmtName string
 	var nvcudaMgmtPatterns []string
+	var nvmlMgmtName string
+	var nvmlMgmtPatterns []string
 
 	tmpDir, _ := PayloadsDir()
 	switch runtime.GOOS {
@@ -142,6 +154,12 @@ func initCudaHandles() *cudaHandles {
 		// Aligned with driver, we can't carry as payloads
 		nvcudaMgmtName = "nvcuda.dll"
 		nvcudaMgmtPatterns = NvcudaWindowsGlobs
+
+		// Use nvml to refresh free memory on windows only
+		nvmlMgmtName = "nvml.dll"
+		nvmlMgmtPatterns = make([]string, len(NvmlWindowsGlobs))
+		copy(nvmlMgmtPatterns, NvmlWindowsGlobs)
+
 	case "linux":
 		cudartMgmtName = "libcudart.so*"
 		if tmpDir != "" {
@@ -152,8 +170,22 @@ func initCudaHandles() *cudaHandles {
 		// Aligned with driver, we can't carry as payloads
 		nvcudaMgmtName = "libcuda.so*"
 		nvcudaMgmtPatterns = NvcudaLinuxGlobs
+
+		// nvml omitted on linux
 	default:
 		return cHandles
+	}
+
+	if len(nvmlMgmtPatterns) > 0 {
+		nvmlLibPaths := FindGPULibs(nvmlMgmtName, nvmlMgmtPatterns)
+		if len(nvmlLibPaths) > 0 {
+			nvml, libPath := LoadNVMLMgmt(nvmlLibPaths)
+			if nvml != nil {
+				slog.Debug("nvidia-ml loaded", "library", libPath)
+				cHandles.nvml = nvml
+				nvmlLibPath = libPath
+			}
+		}
 	}
 
 	nvcudaLibPaths := FindGPULibs(nvcudaMgmtName, nvcudaMgmtPatterns)
@@ -229,6 +261,9 @@ func GetGPUInfo() GpuInfoList {
 			}
 			if cHandles.nvcuda != nil {
 				C.nvcuda_release(*cHandles.nvcuda)
+			}
+			if cHandles.nvml != nil {
+				C.nvml_release(*cHandles.nvml)
 			}
 		}
 		if oHandles != nil {
@@ -365,10 +400,17 @@ func GetGPUInfo() GpuInfoList {
 			cHandles = initCudaHandles()
 		}
 		for i, gpu := range cudaGPUs {
-			if cHandles.cudart != nil {
+			if cHandles.nvml != nil {
+				C.nvml_get_free(*cHandles.nvml, C.int(gpu.index), &memInfo.free, &memInfo.total, &memInfo.used)
+			} else if cHandles.cudart != nil {
 				C.cudart_bootstrap(*cHandles.cudart, C.int(gpu.index), &memInfo)
+			} else if cHandles.nvcuda != nil {
+				C.nvcuda_get_free(*cHandles.nvcuda, C.int(gpu.index), &memInfo.free, &memInfo.total)
+				memInfo.used = memInfo.total - memInfo.free
 			} else {
-				C.nvcuda_get_free(*cHandles.nvcuda, C.int(gpu.index), &memInfo.free)
+				// shouldn't happen
+				slog.Warn("no valid cuda library loaded to refresh vram usage")
+				break
 			}
 			if memInfo.err != nil {
 				slog.Warn("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
@@ -379,7 +421,21 @@ func GetGPUInfo() GpuInfoList {
 				slog.Warn("error looking up nvidia GPU memory")
 				continue
 			}
-			slog.Debug("updating cuda free memory", "gpu", gpu.ID, "name", gpu.Name, "before", format.HumanBytes2(gpu.FreeMemory), "now", format.HumanBytes2(uint64(memInfo.free)))
+			slog.Debug("updating cuda memory data",
+				"gpu", gpu.ID,
+				"name", gpu.Name,
+				slog.Group(
+					"before",
+					"total", format.HumanBytes2(gpu.TotalMemory),
+					"free", format.HumanBytes2(gpu.FreeMemory),
+				),
+				slog.Group(
+					"now",
+					"total", format.HumanBytes2(uint64(memInfo.total)),
+					"free", format.HumanBytes2(uint64(memInfo.free)),
+					"used", format.HumanBytes2(uint64(memInfo.used)),
+				),
+			)
 			cudaGPUs[i].FreeMemory = uint64(memInfo.free)
 		}
 
@@ -528,6 +584,23 @@ func LoadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string) {
 		}
 	}
 	return 0, nil, ""
+}
+
+func LoadNVMLMgmt(nvmlLibPaths []string) (*C.nvml_handle_t, string) {
+	var resp C.nvml_init_resp_t
+	resp.ch.verbose = getVerboseState()
+	for _, libPath := range nvmlLibPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.nvml_init(lib, &resp)
+		if resp.err != nil {
+			slog.Info(fmt.Sprintf("Unable to load NVML management library %s: %s", libPath, C.GoString(resp.err)))
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			return &resp.ch, libPath
+		}
+	}
+	return nil, ""
 }
 
 func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {

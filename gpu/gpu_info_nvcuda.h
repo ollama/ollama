@@ -68,7 +68,7 @@ typedef struct nvcuda_init_resp {
 
 void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp);
 void nvcuda_bootstrap(nvcuda_handle_t ch, int device_id, mem_info_t *resp);
-void nvcuda_get_free(nvcuda_handle_t ch,  int device_id, uint64_t *free);
+void nvcuda_get_free(nvcuda_handle_t ch,  int device_id, uint64_t *free, uint64_t *total);
 void nvcuda_release(nvcuda_handle_t ch);
 
 #endif  // __GPU_INFO_NVCUDA_H__
