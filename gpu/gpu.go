@@ -16,12 +16,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/envconfig"
 )
 
 type handles struct {
@@ -104,6 +105,8 @@ func initGPUHandles() *handles {
 	var cudartMgmtPatterns []string
 	var nvcudaMgmtName string
 	var nvcudaMgmtPatterns []string
+	var oneapiMgmtName string
+	var oneapiMgmtPatterns []string
 
 	tmpDir, _ := PayloadsDir()
 	switch runtime.GOOS {
@@ -115,6 +118,8 @@ func initGPUHandles() *handles {
 		// Aligned with driver, we can't carry as payloads
 		nvcudaMgmtName = "nvcuda.dll"
 		nvcudaMgmtPatterns = NvcudaWindowsGlobs
+		oneapiMgmtName = "ze_intel_gpu64.dll"
+		oneapiMgmtPatterns = OneapiWindowsGlobs
 	case "linux":
 		cudartMgmtName = "libcudart.so*"
 		if tmpDir != "" {
@@ -125,6 +130,8 @@ func initGPUHandles() *handles {
 		// Aligned with driver, we can't carry as payloads
 		nvcudaMgmtName = "libcuda.so*"
 		nvcudaMgmtPatterns = NvcudaLinuxGlobs
+		oneapiMgmtName = "libze_intel_gpu.so"
+		oneapiMgmtPatterns = OneapiLinuxGlobs
 	default:
 		return gpuHandles
 	}
@@ -147,6 +154,17 @@ func initGPUHandles() *handles {
 		if cudart != nil {
 			slog.Debug("detected GPUs", "library", libPath, "count", deviceCount)
 			gpuHandles.cudart = cudart
+			gpuHandles.deviceCount = deviceCount
+			return gpuHandles
+		}
+	}
+
+	oneapiLibPaths := FindGPULibs(oneapiMgmtName, oneapiMgmtPatterns)
+	if len(oneapiLibPaths) > 0 {
+		deviceCount, oneapi, libPath := LoadOneapiMgmt(oneapiLibPaths)
+		if oneapi != nil {
+			slog.Debug("detected Intel GPUs", "library", libPath, "count", deviceCount)
+			gpuHandles.oneapi = oneapi
 			gpuHandles.deviceCount = deviceCount
 			return gpuHandles
 		}
@@ -225,6 +243,18 @@ func GetGPUInfo() GpuInfoList {
 			gpuInfo.DriverMinor = driverMinor
 
 			// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
+			resp = append(resp, gpuInfo)
+		}
+		if gpuHandles.oneapi != nil {
+			gpuInfo := GpuInfo{
+				Library: "oneapi",
+			}
+			C.oneapi_check_vram(*gpuHandles.oneapi, &memInfo)
+			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+			memInfo.free = C.uint64_t(totalFreeMem)
+			gpuInfo.TotalMemory = uint64(memInfo.total)
+			gpuInfo.FreeMemory = uint64(memInfo.free)
+			gpuInfo.ID = strconv.Itoa(i)
 			resp = append(resp, gpuInfo)
 		}
 	}
