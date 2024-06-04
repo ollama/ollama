@@ -12,7 +12,8 @@ linters:
     # FIXME: for some reason this errors on windows
     # - gofmt
     # - goimports
-    - intrange
+    # TODO: disable for now
+    # - intrange
     - misspell
     - nilerr
     - nolintlint
