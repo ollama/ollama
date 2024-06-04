@@ -24,9 +24,9 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
-	"github.com/ollama/ollama/envconfig"
 )
 
 type LlamaServer interface {
@@ -189,33 +189,36 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--memory-f32")
 	}
 
-	if opts.UseMLock {
-		params = append(params, "--mlock")
+	flashAttnEnabled := envconfig.FlashAttention
+
+	for _, g := range gpus {
+		// only cuda (compute capability 7+) and metal support flash attention
+		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
+			flashAttnEnabled = false
+		}
+
+		// mmap has issues with partial offloading on metal
+		if g.Library == "metal" &&
+			uint64(opts.NumGPU) > 0 &&
+			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
+			opts.UseMMap = false
+		}
+	}
+
+	if flashAttnEnabled {
+		params = append(params, "--flash-attn")
 	}
 
 	if !opts.UseMMap {
 		params = append(params, "--no-mmap")
 	}
 
+	if opts.UseMLock {
+		params = append(params, "--mlock")
+	}
+
 	if opts.UseNUMA {
 		params = append(params, "--numa")
-	}
-
-	flashAttnEnabled := envconfig.FlashAttention
-
-	// partial offloading does not support flash attention
-	if uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
-		flashAttnEnabled = false
-	}
-
-	// only cuda (compute capability 7+) and metal support flash attention
-	for _, g := range gpus {
-		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
-			flashAttnEnabled = false
-		}
-	}
-	if flashAttnEnabled {
-		params = append(params, "--flash-attn")
 	}
 
 	numParallel := envconfig.NumParallel
@@ -243,7 +246,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			gpuCount = 0
 		}
 
-		// Find an availableServers  port, retry on each iterration in case the failure was a port conflict race
+		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
 		port := 0
 		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
 			var l *net.TCPListener
@@ -519,11 +522,13 @@ func (s *llmServer) Ping(ctx context.Context) error {
 
 func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	start := time.Now()
-	stallDuration := 60 * time.Second
-	stallTimer := time.Now().Add(stallDuration) // give up if we stall for
+	stallDuration := 5 * time.Minute            // If no progress happens
+	finalLoadDuration := 5 * time.Minute        // After we hit 100%, give the runner more time to come online
+	stallTimer := time.Now().Add(stallDuration) // give up if we stall
 
 	slog.Info("waiting for llama runner to start responding")
 	var lastStatus ServerStatus = -1
+	fullyLoaded := false
 
 	for {
 		select {
@@ -572,6 +577,10 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			if priorProgress != s.loadProgress {
 				slog.Debug(fmt.Sprintf("model load progress %0.2f", s.loadProgress))
 				stallTimer = time.Now().Add(stallDuration)
+			} else if !fullyLoaded && int(s.loadProgress*100.0) >= 100 {
+				slog.Debug("model load completed, waiting for server to become available", "status", status.ToString())
+				stallTimer = time.Now().Add(finalLoadDuration)
+				fullyLoaded = true
 			}
 			time.Sleep(time.Millisecond * 250)
 			continue
@@ -756,7 +765,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 			var c completion
 			if err := json.Unmarshal(evt, &c); err != nil {
-				return fmt.Errorf("error unmarshaling llm prediction response: %v", err)
+				return fmt.Errorf("error unmarshalling llm prediction response: %v", err)
 			}
 
 			switch {

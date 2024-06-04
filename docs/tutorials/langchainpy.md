@@ -45,7 +45,7 @@ all_splits = text_splitter.split_documents(data)
 ```
 
 It's split up, but we have to find the relevant splits and then submit those to the model. We can do this by creating embeddings and storing them in a vector database. We can use Ollama directly to instantiate an embedding model. We will use ChromaDB in this example for a vector database. `pip install chromadb`
-
+We also need to pull embedding model: `ollama pull nomic-embed-text`
 ```python
 from langchain.embeddings import OllamaEmbeddings
 from langchain.vectorstores import Chroma
@@ -68,7 +68,8 @@ The next thing is to send the question and the relevant parts of the docs to the
 ```python
 from langchain.chains import RetrievalQA
 qachain=RetrievalQA.from_chain_type(ollama, retriever=vectorstore.as_retriever())
-qachain.invoke({"query": question})
+res = qachain.invoke({"query": question})
+print(res['result'])
 ```
 
 The answer received from this chain was:

@@ -385,3 +385,30 @@ func FuzzName(f *testing.F) {
 
 	})
 }
+
+func TestIsValidNamespace(t *testing.T) {
+	cases := []struct {
+		username   string
+		expected   bool
+	}{
+		{"", false},
+		{"a", true},
+		{"a:b", false},
+		{"a/b", false},
+		{"a:b/c", false},
+		{"a/b:c", false},
+		{"a/b:c", false},
+		{"a/b:c/d", false},
+		{"a/b:c/d@e", false},
+		{"a/b:c/d@sha256-100", false},
+		{"himynameisjoe", true},
+		{"himynameisreallyreallyreallyreallylongbutitshouldstillbevalid", true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.username, func(t *testing.T) {
+			if got := IsValidNamespace(tt.username); got != tt.expected {
+				t.Errorf("IsValidName(%q) = %v; want %v", tt.username, got, tt.expected)
+			}
+		})
+	}
+}
