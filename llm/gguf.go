@@ -592,8 +592,8 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 			return err
 		}
 
-		dims := 0
-		for cnt := 0; cnt < len(tensor.Shape); cnt++ {
+		var dims int
+		for cnt := range len(tensor.Shape) {
 			if tensor.Shape[cnt] > 0 {
 				dims++
 			}
@@ -603,8 +603,8 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 			return err
 		}
 
-		for i := 0; i < dims; i++ {
-			if err := binary.Write(ws, llm.ByteOrder, uint64(tensor.Shape[dims-1-i])); err != nil {
+		for i := range dims {
+			if err := binary.Write(ws, llm.ByteOrder, tensor.Shape[dims-1-i]); err != nil {
 				return err
 			}
 		}

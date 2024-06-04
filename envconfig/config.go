@@ -3,6 +3,7 @@ package envconfig
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -126,7 +127,7 @@ func LoadConfig() {
 		var paths []string
 		for _, root := range []string{filepath.Dir(appExe), cwd} {
 			paths = append(paths,
-				filepath.Join(root),
+				root,
 				filepath.Join(root, "windows-"+runtime.GOARCH),
 				filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
 			)
@@ -184,8 +185,8 @@ func LoadConfig() {
 		AllowOrigins = append(AllowOrigins,
 			fmt.Sprintf("http://%s", allowOrigin),
 			fmt.Sprintf("https://%s", allowOrigin),
-			fmt.Sprintf("http://%s:*", allowOrigin),
-			fmt.Sprintf("https://%s:*", allowOrigin),
+			fmt.Sprintf("http://%s", net.JoinHostPort(allowOrigin, "*")),
+			fmt.Sprintf("https://%s", net.JoinHostPort(allowOrigin, "*")),
 		)
 	}
 

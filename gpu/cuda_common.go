@@ -18,5 +18,4 @@ func cudaGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
 		ids = append(ids, info.ID)
 	}
 	return "CUDA_VISIBLE_DEVICES", strings.Join(ids, ",")
-
 }

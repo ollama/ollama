@@ -268,7 +268,6 @@ func TestNameIsValidPart(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestFilepathAllocs(t *testing.T) {
@@ -325,7 +324,7 @@ func TestParseNameFromFilepath(t *testing.T) {
 		filepath.Join("host:port", "namespace", "model", "tag"): {Host: "host:port", Namespace: "namespace", Model: "model", Tag: "tag"},
 		filepath.Join("namespace", "model", "tag"):              {},
 		filepath.Join("model", "tag"):                           {},
-		filepath.Join("model"):                                  {},
+		"model":                                                 {},
 		filepath.Join("..", "..", "model", "tag"):               {},
 		filepath.Join("", "namespace", ".", "tag"):              {},
 		filepath.Join(".", ".", ".", "."):                       {},
@@ -382,14 +381,13 @@ func FuzzName(f *testing.F) {
 				t.Errorf("String() = %q; want %q", n.String(), s)
 			}
 		}
-
 	})
 }
 
 func TestIsValidNamespace(t *testing.T) {
 	cases := []struct {
-		username   string
-		expected   bool
+		username string
+		expected bool
 	}{
 		{"", false},
 		{"a", true},

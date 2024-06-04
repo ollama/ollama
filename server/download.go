@@ -372,7 +372,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 			return err
 		}
 
-		// nolint: contextcheck
+		//nolint:contextcheck
 		go download.Run(context.Background(), requestURL, opts.regOpts)
 	}
 

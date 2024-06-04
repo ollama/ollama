@@ -72,7 +72,6 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		default:
 			layers = append(layers, &layerWithGGML{layer, nil})
 		}
-
 	}
 
 	return layers, nil
