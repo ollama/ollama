@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/ollama/ollama/llama"
@@ -28,9 +29,11 @@ func main() {
 
 	// load the model
 	llama.BackendInit()
-	params := llama.NewModelParams()
+	params := llama.NewModelParams(999, 0, func(p float32) {
+		fmt.Printf("loading... %f\n", p)
+	})
 	model := llama.LoadModelFromFile(*mpath, params)
-	ctxParams := llama.NewContextParams()
+	ctxParams := llama.NewContextParams(2048, runtime.NumCPU(), false)
 
 	// language model context
 	lc := llama.NewContextWithModel(model, ctxParams)
@@ -65,7 +68,7 @@ func main() {
 			panic("prompt must contain exactly one <image>")
 		}
 
-		beforeTokens, err := lc.Model().Tokenize(parts[0], 2048, true, true)
+		beforeTokens, err := lc.Model().Tokenize(parts[0], true, true)
 		if err != nil {
 			panic(err)
 		}
@@ -82,7 +85,7 @@ func main() {
 
 		llama.LlavaEvalImageEmbed(lc, embedding, 512, &nPast)
 
-		afterTokens, err := lc.Model().Tokenize(parts[1], 2048, true, true)
+		afterTokens, err := lc.Model().Tokenize(parts[1], true, true)
 		if err != nil {
 			panic(err)
 		}
@@ -92,7 +95,7 @@ func main() {
 			nPast++
 		}
 	} else {
-		tokens, err := lc.Model().Tokenize(*prompt, 2048, true, true)
+		tokens, err := lc.Model().Tokenize(*prompt, true, true)
 		if err != nil {
 			panic(err)
 		}

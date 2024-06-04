@@ -58,6 +58,19 @@ git_module_setup
 apply_patches
 
 init_vars
+if [ -z "${OLLAMA_SKIP_STATIC_GENERATE}" -o "${OLLAMA_CPU_TARGET}" = "static" ]; then
+    # Builds by default, allows skipping, forces build if OLLAMA_CPU_TARGET="static"
+    # Enables optimized Dockerfile builds using a blanket skip and targeted overrides
+    # Static build for linking into the Go binary
+    init_vars
+    CMAKE_TARGETS="--target llama --target ggml"
+    CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DLLAMA_NATIVE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+    BUILD_DIR="../build/linux/${ARCH}_static"
+    echo "Building static library"
+    build
+fi
+
+init_vars
 if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
     # Users building from source can tune the exact flags we pass to cmake for configuring
     # llama.cpp, and we'll build only 1 CPU variant in that case as the default.
