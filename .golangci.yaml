@@ -9,11 +9,9 @@ linters:
     - contextcheck
     - exportloopref
     - gocheckcompilerdirectives
-    # FIXME: for some reason this errors on windows
-    # - gofmt
-    # - goimports
-    # TODO: disable for now
-    # - intrange
+    - gofmt
+    - goimports
+    - intrange
     - misspell
     - nilerr
     - nolintlint
@@ -21,7 +19,15 @@ linters:
     - testifylint
     - unconvert
     - unused
-    # TODO: bmizerany says no :(
-    # - usestdlibvars
     - wastedassign
     - whitespace
+    - usestdlibvars
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - gofmt
+        - goimports
+        - intrange
+        - usestdlibvars
+      severity: info
