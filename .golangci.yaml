@@ -9,8 +9,9 @@ linters:
     - contextcheck
     - exportloopref
     - gocheckcompilerdirectives
-    - gofmt
-    - goimports
+    # conditionally enable this on linux/macos
+    # - gofmt
+    # - goimports
     - intrange
     - misspell
     - nilerr

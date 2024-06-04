@@ -386,8 +386,8 @@ func FuzzName(f *testing.F) {
 
 func TestIsValidNamespace(t *testing.T) {
 	cases := []struct {
-		username   string
-		expected   bool
+		username string
+		expected bool
 	}{
 		{"", false},
 		{"a", true},

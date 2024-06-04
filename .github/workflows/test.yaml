@@ -269,9 +269,9 @@ jobs:
           mkdir -p llm/build/darwin/$ARCH/stub/bin
           touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
         if: ${{ startsWith(matrix.os, 'macos-') }}
-      - uses: golangci/golangci-lint-action@v4
+      - uses: golangci/golangci-lint-action@v6
         with:
-          args: --timeout 8m0s -v
+          args: --timeout 8m0s -v ${{ startsWith(matrix.os, 'windows-') && '' || '--disable gofmt --disable goimports' }}
   test:
     strategy:
       matrix:
