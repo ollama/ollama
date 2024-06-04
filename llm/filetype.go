@@ -2,10 +2,10 @@ package llm
 
 import "fmt"
 
-type FileType uint32
+type fileType uint32
 
 const (
-	fileTypeF32 FileType = iota
+	fileTypeF32 fileType = iota
 	fileTypeF16
 	fileTypeQ4_0
 	fileTypeQ4_1
@@ -41,7 +41,7 @@ const (
 	fileTypeUnknown
 )
 
-func ParseFileType(s string) (FileType, error) {
+func ParseFileType(s string) (fileType, error) {
 	switch s {
 	case "F32":
 		return fileTypeF32, nil
@@ -108,7 +108,7 @@ func ParseFileType(s string) (FileType, error) {
 	}
 }
 
-func (t FileType) String() string {
+func (t fileType) String() string {
 	switch t {
 	case fileTypeF32:
 		return "F32"
@@ -175,6 +175,6 @@ func (t FileType) String() string {
 	}
 }
 
-func (t FileType) Value() uint32 {
+func (t fileType) Value() uint32 {
 	return uint32(t)
 }
