@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"reflect"
 	"runtime"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -41,6 +40,7 @@ type Scheduler struct {
 	loadFn      func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList)
 	newServerFn func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options) (llm.LlamaServer, error)
 	getGpuFn    func() gpu.GpuInfoList
+	getCpuFn    func() gpu.GpuInfoList
 }
 
 var ErrMaxQueue = fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
@@ -54,6 +54,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		loaded:        make(map[string]*runnerRef),
 		newServerFn:   llm.NewLlamaServer,
 		getGpuFn:      gpu.GetGPUInfo,
+		getCpuFn:      gpu.GetCPUInfo,
 	}
 	sched.loadFn = sched.load
 	return sched
@@ -131,7 +132,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				} else {
 					// Either no models are loaded or below envconfig.MaxRunners
 					// Get a refreshed GPU list
-					gpus := s.getGpuFn()
+					var gpus gpu.GpuInfoList
+					if pending.opts.NumGPU == 0 {
+						gpus = s.getCpuFn()
+					} else {
+						gpus = s.getGpuFn()
+					}
 
 					// Load model for fitting
 					ggml, err := llm.LoadModel(pending.model.ModelPath)
@@ -140,16 +146,22 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
-					// If we're CPU only mode, just limit by envconfig.MaxRunners above
-					// TODO handle system memory exhaustion
-					if (len(gpus) == 1 && gpus[0].Library == "cpu") || pending.opts.NumGPU == 0 {
-						slog.Debug("cpu mode with existing models, loading")
-						s.loadFn(pending, ggml, gpus)
-						break
-					}
-
-					// No models loaded. Load the model but prefer the best fit.
-					if loadedCount == 0 {
+					// Evaluate if the model will fit in the available system memory, or if we should unload a model first
+					if len(gpus) == 1 && gpus[0].Library == "cpu" {
+						if loadedCount == 0 {
+							slog.Debug("cpu mode with first model, loading")
+							s.loadFn(pending, ggml, gpus)
+							break
+						}
+						runnerToExpire = s.maybeFindCPURunnerToUnload(pending, ggml, gpus)
+						if runnerToExpire == nil {
+							slog.Debug("cpu mode with available system memory or first model, loading")
+							s.loadFn(pending, ggml, gpus)
+							break
+						}
+						// else we need to expire a runner
+					} else if loadedCount == 0 {
+						// No models loaded. Load the model but prefer the best fit.
 						slog.Debug("loading first model", "model", pending.model.ModelPath)
 						g := pickBestFitGPUs(pending, ggml, gpus)
 						if g != nil {
@@ -159,16 +171,18 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
-					// More than one loaded model, so we have to see if the new one fits
-					// Update free memory from currently loaded models
-					s.updateFreeSpace(gpus)
-					gpus = pickBestFitGPUs(pending, ggml, gpus)
-					if gpus != nil {
-						slog.Debug("new model fits with existing models, loading")
-						s.loadFn(pending, ggml, gpus)
-						break
+					if runnerToExpire == nil {
+						// More than one loaded model, so we have to see if the new one fits
+						// Update free memory from currently loaded models
+						s.updateFreeSpace(gpus)
+						gpus = pickBestFitGPUs(pending, ggml, gpus)
+						if gpus != nil {
+							slog.Debug("new model fits with existing models, loading")
+							s.loadFn(pending, ggml, gpus)
+							break
+						}
+						runnerToExpire = s.findRunnerToUnload()
 					}
-					runnerToExpire = s.findRunnerToUnload()
 				}
 
 				if runnerToExpire == nil {
@@ -368,17 +382,11 @@ func (s *Scheduler) updateFreeSpace(allGpus gpu.GpuInfoList) {
 	s.loadedMu.Lock()
 	for _, r := range s.loaded {
 		r.refMu.Lock()
-		gpuIDs := make([]string, 0, len(r.gpus))
 		if r.llama != nil {
-			// TODO this should be broken down by GPU instead of assuming uniform spread
-			estimatedVRAMPerGPU := r.llama.EstimatedVRAM() / uint64(len(r.gpus))
-			for _, gpu := range r.gpus {
-				gpuIDs = append(gpuIDs, gpu.ID)
-			}
 			for _, gpu := range allGpus {
-				if slices.Contains(gpuIDs, gpu.ID) {
-					predMap[predKey{gpu.Library, gpu.ID}] += estimatedVRAMPerGPU
-				}
+				// if slices.Contains(gpuIDs, gpu.ID) {
+				predMap[predKey{gpu.Library, gpu.ID}] += r.llama.EstimagedVRAMByGPU(gpu.ID)
+				// }
 			}
 		} else {
 			slog.Warn("unexpected nil runner reference, memory prediction may be incorrect")
@@ -489,7 +497,8 @@ func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 
 	// CPU or Metal don't need checking, so no waiting required
 	// windows can page VRAM, only cuda currently can report accurate used vram usage
-	if (len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal")) ||
+	if len(runner.gpus) == 0 ||
+		(len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal")) ||
 		(runtime.GOOS == "windows" && runner.gpus[0].Library != "cuda") {
 		finished <- struct{}{}
 		return finished
@@ -623,4 +632,20 @@ func (s *Scheduler) unloadAllRunners() {
 			runner.llama.Close()
 		}
 	}
+}
+
+// If other runners are loaded, make sure the pending request will fit in system memory
+// If not, pick a runner to unload, else return nil and the request can be loaded
+func (s *Scheduler) maybeFindCPURunnerToUnload(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) *runnerRef {
+	slog.Debug("evaluating if CPU model load will fit in available system memory")
+	estimate := llm.EstimateGPULayers(gpus, ggml, req.model.ProjectorPaths, req.opts)
+	if estimate.TotalSize <= gpus[0].FreeMemory {
+		slog.Debug("cpu inference mode, model fits in available system memory", "model", format.HumanBytes2(estimate.TotalSize), "available", format.HumanBytes2(gpus[0].FreeMemory))
+		return nil
+	}
+
+	// TODO - optimization: try to find CPU only runners first, or partial offloads with enough in system memory to make room
+
+	return s.findRunnerToUnload()
+
 }

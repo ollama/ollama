@@ -35,11 +35,7 @@ void cpu_check_ram(mem_info_t *resp) {
 }
 
 #elif __APPLE__
-// TODO consider an Apple implementation that does something useful
-// mem_info_t cpu_check_ram() {
-//   mem_info_t resp = {0, 0, NULL};
-//   return resp;
-// }
+// Unused - see gpu_darwin.go
 #else
 #error "Unsupported platform"
 #endif

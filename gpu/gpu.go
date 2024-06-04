@@ -11,6 +11,8 @@ package gpu
 */
 import "C"
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -246,6 +248,17 @@ func initOneAPIHandles() *oneapiHandles {
 	return oHandles
 }
 
+func GetCPUInfo() GpuInfoList {
+	gpuMutex.Lock()
+	if !bootstrapped {
+		gpuMutex.Unlock()
+		GetGPUInfo()
+	} else {
+		gpuMutex.Unlock()
+	}
+	return GpuInfoList{cpus[0].GpuInfo}
+}
+
 func GetGPUInfo() GpuInfoList {
 	// TODO - consider exploring lspci (and equivalent on windows) to check for
 	// GPUs so we can report warnings if we see Nvidia/AMD but fail to load the libraries
@@ -279,22 +292,19 @@ func GetGPUInfo() GpuInfoList {
 		needRefresh = false
 		cpuCapability = getCPUCapability()
 		var memInfo C.mem_info_t
-		C.cpu_check_ram(&memInfo)
-		if memInfo.err != nil {
-			slog.Info("error looking up CPU memory", "error", C.GoString(memInfo.err))
-			C.free(unsafe.Pointer(memInfo.err))
-			return []GpuInfo{}
+
+		mem, err := GetCPUMem()
+		if err != nil {
+			slog.Warn("error looking up system memory", "error", err)
 		}
-		cpuInfo := CPUInfo{
+		cpus = []CPUInfo{CPUInfo{
 			GpuInfo: GpuInfo{
+				memInfo: mem,
 				Library: "cpu",
 				Variant: cpuCapability.ToVariant(),
+				ID:      "0",
 			},
-		}
-		cpuInfo.TotalMemory = uint64(memInfo.total)
-		cpuInfo.FreeMemory = uint64(memInfo.free)
-		cpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
-		cpus = []CPUInfo{cpuInfo}
+		}}
 
 		// Fallback to CPU mode if we're lacking required vector extensions on x86
 		if cpuCapability < GPURunnerCPUCapability && runtime.GOARCH == "amd64" {
@@ -394,7 +404,25 @@ func GetGPUInfo() GpuInfoList {
 
 	// Refresh free memory usage
 	if needRefresh {
-		// TODO - CPU system memory tracking/refresh
+		mem, err := GetCPUMem()
+		if err != nil {
+			slog.Warn("error looking up system memory", "error", err)
+		} else {
+			slog.Debug("updating system memory data",
+				slog.Group(
+					"before",
+					"total", format.HumanBytes2(cpus[0].TotalMemory),
+					"free", format.HumanBytes2(cpus[0].FreeMemory),
+				),
+				slog.Group(
+					"now",
+					"total", format.HumanBytes2(mem.TotalMemory),
+					"free", format.HumanBytes2(mem.FreeMemory),
+				),
+			)
+			cpus[0].FreeMemory = mem.FreeMemory
+		}
+
 		var memInfo C.mem_info_t
 		if cHandles == nil && len(cudaGPUs) > 0 {
 			cHandles = initCudaHandles()
@@ -455,7 +483,7 @@ func GetGPUInfo() GpuInfoList {
 			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
 		}
 
-		err := RocmGPUInfoList(rocmGPUs).RefreshFreeMemory()
+		err = RocmGPUInfoList(rocmGPUs).RefreshFreeMemory()
 		if err != nil {
 			slog.Debug("problem refreshing ROCm free memory", "error", err)
 		}
@@ -478,6 +506,9 @@ func GetGPUInfo() GpuInfoList {
 }
 
 func GetCPUMem() (memInfo, error) {
+	if runtime.GOOS == "linux" {
+		return GetLinuxMemInfo()
+	}
 	var ret memInfo
 	var info C.mem_info_t
 	C.cpu_check_ram(&info)
@@ -650,4 +681,43 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 		slog.Debug("no filter required for library " + l[0].Library)
 		return "", ""
 	}
+}
+
+func GetLinuxMemInfo() (memInfo, error) {
+	var mem memInfo
+	var total, available, free, buffers, cached uint64
+	f, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return mem, err
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		switch {
+		case bytes.HasPrefix(s.Bytes(), []byte(`MemTotal:`)):
+			_, err = fmt.Sscanf(s.Text(), "MemTotal:%d", &total)
+		case bytes.HasPrefix(s.Bytes(), []byte(`MemAvailable:`)):
+			_, err = fmt.Sscanf(s.Text(), "MemAvailable:%d", &available)
+		case bytes.HasPrefix(s.Bytes(), []byte(`MemFree:`)):
+			_, err = fmt.Sscanf(s.Text(), "MemFree:%d", &free)
+		case bytes.HasPrefix(s.Bytes(), []byte(`Buffers:`)):
+			_, err = fmt.Sscanf(s.Text(), "Buffers:%d", &buffers)
+		case bytes.HasPrefix(s.Bytes(), []byte(`Cached:`)):
+			_, err = fmt.Sscanf(s.Text(), "Cached:%d", &cached)
+		default:
+			continue
+		}
+		if err != nil {
+			return mem, err
+		}
+
+		if total > 0 && available > 0 {
+			mem.TotalMemory = total * 1024
+			mem.FreeMemory = available * 1024
+			return mem, nil
+		}
+	}
+	mem.TotalMemory = total * 1024
+	mem.FreeMemory = (free + buffers + cached) * 1024
+	return mem, nil
 }

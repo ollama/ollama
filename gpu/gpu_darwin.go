@@ -42,6 +42,17 @@ func GetGPUInfo() GpuInfoList {
 	return []GpuInfo{info}
 }
 
+func GetCPUInfo() GpuInfoList {
+	mem, _ := GetCPUMem()
+	return []GpuInfo{
+		{
+			Library: "cpu",
+			Variant: GetCPUVariant(),
+			memInfo: mem,
+		},
+	}
+}
+
 func GetCPUMem() (memInfo, error) {
 	return memInfo{
 		TotalMemory: uint64(C.getPhysicalMemory()),

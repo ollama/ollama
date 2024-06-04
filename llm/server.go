@@ -37,8 +37,9 @@ type LlamaServer interface {
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
-	EstimatedVRAM() uint64
+	EstimatedVRAM() uint64 // Total VRAM across all GPUs
 	EstimatedTotal() uint64
+	EstimagedVRAMByGPU(gpuID string) uint64
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -49,10 +50,11 @@ type llmServer struct {
 	status  *StatusWriter
 	options api.Options
 
-	estimate     MemoryEstimate
-	totalLayers  uint64
-	gpuCount     int
-	loadDuration time.Duration // Record how long it took the model to load
+	estimate    MemoryEstimate
+	totalLayers uint64
+	// gpuCount     int
+	gpus         gpu.GpuInfoList // Recorded just before the model loaded, free space will be incorrect
+	loadDuration time.Duration   // Record how long it took the model to load
 	loadProgress float32
 
 	sem *semaphore.Weighted
@@ -80,12 +82,13 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	var cpuRunner string
 	var estimate MemoryEstimate
 	var systemMemory uint64
-	gpuCount := len(gpus)
-	if (len(gpus) == 1 && gpus[0].Library == "cpu") || opts.NumGPU == 0 {
-		// TODO evaluate system memory to see if we should block the load, or force an unload of another CPU runner
 
+	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
+	if opts.NumGPU == 0 {
+		gpus = gpu.GetCPUInfo()
+	}
+	if len(gpus) == 1 && gpus[0].Library == "cpu" {
 		cpuRunner = serverForCpu()
-		gpuCount = 0
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
 	} else {
 		if gpus[0].Library == "metal" {
@@ -107,7 +110,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
 			cpuRunner = serverForCpu()
-			gpuCount = 0
+			gpus = gpu.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
 		}
@@ -246,8 +249,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		if strings.HasPrefix(servers[i], "cpu") {
-			// TODO if we tried a gpu runner first, and it failed, record the error and bubble that back up
-			gpuCount = 0
+			gpus = gpu.GetCPUInfo()
 		}
 
 		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
@@ -310,7 +312,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			estimate:    estimate,
 			sem:         semaphore.NewWeighted(int64(numParallel)),
 			totalLayers: ggml.KV().BlockCount() + 1,
-			gpuCount:    gpuCount,
+			gpus:        gpus,
 			done:        make(chan error, 1),
 		}
 
@@ -1012,6 +1014,15 @@ func (s *llmServer) EstimatedVRAM() uint64 {
 
 func (s *llmServer) EstimatedTotal() uint64 {
 	return s.estimate.TotalSize
+}
+
+func (s *llmServer) EstimagedVRAMByGPU(gpuID string) uint64 {
+	for i, gpu := range s.gpus {
+		if gpu.ID == gpuID {
+			return s.estimate.GPUSizes[i]
+		}
+	}
+	return 0
 }
 
 func parseDurationMs(ms float64) time.Duration {

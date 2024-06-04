@@ -11,8 +11,6 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
   char buf[buflen + 1];
   int i;
 
-  LOG(1, "XXX starting nvml_init %s\n", nvml_lib_path);
-
   struct lookup {
     char *s;
     void **p;
@@ -37,13 +35,11 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
   }
 
   // TODO once we've squashed the remaining corner cases remove this log
-//   LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", nvml_lib_path);
+  // LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", nvml_lib_path);
   
-    LOG(1, "XXX wiring functions nvml_init\n");
-
   for (i = 0; l[i].s != NULL; i++) {
     // TODO once we've squashed the remaining corner cases remove this log
-    LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
+    // LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
 
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
     if (!l[i].p) {
@@ -58,7 +54,6 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
       return;
     }
   }
-    LOG(1, "XXX calling init_v2\n");
 
   ret = (*resp->ch.nvmlInit_v2)();
   if (ret != NVML_SUCCESS) {
@@ -69,8 +64,6 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
     resp->err = strdup(buf);
     return;
   }
-      LOG(1, "XXX nvml_init done\n");
-
 }
 
 
@@ -78,7 +71,6 @@ void nvml_get_free(nvml_handle_t h, int device_id, uint64_t *free, uint64_t *tot
     nvmlDevice_t device;
     nvmlMemory_t memInfo = {0};
     nvmlReturn_t ret;
-    LOG(1, "XXX in nvml_get_free\n");
     ret = (*h.nvmlDeviceGetHandleByIndex)(device_id, &device);
     if (ret != NVML_SUCCESS) {
         LOG(1, "unable to get device handle %d: %d", device_id, ret);
