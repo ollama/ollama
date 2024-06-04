@@ -46,7 +46,7 @@ func main() {
 	var clipCtx *llama.ClipContext
 
 	// multi-modal
-	if *ppath == "" {
+	if *ppath != "" {
 		clipCtx = llama.NewClipContext(*ppath)
 
 		// open image file
