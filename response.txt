@@ -1,0 +1,18 @@
+Hello! It's nice to meet you. Is there something I can help you with, or would you like to chat?
+
+[?2004h>>> [38;5;245mSend a message (/? for help)[28D[0m[Khsaeljkljfa
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+[?2004l

@@ -1,0 +1,8 @@
+[?2004h>>> [38;5;245mSend a message (/? for help)[28D[0m[Kfasdfsafasdfasf
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+Use Ctrl + d or /bye to exit.
+>>> [38;5;245mSend a message (/? for help)[28D[0m[K
+[?2004l
