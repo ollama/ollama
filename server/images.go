@@ -26,7 +26,6 @@ import (
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
@@ -453,7 +452,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						defer temp.Close()
 						defer os.Remove(temp.Name())
 
-						if err := llama.Quantize(blob, temp.Name(), want); err != nil {
+						if err := llm.Quantize(blob, temp.Name(), want); err != nil {
 							return err
 						}
 
