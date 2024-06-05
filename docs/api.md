@@ -12,6 +12,7 @@
 - [Pull a Model](#pull-a-model)
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
+- [List Running Models](#list-running-models)
 
 ## Conventions
 
@@ -1032,6 +1033,51 @@ curl http://localhost:11434/api/embeddings -d '{
   "embedding": [
     0.5670403838157654, 0.009260174818336964, 0.23178744316101074, -0.2916173040866852, -0.8924556970596313,
     0.8785552978515625, -0.34576427936553955, 0.5742510557174683, -0.04222835972905159, -0.137906014919281
+  ]
+}
+```
+
+## List Running Models
+```shell
+GET /api/ps
+```
+
+List models that are currently loaded into memory.
+
+\* If a model is loaded completely into system memory, `size_vram` is omitted from the response.
+
+#### Examples
+
+### Request
+```shell
+curl http://localhost:11434/api/ps
+```
+
+#### Response
+
+A single JSON object will be returned.
+
+```json
+{
+  "models": [
+    {
+      "name": "mistral:latest",
+      "model": "mistral:latest",
+      "size": 5137025024,
+      "digest": "2ae6f6dd7a3dd734790bbbf58b8909a606e0e7e97e94b7604e0aa7ae4490e6d8",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "llama",
+        "families": [
+          "llama"
+        ],
+        "parameter_size": "7.2B",
+        "quantization_level": "Q4_0"
+      },
+      "expires_at": "2024-06-04T14:38:31.83753-07:00",
+      "size_vram": 5137025024
+    }
   ]
 }
 ```
