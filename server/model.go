@@ -25,16 +25,14 @@ type layerWithGGML struct {
 }
 
 func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerWithGGML, err error) {
-	modelpath := ParseModelPath(name.String())
-	manifest, _, err := GetManifest(modelpath)
+	m, err := ParseNamedManifest(name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := PullModel(ctx, name.String(), &registryOptions{}, fn); err != nil {
 			return nil, err
 		}
 
-		modelpath = ParseModelPath(name.String())
-		manifest, _, err = GetManifest(modelpath)
+		m, err = ParseNamedManifest(name)
 		if err != nil {
 			return nil, err
 		}
@@ -42,8 +40,8 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		return nil, err
 	}
 
-	for _, layer := range manifest.Layers {
-		layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, modelpath.GetShortTagname())
+	for _, layer := range m.Layers {
+		layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, name.DisplayShortest())
 		if err != nil {
 			return nil, err
 		}
