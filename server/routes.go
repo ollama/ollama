@@ -730,7 +730,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 		return
 	}
 
-	models := []api.ModelResponse{}
+	models := []api.ListModelResponse{}
 	for n, m := range ms {
 		f, err := m.Config.Open()
 		if err != nil {
@@ -746,13 +746,12 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 		}
 
 		// tag should never be masked
-		modified := m.fi.ModTime()
-		models = append(models, api.ModelResponse{
+		models = append(models, api.ListModelResponse{
 			Model:      n.DisplayShortest(),
 			Name:       n.DisplayShortest(),
 			Size:       m.Size(),
 			Digest:     m.digest,
-			ModifiedAt: &modified,
+			ModifiedAt: m.fi.ModTime(),
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
@@ -763,7 +762,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 		})
 	}
 
-	slices.SortStableFunc(models, func(i, j api.ModelResponse) int {
+	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
 		// most recently modified first
 		return cmp.Compare(j.ModifiedAt.Unix(), i.ModifiedAt.Unix())
 	})
@@ -1140,7 +1139,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 }
 
 func (s *Server) ProcessHandler(c *gin.Context) {
-	models := []api.ModelResponse{}
+	models := []api.ProcessModelResponse{}
 
 	for _, v := range s.sched.loaded {
 		model := v.model
@@ -1152,28 +1151,27 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 			QuantizationLevel: model.Config.FileType,
 		}
 
-		mr := api.ModelResponse{
+		mr := api.ProcessModelResponse{
 			Model:     model.ShortName,
 			Name:      model.ShortName,
 			Size:      int64(v.estimatedTotal),
 			SizeVRAM:  int64(v.estimatedVRAM),
 			Digest:    model.Digest,
 			Details:   modelDetails,
-			ExpiresAt: &v.expiresAt,
+			ExpiresAt: v.expiresAt,
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
 		// calculate the time w/ the sessionDuration instead.
 		var epoch time.Time
 		if v.expiresAt == epoch {
-			expiresAt := time.Now().Add(v.sessionDuration)
-			mr.ExpiresAt = &expiresAt
+			mr.ExpiresAt = time.Now().Add(v.sessionDuration)
 		}
 
 		models = append(models, mr)
 	}
 
-	c.JSON(http.StatusOK, api.ListResponse{Models: models})
+	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
