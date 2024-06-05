@@ -746,12 +746,13 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 		}
 
 		// tag should never be masked
+		modified := m.fi.ModTime()
 		models = append(models, api.ModelResponse{
 			Model:      n.DisplayShortest(),
 			Name:       n.DisplayShortest(),
 			Size:       m.Size(),
 			Digest:     m.digest,
-			ModifiedAt: m.fi.ModTime(),
+			ModifiedAt: &modified,
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
@@ -1158,14 +1159,15 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 			SizeVRAM:  int64(v.estimatedVRAM),
 			Digest:    model.Digest,
 			Details:   modelDetails,
-			ExpiresAt: v.expiresAt,
+			ExpiresAt: &v.expiresAt,
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
 		// calculate the time w/ the sessionDuration instead.
 		var epoch time.Time
 		if v.expiresAt == epoch {
-			mr.ExpiresAt = time.Now().Add(v.sessionDuration)
+			expiresAt := time.Now().Add(v.sessionDuration)
+			mr.ExpiresAt = &expiresAt
 		}
 
 		models = append(models, mr)
