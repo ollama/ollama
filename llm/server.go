@@ -39,7 +39,7 @@ type LlamaServer interface {
 	Close() error
 	EstimatedVRAM() uint64 // Total VRAM across all GPUs
 	EstimatedTotal() uint64
-	EstimagedVRAMByGPU(gpuID string) uint64
+	EstimatedVRAMByGPU(gpuID string) uint64
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -1016,7 +1016,7 @@ func (s *llmServer) EstimatedTotal() uint64 {
 	return s.estimate.TotalSize
 }
 
-func (s *llmServer) EstimagedVRAMByGPU(gpuID string) uint64 {
+func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
 	for i, gpu := range s.gpus {
 		if gpu.ID == gpuID {
 			return s.estimate.GPUSizes[i]

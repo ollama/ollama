@@ -4,11 +4,7 @@ import (
 	"golang.org/x/sys/cpu"
 )
 
-func GetCPUVariant() string {
-	return getCPUCapability().ToVariant()
-}
-
-func getCPUCapability() CPUCapability {
+func GetCPUCapability() CPUCapability {
 	if cpu.X86.HasAVX2 {
 		return CPUCapabilityAVX2
 	}
@@ -16,5 +12,5 @@ func getCPUCapability() CPUCapability {
 		return CPUCapabilityAVX
 	}
 	// else LCD
-	return CPUCapabilityBase
+	return CPUCapabilityNone
 }

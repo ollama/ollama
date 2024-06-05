@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -69,13 +68,9 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 
 	// Conditional output size on GPU 0
 	var memoryLayerOutput uint64
-	var includeOutput bool
 
-	// One extra layer as a pad for each GPU
-	var layerBuffer uint64
-
-	// The sizes of the main layers
-	var layerSizes []uint64
+	// The sizes of a layer
+	var layerSize uint64
 
 	// The sum of all the layer sizes (just for logging)
 	var memoryWeights uint64
@@ -102,11 +97,16 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	layers := ggml.Tensors().Layers()
 	// add one layer worth of memory as a buffer
 	if blk0, ok := layers["blk.0"]; ok {
-		layerBuffer = blk0.size()
+		layerSize = blk0.size()
+	} else {
+		slog.Warn("model missing blk.0 layer size")
 	}
 
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
 	var kv uint64 = 2 * 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * ggml.KV().EmbeddingLength() / ggml.KV().HeadCount() * ggml.KV().HeadCountKV()
+
+	// KV is proportional to the number of layers
+	layerSize += kv / ggml.KV().BlockCount()
 
 	graphPartialOffload, graphFullOffload = ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)))
 	if graphPartialOffload == 0 {
@@ -119,6 +119,9 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	// on metal there's no partial offload overhead
 	if gpus[0].Library == "metal" {
 		graphPartialOffload = graphFullOffload
+	} else if len(gpus) > 1 {
+		// multigpu should always use the partial graph size
+		graphFullOffload = graphPartialOffload
 	}
 
 	if layer, ok := layers["output_norm"]; ok {
@@ -130,16 +133,8 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		memoryLayerOutput += layer.size()
 	}
 
-	if gpus[0].Library == "metal" && opts.UseMMap {
-		includeOutput = true
-	} else if gpus[0].Library != "metal" || !opts.UseMMap {
-		includeOutput = true
-	}
-
+	// Output layer handled at the end if we have space
 	gpuZeroOverhead := projectorSize
-	if includeOutput {
-		gpuZeroOverhead += memoryLayerOutput
-	}
 
 	// Reduce set of GPUs to only those that have sufficient space to fit overhead and at least one layer
 	var layerCount int
@@ -156,12 +151,12 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 			gzo = gpuZeroOverhead
 		}
 		// Only include GPUs that can fit the graph, gpu minimum, the layer buffer and at least more layer
-		if gpus[i].FreeMemory < gzo+max(graphPartialOffload, graphFullOffload)+gpus[i].MinimumMemory+2*layerBuffer {
+		if gpus[i].FreeMemory < gzo+max(graphPartialOffload, graphFullOffload)+gpus[i].MinimumMemory+2*layerSize {
 			slog.Debug("gpu has too little memory to allocate any layers", "gpu", gpus[i])
 			continue
 		}
 		gpusWithSpace = append(gpusWithSpace, gs{i, &gpus[i]})
-		gpuAllocations[i] += gpus[i].MinimumMemory + layerBuffer // We hold off on graph until we know partial vs. full
+		gpuAllocations[i] += gpus[i].MinimumMemory + layerSize // We hold off on graph until we know partial vs. full
 	}
 
 	var gpuZeroID int
@@ -170,23 +165,10 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		gpuAllocations[gpuZeroID] += gpuZeroOverhead
 	}
 
-	layerSizes = make([]uint64, int(ggml.KV().BlockCount()))
-	for i := range int(ggml.KV().BlockCount()) {
-		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
-			memoryLayer := blk.size()
-
-			// KV is proportional to the number of layers
-			memoryLayer += kv / ggml.KV().BlockCount()
-			layerSizes[i] = memoryLayer
-			memoryWeights += memoryLayer
-		}
-	}
-
 	// For all the layers, find where they can fit on the GPU(s)
-	for i := range layerSizes {
-		if layerSizes[i] == 0 {
-			continue
-		}
+	for i := range int(ggml.KV().BlockCount()) {
+		memoryWeights += layerSize
+
 		if opts.NumGPU >= 0 && layerCount >= opts.NumGPU {
 			// Stop allocating on GPU(s) once we hit the users target NumGPU
 			continue
@@ -196,8 +178,8 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		for j := len(gpusWithSpace); j > 0; j-- {
 			g := gpusWithSpace[i%j]
 			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
-			if g.g.FreeMemory > used+layerSizes[i] {
-				gpuAllocations[g.i] += layerSizes[i]
+			if g.g.FreeMemory > used+layerSize {
+				gpuAllocations[g.i] += layerSize
 				layerCounts[g.i]++
 				layerCount++
 				break
@@ -205,17 +187,18 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 				gpusWithSpace = append(gpusWithSpace[:i%j], gpusWithSpace[i%j+1:]...)
 			}
 		}
-
 	}
 	if layerCount >= int(ggml.KV().BlockCount()) {
 		fullyLoaded = true
 	} else {
 		for i := layerCount; i < int(ggml.KV().BlockCount()); i++ {
-			overflow += layerSizes[i]
+			overflow += layerSize
 		}
 	}
-	// Find where the output fits
-	if includeOutput && memoryLayerOutput > 0 && (opts.NumGPU < 0 || layerCount < opts.NumGPU) {
+
+	// Determine if we need to consider output then find where it fits
+	if ((gpus[0].Library == "metal" && opts.UseMMap) || (gpus[0].Library != "metal" || !opts.UseMMap)) &&
+		memoryLayerOutput > 0 && (opts.NumGPU < 0 || layerCount < opts.NumGPU) {
 		for j := len(gpusWithSpace); j > 0; j-- {
 			g := gpusWithSpace[layerCount%j]
 			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
@@ -226,6 +209,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 				break
 			}
 		}
+
 		if layerCount < int(ggml.KV().BlockCount())+1 {
 			fullyLoaded = false
 			overflow += memoryLayerOutput
@@ -253,7 +237,6 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	var memoryRequiredPartial, memoryRequiredTotal uint64
 	for i := range gpuAllocations {
 		memoryRequiredPartial += gpuAllocations[i]
-
 	}
 	memoryRequiredTotal = memoryRequiredPartial + overflow
 

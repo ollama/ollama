@@ -11,8 +11,6 @@ package gpu
 */
 import "C"
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -66,54 +64,6 @@ var RocmComputeMin = 9
 // TODO find a better way to detect iGPU instead of minimum memory
 const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
 
-var CudartLinuxGlobs = []string{
-	"/usr/local/cuda/lib64/libcudart.so*",
-	"/usr/lib/x86_64-linux-gnu/nvidia/current/libcudart.so*",
-	"/usr/lib/x86_64-linux-gnu/libcudart.so*",
-	"/usr/lib/wsl/lib/libcudart.so*",
-	"/usr/lib/wsl/drivers/*/libcudart.so*",
-	"/opt/cuda/lib64/libcudart.so*",
-	"/usr/local/cuda*/targets/aarch64-linux/lib/libcudart.so*",
-	"/usr/lib/aarch64-linux-gnu/nvidia/current/libcudart.so*",
-	"/usr/lib/aarch64-linux-gnu/libcudart.so*",
-	"/usr/local/cuda/lib*/libcudart.so*",
-	"/usr/lib*/libcudart.so*",
-	"/usr/local/lib*/libcudart.so*",
-}
-
-var CudartWindowsGlobs = []string{
-	"c:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v*\\bin\\cudart64_*.dll",
-}
-
-var NvmlWindowsGlobs = []string{
-	"c:\\Windows\\System32\\nvml.dll",
-}
-
-var NvcudaLinuxGlobs = []string{
-	"/usr/local/cuda*/targets/*/lib/libcuda.so*",
-	"/usr/lib/*-linux-gnu/nvidia/current/libcuda.so*",
-	"/usr/lib/*-linux-gnu/libcuda.so*",
-	"/usr/lib/wsl/lib/libcuda.so*",
-	"/usr/lib/wsl/drivers/*/libcuda.so*",
-	"/opt/cuda/lib*/libcuda.so*",
-	"/usr/local/cuda/lib*/libcuda.so*",
-	"/usr/lib*/libcuda.so*",
-	"/usr/local/lib*/libcuda.so*",
-}
-
-var NvcudaWindowsGlobs = []string{
-	"c:\\windows\\system*\\nvcuda.dll",
-}
-
-var OneapiWindowsGlobs = []string{
-	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
-}
-
-var OneapiLinuxGlobs = []string{
-	"/usr/lib/x86_64-linux-gnu/libze_intel_gpu.so*",
-	"/usr/lib*/libze_intel_gpu.so*",
-}
-
 // Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
@@ -139,47 +89,24 @@ func initCudaHandles() *cudaHandles {
 	}
 
 	slog.Debug("searching for GPU discovery libraries for NVIDIA")
-	var cudartMgmtName string
 	var cudartMgmtPatterns []string
-	var nvcudaMgmtName string
-	var nvcudaMgmtPatterns []string
-	var nvmlMgmtName string
-	var nvmlMgmtPatterns []string
 
-	tmpDir, _ := PayloadsDir()
-	switch runtime.GOOS {
-	case "windows":
-		cudartMgmtName = "cudart64_*.dll"
+	// Aligned with driver, we can't carry as payloads
+	nvcudaMgmtPatterns := NvcudaGlobs
+
+	if runtime.GOOS == "windows" {
 		localAppData := os.Getenv("LOCALAPPDATA")
-		cudartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", cudartMgmtName)}
-		cudartMgmtPatterns = append(cudartMgmtPatterns, CudartWindowsGlobs...)
-		// Aligned with driver, we can't carry as payloads
-		nvcudaMgmtName = "nvcuda.dll"
-		nvcudaMgmtPatterns = NvcudaWindowsGlobs
-
-		// Use nvml to refresh free memory on windows only
-		nvmlMgmtName = "nvml.dll"
-		nvmlMgmtPatterns = make([]string, len(NvmlWindowsGlobs))
-		copy(nvmlMgmtPatterns, NvmlWindowsGlobs)
-
-	case "linux":
-		cudartMgmtName = "libcudart.so*"
-		if tmpDir != "" {
-			// TODO - add "payloads" for subprocess
-			cudartMgmtPatterns = []string{filepath.Join(tmpDir, "cuda*", cudartMgmtName)}
-		}
-		cudartMgmtPatterns = append(cudartMgmtPatterns, CudartLinuxGlobs...)
-		// Aligned with driver, we can't carry as payloads
-		nvcudaMgmtName = "libcuda.so*"
-		nvcudaMgmtPatterns = NvcudaLinuxGlobs
-
-		// nvml omitted on linux
-	default:
-		return cHandles
+		cudartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", CudartMgmtName)}
 	}
+	tmpDir, _ := PayloadsDir()
+	if tmpDir != "" {
+		// TODO - add "payloads" for subprocess
+		cudartMgmtPatterns = []string{filepath.Join(tmpDir, "cuda*", CudartMgmtName)}
+	}
+	cudartMgmtPatterns = append(cudartMgmtPatterns, CudartGlobs...)
 
-	if len(nvmlMgmtPatterns) > 0 {
-		nvmlLibPaths := FindGPULibs(nvmlMgmtName, nvmlMgmtPatterns)
+	if len(NvmlGlobs) > 0 {
+		nvmlLibPaths := FindGPULibs(NvmlMgmtName, NvmlGlobs)
 		if len(nvmlLibPaths) > 0 {
 			nvml, libPath := LoadNVMLMgmt(nvmlLibPaths)
 			if nvml != nil {
@@ -190,7 +117,7 @@ func initCudaHandles() *cudaHandles {
 		}
 	}
 
-	nvcudaLibPaths := FindGPULibs(nvcudaMgmtName, nvcudaMgmtPatterns)
+	nvcudaLibPaths := FindGPULibs(NvcudaMgmtName, nvcudaMgmtPatterns)
 	if len(nvcudaLibPaths) > 0 {
 		deviceCount, nvcuda, libPath := LoadNVCUDAMgmt(nvcudaLibPaths)
 		if nvcuda != nil {
@@ -202,7 +129,7 @@ func initCudaHandles() *cudaHandles {
 		}
 	}
 
-	cudartLibPaths := FindGPULibs(cudartMgmtName, cudartMgmtPatterns)
+	cudartLibPaths := FindGPULibs(CudartMgmtName, cudartMgmtPatterns)
 	if len(cudartLibPaths) > 0 {
 		deviceCount, cudart, libPath := LoadCUDARTMgmt(cudartLibPaths)
 		if cudart != nil {
@@ -220,8 +147,6 @@ func initCudaHandles() *cudaHandles {
 // Note: gpuMutex must already be held
 func initOneAPIHandles() *oneapiHandles {
 	oHandles := &oneapiHandles{}
-	var oneapiMgmtName string
-	var oneapiMgmtPatterns []string
 
 	// Short Circuit if we already know which library to use
 	if oneapiLibPath != "" {
@@ -229,18 +154,7 @@ func initOneAPIHandles() *oneapiHandles {
 		return oHandles
 	}
 
-	switch runtime.GOOS {
-	case "windows":
-		oneapiMgmtName = "ze_intel_gpu64.dll"
-		oneapiMgmtPatterns = OneapiWindowsGlobs
-	case "linux":
-		oneapiMgmtName = "libze_intel_gpu.so"
-		oneapiMgmtPatterns = OneapiLinuxGlobs
-	default:
-		return oHandles
-	}
-
-	oneapiLibPaths := FindGPULibs(oneapiMgmtName, oneapiMgmtPatterns)
+	oneapiLibPaths := FindGPULibs(OneapiMgmtName, OneapiGlobs)
 	if len(oneapiLibPaths) > 0 {
 		oHandles.deviceCount, oHandles.oneapi, oneapiLibPath = LoadOneapiMgmt(oneapiLibPaths)
 	}
@@ -290,7 +204,7 @@ func GetGPUInfo() GpuInfoList {
 	if !bootstrapped {
 		slog.Debug("Detecting GPUs")
 		needRefresh = false
-		cpuCapability = getCPUCapability()
+		cpuCapability = GetCPUCapability()
 		var memInfo C.mem_info_t
 
 		mem, err := GetCPUMem()
@@ -301,14 +215,14 @@ func GetGPUInfo() GpuInfoList {
 			GpuInfo: GpuInfo{
 				memInfo: mem,
 				Library: "cpu",
-				Variant: cpuCapability.ToVariant(),
+				Variant: cpuCapability,
 				ID:      "0",
 			},
 		}}
 
 		// Fallback to CPU mode if we're lacking required vector extensions on x86
 		if cpuCapability < GPURunnerCPUCapability && runtime.GOARCH == "amd64" {
-			slog.Warn("CPU does not have minimum vector extensions, GPU inference disabled", "required", GPURunnerCPUCapability.ToString(), "detected", cpuCapability.ToString())
+			slog.Warn("CPU does not have minimum vector extensions, GPU inference disabled", "required", GPURunnerCPUCapability, "detected", cpuCapability)
 			bootstrapped = true
 			// No need to do any GPU discovery, since we can't run on them
 			return GpuInfoList{cpus[0].GpuInfo}
@@ -357,8 +271,8 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.MinimumMemory = cudaMinimumMemory
 				gpuInfo.DependencyPath = depPath
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-				gpuInfo.DriverMajor = int(driverMajor)
-				gpuInfo.DriverMinor = int(driverMinor)
+				gpuInfo.DriverMajor = driverMajor
+				gpuInfo.DriverMinor = driverMinor
 
 				// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
 				cudaGPUs = append(cudaGPUs, gpuInfo)
@@ -374,16 +288,16 @@ func GetGPUInfo() GpuInfoList {
 				continue
 			}
 			devCount := C.oneapi_get_device_count(*oHandles.oneapi, C.int(d))
-			for i := 0; i < int(devCount); i++ {
+			for i := range devCount {
 				gpuInfo := OneapiGPUInfo{
 					GpuInfo: GpuInfo{
 						Library: "oneapi",
 					},
 					driverIndex: d,
-					gpuIndex:    i,
+					gpuIndex:    int(i),
 				}
 				// TODO - split bootstrapping from updating free memory
-				C.oneapi_check_vram(*oHandles.oneapi, C.int(d), C.int(i), &memInfo)
+				C.oneapi_check_vram(*oHandles.oneapi, C.int(d), i, &memInfo)
 				// TODO - convert this to MinimumMemory based on testing...
 				var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
 				memInfo.free = C.uint64_t(totalFreeMem)
@@ -503,22 +417,6 @@ func GetGPUInfo() GpuInfoList {
 		resp = append(resp, cpus[0].GpuInfo)
 	}
 	return resp
-}
-
-func GetCPUMem() (memInfo, error) {
-	if runtime.GOOS == "linux" {
-		return GetLinuxMemInfo()
-	}
-	var ret memInfo
-	var info C.mem_info_t
-	C.cpu_check_ram(&info)
-	if info.err != nil {
-		defer C.free(unsafe.Pointer(info.err))
-		return ret, fmt.Errorf(C.GoString(info.err))
-	}
-	ret.FreeMemory = uint64(info.free)
-	ret.TotalMemory = uint64(info.total)
-	return ret, nil
 }
 
 func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
@@ -646,7 +544,7 @@ func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
 			slog.Debug("Unable to load oneAPI management library", "library", libPath, "error", C.GoString(resp.err))
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			for i := 0; i < int(resp.oh.num_drivers); i++ {
+			for i := range resp.oh.num_drivers {
 				num_devices += int(C.oneapi_get_device_count(resp.oh, C.int(i)))
 			}
 			return num_devices, &resp.oh, libPath
@@ -681,43 +579,4 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 		slog.Debug("no filter required for library " + l[0].Library)
 		return "", ""
 	}
-}
-
-func GetLinuxMemInfo() (memInfo, error) {
-	var mem memInfo
-	var total, available, free, buffers, cached uint64
-	f, err := os.Open("/proc/meminfo")
-	if err != nil {
-		return mem, err
-	}
-	defer f.Close()
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		switch {
-		case bytes.HasPrefix(s.Bytes(), []byte(`MemTotal:`)):
-			_, err = fmt.Sscanf(s.Text(), "MemTotal:%d", &total)
-		case bytes.HasPrefix(s.Bytes(), []byte(`MemAvailable:`)):
-			_, err = fmt.Sscanf(s.Text(), "MemAvailable:%d", &available)
-		case bytes.HasPrefix(s.Bytes(), []byte(`MemFree:`)):
-			_, err = fmt.Sscanf(s.Text(), "MemFree:%d", &free)
-		case bytes.HasPrefix(s.Bytes(), []byte(`Buffers:`)):
-			_, err = fmt.Sscanf(s.Text(), "Buffers:%d", &buffers)
-		case bytes.HasPrefix(s.Bytes(), []byte(`Cached:`)):
-			_, err = fmt.Sscanf(s.Text(), "Cached:%d", &cached)
-		default:
-			continue
-		}
-		if err != nil {
-			return mem, err
-		}
-
-		if total > 0 && available > 0 {
-			mem.TotalMemory = total * 1024
-			mem.FreeMemory = available * 1024
-			return mem, nil
-		}
-	}
-	mem.TotalMemory = total * 1024
-	mem.FreeMemory = (free + buffers + cached) * 1024
-	return mem, nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -124,7 +125,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 					TotalMemory: totalMemory,
 					FreeMemory:  freeMemory,
 				},
-				ID:             fmt.Sprintf("%d", i), // TODO this is probably wrong if we specify visible devices
+				ID:             strconv.Itoa(i), // TODO this is probably wrong if we specify visible devices
 				DependencyPath: libDir,
 				MinimumMemory:  rocmMinimumMemory,
 				Name:           name,

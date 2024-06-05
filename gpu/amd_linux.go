@@ -178,7 +178,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 		// Shouldn't happen, but just in case...
 		if gpuID < 0 {
 			slog.Error("unexpected amdgpu sysfs data resulted in negative GPU ID, please set OLLAMA_DEBUG=1 and report an issue")
-			return []RocmGPUInfo{}
+			return nil
 		}
 
 		if int(major) < RocmComputeMin {
@@ -205,22 +205,17 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			matched := true
 			for _, m := range mapping {
 				if m.id == 0 {
+					// Null ID means it didn't populate, so we can't use it to match
 					continue
 				}
 				filename := filepath.Join(devDir, m.filename)
-				fp, err := os.Open(filename)
-				if err != nil {
-					slog.Debug("failed to open sysfs node", "file", filename, "error", err)
-					matched = false
-					break
-				}
-				defer fp.Close()
-				buf, err := io.ReadAll(fp)
+				buf, err := os.ReadFile(filename)
 				if err != nil {
 					slog.Debug("failed to read sysfs node", "file", filename, "error", err)
 					matched = false
 					break
 				}
+				// values here are in hex, strip off the lead 0x and parse so we can compare the numeric (decimal) values in amdgpu
 				cmp, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(string(buf)), "0x"), 16, 64)
 				if err != nil {
 					slog.Debug("failed to parse sysfs node", "file", filename, "error", err)
@@ -239,13 +234,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			// Found the matching DRM directory
 			slog.Debug("matched", "amdgpu", match, "drm", devDir)
 			totalFile := filepath.Join(devDir, DRMTotalMemoryFile)
-			totalFp, err := os.Open(totalFile)
-			if err != nil {
-				slog.Debug("failed to open sysfs node", "file", totalFile, "error", err)
-				break
-			}
-			defer totalFp.Close()
-			buf, err := io.ReadAll(totalFp)
+			buf, err := os.ReadFile(totalFile)
 			if err != nil {
 				slog.Debug("failed to read sysfs node", "file", totalFile, "error", err)
 				break
@@ -284,7 +273,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 					TotalMemory: totalMemory,
 					FreeMemory:  (totalMemory - usedMemory),
 				},
-				ID:            fmt.Sprintf("%d", gpuID),
+				ID:            strconv.Itoa(gpuID),
 				Name:          name,
 				Compute:       fmt.Sprintf("gfx%d%x%x", major, minor, patch),
 				MinimumMemory: rocmMinimumMemory,
@@ -315,7 +304,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			libDir, err = AMDValidateLibDir()
 			if err != nil {
 				slog.Warn("unable to verify rocm library, will use cpu", "error", err)
-				return []RocmGPUInfo{}
+				return nil
 			}
 		}
 		gpuInfo.DependencyPath = libDir
@@ -326,7 +315,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 				supported, err = GetSupportedGFX(libDir)
 				if err != nil {
 					slog.Warn("failed to lookup supported GFX types, falling back to CPU mode", "error", err)
-					return []RocmGPUInfo{}
+					return nil
 				}
 				slog.Debug("rocm supported GPUs", "types", supported)
 			}
@@ -434,12 +423,7 @@ func (gpus RocmGPUInfoList) RefreshFreeMemory() error {
 }
 
 func getFreeMemory(usedFile string) (uint64, error) {
-	usedFp, err := os.Open(usedFile)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open sysfs node %s %w", usedFile, err)
-	}
-	defer usedFp.Close()
-	buf, err := io.ReadAll(usedFp)
+	buf, err := os.ReadFile(usedFile)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read sysfs node %s %w", usedFile, err)
 	}

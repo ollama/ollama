@@ -11,7 +11,8 @@ import (
 )
 
 func TestContextExhaustion(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute) // Longer needed for small footprint GPUs
+	// Longer needed for small footprint GPUs
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	// Set up the test data
 	req := api.GenerateRequest{

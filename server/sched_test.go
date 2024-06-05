@@ -156,7 +156,7 @@ func TestRequests(t *testing.T) {
 
 	// Same model, same request
 	scenario1a := newScenario(t, ctx, "ollama-model-1", 10)
-	scenario1a.req.sessionDuration = 0
+	scenario1a.req.sessionDuration = 5 * time.Millisecond
 	scenario1b := newScenario(t, ctx, "ollama-model-1", 11)
 	scenario1b.req.model = scenario1a.req.model
 	scenario1b.ggml = scenario1a.ggml
@@ -167,6 +167,7 @@ func TestRequests(t *testing.T) {
 	tmpModel := *scenario1a.req.model
 	scenario2a.req.model = &tmpModel
 	scenario2a.ggml = scenario1a.ggml
+	scenario2a.req.sessionDuration = 5 * time.Millisecond
 
 	// Multiple loaded models
 	scenario3a := newScenario(t, ctx, "ollama-model-3a", 1*format.GigaByte)
@@ -316,7 +317,6 @@ func TestGetRunner(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
 
-	// Same model, same request
 	scenario1a := newScenario(t, ctx, "ollama-model-1a", 10)
 	scenario1a.req.sessionDuration = 0
 	scenario1b := newScenario(t, ctx, "ollama-model-1b", 10)
@@ -475,6 +475,40 @@ func TestUpdateFreeSpace(t *testing.T) {
 	require.Equal(t, uint64(2000-50-75), gpus[1].FreeMemory)
 }
 
+func TestFilterGPUsWithoutLoadingModels(t *testing.T) {
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer done()
+	gpus := gpu.GpuInfoList{
+		{
+			Library: "cuda",
+			ID:      "0",
+		},
+		{
+			Library: "cuda",
+			ID:      "1",
+		},
+	}
+	r1 := &runnerRef{gpus: gpu.GpuInfoList{gpus[0]}, loading: true}
+
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	s.loaded["a"] = r1
+	s.loadedMu.Unlock()
+
+	tmp := s.filterGPUsWithoutLoadingModels(gpus)
+	require.Len(t, tmp, 1)
+	require.Equal(t, "1", tmp[0].ID)
+
+	r1.gpus = gpu.GpuInfoList{gpus[1]}
+	tmp = s.filterGPUsWithoutLoadingModels(gpus)
+	require.Len(t, tmp, 1)
+	require.Equal(t, "0", tmp[0].ID)
+
+	r1.gpus = gpu.GpuInfoList{}
+	tmp = s.filterGPUsWithoutLoadingModels(gpus)
+	require.Len(t, tmp, 2)
+}
+
 func TestFindRunnerToUnload(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
@@ -607,4 +641,4 @@ func (s *mockLlm) Close() error {
 }
 func (s *mockLlm) EstimatedVRAM() uint64                  { return s.estimatedVRAM }
 func (s *mockLlm) EstimatedTotal() uint64                 { return s.estimatedTotal }
-func (s *mockLlm) EstimagedVRAMByGPU(gpuid string) uint64 { return s.estimatedVRAMByGPU[gpuid] }
+func (s *mockLlm) EstimatedVRAMByGPU(gpuid string) uint64 { return s.estimatedVRAMByGPU[gpuid] }

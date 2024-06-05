@@ -18,7 +18,7 @@ type GpuInfo struct {
 	Library string `json:"library,omitempty"`
 
 	// Optional variant to select (e.g. versions, cpu feature flags)
-	Variant string `json:"variant,omitempty"`
+	Variant CPUCapability `json:"variant"`
 
 	// MinimumMemory represents the minimum memory required to use the GPU
 	MinimumMemory uint64 `json:"-"`
@@ -44,21 +44,21 @@ type CPUInfo struct {
 
 type CudaGPUInfo struct {
 	GpuInfo
-	index int // nolint: unused
+	index int //nolint:unused,nolintlint
 }
 type CudaGPUInfoList []CudaGPUInfo
 
 type RocmGPUInfo struct {
 	GpuInfo
-	usedFilepath string // nolint: unused
-	index        int    // nolint: unused
+	usedFilepath string //nolint:unused,nolintlint
+	index        int    //nolint:unused,nolintlint
 }
 type RocmGPUInfoList []RocmGPUInfo
 
 type OneapiGPUInfo struct {
 	GpuInfo
-	driverIndex int // nolint: unused
-	gpuIndex    int // nolint: unused
+	driverIndex int //nolint:unused,nolintlint
+	gpuIndex    int //nolint:unused,nolintlint
 }
 type OneapiGPUInfoList []OneapiGPUInfo
 
@@ -71,8 +71,8 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	for _, info := range l {
 		found := false
 		requested := info.Library
-		if info.Variant != "" {
-			requested += "_" + info.Variant
+		if info.Variant != CPUCapabilityNone {
+			requested += "_" + info.Variant.String()
 		}
 		for i, lib := range libs {
 			if lib == requested {
@@ -117,30 +117,19 @@ type CPUCapability uint32
 var GPURunnerCPUCapability = CPUCapabilityAVX
 
 const (
-	CPUCapabilityBase CPUCapability = iota
+	CPUCapabilityNone CPUCapability = iota
 	CPUCapabilityAVX
 	CPUCapabilityAVX2
 	// TODO AVX512
 )
 
-func (c CPUCapability) ToString() string {
-	switch c {
-	case CPUCapabilityAVX:
-		return "AVX"
-	case CPUCapabilityAVX2:
-		return "AVX2"
-	default:
-		return "no vector extensions"
-	}
-}
-
-func (c CPUCapability) ToVariant() string {
+func (c CPUCapability) String() string {
 	switch c {
 	case CPUCapabilityAVX:
 		return "avx"
 	case CPUCapabilityAVX2:
 		return "avx2"
 	default:
-		return ""
+		return "no vector extensions"
 	}
 }

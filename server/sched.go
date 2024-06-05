@@ -182,7 +182,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						// We want to avoid loading on any GPUs that have other
 						// models still loading on them to avoid potential races
 						// with VRAM consumption ramping up during load
-						availGpus := s.filterGPUsWithLoadingModels(gpus)
+						availGpus := s.filterGPUsWithoutLoadingModels(gpus)
 
 						// Update free memory from currently loaded models
 						s.updateFreeSpace(availGpus)
@@ -414,9 +414,7 @@ func (s *Scheduler) updateFreeSpace(allGpus gpu.GpuInfoList) {
 		r.refMu.Lock()
 		if r.llama != nil {
 			for _, gpu := range allGpus {
-				// if slices.Contains(gpuIDs, gpu.ID) {
-				predMap[predKey{gpu.Library, gpu.ID}] += r.llama.EstimagedVRAMByGPU(gpu.ID)
-				// }
+				predMap[predKey{gpu.Library, gpu.ID}] += r.llama.EstimatedVRAMByGPU(gpu.ID)
 			}
 		} else {
 			slog.Warn("unexpected nil runner reference, memory prediction may be incorrect")
@@ -448,7 +446,7 @@ func (s *Scheduler) updateFreeSpace(allGpus gpu.GpuInfoList) {
 // to avoid scheduling another model on the same GPU(s) that haven't stabilized.
 // This routine returns the set of GPUs that do not have an active loading model.
 // If all GPUs have loading models, an empty list will be returned (not a single CPU entry)
-func (s *Scheduler) filterGPUsWithLoadingModels(allGpus gpu.GpuInfoList) gpu.GpuInfoList {
+func (s *Scheduler) filterGPUsWithoutLoadingModels(allGpus gpu.GpuInfoList) gpu.GpuInfoList {
 	ret := append(gpu.GpuInfoList{}, allGpus...)
 	s.loadedMu.Lock()
 	defer s.loadedMu.Unlock()
@@ -702,5 +700,4 @@ func (s *Scheduler) maybeFindCPURunnerToUnload(req *LlmRequest, ggml *llm.GGML, 
 	// TODO - optimization: try to find CPU only runners first, or partial offloads with enough in system memory to make room
 
 	return s.findRunnerToUnload()
-
 }
