@@ -190,13 +190,11 @@ func LoadConfig() {
 		)
 	}
 
-	additionalOrigins := []string{
+	AllowOrigins = append(AllowOrigins,
 		"app://*",
 		"file://*",
-		"chrome-extension://*",
-	}
-
-	AllowOrigins = append(AllowOrigins, additionalOrigins...)
+		"tauri://*",
+	)
 
 	maxRunners := clean("OLLAMA_MAX_LOADED_MODELS")
 	if maxRunners != "" {
