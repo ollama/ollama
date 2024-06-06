@@ -190,6 +190,14 @@ func LoadConfig() {
 		)
 	}
 
+	additionalOrigins := []string{
+		"app://*",
+		"file://*",
+		"chrome-extension://*",
+	}
+
+	AllowOrigins = append(AllowOrigins, additionalOrigins...)
+
 	maxRunners := clean("OLLAMA_MAX_LOADED_MODELS")
 	if maxRunners != "" {
 		m, err := strconv.Atoi(maxRunners)
