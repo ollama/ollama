@@ -116,6 +116,8 @@ func Test_Routes(t *testing.T) {
 				body, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
 
+				assert.NotContains(t, string(body), "expires_at")
+
 				var modelList api.ListResponse
 				err = json.Unmarshal(body, &modelList)
 				require.NoError(t, err)

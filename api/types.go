@@ -282,19 +282,33 @@ type PushRequest struct {
 
 // ListResponse is the response from [Client.List].
 type ListResponse struct {
-	Models []ModelResponse `json:"models"`
+	Models []ListModelResponse `json:"models"`
 }
 
-// ModelResponse is a single model description in [ListResponse].
-type ModelResponse struct {
+// ProcessResponse is the response from [Client.Process].
+type ProcessResponse struct {
+	Models []ProcessModelResponse `json:"models"`
+}
+
+// ListModelResponse is a single model description in [ListResponse].
+type ListModelResponse struct {
 	Name       string       `json:"name"`
 	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at,omitempty"`
+	ModifiedAt time.Time    `json:"modified_at"`
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
 	Details    ModelDetails `json:"details,omitempty"`
-	ExpiresAt  time.Time    `json:"expires_at,omitempty"`
-	SizeVRAM   int64        `json:"size_vram,omitempty"`
+}
+
+// ProcessModelResponse is a single model description in [ProcessResponse].
+type ProcessModelResponse struct {
+	Name      string       `json:"name"`
+	Model     string       `json:"model"`
+	Size      int64        `json:"size"`
+	Digest    string       `json:"digest"`
+	Details   ModelDetails `json:"details,omitempty"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	SizeVRAM  int64        `json:"size_vram"`
 }
 
 type TokenResponse struct {
