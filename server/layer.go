@@ -80,11 +80,34 @@ func NewLayerFromLayer(digest, mediatype, from string) (*Layer, error) {
 	}, nil
 }
 
-func (l *Layer) Open() (io.ReadCloser, error) {
+func (l *Layer) Open() (io.ReadSeekCloser, error) {
 	blob, err := GetBlobsPath(l.Digest)
 	if err != nil {
 		return nil, err
 	}
 
 	return os.Open(blob)
+}
+
+func (l *Layer) Remove() error {
+	ms, err := Manifests()
+	if err != nil {
+		return err
+	}
+
+	for _, m := range ms {
+		for _, layer := range append(m.Layers, m.Config) {
+			if layer.Digest == l.Digest {
+				// something is using this layer
+				return nil
+			}
+		}
+	}
+
+	blob, err := GetBlobsPath(l.Digest)
+	if err != nil {
+		return err
+	}
+
+	return os.Remove(blob)
 }

@@ -9,9 +9,26 @@ linters:
     - contextcheck
     - exportloopref
     - gocheckcompilerdirectives
-    # FIXME: for some reason this errors on windows
+    # conditionally enable this on linux/macos
     # - gofmt
     # - goimports
+    - intrange
     - misspell
     - nilerr
+    - nolintlint
+    - nosprintfhostport
+    - testifylint
+    - unconvert
     - unused
+    - wastedassign
+    - whitespace
+    - usestdlibvars
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - gofmt
+        - goimports
+        - intrange
+        - usestdlibvars
+      severity: info

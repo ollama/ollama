@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 )
 
 type Prompt struct {
@@ -63,7 +62,7 @@ func New(prompt Prompt) (*Instance, error) {
 
 func (i *Instance) Readline() (string, error) {
 	if !i.Terminal.rawmode {
-		fd := int(syscall.Stdin)
+		fd := os.Stdin.Fd()
 		termios, err := SetRawMode(fd)
 		if err != nil {
 			return "", err
@@ -80,8 +79,8 @@ func (i *Instance) Readline() (string, error) {
 	fmt.Print(prompt)
 
 	defer func() {
-		fd := int(syscall.Stdin)
-		// nolint: errcheck
+		fd := os.Stdin.Fd()
+		//nolint:errcheck
 		UnsetRawMode(fd, i.Terminal.termios)
 		i.Terminal.rawmode = false
 	}()
@@ -136,7 +135,7 @@ func (i *Instance) Readline() (string, error) {
 				buf.MoveRight()
 			case CharBracketedPaste:
 				var code string
-				for cnt := 0; cnt < 3; cnt++ {
+				for range 3 {
 					r, err = i.Terminal.Read()
 					if err != nil {
 						return "", io.EOF
@@ -150,7 +149,7 @@ func (i *Instance) Readline() (string, error) {
 					i.Pasting = false
 				}
 			case KeyDel:
-				if buf.Size() > 0 {
+				if buf.DisplaySize() > 0 {
 					buf.Delete()
 				}
 				metaDel = true
@@ -198,11 +197,11 @@ func (i *Instance) Readline() (string, error) {
 			buf.Remove()
 		case CharTab:
 			// todo: convert back to real tabs
-			for cnt := 0; cnt < 8; cnt++ {
+			for range 8 {
 				buf.Add(' ')
 			}
 		case CharDelete:
-			if buf.Size() > 0 {
+			if buf.DisplaySize() > 0 {
 				buf.Delete()
 			} else {
 				return "", io.EOF
@@ -216,7 +215,7 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
-			fd := int(syscall.Stdin)
+			fd := os.Stdin.Fd()
 			return handleCharCtrlZ(fd, i.Terminal.termios)
 		case CharEnter, CharCtrlJ:
 			output := buf.String()
@@ -248,7 +247,7 @@ func (i *Instance) HistoryDisable() {
 }
 
 func NewTerminal() (*Terminal, error) {
-	fd := int(syscall.Stdin)
+	fd := os.Stdin.Fd()
 	termios, err := SetRawMode(fd)
 	if err != nil {
 		return nil, err

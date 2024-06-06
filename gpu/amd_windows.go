@@ -65,7 +65,7 @@ func AMDGetGPUInfo() []GpuInfo {
 
 	slog.Debug("detected hip devices", "count", count)
 	// TODO how to determine the underlying device ID when visible devices is causing this to subset?
-	for i := 0; i < count; i++ {
+	for i := range count {
 		err = hl.HipSetDevice(i)
 		if err != nil {
 			slog.Warn("set device", "id", i, "error", err)

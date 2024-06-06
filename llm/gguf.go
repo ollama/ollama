@@ -63,16 +63,6 @@ func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
 }
 
 const (
-	_ uint32 = iota
-	GGUFTokenNormal
-	GGUFTokenUnknown
-	GGUFTokenControl
-	GGUFTokenUserDefined
-	GGUFTokenUnused
-	GGUFTokenByte
-)
-
-const (
 	ggufTypeUint8 uint32 = iota
 	ggufTypeInt8
 	ggufTypeUint16
@@ -251,11 +241,11 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	}
 
 	for _, tensor := range llm.tensors {
-		if _, err := rs.Seek(int64(tensor.size()), io.SeekCurrent); err != nil {
+		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
 			return err
 		}
 
-		padding := llm.padding(int64(tensor.size()), int64(alignment))
+		padding := llm.padding(int64(tensor.Size()), int64(alignment))
 		if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
 			return err
 		}
@@ -480,9 +470,11 @@ var ggufKVOrder = map[string][]string{
 		"gemma.attention.key_length",
 		"gemma.attention.value_length",
 		"general.file_type",
+		"tokenizer.ggml.pre",
 		"tokenizer.ggml.model",
 		"tokenizer.ggml.tokens",
 		"tokenizer.ggml.scores",
+		"tokenizer.ggml.merges",
 		"tokenizer.ggml.token_type",
 		"tokenizer.ggml.bos_token_id",
 		"tokenizer.ggml.eos_token_id",
@@ -600,8 +592,8 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 			return err
 		}
 
-		dims := 0
-		for cnt := 0; cnt < len(tensor.Shape); cnt++ {
+		var dims int
+		for cnt := range len(tensor.Shape) {
 			if tensor.Shape[cnt] > 0 {
 				dims++
 			}
@@ -611,8 +603,8 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 			return err
 		}
 
-		for i := 0; i < dims; i++ {
-			if err := binary.Write(ws, llm.ByteOrder, uint64(tensor.Shape[dims-1-i])); err != nil {
+		for i := range dims {
+			if err := binary.Write(ws, llm.ByteOrder, tensor.Shape[dims-1-i]); err != nil {
 				return err
 			}
 		}

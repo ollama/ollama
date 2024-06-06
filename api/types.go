@@ -306,7 +306,7 @@ type GenerateResponse struct {
 	// Model is the model name that generated the response.
 	Model string `json:"model"`
 
-	//CreatedAt is the timestamp of the response.
+	// CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`
 
 	// Response is the textual response itself.

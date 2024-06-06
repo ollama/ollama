@@ -156,7 +156,7 @@ if [ -z "${CUDART_LIB_DIR}" ]; then
     CUDART_LIB_DIR="${CUDA_LIB_DIR}"
 fi
 
-if [ -d "${CUDA_LIB_DIR}" ]; then
+if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
     CUDA_MAJOR=$(ls "${CUDA_LIB_DIR}"/libcudart.so.* | head -1 | cut -f3 -d. || true)
@@ -206,6 +206,36 @@ if [ -d "${CUDA_LIB_DIR}" ]; then
 
 fi
 
+if [ -z "${ONEAPI_ROOT}" ]; then
+    # Try the default location in case it exists
+    ONEAPI_ROOT=/opt/intel/oneapi
+fi
+
+if [ -d "${ONEAPI_ROOT}" ]; then
+    echo "OneAPI libraries detected - building dynamic OneAPI library"
+    init_vars
+    source ${ONEAPI_ROOT}/setvars.sh --force # set up environment variables for oneAPI
+    CC=icx
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DLLAMA_SYCL=ON -DLLAMA_SYCL_F16=OFF"
+    BUILD_DIR="../build/linux/${ARCH}/oneapi"
+    EXTRA_LIBS="-fsycl -Wl,-rpath,${ONEAPI_ROOT}/compiler/latest/lib,-rpath,${ONEAPI_ROOT}/mkl/latest/lib,-rpath,${ONEAPI_ROOT}/tbb/latest/lib,-rpath,${ONEAPI_ROOT}/compiler/latest/opt/oclfpga/linux64/lib -lOpenCL -lmkl_core -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -ltbb"
+    DEBUG_FLAGS="" # icx compiles with -O0 if we pass -g, so we must remove it
+    build
+
+    # copy oneAPI dependencies
+    for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e sycl -e mkl -e tbb); do
+        cp "${dep}" "${BUILD_DIR}/bin/"
+    done
+    cp "${ONEAPI_ROOT}/compiler/latest/lib/libOpenCL.so" "${BUILD_DIR}/bin/"
+    cp "${ONEAPI_ROOT}/compiler/latest/lib/libimf.so" "${BUILD_DIR}/bin/"
+    cp "${ONEAPI_ROOT}/compiler/latest/lib/libintlc.so.5" "${BUILD_DIR}/bin/"
+    cp "${ONEAPI_ROOT}/compiler/latest/lib/libirng.so" "${BUILD_DIR}/bin/"
+    cp "${ONEAPI_ROOT}/compiler/latest/lib/libpi_level_zero.so" "${BUILD_DIR}/bin/"
+    cp "${ONEAPI_ROOT}/compiler/latest/lib/libsvml.so" "${BUILD_DIR}/bin/"
+    cp "${ONEAPI_ROOT}/compiler/latest/lib/libur_loader.so.0" "${BUILD_DIR}/bin/"
+    compress
+fi
+
 if [ -z "${ROCM_PATH}" ]; then
     # Try the default location in case it exists
     ROCM_PATH=/opt/rocm
@@ -218,7 +248,7 @@ if [ -z "${CLBlast_DIR}" ]; then
     fi
 fi
 
-if [ -d "${ROCM_PATH}" ]; then
+if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
     if [ -f ${ROCM_PATH}/lib/librocblas.so.*.*.????? ]; then
         ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocblas.so.*.*.????? | cut -f5 -d. || true)

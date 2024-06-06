@@ -186,7 +186,7 @@ func (t *winTray) initInstance() error {
 	t.muNID.Lock()
 	defer t.muNID.Unlock()
 	t.nid = &notifyIconData{
-		Wnd:             windows.Handle(t.window),
+		Wnd:             t.window,
 		ID:              100,
 		Flags:           NIF_MESSAGE,
 		CallbackMessage: t.wmSystrayMessage,
@@ -197,7 +197,6 @@ func (t *winTray) initInstance() error {
 }
 
 func (t *winTray) createMenu() error {
-
 	menuHandle, _, err := pCreatePopupMenu.Call()
 	if menuHandle == 0 {
 		return err
@@ -246,7 +245,7 @@ func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title 
 	mi := menuItemInfo{
 		Mask:     MIIM_FTYPE | MIIM_STRING | MIIM_ID | MIIM_STATE,
 		Type:     MFT_STRING,
-		ID:       uint32(menuItemId),
+		ID:       menuItemId,
 		TypeData: titlePtr,
 		Cch:      uint32(len(title)),
 	}
@@ -302,11 +301,10 @@ func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title 
 }
 
 func (t *winTray) addSeparatorMenuItem(menuItemId, parentId uint32) error {
-
 	mi := menuItemInfo{
 		Mask: MIIM_FTYPE | MIIM_ID | MIIM_STATE,
 		Type: MFT_SEPARATOR,
-		ID:   uint32(menuItemId),
+		ID:   menuItemId,
 	}
 
 	mi.Size = uint32(unsafe.Sizeof(mi))
@@ -426,7 +424,6 @@ func iconBytesToFilePath(iconBytes []byte) (string, error) {
 // Loads an image from file and shows it in tray.
 // Shell_NotifyIcon: https://msdn.microsoft.com/en-us/library/windows/desktop/bb762159(v=vs.85).aspx
 func (t *winTray) setIcon(src string) error {
-
 	h, err := t.loadIconFrom(src)
 	if err != nil {
 		return err
@@ -444,7 +441,6 @@ func (t *winTray) setIcon(src string) error {
 // Loads an image from file to be shown in tray or menu item.
 // LoadImage: https://msdn.microsoft.com/en-us/library/windows/desktop/ms648045(v=vs.85).aspx
 func (t *winTray) loadIconFrom(src string) (windows.Handle, error) {
-
 	// Save and reuse handles of loaded images
 	t.muLoadedImages.RLock()
 	h, ok := t.loadedImages[src]

@@ -1,0 +1,31 @@
+diff --git a/common/common.cpp b/common/common.cpp
+index ba1ecf0e..cead57cc 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1836,6 +1836,8 @@ struct llama_model_params llama_model_params_from_gpt_params(const gpt_params &
+     mparams.use_mmap        = params.use_mmap;
+     mparams.use_mlock       = params.use_mlock;
+     mparams.check_tensors   = params.check_tensors;
++    mparams.progress_callback = params.progress_callback;
++    mparams.progress_callback_user_data = params.progress_callback_user_data;
+     if (params.kv_overrides.empty()) {
+         mparams.kv_overrides = NULL;
+     } else {
+diff --git a/common/common.h b/common/common.h
+index d80344f2..71e84834 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -174,6 +174,13 @@ struct gpt_params {
+     // multimodal models (see examples/llava)
+     std::string mmproj = "";        // path to multimodal projector
+     std::vector<std::string> image; // path to image file(s)
++
++    // Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
++    // If the provided progress_callback returns true, model loading continues.
++    // If it returns false, model loading is immediately aborted.
++    llama_progress_callback progress_callback = NULL;
++    // context pointer passed to the progress callback
++    void * progress_callback_user_data;
+ };
+ 
+ void gpt_params_handle_model_default(gpt_params & params);

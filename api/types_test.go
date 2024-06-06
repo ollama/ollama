@@ -72,13 +72,13 @@ func TestDurationMarshalUnmarshal(t *testing.T) {
 		},
 		{
 			"positive duration",
-			time.Duration(42 * time.Second),
-			time.Duration(42 * time.Second),
+			42 * time.Second,
+			42 * time.Second,
 		},
 		{
 			"another positive duration",
-			time.Duration(42 * time.Minute),
-			time.Duration(42 * time.Minute),
+			42 * time.Minute,
+			42 * time.Minute,
 		},
 		{
 			"zero duration",

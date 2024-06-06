@@ -6,17 +6,18 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/server/envconfig"
-	"golang.org/x/exp/slices"
 )
 
 type LlmRequest struct {
@@ -65,7 +66,7 @@ func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options,
 		opts.NumCtx = 4
 	}
 
-	opts.NumCtx = opts.NumCtx * envconfig.NumParallel
+	opts.NumCtx *= envconfig.NumParallel
 
 	req := &LlmRequest{
 		ctx:             c,
@@ -219,7 +220,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			runner := s.loaded[finished.model.ModelPath]
 			s.loadedMu.Unlock()
 			if runner == nil {
-				slog.Error("finished requeset signal received after model unloaded", "modelPath", finished.model.ModelPath)
+				slog.Error("finished request signal received after model unloaded", "modelPath", finished.model.ModelPath)
 				continue
 			}
 			runner.refMu.Lock()
@@ -369,7 +370,6 @@ func (s *Scheduler) updateFreeSpace(allGpus gpu.GpuInfoList) {
 		r.refMu.Lock()
 		gpuIDs := make([]string, 0, len(r.gpus))
 		if r.llama != nil {
-
 			// TODO this should be broken down by GPU instead of assuming uniform spread
 			estimatedVRAMPerGPU := r.llama.EstimatedVRAM() / uint64(len(r.gpus))
 			for _, gpu := range r.gpus {
@@ -487,8 +487,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 	finished := make(chan interface{}, 1)
 
-	// CPU or Metal don't need checking, so no waiting required
-	if len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal") {
+	// CPU or Metal don't need checking, so no waiting required, windows can page VRAM, and the APIs we query tend to be optimistic on free space
+	if (len(runner.gpus) == 1 && (runner.gpus[0].Library == "cpu" || runner.gpus[0].Library == "metal")) || runtime.GOOS == "windows" {
 		finished <- struct{}{}
 		return finished
 	}
@@ -528,7 +528,6 @@ func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 		}
 	}()
 	return finished
-
 }
 
 type ByDuration []*runnerRef
