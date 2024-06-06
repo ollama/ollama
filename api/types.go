@@ -499,26 +499,6 @@ func DefaultOptions() Options {
 	}
 }
 
-// TODO: Remove Custom Marshalling if struct separation is fine
-// type Time struct {
-// 	time.Time
-// }
-
-// func (t Time) MarshalJSON() ([]byte, error) {
-// 	if t.IsZero() {
-// 		return json.Marshal(nil)
-// 	}
-// 	return json.Marshal(t.Time)
-// }
-
-// func (t *Time) UnmarshalJSON(b []byte) error {
-// 	if string(b) == "null" {
-// 		t.Time = time.Time{}
-// 		return nil
-// 	}
-// 	return json.Unmarshal(b, &t.Time)
-// }
-
 type Duration struct {
 	time.Duration
 }
