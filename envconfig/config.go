@@ -190,6 +190,12 @@ func LoadConfig() {
 		)
 	}
 
+	AllowOrigins = append(AllowOrigins,
+		"app://*",
+		"file://*",
+		"tauri://*",
+	)
+
 	maxRunners := clean("OLLAMA_MAX_LOADED_MODELS")
 	if maxRunners != "" {
 		m, err := strconv.Atoi(maxRunners)
