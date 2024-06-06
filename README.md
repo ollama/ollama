@@ -286,6 +286,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
 - [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
 - [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
+- [Shinkai Desktop (Native Mac, Windows and Linux -- no Docker required)](https://github.com/dcSpark/shinkai-apps) (Two click install AI manager using Ollama + Files + RAG)
 
 ### Terminal
 
