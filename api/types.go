@@ -232,14 +232,14 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License    string       `json:"license,omitempty"`
-	Modelfile  string       `json:"modelfile,omitempty"`
-	Parameters string       `json:"parameters,omitempty"`
-	Template   string       `json:"template,omitempty"`
-	System     string       `json:"system,omitempty"`
-	Details    ModelDetails `json:"details,omitempty"`
-	Messages   []Message    `json:"messages,omitempty"`
-	ModelInfo  string       `json:"model_info,omitempty"`
+	License    string          `json:"license,omitempty"`
+	Modelfile  string          `json:"modelfile,omitempty"`
+	Parameters string          `json:"parameters,omitempty"`
+	Template   string          `json:"template,omitempty"`
+	System     string          `json:"system,omitempty"`
+	Details    ModelDetails    `json:"details,omitempty"`
+	Messages   []Message       `json:"messages,omitempty"`
+	ModelInfo  json.RawMessage `json:"model_info,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].

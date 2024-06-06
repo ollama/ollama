@@ -724,7 +724,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp.ModelInfo = string(ggmlData)
+	resp.ModelInfo = ggmlData
 
 	return resp, nil
 }
@@ -740,32 +740,27 @@ func getGGMLData(model *Model) ([]byte, error) {
 		return nil, err
 	}
 
-	kv := ggml.KV()
-	var keys []string
-	for k := range kv {
-		keys = append(keys, k)
-	}
+	f.Close()
 
+	kv := ggml.KV()
 	kvMap := make(map[string]any)
 
-	for _, k := range keys {
+	for k := range kv {
 		val := kv[k]
 
 		switch v := val.(type) {
 		case []interface{}:
 			if len(v) > 5 {
 				kvMap[k] = []string{}
-				continue
 			}
+		default:
+			kvMap[k] = val
 		}
-		kvMap[k] = val
 	}
 
-	ggmlMap := make(map[string]any)
-	ggmlMap["kv"] = kvMap
-	ggmlMap["tensors"] = ggml.Tensors()
+	kvMap["embedding_model"] = model.IsEmbedding()
 
-	ggmlJson, err := json.Marshal(ggmlMap)
+	ggmlJson, err := json.Marshal(kvMap)
 	if err != nil {
 		return nil, err
 	}
