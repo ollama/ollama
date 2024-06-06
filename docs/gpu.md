@@ -28,6 +28,7 @@ Check your compute compatibility to see if your card is supported:
 | 5.0                | GeForce GTX         | `GTX 750 Ti` `GTX 750` `NVS 810`                                                                            |
 |                    | Quadro              | `K2200` `K1200` `K620` `M1200` `M520` `M5000M` `M4000M` `M3000M` `M2000M` `M1000M` `K620M` `M600M` `M500M`  |
 
+For building locally to support older GPUs, see [developer.md](./development.md#linux-cuda-nvidia)
 
 ### GPU Selection
 

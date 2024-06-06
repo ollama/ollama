@@ -53,7 +53,11 @@ Typically the build scripts will auto-detect CUDA, however, if your Linux distro
 or installation approach uses unusual paths, you can specify the location by
 specifying an environment variable `CUDA_LIB_DIR` to the location of the shared
 libraries, and `CUDACXX` to the location of the nvcc compiler. You can customize
-a set of target CUDA architectures by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "50;60;70")
+a set of target CUDA architectures by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "35;37;50;60;70")
+
+To support GPUs older than Compute Capability 5.0, you will need to use an older version of
+the Driver from [Unix Driver Archive](https://www.nvidia.com/en-us/drivers/unix/) (tested with 470) and [CUDA Toolkit Archive](https://developer.nvidia.com/cuda-toolkit-archive) (tested with cuda V11).  When you build Ollama, you will need to set two environment variable to adjust the minimum compute capability Ollama supports via `export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/gpu.CudaComputeMajorMin=3\" \"-X=github.com/ollama/ollama/gpu.CudaComputeMinorMin=5\"'"` and the `CMAKE_CUDA_ARCHITECTURES`.  To find the Compute Capability of your older GPU, refer to [GPU Compute Capability](https://developer.nvidia.com/cuda-gpus).
+
 
 Then generate dependencies:
 
