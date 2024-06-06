@@ -720,7 +720,57 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, model.String())
 	resp.Modelfile = sb.String()
 
+	ggmlData, err := getGGMLData(model)
+	if err != nil {
+		return nil, err
+	}
+	resp.ModelInfo = string(ggmlData)
+
 	return resp, nil
+}
+
+func getGGMLData(model *Model) ([]byte, error) {
+	f, err := os.Open(model.ModelPath)
+	if err != nil {
+		return nil, err
+	}
+
+	ggml, _, err := llm.DecodeGGML(f)
+	if err != nil {
+		return nil, err
+	}
+
+	kv := ggml.KV()
+	var keys []string
+	for k := range kv {
+		keys = append(keys, k)
+	}
+
+	kvMap := make(map[string]any)
+
+	for _, k := range keys {
+		val := kv[k]
+
+		switch v := val.(type) {
+		case []interface{}:
+			if len(v) > 5 {
+				kvMap[k] = []string{}
+				continue
+			}
+		}
+		kvMap[k] = val
+	}
+
+	ggmlMap := make(map[string]any)
+	ggmlMap["kv"] = kvMap
+	ggmlMap["tensors"] = ggml.Tensors()
+
+	ggmlJson, err := json.Marshal(ggmlMap)
+	if err != nil {
+		return nil, err
+	}
+
+	return ggmlJson, nil
 }
 
 func (s *Server) ListModelsHandler(c *gin.Context) {

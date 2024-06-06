@@ -239,6 +239,7 @@ type ShowResponse struct {
 	System     string       `json:"system,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
 	Messages   []Message    `json:"messages,omitempty"`
+	ModelInfo  string       `json:"model_info,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
