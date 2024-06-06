@@ -743,24 +743,19 @@ func getGGMLData(model *Model) ([]byte, error) {
 	f.Close()
 
 	kv := ggml.KV()
-	kvMap := make(map[string]any)
 
 	for k := range kv {
-		val := kv[k]
-
-		switch v := val.(type) {
+		switch v := kv[k].(type) {
 		case []interface{}:
 			if len(v) > 5 {
-				kvMap[k] = []string{}
+				kv[k] = []string{}
 			}
-		default:
-			kvMap[k] = val
 		}
 	}
 
-	kvMap["embedding_model"] = model.IsEmbedding()
+	kv["embedding_model"] = model.IsEmbedding()
 
-	ggmlJson, err := json.Marshal(kvMap)
+	ggmlJson, err := json.Marshal(kv)
 	if err != nil {
 		return nil, err
 	}
