@@ -828,6 +828,12 @@ type EmbeddingRequest struct {
 	Image  ImageData
 }
 
+type EmbeddingJSONRequest struct {
+	// According to ext_server, they should both be optional, TODO: Do it!
+	Content string    `json:"content"`
+	Image   ImageData `json:"image_data"` //TODO: Check how other Marshall these
+}
+
 type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
@@ -847,7 +853,8 @@ func (s *llmServer) Embedding(ctx context.Context, req EmbeddingRequest) ([]floa
 		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	data, err := json.Marshal(TokenizeRequest{Content: req.Prompt})
+	//TODO: Check if Marshal can handle the image, see how completion uses Encode method from an encoder
+	data, err := json.Marshal(EmbeddingJSONRequest{Content: req.Prompt, Image: req.Image})
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}

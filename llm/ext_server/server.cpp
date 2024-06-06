@@ -1244,6 +1244,7 @@ struct llama_server_context
 
     void request_completion(int task_id, json data, bool embedding, int multitask_id)
     {
+        //TODO: This should handle when `image` is in the json data
         task_server task;
         task.id = task_id;
         task.target_id = 0;
