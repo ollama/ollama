@@ -72,6 +72,17 @@ function init_vars {
     if ("${env:KEY_CONTAINER}") {
         ${script:OLLAMA_CERT}=$(resolve-path "${script:SRC_DIR}\ollama_inc.crt")
     }
+    if (($null -eq $env:ONEAPI_ROOT) -and (Test-Path "C:\Program Files (x86)\Intel\oneAPI" )) {
+        $env:ONEAPI_ROOT="C:\Program Files (x86)\Intel\oneAPI"
+    }
+
+    # Fail fast if we can build oneapi but aren't in the right environment
+    if ((-not "${env:OLLAMA_SKIP_ONEAPI_GENERATE}") -and ("${env:ONEAPI_ROOT}"))  {
+        # C:\Windows\System32\cmd.exe /E:ON /K ""C:\Program Files (x86)\Intel\oneAPI\setvars.bat" intel64 vs2019"
+        if ($null -eq $env:WindowsLibPath) {
+            throw "OneAPI install detected. Intel GPU support requires building from a onAPI Developer Shell`ncmd.exe `"/K`" '`"C:\Program Files (x86)\Intel\oneAPI\setvars.bat`" && powershell'"
+        }
+    }
 }
 
 function git_module_setup {
@@ -299,21 +310,43 @@ function build_cuda() {
 
 function build_oneapi() {
   if ((-not "${env:OLLAMA_SKIP_ONEAPI_GENERATE}") -and ("${env:ONEAPI_ROOT}"))  {
+    # C:\Windows\System32\cmd.exe /E:ON /K ""C:\Program Files (x86)\Intel\oneAPI\setvars.bat" intel64 vs2019"
+    if ($null -eq $env:WindowsLibPath) {
+        throw "Intel GPU support requires building from a onAPI Developer Shell"
+    }
+    init_vars
     # Get oneAPI version
+    # $env:PATH="$env:PATH;${env:ONEAPI_ROOT}\compiler\latest\bin\"
+    # write-host "Checking for oneAPI dependencies..."
+    # # error action ensures we exit on failure
+    # get-command icpx
+    # get-command mingw32-make
+    # get-command rc
+
     $script:ONEAPI_VERSION = icpx --version
     $script:ONEAPI_VERSION = [regex]::Match($script:ONEAPI_VERSION, '(?<=oneAPI DPC\+\+/C\+\+ Compiler )(?<version>\d+\.\d+\.\d+)').Value
     if ($null -ne $script:ONEAPI_VERSION) {
       $script:ONEAPI_VARIANT = "_v" + $script:ONEAPI_VERSION
     }
     init_vars
-    $script:buildDir = "../build/windows/${script:ARCH}/oneapi$script:ONEAPI_VARIANT"
+    $script:buildDir = "..\build\windows\${script:ARCH}\oneapi$script:ONEAPI_VARIANT"
     $script:distDir ="$script:DIST_BASE\oneapi$script:ONEAPI_VARIANT"
+    # TODO - catch-22:
+    #    icx-cc is a C compiler, but doesn't accept MSVC sytle flags
+    #    icx-cl is a C++ compiler that accepts MSVC style flags, but the ggml C code isn't C++ type clean and fails with bad casts.
+    # 
+    # "-G", "Ninja",
+    # 
     $script:cmakeDefs += @(
       "-G", "MinGW Makefiles",
       "-DGGML_SYCL=ON",
-      "-DCMAKE_C_COMPILER=icx",
-      "-DCMAKE_CXX_COMPILER=icx",
-      "-DCMAKE_BUILD_TYPE=Release"
+      "-DCMAKE_VERBOSE_MAKEFILE=on"
+      "-DCMAKE_C_COMPILER=icx-cc",
+      "-DCMAKE_CXX_COMPILER=icx-cl",
+      "-DGGML_SYCL_F16=OFF",
+      "-DGGML_AVX=on",
+      "-DGGML_AVX2=off",
+      "-DCMAKE_POSITION_INDEPENDENT_CODE=on"
     )
 
     Write-Host "Building oneAPI"

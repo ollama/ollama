@@ -22,7 +22,7 @@ function checkEnv() {
             $script:NVIDIA_DIR=($d| split-path -parent)
         } else {
             $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
-            if ($cudaList.length > 0) {
+            if ($cudaList.length -gt 0) {
                 $script:NVIDIA_DIR=$cudaList[0]
             }
         }
