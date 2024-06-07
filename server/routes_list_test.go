@@ -29,7 +29,7 @@ func TestList(t *testing.T) {
 	for _, n := range expectNames {
 		createRequest(t, s.CreateModelHandler, api.CreateRequest{
 			Name:      n,
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t)),
+			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 		})
 	}
 

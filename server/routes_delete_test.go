@@ -16,7 +16,7 @@ func TestDelete(t *testing.T) {
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
 		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t)),
+		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 	})
 
 	if w.Code != http.StatusOK {
@@ -25,7 +25,7 @@ func TestDelete(t *testing.T) {
 
 	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
 		Name:      "test2",
-		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .System }} {{ .Prompt }}", createBinFile(t)),
+		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .System }} {{ .Prompt }}", createBinFile(t, nil, nil)),
 	})
 
 	if w.Code != http.StatusOK {
