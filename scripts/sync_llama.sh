@@ -97,7 +97,7 @@ $(sed 's/^/ * /' <$src_dir/LICENSE)
 EOF
 
 for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
-    if [[ "$IN" == *"sgemm.cpp" || "$IN" == *"sgemm.h" ]]; then
+    if [[ "$IN" == *"sgemm.cpp" || "$IN" == *"sgemm.h" || "$IN" == *"sampling_ext.cpp" || "$IN" == *"sampling_ext.h"  ]]; then
         continue
     fi
     TMP=$(mktemp)
@@ -106,7 +106,7 @@ for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
 done
 
 # ggml-metal
-sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < $dst_dir/ggml-metal.metal > temp.metal
+sed -e '/#include "ggml-common.h"/r llama/ggml-common.h' -e '/#include "ggml-common.h"/d' < $dst_dir/ggml-metal.metal > temp.metal
 TEMP_ASSEMBLY=$(mktemp)
 echo ".section __DATA, __ggml_metallib"   >  $TEMP_ASSEMBLY
 echo ".globl _ggml_metallib_start"        >> $TEMP_ASSEMBLY
