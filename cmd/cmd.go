@@ -223,6 +223,14 @@ func tempZipFiles(path string) (string, error) {
 	}
 	files = append(files, js...)
 
+	// bert models require a nested config.json
+	// TODO(mxyng): merge this with the glob above
+	js, err = glob(filepath.Join(path, "**/*.json"), "text/plain")
+	if err != nil {
+		return "", err
+	}
+	files = append(files, js...)
+
 	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
 		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
 		// tokenizer.model might be a unresolved git lfs reference; error if it is
@@ -248,6 +256,11 @@ func tempZipFiles(path string) (string, error) {
 		}
 
 		zfi, err := zip.FileInfoHeader(fi)
+		if err != nil {
+			return "", err
+		}
+
+		zfi.Name, err = filepath.Rel(path, file)
 		if err != nil {
 			return "", err
 		}
