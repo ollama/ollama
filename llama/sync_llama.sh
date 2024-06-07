@@ -11,7 +11,7 @@ if [ -z "$src_dir" ]; then
 fi
 
 # Set the destination directory
-dst_dir=./llama
+dst_dir=.
 
 # llama.cpp
 cp $src_dir/unicode.cpp $dst_dir/unicode.cpp
@@ -106,7 +106,7 @@ for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
 done
 
 # ggml-metal
-sed -e '/#include "ggml-common.h"/r llama/ggml-common.h' -e '/#include "ggml-common.h"/d' < $dst_dir/ggml-metal.metal > temp.metal
+sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < $dst_dir/ggml-metal.metal > temp.metal
 TEMP_ASSEMBLY=$(mktemp)
 echo ".section __DATA, __ggml_metallib"   >  $TEMP_ASSEMBLY
 echo ".globl _ggml_metallib_start"        >> $TEMP_ASSEMBLY
