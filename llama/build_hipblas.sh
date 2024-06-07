@@ -61,7 +61,6 @@ hipcc \
     -Wno-deprecated-declarations \
     -Wno-unused-result \
     -I. \
-    -fPIC \
     -lhipblas -lamdhip64 -lrocblas \
     -shared \
     $additional_flags \
