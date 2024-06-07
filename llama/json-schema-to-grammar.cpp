@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 059031b8c40e1f4ba60586842c5b1ed3ddf61842
+ * llama.cpp - git d5c938cd7716b9a2ace49a43a469dfbffcff4d28
  *
  * MIT License
  *
@@ -42,58 +42,27 @@ static std::string join(Iterator begin, Iterator end, const std::string & separa
 
 static std::string repeat(const std::string & str, size_t n);
 
-static std::string build_repetition(const std::string & item_rule, int min_items, int max_items, const std::string & separator_rule = "", bool item_rule_is_literal = false) {
+static std::string build_repetition(const std::string & item_rule, int min_items, int max_items, const std::string & separator_rule = "") {
+    auto has_max = max_items != std::numeric_limits<int>::max();
+
+    if (min_items == 0 && max_items == 1) {
+        return item_rule + "?";
+    }
+
     if (separator_rule.empty()) {
-        if (min_items == 0 && max_items == 1) {
-            return item_rule + "?";
-        } else if (min_items == 1 && max_items == std::numeric_limits<int>::max()) {
+        if (min_items == 1 && !has_max) {
             return item_rule + "+";
-        }
-    }
-
-    std::string result;
-    if (min_items > 0) {
-        if (item_rule_is_literal && separator_rule.empty()) {
-            result = "\"" + repeat(std::string(item_rule.begin() + 1, item_rule.end() - 1), min_items) + "\"";
+        } else if (min_items == 0 && !has_max) {
+            return item_rule + "*";
         } else {
-            std::vector<std::string> items(min_items, item_rule);
-            result = join(items.begin(), items.end(), separator_rule.empty() ? " " : " " + separator_rule + " ");
+            return item_rule + "{" + std::to_string(min_items) + "," + (has_max ? std::to_string(max_items) : "") + "}";
         }
     }
 
-    std::function<std::string(int, bool)> opt_repetitions = [&](int up_to_n, bool prefix_with_sep) -> std::string {
-        auto content = prefix_with_sep && !separator_rule.empty() ? separator_rule + " " + item_rule : item_rule;
-
-        if (up_to_n == 0) {
-            return "";
-        } else if (up_to_n == 1) {
-            return "(" + content + ")?";
-        } else if (!separator_rule.empty() && !prefix_with_sep) {
-            return "(" + content + " " + opt_repetitions(up_to_n - 1, true) + ")?";
-        } else {
-            std::string res = repeat("(" + content + " ", up_to_n);
-            // strip trailing space
-            res = res.substr(0, res.length() - 1);
-            res += repeat(")?", up_to_n);
-            return res;
-        }
-    };
-
-    if (min_items > 0 && max_items != min_items) {
-        result += " ";
+    auto result = item_rule + " " + build_repetition("(" + separator_rule + " " + item_rule + ")", min_items == 0 ? 0 : min_items - 1, has_max ? max_items - 1 : max_items);
+    if (min_items == 0) {
+        result = "(" + result + ")?";
     }
-
-    if (max_items != std::numeric_limits<int>::max()) {
-        result += opt_repetitions(max_items - min_items, min_items > 0);
-    } else {
-        std::string item_operator = "(" + (separator_rule.empty() ? "" : separator_rule + " ") + item_rule + ")";
-        if (min_items == 0 && !separator_rule.empty()) {
-            result = "(" + item_rule + " " + item_operator + "*)?";
-        } else {
-            result += item_operator + "*";
-        }
-    }
-
     return result;
 }
 
@@ -104,30 +73,24 @@ struct BuiltinRule {
     std::vector<std::string> deps;
 };
 
-const std::string _up_to_15_digits = build_repetition("[0-9]", 0, 15);
-
 std::unordered_map<std::string, BuiltinRule> PRIMITIVE_RULES = {
     {"boolean", {"(\"true\" | \"false\") space", {}}},
-    {"decimal-part", {"[0-9] " + _up_to_15_digits, {}}},
-    {"integral-part", {"[0-9] | [1-9] " + _up_to_15_digits, {}}},
+    {"decimal-part", {"[0-9]{1,16}", {}}},
+    {"integral-part", {"[0] | [1-9] [0-9]{0,15}", {}}},
     {"number", {"(\"-\"? integral-part) (\".\" decimal-part)? ([eE] [-+]? integral-part)? space", {"integral-part", "decimal-part"}}},
     {"integer", {"(\"-\"? integral-part) space", {"integral-part"}}},
     {"value", {"object | array | string | number | boolean | null", {"object", "array", "string", "number", "boolean", "null"}}},
     {"object", {"\"{\" space ( string \":\" space value (\",\" space string \":\" space value)* )? \"}\" space", {"string", "value"}}},
     {"array", {"\"[\" space ( value (\",\" space value)* )? \"]\" space", {"value"}}},
-    {"uuid", {"\"\\\"\" [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F] "
-                "\"-\" [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F] "
-                "\"-\" [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F] "
-                "\"-\" [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F] "
-                "\"-\" [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F] \"\\\"\" space", {}}},
-    {"char",   {"[^\"\\\\] | \"\\\\\" ([\"\\\\/bfnrt] | \"u\" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])", {}}},
+    {"uuid", {"\"\\\"\" [0-9a-fA-F]{8} \"-\" [0-9a-fA-F]{4} \"-\" [0-9a-fA-F]{4} \"-\" [0-9a-fA-F]{4} \"-\" [0-9a-fA-F]{12} \"\\\"\" space", {}}},
+    {"char",   {"[^\"\\\\] | \"\\\\\" ([\"\\\\/bfnrt] | \"u\" [0-9a-fA-F]{4})", {}}},
     {"string", {"\"\\\"\" char* \"\\\"\" space", {"char"}}},
     {"null", {"\"null\" space", {}}},
 };
 
 std::unordered_map<std::string, BuiltinRule> STRING_FORMAT_RULES = {
-    {"date", {"[0-9] [0-9] [0-9] [0-9] \"-\" ( \"0\" [1-9] | \"1\" [0-2] ) \"-\" ( \"0\" [1-9] | [1-2] [0-9] | \"3\" [0-1] )", {}}},
-    {"time", {"([01] [0-9] | \"2\" [0-3]) \":\" [0-5] [0-9] \":\" [0-5] [0-9] ( \".\" [0-9] [0-9] [0-9] )? ( \"Z\" | ( \"+\" | \"-\" ) ( [01] [0-9] | \"2\" [0-3] ) \":\" [0-5] [0-9] )", {}}},
+    {"date", {"[0-9]{4} \"-\" ( \"0\" [1-9] | \"1\" [0-2] ) \"-\" ( \"0\" [1-9] | [1-2] [0-9] | \"3\" [0-1] )", {}}},
+    {"time", {"([01] [0-9] | \"2\" [0-3]) \":\" [0-5] [0-9] \":\" [0-5] [0-9] ( \".\" [0-9]{3} )? ( \"Z\" | ( \"+\" | \"-\" ) ( [01] [0-9] | \"2\" [0-3] ) \":\" [0-5] [0-9] )", {}}},
     {"date-time", {"date \"T\" time", {"date", "time"}}},
     {"date-string", {"\"\\\"\" date \"\\\"\" space", {"date"}}},
     {"time-string", {"\"\\\"\" time \"\\\"\" space", {"time"}}},
@@ -411,8 +374,7 @@ private:
                         sub_is_literal ? "\"" + sub + "\"" : sub,
                         min_times,
                         max_times,
-                        "",
-                        sub_is_literal
+                        ""
                     );
                     seq.back().second = false;
                 } else {

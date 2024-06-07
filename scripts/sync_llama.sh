@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 # Set the source directory
 src_dir=$1
 
@@ -8,7 +10,7 @@ if [ -z "$src_dir" ]; then
   exit 1
 fi
 
-# Set the destination directory (current directory)
+# Set the destination directory
 dst_dir=./llama
 
 # llama.cpp
@@ -72,7 +74,7 @@ char const *LLAMA_BUILD_TARGET = "";
 EOF
 
 # apply patches
-for patch in $dst_dir/patches/*.patch; do
+for patch in $dst_dir/patches/*.diff; do
   git apply "$patch"
 done
 
@@ -112,6 +114,6 @@ echo "_ggml_metallib_start:"              >> $TEMP_ASSEMBLY
 echo ".incbin \"temp.metal\"" >> $TEMP_ASSEMBLY
 echo ".globl _ggml_metallib_end"          >> $TEMP_ASSEMBLY
 echo "_ggml_metallib_end:"                >> $TEMP_ASSEMBLY
-as -mmacosx-version-min=11.3 $TEMP_ASSEMBLY -o ggml-metal.o
+as -mmacosx-version-min=11.3 $TEMP_ASSEMBLY -o $dst_dir/ggml-metal.o
 rm -f $TEMP_ASSEMBLY
 rm -rf temp.metal
