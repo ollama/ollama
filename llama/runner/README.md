@@ -1,5 +1,7 @@
 # `runner`
 
+> Note: this is a work in progress
+
 A minimial runner for loading a model and running inference via a http web server.
 
 ```
@@ -13,3 +15,12 @@ curl -X POST -H "Content-Type: application/json" -d '{"prompt": "hi"}' http://lo
 ```
 
 ### Embeddings
+
+```
+curl -X POST -H "Content-Type: application/json" -d '{"prompt": "turn me into an embedding"}' http://localhost:8080/embeddings
+```
+
+### TODO
+
+- [ ] Parallization
+- [ ] More tests
