@@ -12,7 +12,6 @@ Supported:
 - [x] Linux CUDA
 - [x] Linux ROCm
 - [x] Llava
-- [x] Parallel Requests
 
 Extra build steps are required for CUDA and ROCm on Windows since `nvcc` and `hipcc` both require using msvc as the host compiler. For these small dlls are created:
 
@@ -61,6 +60,8 @@ go build -tags=cuda .
 
 ## Windows
 
+Download [w64devkit](https://github.com/skeeto/w64devkit/releases/latest) for a simple MinGW development environment.
+
 ### CUDA
 
 Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-download-archive) then build the cuda code:
@@ -95,9 +96,8 @@ go build -tags=rocm .
 
 ## Syncing with llama.cpp
 
-To update this package to the latest llama.cpp code, use the `scripts/sync_llama.sh` script from the root of this repo:
+To update this package to the latest llama.cpp code, use the `sync_llama.sh` script from the root of this repo:
 
 ```
-cd ollama
-./scripts/sync_llama.sh ../llama.cpp
+./sync_llama.sh ../../llama.cpp
 ```
