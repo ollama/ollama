@@ -12,31 +12,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationMultimodal(t *testing.T) {
+func GenerateVisionRequest(t *testing.T) (api.GenerateRequest, []string) {
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
 	require.NoError(t, err)
-	req := api.GenerateRequest{
-		Model:  "llava:7b",
-		Prompt: "what does the text in this image say?",
-		Stream: &stream,
-		Options: map[string]interface{}{
-			"seed":        42,
-			"temperature": 0.0,
+	return api.GenerateRequest{
+			Model:     "llava:7b",
+			Prompt:    "describe what you see in this image",
+			Stream:    &stream,
+			KeepAlive: &api.Duration{Duration: 10 * time.Second},
+			Options: map[string]interface{}{
+				"seed":        42,
+				"temperature": 0.0,
+			},
+			Images: []api.ImageData{
+				image,
+			},
 		},
-		Images: []api.ImageData{
-			image,
-		},
-	}
+		// Note: sometimes it returns "the ollamas" sometimes "the ollams"
+		[]string{"the ollam", "cartoon", "characters", "crosswalk"}
 
-	// Note: sometimes it returns "the ollamas" sometimes "the ollams"
-	resp := "the ollam"
+}
+func TestIntegrationMultimodal(t *testing.T) {
+	req, resp := GenerateVisionRequest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 	require.NoError(t, PullIfMissing(ctx, client, req.Model))
 	// llava models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
+	DoGenerate(ctx, t, client, req, resp, 120*time.Second, 30*time.Second)
 }
 
 const imageEncoding = `iVBORw0KGgoAAAANSUhEUgAAANIAAAB4CAYAAACHHqzKAAAAAXNSR0IArs4c6QAAAIRlWElmTU0AKgAAAAgABQESAAMAAAABAAEAAAEaAAUAAAABAAAASgEb
