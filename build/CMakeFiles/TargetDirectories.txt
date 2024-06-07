@@ -1,0 +1,4 @@
+B:/New/ollama/build/CMakeFiles/ollama_llama_server.dir
+B:/New/ollama/build/CMakeFiles/INSTALL.dir
+B:/New/ollama/build/CMakeFiles/ALL_BUILD.dir
+B:/New/ollama/build/CMakeFiles/ZERO_CHECK.dir
