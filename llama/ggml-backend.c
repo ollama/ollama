@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 059031b8c40e1f4ba60586842c5b1ed3ddf61842
+ * llama.cpp - git d5c938cd7716b9a2ace49a43a469dfbffcff4d28
  *
  * MIT License
  *
@@ -182,7 +182,7 @@ void ggml_backend_buffer_reset(ggml_backend_buffer_t buffer) {
 bool ggml_backend_buffer_copy_tensor(const struct ggml_tensor * src, struct ggml_tensor * dst) {
     ggml_backend_buffer_t dst_buf = dst->view_src ? dst->view_src->buffer : dst->buffer;
     if (dst_buf->iface.cpy_tensor) {
-        return src->buffer->iface.cpy_tensor(dst_buf, src, dst);
+        return dst_buf->iface.cpy_tensor(dst_buf, src, dst);
     }
     return false;
 }
@@ -1918,15 +1918,15 @@ ggml_backend_t ggml_backend_sched_get_tensor_backend(ggml_backend_sched_t sched,
 
 // utils
 
-void ggml_backend_view_init(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+void ggml_backend_view_init(struct ggml_tensor * tensor) {
     GGML_ASSERT(tensor->buffer == NULL);
     GGML_ASSERT(tensor->view_src != NULL);
     GGML_ASSERT(tensor->view_src->buffer != NULL);
     GGML_ASSERT(tensor->view_src->data != NULL);
 
-    tensor->buffer = buffer;
+    tensor->buffer = tensor->view_src->buffer;
     tensor->data = (char *)tensor->view_src->data + tensor->view_offs;
-    ggml_backend_buffer_init_tensor(buffer, tensor);
+    ggml_backend_buffer_init_tensor(tensor->buffer, tensor);
 }
 
 void ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
@@ -1985,7 +1985,7 @@ static void graph_copy_init_tensor(struct ggml_hash_set hash_set, struct ggml_te
     struct ggml_tensor * dst = node_copies[id];
     if (dst->view_src != NULL) {
         graph_copy_init_tensor(hash_set, node_copies, node_init, src->view_src);
-        ggml_backend_view_init(dst->view_src->buffer, dst);
+        ggml_backend_view_init(dst);
     }
     else {
         ggml_backend_tensor_copy(src, dst);

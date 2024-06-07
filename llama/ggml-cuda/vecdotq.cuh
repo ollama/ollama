@@ -180,8 +180,8 @@ template <int vdr> static __device__ __forceinline__ float vec_dot_q5_1_q8_1_imp
 #define VDR_Q8_0_Q8_1_MMVQ 2
 #define VDR_Q8_0_Q8_1_MMQ 8
 
-template <int vdr> static __device__ __forceinline__ float vec_dot_q8_0_q8_1_impl(
-    const int * v, const int * u, const float & d8_0, const float & d8_1) {
+template <typename T, int vdr> static __device__ __forceinline__ T vec_dot_q8_0_q8_1_impl(
+    const int * v, const int * u, const T & d8_0, const T & d8_1) {
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     int sumi = 0;
@@ -192,7 +192,7 @@ template <int vdr> static __device__ __forceinline__ float vec_dot_q8_0_q8_1_imp
         sumi = __dp4a(v[i], u[i], sumi);
     }
 
-    return d8_0*d8_1 * sumi;
+    return d8_0*d8_1 * ((T) sumi);
 #else
     NO_DEVICE_CODE;
 #endif // __CUDA_ARCH__ >= MIN_CC_DP4A
@@ -566,9 +566,9 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_impl_mmq(
 }
 
 static __device__ __forceinline__ float vec_dot_q4_0_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_q4_0 * bq4_0 = (const block_q4_0 *) vbq;
+    const block_q4_0 * bq4_0 = (const block_q4_0 *) vbq + kbx;
 
     int v[VDR_Q4_0_Q8_1_MMVQ];
     int u[2*VDR_Q4_0_Q8_1_MMVQ];
@@ -585,9 +585,9 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1(
 
 
 static __device__ __forceinline__ float vec_dot_q4_1_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_q4_1 * bq4_1 = (const block_q4_1 *) vbq;
+    const block_q4_1 * bq4_1 = (const block_q4_1 *) vbq + kbx;
 
     int v[VDR_Q4_1_Q8_1_MMVQ];
     int u[2*VDR_Q4_1_Q8_1_MMVQ];
@@ -603,9 +603,9 @@ static __device__ __forceinline__ float vec_dot_q4_1_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_q5_0_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_q5_0 * bq5_0 = (const block_q5_0 *) vbq;
+    const block_q5_0 * bq5_0 = (const block_q5_0 *) vbq + kbx;
 
     int vl[VDR_Q5_0_Q8_1_MMVQ];
     int vh[VDR_Q5_0_Q8_1_MMVQ];
@@ -623,9 +623,9 @@ static __device__ __forceinline__ float vec_dot_q5_0_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_q5_1_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_q5_1 * bq5_1 = (const block_q5_1 *) vbq;
+    const block_q5_1 * bq5_1 = (const block_q5_1 *) vbq + kbx;
 
     int vl[VDR_Q5_1_Q8_1_MMVQ];
     int vh[VDR_Q5_1_Q8_1_MMVQ];
@@ -643,9 +643,9 @@ static __device__ __forceinline__ float vec_dot_q5_1_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_q8_0_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_q8_0 * bq8_0 = (const block_q8_0 *) vbq;
+    const block_q8_0 * bq8_0 = (const block_q8_0 *) vbq + kbx;
 
     int v[VDR_Q8_0_Q8_1_MMVQ];
     int u[VDR_Q8_0_Q8_1_MMVQ];
@@ -656,13 +656,13 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1(
         u[i] = get_int_from_int8_aligned(bq8_1->qs, iqs + i);
     }
 
-    return vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMVQ>(v, u, bq8_0->d, __low2half(bq8_1->ds));
+    return vec_dot_q8_0_q8_1_impl<float, VDR_Q8_0_Q8_1_MMVQ>(v, u, bq8_0->d, __low2half(bq8_1->ds));
 }
 
 static __device__ __forceinline__ float vec_dot_q2_K_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_q2_K * bq2_K = (const block_q2_K *) vbq;
+    const block_q2_K * bq2_K = (const block_q2_K *) vbq + kbx;
 
     const int bq8_offset = QR2_K * (iqs / QI8_1);
     const int scale_offset = iqs - iqs % QI8_1 + (iqs % QI8_1) / (QI8_1/2);
@@ -683,9 +683,9 @@ static __device__ __forceinline__ float vec_dot_q2_K_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_q3_K_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_q3_K * bq3_K = (const block_q3_K *) vbq;
+    const block_q3_K * bq3_K = (const block_q3_K *) vbq + kbx;
 
     const int bq8_offset = QR3_K * (iqs / (QI3_K/2));
     const int scale_offset = iqs - iqs % QI8_1 + (iqs % QI8_1) / (QI8_1/2);
@@ -710,10 +710,9 @@ static __device__ __forceinline__ float vec_dot_q3_K_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-#ifndef GGML_QKK_64
-    const block_q4_K * bq4_K = (const block_q4_K *) vbq;
+    const block_q4_K * bq4_K = (const block_q4_K *) vbq + kbx;
 
     int    v[2];
     int    u[2*QR4_K];
@@ -754,59 +753,12 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     }
 
     return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, bq4_K->dm, d8);
-
-#else
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const block_q4_K * bq4_K = (const block_q4_K *) vbq;
-
-    float sumf_d = 0.0f;
-    float sumf_m = 0.0f;
-
-    uint16_t aux16[2];
-    const uint8_t * s = (const uint8_t *)aux16;
-
-    const uint16_t * a = (const uint16_t *)bq4_K->scales;
-    aux16[0] = a[0] & 0x0f0f;
-    aux16[1] = (a[0] >> 4) & 0x0f0f;
-
-    const float dall = bq4_K->dm[0];
-    const float dmin = bq4_K->dm[1];
-
-    const float d8_1 = __low2float(bq8_1[0].ds);
-    const float d8_2 = __low2float(bq8_1[1].ds);
-
-    const int ui1 = *((const int *)bq8_1[0].qs + (iqs/2));
-    const int ui2 = *((const int *)bq8_1[0].qs + (iqs/2) + 4);
-    const int ui3 = *((const int *)bq8_1[1].qs + (iqs/2));
-    const int ui4 = *((const int *)bq8_1[1].qs + (iqs/2) + 4);
-
-    const int * q4 = (const int *)bq4_K->qs + (iqs/2);
-    const int v1 = q4[0];
-    const int v2 = q4[4];
-
-    const int dot1 = __dp4a(ui2, v2 & 0x0f0f0f0f, __dp4a(ui1, v1 & 0x0f0f0f0f, 0));
-    const int dot2 = __dp4a(ui4, (v2 >> 4) & 0x0f0f0f0f, __dp4a(ui3, (v1 >> 4) & 0x0f0f0f0f, 0));
-    const int dot3 = __dp4a(0x01010101, ui2, __dp4a(0x01010101, ui1, 0));
-    const int dot4 = __dp4a(0x01010101, ui4, __dp4a(0x01010101, ui3, 0));
-
-    sumf_d += d8_1 * (dot1 * s[0]) + d8_2 * (dot2 * s[1]);
-    sumf_m += d8_1 * (dot3 * s[2]) + d8_2 * (dot4 * s[3]);
-
-    return dall * sumf_d - dmin * sumf_m;
-
-#else
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-
-#endif
 }
 
 static __device__ __forceinline__ float vec_dot_q5_K_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-#ifndef GGML_QKK_64
-    const block_q5_K * bq5_K = (const block_q5_K *) vbq;
+    const block_q5_K * bq5_K = (const block_q5_K *) vbq + kbx;
 
     int   vl[2];
     int   vh[2];
@@ -847,54 +799,12 @@ static __device__ __forceinline__ float vec_dot_q5_K_q8_1(
     }
 
     return vec_dot_q5_K_q8_1_impl_vmmq(vl, vh, u, sc, m, bq5_K->dm, d8);
-
-#else
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const block_q5_K * bq5_K = (const block_q5_K *) vbq;
-
-    const int8_t * s = bq5_K->scales;
-
-    const float d = bq5_K->d;
-
-    const float d8_1 = __low2half(bq8_1[0].ds);
-    const float d8_2 = __low2half(bq8_1[1].ds);
-
-    const int ui1 = *((const int *)bq8_1[0].qs + (iqs/2));
-    const int ui2 = *((const int *)bq8_1[0].qs + (iqs/2) + 4);
-    const int ui3 = *((const int *)bq8_1[1].qs + (iqs/2));
-    const int ui4 = *((const int *)bq8_1[1].qs + (iqs/2) + 4);
-
-    const int * ql = (const int *)bq5_K->qs + (iqs/2);
-    const int vl1 = ql[0];
-    const int vl2 = ql[4];
-
-    const int step = 4 * (iqs/2); // 0, 4, 8, 12
-    const int im = step/8; // = 0 for iqs = 0, 2, = 1 for iqs = 4, 6
-    const int in = step%8; // 0, 4, 0, 4
-    const int vh = (*((const int *)(bq5_K->qh + in))) >> im;
-
-    const int v1 = (((vh << 4) & 0x10101010) ^ 0x10101010) | ((vl1 >> 0) & 0x0f0f0f0f);
-    const int v2 = (((vh << 2) & 0x10101010) ^ 0x10101010) | ((vl2 >> 0) & 0x0f0f0f0f);
-    const int v3 = (((vh >> 0) & 0x10101010) ^ 0x10101010) | ((vl1 >> 4) & 0x0f0f0f0f);
-    const int v4 = (((vh >> 2) & 0x10101010) ^ 0x10101010) | ((vl2 >> 4) & 0x0f0f0f0f);
-
-    const float sumf_d = d8_1 * (__dp4a(ui1, v1, 0) * s[0] + __dp4a(ui2, v2, 0) * s[1])
-                       + d8_2 * (__dp4a(ui3, v3, 0) * s[2] + __dp4a(ui4, v4, 0) * s[3]);
-
-    return d * sumf_d;
-
-#else
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-
-#endif
 }
 
 static __device__ __forceinline__ float vec_dot_q6_K_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_q6_K * bq6_K = (const block_q6_K *) vbq;
+    const block_q6_K * bq6_K = (const block_q6_K *) vbq + kbx;
 
     const int bq8_offset = 2 * QR6_K * (iqs / (QI6_K/2)) + (iqs % (QI6_K/2)) / (QI6_K/4);
     const int scale_offset = (QI6_K/4) * (iqs / (QI6_K/2)) + (iqs % (QI6_K/2)) / (QI6_K/8);
@@ -918,9 +828,8 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
-#if QK_K == 256
-    const block_iq2_xxs * bq2 = (const block_iq2_xxs *) vbq;
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+    const block_iq2_xxs * bq2 = (const block_iq2_xxs *) vbq + kbx;
 
 #if QR2_XXS == 8
     const int ib32 = iqs;
@@ -960,16 +869,12 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
     }
     return d * (sumi1 + sumi2);
 #endif
-#else
-    NO_DEVICE_CODE;
-#endif
 }
 
 static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-#if QK_K == 256
-    const block_iq2_xs * bq2 = (const block_iq2_xs *) vbq;
+    const block_iq2_xs * bq2 = (const block_iq2_xs *) vbq + kbx;
 
     const int ib32 = iqs;
     const uint16_t * q2 = bq2->qs + 4*ib32;
@@ -1002,18 +907,13 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
 #endif
-#else
-    GGML_UNUSED(ksigns64);
-    NO_DEVICE_CODE;
-#endif
 }
 
 // TODO
 static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-#if QK_K == 256
-    const block_iq2_s * bq2 = (const block_iq2_s *) vbq;
+    const block_iq2_s * bq2 = (const block_iq2_s *) vbq + kbx;
 
     const int ib32 = iqs;
     const int8_t  * q8 = bq8_1[ib32].qs;
@@ -1048,17 +948,12 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
 #endif
-#else
-    GGML_UNUSED(ksigns64);
-    NO_DEVICE_CODE;
-#endif
 }
 
 static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-#if QK_K == 256
-    const block_iq3_xxs * bq2 = (const block_iq3_xxs *) vbq;
+    const block_iq3_xxs * bq2 = (const block_iq3_xxs *) vbq + kbx;
 
     const int ib32 = iqs;
     const uint8_t  * q3 = bq2->qs + 8*ib32;
@@ -1082,17 +977,13 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
 #else
     NO_DEVICE_CODE;
 #endif
-#else
-    NO_DEVICE_CODE;
-#endif
 }
 
 // TODO: don't use lookup table for signs
 static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-#if QK_K == 256
-    const block_iq3_s * bq2 = (const block_iq3_s *) vbq;
+    const block_iq3_s * bq2 = (const block_iq3_s *) vbq + kbx;
 
     const int ib32 = iqs;
     const uint8_t  * qs = bq2->qs + 8*ib32;
@@ -1114,15 +1005,11 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
 #else
     NO_DEVICE_CODE;
 #endif
-#else
-    NO_DEVICE_CODE;
-#endif
 }
 
 static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
-#if QK_K == 256
-    const block_iq1_s * bq1 = (const block_iq1_s *) vbq;
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+    const block_iq1_s * bq1 = (const block_iq1_s *) vbq + kbx;
 
     const int ib32 = iqs;
     int sumi = 0;
@@ -1149,15 +1036,11 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
     const float d = d1q * __low2float (bq8_1[ib32].ds);
     const float m = d1q * __high2float(bq8_1[ib32].ds);
     return d * sumi + m * delta;
-#else
-    NO_DEVICE_CODE;
-#endif
 }
 
 static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
-#if QK_K == 256
-    const block_iq1_m * bq1 = (const block_iq1_m *) vbq;
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+    const block_iq1_m * bq1 = (const block_iq1_m *) vbq + kbx;
 
     const int ib32 = iqs;
     int   sumi[2] = {0, 0};
@@ -1192,9 +1075,6 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00f0) | ((sc[2] >> 4) & 0x0f00) | (sc[3] & 0xf000);
     const float d = (float)scale.f16 * __low2float (bq8_1[ib32].ds);
     return d * ((sumi[0] + sumf[0]) * (2*((sc[ib32/2] >> 6*(ib32%2)) & 0x7) + 1) + (sumi[1] + sumf[1]) * (2*((sc[ib32/2] >> (6*(ib32%2)+3)) & 0x7) + 1));
-#else
-    NO_DEVICE_CODE;
-#endif
 }
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
@@ -1214,9 +1094,9 @@ static __device__ __forceinline__ void get_int_from_table_16(const uint32_t & q4
 #endif
 
 static __device__ __forceinline__ float vec_dot_iq4_nl_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-    const block_iq4_nl * bq = (const block_iq4_nl *) vbq;
+    const block_iq4_nl * bq = (const block_iq4_nl *) vbq + kbx;
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const uint16_t * q4 = (const uint16_t *)bq->qs + 2*iqs;
@@ -1248,12 +1128,10 @@ static __device__ __forceinline__ float vec_dot_iq4_nl_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
-#if QK_K == 256
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-
-    const block_iq4_xs * bq4 = (const block_iq4_xs *) vbq;
+    const block_iq4_xs * bq4 = (const block_iq4_xs *) vbq + kbx;
     const uint8_t * values = (const uint8_t *)kvalues_iq4nl;
 
     // iqs is 0...7
@@ -1270,11 +1148,7 @@ static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
         sumi2 = __dp4a(v2, q8[j+4], sumi2);
     }
     return d * (sumi1 + sumi2);
-
 #else
-    NO_DEVICE_CODE;
-#endif
-#else
-    return vec_dot_iq4_xs_q8_1(vbq, bq8_1, iqs);
+    return vec_dot_iq4_xs_q8_1(vbq, bq8_1, kbx, iqs);
 #endif
 }

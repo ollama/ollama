@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 059031b8c40e1f4ba60586842c5b1ed3ddf61842
+ * llama.cpp - git d5c938cd7716b9a2ace49a43a469dfbffcff4d28
  *
  * MIT License
  *
@@ -151,7 +151,7 @@ std::string llama_sampling_order_print(const llama_sampling_params & params) {
     std::string result = "CFG -> Penalties ";
     if (params.mirostat == 0) {
         for (auto sampler_type : params.samplers_sequence) {
-            const auto sampler_type_name = sampler_type_to_name_string(sampler_type);
+            const auto sampler_type_name = llama_sampling_type_to_str(sampler_type);
             if (!sampler_type_name.empty()) {
                 result += "-> " + sampler_type_name + " ";
             }
@@ -161,6 +161,87 @@ std::string llama_sampling_order_print(const llama_sampling_params & params) {
     }
 
     return result;
+}
+
+std::string llama_sampling_type_to_str(llama_sampler_type sampler_type) {
+    switch (sampler_type) {
+        case llama_sampler_type::TOP_K:       return "top_k";
+        case llama_sampler_type::TFS_Z:       return "tfs_z";
+        case llama_sampler_type::TYPICAL_P:   return "typical_p";
+        case llama_sampler_type::TOP_P:       return "top_p";
+        case llama_sampler_type::MIN_P:       return "min_p";
+        case llama_sampler_type::TEMPERATURE: return "temperature";
+        default : return "";
+    }
+}
+
+std::vector<llama_sampler_type> llama_sampling_types_from_names(const std::vector<std::string> & names, bool allow_alt_names) {
+    std::unordered_map<std::string, llama_sampler_type> sampler_canonical_name_map {
+        {"top_k",       llama_sampler_type::TOP_K},
+        {"top_p",       llama_sampler_type::TOP_P},
+        {"typical_p",   llama_sampler_type::TYPICAL_P},
+        {"min_p",       llama_sampler_type::MIN_P},
+        {"tfs_z",       llama_sampler_type::TFS_Z},
+        {"temperature", llama_sampler_type::TEMPERATURE}
+    };
+
+    // since samplers names are written multiple ways
+    // make it ready for both system names and input names
+    std::unordered_map<std::string, llama_sampler_type> sampler_alt_name_map {
+        {"top-k",       llama_sampler_type::TOP_K},
+        {"top-p",       llama_sampler_type::TOP_P},
+        {"nucleus",     llama_sampler_type::TOP_P},
+        {"typical-p",   llama_sampler_type::TYPICAL_P},
+        {"typical",     llama_sampler_type::TYPICAL_P},
+        {"min-p",       llama_sampler_type::MIN_P},
+        {"tfs-z",       llama_sampler_type::TFS_Z},
+        {"tfs",         llama_sampler_type::TFS_Z},
+        {"temp",        llama_sampler_type::TEMPERATURE}
+    };
+
+    std::vector<llama_sampler_type> sampler_types;
+    sampler_types.reserve(names.size());
+    for (const auto & name : names)
+    {
+        auto sampler_item = sampler_canonical_name_map.find(name);
+        if (sampler_item != sampler_canonical_name_map.end())
+        {
+            sampler_types.push_back(sampler_item->second);
+        }
+        else
+        {
+            if (allow_alt_names)
+            {
+                sampler_item = sampler_alt_name_map.find(name);
+                if (sampler_item != sampler_alt_name_map.end())
+                {
+                    sampler_types.push_back(sampler_item->second);
+                }
+            }
+        }
+    }
+    return sampler_types;
+}
+
+std::vector<llama_sampler_type> llama_sampling_types_from_chars(const std::string & names_string) {
+    std::unordered_map<char, llama_sampler_type> sampler_name_map {
+        {'k', llama_sampler_type::TOP_K},
+        {'p', llama_sampler_type::TOP_P},
+        {'y', llama_sampler_type::TYPICAL_P},
+        {'m', llama_sampler_type::MIN_P},
+        {'f', llama_sampler_type::TFS_Z},
+        {'t', llama_sampler_type::TEMPERATURE}
+    };
+
+    std::vector<llama_sampler_type> sampler_types;
+    sampler_types.reserve(names_string.size());
+    for (const auto & c : names_string) {
+        const auto sampler_item = sampler_name_map.find(c);
+        if (sampler_item != sampler_name_map.end()) {
+            sampler_types.push_back(sampler_item->second);
+        }
+    }
+    return sampler_types;
 }
 
 // no reasons to expose this function in header
@@ -205,7 +286,7 @@ static llama_token llama_sampling_sample_impl(
                   struct llama_context * ctx_main,
                   struct llama_context * ctx_cfg,
                   const int idx,
-                  bool is_resampling) {  // Add a parameter to indicate if we are resampling
+                  bool is_resampling) {
     const llama_sampling_params & params = ctx_sampling->params;
 
     const float   temp            = params.temp;
@@ -214,8 +295,8 @@ static llama_token llama_sampling_sample_impl(
     const float   mirostat_eta    = params.mirostat_eta;
 
     std::vector<float> original_logits;
-    auto cur_p = llama_sampling_prepare(ctx_sampling, ctx_main, ctx_cfg, idx, !is_resampling, &original_logits);
-    if (!is_resampling) {
+    auto cur_p = llama_sampling_prepare(ctx_sampling, ctx_main, ctx_cfg, idx, /* apply_grammar= */ is_resampling, &original_logits);
+    if (ctx_sampling->grammar != NULL && !is_resampling) {
         GGML_ASSERT(!original_logits.empty());
     }
     llama_token id = 0;
@@ -278,7 +359,7 @@ static llama_token llama_sampling_sample_impl(
             // Restore logits from the copy
             std::copy(original_logits.begin(), original_logits.end(), logits);
 
-            return llama_sampling_sample_impl(ctx_sampling, ctx_main, ctx_cfg, idx, true);  // Pass true for is_resampling
+            return llama_sampling_sample_impl(ctx_sampling, ctx_main, ctx_cfg, idx, /* is_resampling= */ true);
         }
     }
 
@@ -311,7 +392,8 @@ static llama_token_data_array llama_sampling_prepare_impl(
     // Get a pointer to the logits
     float * logits = llama_get_logits_ith(ctx_main, idx);
 
-    if (apply_grammar && original_logits != NULL) {
+    if (ctx_sampling->grammar != NULL && !apply_grammar) {
+        GGML_ASSERT(original_logits != NULL);
         // Only make a copy of the original logits if we are not applying grammar checks, not sure if I actually have to do this.
         *original_logits = {logits, logits + llama_n_vocab(llama_get_model(ctx_main))};
     }
@@ -368,7 +450,7 @@ llama_token llama_sampling_sample(
                   struct llama_context * ctx_cfg,
                   const int idx) {
     // Call the implementation function with is_resampling set to false by default
-    return llama_sampling_sample_impl(ctx_sampling, ctx_main, ctx_cfg, idx, false);
+    return llama_sampling_sample_impl(ctx_sampling, ctx_main, ctx_cfg, idx, /* is_resampling= */ false);
 }
 
 llama_token_data_array llama_sampling_prepare(
