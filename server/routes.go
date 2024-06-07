@@ -729,38 +729,30 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	return resp, nil
 }
 
-func getGGMLData(model *Model) ([]byte, error) {
+func getGGMLData(model *Model) (llm.KV, error) {
 	f, err := os.Open(model.ModelPath)
 	if err != nil {
 		return nil, err
 	}
+
+	defer f.Close()
 
 	ggml, _, err := llm.DecodeGGML(f)
 	if err != nil {
 		return nil, err
 	}
 
-	f.Close()
-
 	kv := ggml.KV()
 
 	for k := range kv {
-		switch v := kv[k].(type) {
-		case []interface{}:
-			if len(v) > 5 {
-				kv[k] = []string{}
-			}
+		if t, ok := kv[k].([]any); ok {
+			kv[k] = fmt.Sprintf("(%d items)", len(t))
 		}
 	}
 
-	kv["embedding_model"] = model.IsEmbedding()
+	// kv["embedding_model"] = model.IsEmbedding()
 
-	ggmlJson, err := json.Marshal(kv)
-	if err != nil {
-		return nil, err
-	}
-
-	return ggmlJson, nil
+	return kv, nil
 }
 
 func (s *Server) ListModelsHandler(c *gin.Context) {

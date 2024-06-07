@@ -579,8 +579,10 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(args) != 1 {
+	if len(args) == 0 {
 		return errors.New("missing model name")
+	} else if len(args) > 1 {
+		return errors.New("only one model name can be specified")
 	}
 
 	license, errLicense := cmd.Flags().GetBool("license")
@@ -623,29 +625,30 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		showType = "template"
 	}
 
-	if flagsSet > 1 {
-		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
-	} else if flagsSet == 0 {
+	switch flagsSet {
+	case 0:
 		return errors.New("one of '--license', '--modelfile', '--parameters', '--system', or '--template' must be specified")
-	}
+	case 1:
+		req := api.ShowRequest{Name: args[0]}
+		resp, err := client.Show(cmd.Context(), &req)
+		if err != nil {
+			return err
+		}
 
-	req := api.ShowRequest{Name: args[0]}
-	resp, err := client.Show(cmd.Context(), &req)
-	if err != nil {
-		return err
-	}
-
-	switch showType {
-	case "license":
-		fmt.Println(resp.License)
-	case "modelfile":
-		fmt.Println(resp.Modelfile)
-	case "parameters":
-		fmt.Println(resp.Parameters)
-	case "system":
-		fmt.Println(resp.System)
-	case "template":
-		fmt.Println(resp.Template)
+		switch showType {
+		case "license":
+			fmt.Println(resp.License)
+		case "modelfile":
+			fmt.Println(resp.Modelfile)
+		case "parameters":
+			fmt.Println(resp.Parameters)
+		case "system":
+			fmt.Println(resp.System)
+		case "template":
+			fmt.Println(resp.Template)
+		}
+	default:
+		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
 	return nil
@@ -1122,7 +1125,6 @@ func NewCLI() *cobra.Command {
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
 		Short:   "Show information for a model",
-		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ShowHandler,
 	}
