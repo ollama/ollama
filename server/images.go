@@ -437,18 +437,17 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
 
 					if s := baseLayer.GGML.KV().ChatTemplate(); s != "" {
-						t, err := templates.NamedTemplate(s)
-						if err != nil {
-							return err
-						}
+						if t, err := templates.NamedTemplate(s); err != nil {
+							slog.Debug("template detection", "error", err)
+						} else {
+							layer, err := NewLayer(t.Reader(), "application/vnd.ollama.image.template")
+							if err != nil {
+								return err
+							}
 
-						layer, err := NewLayer(t.Reader(), "application/vnd.ollama.image.template")
-						if err != nil {
-							return err
+							layer.status = fmt.Sprintf("using autodetected template %s", t.Name)
+							layers = append(layers, layer)
 						}
-
-						layer.status = fmt.Sprintf("using autodetected template %s", t.Name)
-						layers = append(layers, layer)
 					}
 				}
 

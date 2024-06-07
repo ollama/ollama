@@ -30,7 +30,8 @@ var templatesOnce = sync.OnceValues(func() ([]*Template, error) {
 			return nil, err
 		}
 
-		t.Bytes = bts
+		// normalize line endings
+		t.Bytes = bytes.ReplaceAll(bts, []byte("\r\n"), []byte("\n"))
 	}
 
 	return templates, nil
