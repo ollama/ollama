@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git 059031b8c40e1f4ba60586842c5b1ed3ddf61842
+ * llama.cpp - git d5c938cd7716b9a2ace49a43a469dfbffcff4d28
  *
  * MIT License
  *
@@ -403,7 +403,7 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
     galloc->bufts = calloc(n_bufs, sizeof(ggml_backend_buffer_type_t));
     GGML_ASSERT(galloc->bufts != NULL);
 
-    galloc->buffers = calloc(n_bufs, sizeof(ggml_backend_buffer_t) * n_bufs);
+    galloc->buffers = calloc(n_bufs, sizeof(ggml_backend_buffer_t));
     GGML_ASSERT(galloc->buffers != NULL);
 
     galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
@@ -776,7 +776,7 @@ static void ggml_gallocr_init_tensor(ggml_gallocr_t galloc, struct ggml_tensor *
                 // this tensor was allocated without ggml-backend
                 return;
             }
-            ggml_backend_view_init(galloc->buffers[buffer_id], tensor);
+            ggml_backend_view_init(tensor);
         }
     } else {
         if (tensor->data == NULL) {
@@ -925,12 +925,12 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
             if (t->view_src == NULL) {
                 ggml_tallocr_alloc(&tallocr, t);
             } else if (t->buffer == NULL) {
-                ggml_backend_view_init(buffer, t);
+                ggml_backend_view_init(t);
             }
         } else {
             if (t->view_src != NULL && t->buffer == NULL) {
                 // view of a pre-allocated tensor
-                ggml_backend_view_init(buffer, t);
+                ggml_backend_view_init(t);
             }
         }
     }
