@@ -268,7 +268,6 @@ func TestNameIsValidPart(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestFilepathAllocs(t *testing.T) {
@@ -325,7 +324,7 @@ func TestParseNameFromFilepath(t *testing.T) {
 		filepath.Join("host:port", "namespace", "model", "tag"): {Host: "host:port", Namespace: "namespace", Model: "model", Tag: "tag"},
 		filepath.Join("namespace", "model", "tag"):              {},
 		filepath.Join("model", "tag"):                           {},
-		filepath.Join("model"):                                  {},
+		"model":                                                 {},
 		filepath.Join("..", "..", "model", "tag"):               {},
 		filepath.Join("", "namespace", ".", "tag"):              {},
 		filepath.Join(".", ".", ".", "."):                       {},
@@ -382,6 +381,32 @@ func FuzzName(f *testing.F) {
 				t.Errorf("String() = %q; want %q", n.String(), s)
 			}
 		}
-
 	})
+}
+
+func TestIsValidNamespace(t *testing.T) {
+	cases := []struct {
+		username string
+		expected bool
+	}{
+		{"", false},
+		{"a", true},
+		{"a:b", false},
+		{"a/b", false},
+		{"a:b/c", false},
+		{"a/b:c", false},
+		{"a/b:c", false},
+		{"a/b:c/d", false},
+		{"a/b:c/d@e", false},
+		{"a/b:c/d@sha256-100", false},
+		{"himynameisjoe", true},
+		{"himynameisreallyreallyreallyreallylongbutitshouldstillbevalid", true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.username, func(t *testing.T) {
+			if got := IsValidNamespace(tt.username); got != tt.expected {
+				t.Errorf("IsValidName(%q) = %v; want %v", tt.username, got, tt.expected)
+			}
+		})
+	}
 }

@@ -592,8 +592,8 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 			return err
 		}
 
-		dims := 0
-		for cnt := 0; cnt < len(tensor.Shape); cnt++ {
+		var dims int
+		for cnt := range len(tensor.Shape) {
 			if tensor.Shape[cnt] > 0 {
 				dims++
 			}
@@ -603,8 +603,8 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 			return err
 		}
 
-		for i := 0; i < dims; i++ {
-			if err := binary.Write(ws, llm.ByteOrder, uint64(tensor.Shape[dims-1-i])); err != nil {
+		for i := range dims {
+			if err := binary.Write(ws, llm.ByteOrder, tensor.Shape[dims-1-i]); err != nil {
 				return err
 			}
 		}
@@ -618,22 +618,8 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 		}
 	}
 
-	offset, err := ws.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-
 	var alignment int64 = 32
-	padding := llm.padding(offset, alignment)
-	if err := binary.Write(ws, llm.ByteOrder, bytes.Repeat([]byte{0}, int(padding))); err != nil {
-		return err
-	}
-
 	for _, tensor := range tensors {
-		if _, err := tensor.WriteTo(ws); err != nil {
-			return err
-		}
-
 		offset, err := ws.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -641,6 +627,10 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 
 		padding := llm.padding(offset, alignment)
 		if err := binary.Write(ws, llm.ByteOrder, bytes.Repeat([]byte{0}, int(padding))); err != nil {
+			return err
+		}
+
+		if _, err := tensor.WriteTo(ws); err != nil {
 			return err
 		}
 	}

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -29,7 +30,6 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
@@ -746,7 +746,6 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
-
 				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
 					fmt.Printf("%s%c", state.wordBuffer, ch)
 					state.wordBuffer = ""
@@ -755,7 +754,11 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				}
 
 				// backtrack the length of the last word and clear to the end of the line
-				fmt.Printf("\x1b[%dD\x1b[K\n", runewidth.StringWidth(state.wordBuffer))
+				a := runewidth.StringWidth(state.wordBuffer)
+				if a > 0 {
+					fmt.Printf("\x1b[%dD", a)
+				}
+				fmt.Printf("\x1b[K\n")
 				fmt.Printf("%s%c", state.wordBuffer, ch)
 				chWidth := runewidth.RuneWidth(ch)
 
@@ -1026,24 +1029,6 @@ func initializeKeypair() error {
 	return nil
 }
 
-//nolint:unused
-func waitForServer(ctx context.Context, client *api.Client) error {
-	// wait for the server to start
-	timeout := time.After(5 * time.Second)
-	tick := time.Tick(500 * time.Millisecond)
-	for {
-		select {
-		case <-timeout:
-			return errors.New("timed out waiting for server to start")
-		case <-tick:
-			if err := client.Heartbeat(ctx); err == nil {
-				return nil // server has started
-			}
-		}
-	}
-
-}
-
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -1251,6 +1236,9 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
 				envVars["OLLAMA_TMPDIR"],
+				envVars["OLLAMA_FLASH_ATTENTION"],
+				envVars["OLLAMA_LLM_LIBRARY"],
+				envVars["OLLAMA_MAX_VRAM"],
 			})
 		default:
 			appendEnvDocs(cmd, envs)

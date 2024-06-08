@@ -81,6 +81,11 @@ func (kv KV) ContextLength() uint64 {
 	return kv.u64(fmt.Sprintf("%s.context_length", kv.Architecture()))
 }
 
+func (kv KV) ChatTemplate() string {
+	s, _ := kv["tokenizer.chat_template"].(string)
+	return s
+}
+
 type Tensors []*Tensor
 
 func (ts Tensors) Layers() map[string]Layer {

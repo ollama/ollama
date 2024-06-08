@@ -340,17 +340,17 @@ type downloadOpts struct {
 }
 
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
-func downloadBlob(ctx context.Context, opts downloadOpts) error {
+func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
 	fp, err := GetBlobsPath(opts.digest)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	fi, err := os.Stat(fp)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
-		return err
+		return false, err
 	default:
 		opts.fn(api.ProgressResponse{
 			Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
@@ -359,7 +359,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 			Completed: fi.Size(),
 		})
 
-		return nil
+		return true, nil
 	}
 
 	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
@@ -369,12 +369,12 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 		requestURL = requestURL.JoinPath("v2", opts.mp.GetNamespaceRepository(), "blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
 			blobDownloadManager.Delete(opts.digest)
-			return err
+			return false, err
 		}
 
-		// nolint: contextcheck
+		//nolint:contextcheck
 		go download.Run(context.Background(), requestURL, opts.regOpts)
 	}
 
-	return download.Wait(ctx, opts.fn)
+	return false, download.Wait(ctx, opts.fn)
 }

@@ -69,7 +69,6 @@ func init() {
 				slog.Error(fmt.Sprintf("create ollama dir %s: %v", AppDataDir, err))
 			}
 		}
-
 	} else if runtime.GOOS == "darwin" {
 		// TODO
 		AppName += ".app"

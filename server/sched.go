@@ -7,17 +7,17 @@ import (
 	"log/slog"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/envconfig"
-	"golang.org/x/exp/slices"
 )
 
 type LlmRequest struct {
@@ -66,7 +66,7 @@ func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options,
 		opts.NumCtx = 4
 	}
 
-	opts.NumCtx = opts.NumCtx * envconfig.NumParallel
+	opts.NumCtx *= envconfig.NumParallel
 
 	req := &LlmRequest{
 		ctx:             c,
@@ -370,7 +370,6 @@ func (s *Scheduler) updateFreeSpace(allGpus gpu.GpuInfoList) {
 		r.refMu.Lock()
 		gpuIDs := make([]string, 0, len(r.gpus))
 		if r.llama != nil {
-
 			// TODO this should be broken down by GPU instead of assuming uniform spread
 			estimatedVRAMPerGPU := r.llama.EstimatedVRAM() / uint64(len(r.gpus))
 			for _, gpu := range r.gpus {
@@ -529,7 +528,6 @@ func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 		}
 	}()
 	return finished
-
 }
 
 type ByDuration []*runnerRef

@@ -6,7 +6,7 @@
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-Get up and running with large language models locally.
+Get up and running with large language models.
 
 ### macOS
 
@@ -283,6 +283,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) (Local Chat with multiple PDFs using Ollama and RAG)
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
 - [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
+- [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
+- [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
+- [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
 
 ### Terminal
 
@@ -305,6 +308,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ShellOracle](https://github.com/djcopley/ShellOracle)
 - [tlm](https://github.com/yusufcanb/tlm)
 - [podman-ollama](https://github.com/ericcurtin/podman-ollama)
+- [gollama](https://github.com/sammcj/gollama)
 
 ### Database
 
@@ -344,6 +348,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
 - [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
 - [LlamaScript](https://github.com/Project-Llama/llamascript)
+
 ### Mobile
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
@@ -378,6 +383,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Chat/moderation bot written in python. Uses Ollama to create personalities.
 - [node-red-contrib-ollama](https://github.com/jakubburkiewicz/node-red-contrib-ollama)
 
-### Supported backends 
+### Supported backends
+
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
 

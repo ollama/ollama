@@ -12,11 +12,10 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/envconfig"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,10 +52,10 @@ func TestLoad(t *testing.T) {
 	}
 	gpus := gpu.GpuInfoList{}
 	s.load(req, ggml, gpus)
-	require.Len(t, req.successCh, 0)
+	require.Empty(t, req.successCh)
 	require.Len(t, req.errCh, 1)
 	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 0)
+	require.Empty(t, s.loaded)
 	s.loadedMu.Unlock()
 	err := <-req.errCh
 	require.Contains(t, err.Error(), "this model may be incompatible")
@@ -113,7 +112,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), modelName)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	defer f.Close()
 
 	gguf := llm.NewGGUFV3(binary.LittleEndian)
@@ -131,7 +130,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 	}, []llm.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: &bytes.Reader{}},
 	})
-	assert.Nil(t, err)
+	require.NoError(t, err)
 
 	fname := f.Name()
 	model := &Model{Name: modelName, ModelPath: fname}
@@ -190,8 +189,8 @@ func TestRequests(t *testing.T) {
 	select {
 	case resp := <-scenario1a.req.successCh:
 		require.Equal(t, resp.llama, scenario1a.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, scenario1a.req.errCh, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, scenario1a.req.errCh)
 	case <-ctx.Done():
 		t.Errorf("timeout")
 	}
@@ -203,8 +202,8 @@ func TestRequests(t *testing.T) {
 	select {
 	case resp := <-scenario1b.req.successCh:
 		require.Equal(t, resp.llama, scenario1a.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, scenario1b.req.errCh, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, scenario1b.req.errCh)
 	case <-ctx.Done():
 		t.Errorf("timeout")
 	}
@@ -221,8 +220,8 @@ func TestRequests(t *testing.T) {
 	select {
 	case resp := <-scenario2a.req.successCh:
 		require.Equal(t, resp.llama, scenario2a.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, scenario2a.req.errCh, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, scenario2a.req.errCh)
 	case <-ctx.Done():
 		t.Errorf("timeout")
 	}
@@ -237,8 +236,8 @@ func TestRequests(t *testing.T) {
 	select {
 	case resp := <-scenario3a.req.successCh:
 		require.Equal(t, resp.llama, scenario3a.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, scenario3a.req.errCh, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, scenario3a.req.errCh)
 	case <-ctx.Done():
 		t.Errorf("timeout")
 	}
@@ -253,8 +252,8 @@ func TestRequests(t *testing.T) {
 	select {
 	case resp := <-scenario3b.req.successCh:
 		require.Equal(t, resp.llama, scenario3b.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, scenario3b.req.errCh, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, scenario3b.req.errCh)
 	case <-ctx.Done():
 		t.Errorf("timeout")
 	}
@@ -269,8 +268,8 @@ func TestRequests(t *testing.T) {
 	select {
 	case resp := <-scenario3c.req.successCh:
 		require.Equal(t, resp.llama, scenario3c.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, scenario3c.req.errCh, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, scenario3c.req.errCh)
 	case <-ctx.Done():
 		t.Errorf("timeout")
 	}
@@ -296,8 +295,8 @@ func TestRequests(t *testing.T) {
 	select {
 	case resp := <-scenario3d.req.successCh:
 		require.Equal(t, resp.llama, scenario3d.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, scenario3d.req.errCh, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, scenario3d.req.errCh)
 	case <-ctx.Done():
 		t.Errorf("timeout")
 	}
@@ -332,7 +331,7 @@ func TestGetRunner(t *testing.T) {
 	slog.Info("scenario1b")
 	successCh1b, errCh1b := s.GetRunner(scenario1b.ctx, scenario1b.req.model, scenario1b.req.opts, scenario1b.req.sessionDuration)
 	require.Len(t, s.pendingReqCh, 1)
-	require.Len(t, successCh1b, 0)
+	require.Empty(t, successCh1b)
 	require.Len(t, errCh1b, 1)
 	err := <-errCh1b
 	require.Contains(t, err.Error(), "server busy")
@@ -340,8 +339,8 @@ func TestGetRunner(t *testing.T) {
 	select {
 	case resp := <-successCh1a:
 		require.Equal(t, resp.llama, scenario1a.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, errCh1a, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, errCh1a)
 	case <-ctx.Done():
 		t.Errorf("timeout")
 	}
@@ -355,9 +354,9 @@ func TestGetRunner(t *testing.T) {
 	successCh1c, errCh1c := s.GetRunner(scenario1c.ctx, scenario1c.req.model, scenario1c.req.opts, scenario1c.req.sessionDuration)
 	// Starts in pending channel, then should be quickly processsed to return an error
 	time.Sleep(5 * time.Millisecond)
-	require.Len(t, successCh1c, 0)
+	require.Empty(t, successCh1c)
 	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 0)
+	require.Empty(t, s.loaded)
 	s.loadedMu.Unlock()
 	require.Len(t, errCh1c, 1)
 	err = <-errCh1c
@@ -386,8 +385,8 @@ func TestPrematureExpired(t *testing.T) {
 	select {
 	case resp := <-successCh1a:
 		require.Equal(t, resp.llama, scenario1a.srv)
-		require.Len(t, s.pendingReqCh, 0)
-		require.Len(t, errCh1a, 0)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, errCh1a)
 		s.loadedMu.Lock()
 		require.Len(t, s.loaded, 1)
 		s.loadedMu.Unlock()
@@ -401,9 +400,9 @@ func TestPrematureExpired(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	require.LessOrEqual(t, len(s.finishedReqCh), 1)
 	time.Sleep(10 * time.Millisecond)
-	require.Len(t, s.finishedReqCh, 0)
+	require.Empty(t, s.finishedReqCh)
 	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 0)
+	require.Empty(t, s.loaded)
 	s.loadedMu.Unlock()
 
 	// also shouldn't happen in real life
@@ -487,7 +486,6 @@ func TestFindRunnerToUnload(t *testing.T) {
 	r2.refCount = 1
 	resp = s.findRunnerToUnload()
 	require.Equal(t, r1, resp)
-
 }
 
 func TestNeedsReload(t *testing.T) {

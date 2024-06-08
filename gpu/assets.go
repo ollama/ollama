@@ -80,7 +80,7 @@ func cleanupTmpDirs() {
 		if err == nil {
 			pid, err := strconv.Atoi(string(raw))
 			if err == nil {
-				if proc, err := os.FindProcess(int(pid)); err == nil && !errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+				if proc, err := os.FindProcess(pid); err == nil && !errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
 					// Another running ollama, ignore this tmpdir
 					continue
 				}

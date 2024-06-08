@@ -245,7 +245,6 @@ func (w *writer) writeResponse(data []byte) (int, error) {
 		d, err := json.Marshal(toChunk(w.id, chatResponse))
 		if err != nil {
 			return 0, err
-
 		}
 
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")

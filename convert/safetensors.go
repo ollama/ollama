@@ -120,7 +120,7 @@ func (m *SafetensorFormat) readTensors(fn string, offset uint64, params *Params)
 			Name:   name,
 			Kind:   kind,
 			Offset: offset,
-			Shape:  shape[:],
+			Shape:  shape,
 		}
 
 		t.WriterTo = safetensorWriterTo{
