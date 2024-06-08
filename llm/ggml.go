@@ -231,8 +231,7 @@ const (
 	// Magic constant for `ggla` files (LoRA adapter).
 	FILE_MAGIC_GGLA = 0x67676C61
 	// Magic constant for `gguf` files (versioned, gguf)
-	FILE_MAGIC_GGUF_LE = 0x46554747
-	FILE_MAGIC_GGUF_BE = 0x47475546
+	FILE_MAGIC_GGUF = 0x46554747
 )
 
 var ErrUnsupportedFormat = errors.New("unsupported model format")
@@ -247,7 +246,7 @@ func DetectGGMLType(b []byte) string {
 		return "ggjt"
 	case FILE_MAGIC_GGLA:
 		return "ggla"
-	case FILE_MAGIC_GGUF_LE, FILE_MAGIC_GGUF_BE:
+	case FILE_MAGIC_GGUF:
 		return "gguf"
 	default:
 		return ""
@@ -255,21 +254,19 @@ func DetectGGMLType(b []byte) string {
 }
 
 func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
-	var magic uint32
+	var magic [4]byte
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, 0, err
 	}
 
 	var c container
-	switch magic {
+	switch binary.LittleEndian.Uint32(magic[:]) {
 	case FILE_MAGIC_GGML, FILE_MAGIC_GGMF, FILE_MAGIC_GGJT:
 		return nil, 0, ErrUnsupportedFormat
 	case FILE_MAGIC_GGLA:
 		c = &containerGGLA{}
-	case FILE_MAGIC_GGUF_LE:
+	case FILE_MAGIC_GGUF:
 		c = &containerGGUF{ByteOrder: binary.LittleEndian}
-	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{ByteOrder: binary.BigEndian}
 	default:
 		return nil, 0, errors.New("invalid file magic")
 	}
