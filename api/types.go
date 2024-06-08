@@ -240,6 +240,7 @@ type ShowResponse struct {
 	Details    ModelDetails   `json:"details,omitempty"`
 	Messages   []Message      `json:"messages,omitempty"`
 	ModelInfo  map[string]any `json:"model_info,omitempty"`
+	// * placing llm.KV creates an import cycle between api and llm...
 }
 
 // CopyRequest is the request passed to [Client.Copy].

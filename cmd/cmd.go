@@ -585,13 +585,14 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("only one model name can be specified")
 	}
 
+	model, errModel := cmd.Flags().GetBool("model")
 	license, errLicense := cmd.Flags().GetBool("license")
 	modelfile, errModelfile := cmd.Flags().GetBool("modelfile")
 	parameters, errParams := cmd.Flags().GetBool("parameters")
 	system, errSystem := cmd.Flags().GetBool("system")
 	template, errTemplate := cmd.Flags().GetBool("template")
 
-	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate} {
+	for _, boolErr := range []error{errModel, errLicense, errModelfile, errParams, errSystem, errTemplate} {
 		if boolErr != nil {
 			return errors.New("error retrieving flags")
 		}
@@ -599,6 +600,11 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 	flagsSet := 0
 	showType := ""
+
+	if model {
+		flagsSet++
+		showType = "model"
+	}
 
 	if license {
 		flagsSet++
@@ -627,7 +633,50 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 	switch flagsSet {
 	case 0:
-		return errors.New("one of '--license', '--modelfile', '--parameters', '--system', or '--template' must be specified")
+		req := api.ShowRequest{Name: args[0]}
+		resp, err := client.Show(cmd.Context(), &req)
+		if err != nil {
+			return err
+		}
+
+		var data []string
+
+		data = append(data,
+			strings.Join([]string{
+				fmt.Sprintf("arch %v", resp.ModelInfo["general.architecture"]),
+				fmt.Sprintf("parameters %v", resp.Details.ParameterSize),
+				fmt.Sprintf("quantization %v", resp.Details.QuantizationLevel),
+			}, " · "),
+			truncate(resp.License),
+			truncate(resp.Modelfile),
+			handleParams(resp.Parameters),
+			truncate(resp.System),
+			truncate(resp.Template),
+		)
+
+		headers := []string{
+			"MODEL",
+			"LICENSE",
+			"MODELFILE",
+			"PARAMETERS",
+			"SYSTEM",
+			"TEMPLATE",
+		}
+
+		table := tablewriter.NewWriter(os.Stdout)
+		table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+		table.SetAlignment(tablewriter.ALIGN_LEFT)
+		table.SetBorder(false)
+		table.SetNoWhiteSpace(true)
+		table.SetTablePadding("\t")
+		table.SetAutoWrapText(false)
+		for i := 0; i < len(headers); i++ {
+			if data[i] != "" {
+				table.Append([]string{headers[i], data[i]})
+			}
+		}
+		table.Render()
+
 	case 1:
 		req := api.ShowRequest{Name: args[0]}
 		resp, err := client.Show(cmd.Context(), &req)
@@ -646,12 +695,52 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 			fmt.Println(resp.System)
 		case "template":
 			fmt.Println(resp.Template)
+		case "model":
+			fmt.Println(
+				strings.Join([]string{
+					fmt.Sprintf("arch %v", resp.ModelInfo["general.architecture"]),
+					fmt.Sprintf("parameters %v", resp.Details.ParameterSize),
+					fmt.Sprintf("quantization %v", resp.Details.QuantizationLevel),
+				}, " · "),
+			)
 		}
 	default:
-		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
+		return errors.New("only one of '--model', --license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
 	return nil
+}
+
+func truncate(s string) string {
+	lines := strings.Split(s, "\n")
+	var truncated strings.Builder
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			truncated.WriteString(line + " ")
+			if truncated.Len() > 60 {
+				return truncated.String()[:57] + "..."
+			}
+		}
+	}
+	return strings.TrimSpace(truncated.String())
+}
+
+// temporary fix for buggy params #4918
+func handleParams(s string) string {
+	lines := strings.Split(s, "\n")
+	var truncated strings.Builder
+
+	truncated.WriteString("{")
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), ":")
+		truncated.WriteString(line + ",")
+		if truncated.Len() > 60 {
+			return truncated.String()[:57] + "..."
+		}
+	}
+	return strings.TrimSpace(truncated.String()) + "}"
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
@@ -1129,6 +1218,7 @@ func NewCLI() *cobra.Command {
 		RunE:    ShowHandler,
 	}
 
+	showCmd.Flags().Bool("model", false, "Show basic stats of a model")
 	showCmd.Flags().Bool("license", false, "Show license of a model")
 	showCmd.Flags().Bool("modelfile", false, "Show Modelfile of a model")
 	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")

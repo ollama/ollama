@@ -724,6 +724,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// exclusionList := []string{}
+	// for _, e := range exclusionList {
+	// 	delete(ggmlData, e)
+	// }
+
 	resp.ModelInfo = ggmlData
 
 	return resp, nil
@@ -746,7 +752,7 @@ func getGGMLData(model *Model) (llm.KV, error) {
 
 	for k := range kv {
 		if t, ok := kv[k].([]any); ok {
-			kv[k] = fmt.Sprintf("(%d items)", len(t))
+			kv[k] = fmt.Sprintf("... (%d values)", len(t))
 		}
 	}
 
