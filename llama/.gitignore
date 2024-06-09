@@ -3,3 +3,4 @@
 *.lib
 *.exp
 *.dll
+*.o
