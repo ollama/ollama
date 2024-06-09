@@ -1188,6 +1188,82 @@ func chatPrompt(ctx context.Context, runner *runnerRef, template string, message
 	return prompt, nil
 }
 
+func extractSubstringFromResponse(content, startSequence, endSequence string) string {
+	// Find the start index of the startSequence
+	startIndex := strings.Index(content, startSequence)
+	if startIndex == -1 {
+		return "" // startSequence not found
+	}
+
+	// Move startIndex to the end of the startSequence
+	startIndex += len(startSequence)
+
+	if endSequence == "" {
+		// If endSequence is empty, return the substring from startSequence to the end of input
+		return content[startIndex:]
+	}
+
+	// Find the end index of the endSequence
+	endIndex := strings.Index(content[startIndex:], endSequence)
+	if endIndex == -1 {
+		return "" // endSequence not found after startSequence
+	}
+
+	// Extract the substring between startIndex and endIndex
+	return content[startIndex : startIndex+endIndex]
+}
+
+func extractJsonObjectOrArrayFromResponse(content string, startSequence string, endSequence string) string {
+	startIndex := strings.Index(content, startSequence)
+	if startIndex == -1 {
+		// Start sequence not found
+		return ""
+	}
+
+	// Start searching for JSON after the start sequence
+	content = extractSubstringFromResponse(content, startSequence, endSequence)
+
+	if content == "" {
+		return ""
+	}
+
+	var stack []rune
+	var jsonStr strings.Builder
+
+	for _, char := range content {
+		if char == '{' || char == '[' {
+			if len(stack) == 0 {
+				// Start of a potential JSON object or array
+				jsonStr.Reset()
+			}
+			stack = append(stack, char)
+		}
+		if len(stack) > 0 {
+			jsonStr.WriteRune(char)
+		}
+		if char == '}' || char == ']' {
+			if len(stack) == 0 {
+				// Unbalanced JSON structure
+				return ""
+			}
+			top := stack[len(stack)-1]
+			if (char == '}' && top == '{') || (char == ']' && top == '[') {
+				stack = stack[:len(stack)-1]
+			}
+			if len(stack) == 0 {
+				// End of a potential JSON object or array
+				jsonStrContent := jsonStr.String()
+				var jsonObj interface{}
+				if err := json.Unmarshal([]byte(jsonStrContent), &jsonObj); err == nil {
+					return jsonStr.String()
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -1362,9 +1438,58 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
-		// TODO: @dkesler add tool_calls parser
+		content := sb.String()
+		tool_calls := ""
 
-		final.Message = api.Message{Role: "assistant", Content: sb.String()}
+		// If tool_calls_format is defined, we presume that tool_calls are supported
+		if val, ok := model.Options["tool_calls_format"]; ok {
+			format := val.(string)
+
+			if format == "json" {
+				startSequence := ""
+				if val, ok := model.Options["tool_calls_start"]; ok {
+					startSequence = val.(string)
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "tool_calls_start model parameter is required when tool_calls_format is json"})
+					return
+				}
+
+				// End sequence is not mandatory because we can extract a json object or array without it
+				endSequence := ""
+				if val, ok := model.Options["tool_calls_end"]; ok {
+					endSequence = val.(string)
+				}
+
+				// Try to extract a json object or a json array
+				tool_calls = extractJsonObjectOrArrayFromResponse(content, startSequence, endSequence)
+			} else if format == "raw" {
+				startSequence := ""
+				if val, ok := model.Options["tool_calls_start"]; ok {
+					startSequence = val.(string)
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "tool_calls_start model parameter is required when tool_calls_format is raw"})
+					return
+				}
+
+				endSequence := ""
+				if val, ok := model.Options["tool_calls_end"]; ok {
+					endSequence = val.(string)
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "tool_calls_end model parameter is required when tool_calls_format is raw"})
+					return
+				}
+
+				// Extract the content between the start and end sequence
+				tool_calls = extractSubstringFromResponse(content, startSequence, endSequence)
+			}
+		}
+
+		if tool_calls != "" {
+			final.Message = api.Message{Role: "assistant", Content: "", ToolCalls: tool_calls}
+		} else {
+			final.Message = api.Message{Role: "assistant", Content: content}
+		}
+
 		c.JSON(http.StatusOK, final)
 		return
 	}

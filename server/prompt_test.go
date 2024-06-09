@@ -11,8 +11,10 @@ func TestPrompt(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
+		tools    string
 		system   string
 		prompt   string
+		results  string
 		response string
 		generate bool
 		want     string
@@ -61,7 +63,7 @@ func TestPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Prompt(tc.template, tc.system, tc.prompt, tc.response, tc.generate)
+			got, err := Prompt(tc.template, tc.tools, tc.system, tc.prompt, tc.results, tc.response, tc.generate)
 			if err != nil {
 				t.Errorf("error = %v", err)
 			}
@@ -78,6 +80,7 @@ func TestChatPrompt(t *testing.T) {
 		name     string
 		template string
 		messages []api.Message
+		tools    string
 		window   int
 		want     string
 	}{
@@ -192,7 +195,7 @@ func TestChatPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ChatPrompt(tc.template, tc.messages, tc.window, encode)
+			got, err := ChatPrompt(tc.template, tc.messages, tc.tools, tc.window, encode)
 			if err != nil {
 				t.Errorf("error = %v", err)
 			}

@@ -161,6 +161,9 @@ type Options struct {
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+	ToolCallsStart   string   `json:"tool_calls_start,omitempty"`
+	ToolCallsEnd     string   `json:"tool_calls_end,omitempty"`
+	ToolCallsFormat  string   `json:"tool_calls_format,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
