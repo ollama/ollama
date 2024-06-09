@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/exp/slices"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -77,6 +77,7 @@ func isSupportedImageType(image []byte) bool {
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
+
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
 	err := c.ShouldBindJSON(&req)
@@ -187,7 +188,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		sb.WriteString(req.Prompt)
 
-		p, err := Prompt(req.Template, req.System, sb.String(), "", true)
+		p, err := Prompt(req.Template, "", req.System, sb.String(), "", "", true)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -242,7 +243,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
 				if !req.Raw {
-					p, err := Prompt(req.Template, req.System, req.Prompt, generated.String(), false)
+					p, err := Prompt(req.Template, "", req.System, req.Prompt, "", generated.String(), false)
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 						return
@@ -523,8 +524,8 @@ func checkNameExists(name model.Name) error {
 }
 
 func (s *Server) CreateModelHandler(c *gin.Context) {
-	var r api.CreateRequest
-	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
+	var req api.CreateRequest
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -532,7 +533,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	name := model.ParseName(cmp.Or(r.Model, r.Name))
+	name := model.ParseName(cmp.Or(req.Model, req.Name))
 	if !name.IsValid() {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errtypes.InvalidModelNameErrMsg})
 		return
@@ -543,24 +544,24 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		return
 	}
 
-	if r.Path == "" && r.Modelfile == "" {
+	if req.Path == "" && req.Modelfile == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "path or modelfile are required"})
 		return
 	}
 
-	var sr io.Reader = strings.NewReader(r.Modelfile)
-	if r.Path != "" && r.Modelfile == "" {
-		f, err := os.Open(r.Path)
+	var r io.Reader = strings.NewReader(req.Modelfile)
+	if req.Path != "" && req.Modelfile == "" {
+		f, err := os.Open(req.Path)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("error reading modelfile: %s", err)})
 			return
 		}
 		defer f.Close()
 
-		sr = f
+		r = f
 	}
 
-	f, err := parser.ParseFile(sr)
+	modelfile, err := parser.ParseFile(r)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -576,13 +577,17 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		quantization := cmp.Or(r.Quantize, r.Quantization)
-		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
+		quantization := req.Quantization
+		if req.Quantize != "" {
+			quantization = req.Quantize
+		}
+
+		if err := CreateModel(ctx, name.String(), filepath.Dir(req.Path), strings.ToUpper(quantization), modelfile, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
 
-	if r.Stream != nil && !*r.Stream {
+	if req.Stream != nil && !*req.Stream {
 		waitForStream(c, ch)
 		return
 	}
@@ -613,11 +618,6 @@ func (s *Server) DeleteModelHandler(c *gin.Context) {
 	}
 
 	if err := m.Remove(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := m.RemoveLayers(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -730,7 +730,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 		return
 	}
 
-	models := []api.ListModelResponse{}
+	models := []api.ModelResponse{}
 	for n, m := range ms {
 		f, err := m.Config.Open()
 		if err != nil {
@@ -746,7 +746,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 		}
 
 		// tag should never be masked
-		models = append(models, api.ListModelResponse{
+		models = append(models, api.ModelResponse{
 			Model:      n.DisplayShortest(),
 			Name:       n.DisplayShortest(),
 			Size:       m.Size(),
@@ -762,7 +762,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 		})
 	}
 
-	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
+	slices.SortStableFunc(models, func(i, j api.ModelResponse) int {
 		// most recently modified first
 		return cmp.Compare(j.ModifiedAt.Unix(), i.ModifiedAt.Unix())
 	})
@@ -942,7 +942,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 		}
 
 		if allowedHost(host) {
-			if c.Request.Method == http.MethodOptions {
+			if c.Request.Method == "OPTIONS" {
 				c.AbortWithStatus(http.StatusNoContent)
 				return
 			}
@@ -960,10 +960,6 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
 	config.AllowHeaders = []string{"Authorization", "Content-Type", "User-Agent", "Accept", "X-Requested-With"}
-	openAIProperties := []string{"lang", "package-version", "os", "arch", "runtime", "runtime-version", "async"}
-	for _, prop := range openAIProperties {
-		config.AllowHeaders = append(config.AllowHeaders, "x-stainless-"+prop)
-	}
 	config.AllowOrigins = envconfig.AllowOrigins
 
 	r := gin.Default()
@@ -1143,7 +1139,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 }
 
 func (s *Server) ProcessHandler(c *gin.Context) {
-	models := []api.ProcessModelResponse{}
+	models := []api.ModelResponse{}
 
 	for _, v := range s.sched.loaded {
 		model := v.model
@@ -1155,7 +1151,7 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 			QuantizationLevel: model.Config.FileType,
 		}
 
-		mr := api.ProcessModelResponse{
+		mr := api.ModelResponse{
 			Model:     model.ShortName,
 			Name:      model.ShortName,
 			Size:      int64(v.estimatedTotal),
@@ -1175,16 +1171,16 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 		models = append(models, mr)
 	}
 
-	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
+	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
-func chatPrompt(ctx context.Context, runner *runnerRef, template string, messages []api.Message, numCtx int) (string, error) {
+func chatPrompt(ctx context.Context, runner *runnerRef, template string, messages []api.Message, tools string, numCtx int) (string, error) {
 	encode := func(s string) ([]int, error) {
 		return runner.llama.Tokenize(ctx, s)
 	}
 
-	prompt, err := ChatPrompt(template, messages, numCtx, encode)
+	prompt, err := ChatPrompt(template, messages, tools, numCtx, encode)
 	if err != nil {
 		return "", err
 	}
@@ -1266,7 +1262,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}, req.Messages...)
 	}
 
-	prompt, err := chatPrompt(c.Request.Context(), runner, model.Template, req.Messages, opts.NumCtx)
+	prompt, err := chatPrompt(c.Request.Context(), runner, model.Template, req.Messages, req.Tools, opts.NumCtx)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1310,6 +1306,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		fn := func(r llm.CompletionResponse) {
+
 			resp := api.ChatResponse{
 				Model:      req.Model,
 				CreatedAt:  time.Now().UTC(),
@@ -1364,6 +1361,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				return
 			}
 		}
+
+		// TODO: @dkesler add tool_calls parser
 
 		final.Message = api.Message{Role: "assistant", Content: sb.String()}
 		c.JSON(http.StatusOK, final)

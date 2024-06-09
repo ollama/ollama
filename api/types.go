@@ -88,6 +88,9 @@ type ChatRequest struct {
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
 
+	// Tools is the available tool definition for the model
+	Tools string `json:"tools"`
+
 	// Stream enable streaming of returned response; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
@@ -103,12 +106,13 @@ type ChatRequest struct {
 }
 
 // Message is a single message in a chat sequence. The message contains the
-// role ("system", "user", or "assistant"), the content and an optional list
+// role ("system", "user", "tool" or "assistant"), the content and an optional list
 // of images.
 type Message struct {
-	Role    string      `json:"role"`
-	Content string      `json:"content"`
-	Images  []ImageData `json:"images,omitempty"`
+	Role      string      `json:"role"`
+	Content   string      `json:"content"`
+	Images    []ImageData `json:"images,omitempty"`
+	ToolCalls string      `json:"tool_calls"`
 }
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
@@ -117,6 +121,7 @@ type ChatResponse struct {
 	Model      string    `json:"model"`
 	CreatedAt  time.Time `json:"created_at"`
 	Message    Message   `json:"message"`
+	ToolCalls  string    `json:"tool_calls"`
 	DoneReason string    `json:"done_reason,omitempty"`
 
 	Done bool `json:"done"`
@@ -282,33 +287,19 @@ type PushRequest struct {
 
 // ListResponse is the response from [Client.List].
 type ListResponse struct {
-	Models []ListModelResponse `json:"models"`
+	Models []ModelResponse `json:"models"`
 }
 
-// ProcessResponse is the response from [Client.Process].
-type ProcessResponse struct {
-	Models []ProcessModelResponse `json:"models"`
-}
-
-// ListModelResponse is a single model description in [ListResponse].
-type ListModelResponse struct {
+// ModelResponse is a single model description in [ListResponse].
+type ModelResponse struct {
 	Name       string       `json:"name"`
 	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at"`
+	ModifiedAt time.Time    `json:"modified_at,omitempty"`
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
 	Details    ModelDetails `json:"details,omitempty"`
-}
-
-// ProcessModelResponse is a single model description in [ProcessResponse].
-type ProcessModelResponse struct {
-	Name      string       `json:"name"`
-	Model     string       `json:"model"`
-	Size      int64        `json:"size"`
-	Digest    string       `json:"digest"`
-	Details   ModelDetails `json:"details,omitempty"`
-	ExpiresAt time.Time    `json:"expires_at"`
-	SizeVRAM  int64        `json:"size_vram"`
+	ExpiresAt  time.Time    `json:"expires_at,omitempty"`
+	SizeVRAM   int64        `json:"size_vram,omitempty"`
 }
 
 type TokenResponse struct {
@@ -320,7 +311,7 @@ type GenerateResponse struct {
 	// Model is the model name that generated the response.
 	Model string `json:"model"`
 
-	// CreatedAt is the timestamp of the response.
+	//CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`
 
 	// Response is the textual response itself.

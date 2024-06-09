@@ -53,7 +53,7 @@ func formatTemplateForResponse(tmpl *template.Template, generate bool) {
 
 // Prompt renders a prompt from a template. If generate is set to true,
 // the response and parts of the template following it are not rendered
-func Prompt(tmpl, system, prompt, response string, generate bool) (string, error) {
+func Prompt(tmpl, tools, system, prompt, results string, response string, generate bool) (string, error) {
 	parsed, err := template.New("").Option("missingkey=zero").Parse(tmpl)
 	if err != nil {
 		return "", err
@@ -62,8 +62,10 @@ func Prompt(tmpl, system, prompt, response string, generate bool) (string, error
 	formatTemplateForResponse(parsed, generate)
 
 	vars := map[string]any{
+		"Tools":    tools,
 		"System":   system,
 		"Prompt":   prompt,
+		"Results":  results,
 		"Response": response,
 	}
 
@@ -75,8 +77,8 @@ func Prompt(tmpl, system, prompt, response string, generate bool) (string, error
 	return sb.String(), nil
 }
 
-func countTokens(tmpl string, system string, prompt string, response string, encode func(string) ([]int, error)) (int, error) {
-	rendered, err := Prompt(tmpl, system, prompt, response, false)
+func countTokens(tmpl string, tools string, system string, prompt string, results string, response string, encode func(string) ([]int, error)) (int, error) {
+	rendered, err := Prompt(tmpl, tools, system, prompt, results, response, false)
 	if err != nil {
 		return 0, err
 	}
@@ -91,15 +93,19 @@ func countTokens(tmpl string, system string, prompt string, response string, enc
 }
 
 // ChatPrompt builds up a prompt from a series of messages, truncating based on context window size
-func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(string) ([]int, error)) (string, error) {
+func ChatPrompt(tmpl string, messages []api.Message, tools string, window int, encode func(string) ([]int, error)) (string, error) {
 	type prompt struct {
+		Tools    string
 		System   string
 		Prompt   string
+		Results  string
 		Response string
 
 		images []int
 		tokens int
 	}
+
+	slog.Debug("Available tools", "tools", tools)
 
 	var p prompt
 
@@ -130,6 +136,13 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 
 			sb.WriteString(msg.Content)
 			p.Prompt = sb.String()
+		case "tool":
+			if p.Results != "" {
+				prompts = append(prompts, p)
+				p = prompt{}
+			}
+
+			p.Results = msg.Content
 		case "assistant":
 			if p.Response != "" {
 				prompts = append(prompts, p)
@@ -138,18 +151,23 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 
 			p.Response = msg.Content
 		default:
-			return "", fmt.Errorf("invalid role: %s, role must be one of [system, user, assistant]", msg.Role)
+			return "", fmt.Errorf("invalid role: %s, role must be one of [system, user, tool, assistant]", msg.Role)
 		}
 	}
 
 	// add final prompt
-	if p.System != "" || p.Prompt != "" || p.Response != "" {
+	if p.Tools != "" || p.System != "" || p.Prompt != "" || p.Results != "" || p.Response != "" {
 		prompts = append(prompts, p)
+	}
+
+	// add available tools to the first prompt
+	if len(prompts) > 0 {
+		prompts[0].Tools = tools
 	}
 
 	// calculate token lengths for each prompt, estimating 768 tokens per images
 	for i, p := range prompts {
-		tokens, err := countTokens(tmpl, p.System, p.Prompt, p.Response, encode)
+		tokens, err := countTokens(tmpl, p.Tools, p.System, p.Prompt, p.Results, p.Response, encode)
 		if err != nil {
 			return "", err
 		}
@@ -192,7 +210,7 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 			if system != "" && prompts[0].System == "" {
 				prompts[0].System = system
 
-				tokens, err := countTokens(tmpl, prompts[0].System, prompts[0].Prompt, prompts[0].Response, encode)
+				tokens, err := countTokens(tmpl, prompts[0].Tools, prompts[0].System, prompts[0].Prompt, prompts[0].Results, prompts[0].Response, encode)
 				if err != nil {
 					return "", err
 				}
@@ -210,7 +228,7 @@ func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(str
 	var sb strings.Builder
 	for i, p := range prompts {
 		// last prompt should leave the response unrendered (for completion)
-		rendered, err := Prompt(tmpl, p.System, p.Prompt, p.Response, i == len(prompts)-1)
+		rendered, err := Prompt(tmpl, p.Tools, p.System, p.Prompt, p.Results, p.Response, i == len(prompts)-1)
 		if err != nil {
 			return "", err
 		}
