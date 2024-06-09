@@ -102,7 +102,7 @@ sudo chmod +x /usr/bin/ollama
 
 ## Installing specific versions
 
-You can run the install script after setting the `OLLAMA_VERSION` environment variable to whatever version you want to install. You can find the version numbers in the [Github's release page](https://github.com/ollama/ollama/releases). 
+Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases). 
 
 For example:
 
