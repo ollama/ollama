@@ -7,7 +7,10 @@ package llama
 // #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/ggml-metal.o -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
 // #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 // #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
-// #cgo darwin,amd64 LDFLAGS: -framework Foundation -framework Accelerate
+// #cgo darwin,amd64 LDFLAGS: -framework Foundation
+// #cgo darwin,amd64,avx2 CFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+// #cgo darwin,amd64,avx2 CXXFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+// #cgo darwin,amd64,avx2 LDFLAGS: -framework Accelerate
 // #cgo linux CFLAGS: -D_GNU_SOURCE
 // #cgo linux CXXFLAGS: -D_GNU_SOURCE
 // #cgo windows LDFLAGS: -lmsvcrt
