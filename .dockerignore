@@ -7,3 +7,13 @@ llm/llama.cpp
 .env
 .cache
 test_data
+
+# git
+.gitattributes
+.gitignore
+.gitmodules
+
+.prettierrc.json
+LICENSE
+
+README.md
