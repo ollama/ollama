@@ -424,7 +424,6 @@ struct llama_server_context
         n_ctx = llama_n_ctx(ctx);
 
         add_bos_token = llama_should_add_bos_token(model);
-        GGML_ASSERT(llama_add_eos_token(model) != 1);
 
         return true;
     }
