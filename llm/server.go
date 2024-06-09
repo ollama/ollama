@@ -606,7 +606,7 @@ array  ::=
 
 string ::=
   "\"" (
-    [^"\\] |
+    [^"\\\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
   )* "\"" ws
 
