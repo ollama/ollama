@@ -9,7 +9,7 @@ else
 fi
 
 nvcc \
-    -t 12 \
+    -t $(nproc) \
     --generate-code=arch=compute_50,code=[compute_50,sm_50] \
     --generate-code=arch=compute_52,code=[compute_52,sm_52] \
     --generate-code=arch=compute_61,code=[compute_61,sm_61] \
@@ -30,9 +30,18 @@ nvcc \
     -use_fast_math \
     -link \
     -shared \
-    -fPIC \
     -I. \
     -lcuda -lcublas -lcudart -lcublasLt \
     -O3 \
     -o $output \
-    ggml-cuda.cu ggml-cuda/*.cu ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c sgemm.cpp
+    ggml-cuda.cu \
+    ggml-cuda/*.cu \
+    ggml-cuda/template-instances/fattn-wmma*.cu \
+    ggml-cuda/template-instances/mmq*.cu \
+    ggml-cuda/template-instances/fattn-vec*q4_0-q4_0.cu \
+    ggml-cuda/template-instances/fattn-vec*q8_0-q8_0.cu \
+    ggml-cuda/template-instances/fattn-vec*f16-f16.cu \
+    ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c sgemm.cpp
+
+#   -DGGML_CUDA_USE_GRAPHS=1 
+#   -DGGML_CUDA_FA_ALL_QUANTS=1
