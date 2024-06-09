@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git d5c938cd7716b9a2ace49a43a469dfbffcff4d28
+ * llama.cpp - git e95beeb1fc4621826ddd616776dbdf717366bf5c
  *
  * MIT License
  *
@@ -226,19 +226,13 @@ void gpt_params_handle_model_default(gpt_params & params) {
             }
             params.hf_file = params.model;
         } else if (params.model.empty()) {
-            std::string cache_directory = fs_get_cache_directory();
-            const bool success = fs_create_directory_with_parents(cache_directory);
-            if (!success) {
-                throw std::runtime_error("failed to create cache directory: " + cache_directory);
-            }
-            params.model = cache_directory + string_split(params.hf_file, '/').back();
+            params.model = fs_get_cache_file(string_split(params.hf_file, '/').back());
         }
     } else if (!params.model_url.empty()) {
         if (params.model.empty()) {
             auto f = string_split(params.model_url, '#').front();
             f = string_split(f, '?').front();
-            f = string_split(f, '/').back();
-            params.model =  "models/" + f;
+            params.model = fs_get_cache_file(string_split(f, '/').back());
         }
     } else if (params.model.empty()) {
         params.model = DEFAULT_MODEL_PATH;
@@ -1517,6 +1511,14 @@ bool gpt_params_find_arg(int argc, char ** argv, const std::string & arg, gpt_pa
         params.chat_template = argv[i];
         return true;
     }
+    if (arg == "--slot-prompt-similarity" || arg == "-sps") {
+        if (++i >= argc) {
+            invalid_param = true;
+            return true;
+        }
+        params.slot_prompt_similarity = std::stof(argv[i]);
+        return true;
+    }
     if (arg == "-pps") {
         params.is_pp_shared = true;
         return true;
@@ -1939,6 +1941,8 @@ void gpt_params_print_usage(int /*argc*/, char ** argv, const gpt_params & param
                                                                         "set custom jinja chat template (default: template taken from model's metadata)\n"
                                                                         "only commonly used templates are accepted:\n"
                                                                         "https://github.com/ggerganov/llama.cpp/wiki/Templates-supported-by-llama_chat_apply_template" });
+    options.push_back({ "server",      "-sps,  --slot-prompt-similarity SIMILARITY",
+                                                                        "how much the prompt of a request must match the prompt of a slot in order to use that slot (default: %.2f, 0.0 = disabled)\n", params.slot_prompt_similarity });
 
 #ifndef LOG_DISABLE_LOGS
     options.push_back({ "logging" });
@@ -2293,6 +2297,16 @@ std::string fs_get_cache_directory() {
         cache_directory += "llama.cpp";
     }
     return ensure_trailing_slash(cache_directory);
+}
+
+std::string fs_get_cache_file(const std::string & filename) {
+    GGML_ASSERT(filename.find(DIRECTORY_SEPARATOR) == std::string::npos);
+    std::string cache_directory = fs_get_cache_directory();
+    const bool success = fs_create_directory_with_parents(cache_directory);
+    if (!success) {
+        throw std::runtime_error("failed to create cache directory: " + cache_directory);
+    }
+    return cache_directory + filename;
 }
 
 
