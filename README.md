@@ -286,6 +286,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
 - [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
 - [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
+- [TypingMind.com](https://docs.typingmind.com/chat-models-settings/use-with-ollama-(local-models:-llava-llama2-mistral-orca-etc.)) (All-in-one AI chat app for ChatGPT, Claude, and Gemini)
 
 ### Terminal
 
