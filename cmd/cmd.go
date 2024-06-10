@@ -627,7 +627,68 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 	switch flagsSet {
 	case 0:
-		return errors.New("one of '--license', '--modelfile', '--parameters', '--system', or '--template' must be specified")
+		req := api.ShowRequest{Name: args[0]}
+		resp, err := client.Show(cmd.Context(), &req)
+		if err != nil {
+			return err
+		}
+
+		arch := resp.ModelInfo["general.architecture"].(string)
+
+		modelData := [][]string{
+			{"arch", arch},
+			{"parameters", resp.Details.ParameterSize},
+			{"quantization", resp.Details.QuantizationLevel},
+			{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
+			{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
+			{"bos token id", fmt.Sprintf("%v", resp.ModelInfo["tokenizer.ggml.bos_token_id"].(float64))},
+			{"eos token id", fmt.Sprintf("%v", resp.ModelInfo["tokenizer.ggml.eos_token_id"].(float64))},
+		}
+
+		mainTableData := [][]string{
+			{"Model"},
+			{renderSubTable(modelData)},
+		}
+
+		if slices.Contains(resp.Details.Families, "clip") {
+			projectorData := [][]string{
+				{"arch", "clip"},
+				{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
+				{"projector type", resp.ProjectorInfo["clip.projector_type"].(string)},
+				{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
+				{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
+			}
+
+			mainTableData = append(mainTableData,
+				[]string{"Projector"},
+				[]string{renderSubTable(projectorData)},
+			)
+		}
+
+		mainTableData = append(mainTableData,
+			[]string{"Parameters"},
+			[]string{handleParams(resp.Parameters)},
+			[]string{"Template"},
+			[]string{renderSubTable([][]string{{truncate(resp.Template)}})},
+			[]string{"Modelfile"},
+			[]string{renderSubTable([][]string{{truncate(resp.Modelfile)}})},
+			[]string{"System"},
+			[]string{renderSubTable([][]string{{truncate(resp.System)}})},
+			[]string{"License"},
+			[]string{renderSubTable([][]string{{truncate(resp.License)}})},
+		)
+
+		table := tablewriter.NewWriter(os.Stdout)
+		table.SetAutoWrapText(false)
+		table.SetBorder(false)
+		table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+		for _, v := range mainTableData {
+			table.Append(v)
+		}
+
+		table.Render()
+
 	case 1:
 		req := api.ShowRequest{Name: args[0]}
 		resp, err := client.Show(cmd.Context(), &req)
@@ -647,11 +708,63 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		case "template":
 			fmt.Println(resp.Template)
 		}
+
 	default:
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
 	return nil
+}
+
+func renderSubTable(data [][]string) string {
+	var buf bytes.Buffer
+	table := tablewriter.NewWriter(&buf)
+	table.SetAutoWrapText(true)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("\t")
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	for _, v := range data {
+		table.Append(v)
+	}
+
+	table.Render()
+
+	renderedTable := buf.String()
+	lines := strings.Split(renderedTable, "\n")
+	for i, line := range lines {
+		lines[i] = "\t" + line
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func truncate(s string) string {
+	lines := strings.Split(s, "\n")
+	var truncated strings.Builder
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			truncated.WriteString(line + " ")
+			if truncated.Len() > 120 {
+				return truncated.String()[:117] + "..."
+			}
+		}
+	}
+	return strings.TrimSpace(truncated.String())
+}
+
+// temporary fix for buggy params #4918
+func handleParams(s string) string {
+	lines := strings.Split(s, "\n")
+	table := [][]string{}
+
+	for _, line := range lines {
+		table = append(table, strings.Fields(line))
+	}
+	return renderSubTable(table)
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {

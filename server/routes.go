@@ -720,17 +720,25 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, model.String())
 	resp.Modelfile = sb.String()
 
-	ggmlData, err := getGGMLData(model)
+	ggmlData, err := getGGMLData(model.ModelPath)
 	if err != nil {
 		return nil, err
 	}
 	resp.ModelInfo = ggmlData
 
+	if slices.Contains(resp.Details.Families, "clip") {
+		projectorData, err := getGGMLData(model.ProjectorPaths[0])
+		if err != nil {
+			return nil, err
+		}
+		resp.ProjectorInfo = projectorData
+	}
+
 	return resp, nil
 }
 
-func getGGMLData(model *Model) (llm.KV, error) {
-	f, err := os.Open(model.ModelPath)
+func getGGMLData(digest string) (llm.KV, error) {
+	f, err := os.Open(digest)
 	if err != nil {
 		return nil, err
 	}
@@ -745,12 +753,10 @@ func getGGMLData(model *Model) (llm.KV, error) {
 	kv := ggml.KV()
 
 	for k := range kv {
-		if t, ok := kv[k].([]any); ok {
+		if t, ok := kv[k].([]any); len(t) > 5 && ok {
 			kv[k] = fmt.Sprintf("(%d items)", len(t))
 		}
 	}
-
-	// kv["embedding_model"] = model.IsEmbedding()
 
 	return kv, nil
 }
