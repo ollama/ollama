@@ -1,6 +1,6 @@
 package llama
 
-// #cgo CFLAGS: -std=c11 -DNDEBUG -DLOG_DISABLE_LOGS -Wno-discarded-qualifiers
+// #cgo CFLAGS: -std=c11 -DNDEBUG -DLOG_DISABLE_LOGS
 // #cgo CXXFLAGS: -std=c++11 -DNDEBUG -DLOG_DISABLE_LOGS
 // #cgo darwin,arm64 CFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,arm64 CXXFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
@@ -13,6 +13,7 @@ package llama
 // #cgo darwin,amd64,avx2 LDFLAGS: -framework Accelerate
 // #cgo linux CFLAGS: -D_GNU_SOURCE
 // #cgo linux CXXFLAGS: -D_GNU_SOURCE
+// #cgo windows CFLAGS: -Wno-discarded-qualifiers
 // #cgo windows LDFLAGS: -lmsvcrt
 // #cgo avx CFLAGS: -mavx
 // #cgo avx CXXFLAGS: -mavx
