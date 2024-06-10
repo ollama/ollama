@@ -674,18 +674,17 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 			)
 		}
 
-		mainTableData = append(mainTableData,
-			[]string{"Parameters"},
-			[]string{handleParams(resp.Parameters)},
-			[]string{"Template"},
-			[]string{renderSubTable([][]string{{truncate(resp.Template)}})},
-			[]string{"Modelfile"},
-			[]string{renderSubTable([][]string{{truncate(resp.Modelfile)}})},
-			[]string{"System"},
-			[]string{renderSubTable([][]string{{truncate(resp.System)}})},
-			[]string{"License"},
-			[]string{renderSubTable([][]string{{truncate(resp.License)}})},
-		)
+		if resp.Parameters != "" {
+			mainTableData = append(mainTableData, []string{"Parameters"}, []string{handleParams(resp.Parameters)})
+		}
+
+		if resp.System != "" {
+			mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System))})
+		}
+
+		if resp.License != "" {
+			mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License))})
+		}
 
 		table := tablewriter.NewWriter(os.Stdout)
 		table.SetAutoWrapText(false)
@@ -749,20 +748,22 @@ func renderSubTable(data [][]string) string {
 	return strings.Join(lines, "\n")
 }
 
-func truncate(s string) string {
+func twoLines(s string) [][]string {
 	lines := strings.Split(s, "\n")
-	var truncated strings.Builder
+	res := [][]string{}
 
+	count := 0
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
-			truncated.WriteString(line + " ")
-			if truncated.Len() > 120 {
-				return truncated.String()[:117] + "..."
+			count++
+			res = append(res, []string{line})
+			if count == 2 {
+				return res
 			}
 		}
 	}
-	return strings.TrimSpace(truncated.String())
+	return res
 }
 
 // temporary fix for buggy params #4918
