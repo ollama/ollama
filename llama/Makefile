@@ -1,7 +1,8 @@
 OS := $(shell uname -s)
 ARCH := $(or $(ARCH), $(shell uname -m))
 NVCC := nvcc
-HIPCC := "$(HIP_PATH)/bin/hipcc"
+HIP_PATH := $(shell cygpath -w -s "$(HIP_PATH)")
+HIPCC := "$(HIP_PATH)/bin/hipcc.bin.exe"
 
 ifeq ($(ARCH),x86_64)
     ARCH := amd64
@@ -43,7 +44,6 @@ CUDA_FLAGS := \
     --generate-code=arch=compute_80,code=[compute_80,sm_80] \
     -DGGML_CUDA_DMMV_X=32 \
     -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 \
-    -DGGML_CUDA_MMV_Y=1 \
     -DGGML_USE_CUDA=1 \
     -DGGML_SHARED=1 \
     -DGGML_BUILD=1 \
