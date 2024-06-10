@@ -16,7 +16,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/templates"
+	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -258,7 +258,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 func detectChatTemplate(layers []*layerGGML) ([]*layerGGML, error) {
 	for _, layer := range layers {
 		if s := layer.GGML.KV().ChatTemplate(); s != "" {
-			if t, err := templates.NamedTemplate(s); err != nil {
+			if t, err := template.Named(s); err != nil {
 				slog.Debug("template detection", "error", err)
 			} else {
 				tmpl, err := NewLayer(t.Reader(), "application/vnd.ollama.image.template")

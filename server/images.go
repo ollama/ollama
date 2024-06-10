@@ -28,6 +28,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -48,12 +49,13 @@ type Model struct {
 	ParentModel    string
 	AdapterPaths   []string
 	ProjectorPaths []string
-	Template       string
 	System         string
 	License        []string
 	Digest         string
 	Options        map[string]interface{}
 	Messages       []Message
+
+	Template *template.Template
 }
 
 func (m *Model) IsEmbedding() bool {
@@ -82,10 +84,10 @@ func (m *Model) String() string {
 		})
 	}
 
-	if m.Template != "" {
+	if m.Template != nil {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "template",
-			Args: m.Template,
+			Args: m.Template.String(),
 		})
 	}
 
@@ -191,8 +193,7 @@ func GetModel(name string) (*Model, error) {
 		Name:      mp.GetFullTagname(),
 		ShortName: mp.GetShortTagname(),
 		Digest:    digest,
-		Template:  "{{ .Prompt }}",
-		License:   []string{},
+		Template:  template.DefaultTemplate,
 	}
 
 	filename, err := GetBlobsPath(manifest.Config.Digest)
@@ -228,13 +229,17 @@ func GetModel(name string) (*Model, error) {
 			model.AdapterPaths = append(model.AdapterPaths, filename)
 		case "application/vnd.ollama.image.projector":
 			model.ProjectorPaths = append(model.ProjectorPaths, filename)
-		case "application/vnd.ollama.image.template":
+		case "application/vnd.ollama.image.prompt",
+			"application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err
 			}
 
-			model.Template = string(bts)
+			model.Template, err = template.Parse(string(bts))
+			if err != nil {
+				return nil, err
+			}
 		case "application/vnd.ollama.image.system":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
@@ -242,13 +247,6 @@ func GetModel(name string) (*Model, error) {
 			}
 
 			model.System = string(bts)
-		case "application/vnd.ollama.image.prompt":
-			bts, err := os.ReadFile(filename)
-			if err != nil {
-				return nil, err
-			}
-
-			model.Template = string(bts)
 		case "application/vnd.ollama.image.params":
 			params, err := os.Open(filename)
 			if err != nil {
