@@ -641,9 +641,18 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 			{"quantization", resp.Details.QuantizationLevel},
 			{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
 			{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
-			{"bos token id", fmt.Sprintf("%v", resp.ModelInfo["tokenizer.ggml.bos_token_id"].(float64))},
-			{"eos token id", fmt.Sprintf("%v", resp.ModelInfo["tokenizer.ggml.eos_token_id"].(float64))},
 		}
+
+		// error checking for attributes
+		// modelInclusionMap := [][]string{}
+		// if ctx, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)]; ok {
+		// 	modelInclusionMap = append(modelInclusionMap, []string{"context length", fmt.Sprintf("%v", ctx)})
+		// }
+		// if emb, ok := resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)]; ok {
+		// 	modelInclusionMap = append(modelInclusionMap, []string{"embedding length", fmt.Sprintf("%v", emb)})
+		// }
+
+		// modelData = append(modelData, modelInclusionMap...)
 
 		mainTableData := [][]string{
 			{"Model"},

@@ -724,6 +724,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	delete(ggmlData, "tokenizer.chat_template")
 	resp.ModelInfo = ggmlData
 
 	if slices.Contains(resp.Details.Families, "clip") {
