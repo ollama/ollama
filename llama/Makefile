@@ -3,21 +3,17 @@ ARCH := $(or $(ARCH), $(shell uname -m))
 NVCC := nvcc
 HIPCC := "$(HIP_PATH)/bin/hipcc"
 
-ifeq ($(UNAME_ARCH),x86_64)
+ifeq ($(ARCH),x86_64)
     ARCH := amd64
 endif
 
 # Determine object file extension based on OS
-ifeq ($(OS),Windows_NT)
+ifneq (,$(findstring MINGW,$(OS)))
     OBJ_EXT := obj
+	SHARED_EXT := dll
 else
     OBJ_EXT := o
-endif
-
-ifeq ($(OS),Windows_NT)
-    SHARED_EXT := dll
-else
-    SHARED_EXT := so
+	SHARED_EXT := so
 endif
 
 CUDA_SRCS := \
@@ -105,14 +101,26 @@ else
     all: ollama_runner ollama_runner_avx ollama_runner_avx2 ollama_runner_cuda ollama_runner_rocm
 endif
 
-%.cuda.$(OBJ_EXT): %.cu %.c %.cpp
-	nvcc -c $(CUDA_FLAGS) -o $@ $<
+%.cuda.$(OBJ_EXT): %.cu
+	$(NVCC) -c $(CUDA_FLAGS) -o $@ $<
 
-%.hip.$(OBJ_EXT): %.cu %.c %.cpp
-	$(HIPCC) -c $(HIP_FLAGS) -o $@ $<
+%.cuda.$(OBJ_EXT): %.c
+	$(NVCC) -c $(CFLAGS) -o $@ $<
+
+%.cuda.$(OBJ_EXT): %.cpp
+	$(NVCC) -c $(CXXFLAGS) -o $@ $<
 
 ggml_cuda.$(SHARED_EXT): $(CUDA_OBJS)
 	nvcc --shared -lcuda -lcublas -lcudart -lcublasLt $(CUDA_FLAGS) $(CUDA_OBJS) -o $@
+
+%.hip.$(OBJ_EXT): %.cu
+	$(HIPCC) -c $(HIP_FLAGS) -o $@ $<
+
+%.hip.$(OBJ_EXT): %.c
+	$(HIPCC) -c $(CFLAGS) -o $@ $<
+
+%.hip.$(OBJ_EXT): %.cpp
+	$(HIPCC) -c $(CXXFLAGS) -o $@ $<
 
 ggml_hipblas.$(SHARED_EXT): $(HIP_OBJS)
 	$(HIPCC) --shared -lhipblas -lamdhip64 -lrocblas $(HIP_OBJS) -o $@
@@ -135,4 +143,4 @@ ollama_runner_rocm: ggml_hipblas.dll
 clean:
 	rm -f $(CUDA_OBJS) $(HIP_OBJS) ggml_cuda.$(SHARED_EXT) ggml_cuda.* ggml_hipblas.* ollama_runner*
 
-.PHONY: all clean ollama_runner_cpu ollama_runner_cpu_avx ollama_runner_cpu_avx2 ollama_runner_cuda ollama_runner_rocm
+.PHONY: all clean ollama_runner ollama_runner_avx ollama_runner_avx2 ollama_runner_cuda ollama_runner_rocm
