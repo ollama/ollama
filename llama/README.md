@@ -71,7 +71,7 @@ go build -tags=cuda .
 
 ### ROCm
 
-Install [ROCm 5.7.1](https://rocm.docs.amd.com/en/docs-5.7.1/) and [Strawberry Perl](https://strawberryperl.com/).
+Install [ROCm 5.7.1](https://rocm.docs.amd.com/en/docs-5.7.1/).
 
 ```shell
 make ggml_hipblas.dll
