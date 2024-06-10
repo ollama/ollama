@@ -1,17 +1,18 @@
 OS := $(shell uname -s)
 ARCH := $(or $(ARCH), $(shell uname -m))
 NVCC := nvcc
-HIP_PATH := $(shell cygpath -w -s "$(HIP_PATH)")
-HIPCC := "$(HIP_PATH)/bin/hipcc.bin.exe"
+
+export CGO_CFLAGS_ALLOW = -mfma|-mf16c
+export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
 
 ifeq ($(ARCH),x86_64)
     ARCH := amd64
 endif
 
-# Determine object file extension based on OS
 ifneq (,$(findstring MINGW,$(OS)))
     OBJ_EXT := obj
 	SHARED_EXT := dll
+    HIP_PATH := $(shell cygpath -w -s "$(HIP_PATH)")
 else
     OBJ_EXT := o
 	SHARED_EXT := so
@@ -61,6 +62,7 @@ CUDA_FLAGS := \
 HIP_ARCHS := gfx900 gfx940 gfx941 gfx942 gfx1010 gfx1012 gfx1030 gfx1100 gfx1101 gfx1102
 LINUX_HIP_ARCHS := gfx906:xnack- gfx908:xnack- gfx90a:xnack+ gfx90a:xnack-
 
+HIPCC := "$(HIP_PATH)/bin/hipcc.bin.exe"
 HIP_FLAGS := \
     -c \
 	-O3 \
@@ -84,6 +86,8 @@ HIP_FLAGS := \
     -Wno-pass-failed \
 	-Wno-deprecated-declarations \
 	-Wno-unused-result \
+    -Xclang \
+    --dependent-lib=msvcrt \
 	-I. \
     $(foreach arch, $(HIP_ARCHS), --offload-arch=$(arch))
 
