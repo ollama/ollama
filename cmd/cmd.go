@@ -670,7 +670,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		table.SetNoWhiteSpace(true)
 		table.SetTablePadding("\t")
 		table.SetAutoWrapText(false)
-		for i := 0; i < len(headers); i++ {
+		for i := range headers {
 			if data[i] != "" {
 				table.Append([]string{headers[i], data[i]})
 			}
