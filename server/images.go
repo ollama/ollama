@@ -135,13 +135,6 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-type ManifestV2 struct {
-	SchemaVersion int      `json:"schemaVersion"`
-	MediaType     string   `json:"mediaType"`
-	Config        *Layer   `json:"config"`
-	Layers        []*Layer `json:"layers"`
-}
-
 type ConfigV2 struct {
 	ModelFormat   string   `json:"model_format"`
 	ModelFamily   string   `json:"model_family"`
@@ -160,7 +153,7 @@ type RootFS struct {
 	DiffIDs []string `json:"diff_ids"`
 }
 
-func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
+func GetManifest(mp ModelPath) (*Manifest, string, error) {
 	fp, err := mp.GetManifestPath()
 	if err != nil {
 		return nil, "", err
@@ -170,7 +163,7 @@ func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
 		return nil, "", err
 	}
 
-	var manifest *ManifestV2
+	var manifest *Manifest
 
 	bts, err := os.ReadFile(fp)
 	if err != nil {
@@ -822,7 +815,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
-	var manifest *ManifestV2
+	var manifest *Manifest
 	var err error
 	var noprune string
 
@@ -929,7 +922,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*ManifestV2, error) {
+func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
@@ -940,7 +933,7 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptio
 	}
 	defer resp.Body.Close()
 
-	var m *ManifestV2
+	var m *Manifest
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
 		return nil, err
 	}
