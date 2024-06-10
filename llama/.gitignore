@@ -4,3 +4,4 @@
 *.exp
 *.dll
 *.o
+ollama_runner_*
