@@ -1,12 +1,23 @@
 OS := $(shell uname -s)
+ARCH := $(or $(ARCH), $(shell uname -m))
 NVCC := nvcc
 HIPCC := "$(HIP_PATH)/bin/hipcc"
+
+ifeq ($(UNAME_ARCH),x86_64)
+    ARCH := amd64
+endif
 
 # Determine object file extension based on OS
 ifeq ($(OS),Windows_NT)
     OBJ_EXT := obj
 else
     OBJ_EXT := o
+endif
+
+ifeq ($(OS),Windows_NT)
+    SHARED_EXT := dll
+else
+    SHARED_EXT := so
 endif
 
 CUDA_SRCS := \
@@ -27,7 +38,6 @@ HIP_OBJS := $(CUDA_SRCS:.cu=.hip.$(OBJ_EXT))
 HIP_OBJS := $(HIP_OBJS:.c=.hip.$(OBJ_EXT))
 HIP_OBJS := $(HIP_OBJS:.cpp=.hip.$(OBJ_EXT))
 
-# TODO (jmorganca): shared flags for cuda/hip
 CUDA_FLAGS := \
     --generate-code=arch=compute_50,code=[compute_50,sm_50] \
     --generate-code=arch=compute_52,code=[compute_52,sm_52] \
@@ -51,7 +61,6 @@ CUDA_FLAGS := \
     -shared \
     -I. \
     -O3
-
 
 HIP_ARCHS := gfx900 gfx940 gfx941 gfx942 gfx1010 gfx1012 gfx1030 gfx1100 gfx1101 gfx1102
 LINUX_HIP_ARCHS := gfx906:xnack- gfx908:xnack- gfx90a:xnack+ gfx90a:xnack-
@@ -86,48 +95,44 @@ ifeq ($(UNAME_S), Linux)
     HIP_FLAGS += $(foreach arch, $(LINUX_HIP_ARCHS), --offload-arch=$(arch))
 endif
 
-all: ollama_runner_cpu ollama_runner_cpu_avx ollama_runner_cpu_avx2 ollama_runner_cuda ollama_runner_rocm
+ifeq ($(OS),Darwin)
+    ifeq ($(ARCH),arm64)
+        all: ollama_runner
+    else ifeq ($(ARCH),amd64)
+        all: ollama_runner ollama_runner_avx ollama_runner_avx2
+    endif
+else
+    all: ollama_runner ollama_runner_avx ollama_runner_avx2 ollama_runner_cuda ollama_runner_rocm
+endif
 
-%.cuda.$(OBJ_EXT): %.cu
+%.cuda.$(OBJ_EXT): %.cu %.c %.cpp
 	nvcc -c $(CUDA_FLAGS) -o $@ $<
 
-%.cuda.$(OBJ_EXT): %.c
-	nvcc -c $(CUDA_FLAGS) -o $@ $<
-
-%.cuda.$(OBJ_EXT): %.cpp
-	nvcc -c $(CUDA_FLAGS) -o $@ $<
-
-%.hip.$(OBJ_EXT): %.cu
+%.hip.$(OBJ_EXT): %.cu %.c %.cpp
 	$(HIPCC) -c $(HIP_FLAGS) -o $@ $<
 
-%.hip.$(OBJ_EXT): %.c
-	$(HIPCC) -c $(HIP_FLAGS) -o $@ $<
-
-%.hip.$(OBJ_EXT): %.cpp
-	$(HIPCC) -c $(HIP_FLAGS) -o $@ $<
-
-ggml_cuda.dll: $(CUDA_OBJS)
+ggml_cuda.$(SHARED_EXT): $(CUDA_OBJS)
 	nvcc --shared -lcuda -lcublas -lcudart -lcublasLt $(CUDA_FLAGS) $(CUDA_OBJS) -o $@
 
-ggml_hipblas.dll: $(HIP_OBJS)
+ggml_hipblas.$(SHARED_EXT): $(HIP_OBJS)
 	$(HIPCC) --shared -lhipblas -lamdhip64 -lrocblas $(HIP_OBJS) -o $@
 
-ollama_runner_cpu:
-	go build -ldflags "-s -w" -o $@ ./runner 
+ollama_runner:
+	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -o $@ ./runner 
 
-ollama_runner_cpu_avx:
-	go build -ldflags "-s -w" -tags avx -o $@ ./runner
+ollama_runner_avx:
+	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx -o $@ ./runner
 
-ollama_runner_cpu_avx2:
-	go build -ldflags "-s -w" -tags avx,avx2 -o $@ ./runner
+ollama_runner_avx2:
+	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,avx2 -o $@ ./runner
 
 ollama_runner_cuda: ggml_cuda.dll
-	go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
 
 ollama_runner_rocm: ggml_hipblas.dll
-	go build -ldflags "-s -w" -tags avx,rocm -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,rocm -o $@ ./runner
 
 clean:
-	rm -f $(CUDA_OBJS) $(HIP_OBJS) ggml_cuda.dll ggml_cuda.exp ggml_cuda.lib ggml_hipblas.dll ggml_hipblas.lib ggml_hipblas.exp ollama_runner_cpu ollama_runner_cpu_avx ollama_runner_cpu_avx2 ollama_runner_cuda ollama_runner_rocm
+	rm -f $(CUDA_OBJS) $(HIP_OBJS) ggml_cuda.$(SHARED_EXT) ggml_cuda.* ggml_hipblas.* ollama_runner*
 
 .PHONY: all clean ollama_runner_cpu ollama_runner_cpu_avx ollama_runner_cpu_avx2 ollama_runner_cuda ollama_runner_rocm
