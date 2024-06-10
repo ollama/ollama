@@ -3,5 +3,7 @@
 *.lib
 *.exp
 *.dll
+*.so
 *.o
-ollama_runner_*
+*.obj
+ollama_runner*
