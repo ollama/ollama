@@ -13,11 +13,6 @@ Supported:
 - [x] Linux ROCm
 - [x] Llava
 
-Extra build steps are required for CUDA and ROCm on Windows since `nvcc` and `hipcc` both require using msvc as the host compiler. For these small dlls are created:
-
-- `ggml-cuda.dll`
-- `ggml-hipblas.dll`
-
 > Note: it's important that memory is allocated and freed by the same compiler (e.g. entirely by code compiled with msvc or mingw). Issues from this should be rare, but there are some places where pointers are returned by the CUDA or HIP runtimes and freed elsewhere, causing a a crash. In a future change the same runtime should be used in both cases to avoid crashes.
 
 ## Building
@@ -46,11 +41,7 @@ go build -tags=avx,avx2 .
 
 ### CUDA
 
-Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-download-archive) then build `libggml-cuda.so`:
-
-```shell
-./build_cuda.sh
-```
+Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-download-archive):
 
 Then build the package with the `cuda` tag:
 
@@ -69,7 +60,7 @@ Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-down
 Build `ggml-cuda.dll`:
 
 ```shell
-./build_cuda.ps1
+make ggml_cuda.dll
 ```
 
 Then build the package with the `cuda` tag:
@@ -82,10 +73,8 @@ go build -tags=cuda .
 
 Install [ROCm 5.7.1](https://rocm.docs.amd.com/en/docs-5.7.1/) and [Strawberry Perl](https://strawberryperl.com/).
 
-Then, build `ggml-hipblas.dll`:
-
 ```shell
-./build_hipblas.sh
+make ggml_hipblas.dll
 ```
 
 Then build the package with the `rocm` tag:
