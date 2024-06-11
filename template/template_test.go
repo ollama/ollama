@@ -61,8 +61,8 @@ func TestNamed(t *testing.T) {
 
 func TestParse(t *testing.T) {
 	cases := []struct {
-		template     string
-		capabilities []string
+		template string
+		vars     []string
 	}{
 		{"{{ .Prompt }}", []string{"prompt"}},
 		{"{{ .System }} {{ .Prompt }}", []string{"prompt", "system"}},
@@ -81,8 +81,8 @@ func TestParse(t *testing.T) {
 			}
 
 			vars := tmpl.Vars()
-			if !slices.Equal(tt.capabilities, vars) {
-				t.Errorf("expected %v, got %v", tt.capabilities, vars)
+			if !slices.Equal(tt.vars, vars) {
+				t.Errorf("expected %v, got %v", tt.vars, vars)
 			}
 		})
 	}
