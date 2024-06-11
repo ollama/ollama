@@ -28,7 +28,7 @@ cp $src_dir/ggml.c $dst_dir/ggml.c
 cp $src_dir/ggml.h $dst_dir/ggml.h
 cp $src_dir/ggml-quants.c $dst_dir/ggml-quants.c
 cp $src_dir/ggml-quants.h $dst_dir/ggml-quants.h
-cp $src_dir/ggml-metal.metal $dst_dir/ggml-metal.metal
+cp $src_dir/ggml-metal.metal $dst_dir/ggml-metal.in.metal
 cp $src_dir/ggml-metal.h $dst_dir/ggml-metal.h
 cp $src_dir/ggml-metal.m $dst_dir/ggml-metal-darwin_arm64.m
 cp $src_dir/ggml-impl.h $dst_dir/ggml-impl.h
@@ -105,17 +105,3 @@ for IN in $dst_dir/*.{c,h,cpp,m,metal,cu}; do
     cat $TEMP_LICENSE $IN >$TMP
     mv $TMP $IN
 done
-
-# ggml-metal
-# TODO: just embed the files
-sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < $dst_dir/ggml-metal.metal > temp.metal
-TEMP_ASSEMBLY=$(mktemp)
-echo ".section __DATA, __ggml_metallib"   >  $TEMP_ASSEMBLY
-echo ".globl _ggml_metallib_start"        >> $TEMP_ASSEMBLY
-echo "_ggml_metallib_start:"              >> $TEMP_ASSEMBLY
-echo ".incbin \"temp.metal\"" >> $TEMP_ASSEMBLY
-echo ".globl _ggml_metallib_end"          >> $TEMP_ASSEMBLY
-echo "_ggml_metallib_end:"                >> $TEMP_ASSEMBLY
-as $TEMP_ASSEMBLY -o $dst_dir/ggml-metal.o
-rm -f $TEMP_ASSEMBLY
-rm -rf temp.metal
