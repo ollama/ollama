@@ -4,10 +4,10 @@ package llama
 // #cgo CXXFLAGS: -std=c++11 -DNDEBUG -DLOG_DISABLE_LOGS
 // #cgo darwin,arm64 CFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,arm64 CXXFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-// #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/ggml-metal.o -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
+// #cgo darwin,arm64 LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
 // #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 // #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
-// #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/ggml-metal.o -framework Foundation
+// #cgo darwin,amd64 LDFLAGS: -framework Foundation
 // #cgo darwin,amd64,avx2 CFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,amd64,avx2 CXXFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,amd64,avx2 LDFLAGS: -framework Accelerate
@@ -35,8 +35,11 @@ package llama
 // #include "sampling_ext.h"
 //
 // bool llamaProgressCallback(float progress, void *user_data);
+// const char* ggml_metallib_start;
+// const char* ggml_metallib_end;
 import "C"
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"runtime"
@@ -44,6 +47,21 @@ import (
 	"strings"
 	"unsafe"
 )
+
+//go:embed ggml-common.h
+var ggmlCommon string
+
+//go:embed ggml-metal.metal
+var ggmlMetal string
+
+// TODO: write me somewhere else
+func init() {
+	metal := strings.ReplaceAll(ggmlMetal, `#include "ggml-common.h"`, ggmlCommon)
+	fmt.Println(metal)
+	cMetal := C.CString(metal)
+	C.ggml_metallib_start = cMetal
+	C.ggml_metallib_end = (*C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(cMetal)) + uintptr(len(metal))))
+}
 
 func BackendInit() {
 	C.llama_backend_init()
@@ -81,6 +99,12 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 }
 
 func NewModelParams(numGpuLayers int, mainGpu int, callback func(float32)) ModelParams {
+	fmt.Println("Contents of ggml-common.h:")
+	fmt.Println(ggmlCommon)
+
+	fmt.Println("\nContents of ggml-metal.in.metal:")
+	fmt.Println(ggmlMetal)
+
 	params := C.llama_model_default_params()
 	params.n_gpu_layers = C.int(numGpuLayers)
 	params.main_gpu = C.int32_t(mainGpu)
