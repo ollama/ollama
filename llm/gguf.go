@@ -36,22 +36,9 @@ func (c *containerGGUF) Name() string {
 }
 
 func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
-	var version [4]byte
-	if err := binary.Read(rs, c.ByteOrder, &version); err != nil {
+	if err := binary.Read(rs, c.ByteOrder, &c.Version); err != nil {
 		return nil, err
 	}
-
-	// if the lower 16 bits are 0, the byte order is probably wrong
-	if c.ByteOrder.Uint32(version[:])&1<<4 == 0 {
-		switch c.ByteOrder {
-		case binary.LittleEndian:
-			c.ByteOrder = binary.BigEndian
-		case binary.BigEndian:
-			c.ByteOrder = binary.LittleEndian
-		}
-	}
-
-	c.Version = c.ByteOrder.Uint32(version[:])
 
 	var err error
 	switch c.Version {
