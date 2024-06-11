@@ -1,5 +1,5 @@
 /**
- * llama.cpp - git e95beeb1fc4621826ddd616776dbdf717366bf5c
+ * llama.cpp - git ee459f40f65810a810151b24eba5b8bd174ceffe
  *
  * MIT License
  *
@@ -15255,14 +15255,6 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
         if (imatrix_data) {
             LLAMA_LOG_INFO("================================ Have weights data with %d entries\n",int(imatrix_data->size()));
             qs.has_imatrix = true;
-            // check imatrix for nans or infs
-            for (const auto & kv : *imatrix_data) {
-                for (float f : kv.second) {
-                    if (!std::isfinite(f)) {
-                        throw std::runtime_error(format("imatrix contains non-finite value %f\n", f));
-                    }
-                }
-            }
         }
     }
 
