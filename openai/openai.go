@@ -94,7 +94,6 @@ type ChatCompletionChunk struct {
 	Choices           []ChunkChoice `json:"choices"`
 }
 
-// TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
 type CompletionRequest struct {
 	Model            string   `json:"model"`
 	Prompt           string   `json:"prompt"`
