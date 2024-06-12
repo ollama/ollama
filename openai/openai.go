@@ -85,6 +85,18 @@ type ChatCompletionChunk struct {
 	Choices           []ChunkChoice `json:"choices"`
 }
 
+type Model struct {
+	Id      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+type ListCompletion struct {
+	Object string  `json:"object"`
+	Data   []Model `json:"data"`
+}
+
 func NewError(code int, message string) ErrorResponse {
 	var etype string
 	switch code {
@@ -142,6 +154,23 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 				return nil
 			}(r.DoneReason),
 		}},
+	}
+}
+
+func toListCompletion(r api.ListResponse) ListCompletion {
+	var data []Model
+	for _, m := range r.Models {
+		data = append(data, Model{
+			Id:      m.Name,
+			Object:  "model",
+			Created: m.ModifiedAt.Unix(),
+			OwnedBy: "ollama",
+		})
+	}
+
+	return ListCompletion{
+		Object: "list",
+		Data:   data,
 	}
 }
 
@@ -217,7 +246,27 @@ type writer struct {
 	gin.ResponseWriter
 }
 
+type listWriter struct {
+	gin.ResponseWriter
+}
+
 func (w *writer) writeError(code int, data []byte) (int, error) {
+	var serr api.StatusError
+	err := json.Unmarshal(data, &serr)
+	if err != nil {
+		return 0, err
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(NewError(http.StatusInternalServerError, serr.Error()))
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *listWriter) writeError(code int, data []byte) (int, error) {
 	var serr api.StatusError
 	err := json.Unmarshal(data, &serr)
 	if err != nil {
@@ -280,6 +329,44 @@ func (w *writer) Write(data []byte) (int, error) {
 	}
 
 	return w.writeResponse(data)
+}
+
+func (w *listWriter) writeResponse(data []byte) (int, error) {
+	var listResponse api.ListResponse
+	err := json.Unmarshal(data, &listResponse)
+	if err != nil {
+		return 0, err
+	}
+
+	// list completion
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(toListCompletion(listResponse))
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *listWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(code, data)
+	}
+
+	return w.writeResponse(data)
+}
+
+func ListMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		w := &listWriter{
+			ResponseWriter: c.Writer,
+		}
+
+		c.Writer = w
+
+		c.Next()
+	}
 }
 
 func Middleware() gin.HandlerFunc {
