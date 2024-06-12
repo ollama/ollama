@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -124,6 +125,24 @@ func Test_Routes(t *testing.T) {
 
 				assert.Len(t, modelList.Models, 1)
 				assert.Equal(t, "test-model:latest", modelList.Models[0].Name)
+			},
+		},
+		{
+			Name:   "List Model Handler OpenAI",
+			Method: http.MethodGet,
+			Path:   "/v1/models",
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var modelList openai.ListCompletion
+				err = json.Unmarshal(body, &modelList)
+				require.NoError(t, err)
+
+				assert.Len(t, modelList.Data, 1)
+				assert.Equal(t, "test-model:latest", modelList.Data[0].Id)
 			},
 		},
 		{
