@@ -96,5 +96,5 @@ go build -tags=avx,rocm .
 To update this package to the latest llama.cpp code, use the `sync_llama.sh` script:
 
 ```
-../sync_llama.sh ../../llama.cpp
+./sync_llama.sh ../../llama.cpp
 ```
