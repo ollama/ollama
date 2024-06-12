@@ -91,19 +91,22 @@ HIP_FLAGS := \
 	-I. \
 	$(foreach arch, $(HIP_ARCHS), --offload-arch=$(arch))
 
-ifeq ($(UNAME_S), Linux)
+ifeq ($(OS), Linux)
 	HIP_FLAGS += $(foreach arch, $(LINUX_HIP_ARCHS), --offload-arch=$(arch))
 endif
 
-ifeq ($(OS),Darwin)
-	ifeq ($(ARCH),arm64)
-		all: ollama_runner
-	else ifeq ($(ARCH),amd64)
-		all: ollama_runner ollama_runner_avx ollama_runner_avx2
-	endif
-else
-	all: ollama_runner ollama_runner_avx ollama_runner_avx2 ollama_runner_cuda ollama_runner_rocm
+RUNNERS := ollama_runner
+ifeq ($(ARCH),amd64)
+	RUNNERS += ollama_runner_avx ollama_runner_avx2
 endif
+ifeq ($(NVCC),)
+	RUNNERS += ollama_runner_cuda
+endif
+ifeq ($(HIPCC),)
+	RUNNERS += ollama_runner_rocm
+endif
+
+all: ollama_runner $(RUNNERS)
 
 %.cuda.$(OBJ_EXT): %.cu
 	$(NVCC) -c $(CUDA_FLAGS) -o $@ $<
@@ -147,4 +150,4 @@ ollama_runner_rocm: ggml_hipblas.dll
 clean:
 	rm -f $(CUDA_OBJS) $(HIP_OBJS) ggml_cuda.$(SHARED_EXT) ggml_cuda.* ggml_hipblas.* ollama_runner*
 
-.PHONY: all clean ollama_runner ollama_runner_avx ollama_runner_avx2 ollama_runner_cuda ollama_runner_rocm
+.PHONY: runners clean ollama_runner ollama_runner_avx ollama_runner_avx2 ollama_runner_cuda ollama_runner_rocm
