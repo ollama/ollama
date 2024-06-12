@@ -99,14 +99,14 @@ RUNNERS := ollama_runner
 ifeq ($(ARCH),amd64)
 	RUNNERS += ollama_runner_avx ollama_runner_avx2
 endif
-ifeq ($(NVCC),)
+ifneq ($(NVCC),)
 	RUNNERS += ollama_runner_cuda
 endif
-ifeq ($(HIPCC),)
+ifneq ($(HIPCC),)
 	RUNNERS += ollama_runner_rocm
 endif
 
-all: ollama_runner $(RUNNERS)
+runners: $(RUNNERS)
 
 %.cuda.$(OBJ_EXT): %.cu
 	$(NVCC) -c $(CUDA_FLAGS) -o $@ $<

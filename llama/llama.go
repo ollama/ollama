@@ -59,7 +59,6 @@ var ggmlMetal string
 
 func init() {
 	metal := strings.ReplaceAll(ggmlMetal, `#include "ggml-common.h"`, ggmlCommon)
-	fmt.Println(metal)
 	cMetal := C.CString(metal)
 	C.ggml_metallib_start = cMetal
 	C.ggml_metallib_end = (*C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(cMetal)) + uintptr(len(metal))))
