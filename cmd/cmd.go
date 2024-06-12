@@ -989,8 +989,19 @@ func initializeKeypair() error {
 		return err
 	}
 
-	privKeyPath := filepath.Join(home, ".ollama", "id_ed25519")
-	pubKeyPath := filepath.Join(home, ".ollama", "id_ed25519.pub")
+	defaultOllamaPath := filepath.Join(home, ".ollama")
+	dataHome, dataHomeExists := os.LookupEnv("XDG_DATA_HOME")
+    var privKeyPath string
+	var pubKeyPath  string
+
+	if _, err := os.Stat(defaultOllamaPath); errors.Is(err, os.ErrNotExist) && dataHomeExists {
+		privKeyPath = filepath.Join(dataHome, "id_ed25519")
+		pubKeyPath = filepath.Join(dataHome, "id_ed25519.pub")
+	} else {
+		privKeyPath = filepath.Join(home, ".ollama", "id_ed25519")
+		pubKeyPath = filepath.Join(home, ".ollama", "id_ed25519.pub")
+	}
+
 
 	_, err = os.Stat(privKeyPath)
 	if os.IsNotExist(err) {
