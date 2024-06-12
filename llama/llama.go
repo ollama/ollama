@@ -1,40 +1,45 @@
 package llama
 
-// #cgo CFLAGS: -std=c11 -DNDEBUG -DLOG_DISABLE_LOGS
-// #cgo CXXFLAGS: -std=c++11 -DNDEBUG -DLOG_DISABLE_LOGS
-// #cgo darwin,arm64 CFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-// #cgo darwin,arm64 CXXFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-// #cgo darwin,arm64 LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
-// #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
-// #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
-// #cgo darwin,amd64 LDFLAGS: -framework Foundation
-// #cgo darwin,amd64,avx2 CFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-// #cgo darwin,amd64,avx2 CXXFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-// #cgo darwin,amd64,avx2 LDFLAGS: -framework Accelerate
-// #cgo linux CFLAGS: -D_GNU_SOURCE
-// #cgo linux CXXFLAGS: -D_GNU_SOURCE
-// #cgo windows CFLAGS: -Wno-discarded-qualifiers
-// #cgo windows LDFLAGS: -lmsvcrt
-// #cgo avx CFLAGS: -mavx
-// #cgo avx CXXFLAGS: -mavx
-// #cgo avx2 CFLAGS: -mavx2 -mfma
-// #cgo avx2 CXXFLAGS: -mavx2 -mfma
-// #cgo cuda CFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-// #cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-// #cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-// #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-// #cgo rocm LDFLAGS: -L${SRCDIR} -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
-// #cgo windows,cuda LDFLAGS: -L${SRCDIR} -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.3/lib/x64" -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt
-// #cgo windows,rocm LDFLAGS: -L${SRCDIR} -L"C:/Program Files/AMD/ROCm/5.7/lib" -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
-// #cgo linux,cuda LDFLAGS: -L${SRCDIR} -L/usr/local/cuda/lib64 -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt
-// #cgo linux,rocm LDFLAGS: -L/opt/rocm/lib
-// #include <stdlib.h>
-// #include "llama.h"
-// #include "clip.h"
-// #include "llava.h"
-// #include "sampling_ext.h"
-//
-// bool llamaProgressCallback(float progress, void *user_data);
+/*
+#cgo CFLAGS: -std=c11 -DNDEBUG -DLOG_DISABLE_LOGS
+#cgo CXXFLAGS: -std=c++11 -DNDEBUG -DLOG_DISABLE_LOGS
+#cgo darwin,arm64 CFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+#cgo darwin,arm64 CXXFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+#cgo darwin,arm64 LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
+#cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
+#cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
+#cgo darwin,amd64 LDFLAGS: -framework Foundation
+#cgo darwin,amd64,avx2 CFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+#cgo darwin,amd64,avx2 CXXFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+#cgo darwin,amd64,avx2 LDFLAGS: -framework Accelerate
+#cgo linux CFLAGS: -D_GNU_SOURCE
+#cgo linux CXXFLAGS: -D_GNU_SOURCE
+#cgo windows CFLAGS: -Wno-discarded-qualifiers
+#cgo windows LDFLAGS: -lmsvcrt
+#cgo avx CFLAGS: -mavx
+#cgo avx CXXFLAGS: -mavx
+#cgo avx2 CFLAGS: -mavx2 -mfma
+#cgo avx2 CXXFLAGS: -mavx2 -mfma
+#cgo cuda CFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+#cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+#cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+#cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+#cgo rocm LDFLAGS: -L${SRCDIR} -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
+#cgo windows,cuda LDFLAGS: -L${SRCDIR} -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.3/lib/x64" -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt
+#cgo windows,rocm LDFLAGS: -L${SRCDIR} -L"C:/Program Files/AMD/ROCm/5.7/lib" -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
+#cgo linux,cuda LDFLAGS: -L${SRCDIR} -L/usr/local/cuda/lib64 -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt
+#cgo linux,rocm LDFLAGS: -L/opt/rocm/lib
+
+#include <stdlib.h>
+#include "llama.h"
+#include "clip.h"
+#include "llava.h"
+#include "sampling_ext.h"
+
+bool llamaProgressCallback(float progress, void *user_data);
+extern const char* ggml_metallib_start;
+extern const char* ggml_metallib_end;
+*/
 import "C"
 import (
 	_ "embed"
@@ -52,7 +57,6 @@ var ggmlCommon string
 //go:embed ggml-metal.metal
 var ggmlMetal string
 
-// TODO: write me somewhere else
 func init() {
 	metal := strings.ReplaceAll(ggmlMetal, `#include "ggml-common.h"`, ggmlCommon)
 	fmt.Println(metal)
