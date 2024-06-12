@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ollama/ollama/types/defaults"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -114,7 +115,7 @@ func TestParseModelPath(t *testing.T) {
 			"ns/repo:tag",
 			ModelPath{
 				ProtocolScheme: "https",
-				Registry:       DefaultRegistry,
+				Registry:       defaults.REGISTRY_ENDPOINT,
 				Namespace:      "ns",
 				Repository:     "repo",
 				Tag:            "tag",
@@ -125,8 +126,8 @@ func TestParseModelPath(t *testing.T) {
 			"repo:tag",
 			ModelPath{
 				ProtocolScheme: "https",
-				Registry:       DefaultRegistry,
-				Namespace:      DefaultNamespace,
+				Registry:       defaults.REGISTRY_ENDPOINT,
+				Namespace:      defaults.REGISTRY_NAMESPACE,
 				Repository:     "repo",
 				Tag:            "tag",
 			},
@@ -136,10 +137,10 @@ func TestParseModelPath(t *testing.T) {
 			"repo",
 			ModelPath{
 				ProtocolScheme: "https",
-				Registry:       DefaultRegistry,
-				Namespace:      DefaultNamespace,
+				Registry:       defaults.REGISTRY_ENDPOINT,
+				Namespace:      defaults.REGISTRY_NAMESPACE,
 				Repository:     "repo",
-				Tag:            DefaultTag,
+				Tag:            defaults.REGISTRY_TAG,
 			},
 		},
 	}

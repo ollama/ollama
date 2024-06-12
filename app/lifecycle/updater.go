@@ -19,11 +19,11 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/types/defaults"
 	"github.com/ollama/ollama/version"
 )
 
 var (
-	UpdateCheckURLBase  = "https://ollama.com/api/update"
 	UpdateDownloaded    = false
 	UpdateCheckInterval = 60 * 60 * time.Second
 )
@@ -37,7 +37,7 @@ type UpdateResponse struct {
 func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	var updateResp UpdateResponse
 
-	requestURL, err := url.Parse(UpdateCheckURLBase)
+	requestURL, err := url.Parse(defaults.UPDATE_CHECK_ENDPOINT)
 	if err != nil {
 		return false, updateResp
 	}

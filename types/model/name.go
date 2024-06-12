@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+
+	"github.com/ollama/ollama/types/defaults"
 )
 
 // Errors
@@ -35,12 +37,6 @@ func Unqualified(n Name) error {
 // spot in logs.
 const MissingPart = "!MISSING!"
 
-const (
-	defaultHost      = "registry.ollama.ai"
-	defaultNamespace = "library"
-	defaultTag       = "latest"
-)
-
 // DefaultName returns a name with the default values for the host, namespace,
 // and tag parts. The model and digest parts are empty.
 //
@@ -49,9 +45,9 @@ const (
 //   - The default tag is ("latest")
 func DefaultName() Name {
 	return Name{
-		Host:      defaultHost,
-		Namespace: defaultNamespace,
-		Tag:       defaultTag,
+		Host:      defaults.REGISTRY_ENDPOINT,
+		Namespace: defaults.REGISTRY_NAMESPACE,
+		Tag:       defaults.REGISTRY_TAG,
 	}
 }
 
@@ -234,12 +230,12 @@ func (n Name) String() string {
 func (n Name) DisplayShortest() string {
 	var sb strings.Builder
 
-	if n.Host != defaultHost {
+	if n.Host != defaults.REGISTRY_ENDPOINT {
 		sb.WriteString(n.Host)
 		sb.WriteByte('/')
 		sb.WriteString(n.Namespace)
 		sb.WriteByte('/')
-	} else if n.Namespace != defaultNamespace {
+	} else if n.Namespace != defaults.REGISTRY_NAMESPACE {
 		sb.WriteString(n.Namespace)
 		sb.WriteByte('/')
 	}
