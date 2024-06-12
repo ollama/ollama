@@ -61,9 +61,6 @@ struct ggml_cgraph;
 extern "C" {
 #endif
 
-const char* ggml_metallib_start;
-const char* ggml_metallib_end;
-
 //
 // backend API
 // user-code should use only these functions
