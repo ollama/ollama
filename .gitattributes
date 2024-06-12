@@ -1,8 +1,2 @@
 llm/ext_server/* linguist-vendored
-llama/*.cpp linguist-vendored
-llama/*.h linguist-vendored
-llama/*.c linguist-vendored
-llama/*.cu linguist-vendored
-llama/*.cuh linguist-vendored
-llama/ggml-cuda/*.cu linguist-vendored
-llama/ggml-cuda/*.cuh linguist-vendored
+llama/**/*.{cpp,hpp,h,c,cu,cuh,m} linguist-vendored
