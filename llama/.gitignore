@@ -7,4 +7,3 @@
 *.o
 *.obj
 ollama_runner*
-ggml-metal.metal

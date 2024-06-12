@@ -61,6 +61,9 @@ struct ggml_cgraph;
 extern "C" {
 #endif
 
+const char* ggml_metallib_start;
+const char* ggml_metallib_end;
+
 //
 // backend API
 // user-code should use only these functions
@@ -89,4 +92,3 @@ GGML_API void ggml_backend_metal_capture_next_compute(ggml_backend_t backend);
 #ifdef __cplusplus
 }
 #endif
-
