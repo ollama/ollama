@@ -12,12 +12,11 @@ Supported:
 - [x] Linux CUDA
 - [x] Linux ROCm
 - [x] Llava
-- [ ] Parallel Requests
 
-Extra build steps are required for CUDA and ROCm on Windows since `nvcc` and `hipcc` both require using msvc as the host compiler. For these small dlls are created:
+Extra build steps are required for CUDA and ROCm on Windows since `nvcc` and `hipcc` both require using msvc as the host compiler. For these shared libraries are created:
 
-- `ggml-cuda.dll`
-- `ggml-hipblas.dll`
+- `ggml_cuda.dll` on Windows or `ggml_cuda.so` on Linux
+- `ggml_hipblas.dll` on Windows or `ggml_hipblas.so` on Linux
 
 > Note: it's important that memory is allocated and freed by the same compiler (e.g. entirely by code compiled with msvc or mingw). Issues from this should be rare, but there are some places where pointers are returned by the CUDA or HIP runtimes and freed elsewhere, causing a a crash. In a future change the same runtime should be used in both cases to avoid crashes.
 
@@ -51,7 +50,7 @@ Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-down
 
 ```shell
 make ggml_cuda.so
-go build -tags=avx,cuda .
+go build -tags avx,cuda .
 ```
 
 ### ROCm
@@ -60,7 +59,7 @@ Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-down
 
 ```shell
 make ggml_hipblas.so
-go build -tags=avx,rocm .
+go build -tags avx,rocm .
 ```
 
 ## Windows
@@ -73,7 +72,7 @@ Install the [CUDA toolkit v11.3.1](https://developer.nvidia.com/cuda-11-3-1-down
 
 ```shell
 make ggml_cuda.dll
-go build -tags=avx,cuda .
+go build -tags avx,cuda .
 ```
 
 ### ROCm
@@ -82,13 +81,14 @@ Install [ROCm 5.7.1](https://rocm.docs.amd.com/en/docs-5.7.1/).
 
 ```shell
 make ggml_hipblas.dll
-go build -tags=rocm .
+go build -tags avx,rocm .
 ```
 
-Then build the package with the `rocm` tag:
+## Building runners
 
 ```shell
-go build -tags=avx,rocm .
+# build all runners for this platform
+make -j
 ```
 
 ## Syncing with llama.cpp
