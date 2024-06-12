@@ -237,7 +237,6 @@ func LoadConfig() {
 	if err != nil {
 		slog.Error("invalid setting", "OLLAMA_HOST", Host, "error", err, "using default port", Host.Port)
 	}
-
 }
 
 func getOllamaHost() (*OllamaHost, error) {
