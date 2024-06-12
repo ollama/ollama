@@ -240,17 +240,21 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	}
 }
 
-type writer struct {
+type BaseWriter struct {
+	gin.ResponseWriter
+}
+
+type ChatWriter struct {
 	stream bool
 	id     string
-	gin.ResponseWriter
+	BaseWriter
 }
 
-type listWriter struct {
-	gin.ResponseWriter
+type ListWriter struct {
+	BaseWriter
 }
 
-func (w *writer) writeError(code int, data []byte) (int, error) {
+func (w *BaseWriter) writeError(code int, data []byte) (int, error) {
 	var serr api.StatusError
 	err := json.Unmarshal(data, &serr)
 	if err != nil {
@@ -266,23 +270,7 @@ func (w *writer) writeError(code int, data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (w *listWriter) writeError(code int, data []byte) (int, error) {
-	var serr api.StatusError
-	err := json.Unmarshal(data, &serr)
-	if err != nil {
-		return 0, err
-	}
-
-	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(NewError(http.StatusInternalServerError, serr.Error()))
-	if err != nil {
-		return 0, err
-	}
-
-	return len(data), nil
-}
-
-func (w *writer) writeResponse(data []byte) (int, error) {
+func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	var chatResponse api.ChatResponse
 	err := json.Unmarshal(data, &chatResponse)
 	if err != nil {
@@ -322,7 +310,7 @@ func (w *writer) writeResponse(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (w *writer) Write(data []byte) (int, error) {
+func (w *ChatWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(code, data)
@@ -331,7 +319,7 @@ func (w *writer) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
-func (w *listWriter) writeResponse(data []byte) (int, error) {
+func (w *ListWriter) writeResponse(data []byte) (int, error) {
 	var listResponse api.ListResponse
 	err := json.Unmarshal(data, &listResponse)
 	if err != nil {
@@ -348,7 +336,7 @@ func (w *listWriter) writeResponse(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (w *listWriter) Write(data []byte) (int, error) {
+func (w *ListWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(code, data)
@@ -359,8 +347,8 @@ func (w *listWriter) Write(data []byte) (int, error) {
 
 func ListMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		w := &listWriter{
-			ResponseWriter: c.Writer,
+		w := &ListWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
 		}
 
 		c.Writer = w
@@ -391,10 +379,10 @@ func Middleware() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
-		w := &writer{
-			ResponseWriter: c.Writer,
-			stream:         req.Stream,
-			id:             fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+		w := &ChatWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			stream:     req.Stream,
+			id:         fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
 		}
 
 		c.Writer = w
