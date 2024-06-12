@@ -1,0 +1,15 @@
+diff --git a/llama/ggml-metal-darwin_arm64.m b/llama/ggml-metal-darwin_arm64.m
+index b56c3604..400d43f4 100644
+--- a/llama/ggml-metal-darwin_arm64.m
++++ b/llama/ggml-metal-darwin_arm64.m
+@@ -377,8 +377,8 @@ static void ggml_metal_log(enum ggml_log_level level, const char * format, ...){
+ #if GGML_METAL_EMBED_LIBRARY
+             GGML_METAL_LOG_INFO("%s: using embedded metal library\n", __func__);
+ 
+-            extern const char ggml_metallib_start[];
+-            extern const char ggml_metallib_end[];
++            extern const char *ggml_metallib_start;
++            extern const char *ggml_metallib_end;
+ 
+             NSString * src = [[NSString alloc] initWithBytes:ggml_metallib_start length:(ggml_metallib_end-ggml_metallib_start) encoding:NSUTF8StringEncoding];
+ #else
