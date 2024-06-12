@@ -1,0 +1,83 @@
+import pygame
+import time
+import random
+
+pygame.init()
+
+# 屏幕设置
+width, height = 600, 400
+win = pygame.display.set_mode((width, height))
+pygame.display.set_caption("贪吃蛇")
+
+# 颜色设置
+white, black, red, green, blue = (255, 255, 255), (0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255)
+
+# 蛇设置
+snake_block = 10
+snake_speed = 15
+snake_list = []
+Length_of_snake = 1
+
+# 初始化蛇的位置
+x1, y1 = width / 2, height / 2
+dx, dy = 0, 0
+
+# 食物设置
+foodx = round(random.randrange(0, width - snake_block) / 10.0) * 10.0
+foody = round(random.randrange(0, height - snake_block) / 10.0) * 10.0
+
+clock = pygame.time.Clock()
+game_over = False
+
+while not game_over:
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            game_over = True
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_LEFT:
+                dx = -snake_block
+                dy = 0
+            elif event.key == pygame.K_RIGHT:
+                dx = snake_block
+                dy = 0
+            elif event.key == pygame.K_UP:
+                dy = -snake_block
+                dx = 0
+            elif event.key == pygame.K_DOWN:
+                dy = snake_block
+                dx = 0
+
+    if x1 >= width or x1 < 0 or y1 >= height or y1 < 0:
+        game_over = True
+
+    x1 += dx
+    y1 += dy
+    win.fill(black)
+    pygame.draw.rect(win, blue, [foodx, foody, snake_block, snake_block])
+    snake_head = []
+    snake_head.append(x1)
+    snake_head.append(y1)
+    snake_list.append(snake_head)
+
+    if len(snake_list) > Length_of_snake:
+        del snake_list[0]
+
+    for x in snake_list[:-1]:
+        if x == snake_head:
+            game_over = True
+
+    for segment in snake_list:
+        pygame.draw.rect(win, red, [segment[0], segment[1], snake_block, snake_block])
+
+    pygame.display.update()
+
+    if x1 == foodx and y1 == foody:
+        foodx = round(random.randrange(0, width - snake_block) / 10.0) * 10.0
+        foody = round(random.randrange(0, height - snake_block) / 10.0) * 10.0
+        Length_of_snake += 1
+
+    clock.tick(snake_speed)
+
+pygame.quit()
+quit()
