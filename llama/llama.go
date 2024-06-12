@@ -37,8 +37,8 @@ package llama
 #include "sampling_ext.h"
 
 bool llamaProgressCallback(float progress, void *user_data);
-extern const char* ggml_metallib_start;
-extern const char* ggml_metallib_end;
+extern const char *ggml_metallib_start;
+extern const char *ggml_metallib_end;
 */
 import "C"
 import (
