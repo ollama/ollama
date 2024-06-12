@@ -123,7 +123,7 @@ func Test_Routes(t *testing.T) {
 				require.NoError(t, err)
 
 				assert.Len(t, modelList.Models, 1)
-				assert.Equal(t, "test-model:latest", modelList.Models[0].Name)
+				assert.Equal(t, "test-model", modelList.Models[0].Name)
 			},
 		},
 		{

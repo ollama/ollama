@@ -747,8 +747,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
-			Model:      n.DisplayShortest(),
-			Name:       n.DisplayShortest(),
+			Name:       trimLatest(n.DisplayShortest()),
 			Size:       m.Size(),
 			Digest:     m.digest,
 			ModifiedAt: m.fi.ModTime(),
@@ -1156,8 +1155,7 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 		}
 
 		mr := api.ProcessModelResponse{
-			Model:     model.ShortName,
-			Name:      model.ShortName,
+			Model:     trimLatest(model.ShortName),
 			Size:      int64(v.estimatedTotal),
 			SizeVRAM:  int64(v.estimatedVRAM),
 			Digest:    model.Digest,
@@ -1176,6 +1174,13 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
+}
+
+func trimLatest(s string) string {
+	if strings.HasSuffix(s, ":latest") {
+		return s[:len(s)-7]
+	}
+	return s
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
