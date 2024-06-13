@@ -441,7 +441,10 @@ func main() {
 	server.model = llama.LoadModelFromFile(*mpath, params)
 
 	if *lpath != "" {
-		server.model.ApplyLoraFromFile(*lpath, 1.0, "", *threads)
+		err := server.model.ApplyLoraFromFile(*lpath, 1.0, "", *threads)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	ctxParams := llama.NewContextParams(*numCtx, *threads, *flashAttention)

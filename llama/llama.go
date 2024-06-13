@@ -302,7 +302,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 	}
 
 	tokens := make([]int, result)
-	for i := 0; i < int(result); i++ {
+	for i := range result {
 		tokens[i] = int(cTokens[i])
 	}
 
