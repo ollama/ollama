@@ -544,3 +544,46 @@ SYSTEM You are a utf16 file.
 	require.NoError(t, err)
 	assert.Equal(t, expected, actual.Commands)
 }
+
+func TestParseFileCJKParseFile(t *testing.T) {
+	data := `FROM bob
+PARAMETER param1 1
+PARAMETER param2 4096
+SYSTEM """
+你好！You are a utf8 file with CJK characters.
+"""
+`
+	// TODO: If adding emoji to the SYSTEM, it will fail to parse.
+	var simulateUTF16File = func(endian binary.ByteOrder) []byte {
+		utf16File := utf16.Encode(append([]rune{'\ufffe'}, []rune(data)...))
+		buf := new(bytes.Buffer)
+		err := binary.Write(buf, endian, utf16File)
+		require.NoError(t, err)
+		return buf.Bytes()
+	}
+
+	cases := []struct {
+		name        string
+		encodedFile []byte
+	}{
+		{"utf16le", simulateUTF16File(binary.LittleEndian)},
+		{"utf16be", simulateUTF16File(binary.BigEndian)},
+		{"utf8", []byte(data)},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			actual, err := ParseFile(bytes.NewReader(c.encodedFile))
+			require.NoError(t, err)
+
+			expected := []Command{
+				{Name: "model", Args: "bob"},
+				{Name: "param1", Args: "1"},
+				{Name: "param2", Args: "4096"},
+				{Name: "system", Args: "\n你好！You are a utf8 file with CJK characters.\n"},
+			}
+
+			assert.Equal(t, expected, actual.Commands)
+		})
+	}
+}
