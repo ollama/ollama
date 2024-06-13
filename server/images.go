@@ -960,7 +960,6 @@ var errUnauthorized = fmt.Errorf("unauthorized: access denied")
 func getTokenSubject(token string) string {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		slog.Error("jwt token does not contain 3 parts")
 		return ""
 	}
 
