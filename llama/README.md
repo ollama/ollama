@@ -93,8 +93,8 @@ make -j
 
 ## Syncing with llama.cpp
 
-To update this package to the latest llama.cpp code, use the `sync_llama.sh` script:
+To update this package to the latest llama.cpp code, use the `sync.sh` script:
 
 ```
-./sync_llama.sh ../../llama.cpp
+./sync.sh ../../llama.cpp
 ```
