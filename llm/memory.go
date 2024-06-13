@@ -197,8 +197,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	}
 
 	// Determine if we need to consider output then find where it fits
-	if ((gpus[0].Library == "metal" && opts.UseMMap) || (gpus[0].Library != "metal" || !opts.UseMMap)) &&
-		memoryLayerOutput > 0 && (opts.NumGPU < 0 || layerCount < opts.NumGPU) {
+	if memoryLayerOutput > 0 && (opts.NumGPU < 0 || layerCount < opts.NumGPU) {
 		for j := len(gpusWithSpace); j > 0; j-- {
 			g := gpusWithSpace[layerCount%j]
 			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
