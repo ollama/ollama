@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -43,7 +44,9 @@ func (m *Manifest) Remove() error {
 
 func (m *Manifest) RemoveLayers() error {
 	for _, layer := range append(m.Layers, m.Config) {
-		if err := layer.Remove(); err != nil {
+		if err := layer.Remove(); errors.Is(err, os.ErrNotExist) {
+			slog.Debug("layer does not exist", "digest", layer.Digest)
+		} else if err != nil {
 			return err
 		}
 	}
