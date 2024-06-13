@@ -324,7 +324,8 @@ type scannerDecoder interface {
 type utf8ScannerDecoder struct{}
 
 func (utf8ScannerDecoder) ScanBytes(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	return scanBytesN(data, 1, atEOF)
+	_, size := utf8.DecodeRune(data)
+	return scanBytesN(data, size, atEOF)
 }
 
 func (utf8ScannerDecoder) DecodeRune(data []byte) (rune, error) {
