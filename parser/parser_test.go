@@ -268,6 +268,17 @@ SYSTEM """This is a multiline system."""
 		{
 			`
 FROM foo
+SYSTEM """utf8测试"""
+			`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: "utf8测试"},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
 SYSTEM """This is a multiline system.""
 			`,
 			nil,
