@@ -98,7 +98,7 @@ $(sed 's/^/ * /' <$src_dir/LICENSE)
 EOF
 
 LICENSE_FILES=$(find $dst_dir -type f \( -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.m" -o -name "*.metal" -o -name "*.cu" -o -name "*.cuh" \))
-EXCLUDED_FILES=("sgemm.cpp" "sgemm.h" "sampling_ext.cpp" "sampling_ext.h" "metal.c")
+EXCLUDED_FILES=("sgemm.cpp" "sgemm.h" "sampling_ext.cpp" "sampling_ext.h" "metal.c", "stb_image.h", "json.hpp")
 
 for IN in $LICENSE_FILES; do
     for EXCLUDED in "${EXCLUDED_FILES[@]}"; do
