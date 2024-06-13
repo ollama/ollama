@@ -31,6 +31,8 @@ var (
 	Debug bool
 	// Experimental flash attention
 	FlashAttention bool
+	// Set via OLLAMA_HOST in the environment
+	Host *OllamaHost
 	// Set via OLLAMA_KEEP_ALIVE in the environment
 	KeepAlive string
 	// Set via OLLAMA_LLM_LIBRARY in the environment
@@ -39,6 +41,8 @@ var (
 	MaxRunners int
 	// Set via OLLAMA_MAX_QUEUE in the environment
 	MaxQueuedRequests int
+	// Set via OLLAMA_MODELS in the environment
+	ModelsDir string
 	// Set via OLLAMA_MAX_VRAM in the environment
 	MaxVRAM uint64
 	// Set via OLLAMA_NOHISTORY in the environment
@@ -47,8 +51,6 @@ var (
 	NoPrune bool
 	// Set via OLLAMA_NUM_PARALLEL in the environment
 	NumParallel int
-	// Set via OLLAMA_HOST in the environment
-	Host *OllamaHost
 	// Set via OLLAMA_RUNNERS_DIR in the environment
 	RunnersDir string
 	// Set via OLLAMA_TMPDIR in the environment
@@ -71,7 +73,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models (default 1)"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
 		"OLLAMA_MAX_VRAM":          {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", "", "The path to the models directory"},
+		"OLLAMA_MODELS":            {"OLLAMA_MODELS", ModelsDir, "The path to the models directory"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
@@ -233,10 +235,26 @@ func LoadConfig() {
 	KeepAlive = clean("OLLAMA_KEEP_ALIVE")
 
 	var err error
+	ModelsDir, err = getModelsDir()
+	if err != nil {
+		slog.Error("invalid setting", "OLLAMA_MODELS", ModelsDir, "error", err)
+	}
+
 	Host, err = getOllamaHost()
 	if err != nil {
 		slog.Error("invalid setting", "OLLAMA_HOST", Host, "error", err, "using default port", Host.Port)
 	}
+}
+
+func getModelsDir() (string, error) {
+	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
+		return models, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".ollama", "models"), nil
 }
 
 func getOllamaHost() (*OllamaHost, error) {
