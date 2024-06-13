@@ -646,9 +646,12 @@ func (s *Server) ShowModelHandler(c *gin.Context) {
 
 	resp, err := GetModelInfo(req)
 	if err != nil {
-		if os.IsNotExist(err) {
+		switch {
+		case os.IsNotExist(err):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-		} else {
+		case err.Error() == "invalid model name":
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
 		return
@@ -687,7 +690,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	n := model.ParseName(req.Model)
 	if !n.IsValid() {
-		return nil, fmt.Errorf("name %q is invalid", req.Model)
+		return nil, fmt.Errorf("invalid model name")
 	}
 
 	manifest, err := ParseNamedManifest(n)
