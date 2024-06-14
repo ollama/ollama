@@ -161,7 +161,7 @@ func Test_Routes(t *testing.T) {
 
 				assert.Len(t, modelList.Data, 1)
 				assert.Equal(t, "test-model:latest", modelList.Data[0].Id)
-				assert.Equal(t, "ollama", modelList.Data[0].OwnedBy)
+				assert.Equal(t, "library", modelList.Data[0].OwnedBy)
 			},
 		},
 		{
