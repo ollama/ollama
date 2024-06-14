@@ -35,8 +35,16 @@ paths:
       operationId: generateResponse
       tags:
         - generate
-      description: Generate a response for a given prompt with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include statistics and additional data from the request.
-      summary: Generate a response for a given prompt with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include statistics and additional data from the request.
+      description: |
+        Generate a response for a given prompt with a provided model. This is 
+        a streaming endpoint, so there will be a series of responses. The 
+        final response object will include statistics and additional data from 
+        the request.
+      summary: |
+        Generate a response for a given prompt with a provided model. This is 
+        a streaming endpoint, so there will be a series of responses. The final 
+        response object will include statistics and additional data from the 
+        request.
       requestBody:
         required: true
         description: Request to generate a response
@@ -58,8 +66,16 @@ paths:
       tags:
         - chat
         - generate
-      description: 'Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using "stream": false. The final response object will include statistics and additional data from the request.'
-      summary: 'Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using "stream": false. The final response object will include statistics and additional data from the request.'
+      description: | 
+        Generate the next message in a chat with a provided model. This is a 
+        streaming endpoint, so there will be a series of responses. Streaming 
+        can be disabled using "stream": false. The final response object will 
+        include statistics and additional data from the request.
+      summary: |
+        Generate the next message in a chat with a provided model. This is a 
+        streaming endpoint, so there will be a series of responses. Streaming 
+        can be disabled using "stream": false. The final response object will 
+        include statistics and additional data from the request.
       requestBody:
         required: true
         description: Request to generate a response in a chat
@@ -80,8 +96,20 @@ paths:
       operationId: createModel
       tags:
         - models
-      description: Create a model from a Modelfile. It is recommended to set modelfile to the content of the Modelfile rather than just set path. This is a requirement for remote create. Remote model creation must also create any file blobs, fields such as FROM and ADAPTER, explicitly with the server using Create a Blob and the value to the path indicated in the response.
-      summary: 'Create a model from a Modelfile. It is recommended to set modelfile to the content of the Modelfile rather than just set path. This is a requirement for remote create. Remote model creation must also create any file blobs, fields such as FROM and ADAPTER, explicitly with the server using Create a Blob and the value to the path indicated in the response.'
+      description: |
+        Create a model from a Modelfile. It is recommended to set modelfile 
+        to the content of the Modelfile rather than just set path. This is a 
+        requirement for remote create. Remote model creation must also create 
+        any file blobs, fields such as FROM and ADAPTER, explicitly with the 
+        server using Create a Blob and the value to the path indicated in the 
+        response.
+      summary: | 
+        Create a model from a Modelfile. It is recommended to set modelfile to 
+        the content of the Modelfile rather than just set path. This is a 
+        requirement for remote create. Remote model creation must also create 
+        any file blobs, fields such as FROM and ADAPTER, explicitly with the 
+        server using Create a Blob and the value to the path indicated in the 
+        response.
       requestBody:
         required: true
         description: Request to create a model
@@ -102,8 +130,12 @@ paths:
       operationId: getBlob
       tags:
         - blobs
-      description: Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not Ollama.ai.
-      summary: 'Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not Ollama.ai.'
+      description: |
+        Ensures that the file blob used for a FROM or ADAPTER field exists on 
+        the server. This is checking your Ollama server and not Ollama.ai.
+      summary: |
+        Ensures that the file blob used for a FROM or ADAPTER field exists on 
+        the server. This is checking your Ollama server and not Ollama.ai.
       parameters:
         - name: digest
           in: path
@@ -164,8 +196,12 @@ paths:
       operationId: showModel
       tags:
         - models
-      description: Show information about a model including details, modelfile, template, parameters, license, and system prompt.
-      summary: 'Show information about a model including details, modelfile, template, parameters, license, and system prompt.'
+      description: |
+        Show information about a model including details, modelfile, template, 
+        parameters, license, and system prompt.
+      summary: |
+        Show information about a model including details, modelfile, template, 
+        parameters, license, and system prompt.
       requestBody:
         required: true
         description: Request to show a model
@@ -186,8 +222,10 @@ paths:
       operationId: copyModel
       tags:
         - models
-      description: Copy a model. Creates a model with another name from an existing model.
-      summary: 'Copy a model. Creates a model with another name from an existing model.'
+      description: |
+        Copy a model. Creates a model with another name from an existing model.
+      summary: |
+        Copy a model. Creates a model with another name from an existing model.
       requestBody:
         required: true
         description: Request to copy a model
@@ -226,8 +264,14 @@ paths:
       operationId: pullModel
       tags:
         - models
-      description: Download a model from the ollama library. Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress.
-      summary: 'Download a model from the ollama library. Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress.'
+      description: | 
+        Download a model from the ollama library. Cancelled pulls are resumed 
+        from where they left off, and multiple calls will share the same 
+        download progress.
+      summary: |
+        Download a model from the ollama library. Cancelled pulls are resumed 
+        from where they left off, and multiple calls will share the same 
+        download progress.
       requestBody:
         required: true
         description: Request to pull a model
@@ -248,8 +292,12 @@ paths:
       operationId: pushModel
       tags:
         - models
-      description: Upload a model to a model library. Requires registering for ollama.ai and adding a public key first.
-      summary: 'Upload a model to a model library. Requires registering for ollama.ai and adding a public key first.'
+      description: |
+        Upload a model to a model library. Requires registering for ollama.ai 
+        and adding a public key first.
+      summary: |
+        Upload a model to a model library. Requires registering for ollama.ai 
+        and adding a public key first.'
       requestBody:
         required: true
         description: Request to push a model
@@ -340,30 +388,44 @@ components:
           items:
             type: string
             format: byte
-          description: A list of base64-encoded images (for multimodal models such as llava)        
+          description: |
+            A list of base64-encoded images (for multimodal models such as 
+            llava)        
         format:
           type: string
-          description: The format to return a response in. Currently the only accepted value is json
+          description: |
+            The format to return a response in. Currently the only accepted 
+            value is json
         options:
           $ref: '#/components/schemas/Options'
         system:
           type: string
-          description: System message to (overrides what is defined in the Modelfile)
+          description: |
+            System message to (overrides what is defined in the Modelfile)
         template:
           type: string
-          description: The prompt template to use (overrides what is defined in the Modelfile)
+          description: |
+            The prompt template to use (overrides what is defined in the 
+            Modelfile)
         context:
           type: array
           items:
             type: integer
-          description: The context parameter returned from a previous request to /generate, this can be used to keep a short conversational memory
+          description: |
+            The context parameter returned from a previous request to generate, 
+            this can be used to keep a short conversational memory
           example: []
         stream:
           type: boolean
-          description: If false the response will be returned as a single response object, rather than a stream of objects
+          description: |
+            If false the response will be returned as a single response object, 
+            rather than a stream of objects
         raw:
           type: boolean
-          description: If true no formatting will be applied to the prompt. You may choose to use the raw parameter if you are specifying a full templated prompt in your request to the API
+          description: |
+            If true no formatting will be applied to the prompt. You may choose 
+            to use the raw parameter if you are specifying a full templated 
+            prompt in your request to the API
         keep_alive:
           $ref: '#/components/schemas/Duration'
       required:
@@ -383,7 +445,9 @@ components:
           description: Timestamp of the response
         response:
           type: string
-          description: The textual response itself. When done, empty if the response was streamed, if not streamed, this will contain the full response
+          description: |
+            The textual response itself. When done, empty if the response was 
+            streamed, if not streamed, this will contain the full response
         done:
           type: boolean
           description: Specifies if the response is complete
@@ -391,7 +455,8 @@ components:
           type: array
           items:
             type: integer
-          description: When done, encoding of the conversation used in this response
+          description: |
+            When done, encoding of the conversation used in this response
         total_duration:
           type: number
           description: When done, time spent generating the response
@@ -403,13 +468,15 @@ components:
           description: When done, number of tokens in the prompt
         prompt_eval_duration:
           type: number
-          description: When done, time spent in nanoseconds evaluating the prompt
+          description: |
+            When done, time spent in nanoseconds evaluating the prompt
         eval_count:
           type: integer
           description: When done, number of tokens in the response
         eval_duration:
           type: number
-          description: When done, time in nanoseconds spent generating the response 
+          description: |
+            When done, time in nanoseconds spent generating the response 
 
     ChatRequest:
       type: object
@@ -486,10 +553,12 @@ components:
         modelfile:
           type: string
           description: The modelfile content
-          example: 'FROM llama3\nSYSTEM You are mario from Super Mario Bros.'
+          example: FROM llama3\nSYSTEM You are mario from Super Mario Bros.
         stream:
           type: boolean
-          description: If false the response will be returned as a single response object, rather than a stream of objects
+          description: |
+            If false the response will be returned as a single response object, 
+            rather than a stream of objects
         quantize:
           type: string
           description: Specifies the quantization level of the model
@@ -588,10 +657,14 @@ components:
           example: llama3
         insecure:
           type: boolean
-          description: allow insecure connections to the library. Only use this if you are pulling from your own library during development.
+          description: |
+            allow insecure connections to the library. Only use this if you are
+             pulling from your own library during development.
         stream:
           type: boolean
-          description: If false the response will be returned as a single response object, rather than a stream of objects
+          description: |
+            If false the response will be returned as a single response object, 
+            rather than a stream of objects
       required: 
         - model
 
@@ -601,13 +674,18 @@ components:
       properties:
         model:
           type: string
-          description: The name of the model to push in the form of <namespace>/<model>:<tag>
+          description: |  
+            The name of the model to push in the form of <namespace>/<model>:<tag>
         insecure:
           type: boolean
-          description: Whether to allow insecure connections to the library. Only use this if you are pushing to your library during development
+          description: |
+            Whether to allow insecure connections to the library. Only use this 
+            if you are pushing to your library during development
         stream:
           type: boolean
-          description: If false the response will be returned as a single response object, rather than a stream of objects
+          description: |
+            If false the response will be returned as a single response object, 
+            rather than a stream of objects
       required: 
         - model
         
@@ -725,132 +803,224 @@ components:
 
     Options:
       type: object
-      description: Advanced model and runner options for generation and chat requests
+      description: |
+        Advanced model and runner options for generation and chat requests
       properties:
         num_keep:
           type: integer
-          description: 'Specifies the number of tokens from the beginning of the context ot retain when the context limit is reached. (Default: 4)'
+          description: | 
+            Specifies the number of tokens from the beginning of 
+            the context ot retain when the context limit is reached. 
+            (Default: 4)
           example: 4
         seed:
           type: integer
-          description: 'Sets the random number seed to use for generation. Setting this to a specific number will make the model generate the same text for the same prompt. (Default: 0)'
+          description: |
+            Sets the random number seed to use for generation. Setting this to 
+            a specific number will make the model generate the same text for 
+            the same prompt. 
+            (Default: 0)
           example: -1
         num_predict:
           type: integer
-          description: 'Maximum number of tokens to predict when generating text. (Default: 128, -1 = infinite generation, -2 = fill context)'
+          description: |
+            Maximum number of tokens to predict when generating text. 
+            (Default: 128, -1 = infinite generation, -2 = fill context)
           example: -1
         top_k:
           type: integer
-          description: 'Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)'
+          description: |
+            Reduces the probability of generating nonsense. A higher value 
+            (e.g. 100) will give more diverse answers, while a lower value 
+            (e.g. 10) will be more conservative. 
+            (Default: 40)
           example: 40
         top_p:
           type: number
           format: float
-          description: 'Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)'
+          description: |
+            Works together with top-k. A higher value (e.g., 0.95) will lead to 
+            more diverse text, while a lower value (e.g., 0.5) will generate 
+            more focused and conservative text. 
+            (Default: 0.9)
           example: 0.9
         tfs_z:
           type: number
           format: float
-          description: 'Tail free sampling is used to reduce the impact of less probable tokens from the output. A higher value (e.g., 2.0) will reduce the impact more, while a value of 1.0 disables this setting. (default: 1)'
+          description: |
+            Tail free sampling is used to reduce the impact of less probable 
+            tokens from the output. A higher value (e.g., 2.0) will reduce the 
+            impact more, while a value of 1.0 disables this setting. 
+            (default: 1)
           example: 1.0
         typical_p:
           type: number
           format: float
-          description: 'Controls the selection of typical words based on their probability distribution. A higher value (e.g., 0.95) focuses on more typical words, reducing the chance of unusual words being selected. (Default: 1.0)'
+          description: |
+            Controls the selection of typical words based on their probability 
+            distribution. A higher value (e.g., 0.95) focuses on more typical 
+            words, reducing the chance of unusual words being selected. 
+            (Default: 1.0)
           example: 1.0
         repeat_last_n:
           type: integer
-          description: 'Sets how far back for the model to look back to prevent repetition. (Default: 64, 0 = disabled, -1 = num_ctx)'
+          description: |
+            Sets how far back for the model to look back to prevent repetition. 
+            (Default: 64, 0 = disabled, -1 = num_ctx)
           example: 64
         temperature:
           type: number
           format: float
-          description: 'The temperature of the model. Increasing the temperature will make the model answer more creatively. (Default: 0.8)'
+          description: |
+            The temperature of the model. Increasing the temperature will make 
+            the model answer more creatively. 
+            (Default: 0.8)
           example: 0.8
         repeat_penalty:
           type: number
           format: float
-          description: 'Sets how strongly to penalize repetitions. A higher value (e.g., 1.5) will penalize repetitions more strongly, while a lower value (e.g., 0.9) will be more lenient. (Default: 1.1)'
+          description: |
+            Sets how strongly to penalize repetitions. A higher value 
+            (e.g., 1.5) will penalize repetitions more strongly, while a lower 
+            value (e.g., 0.9) will be more lenient. 
+            (Default: 1.1)
           example: 1.1
         presence_penalty:
           type: number
           format: float
-          description: 'Applies a penalty to tokens that have already appeared in the generated text, encouraging the model to introduce new tokens. A higher value increases this penalty, promoting more varied and less repetitive output. (Default: 0.8)'
+          description: |
+            Applies a penalty to tokens that have already appeared in the 
+            generated text, encouraging the model to introduce new tokens. A 
+            higher value increases this penalty, promoting more varied and less 
+            repetitive output. 
+            (Default: 0.8)
           example: 0.8
         frequency_penalty:
           type: number
           format: float
-          description: 'Penalizes tokens based on their frequency in the generated text so far. A higher value reduces the likelihood of frequent tokens being generated again, promoting more diverse outputs. (Default: 0.8)'
+          description: |
+            Penalizes tokens based on their frequency in the generated text so 
+            far. A higher value reduces the likelihood of frequent tokens being 
+            generated again, promoting more diverse outputs. 
+            (Default: 0.8)
           example: 0.8
         mirostat:
           type: number
           format: float
-          description: 'Enable Mirostat sampling for controlling perplexity. (default: 0, 0 = disabled, 1 = Mirostat, 2 = Mirostat 2.0)'
+          description: |
+            Enable Mirostat sampling for controlling perplexity. 
+            (default: 0, 0 = disabled, 1 = Mirostat, 2 = Mirostat 2.0)
           example: 0
         mirostat_tau:
           type: number
           format: float
-          description: 'Controls the balance between coherence and diversity of the output. A lower value will result in more focused and coherent text. (Default: 5.0)'
+          description: |
+            Controls the balance between coherence and diversity of the output.
+            A lower value will result in more focused and coherent text. 
+            (Default: 5.0)
           example: 5.8
         mirostat_eta:
           type: number
           format: float
-          description: 'Influences how quickly the algorithm responds to feedback from the generated text. A lower learning rate will result in slower adjustments, while a higher learning rate will make the algorithm more responsive. (Default: 0.1)'
+          description: | 
+            Influences how quickly the algorithm responds to feedback from the 
+            generated text. A lower learning rate will result in slower 
+            adjustments, while a higher learning rate will make the algorithm 
+            more responsive. 
+            (Default: 0.1)
           example: 0.1
         penalize_newline:
           type: boolean
-          description: 'Determines whether the model should penalize the generation of newlines, which can help control the structure and formatting of the output. (Default: true)'
+          description: |
+            Determines whether the model should penalize the generation of 
+            newlines, which can help control the structure and formatting of 
+            the output. 
+            (Default: true)
           example: true
         stop:
           type: array
           items:
             type: string
-          description: 'Sets the stop sequences to use. When this pattern is encountered the LLM will stop generating text and return. Multiple stop patterns may be set by specifying multiple separate stop parameters in a modelfile.'
+          description: |
+            Sets the stop sequences to use. When this pattern is encountered 
+            the LLM will stop generating text and return. Multiple stop patterns 
+            may be set by specifying multiple separate stop parameters in a 
+            modelfile.
           example: ['AI assistant.']
         numa:
           type: boolean
-          description: 'Indicates whether to use Non-Uniform Memory Access (NUMA) for optimizing memory usage and performance on multi-processor systems. (Default: false)'
+          description: |
+            Indicates whether to use Non-Uniform Memory Access (NUMA) for 
+            optimizing memory usage and performance on multi-processor systems. 
+            (Default: false)
           example: false
         num_ctx:
           type: integer
-          description: 'Sets the size of the context window used to generate the next token. (Default: 2048)'
+          description: |
+            Sets the size of the context window used to generate the next token. 
+            (Default: 2048)
           example: 2048
         num_batch:
           type: integer
-          description: 'Specifies the number of batches for processing. (Default: 512)'
+          description: |
+            Specifies the number of batches for processing. 
+            (Default: 512)
           example: 512
         num_gpu:
           type: integer
-          description: 'Specifies the number of GPUs to use. A value of -1 uses all available GPUs. (Default: -1)'
+          description: |
+            Specifies the number of GPUs to use. A value of -1 uses all 
+            available GPUs. 
+            (Default: -1)
           example: -1
         main_gpu:
           type: integer
-          description: 'Specifies the primary GPU to use for processing. (Default: 0)'
+          description: |
+            Specifies the primary GPU to use for processing. 
+            (Default: 0)
         low_vram:
           type: boolean
-          description: 'Indicates whether to optimize the model for low VRAM usage. (Default: false)'
+          description: | 
+            Indicates whether to optimize the model for low VRAM usage. 
+            (Default: false)
           example: false
         f16_kv:
           type: boolean
-          description: 'Indicates whether to use 16-bit floating point precision for key-value pairs, reducing memory usage. (Default: false)'
+          description: |
+            Indicates whether to use 16-bit floating point precision for 
+            key-value pairs, reducing memory usage. 
+            (Default: false)
           example: true
         logits_all:
           type: boolean
-          description: 'Specifies whether to output logits for all tokens. (Default: false)'
+          description: |
+            Specifies whether to output logits for all tokens. 
+            (Default: false)
           example: false
         vocab_only:
           type: boolean
-          description: 'Indicates whether to only load the vocabulary without the full model. (Default: false)'
+          description: |
+            Indicates whether to only load the vocabulary without the full model. 
+            (Default: false)
           example: false
         use_mmap:
           type: boolean
-          description: 'Determines whether to use memory-mapped files for loading the model, improving performance on large models. (Default: true)'
+          description: |
+            Determines whether to use memory-mapped files for loading the model, 
+            improving performance on large models. 
+            (Default: true)
           example: true
         use_mlock:
           type: boolean
-          description: 'Determines whether to use memory locking to prevent swapping the model out of RAM. (Default: false)'
+          description: |
+            Determines whether to use memory locking to prevent swapping the 
+            model out of RAM. 
+            (Default: false)
           example: false
         num_thread:
           type: integer
-          description: 'Specifies the number of threads to use for processing. A value of 0 uses all available threads. (Default: 0)'
+          description: |
+            Specifies the number of threads to use for processing. A value of 
+            0 uses all available threads. 
+            (Default: 0)
           example: 0
