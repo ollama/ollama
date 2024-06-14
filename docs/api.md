@@ -250,7 +250,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Request (Reproducible outputs)
 
-For reproducible outputs, set `temperature` to 0 and `seed` to a number:
+For reproducible outputs, set `seed` to a number:
 
 ##### Request
 
@@ -259,8 +259,7 @@ curl http://localhost:11434/api/generate -d '{
   "model": "mistral",
   "prompt": "Why is the sky blue?",
   "options": {
-    "seed": 123,
-    "temperature": 0
+    "seed": 123
   }
 }'
 ```
@@ -1044,11 +1043,10 @@ GET /api/ps
 
 List models that are currently loaded into memory.
 
-\* If a model is loaded completely into system memory, `size_vram` is omitted from the response.
-
 #### Examples
 
 ### Request
+
 ```shell
 curl http://localhost:11434/api/ps
 ```

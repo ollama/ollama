@@ -1,17 +1,23 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestDelete(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
+
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -68,4 +74,34 @@ func TestDelete(t *testing.T) {
 
 	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{})
+}
+
+func TestDeleteDuplicateLayers(t *testing.T) {
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	n := model.ParseName("test")
+
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(&ConfigV2{}); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// create a manifest with duplicate layers
+	if err := WriteManifest(n, config, []*Layer{config}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := createRequest(t, s.DeleteModelHandler, api.DeleteRequest{Name: "test"})
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status code 200, actual %d", w.Code)
+	}
+
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
 }

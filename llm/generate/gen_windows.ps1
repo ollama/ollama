@@ -290,7 +290,7 @@ function build_cuda() {
 }
 
 function build_oneapi() {
-  if ((-not "${env:OLLAMA_SKIP_CUDA_GENERATE}") -and ("${env:ONEAPI_ROOT}"))  {
+  if ((-not "${env:OLLAMA_SKIP_ONEAPI_GENERATE}") -and ("${env:ONEAPI_ROOT}"))  {
     # Get oneAPI version
     $script:ONEAPI_VERSION = icpx --version
     $script:ONEAPI_VERSION = [regex]::Match($script:ONEAPI_VERSION, '(?<=oneAPI DPC\+\+/C\+\+ Compiler )(?<version>\d+\.\d+\.\d+)').Value

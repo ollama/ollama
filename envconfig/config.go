@@ -1,6 +1,7 @@
 package envconfig
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +12,18 @@ import (
 	"strings"
 )
 
+type OllamaHost struct {
+	Scheme string
+	Host   string
+	Port   string
+}
+
+func (o OllamaHost) String() string {
+	return fmt.Sprintf("%s://%s:%s", o.Scheme, o.Host, o.Port)
+}
+
+var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
+
 var (
 	// Set via OLLAMA_ORIGINS in the environment
 	AllowOrigins []string
@@ -18,6 +31,8 @@ var (
 	Debug bool
 	// Experimental flash attention
 	FlashAttention bool
+	// Set via OLLAMA_HOST in the environment
+	Host *OllamaHost
 	// Set via OLLAMA_KEEP_ALIVE in the environment
 	KeepAlive string
 	// Set via OLLAMA_LLM_LIBRARY in the environment
@@ -26,6 +41,8 @@ var (
 	MaxRunners int
 	// Set via OLLAMA_MAX_QUEUE in the environment
 	MaxQueuedRequests int
+	// Set via OLLAMA_MODELS in the environment
+	ModelsDir string
 	// Set via OLLAMA_MAX_VRAM in the environment
 	MaxVRAM uint64
 	// Set via OLLAMA_NOHISTORY in the environment
@@ -50,13 +67,13 @@ func AsMap() map[string]EnvVar {
 	return map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", "", "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_HOST":              {"OLLAMA_HOST", Host, "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models (default 1)"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
 		"OLLAMA_MAX_VRAM":          {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", "", "The path to the models directory"},
+		"OLLAMA_MODELS":            {"OLLAMA_MODELS", ModelsDir, "The path to the models directory"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
@@ -216,4 +233,70 @@ func LoadConfig() {
 	}
 
 	KeepAlive = clean("OLLAMA_KEEP_ALIVE")
+
+	var err error
+	ModelsDir, err = getModelsDir()
+	if err != nil {
+		slog.Error("invalid setting", "OLLAMA_MODELS", ModelsDir, "error", err)
+	}
+
+	Host, err = getOllamaHost()
+	if err != nil {
+		slog.Error("invalid setting", "OLLAMA_HOST", Host, "error", err, "using default port", Host.Port)
+	}
+}
+
+func getModelsDir() (string, error) {
+	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
+		return models, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".ollama", "models"), nil
+}
+
+func getOllamaHost() (*OllamaHost, error) {
+	defaultPort := "11434"
+
+	hostVar := os.Getenv("OLLAMA_HOST")
+	hostVar = strings.TrimSpace(strings.Trim(strings.TrimSpace(hostVar), "\"'"))
+
+	scheme, hostport, ok := strings.Cut(hostVar, "://")
+	switch {
+	case !ok:
+		scheme, hostport = "http", hostVar
+	case scheme == "http":
+		defaultPort = "80"
+	case scheme == "https":
+		defaultPort = "443"
+	}
+
+	// trim trailing slashes
+	hostport = strings.TrimRight(hostport, "/")
+
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host, port = "127.0.0.1", defaultPort
+		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
+			host = ip.String()
+		} else if hostport != "" {
+			host = hostport
+		}
+	}
+
+	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 0 {
+		return &OllamaHost{
+			Scheme: scheme,
+			Host:   host,
+			Port:   defaultPort,
+		}, ErrInvalidHostPort
+	}
+
+	return &OllamaHost{
+		Scheme: scheme,
+		Host:   host,
+		Port:   port,
+	}, nil
 }

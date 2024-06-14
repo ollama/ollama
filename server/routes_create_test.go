@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -86,6 +87,7 @@ func checkFileExists(t *testing.T, p string, expect []string) {
 func TestCreateFromBin(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 
 	var s Server
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -111,6 +113,7 @@ func TestCreateFromBin(t *testing.T) {
 func TestCreateFromModel(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -151,6 +154,7 @@ func TestCreateFromModel(t *testing.T) {
 func TestCreateRemovesLayers(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -197,6 +201,7 @@ func TestCreateRemovesLayers(t *testing.T) {
 func TestCreateUnsetsSystem(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -252,6 +257,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 func TestCreateMergeParameters(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -354,6 +360,7 @@ func TestCreateMergeParameters(t *testing.T) {
 func TestCreateReplacesMessages(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -429,6 +436,7 @@ func TestCreateReplacesMessages(t *testing.T) {
 func TestCreateTemplateSystem(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -474,6 +482,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 func TestCreateLicenses(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -519,6 +528,7 @@ func TestCreateLicenses(t *testing.T) {
 func TestCreateDetectTemplate(t *testing.T) {
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	t.Run("matched", func(t *testing.T) {
@@ -535,7 +545,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 		}
 
 		checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-			filepath.Join(p, "blobs", "sha256-06cd2687a518d624073f125f1db1c5c727f77c75e84a138fe745186dbbbb4cd7"),
+			filepath.Join(p, "blobs", "sha256-2f8e594e6f34b1b4d36a246628eeb3365ce442303d656f1fcc69e821722acea0"),
 			filepath.Join(p, "blobs", "sha256-542b217f179c7825eeb5bca3c77d2b75ed05bafbd3451d9188891a60a85337c6"),
 			filepath.Join(p, "blobs", "sha256-553c4a3f747b3d22a4946875f1cc8ed011c2930d83f864a0c7265f9ec0a20413"),
 		})
