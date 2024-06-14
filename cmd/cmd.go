@@ -656,7 +656,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 		mainTableData := [][]string{
 			{"Model"},
-			{renderSubTable(modelData)},
+			{renderSubTable(modelData, false)},
 		}
 
 		if slices.Contains(resp.Details.Families, "clip") {
@@ -670,7 +670,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 			mainTableData = append(mainTableData,
 				[]string{"Projector"},
-				[]string{renderSubTable(projectorData)},
+				[]string{renderSubTable(projectorData, false)},
 			)
 		}
 
@@ -679,11 +679,11 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		}
 
 		if resp.System != "" {
-			mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System))})
+			mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System), true)})
 		}
 
 		if resp.License != "" {
-			mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License))})
+			mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License), true)})
 		}
 
 		table := tablewriter.NewWriter(os.Stdout)
@@ -724,10 +724,10 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func renderSubTable(data [][]string) string {
+func renderSubTable(data [][]string, file bool) string {
 	var buf bytes.Buffer
 	table := tablewriter.NewWriter(&buf)
-	table.SetAutoWrapText(true)
+	table.SetAutoWrapText(!file)
 	table.SetBorder(false)
 	table.SetNoWhiteSpace(true)
 	table.SetTablePadding("\t")
@@ -774,7 +774,7 @@ func handleParams(s string) string {
 	for _, line := range lines {
 		table = append(table, strings.Fields(line))
 	}
-	return renderSubTable(table)
+	return renderSubTable(table, false)
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
