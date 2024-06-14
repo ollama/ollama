@@ -15,9 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -65,10 +63,6 @@ var RocmComputeMin = 9
 
 // TODO find a better way to detect iGPU instead of minimum memory
 const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
-
-// Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
-// Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
-var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
 // Note: gpuMutex must already be held
 func initCudaHandles() *cudaHandles {
@@ -233,35 +227,6 @@ func GetGPUInfo() GpuInfoList {
 
 		depPath := GetDepDir()
 
-		var cudaVariant string
-		if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
-			if CudaTegra != "" {
-				ver := strings.Split(CudaTegra, ".")
-				if len(ver) > 0 {
-					cudaVariant = "jetpack" + ver[0]
-				}
-			} else if data, err := os.ReadFile("/etc/nv_tegra_release"); err == nil {
-				r := regexp.MustCompile(` R(\d+) `)
-				m := r.FindSubmatch(data)
-				if len(m) != 2 {
-					slog.Info("Unexpected format for /etc/nv_tegra_release.  Set JETSON_JETPACK to select version")
-				} else {
-					if l4t, err := strconv.Atoi(string(m[1])); err == nil {
-						// Note: mapping from L4t -> JP is inconsistent (can't just subtract 30)
-						// https://developer.nvidia.com/embedded/jetpack-archive
-						switch l4t {
-						case 35:
-							cudaVariant = "jetpack5"
-						case 36:
-							cudaVariant = "jetpack6"
-						default:
-							slog.Info("unsupported L4T version", "nv_tegra_release", string(data))
-						}
-					}
-				}
-			}
-		}
-
 		// Load ALL libraries
 		cHandles = initCudaHandles()
 
@@ -271,7 +236,6 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo := CudaGPUInfo{
 					GpuInfo: GpuInfo{
 						Library: "cuda",
-						Variant: cudaVariant,
 					},
 					index: i,
 				}
@@ -297,7 +261,10 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.FreeMemory = uint64(memInfo.free)
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 				gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
+				gpuInfo.computeMajor = int(memInfo.major)
+				gpuInfo.computeMinor = int(memInfo.minor)
 				gpuInfo.MinimumMemory = cudaMinimumMemory
+				cudaVariant := cudaGetVariant(gpuInfo)
 				if depPath != "" {
 					gpuInfo.DependencyPath = depPath
 					// Check for variant specific directory
@@ -310,6 +277,7 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 				gpuInfo.DriverMajor = driverMajor
 				gpuInfo.DriverMinor = driverMinor
+				gpuInfo.Variant = cudaGetVariant(gpuInfo)
 
 				// query the management library as well so we can record any skew between the two
 				// which represents overhead on the GPU we must set aside on subsequent updates
