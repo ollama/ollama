@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -164,7 +165,7 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 			Id:      m.Name,
 			Object:  "model",
 			Created: m.ModifiedAt.Unix(),
-			OwnedBy: "ollama",
+			OwnedBy: getNamespace(m.Name),
 		})
 	}
 
@@ -172,6 +173,16 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 		Object: "list",
 		Data:   data,
 	}
+}
+
+func getNamespace(model string) string {
+	parts := strings.Split(model, "/")
+
+	if len(parts) > 1 {
+		return parts[len(parts)-2]
+	}
+
+	return "library"
 }
 
 func fromRequest(r ChatCompletionRequest) api.ChatRequest {
