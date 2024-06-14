@@ -24,7 +24,7 @@ func GetGPUInfo() GpuInfoList {
 		return []GpuInfo{
 			{
 				Library: "cpu",
-				Variant: GetCPUVariant(),
+				Variant: GetCPUCapability(),
 				memInfo: mem,
 			},
 		}
@@ -40,6 +40,17 @@ func GetGPUInfo() GpuInfoList {
 
 	info.MinimumMemory = metalMinimumMemory
 	return []GpuInfo{info}
+}
+
+func GetCPUInfo() GpuInfoList {
+	mem, _ := GetCPUMem()
+	return []GpuInfo{
+		{
+			Library: "cpu",
+			Variant: GetCPUCapability(),
+			memInfo: mem,
+		},
+	}
 }
 
 func GetCPUMem() (memInfo, error) {

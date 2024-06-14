@@ -1,11 +1,11 @@
 package llm
 
 import (
-	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 )
@@ -16,7 +16,8 @@ func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors 
 	var estimatedVRAM uint64
 	for _, gpus := range allGpus.ByLibrary() {
 		var layerCount int
-		layerCount, estimatedVRAM, _ = EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
+		layerCount, estimatedVRAM = estimate.Layers, estimate.VRAMSize
 		if opts.NumGPU < 0 {
 			if layerCount > 0 && layerCount >= int(ggml.KV().BlockCount()+1) {
 				return true, estimatedVRAM
@@ -30,24 +31,64 @@ func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors 
 	return false, estimatedVRAM
 }
 
+type MemoryEstimate struct {
+	// How many layers we predict we can load
+	Layers int
+
+	// The size of the graph which occupies the main GPU
+	Graph uint64
+
+	// How much VRAM will be allocated given the number of layers we predict
+	VRAMSize uint64
+
+	// The total size of the model if loaded into VRAM.  If all layers are loaded, VRAMSize == TotalSize
+	TotalSize uint64
+
+	// For multi-GPU scenarios, this provides the tensor split parameter
+	TensorSplit string
+
+	// For multi-GPU scenarios, this is the size in bytes per GPU
+	GPUSizes []uint64
+}
+
 // Given a model and one or more GPU targets, predict how many layers and bytes we can load, and the total size
 // The GPUs provided must all be the same Library
-func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) (int, uint64, uint64) {
-	var memoryAvailable uint64
-	for _, info := range gpus {
-		memoryAvailable += info.FreeMemory
-	}
-	if envconfig.MaxVRAM > 0 {
-		memoryAvailable = envconfig.MaxVRAM
-	}
+func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) MemoryEstimate {
+	// Graph size for a partial offload, applies to all GPUs
+	var graphPartialOffload uint64
 
-	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", format.HumanBytes2(memoryAvailable))
+	// Graph size when all layers are offloaded, applies to all GPUs
+	var graphFullOffload uint64
 
-	// TODO - this is probably wrong, first GPU vs secondaries will have different overheads
-	memoryMinimum := gpus[0].MinimumMemory
+	// Final graph offload once we know full or partial
+	var graphOffload uint64
+
+	// Projectors loaded into GPU0 only
+	var projectorSize uint64
+
+	// Conditional output size on GPU 0
+	var memoryLayerOutput uint64
+
+	// The sizes of a layer
+	var layerSize uint64
+
+	// The sum of all the layer sizes (just for logging)
+	var memoryWeights uint64
+
+	// True if all the layers are loaded
+	var fullyLoaded bool
+
+	// Overflow that didn't fit into the GPU
+	var overflow uint64
+
+	availableList := make([]string, len(gpus))
+	for i, gpu := range gpus {
+		availableList[i] = format.HumanBytes2(gpu.FreeMemory)
+	}
+	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", availableList)
 
 	for _, projector := range projectors {
-		memoryMinimum += projectorMemoryRequirements(projector)
+		projectorSize += projectorMemoryRequirements(projector)
 
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
@@ -56,79 +97,160 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	layers := ggml.Tensors().Layers()
 	// add one layer worth of memory as a buffer
 	if blk0, ok := layers["blk.0"]; ok {
-		memoryMinimum += blk0.size()
+		layerSize = blk0.size()
+	} else {
+		slog.Warn("model missing blk.0 layer size")
 	}
 
 	// fp16 k,v = (1 (k) + 1 (v)) * sizeof(float16) * n_ctx * n_layer * n_embd / n_head * n_head_kv
 	var kv uint64 = 2 * 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * ggml.KV().EmbeddingLength() / ggml.KV().HeadCount() * ggml.KV().HeadCountKV()
 
-	graphPartialOffload, graphFullOffload := ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)))
+	// KV is proportional to the number of layers
+	layerSize += kv / ggml.KV().BlockCount()
+
+	graphPartialOffload, graphFullOffload = ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)))
 	if graphPartialOffload == 0 {
 		graphPartialOffload = ggml.KV().GQA() * kv / 6
 	}
-
 	if graphFullOffload == 0 {
 		graphFullOffload = graphPartialOffload
 	}
 
-	graphFullOffload *= uint64(len(gpus))
-	graphPartialOffload *= uint64(len(gpus))
-
 	// on metal there's no partial offload overhead
 	if gpus[0].Library == "metal" {
 		graphPartialOffload = graphFullOffload
+	} else if len(gpus) > 1 {
+		// multigpu should always use the partial graph size
+		graphFullOffload = graphPartialOffload
 	}
 
-	// memoryRequiredTotal represents the memory required for full GPU offloading (all layers)
-	memoryRequiredTotal := memoryMinimum + graphFullOffload
-
-	// memoryRequiredPartial represents the memory required for partial GPU offloading (n > 0, n < layers)
-	memoryRequiredPartial := memoryMinimum + graphPartialOffload
-
-	var memoryLayerOutput uint64
 	if layer, ok := layers["output_norm"]; ok {
 		memoryLayerOutput += layer.size()
 	}
-
 	if layer, ok := layers["output"]; ok {
 		memoryLayerOutput += layer.size()
 	} else if layer, ok := layers["token_embd"]; ok {
 		memoryLayerOutput += layer.size()
 	}
 
-	if gpus[0].Library == "metal" && opts.UseMMap {
-		// memory is preallocated for output tensors
-		memoryRequiredTotal += memoryLayerOutput
-		memoryRequiredPartial += memoryLayerOutput
+	// Output layer handled at the end if we have space
+	gpuZeroOverhead := projectorSize
+
+	// Reduce set of GPUs to only those that have sufficient space to fit overhead and at least one layer
+	var layerCount int
+	layerCounts := make([]int, len(gpus))
+	gpuAllocations := make([]uint64, len(gpus))
+	type gs struct {
+		i int
+		g *gpu.GpuInfo
+	}
+	gpusWithSpace := []gs{}
+	for i := range gpus {
+		var gzo uint64
+		if len(gpusWithSpace) == 0 {
+			gzo = gpuZeroOverhead
+		}
+		// Only include GPUs that can fit the graph, gpu minimum, the layer buffer and at least more layer
+		if gpus[i].FreeMemory < gzo+max(graphPartialOffload, graphFullOffload)+gpus[i].MinimumMemory+2*layerSize {
+			slog.Debug("gpu has too little memory to allocate any layers", "gpu", gpus[i])
+			continue
+		}
+		gpusWithSpace = append(gpusWithSpace, gs{i, &gpus[i]})
+		gpuAllocations[i] += gpus[i].MinimumMemory + layerSize // We hold off on graph until we know partial vs. full
 	}
 
-	var layerCount int
+	var gpuZeroID int
+	if len(gpusWithSpace) > 0 {
+		gpuZeroID = gpusWithSpace[0].i
+		gpuAllocations[gpuZeroID] += gpuZeroOverhead
+	}
+
+	// For all the layers, find where they can fit on the GPU(s)
 	for i := range int(ggml.KV().BlockCount()) {
-		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
-			memoryLayer := blk.size()
+		memoryWeights += layerSize
 
-			// KV is proportional to the number of layers
-			memoryLayer += kv / ggml.KV().BlockCount()
+		if opts.NumGPU >= 0 && layerCount >= opts.NumGPU {
+			// Stop allocating on GPU(s) once we hit the users target NumGPU
+			continue
+		}
 
-			memoryRequiredTotal += memoryLayer
-			if (opts.NumGPU >= 0 && layerCount+1 <= opts.NumGPU) || (opts.NumGPU < 0 && memoryAvailable > memoryRequiredPartial+memoryLayer) {
-				memoryRequiredPartial += memoryLayer
+		// distribute the layers across the GPU(s) that have space
+		for j := len(gpusWithSpace); j > 0; j-- {
+			g := gpusWithSpace[i%j]
+			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
+			if g.g.FreeMemory > used+layerSize {
+				gpuAllocations[g.i] += layerSize
+				layerCounts[g.i]++
 				layerCount++
+				break
+			} else {
+				gpusWithSpace = append(gpusWithSpace[:i%j], gpusWithSpace[i%j+1:]...)
 			}
 		}
 	}
-
-	if gpus[0].Library != "metal" || !opts.UseMMap {
-		// memory was not preallocated for output tensors
-		memoryRequiredTotal += memoryLayerOutput
+	if layerCount >= int(ggml.KV().BlockCount()) {
+		fullyLoaded = true
+	} else {
+		for i := layerCount; i < int(ggml.KV().BlockCount()); i++ {
+			overflow += layerSize
+		}
 	}
 
-	if (opts.NumGPU >= 0 && layerCount+1 <= opts.NumGPU) || (opts.NumGPU < 0 && memoryAvailable > memoryRequiredTotal) {
-		layerCount = int(ggml.KV().BlockCount()) + 1
-		memoryRequiredPartial = memoryRequiredTotal
+	// Determine if we need to consider output then find where it fits
+	if memoryLayerOutput > 0 && (opts.NumGPU < 0 || layerCount < opts.NumGPU) {
+		for j := len(gpusWithSpace); j > 0; j-- {
+			g := gpusWithSpace[layerCount%j]
+			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
+			if g.g.FreeMemory > used+memoryLayerOutput {
+				gpuAllocations[g.i] += memoryLayerOutput
+				layerCounts[g.i]++
+				layerCount++
+				break
+			}
+		}
+
+		if layerCount < int(ggml.KV().BlockCount())+1 {
+			fullyLoaded = false
+			overflow += memoryLayerOutput
+		}
 	}
 
-	memoryWeights := memoryRequiredTotal - memoryMinimum - graphFullOffload - kv
+	// Add the applicable (full or partial) graph allocations
+	for i := range gpus {
+		if layerCounts[i] <= 0 {
+			continue
+		}
+		if fullyLoaded {
+			gpuAllocations[i] += graphFullOffload
+		} else {
+			gpuAllocations[i] += graphPartialOffload
+		}
+	}
+	if fullyLoaded {
+		graphOffload = graphFullOffload
+	} else {
+		graphOffload = graphPartialOffload
+	}
+
+	// Summaries for the log
+	var memoryRequiredPartial, memoryRequiredTotal uint64
+	for i := range gpuAllocations {
+		memoryRequiredPartial += gpuAllocations[i]
+	}
+	memoryRequiredTotal = memoryRequiredPartial + overflow
+
+	tensorSplit := ""
+	if len(gpus) > 1 {
+		splits := make([]string, len(gpus))
+		for i, count := range layerCounts {
+			splits[i] = strconv.Itoa(count)
+		}
+		tensorSplit = strings.Join(splits, ",")
+	}
+	allocationsList := []string{}
+	for _, a := range gpuAllocations {
+		allocationsList = append(allocationsList, format.HumanBytes2(a))
+	}
 
 	slog.Info(
 		"offload to gpu",
@@ -136,13 +258,17 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 			"layers",
 			// requested number of layers to offload
 			"requested", opts.NumGPU,
+			// The number of layers the model has (including output)
+			"model", int(ggml.KV().BlockCount())+1,
 			// estimated number of layers that can be offloaded
-			"real", layerCount,
+			"offload", layerCount,
+			// multi-gpu split for tesnors
+			"split", tensorSplit,
 		),
 		slog.Group(
 			"memory",
-			// memory available for offloading
-			"available", format.HumanBytes2(memoryAvailable),
+			// memory available by GPU for offloading
+			"available", availableList,
 			slog.Group(
 				"required",
 				// memory required for full offloading
@@ -151,6 +277,8 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 				"partial", format.HumanBytes2(memoryRequiredPartial),
 				// memory of KV cache
 				"kv", format.HumanBytes2(kv),
+				// Allocations across the GPUs
+				"allocations", allocationsList,
 			),
 			slog.Group(
 				"weights",
@@ -171,12 +299,31 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		),
 	)
 	if gpus[0].Library == "cpu" {
-		return 0, 0, memoryRequiredTotal
+		return MemoryEstimate{
+			Layers:    0,
+			Graph:     0,
+			VRAMSize:  0,
+			TotalSize: memoryRequiredTotal,
+			GPUSizes:  []uint64{},
+		}
 	}
-	if memoryRequiredPartial > memoryAvailable {
+	if layerCount == 0 {
 		slog.Debug("insufficient VRAM to load any model layers")
-		return 0, 0, memoryRequiredTotal
+		return MemoryEstimate{
+			Layers:    0,
+			Graph:     0,
+			VRAMSize:  0,
+			TotalSize: memoryRequiredTotal,
+			GPUSizes:  []uint64{},
+		}
 	}
 
-	return layerCount, memoryRequiredPartial, memoryRequiredTotal
+	return MemoryEstimate{
+		Layers:      layerCount,
+		Graph:       graphOffload,
+		VRAMSize:    memoryRequiredPartial,
+		TotalSize:   memoryRequiredTotal,
+		TensorSplit: tensorSplit,
+		GPUSizes:    gpuAllocations,
+	}
 }
