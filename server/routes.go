@@ -1011,7 +1011,6 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListModelsHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowModelHandler)
-	r.DELETE("/v1/models/:model", openai.DeleteMiddleware(), s.DeleteModelHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {

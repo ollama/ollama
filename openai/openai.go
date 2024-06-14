@@ -97,12 +97,6 @@ type ListCompletion struct {
 	Data   []Model `json:"data"`
 }
 
-type DeleteCompletion struct {
-	Id      string `json:"id"`
-	Object  string `json:"object"`
-	Deleted bool   `json:"deleted"`
-}
-
 func NewError(code int, message string) ErrorResponse {
 	var etype string
 	switch code {
@@ -189,14 +183,6 @@ func toRetrieveCompletion(r api.ShowResponse, model string) Model {
 	}
 }
 
-func toDeleteCompletion(model string) DeleteCompletion {
-	return DeleteCompletion{
-		Id:      model,
-		Object:  "model",
-		Deleted: true,
-	}
-}
-
 func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
@@ -278,11 +264,6 @@ type ListWriter struct {
 }
 
 type RetrieveWriter struct {
-	BaseWriter
-	model string
-}
-
-type DeleteWriter struct {
 	BaseWriter
 	model string
 }
@@ -385,7 +366,7 @@ func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
 		return 0, err
 	}
 
-	// delete completion
+	// retrieve completion
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w.ResponseWriter).Encode(toRetrieveCompletion(showResponse, w.model))
 	if err != nil {
@@ -396,26 +377,6 @@ func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
 }
 
 func (w *RetrieveWriter) Write(data []byte) (int, error) {
-	code := w.ResponseWriter.Status()
-	if code != http.StatusOK {
-		return w.writeError(code, data)
-	}
-
-	return w.writeResponse(data)
-}
-
-func (w *DeleteWriter) writeResponse(data []byte) (int, error) {
-	// delete completion
-	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w.ResponseWriter).Encode(toDeleteCompletion(w.model))
-	if err != nil {
-		return 0, err
-	}
-
-	return len(data), nil
-}
-
-func (w *DeleteWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(code, data)
@@ -455,36 +416,6 @@ func RetrieveMiddleware() gin.HandlerFunc {
 		c.Writer = w
 
 		c.Next()
-	}
-}
-
-func DeleteMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(api.DeleteRequest{Model: c.Param("model")}); err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
-			return
-		}
-
-		c.Request.Body = io.NopCloser(&b)
-
-		// response writer
-		w := &DeleteWriter{
-			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			model:      c.Param("model"),
-		}
-
-		c.Writer = w
-
-		c.Next()
-
-		// If the status code is OK, write the DeleteCompletion response
-		if c.Writer.Status() == http.StatusOK {
-			_, err := w.writeResponse(nil)
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
-			}
-		}
 	}
 }
 
