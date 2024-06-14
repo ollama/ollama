@@ -211,6 +211,29 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	}
 }
 
+type DeleteCompletion struct {
+	Id      string `json:"id"`
+	Object  string `json:"object"`
+	Deleted bool   `json:"deleted"`
+}
+
+func toDeleteCompletion(model string) DeleteCompletion {
+	return DeleteCompletion{
+		Id:      model,
+		Object:  "model",
+		Deleted: true,
+	}
+}
+
+type BaseWriter struct {
+	gin.ResponseWriter
+}
+
+type DeleteWriter struct {
+	BaseWriter
+	model string
+}
+
 type writer struct {
 	stream bool
 	id     string
@@ -313,5 +336,71 @@ func Middleware() gin.HandlerFunc {
 		c.Writer = w
 
 		c.Next()
+	}
+}
+
+func (w *DeleteWriter) writeError(code int, data []byte) (int, error) {
+	var serr api.StatusError
+	err := json.Unmarshal(data, &serr)
+	if err != nil {
+		return 0, err
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(NewError(http.StatusInternalServerError, serr.Error()))
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *DeleteWriter) writeResponse(data []byte) (int, error) {
+	// delete completion
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err := json.NewEncoder(w.ResponseWriter).Encode(toDeleteCompletion(w.model))
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *DeleteWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(code, data)
+	}
+
+	return w.writeResponse(data)
+}
+
+func DeleteMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(api.DeleteRequest{Model: c.Param("model")}); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+			return
+		}
+
+		c.Request.Body = io.NopCloser(&b)
+
+		// response writer
+		w := &DeleteWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			model:      c.Param("model"),
+		}
+
+		c.Writer = w
+
+		c.Next()
+
+		// If the status code is OK, write the DeleteCompletion response
+		if c.Writer.Status() == http.StatusOK {
+			_, err := w.writeResponse(nil)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+			}
+		}
 	}
 }

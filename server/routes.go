@@ -987,6 +987,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.Middleware(), s.ChatHandler)
+	r.DELETE("/v1/models/:model", openai.DeleteMiddleware(), s.DeleteModelHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
