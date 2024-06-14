@@ -643,17 +643,6 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 			{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
 		}
 
-		// error checking for attributes
-		// modelInclusionMap := [][]string{}
-		// if ctx, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)]; ok {
-		// 	modelInclusionMap = append(modelInclusionMap, []string{"context length", fmt.Sprintf("%v", ctx)})
-		// }
-		// if emb, ok := resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)]; ok {
-		// 	modelInclusionMap = append(modelInclusionMap, []string{"embedding length", fmt.Sprintf("%v", emb)})
-		// }
-
-		// modelData = append(modelData, modelInclusionMap...)
-
 		mainTableData := [][]string{
 			{"Model"},
 			{renderSubTable(modelData, false)},
@@ -766,7 +755,6 @@ func twoLines(s string) [][]string {
 	return res
 }
 
-// temporary fix for buggy params #4918
 func handleParams(s string) string {
 	lines := strings.Split(s, "\n")
 	table := [][]string{}

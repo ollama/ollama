@@ -223,6 +223,7 @@ type ShowRequest struct {
 	Model    string `json:"model"`
 	System   string `json:"system"`
 	Template string `json:"template"`
+	Verbose  bool   `json:"verbose"`
 
 	Options map[string]interface{} `json:"options"`
 

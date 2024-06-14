@@ -720,7 +720,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, model.String())
 	resp.Modelfile = sb.String()
 
-	ggmlData, err := getGGMLData(model.ModelPath)
+	ggmlData, err := getGGMLData(model.ModelPath, req.Verbose)
 	if err != nil {
 		return nil, err
 	}
@@ -728,7 +728,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	resp.ModelInfo = ggmlData
 
 	if slices.Contains(resp.Details.Families, "clip") {
-		projectorData, err := getGGMLData(model.ProjectorPaths[0])
+		projectorData, err := getGGMLData(model.ProjectorPaths[0], req.Verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -738,7 +738,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	return resp, nil
 }
 
-func getGGMLData(digest string) (llm.KV, error) {
+func getGGMLData(digest string, verbose bool) (llm.KV, error) {
 	f, err := os.Open(digest)
 	if err != nil {
 		return nil, err
@@ -753,9 +753,11 @@ func getGGMLData(digest string) (llm.KV, error) {
 
 	kv := ggml.KV()
 
-	for k := range kv {
-		if t, ok := kv[k].([]any); len(t) > 5 && ok {
-			kv[k] = fmt.Sprintf("(%d items)", len(t))
+	if !verbose {
+		for k := range kv {
+			if t, ok := kv[k].([]any); len(t) > 5 && ok {
+				kv[k] = []any{}
+			}
 		}
 	}
 
