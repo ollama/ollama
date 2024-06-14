@@ -19,7 +19,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -106,6 +105,24 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
+			Name:   "List Model Handler OpenAI (no tags)",
+			Method: http.MethodGet,
+			Path:   "/v1/models",
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var modelList openai.ListCompletion
+				err = json.Unmarshal(body, &modelList)
+				require.NoError(t, err)
+
+				assert.Equal(t, "list", modelList.Object)
+				assert.Empty(t, modelList.Data)
+			},
+		},
+		{
 			Name:   "Tags Handler (yes tags)",
 			Method: http.MethodGet,
 			Path:   "/api/tags",
@@ -129,7 +146,7 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
-			Name:   "List Model Handler OpenAI",
+			Name:   "List Model Handler OpenAI (yes tags)",
 			Method: http.MethodGet,
 			Path:   "/v1/models",
 			Expected: func(t *testing.T, resp *http.Response) {
@@ -237,7 +254,6 @@ func Test_Routes(t *testing.T) {
 	}
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	envconfig.LoadConfig()
 
 	s := &Server{}
 	router := s.GenerateRoutes()
@@ -268,7 +284,6 @@ func Test_Routes(t *testing.T) {
 
 func TestCase(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	envconfig.LoadConfig()
 
 	cases := []string{
 		"mistral",
