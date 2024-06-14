@@ -74,11 +74,44 @@ status "Installing ollama to $BINDIR..."
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
 
+status "Creating uninstall script" 
+UNINSTALL_SCRIPT=ollama_uninstall.sh
+
+cat <<'EOF' | $SUDO tee ${TEMP_DIR}/${UNINSTALL_SCRIPT} >/dev/null
+#!/bin/bash
+TMPFILE=$(mktemp -t ollama_uninstallXXXX.log)
+
+echo "Uninstalling ollama. Logs are in ${TMPFILE}"
+
+function run_redirect() {
+    echo "Running: '$*'" >> ${TMPFILE} 2>&1
+    $* >> ${TMPFILE}  2>&1
+    echo "" >> ${TMPFILE}  2>&1
+}
+
+run_redirect sudo systemctl stop ollama 
+run_redirect sudo systemctl disable ollama
+run_redirect sudo rm /etc/systemd/system/ollama.service
+
+run_redirect sudo rm $(which ollama) 
+run_redirect sudo rm $(which ollama_uninstall.sh)
+
+run_redirect sudo rm -r /usr/share/ollama
+run_redirect sudo userdel ollama 
+run_redirect sudo groupdel ollama
+
+echo "Uninstall completed"
+EOF
+
+$SUDO install -o0 -g0 -m755 ${TEMP_DIR}/${UNINSTALL_SCRIPT} ${BINDIR}/${UNINSTALL_SCRIPT}
+
 install_success() {
     status 'The Ollama API is now available at 127.0.0.1:11434.'
     status 'Install complete. Run "ollama" from the command line.'
 }
 trap install_success EXIT
+
+
 
 # Everything from this point onwards is optional.
 
