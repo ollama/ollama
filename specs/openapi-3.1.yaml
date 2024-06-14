@@ -3,6 +3,9 @@ info:
   title: Ollama API
   description: API for interacting with the Ollama service.
   version: 0.1.44
+  contact:
+    name: Ollama
+    url: https://github.com/ollama/ollama
 servers:
   - url: http://{host}:{port}
     description: Ollama API server
@@ -337,22 +340,18 @@ components:
           items:
             type: string
             format: byte
-          description: A list of base64-encoded images (for multimodal models such as llava)
-          example: null
+          description: A list of base64-encoded images (for multimodal models such as llava)        
         format:
           type: string
           description: The format to return a response in. Currently the only accepted value is json
-          example: null
         options:
           $ref: '#/components/schemas/Options'
         system:
           type: string
           description: System message to (overrides what is defined in the Modelfile)
-          example: null
         template:
           type: string
           description: The prompt template to use (overrides what is defined in the Modelfile)
-          example: null
         context:
           type: array
           items:
