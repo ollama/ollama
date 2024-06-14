@@ -8,11 +8,11 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Error struct {
@@ -165,7 +165,7 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 			Id:      m.Name,
 			Object:  "model",
 			Created: m.ModifiedAt.Unix(),
-			OwnedBy: getNamespace(m.Name),
+			OwnedBy: model.ParseName(m.Name).Namespace,
 		})
 	}
 
@@ -173,16 +173,6 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 		Object: "list",
 		Data:   data,
 	}
-}
-
-func getNamespace(model string) string {
-	parts := strings.Split(model, "/")
-
-	if len(parts) > 1 {
-		return parts[len(parts)-2]
-	}
-
-	return "library"
 }
 
 func fromRequest(r ChatCompletionRequest) api.ChatRequest {
