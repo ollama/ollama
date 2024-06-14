@@ -100,12 +100,6 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 }
 
 func NewModelParams(numGpuLayers int, mainGpu int, callback func(float32)) ModelParams {
-	fmt.Println("Contents of ggml-common.h:")
-	fmt.Println(ggmlCommon)
-
-	fmt.Println("\nContents of ggml-metal.in.metal:")
-	fmt.Println(ggmlMetal)
-
 	params := C.llama_model_default_params()
 	params.n_gpu_layers = C.int(numGpuLayers)
 	params.main_gpu = C.int32_t(mainGpu)
