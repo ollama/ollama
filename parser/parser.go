@@ -8,7 +8,9 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"unicode"
+
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 type File struct {
@@ -69,14 +71,11 @@ func ParseFile(r io.Reader) (*File, error) {
 	var b bytes.Buffer
 	var role string
 
-	var lineCount int
-	var linePos int
-
-	var utf16 bool
-
 	var f File
 
-	br := bufio.NewReader(r)
+	tr := unicode.BOMOverride(unicode.UTF8.NewDecoder())
+	br := bufio.NewReader(transform.NewReader(r, tr))
+
 	for {
 		r, _, err := br.ReadRune()
 		if errors.Is(err, io.EOF) {
@@ -85,29 +84,11 @@ func ParseFile(r io.Reader) (*File, error) {
 			return nil, err
 		}
 
-		// the utf16 byte order mark will be read as "unreadable" by ReadRune()
-		if isUnreadable(r) && lineCount == 0 && linePos == 0 {
-			utf16 = true
-			continue
-		}
-
-		// skip the second byte if we're reading utf16
-		if utf16 && r == 0 {
-			continue
-		}
-
 		next, r, err := parseRuneForState(r, curr)
 		if errors.Is(err, io.ErrUnexpectedEOF) {
 			return nil, fmt.Errorf("%w: %s", err, b.String())
 		} else if err != nil {
 			return nil, err
-		}
-
-		if isNewline(r) {
-			lineCount++
-			linePos = 0
-		} else {
-			linePos++
 		}
 
 		// process the state transition, some transitions need to be intercepted and redirected
@@ -307,10 +288,6 @@ func isSpace(r rune) bool {
 
 func isNewline(r rune) bool {
 	return r == '\r' || r == '\n'
-}
-
-func isUnreadable(r rune) bool {
-	return r == unicode.ReplacementChar
 }
 
 func isValidMessageRole(role string) bool {

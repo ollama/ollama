@@ -35,7 +35,6 @@ func addOnes(data []float32, vectorSize int) ([]float32, error) {
 		f32s = append(f32s, t...)
 	}
 
-
 	return f32s, nil
 }
 

@@ -24,7 +24,8 @@ func terminate(cmd *exec.Cmd) error {
 	if err != nil {
 		return err
 	}
-	defer dll.Release() // nolint: errcheck
+	//nolint:errcheck
+	defer dll.Release()
 
 	pid := cmd.Process.Pid
 
@@ -73,7 +74,8 @@ func isProcessExited(pid int) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("failed to open process: %v", err)
 	}
-	defer windows.CloseHandle(hProcess) // nolint: errcheck
+	//nolint:errcheck
+	defer windows.CloseHandle(hProcess)
 
 	var exitCode uint32
 	err = windows.GetExitCodeProcess(hProcess, &exitCode)

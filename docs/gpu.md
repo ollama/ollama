@@ -8,7 +8,7 @@ Check your compute compatibility to see if your card is supported:
 | Compute Capability | Family              | Cards                                                                                                       |
 | ------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------- |
 | 9.0                | NVIDIA              | `H100`                                                                                                      |
-| 8.9                | GeForce RTX 40xx    | `RTX 4090` `RTX 4080` `RTX 4070 Ti` `RTX 4060 Ti`                                                           |
+| 8.9                | GeForce RTX 40xx    | `RTX 4090` `RTX 4080 SUPER` `RTX 4080` `RTX 4070 Ti SUPER` `RTX 4070 Ti` `RTX 4070 SUPER` `RTX 4070` `RTX 4060 Ti` `RTX 4060`  |
 |                    | NVIDIA Professional | `L4` `L40` `RTX 6000`                                                                                       |
 | 8.6                | GeForce RTX 30xx    | `RTX 3090 Ti` `RTX 3090` `RTX 3080 Ti` `RTX 3080` `RTX 3070 Ti` `RTX 3070` `RTX 3060 Ti` `RTX 3060`         |
 |                    | NVIDIA Professional | `A40` `RTX A6000` `RTX A5000` `RTX A4000` `RTX A3000` `RTX A2000` `A10` `A16` `A2`                          |

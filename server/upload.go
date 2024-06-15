@@ -146,7 +146,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 		case requestURL := <-b.nextURL:
 			g.Go(func() error {
 				var err error
-				for try := 0; try < maxRetries; try++ {
+				for try := range maxRetries {
 					err = b.uploadPart(inner, http.MethodPatch, requestURL, part, opts)
 					switch {
 					case errors.Is(err, context.Canceled):
@@ -190,7 +190,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 	headers.Set("Content-Type", "application/octet-stream")
 	headers.Set("Content-Length", "0")
 
-	for try := 0; try < maxRetries; try++ {
+	for try := range maxRetries {
 		var resp *http.Response
 		resp, err = makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, nil, opts)
 		if errors.Is(err, context.Canceled) {
@@ -253,7 +253,7 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 		}
 
 		// retry uploading to the redirect URL
-		for try := 0; try < maxRetries; try++ {
+		for try := range maxRetries {
 			err = b.uploadPart(ctx, http.MethodPut, redirectURL, part, nil)
 			switch {
 			case errors.Is(err, context.Canceled):
@@ -391,7 +391,7 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *registryO
 			return err
 		}
 
-		// nolint: contextcheck
+		//nolint:contextcheck
 		go upload.Run(context.Background(), opts)
 	}
 

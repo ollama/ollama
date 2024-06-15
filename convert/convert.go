@@ -189,7 +189,7 @@ func LoadSentencePieceTokens(dirpath string, params *Params) (*Vocab, error) {
 	if params.VocabSize > len(v.Tokens) {
 		missingTokens := params.VocabSize - len(v.Tokens)
 		slog.Warn(fmt.Sprintf("vocab is missing %d tokens", missingTokens))
-		for cnt := 0; cnt < missingTokens; cnt++ {
+		for cnt := range missingTokens {
 			v.Tokens = append(v.Tokens, fmt.Sprintf("<dummy%05d>", cnt+1))
 			v.Scores = append(v.Scores, -1)
 			v.Types = append(v.Types, tokenTypeUserDefined)

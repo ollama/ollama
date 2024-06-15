@@ -88,7 +88,7 @@ func (tf *TorchFormat) GetTensors(dirpath string, params *Params) ([]llm.Tensor,
 				Name:   ggufName,
 				Kind:   kind,
 				Offset: offset, // calculate the offset
-				Shape:  shape[:],
+				Shape:  shape,
 			}
 
 			tensor.WriterTo = torchWriterTo{
@@ -104,7 +104,6 @@ func (tf *TorchFormat) GetTensors(dirpath string, params *Params) ([]llm.Tensor,
 	}
 
 	return tensors, nil
-
 }
 
 func getAltParams(dirpath string) (*Params, error) {

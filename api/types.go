@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -288,19 +287,33 @@ type PushRequest struct {
 
 // ListResponse is the response from [Client.List].
 type ListResponse struct {
-	Models []ModelResponse `json:"models"`
+	Models []ListModelResponse `json:"models"`
 }
 
-// ModelResponse is a single model description in [ListResponse].
-type ModelResponse struct {
+// ProcessResponse is the response from [Client.Process].
+type ProcessResponse struct {
+	Models []ProcessModelResponse `json:"models"`
+}
+
+// ListModelResponse is a single model description in [ListResponse].
+type ListModelResponse struct {
 	Name       string       `json:"name"`
 	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at,omitempty"`
+	ModifiedAt time.Time    `json:"modified_at"`
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
 	Details    ModelDetails `json:"details,omitempty"`
-	ExpiresAt  time.Time    `json:"expires_at,omitempty"`
-	SizeVRAM   int64        `json:"size_vram,omitempty"`
+}
+
+// ProcessModelResponse is a single model description in [ProcessResponse].
+type ProcessModelResponse struct {
+	Name      string       `json:"name"`
+	Model     string       `json:"model"`
+	Size      int64        `json:"size"`
+	Digest    string       `json:"digest"`
+	Details   ModelDetails `json:"details,omitempty"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	SizeVRAM  int64        `json:"size_vram"`
 }
 
 type TokenResponse struct {
@@ -312,7 +325,7 @@ type GenerateResponse struct {
 	// Model is the model name that generated the response.
 	Model string `json:"model"`
 
-	//CreatedAt is the timestamp of the response.
+	// CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`
 
 	// Response is the textual response itself.
@@ -368,8 +381,6 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
 	}
 }
-
-var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct

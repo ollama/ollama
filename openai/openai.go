@@ -178,9 +178,6 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 
 	if r.Seed != nil {
 		options["seed"] = *r.Seed
-
-		// temperature=0 is required for reproducible outputs
-		options["temperature"] = 0.0
 	}
 
 	if r.FrequencyPenalty != nil {
@@ -245,7 +242,6 @@ func (w *writer) writeResponse(data []byte) (int, error) {
 		d, err := json.Marshal(toChunk(w.id, chatResponse))
 		if err != nil {
 			return 0, err
-
 		}
 
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")

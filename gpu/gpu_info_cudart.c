@@ -94,7 +94,7 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
 }
 
 
-void cudart_check_vram(cudart_handle_t h, int i, mem_info_t *resp) {
+void cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
   resp->err = NULL;
   cudartMemory_t memInfo = {0,0,0};
   cudartReturn_t ret;
@@ -166,9 +166,11 @@ void cudart_check_vram(cudart_handle_t h, int i, mem_info_t *resp) {
 
   resp->total = memInfo.total;
   resp->free = memInfo.free;
+  resp->used = memInfo.used;
 
   LOG(h.verbose, "[%s] CUDA totalMem %lu\n", resp->gpu_id, resp->total);
   LOG(h.verbose, "[%s] CUDA freeMem %lu\n", resp->gpu_id, resp->free);
+  LOG(h.verbose, "[%s] CUDA usedMem %lu\n", resp->gpu_id, resp->used);
   LOG(h.verbose, "[%s] Compute Capability %d.%d\n", resp->gpu_id, resp->major, resp->minor);
 }
 

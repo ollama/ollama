@@ -25,7 +25,16 @@ const (
 
 	// Prefix with the node dir
 	GPUTotalMemoryFileGlob = "mem_banks/*/properties" // size_in_bytes line
-	GPUUsedMemoryFileGlob  = "mem_banks/*/used_memory"
+
+	// Direct Rendering Manager sysfs location
+	DRMDeviceDirGlob   = "/sys/class/drm/card*/device"
+	DRMTotalMemoryFile = "mem_info_vram_total"
+	DRMUsedMemoryFile  = "mem_info_vram_used"
+
+	// In hex; properties file is in decimal
+	DRMUniqueIDFile = "unique_id"
+	DRMVendorFile   = "vendor"
+	DRMDeviceFile   = "device"
 )
 
 var (
@@ -35,8 +44,8 @@ var (
 )
 
 // Gather GPU information from the amdgpu driver if any supported GPUs are detected
-func AMDGetGPUInfo() []GpuInfo {
-	resp := []GpuInfo{}
+func AMDGetGPUInfo() []RocmGPUInfo {
+	resp := []RocmGPUInfo{}
 	if !AMDDetected() {
 		return resp
 	}
@@ -90,7 +99,7 @@ func AMDGetGPUInfo() []GpuInfo {
 		scanner := bufio.NewScanner(fp)
 		isCPU := false
 		var major, minor, patch uint64
-		var vendor, device uint64
+		var vendor, device, uniqueID uint64
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			// Note: we could also use "cpu_cores_count X" where X is greater than zero to detect CPUs
@@ -121,29 +130,42 @@ func AMDGetGPUInfo() []GpuInfo {
 			} else if strings.HasPrefix(line, "vendor_id") {
 				ver := strings.Fields(line)
 				if len(ver) != 2 {
-					slog.Debug("malformed vendor_id", "vendor_id", line)
+					slog.Debug("malformed", "vendor_id", line)
 					continue
 				}
-				vendor, err = strconv.ParseUint(ver[1], 10, 32)
+				vendor, err = strconv.ParseUint(ver[1], 10, 64)
 				if err != nil {
-					slog.Debug("malformed vendor_id" + line)
+					slog.Debug("malformed", "vendor_id", line, "error", err)
 				}
 			} else if strings.HasPrefix(line, "device_id") {
 				ver := strings.Fields(line)
 				if len(ver) != 2 {
-					slog.Debug("malformed device_id", "device_id", line)
+					slog.Debug("malformed", "device_id", line)
 					continue
 				}
-				device, err = strconv.ParseUint(ver[1], 10, 32)
+				device, err = strconv.ParseUint(ver[1], 10, 64)
 				if err != nil {
-					slog.Debug("malformed device_id" + line)
+					slog.Debug("malformed", "device_id", line, "error", err)
+				}
+			} else if strings.HasPrefix(line, "unique_id") {
+				ver := strings.Fields(line)
+				if len(ver) != 2 {
+					slog.Debug("malformed", "unique_id", line)
+					continue
+				}
+				uniqueID, err = strconv.ParseUint(ver[1], 10, 64)
+				if err != nil {
+					slog.Debug("malformed", "unique_id", line, "error", err)
 				}
 			}
-
 			// TODO - any other properties we want to extract and record?
 			// vendor_id + device_id -> pci lookup for "Name"
 			// Other metrics that may help us understand relative performance between multiple GPUs
 		}
+
+		// Note: while ./mem_banks/*/used_memory exists, it doesn't appear to take other VRAM consumers
+		// into consideration, so we instead map the device over to the DRM driver sysfs nodes which
+		// do reliably report VRAM usage.
 
 		if isCPU {
 			cpuCount++
@@ -156,7 +178,7 @@ func AMDGetGPUInfo() []GpuInfo {
 		// Shouldn't happen, but just in case...
 		if gpuID < 0 {
 			slog.Error("unexpected amdgpu sysfs data resulted in negative GPU ID, please set OLLAMA_DEBUG=1 and report an issue")
-			return []GpuInfo{}
+			return nil
 		}
 
 		if int(major) < RocmComputeMin {
@@ -167,65 +189,68 @@ func AMDGetGPUInfo() []GpuInfo {
 		// Look up the memory for the current node
 		totalMemory := uint64(0)
 		usedMemory := uint64(0)
-		propGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(nodeID), GPUTotalMemoryFileGlob)
-		propFiles, err := filepath.Glob(propGlob)
-		if err != nil {
-			slog.Warn("error looking up total GPU memory", "glob", propGlob, "error", err)
+		var usedFile string
+		mapping := []struct {
+			id       uint64
+			filename string
+		}{
+			{vendor, DRMVendorFile},
+			{device, DRMDeviceFile},
+			{uniqueID, DRMUniqueIDFile}, // Not all devices will report this
 		}
-		// 1 or more memory banks - sum the values of all of them
-		for _, propFile := range propFiles {
-			fp, err := os.Open(propFile)
-			if err != nil {
-				slog.Warn("failed to open sysfs node", "file", propFile, "erroir", err)
-				continue
-			}
-			defer fp.Close()
-			scanner := bufio.NewScanner(fp)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if strings.HasPrefix(line, "size_in_bytes") {
-					ver := strings.Fields(line)
-					if len(ver) != 2 {
-						slog.Warn("malformed " + line)
-						continue
-					}
-					bankSizeInBytes, err := strconv.ParseUint(ver[1], 10, 64)
-					if err != nil {
-						slog.Warn("malformed int " + line)
-						continue
-					}
-					totalMemory += bankSizeInBytes
+		slog.Debug("mapping amdgpu to drm sysfs nodes", "amdgpu", match, "vendor", vendor, "device", device, "unique_id", uniqueID)
+		// Map over to DRM location to find the total/free memory
+		drmMatches, _ := filepath.Glob(DRMDeviceDirGlob)
+		for _, devDir := range drmMatches {
+			matched := true
+			for _, m := range mapping {
+				if m.id == 0 {
+					// Null ID means it didn't populate, so we can't use it to match
+					continue
+				}
+				filename := filepath.Join(devDir, m.filename)
+				buf, err := os.ReadFile(filename)
+				if err != nil {
+					slog.Debug("failed to read sysfs node", "file", filename, "error", err)
+					matched = false
+					break
+				}
+				// values here are in hex, strip off the lead 0x and parse so we can compare the numeric (decimal) values in amdgpu
+				cmp, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(string(buf)), "0x"), 16, 64)
+				if err != nil {
+					slog.Debug("failed to parse sysfs node", "file", filename, "error", err)
+					matched = false
+					break
+				}
+				if cmp != m.id {
+					matched = false
+					break
 				}
 			}
-		}
-		if totalMemory == 0 {
-			slog.Warn("amdgpu reports zero total memory", "gpu", gpuID)
-			continue
-		}
-		usedGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(nodeID), GPUUsedMemoryFileGlob)
-		usedFiles, err := filepath.Glob(usedGlob)
-		if err != nil {
-			slog.Warn("error looking up used GPU memory", "glob", usedGlob, "error", err)
-			continue
-		}
-		for _, usedFile := range usedFiles {
-			fp, err := os.Open(usedFile)
-			if err != nil {
-				slog.Warn("failed to open sysfs node", "file", usedFile, "error", err)
+			if !matched {
 				continue
 			}
-			defer fp.Close()
-			data, err := io.ReadAll(fp)
+
+			// Found the matching DRM directory
+			slog.Debug("matched", "amdgpu", match, "drm", devDir)
+			totalFile := filepath.Join(devDir, DRMTotalMemoryFile)
+			buf, err := os.ReadFile(totalFile)
 			if err != nil {
-				slog.Warn("failed to read sysfs node", "file", usedFile, "error", err)
-				continue
+				slog.Debug("failed to read sysfs node", "file", totalFile, "error", err)
+				break
 			}
-			used, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+			totalMemory, err = strconv.ParseUint(strings.TrimSpace(string(buf)), 10, 64)
 			if err != nil {
-				slog.Warn("malformed used memory", "data", string(data), "error", err)
-				continue
+				slog.Debug("failed to parse sysfs node", "file", totalFile, "error", err)
+				break
 			}
-			usedMemory += used
+
+			usedFile = filepath.Join(devDir, DRMUsedMemoryFile)
+			usedMemory, err = getFreeMemory(usedFile)
+			if err != nil {
+				slog.Debug("failed to update used memory", "error", err)
+			}
+			break
 		}
 
 		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
@@ -241,18 +266,21 @@ func AMDGetGPUInfo() []GpuInfo {
 
 		slog.Debug("amdgpu memory", "gpu", gpuID, "total", format.HumanBytes2(totalMemory))
 		slog.Debug("amdgpu memory", "gpu", gpuID, "available", format.HumanBytes2(totalMemory-usedMemory))
-		gpuInfo := GpuInfo{
-			Library: "rocm",
-			memInfo: memInfo{
-				TotalMemory: totalMemory,
-				FreeMemory:  (totalMemory - usedMemory),
+		gpuInfo := RocmGPUInfo{
+			GpuInfo: GpuInfo{
+				Library: "rocm",
+				memInfo: memInfo{
+					TotalMemory: totalMemory,
+					FreeMemory:  (totalMemory - usedMemory),
+				},
+				ID:            strconv.Itoa(gpuID),
+				Name:          name,
+				Compute:       fmt.Sprintf("gfx%d%x%x", major, minor, patch),
+				MinimumMemory: rocmMinimumMemory,
+				DriverMajor:   driverMajor,
+				DriverMinor:   driverMinor,
 			},
-			ID:            fmt.Sprintf("%d", gpuID),
-			Name:          name,
-			Compute:       fmt.Sprintf("gfx%d%x%x", major, minor, patch),
-			MinimumMemory: rocmMinimumMemory,
-			DriverMajor:   driverMajor,
-			DriverMinor:   driverMinor,
+			usedFilepath: usedFile,
 		}
 
 		// If the user wants to filter to a subset of devices, filter out if we aren't a match
@@ -276,7 +304,7 @@ func AMDGetGPUInfo() []GpuInfo {
 			libDir, err = AMDValidateLibDir()
 			if err != nil {
 				slog.Warn("unable to verify rocm library, will use cpu", "error", err)
-				return []GpuInfo{}
+				return nil
 			}
 		}
 		gpuInfo.DependencyPath = libDir
@@ -287,7 +315,7 @@ func AMDGetGPUInfo() []GpuInfo {
 				supported, err = GetSupportedGFX(libDir)
 				if err != nil {
 					slog.Warn("failed to lookup supported GFX types, falling back to CPU mode", "error", err)
-					return []GpuInfo{}
+					return nil
 				}
 				slog.Debug("rocm supported GPUs", "types", supported)
 			}
@@ -377,4 +405,32 @@ func AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 		return 0, 0, err
 	}
 	return driverMajor, driverMinor, nil
+}
+
+func (gpus RocmGPUInfoList) RefreshFreeMemory() error {
+	if len(gpus) == 0 {
+		return nil
+	}
+	for i := range gpus {
+		usedMemory, err := getFreeMemory(gpus[i].usedFilepath)
+		if err != nil {
+			return err
+		}
+		slog.Debug("updating rocm free memory", "gpu", gpus[i].ID, "name", gpus[i].Name, "before", format.HumanBytes2(gpus[i].FreeMemory), "now", format.HumanBytes2(gpus[i].TotalMemory-usedMemory))
+		gpus[i].FreeMemory = gpus[i].TotalMemory - usedMemory
+	}
+	return nil
+}
+
+func getFreeMemory(usedFile string) (uint64, error) {
+	buf, err := os.ReadFile(usedFile)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read sysfs node %s %w", usedFile, err)
+	}
+	usedMemory, err := strconv.ParseUint(strings.TrimSpace(string(buf)), 10, 64)
+	if err != nil {
+		slog.Debug("failed to parse sysfs node", "file", usedFile, "error", err)
+		return 0, fmt.Errorf("failed to parse sysfs node %s %w", usedFile, err)
+	}
+	return usedMemory, nil
 }
