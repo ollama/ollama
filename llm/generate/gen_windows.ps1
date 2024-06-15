@@ -247,9 +247,8 @@ function build_cpu($gen_arch) {
 
         # Remaining llama.cpp builds use MSVC 
         init_vars
-        $uniqueBuildDir = "../build/windows/${script:ARCH}/cpu_$($generator.Replace(' ', '_'))"
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs + @("-G", $generator)
-        $script:buildDir=$uniqueBuildDir
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off", "-G", $generator) + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_$($generator.Replace(' ', '_'))"
         $script:distDir="$script:DIST_BASE\cpu"
         write-host "Building LCD CPU"
         build
@@ -265,9 +264,8 @@ function build_cpu_avx() {
         $generator = select_latest_vs_generator
 
         init_vars
-        $uniqueBuildDir = "../build/windows/${script:ARCH}/cpu_avx_$($generator.Replace(' ', '_'))"
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs + @("-G", $generator)
-        $script:buildDir=$uniqueBuildDir
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off", "-G", $generator) + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx_$($generator.Replace(' ', '_'))"
         $script:distDir="$script:DIST_BASE\cpu_avx"
         write-host "Building AVX CPU"
         build
@@ -283,9 +281,8 @@ function build_cpu_avx2() {
         $generator = select_latest_vs_generator
 
         init_vars
-        $uniqueBuildDir = "../build/windows/${script:ARCH}/cpu_avx2_$($generator.Replace(' ', '_'))"
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs + @("-G", $generator)
-        $script:buildDir=$uniqueBuildDir
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on", "-G", $generator) + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2_$($generator.Replace(' ', '_'))"
         $script:distDir="$script:DIST_BASE\cpu_avx2"
         write-host "Building AVX2 CPU"
         build
@@ -304,10 +301,11 @@ function build_cuda() {
         if ($null -ne $script:CUDA_VERSION) {
             $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
         }
+        $generator = select_latest_vs_generator
         init_vars
         $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
         $script:distDir="$script:DIST_BASE\cuda$script:CUDA_VARIANT"
-        $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+        $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}", "-G", $generator) 
         if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
             write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${env:OLLAMA_CUSTOM_CUDA_DEFS}`""
             $script:cmakeDefs +=@("${env:OLLAMA_CUSTOM_CUDA_DEFS}")
