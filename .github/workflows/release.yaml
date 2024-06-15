@@ -437,6 +437,7 @@ jobs:
     env:
       OLLAMA_SKIP_IMAGE_BUILD: '1'
       PUSH: '1'
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - name: Set Version
@@ -460,15 +461,20 @@ jobs:
           ls -lh dist/
           (cd dist; sha256sum * > sha256sum.txt)
           cat dist/sha256sum.txt
-      - uses: ncipollo/release-action@v1
-        with:
-          name: ${{ env.RELEASE_VERSION }}
-          allowUpdates: true
-          artifacts: 'dist/*'
-          draft: true
-          prerelease: true
-          omitBodyDuringUpdate: true
-          generateReleaseNotes: true
-          omitDraftDuringUpdate: true
-          omitPrereleaseDuringUpdate: true
-          replacesArtifacts: true
+      - name: Create or update Release
+        run: |
+          echo "Looking for existing release for ${{ env.RELEASE_VERSION }}"
+          OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${{ env.RELEASE_VERSION }}\") | .tagName")
+          if [ -n "$OLD_TAG" ]; then
+            echo "Updating release ${{ env.RELEASE_VERSION }} to point to new tag ${GITHUB_REF_NAME}"
+            gh release edit ${OLD_TAG} --tag ${GITHUB_REF_NAME}
+          else
+            echo "Creating new release ${{ env.RELEASE_VERSION }} pointing to tag ${GITHUB_REF_NAME}"
+            gh release create ${GITHUB_REF_NAME} \
+              --title ${{ env.RELEASE_VERSION }} \
+              --draft \
+              --generate-notes \
+              --prerelease
+          fi
+          echo "Uploading artifacts for tag ${GITHUB_REF_NAME}"
+          gh release upload ${GITHUB_REF_NAME} dist/* --clobber
