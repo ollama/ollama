@@ -160,7 +160,7 @@ void oneapi_check_vram(oneapi_handle_t h, int driver, int device,
     return;
   }
 
-  snprintf(&resp->gpu_name[0], GPU_NAME_LEN, props.modelName);
+  snprintf(&resp->gpu_name[0], GPU_NAME_LEN, "%s", props.modelName);
 
   // TODO this needs to map to ONEAPI_DEVICE_SELECTOR syntax
   // (this is probably wrong...)
