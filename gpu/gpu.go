@@ -37,7 +37,7 @@ type oneapiHandles struct {
 }
 
 type vulkanHandles struct {
-	vulkan      *C.vulkan_handle_t
+	vulkan      *C.vk_handle_t
 	deviceCount int
 }
 
