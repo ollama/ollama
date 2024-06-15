@@ -45,6 +45,10 @@ var NvcudaMgmtName = "nvcuda.dll"
 var NvmlMgmtName = "nvml.dll"
 var OneapiMgmtName = "ze_intel_gpu64.dll"
 
+func FindLibCapLibs() []string {
+	return []string{"<unused>"}
+}
+
 func GetCPUMem() (memInfo, error) {
 	memStatus := MEMORYSTATUSEX{length: sizeofMemoryStatusEx}
 	r1, _, err := globalMemoryStatusExProc.Call(uintptr(unsafe.Pointer(&memStatus)))
