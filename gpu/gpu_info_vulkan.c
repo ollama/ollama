@@ -7,9 +7,6 @@ int check_perfmon(vk_handle_t* rh) {
   cap_t caps;
   const cap_value_t cap_list[1] = {CAP_PERFMON};
 
-  if ((*rh->cap_get_bound)(CAP_SETFCAP) < 0)
-    return -1;
-
   caps = (*rh->cap_get_proc)();
   if (caps == NULL)
     return -1;
