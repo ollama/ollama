@@ -213,9 +213,16 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   resp->major = VK_API_VERSION_MAJOR(properties.apiVersion);
   resp->minor = VK_API_VERSION_MINOR(properties.apiVersion);
   resp->patch = VK_API_VERSION_PATCH(properties.apiVersion);
-
 }
 
 void vk_release(vk_handle_t rh) {
+  LOG(rh.verbose, "releasing vulkan library\n");
   (*rh.vkDestroyInstance)(rh.vk, NULL);
+  UNLOAD_LIBRARY(rh.vk_handle);
+  rh.vk_handle = NULL;
+#ifdef __linux__
+  LOG(rh.verbose, "releasing libcap library\n");
+  UNLOAD_LIBRARY(rh.cap_handle);
+  rh.cap_handle = NULL;
+#endif
 }

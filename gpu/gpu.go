@@ -228,6 +228,11 @@ func GetGPUInfo() GpuInfoList {
 				C.oneapi_release(*oHandles.oneapi)
 			}
 		}
+		if vHandles != nil {
+			if vHandles.vulkan != nil {
+				C.vk_release(*vHandles.vulkan)
+			}
+		}
 	}()
 
 	if !bootstrapped {
