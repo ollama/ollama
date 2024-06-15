@@ -96,7 +96,7 @@ void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp) {
 }
 
 const int buflen = 256;
-void nvcuda_check_vram(nvcuda_handle_t h, int i, mem_info_t *resp) {
+void nvcuda_bootstrap(nvcuda_handle_t h, int i, mem_info_t *resp) {
   resp->err = NULL;
   nvcudaMemory_t memInfo = {0,0};
   CUresult ret;
@@ -168,7 +168,7 @@ void nvcuda_check_vram(nvcuda_handle_t h, int i, mem_info_t *resp) {
   // To get memory we have to set (and release) a context
   ret = (*h.cuCtxCreate_v3)(&ctx, NULL, 0, 0, device);
   if (ret != CUDA_SUCCESS) {
-    snprintf(buf, buflen, "nvcuda failed to get primary device context %d", ret);
+    snprintf(buf, buflen, "nvcuda failed to get device context %d", ret);
     resp->err = strdup(buf);
     return;
   }
@@ -193,7 +193,42 @@ void nvcuda_check_vram(nvcuda_handle_t h, int i, mem_info_t *resp) {
 
   ret = (*h.cuCtxDestroy)(ctx);
   if (ret != CUDA_SUCCESS) {
-    LOG(1, "nvcuda failed to release primary device context %d", ret);
+    LOG(1, "nvcuda failed to release device context %d", ret);
+  }
+}
+
+void nvcuda_get_free(nvcuda_handle_t h, int i, uint64_t *free, uint64_t *total) {
+  CUresult ret;
+  CUcontext ctx = NULL;
+  CUdevice device = -1;
+  *free = 0;
+  *total = 0;
+
+  ret = (*h.cuDeviceGet)(&device, i);
+  if (ret != CUDA_SUCCESS) {
+    LOG(1, "nvcuda device failed to initialize");
+    return;
+  }
+
+
+  // To get memory we have to set (and release) a context
+  ret = (*h.cuCtxCreate_v3)(&ctx, NULL, 0, 0, device);
+  if (ret != CUDA_SUCCESS) {
+    LOG(1, "nvcuda failed to get device context %d", ret);
+    return;
+  }
+
+  ret = (*h.cuMemGetInfo_v2)(free, total);
+  if (ret != CUDA_SUCCESS) {
+    LOG(1, "nvcuda device memory info lookup failure %d", ret);
+    // Best effort on failure...
+    (*h.cuCtxDestroy)(ctx);
+    return;
+  }
+
+  ret = (*h.cuCtxDestroy)(ctx);
+  if (ret != CUDA_SUCCESS) {
+    LOG(1, "nvcuda failed to release device context %d", ret);
   }
 }
 
