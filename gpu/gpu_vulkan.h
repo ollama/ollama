@@ -13,5 +13,6 @@ typedef struct vk_init_resp
   vk_handle_t oh;
 } vk_init_resp_t;
 
-void vk_init(vk_init_resp_t *resp);
+void vk_init(char* vk_lib_path, char* cap_lib_path, vk_init_resp_t *resp);
 void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp);
+void vk_free(vk_handle_t rh);

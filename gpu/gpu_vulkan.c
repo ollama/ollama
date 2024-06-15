@@ -22,18 +22,28 @@ int check_perfmon() {
 
   if (cap_free(caps) == -1)
     return -1;
+#endif
 
   return 0;
-#else
-  return 0;
-#endif
 }
 
-void vk_init(vk_init_resp_t *resp) {
+void vk_init(char* vk_lib_path, char* cap_lib_path, vk_init_resp_t *resp) {
+  if (!LOAD_LIBRARY(vk_lib_path, RTLD_LAZY)) {
+    resp->err = "Failed to load Vulkan library";
+    return;
+  }
+
+#ifdef __linux__
+  if (!LOAD_LIBRARY(cap_lib_path, RTLD_LAZY)) {
+      resp->err = "Failed to load libcap library";
+      return;
+  }
+
   if (check_perfmon() != 0) {
     resp->err = "Performance monitoring is not allowed. Please enable CAP_PERFMON or run as root to use Vulkan.";
     return;
   }
+#endif
 
   VkInstance instance;
   VkApplicationInfo appInfo = {};
@@ -123,4 +133,10 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   resp->major = VK_API_VERSION_MAJOR(properties.apiVersion);
   resp->minor = VK_API_VERSION_MINOR(properties.apiVersion);
   resp->patch = VK_API_VERSION_PATCH(properties.apiVersion);
+
+}
+
+void vk_free(vk_handle_t rh) {
+  vkDestroyInstance(rh->oh, NULL);
+  free(rh);
 }

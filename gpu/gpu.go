@@ -29,6 +29,7 @@ type handles struct {
 	cudart      *C.cudart_handle_t
 	nvcuda      *C.nvcuda_handle_t
 	oneapi      *C.oneapi_handle_t
+	vulkan      *C.vk_handle_t
 }
 
 const (
@@ -90,6 +91,16 @@ var OneapiLinuxGlobs = []string{
 	"/usr/lib*/libze_intel_gpu.so*",
 }
 
+var VulkanLinuxGlobs = []string{
+	"/usr/lib/x86_64-linux-gnu/libvulkan.so*",
+	"/usr/lib*/libvulkan.so*",
+}
+
+var CapLinuxGlobs = []string{
+	"/usr/lib/x86_64-linux-gnu/libcap.so*",
+	"/usr/lib*/libcap.so*",
+}
+
 // Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
@@ -104,6 +115,10 @@ func initGPUHandles() *handles {
 	var cudartMgmtPatterns []string
 	var nvcudaMgmtName string
 	var nvcudaMgmtPatterns []string
+	var vulkanMgmtName string
+	var vulkanMgmtPatterns []string
+	var libcapMgmtName string
+	var libcapMgmtPatterns []string
 
 	tmpDir, _ := PayloadsDir()
 	switch runtime.GOOS {
@@ -125,6 +140,12 @@ func initGPUHandles() *handles {
 		// Aligned with driver, we can't carry as payloads
 		nvcudaMgmtName = "libcuda.so*"
 		nvcudaMgmtPatterns = NvcudaLinuxGlobs
+
+		// Vulkan also needs libcap
+		vulkanMgmtName = "libvulkan.so*"
+		vulkanMgmtPatterns = VulkanLinuxGlobs
+		libcapMgmtName = "libcap.so*"
+		libcapMgmtPatterns = CapLinuxGlobs
 	default:
 		return gpuHandles
 	}
@@ -147,6 +168,25 @@ func initGPUHandles() *handles {
 		if cudart != nil {
 			slog.Debug("detected GPUs", "library", libPath, "count", deviceCount)
 			gpuHandles.cudart = cudart
+			gpuHandles.deviceCount = deviceCount
+			return gpuHandles
+		}
+	}
+
+	vulkanLibPaths := FindGPULibs(vulkanMgmtName, vulkanMgmtPatterns)
+
+	var libcapLibPaths []string
+	if runtime.GOOS == "linux" {
+		libcapLibPaths = FindGPULibs(libcapMgmtName, libcapMgmtPatterns)
+	} else {
+		libcapLibPaths = []string{"<unused>"}
+	}
+
+	if len(vulkanLibPaths) > 0 && len(libcapLibPaths) > 0 {
+		deviceCount, vulkan, vkLibPath, capLibPath := LoadVulkanMgmt(vulkanLibPaths, libcapLibPaths)
+		if vulkan != nil {
+			slog.Debug("detected GPUs", "library", vkLibPath, capLibPath, "count", deviceCount)
+			gpuHandles.vulkan = vulkan
 			gpuHandles.deviceCount = deviceCount
 			return gpuHandles
 		}
@@ -186,7 +226,7 @@ func GetGPUInfo() GpuInfoList {
 	var memInfo C.mem_info_t
 	resp := []GpuInfo{}
 
-	// NVIDIA first
+	// NVIDIA and Vulkan first
 	for i := range gpuHandles.deviceCount {
 		// TODO once we support CPU compilation variants of GPU libraries refine this...
 		if cpuVariant == "" && runtime.GOARCH == "amd64" {
@@ -223,6 +263,32 @@ func GetGPUInfo() GpuInfoList {
 			gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 			gpuInfo.DriverMajor = driverMajor
 			gpuInfo.DriverMinor = driverMinor
+
+			// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
+			resp = append(resp, gpuInfo)
+		}
+
+		if gpuHandles.vulkan != nil {
+			gpuInfo := GpuInfo{
+				Library: "vulkan",
+			}
+
+			C.vk_check_vram(*gpuHandles.vulkan, C.int(i), &memInfo)
+			if memInfo.err != nil {
+				slog.Info("error looking up vulkan GPU memory", "error", C.GoString(memInfo.err))
+				C.free(unsafe.Pointer(memInfo.err))
+				continue
+			}
+
+			gpuInfo.TotalMemory = uint64(memInfo.total)
+			gpuInfo.FreeMemory = uint64(memInfo.free)
+			gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+			gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
+			gpuInfo.MinimumMemory = 0
+			gpuInfo.DependencyPath = depPath
+			gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+			gpuInfo.DriverMajor = int(memInfo.major)
+			gpuInfo.DriverMinor = int(memInfo.minor)
 
 			// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
 			resp = append(resp, gpuInfo)
@@ -379,6 +445,29 @@ func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
 	return 0, nil, ""
 }
 
+func LoadVulkanMgmt(vulkanLibPaths []string, capLibPaths []string) (int, *C.vk_handle_t, string, string) {
+	var resp C.vk_init_resp_t
+	for _, vkLibPath := range vulkanLibPaths {
+		for _, capLibPath := range capLibPaths {
+			vkLib := C.CString(vkLibPath)
+			capLib := C.CString(capLibPath)
+			defer C.free(unsafe.Pointer(vkLib))
+			defer C.free(unsafe.Pointer(capLib))
+
+			C.vk_init(vkLib, capLib, &resp)
+			if resp.err != nil {
+				slog.Debug("Unable to load vulkan", "library", vkLibPath, "error", C.GoString(resp.err))
+				slog.Debug("Unable to load libcap", "library", capLibPath, "error", C.GoString(resp.err))
+				C.free(unsafe.Pointer(resp.err))
+			} else {
+				return int(resp.num_devices), &resp.vk, vkLibPath, capLibPath
+			}
+		}
+	}
+
+	return 0, nil, "", ""
+}
+
 func getVerboseState() C.uint16_t {
 	if envconfig.Debug {
 		return C.uint16_t(1)
@@ -401,6 +490,8 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 		return rocmGetVisibleDevicesEnv(l)
 	case "oneapi":
 		return oneapiGetVisibleDevicesEnv(l)
+	case "vulkan":
+		return vkGetVisibleDevicesEnv(l)
 	default:
 		slog.Debug("no filter required for library " + l[0].Library)
 		return "", ""
