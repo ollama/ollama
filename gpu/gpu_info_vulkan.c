@@ -122,7 +122,8 @@ void vk_init(char* vk_lib_path, char* cap_lib_path, vk_init_resp_t *resp) {
   }
 
   if (check_perfmon(&resp->ch) != 0) {
-    resp->err = "Performance monitoring is not allowed. Please enable CAP_PERFMON or run as root to use Vulkan.";
+    resp->err = strdup("performance monitoring is not allowed. Please enable CAP_PERFMON or run as root to use Vulkan.");
+    LOG(resp->ch.verbose, resp->err);
     return;
   }
 
