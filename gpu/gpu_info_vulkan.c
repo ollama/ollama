@@ -123,7 +123,7 @@ void vk_init(char* vk_lib_path, char* cap_lib_path, vk_init_resp_t *resp) {
 
   if (check_perfmon(&resp->ch) != 0) {
     resp->err = strdup("performance monitoring is not allowed. Please enable CAP_PERFMON or run as root to use Vulkan.");
-    LOG(resp->ch.verbose, resp->err);
+    LOG(resp->ch.verbose, "vulkan: %s", resp->err);
     return;
   }
 
@@ -209,7 +209,8 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
 
   resp->err = NULL;
   snprintf(&resp->gpu_id[0], GPU_ID_LEN, "%d", i);
-  snprintf(&resp->gpu_name[0], GPU_NAME_LEN, "%s", properties.deviceName);
+  resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
+  strncpy(&resp->gpu_name[0], properties.deviceName, GPU_NAME_LEN - 1);
   resp->total = (uint64_t) device_memory_total_usage;
   resp->free = (uint64_t) device_memory_total_usage;
   resp->major = VK_API_VERSION_MAJOR(properties.apiVersion);
