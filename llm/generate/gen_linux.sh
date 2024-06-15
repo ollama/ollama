@@ -206,6 +206,34 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
 
 fi
 
+if [ -z "${VULKAN_ROOT}" ]; then
+    # Try the default location in case it exists
+    VULKAN_ROOT=/usr/lib/
+fi
+
+if [ -z "${CAP_ROOT}" ]; then
+    # Try the default location in case it exists
+    CAP_ROOT=/usr/lib/
+fi
+
+if [ -z "${OLLAMA_SKIP_VULKAN_GENERATE}" -a -d "${VULKAN_ROOT}" ] && [ -z "${OLLAMA_SKIP_VULKAN_GENERATE}" -a -d "${CAP_ROOT}" ]; then
+    echo "Vulkan and capabilities libraries detected - building dynamic Vulkan library"
+    init_vars
+
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_VULKAN=1"
+    BUILD_DIR="../build/linux/${ARCH}/vulkan"
+    EXTRA_LIBS="-L${VULKAN_ROOT} -L${CAP_ROOT} -lvulkan -lcap"
+    build
+
+    # copy oneAPI dependencies
+    for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e vulkan -e cap); do
+        cp "${dep}" "${BUILD_DIR}/bin/"
+    done
+    cp "${VULKAN_ROOT}/libvulkan.so" "${BUILD_DIR}/bin/"
+    cp "${CAP_ROOT}/libcap.so" "${BUILD_DIR}/bin/"
+    compress
+fi
+
 if [ -z "${ONEAPI_ROOT}" ]; then
     # Try the default location in case it exists
     ONEAPI_ROOT=/opt/intel/oneapi
