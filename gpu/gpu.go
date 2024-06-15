@@ -209,6 +209,9 @@ func GetGPUInfo() GpuInfoList {
 		if gpuHandles.nvcuda != nil {
 			C.nvcuda_release(*gpuHandles.nvcuda)
 		}
+		if gpuHandles.vulkan != nil {
+			C.vk_release(*gpuHandles.vulkan)
+		}
 	}()
 
 	// All our GPU builds on x86 have AVX enabled, so fallback to CPU if we don't detect at least AVX
@@ -447,6 +450,7 @@ func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
 
 func LoadVulkanMgmt(vulkanLibPaths []string, capLibPaths []string) (int, *C.vk_handle_t, string, string) {
 	var resp C.vk_init_resp_t
+	resp.ch.verbose = getVerboseState()
 	for _, vkLibPath := range vulkanLibPaths {
 		for _, capLibPath := range capLibPaths {
 			vkLib := C.CString(vkLibPath)
@@ -460,7 +464,7 @@ func LoadVulkanMgmt(vulkanLibPaths []string, capLibPaths []string) (int, *C.vk_h
 				slog.Debug("Unable to load libcap", "library", capLibPath, "error", C.GoString(resp.err))
 				C.free(unsafe.Pointer(resp.err))
 			} else {
-				return int(resp.num_devices), &resp.vk, vkLibPath, capLibPath
+				return int(resp.num_devices), &resp.ch, vkLibPath, capLibPath
 			}
 		}
 	}
