@@ -212,7 +212,7 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
   strncpy(&resp->gpu_name[0], properties.deviceName, GPU_NAME_LEN - 1);
   resp->total = (uint64_t) device_memory_total_usage;
-  resp->free = (uint64_t) device_memory_total_usage;
+  resp->free = (uint64_t) device_memory_heap_budget;
   resp->major = VK_API_VERSION_MAJOR(properties.apiVersion);
   resp->minor = VK_API_VERSION_MINOR(properties.apiVersion);
   resp->patch = VK_API_VERSION_PATCH(properties.apiVersion);
