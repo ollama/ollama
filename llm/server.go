@@ -320,6 +320,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 
+		envWorkarounds := [][2]string{}
+		for _, gpu := range gpus {
+			envWorkarounds = append(envWorkarounds, gpu.EnvWorkarounds...)
+		}
 		visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
@@ -334,6 +338,12 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
 				s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
 				devicesNeeded = false
+			} else if len(envWorkarounds) != 0 {
+				for _, kv := range envWorkarounds {
+					if strings.EqualFold(cmp[0], kv[0]) {
+						s.cmd.Env[i] = kv[0] + "=" + kv[1]
+					}
+				}
 			}
 		}
 		if pathNeeded {
