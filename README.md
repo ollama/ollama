@@ -360,6 +360,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
 - [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
+- [llmcord.py](https://github.com/jakobdylanc/discord-llm-chatbot) (Discord bot with Ollama support)
 - [Continue](https://github.com/continuedev/continue)
 - [Obsidian Ollama plugin](https://github.com/hinterdupfinger/obsidian-ollama)
 - [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
