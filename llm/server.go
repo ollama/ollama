@@ -271,8 +271,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
-		// prepend the server directory to LD_LIBRARY_PATH/PATH
-		libraryPaths := []string{dir}
+		// prepend the server directory to LD_LIBRARY_PATH/PATH and the parent dir for common dependencies
+		libraryPaths := []string{dir, filepath.Dir(dir)}
 
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			// Append our runner directory to the path
