@@ -213,12 +213,43 @@ function build_static() {
     }
 }
 
+function select_latest_vs_generator {
+    # Check for available CMake generators
+    $capabilities = cmake -E capabilities | ConvertFrom-Json
+    $generators = $capabilities.generators
+
+    # Find the latest version of Visual Studio generator
+    $latestVSGenerator = $null
+    $latestMajor = 0
+    $latestMinor = 0
+    foreach ($generator in $generators) {
+        if ($generator.name -match "Visual Studio (\d+) (\d+)") {
+            $major = [int]$matches[1]
+            $minor = [int]$matches[2]
+            if ($major -gt $latestMajor -or ($major -eq $latestMajor -and $minor -gt $latestMinor)) {
+                $latestMajor = $major
+                $latestMinor = $minor
+                $latestVSGenerator = "$major $minor"
+            }
+        }
+    }
+
+    if ($null -ne $latestVSGenerator) {
+        return "Visual Studio $latestVSGenerator"
+    } else {
+        throw "No Visual Studio CMake generators found."
+    }
+}
+
 function build_cpu($gen_arch) {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
-        # remaining llama.cpp builds use MSVC 
+        $generator = select_latest_vs_generator
+
+        # Remaining llama.cpp builds use MSVC 
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-        $script:buildDir="../build/windows/${script:ARCH}/cpu"
+        $uniqueBuildDir = "../build/windows/${script:ARCH}/cpu_$($generator.Replace(' ', '_'))"
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs + @("-G", $generator)
+        $script:buildDir=$uniqueBuildDir
         $script:distDir="$script:DIST_BASE\cpu"
         write-host "Building LCD CPU"
         build
@@ -231,9 +262,12 @@ function build_cpu($gen_arch) {
 
 function build_cpu_avx() {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx"))) {
+        $generator = select_latest_vs_generator
+
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
+        $uniqueBuildDir = "../build/windows/${script:ARCH}/cpu_avx_$($generator.Replace(' ', '_'))"
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs + @("-G", $generator)
+        $script:buildDir=$uniqueBuildDir
         $script:distDir="$script:DIST_BASE\cpu_avx"
         write-host "Building AVX CPU"
         build
@@ -246,9 +280,12 @@ function build_cpu_avx() {
 
 function build_cpu_avx2() {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx2"))) {
+        $generator = select_latest_vs_generator
+
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
-        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
+        $uniqueBuildDir = "../build/windows/${script:ARCH}/cpu_avx2_$($generator.Replace(' ', '_'))"
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs + @("-G", $generator)
+        $script:buildDir=$uniqueBuildDir
         $script:distDir="$script:DIST_BASE\cpu_avx2"
         write-host "Building AVX2 CPU"
         build
