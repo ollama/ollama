@@ -1,8 +1,10 @@
 package server
 
 import (
+	"archive/tar"
 	"bytes"
 	"cmp"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -941,6 +943,70 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptio
 	}
 
 	return m, err
+}
+
+func ExportModelToTar(modelName string) ([]byte, error) {
+	mp := ParseModelPath(modelName)
+	manifest, _, err := GetManifest(mp)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	gzw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gzw)
+
+	// Add manifest file to tar
+	manifestFile, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := addFileToTar(tw, "manifest.json", manifestFile); err != nil {
+		return nil, err
+	}
+
+	// Add model layers to tar
+	for _, layer := range manifest.Layers {
+		filename, err := GetBlobsPath(layer.Digest)
+		if err != nil {
+			return nil, err
+		}
+
+		fileData, err := os.ReadFile(filename)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := addFileToTar(tw, filepath.Base(filename), fileData); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+
+	if err := gzw.Close(); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func addFileToTar(tw *tar.Writer, name string, data []byte) error {
+	hdr := &tar.Header{
+		Name: name,
+		Mode: 0600,
+		Size: int64(len(data)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	if _, err := tw.Write(data); err != nil {
+		return err
+	}
+	return nil
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer

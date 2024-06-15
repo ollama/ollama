@@ -7,7 +7,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -736,124 +735,31 @@ type Manifest struct {
 
 func ExportModelHandler(cmd *cobra.Command, args []string) error {
 	if len(args) < 2 {
-		fmt.Println("Usage: ollama-export <model_name> <target_path>")
+		fmt.Println("Usage: ollama export <model_name> <target_path>")
 		return nil
 	}
 
 	modelName := args[0]
 	targetPath := args[1]
 
-	homeDir, err := os.UserHomeDir()
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		fmt.Printf("%s Failed to get user home directory: %v\n", failedPrefix, err)
 		return err
 	}
 
-	ollamaHome := filepath.Join(homeDir, ".ollama")
-	blobsFileBasePath := filepath.Join(ollamaHome, "models", "blobs")
-	manifestsFileBasePath := filepath.Join(ollamaHome, "models", "manifests")
-
-	nameArgs := strings.Split(strings.ReplaceAll(modelName, ":", "/"), "/")
-	var manifestsRegistryName, manifestsLibraryName, manifestsModelName, manifestsParamsName string
-
-	switch len(nameArgs) {
-	case 4:
-		manifestsRegistryName = nameArgs[0]
-		manifestsLibraryName = nameArgs[1]
-		manifestsModelName = nameArgs[2]
-		manifestsParamsName = nameArgs[3]
-	case 3:
-		manifestsLibraryName = nameArgs[0]
-		manifestsModelName = nameArgs[1]
-		manifestsParamsName = nameArgs[2]
-	case 2:
-		manifestsModelName = nameArgs[0]
-		manifestsParamsName = nameArgs[1]
-	case 1:
-		manifestsModelName = nameArgs[0]
-	}
-
-	if manifestsRegistryName == "" {
-		manifestsRegistryName = "registry.ollama.ai"
-	}
-	if manifestsLibraryName == "" {
-		manifestsLibraryName = "library"
-	}
-	if manifestsModelName == "" {
-		manifestsModelName = "vicuna"
-	}
-	if manifestsParamsName == "" {
-		manifestsParamsName = "latest"
-	}
-
-	modelFullName := manifestsModelName + ":" + manifestsParamsName
-	fmt.Printf("Exporting model \"%s\" to \"%s\"...\n\n", modelFullName, targetPath)
-
-	manifestsFilePath := filepath.Join(manifestsFileBasePath, manifestsRegistryName, manifestsLibraryName, manifestsModelName, manifestsParamsName)
-	if _, err := os.Stat(manifestsFilePath); os.IsNotExist(err) {
-		fmt.Printf("%s \"%s\" does not exist, the model \"%s\" you requested is not found.\n", failedPrefix, manifestsFilePath, modelFullName)
-		return nil
-	}
-
-	if _, err := os.Stat(targetPath); err == nil {
-		fmt.Printf("%s \"%s\" already exists, exiting to prevent unexpected operations.\n", failedPrefix, targetPath)
-		return nil
-	}
-
-	os.MkdirAll(targetPath, os.ModePerm)
-	sourceFilePath := filepath.Join(targetPath, "source.txt")
-	os.WriteFile(sourceFilePath, []byte(fmt.Sprintf("%s/%s/%s:%s", manifestsRegistryName, manifestsLibraryName, manifestsModelName, manifestsParamsName)), os.ModePerm)
-
-	manifestData, err := os.ReadFile(manifestsFilePath)
+	req := api.ExportRequest{Model: modelName}
+	tarBytes, err := client.Export(cmd.Context(), &req)
 	if err != nil {
-		fmt.Printf("%s Failed to read manifest file: %v\n", failedPrefix, err)
+		fmt.Printf("%s Failed to export model: %v\n", failedPrefix, err)
 		return err
 	}
 
-	var manifest Manifest
-	err = json.Unmarshal(manifestData, &manifest)
-	if err != nil {
-		fmt.Printf("%s Failed to unmarshal manifest data: %v\n", failedPrefix, err)
+	if err := os.WriteFile(targetPath, *tarBytes, 0644); err != nil {
+		fmt.Printf("%s Failed to write tarball to target path: %v\n", failedPrefix, err)
 		return err
 	}
 
-	exportModelFilePath := filepath.Join(targetPath, "Modelfile")
-	exportModelBinPath := filepath.Join(targetPath, "model.bin")
-
-	for _, layer := range manifest.Layers {
-		blobFileName := strings.ReplaceAll(layer.Digest, ":", "-")
-		blobFilePath := filepath.Join(blobsFileBasePath, blobFileName)
-		blobData, err := os.ReadFile(blobFilePath)
-		if err != nil {
-			fmt.Printf("%s Failed to read blob file: %v\n", failedPrefix, err)
-			return err
-		}
-
-		blobTypeName := strings.Split(layer.MediaType, ".")[len(strings.Split(layer.MediaType, "."))-1]
-
-		switch blobTypeName {
-		case "model":
-			os.WriteFile(exportModelBinPath, blobData, os.ModePerm)
-			appendToFile(exportModelFilePath, "FROM ./model.bin\n")
-		case "params":
-			paramsJson := string(blobData)
-			paramsMap := make(map[string]interface{})
-			json.Unmarshal([]byte(paramsJson), &paramsMap)
-			for key, value := range paramsMap {
-				switch v := value.(type) {
-				case []interface{}:
-					for _, val := range v {
-						appendToFile(exportModelFilePath, fmt.Sprintf("PARAMETER %s \"%v\"\n", key, val))
-					}
-				}
-			}
-		default:
-			typeName := strings.ToUpper(blobTypeName)
-			appendToFile(exportModelFilePath, fmt.Sprintf("%s \"\"\"%s\"\"\"\n", typeName, string(blobData)))
-		}
-	}
-
-	fmt.Printf("%s Model \"%s\" has been exported to \"%s\"!\n", successPrefix, modelFullName, targetPath)
+	fmt.Printf("%s Model \"%s\" has been exported to \"%s\"!\n", successPrefix, modelName, targetPath)
 	return nil
 }
 
