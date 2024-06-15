@@ -196,13 +196,13 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
 
   (*rh.vkGetPhysicalDeviceMemoryProperties2)(devices[i], &device_memory_properties);
 
-  VkDeviceSize device_memory_total_usage = 0;
+  VkDeviceSize device_memory_total_size  = 0;
   VkDeviceSize device_memory_heap_budget = 0;
 
   for (uint32_t j = 0; j < device_memory_properties.memoryProperties.memoryHeapCount; j++) {
     VkMemoryHeap heap = device_memory_properties.memoryProperties.memoryHeaps[j];
     if (heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
-      device_memory_total_usage += physical_device_memory_budget_properties.heapUsage[j];
+      device_memory_total_size  += heap.size;
       device_memory_heap_budget += physical_device_memory_budget_properties.heapBudget[j];
     }
   }
@@ -211,7 +211,7 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   snprintf(&resp->gpu_id[0], GPU_ID_LEN, "%d", i);
   resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
   strncpy(&resp->gpu_name[0], properties.deviceName, GPU_NAME_LEN - 1);
-  resp->total = (uint64_t) device_memory_total_usage;
+  resp->total = (uint64_t) device_memory_total_size;
   resp->free = (uint64_t) device_memory_heap_budget;
   resp->major = VK_API_VERSION_MAJOR(properties.apiVersion);
   resp->minor = VK_API_VERSION_MINOR(properties.apiVersion);
