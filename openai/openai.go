@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Error struct {
@@ -164,7 +165,7 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 			Id:      m.Name,
 			Object:  "model",
 			Created: m.ModifiedAt.Unix(),
-			OwnedBy: "ollama",
+			OwnedBy: model.ParseName(m.Name).Namespace,
 		})
 	}
 
@@ -216,9 +217,6 @@ func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
 
 	if r.Seed != nil {
 		options["seed"] = *r.Seed
-
-		// temperature=0 is required for reproducible outputs
-		options["temperature"] = 0.0
 	}
 
 	if r.FrequencyPenalty != nil {

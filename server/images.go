@@ -28,7 +28,6 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
-	"github.com/ollama/ollama/templates"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -333,7 +332,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 		switch c.Name {
 		case "model", "adapter":
-			var baseLayers []*layerWithGGML
+			var baseLayers []*layerGGML
 			if name := model.ParseName(c.Args); name.IsValid() {
 				baseLayers, err = parseFromModel(ctx, name, fn)
 				if err != nil {
@@ -435,20 +434,6 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(baseLayer.GGML.KV().ParameterCount()))
 					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType().String())
 					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
-
-					if s := baseLayer.GGML.KV().ChatTemplate(); s != "" {
-						if t, err := templates.NamedTemplate(s); err != nil {
-							slog.Debug("template detection", "error", err)
-						} else {
-							layer, err := NewLayer(t.Reader(), "application/vnd.ollama.image.template")
-							if err != nil {
-								return err
-							}
-
-							layer.status = fmt.Sprintf("using autodetected template %s", t.Name)
-							layers = append(layers, layer)
-						}
-					}
 				}
 
 				layers = append(layers, baseLayer.Layer)
@@ -975,7 +960,6 @@ var errUnauthorized = fmt.Errorf("unauthorized: access denied")
 func getTokenSubject(token string) string {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		slog.Error("jwt token does not contain 3 parts")
 		return ""
 	}
 

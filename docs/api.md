@@ -250,7 +250,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Request (Reproducible outputs)
 
-For reproducible outputs, set `temperature` to 0 and `seed` to a number:
+For reproducible outputs, set `seed` to a number:
 
 ##### Request
 
@@ -259,8 +259,7 @@ curl http://localhost:11434/api/generate -d '{
   "model": "mistral",
   "prompt": "Why is the sky blue?",
   "options": {
-    "seed": 123,
-    "temperature": 0
+    "seed": 123
   }
 }'
 ```

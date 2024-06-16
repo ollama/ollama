@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -239,6 +238,7 @@ type ShowResponse struct {
 	System     string       `json:"system,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
 	Messages   []Message    `json:"messages,omitempty"`
+	ModifiedAt time.Time    `json:"modified_at,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -383,8 +383,6 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
 	}
 }
-
-var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct

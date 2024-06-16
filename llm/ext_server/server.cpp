@@ -359,7 +359,6 @@ struct llama_server_context
 
     // slots / clients
     std::vector<server_slot> slots;
-    json default_generation_settings_for_props;
 
     llama_server_queue    queue_tasks;
     llama_server_response queue_results;
@@ -483,9 +482,6 @@ struct llama_server_context
             slots.push_back(slot);
         }
 
-        default_generation_settings_for_props = get_formated_generation(slots.front());
-        default_generation_settings_for_props["seed"] = -1;
-
         batch = llama_batch_init(n_ctx, 0, params.n_parallel);
     }
 
@@ -584,7 +580,7 @@ struct llama_server_context
         slot->sparams.mirostat_eta      = json_value(data, "mirostat_eta",      default_sparams.mirostat_eta);
         slot->sparams.penalize_nl       = json_value(data, "penalize_nl",       default_sparams.penalize_nl);
         slot->params.n_keep             = json_value(data, "n_keep",            slot->params.n_keep);
-        slot->params.seed               = json_value(data, "seed",              default_params.seed);
+        slot->sparams.seed              = json_value(data, "seed",              default_params.seed);
         slot->sparams.grammar           = json_value(data, "grammar",           default_sparams.grammar);
         slot->sparams.n_probs           = json_value(data, "n_probs",           default_sparams.n_probs);
         slot->sparams.min_keep          = json_value(data, "min_keep",          default_sparams.min_keep);
@@ -811,7 +807,6 @@ struct llama_server_context
             llama_sampling_free(slot->ctx_sampling);
         }
         slot->ctx_sampling = llama_sampling_init(slot->sparams);
-        llama_set_rng_seed(ctx, slot->params.seed);
         slot->command = LOAD_PROMPT;
 
         all_slots_are_idle = false;
@@ -2340,9 +2335,9 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-#ifndef GGML_USE_CUBLAS
-            fprintf(stderr, "warning: llama.cpp was compiled without cuBLAS. Setting the split mode has no effect.\n");
-#endif // GGML_USE_CUBLAS
+#ifndef GGML_USE_CUDA
+            fprintf(stderr, "warning: llama.cpp was compiled without CUDA. Setting the split mode has no effect.\n");
+#endif // GGML_USE_CUDA
         }
         else if (arg == "--tensor-split" || arg == "-ts")
         {
@@ -2351,7 +2346,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-#if defined(GGML_USE_CUBLAS) || defined(GGML_USE_SYCL)
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_SYCL)
             std::string arg_next = argv[i];
 
             // split string by , and /
@@ -2372,8 +2367,8 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 }
             }
 #else
-            LOG_WARNING("llama.cpp was compiled without cuBLAS. It is not possible to set a tensor split.\n", {});
-#endif // GGML_USE_CUBLAS
+            LOG_WARNING("llama.cpp was compiled without CUDA. It is not possible to set a tensor split.\n", {});
+#endif // GGML_USE_CUDA
         }
         else if (arg == "--main-gpu" || arg == "-mg")
         {
@@ -2382,7 +2377,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-#if defined(GGML_USE_CUBLAS) || defined(GGML_USE_SYCL)
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_SYCL)
             params.main_gpu = std::stoi(argv[i]);
 #else
             LOG_WARNING("llama.cpp was compiled without cuBLAS. It is not possible to set a main GPU.", {});
