@@ -238,6 +238,7 @@ type ShowResponse struct {
 	System     string       `json:"system,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
 	Messages   []Message    `json:"messages,omitempty"`
+	ModifiedAt time.Time    `json:"modified_at,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
