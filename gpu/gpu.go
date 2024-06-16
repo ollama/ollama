@@ -294,7 +294,7 @@ func GetGPUInfo() GpuInfoList {
 						GpuInfo: GpuInfo{
 							Library: "oneapi",
 						},
-						driverIndex: d,
+						driverIndex: int(d),
 						gpuIndex:    int(i),
 					}
 					// TODO - split bootstrapping from updating free memory

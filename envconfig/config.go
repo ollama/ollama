@@ -57,6 +57,8 @@ var (
 	SchedSpread bool
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
+	// Set via OLLAMA_INTEL_GPU in the environment
+	IntelGpu bool
 
 	// Set via CUDA_VISIBLE_DEVICES in the environment
 	CudaVisibleDevices string
@@ -68,8 +70,6 @@ var (
 	GpuDeviceOrdinal string
 	// Set via HSA_OVERRIDE_GFX_VERSION in the environment
 	HsaOverrideGfxVersion string
-	// Set via OLLAMA_INTEL_GPU in the environment
-	IntelGpu bool
 )
 
 type EnvVar struct {
