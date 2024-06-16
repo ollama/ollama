@@ -106,7 +106,7 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
-			Name:   "List Model Handler OpenAI (no tags)",
+			Name:   "openai list models no tags",
 			Method: http.MethodGet,
 			Path:   "/v1/models",
 			Expected: func(t *testing.T, resp *http.Response) {
@@ -147,7 +147,7 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
-			Name:   "List Model Handler OpenAI (yes tags)",
+			Name:   "openai list models yes tags",
 			Method: http.MethodGet,
 			Path:   "/v1/models",
 			Expected: func(t *testing.T, resp *http.Response) {
