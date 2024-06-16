@@ -68,6 +68,8 @@ var (
 	GpuDeviceOrdinal string
 	// Set via HSA_OVERRIDE_GFX_VERSION in the environment
 	HsaOverrideGfxVersion string
+	// Set via OLLAMA_INTEL_GPU in the environment
+	IntelGpu bool
 )
 
 type EnvVar struct {
@@ -101,6 +103,7 @@ func AsMap() map[string]EnvVar {
 		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices, "Set which AMD devices are visible"}
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal, "Set which AMD devices are visible"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion, "Override the gfx used for all detected AMD GPUs"}
+		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGpu, "Enable experimental Intel GPU detection"}
 	}
 	return ret
 }
@@ -274,6 +277,10 @@ func LoadConfig() {
 	Host, err = getOllamaHost()
 	if err != nil {
 		slog.Error("invalid setting", "OLLAMA_HOST", Host, "error", err, "using default port", Host.Port)
+	}
+
+	if set, err := strconv.ParseBool(clean("OLLAMA_INTEL_GPU")); err == nil {
+		IntelGpu = set
 	}
 
 	CudaVisibleDevices = clean("CUDA_VISIBLE_DEVICES")
