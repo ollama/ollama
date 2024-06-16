@@ -579,12 +579,6 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(args) == 0 {
-		return errors.New("missing model name")
-	} else if len(args) > 1 {
-		return errors.New("only one model name can be specified")
-	}
-
 	license, errLicense := cmd.Flags().GetBool("license")
 	modelfile, errModelfile := cmd.Flags().GetBool("modelfile")
 	parameters, errParams := cmd.Flags().GetBool("parameters")
@@ -625,68 +619,11 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		showType = "template"
 	}
 
-	switch flagsSet {
-	case 0:
-		req := api.ShowRequest{Name: args[0]}
-		resp, err := client.Show(cmd.Context(), &req)
-		if err != nil {
-			return err
-		}
+	if flagsSet > 1 {
+		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
+	}
 
-		arch := resp.ModelInfo["general.architecture"].(string)
-
-		modelData := [][]string{
-			{"arch", arch},
-			{"parameters", resp.Details.ParameterSize},
-			{"quantization", resp.Details.QuantizationLevel},
-			{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
-			{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
-		}
-
-		mainTableData := [][]string{
-			{"Model"},
-			{renderSubTable(modelData, false)},
-		}
-
-		if slices.Contains(resp.Details.Families, "clip") {
-			projectorData := [][]string{
-				{"arch", "clip"},
-				{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
-				{"projector type", resp.ProjectorInfo["clip.projector_type"].(string)},
-				{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
-				{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
-			}
-
-			mainTableData = append(mainTableData,
-				[]string{"Projector"},
-				[]string{renderSubTable(projectorData, false)},
-			)
-		}
-
-		if resp.Parameters != "" {
-			mainTableData = append(mainTableData, []string{"Parameters"}, []string{handleParams(resp.Parameters)})
-		}
-
-		if resp.System != "" {
-			mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System), true)})
-		}
-
-		if resp.License != "" {
-			mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License), true)})
-		}
-
-		table := tablewriter.NewWriter(os.Stdout)
-		table.SetAutoWrapText(false)
-		table.SetBorder(false)
-		table.SetAlignment(tablewriter.ALIGN_LEFT)
-
-		for _, v := range mainTableData {
-			table.Append(v)
-		}
-
-		table.Render()
-
-	case 1:
+	if flagsSet == 1 {
 		req := api.ShowRequest{Name: args[0]}
 		resp, err := client.Show(cmd.Context(), &req)
 		if err != nil {
@@ -706,9 +643,67 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 			fmt.Println(resp.Template)
 		}
 
-	default:
-		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
+		return nil
 	}
+
+	req := api.ShowRequest{Name: args[0]}
+	resp, err := client.Show(cmd.Context(), &req)
+	if err != nil {
+		return err
+	}
+
+	arch := resp.ModelInfo["general.architecture"].(string)
+
+	modelData := [][]string{
+		{"arch", arch},
+		{"parameters", resp.Details.ParameterSize},
+		{"quantization", resp.Details.QuantizationLevel},
+		{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
+		{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
+	}
+
+	mainTableData := [][]string{
+		{"Model"},
+		{renderSubTable(modelData, false)},
+	}
+
+	if slices.Contains(resp.Details.Families, "clip") {
+		projectorData := [][]string{
+			{"arch", "clip"},
+			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
+			{"projector type", resp.ProjectorInfo["clip.projector_type"].(string)},
+			{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
+			{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
+		}
+
+		mainTableData = append(mainTableData,
+			[]string{"Projector"},
+			[]string{renderSubTable(projectorData, false)},
+		)
+	}
+
+	if resp.Parameters != "" {
+		mainTableData = append(mainTableData, []string{"Parameters"}, []string{handleParams(resp.Parameters)})
+	}
+
+	if resp.System != "" {
+		mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System), true)})
+	}
+
+	if resp.License != "" {
+		mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License), true)})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetAutoWrapText(false)
+	table.SetBorder(false)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	for _, v := range mainTableData {
+		table.Append(v)
+	}
+
+	table.Render()
 
 	return nil
 }
@@ -1236,6 +1231,7 @@ func NewCLI() *cobra.Command {
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
 		Short:   "Show information for a model",
+		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ShowHandler,
 	}

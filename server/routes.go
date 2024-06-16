@@ -720,15 +720,15 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, model.String())
 	resp.Modelfile = sb.String()
 
-	ggmlData, err := getGGMLData(model.ModelPath, req.Verbose)
+	kvData, err := getKVData(model.ModelPath, req.Verbose)
 	if err != nil {
 		return nil, err
 	}
-	delete(ggmlData, "tokenizer.chat_template")
-	resp.ModelInfo = ggmlData
+	delete(kvData, "tokenizer.chat_template")
+	resp.ModelInfo = kvData
 
-	if slices.Contains(resp.Details.Families, "clip") {
-		projectorData, err := getGGMLData(model.ProjectorPaths[0], req.Verbose)
+	if len(model.ProjectorPaths) > 0 {
+		projectorData, err := getKVData(model.ProjectorPaths[0], req.Verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -738,20 +738,13 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	return resp, nil
 }
 
-func getGGMLData(digest string, verbose bool) (llm.KV, error) {
-	f, err := os.Open(digest)
+func getKVData(digest string, verbose bool) (llm.KV, error) {
+	kvData, err := llm.LoadModel(digest)
 	if err != nil {
 		return nil, err
 	}
 
-	defer f.Close()
-
-	ggml, _, err := llm.DecodeGGML(f)
-	if err != nil {
-		return nil, err
-	}
-
-	kv := ggml.KV()
+	kv := kvData.KV()
 
 	if !verbose {
 		for k := range kv {
