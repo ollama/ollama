@@ -53,8 +53,21 @@ var (
 	NumParallel int
 	// Set via OLLAMA_RUNNERS_DIR in the environment
 	RunnersDir string
+	// Set via OLLAMA_SCHED_SPREAD in the environment
+	SchedSpread bool
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
+
+	// Set via CUDA_VISIBLE_DEVICES in the environment
+	CudaVisibleDevices string
+	// Set via HIP_VISIBLE_DEVICES in the environment
+	HipVisibleDevices string
+	// Set via ROCR_VISIBLE_DEVICES in the environment
+	RocrVisibleDevices string
+	// Set via GPU_DEVICE_ORDINAL in the environment
+	GpuDeviceOrdinal string
+	// Set via HSA_OVERRIDE_GFX_VERSION in the environment
+	HsaOverrideGfxVersion string
 )
 
 type EnvVar struct {
@@ -64,7 +77,7 @@ type EnvVar struct {
 }
 
 func AsMap() map[string]EnvVar {
-	return map[string]EnvVar{
+	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host, "IP Address for the ollama server (default 127.0.0.1:11434)"},
@@ -79,8 +92,17 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
+		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread, "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
 	}
+	if runtime.GOOS != "darwin" {
+		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices, "Set which NVIDIA devices are visible"}
+		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices, "Set which AMD devices are visible"}
+		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices, "Set which AMD devices are visible"}
+		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal, "Set which AMD devices are visible"}
+		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion, "Override the gfx used for all detected AMD GPUs"}
+	}
+	return ret
 }
 
 func Values() map[string]string {
@@ -191,6 +213,15 @@ func LoadConfig() {
 		NoHistory = true
 	}
 
+	if spread := clean("OLLAMA_SCHED_SPREAD"); spread != "" {
+		s, err := strconv.ParseBool(spread)
+		if err == nil {
+			SchedSpread = s
+		} else {
+			SchedSpread = true
+		}
+	}
+
 	if noprune := clean("OLLAMA_NOPRUNE"); noprune != "" {
 		NoPrune = true
 	}
@@ -244,6 +275,12 @@ func LoadConfig() {
 	if err != nil {
 		slog.Error("invalid setting", "OLLAMA_HOST", Host, "error", err, "using default port", Host.Port)
 	}
+
+	CudaVisibleDevices = clean("CUDA_VISIBLE_DEVICES")
+	HipVisibleDevices = clean("HIP_VISIBLE_DEVICES")
+	RocrVisibleDevices = clean("ROCR_VISIBLE_DEVICES")
+	GpuDeviceOrdinal = clean("GPU_DEVICE_ORDINAL")
+	HsaOverrideGfxVersion = clean("HSA_OVERRIDE_GFX_VERSION")
 }
 
 func getModelsDir() (string, error) {
