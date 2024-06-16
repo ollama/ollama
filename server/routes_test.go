@@ -253,12 +253,12 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
-			Name:   "Retrieve Model Handler OpenAI",
+			Name:   "openai retrieve model handler",
 			Method: http.MethodGet,
 			Path:   "/v1/models/show-model",
 			Expected: func(t *testing.T, resp *http.Response) {
 				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, "application/json; charset=utf-8", contentType)
+				assert.Equal(t, "application/json", contentType)
 				body, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
 
