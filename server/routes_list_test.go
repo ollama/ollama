@@ -8,10 +8,12 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestList(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	envconfig.LoadConfig()
 
 	expectNames := []string{
 		"mistral:7b-instruct-q4_0",

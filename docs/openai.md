@@ -104,7 +104,6 @@ curl http://localhost:11434/v1/chat/completions \
 
 #### Notes
 
-- Setting `seed` will always set `temperature` to `0`
 - `finish_reason` will always be `stop`
 - `usage.prompt_tokens` will be 0 for completions where prompt evaluation is cached
 
