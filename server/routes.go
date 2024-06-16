@@ -734,15 +734,15 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, m.String())
 	resp.Modelfile = sb.String()
 
-	kvData, err := getKVData(model.ModelPath, req.Verbose)
+	kvData, err := getKVData(m.ModelPath, req.Verbose)
 	if err != nil {
 		return nil, err
 	}
 	delete(kvData, "tokenizer.chat_template")
 	resp.ModelInfo = kvData
 
-	if len(model.ProjectorPaths) > 0 {
-		projectorData, err := getKVData(model.ProjectorPaths[0], req.Verbose)
+	if len(m.ProjectorPaths) > 0 {
+		projectorData, err := getKVData(m.ProjectorPaths[0], req.Verbose)
 		if err != nil {
 			return nil, err
 		}
