@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestGetBlobsPath(t *testing.T) {
@@ -61,6 +63,7 @@ func TestGetBlobsPath(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("OLLAMA_MODELS", dir)
+			envconfig.LoadConfig()
 
 			got, err := GetBlobsPath(tc.digest)
 

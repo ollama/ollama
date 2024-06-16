@@ -211,7 +211,7 @@ if [ -z "${ONEAPI_ROOT}" ]; then
     ONEAPI_ROOT=/opt/intel/oneapi
 fi
 
-if [ -d "${ONEAPI_ROOT}" ]; then
+if [ -z "${OLLAMA_SKIP_ONEAPI_GENERATE}" -a -d "${ONEAPI_ROOT}" ]; then
     echo "OneAPI libraries detected - building dynamic OneAPI library"
     init_vars
     source ${ONEAPI_ROOT}/setvars.sh --force # set up environment variables for oneAPI

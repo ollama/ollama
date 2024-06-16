@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -233,16 +232,15 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License       string         `json:"license,omitempty"`
-	Modelfile     string         `json:"modelfile,omitempty"`
-	Parameters    string         `json:"parameters,omitempty"`
-	Template      string         `json:"template,omitempty"`
-	System        string         `json:"system,omitempty"`
-	Details       ModelDetails   `json:"details,omitempty"`
-	Messages      []Message      `json:"messages,omitempty"`
-	ModelInfo     map[string]any `json:"model_info,omitempty"`
-	ProjectorInfo map[string]any `json:"projector_info,omitempty"`
-}
+	License    string       `json:"license,omitempty"`
+	Modelfile  string       `json:"modelfile,omitempty"`
+	Parameters string       `json:"parameters,omitempty"`
+	Template   string       `json:"template,omitempty"`
+	System     string       `json:"system,omitempty"`
+	Details    ModelDetails `json:"details,omitempty"`
+	Messages   []Message    `json:"messages,omitempty"`
+  ModelInfo     map[string]any `json:"model_info,omitempty"`
+	ModifiedAt time.Time    `json:"modified_at,omitempty"`
 
 // CopyRequest is the request passed to [Client.Copy].
 type CopyRequest struct {
@@ -379,8 +377,6 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
 	}
 }
-
-var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct

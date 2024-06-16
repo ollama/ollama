@@ -1,170 +1,99 @@
-# Import a model
+# Import
 
-This guide walks through importing a GGUF, PyTorch or Safetensors model.
+GGUF models and select Safetensors models can be imported directly into Ollama.
 
-## Importing (GGUF)
+## Import GGUF
 
-### Step 1: Write a `Modelfile`
+A binary GGUF file can be imported directly into Ollama through a Modelfile.
 
-Start by creating a `Modelfile`. This file is the blueprint for your model, specifying weights, parameters, prompt templates and more.
-
-```
-FROM ./mistral-7b-v0.1.Q4_0.gguf
+```dockerfile
+FROM /path/to/file.gguf
 ```
 
-(Optional) many chat models require a prompt template in order to answer correctly. A default prompt template can be specified with the `TEMPLATE` instruction in the `Modelfile`:
+## Import Safetensors
 
-```
-FROM ./mistral-7b-v0.1.Q4_0.gguf
-TEMPLATE "[INST] {{ .Prompt }} [/INST]"
-```
+If the model being imported is one of these architectures, it can be imported directly into Ollama through a Modelfile:
 
-### Step 2: Create the Ollama model
+ - LlamaForCausalLM
+ - MistralForCausalLM
+ - GemmaForCausalLM
 
-Finally, create a model from your `Modelfile`:
-
-```
-ollama create example -f Modelfile
+```dockerfile
+FROM /path/to/safetensors/directory
 ```
 
-### Step 3: Run your model
+For architectures not directly convertable by Ollama, see llama.cpp's [guide](https://github.com/ggerganov/llama.cpp/blob/master/README.md#prepare-and-quantize) on conversion. After conversion, see [Import GGUF](#import-gguf).
 
-Next, test the model with `ollama run`:
+## Automatic Quantization
 
+> [!NOTE]
+> Automatic quantization requires v0.1.35 or higher.
+
+Ollama is capable of quantizing FP16 or FP32 models to any of the supported quantizations with the `-q/--quantize` flag in `ollama create`.
+
+```dockerfile
+FROM /path/to/my/gemma/f16/model
 ```
-ollama run example "What is your favourite condiment?"
-```
-
-## Importing (PyTorch & Safetensors)
-
-> Importing from PyTorch and Safetensors is a longer process than importing from GGUF. Improvements that make it easier are a work in progress.
-
-### Setup
-
-First, clone the `ollama/ollama` repo:
-
-```
-git clone git@github.com:ollama/ollama.git ollama
-cd ollama
-```
-
-and then fetch its `llama.cpp` submodule:
 
 ```shell
-git submodule init
-git submodule update llm/llama.cpp
+$ ollama create -q Q4_K_M mymodel
+transferring model data
+quantizing F16 model to Q4_K_M
+creating new layer sha256:735e246cc1abfd06e9cdcf95504d6789a6cd1ad7577108a70d9902fef503c1bd
+creating new layer sha256:0853f0ad24e5865173bbf9ffcc7b0f5d56b66fd690ab1009867e45e7d2c4db0f
+writing manifest
+success
 ```
 
-Next, install the Python dependencies:
+### Supported Quantizations
 
-```
-python3 -m venv llm/llama.cpp/.venv
-source llm/llama.cpp/.venv/bin/activate
-pip install -r llm/llama.cpp/requirements.txt
-```
+<details>
+<summary>Legacy Quantization</summary>
 
-Then build the `quantize` tool:
+- `Q4_0`
+- `Q4_1`
+- `Q5_0`
+- `Q5_1`
+- `Q8_0`
 
-```
-make -C llm/llama.cpp quantize
-```
+</details>
 
-### Clone the HuggingFace repository (optional)
+<details>
+<summary>K-means Quantization</summary>`
 
-If the model is currently hosted in a HuggingFace repository, first clone that repository to download the raw model.
+- `Q3_K_S`
+- `Q3_K_M`
+- `Q3_K_L`
+- `Q4_K_S`
+- `Q4_K_M`
+- `Q5_K_S`
+- `Q5_K_M`
+- `Q6_K`
 
-Install [Git LFS](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage), verify it's installed, and then clone the model's repository:
+</details>
 
-```
-git lfs install
-git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 model
-```
+> [!NOTE]
+> Activation-aware Weight Quantization (i.e. IQ) are not currently supported for automatic quantization however you can still import the quantized model into Ollama, see [Import GGUF](#import-gguf).
 
-### Convert the model
+## Template Detection
 
-> Note: some model architectures require using specific convert scripts. For example, Qwen models require running `convert-hf-to-gguf.py` instead of `convert.py`
+> [!NOTE]
+> Template detection requires v0.1.42 or higher.
 
-```
-python llm/llama.cpp/convert.py ./model --outtype f16 --outfile converted.bin
-```
+Ollama uses model metadata, specifically `tokenizer.chat_template`, to automatically create a template appropriate for the model you're importing.
 
-### Quantize the model
-
-```
-llm/llama.cpp/quantize converted.bin quantized.bin q4_0
-```
-
-### Step 3: Write a `Modelfile`
-
-Next, create a `Modelfile` for your model:
-
-```
-FROM quantized.bin
-TEMPLATE "[INST] {{ .Prompt }} [/INST]"
+```dockerfile
+FROM /path/to/my/gemma/model
 ```
 
-### Step 4: Create the Ollama model
-
-Finally, create a model from your `Modelfile`:
-
-```
-ollama create example -f Modelfile
-```
-
-### Step 5: Run your model
-
-Next, test the model with `ollama run`:
-
-```
-ollama run example "What is your favourite condiment?"
+```shell
+$ ollama create mymodel
+transferring model data
+using autodetected template gemma-instruct
+creating new layer sha256:baa2a0edc27d19cc6b7537578a9a7ba1a4e3214dc185ed5ae43692b319af7b84
+creating new layer sha256:ba66c3309914dbef07e5149a648fd1877f030d337a4f240d444ea335008943cb
+writing manifest
+success
 ```
 
-## Publishing your model (optional – early alpha)
-
-Publishing models is in early alpha. If you'd like to publish your model to share with others, follow these steps:
-
-1. Create [an account](https://ollama.com/signup)
-2. Copy your Ollama public key:
-  - macOS: `cat ~/.ollama/id_ed25519.pub | pbcopy`
-  - Windows: `type %USERPROFILE%\.ollama\id_ed25519.pub`
-  - Linux: `cat /usr/share/ollama/.ollama/id_ed25519.pub`
-3. Add your public key to your [Ollama account](https://ollama.com/settings/keys)
-
-Next, copy your model to your username's namespace:
-
-```
-ollama cp example <your username>/example
-```
-
-> Note: model names may only contain lowercase letters, digits, and the characters `.`, `-`, and `_`.
-
-Then push the model:
-
-```
-ollama push <your username>/example
-```
-
-After publishing, your model will be available at `https://ollama.com/<your username>/example`.
-
-## Quantization reference
-
-The quantization options are as follow (from highest highest to lowest levels of quantization). Note: some architectures such as Falcon do not support K quants.
-
-- `q2_K`
-- `q3_K`
-- `q3_K_S`
-- `q3_K_M`
-- `q3_K_L`
-- `q4_0` (recommended)
-- `q4_1`
-- `q4_K`
-- `q4_K_S`
-- `q4_K_M`
-- `q5_0`
-- `q5_1`
-- `q5_K`
-- `q5_K_S`
-- `q5_K_M`
-- `q6_K`
-- `q8_0`
-- `f16`
+Defining a template in the Modelfile will disable this feature which may be useful if you want to use a different template than the autodetected one.

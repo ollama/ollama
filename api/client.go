@@ -23,11 +23,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"runtime"
-	"strconv"
-	"strings"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/version"
 )
@@ -65,10 +63,7 @@ func checkError(resp *http.Response, body []byte) error {
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
-	ollamaHost, err := GetOllamaHost()
-	if err != nil {
-		return nil, err
-	}
+	ollamaHost := envconfig.Host
 
 	return &Client{
 		base: &url.URL{
@@ -76,52 +71,6 @@ func ClientFromEnvironment() (*Client, error) {
 			Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
 		},
 		http: http.DefaultClient,
-	}, nil
-}
-
-type OllamaHost struct {
-	Scheme string
-	Host   string
-	Port   string
-}
-
-func GetOllamaHost() (OllamaHost, error) {
-	defaultPort := "11434"
-
-	hostVar := os.Getenv("OLLAMA_HOST")
-	hostVar = strings.TrimSpace(strings.Trim(strings.TrimSpace(hostVar), "\"'"))
-
-	scheme, hostport, ok := strings.Cut(hostVar, "://")
-	switch {
-	case !ok:
-		scheme, hostport = "http", hostVar
-	case scheme == "http":
-		defaultPort = "80"
-	case scheme == "https":
-		defaultPort = "443"
-	}
-
-	// trim trailing slashes
-	hostport = strings.TrimRight(hostport, "/")
-
-	host, port, err := net.SplitHostPort(hostport)
-	if err != nil {
-		host, port = "127.0.0.1", defaultPort
-		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
-			host = ip.String()
-		} else if hostport != "" {
-			host = hostport
-		}
-	}
-
-	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 0 {
-		return OllamaHost{}, ErrInvalidHostPort
-	}
-
-	return OllamaHost{
-		Scheme: scheme,
-		Host:   host,
-		Port:   port,
 	}, nil
 }
 

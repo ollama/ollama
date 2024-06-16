@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/unicode"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -517,14 +519,6 @@ PARAMETER param1 1
 PARAMETER param2 4096
 SYSTEM You are a utf16 file.
 `
-	// simulate a utf16 le file
-	utf16File := utf16.Encode(append([]rune{'\ufffe'}, []rune(data)...))
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, utf16File)
-	require.NoError(t, err)
-
-	actual, err := ParseFile(buf)
-	require.NoError(t, err)
 
 	expected := []Command{
 		{Name: "model", Args: "bob"},
@@ -533,14 +527,52 @@ SYSTEM You are a utf16 file.
 		{Name: "system", Args: "You are a utf16 file."},
 	}
 
-	assert.Equal(t, expected, actual.Commands)
+	t.Run("le", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, binary.Write(&b, binary.LittleEndian, []byte{0xff, 0xfe}))
+		require.NoError(t, binary.Write(&b, binary.LittleEndian, utf16.Encode([]rune(data))))
 
-	// simulate a utf16 be file
-	buf = new(bytes.Buffer)
-	err = binary.Write(buf, binary.BigEndian, utf16File)
-	require.NoError(t, err)
+		actual, err := ParseFile(&b)
+		require.NoError(t, err)
 
-	actual, err = ParseFile(buf)
-	require.NoError(t, err)
-	assert.Equal(t, expected, actual.Commands)
+		assert.Equal(t, expected, actual.Commands)
+	})
+
+	t.Run("be", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, binary.Write(&b, binary.BigEndian, []byte{0xfe, 0xff}))
+		require.NoError(t, binary.Write(&b, binary.BigEndian, utf16.Encode([]rune(data))))
+
+		actual, err := ParseFile(&b)
+		require.NoError(t, err)
+		assert.Equal(t, expected, actual.Commands)
+	})
+}
+
+func TestParseMultiByte(t *testing.T) {
+	input := `FROM test
+	SYSTEM 你好👋`
+
+	expect := []Command{
+		{Name: "model", Args: "test"},
+		{Name: "system", Args: "你好👋"},
+	}
+
+	encodings := []encoding.Encoding{
+		unicode.UTF8,
+		unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
+		unicode.UTF16(unicode.BigEndian, unicode.UseBOM),
+	}
+
+	for _, encoding := range encodings {
+		t.Run(fmt.Sprintf("%s", encoding), func(t *testing.T) {
+			s, err := encoding.NewEncoder().String(input)
+			require.NoError(t, err)
+
+			actual, err := ParseFile(strings.NewReader(s))
+			require.NoError(t, err)
+
+			assert.Equal(t, expect, actual.Commands)
+		})
+	}
 }

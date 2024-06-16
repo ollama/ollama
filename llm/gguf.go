@@ -618,22 +618,8 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 		}
 	}
 
-	offset, err := ws.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-
 	var alignment int64 = 32
-	padding := llm.padding(offset, alignment)
-	if err := binary.Write(ws, llm.ByteOrder, bytes.Repeat([]byte{0}, int(padding))); err != nil {
-		return err
-	}
-
 	for _, tensor := range tensors {
-		if _, err := tensor.WriteTo(ws); err != nil {
-			return err
-		}
-
 		offset, err := ws.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -641,6 +627,10 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 
 		padding := llm.padding(offset, alignment)
 		if err := binary.Write(ws, llm.ByteOrder, bytes.Repeat([]byte{0}, int(padding))); err != nil {
+			return err
+		}
+
+		if _, err := tensor.WriteTo(ws); err != nil {
 			return err
 		}
 	}
