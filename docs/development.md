@@ -123,7 +123,7 @@ First, install required tools:
 - MinGW (pick one variant) with GCC.
   - [MinGW-w64](https://www.mingw-w64.org/)
   - [MSYS2](https://www.msys2.org/)
-- The `ThreadJob` Powershell module `Install-Module -Name ThreadJob -Scope CurrentUser`
+- The `ThreadJob` Powershell module: `Install-Module -Name ThreadJob -Scope CurrentUser`
 
 Then, build the `ollama` binary:
 
