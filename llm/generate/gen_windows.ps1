@@ -123,8 +123,13 @@ function build {
     & cmake --version
     & cmake -S "${script:llamacppDir}" -B $script:buildDir $script:cmakeDefs
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ })"
-    & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ })
+    if ($cmakeDefs -contains "-G") {
+        $extra=@("-j8")
+    } else {
+        $extra= @("--", "/p:CL_MPcount=8")
+    }
+    write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ }) $extra"
+    & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ }) $extra
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     # Rearrange output to be consistent between different generators
     if ($null -ne ${script:config} -And (test-path -path "${script:buildDir}/bin/${script:config}" ) ) {
@@ -272,7 +277,15 @@ function build_cuda() {
         init_vars
         $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
         $script:distDir="$script:DIST_BASE\cuda$script:CUDA_VARIANT"
-        $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+        $script:cmakeDefs += @(
+            "-A", "x64",
+            "-DLLAMA_CUDA=ON",
+            "-DLLAMA_AVX=on",
+            "-DLLAMA_AVX2=off",
+            "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR",
+            "-DCMAKE_CUDA_FLAGS=-t8",
+            "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}"
+            )
         if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
             write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${env:OLLAMA_CUSTOM_CUDA_DEFS}`""
             $script:cmakeDefs +=@("${env:OLLAMA_CUSTOM_CUDA_DEFS}")
