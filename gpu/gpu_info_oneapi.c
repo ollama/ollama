@@ -98,7 +98,7 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
   }
 
   for (d = 0; d < resp->oh.num_drivers; d++) {
-    LOG(resp->oh.verbose, "calling zesDeviceGet %d\n", resp->oh.drivers[d]);
+    LOG(resp->oh.verbose, "calling zesDeviceGet count %d: %p\n", d, resp->oh.drivers[d]);
     ret = (*resp->oh.zesDeviceGet)(resp->oh.drivers[d],
                                    &resp->oh.num_devices[d], NULL);
     if (ret != ZE_RESULT_SUCCESS) {
