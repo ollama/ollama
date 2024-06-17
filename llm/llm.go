@@ -7,6 +7,7 @@ package llm
 // #cgo windows,arm64 LDFLAGS: ${SRCDIR}/build/windows/arm64_static/libllama.a -static -lstdc++
 // #cgo linux,amd64 LDFLAGS: ${SRCDIR}/build/linux/x86_64_static/libllama.a -lstdc++
 // #cgo linux,arm64 LDFLAGS: ${SRCDIR}/build/linux/arm64_static/libllama.a -lstdc++
+// #cgo linux,loong64 LDFLAGS: ${SRCDIR}/build/linux/loongarch64_static/libllama.a -lstdc++
 // #include <stdlib.h>
 // #include "llama.h"
 import "C"

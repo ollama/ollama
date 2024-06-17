@@ -51,7 +51,7 @@ if [ -z "${CUDACXX}" ]; then
         export CUDACXX=$(command -v nvcc)
     fi
 fi
-COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off"
+COMMON_CMAKE_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DLLAMA_LASX=off -DLLAMA_LSX=off"
 source $(dirname $0)/gen_common.sh
 init_vars
 git_module_setup
@@ -64,7 +64,7 @@ if [ -z "${OLLAMA_SKIP_STATIC_GENERATE}" -o "${OLLAMA_CPU_TARGET}" = "static" ];
     # Static build for linking into the Go binary
     init_vars
     CMAKE_TARGETS="--target llama --target ggml"
-    CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DLLAMA_NATIVE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+    CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DLLAMA_NATIVE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DLLAMA_LASX=off -DLLAMA_LSX=off ${CMAKE_DEFS}"
     BUILD_DIR="../build/linux/${ARCH}_static"
     echo "Building static library"
     build
@@ -92,6 +92,8 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
         # -DLLAMA_AVX512 -- 2017 Intel Skylake and High End DeskTop (HEDT)
         # -DLLAMA_AVX512_VBMI -- 2018 Intel Cannon Lake
         # -DLLAMA_AVX512_VNNI -- 2021 Intel Alder Lake
+        # -DLLAMA_LASX -- 2021 Loongson LA464
+        # -DLLAMA_LSX -- 2021 Loongson LA464
 
         COMMON_CPU_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DLLAMA_NATIVE=off"
         if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu" ]; then
@@ -99,7 +101,7 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
             # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
             #
             init_vars
-            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+            CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DLLAMA_LASX=off -DLLAMA_LSX=off ${CMAKE_DEFS}"
             BUILD_DIR="../build/linux/${ARCH}/cpu"
             echo "Building LCD CPU"
             build
@@ -116,7 +118,7 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 # Approximately 400% faster than LCD on same CPU
                 #
                 init_vars
-                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DLLAMA_LASX=off -DLLAMA_LSX=off ${CMAKE_DEFS}"
                 BUILD_DIR="../build/linux/${ARCH}/cpu_avx"
                 echo "Building AVX CPU"
                 build
@@ -129,9 +131,26 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 # Approximately 10% faster than AVX on same CPU
                 #
                 init_vars
-                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
+                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on -DLLAMA_LASX=off -DLLAMA_LSX=off ${CMAKE_DEFS}"
                 BUILD_DIR="../build/linux/${ARCH}/cpu_avx2"
                 echo "Building AVX2 CPU"
+                build
+                compress
+            fi
+        fi
+
+        if [ "${ARCH}" == "loongarch64" ]; then
+            #
+            # LoongArch LA464 or new one support LASX LSX extensions.
+            #
+            if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_lasx_lsx" ]; then
+                #
+                # 2021 Loongson LA464
+                #
+                init_vars
+                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DLLAMA_LASX=on -DLLAMA_LSX=on ${CMAKE_DEFS}"
+                BUILD_DIR="../build/linux/${ARCH}/cpu_lasx_lsx"
+                echo "Building LASX LoongArch"
                 build
                 compress
             fi
