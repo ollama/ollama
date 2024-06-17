@@ -683,7 +683,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if resp.Parameters != "" {
-		mainTableData = append(mainTableData, []string{"Parameters"}, []string{handleParams(resp.Parameters)})
+		mainTableData = append(mainTableData, []string{"Parameters"}, []string{formatParams(resp.Parameters)})
 	}
 
 	if resp.System != "" {
@@ -750,7 +750,7 @@ func twoLines(s string) [][]string {
 	return res
 }
 
-func handleParams(s string) string {
+func formatParams(s string) string {
 	lines := strings.Split(s, "\n")
 	table := [][]string{}
 
