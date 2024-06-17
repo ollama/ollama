@@ -27,7 +27,7 @@ case "${GOARCH}" in
     # Static build for linking into the Go binary
     init_vars
     CMAKE_TARGETS="--target llama --target ggml"
-    CMAKE_DEFS="${COMMON_CPU_DEFS} -DBUILD_SHARED_LIBS=off -DLLAMA_ACCELERATE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+    CMAKE_DEFS="${COMMON_CPU_DEFS} -DBUILD_SHARED_LIBS=off -DLLAMA_BLAS=off -DLLAMA_ACCELERATE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
     BUILD_DIR="../build/darwin/${ARCH}_static"
     echo "Building static library"
     build
@@ -37,7 +37,7 @@ case "${GOARCH}" in
         # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
         #
         init_vars
-        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=off -DLLAMA_BLAS=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
         BUILD_DIR="../build/darwin/${ARCH}/cpu"
         echo "Building LCD CPU"
         build
@@ -49,7 +49,7 @@ case "${GOARCH}" in
         # Approximately 400% faster than LCD on same CPU
         #
         init_vars
-        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=off -DLLAMA_BLAS=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
         BUILD_DIR="../build/darwin/${ARCH}/cpu_avx"
         echo "Building AVX CPU"
         build
@@ -61,7 +61,7 @@ case "${GOARCH}" in
         # Approximately 10% faster than AVX on same CPU
         #
         init_vars
-        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=on -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
+        CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_ACCELERATE=on -DLLAMA_BLAS=off -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=off -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
         BUILD_DIR="../build/darwin/${ARCH}/cpu_avx2"
         echo "Building AVX2 CPU"
         EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation"
