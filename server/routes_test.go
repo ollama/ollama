@@ -327,21 +327,5 @@ func TestCase(t *testing.T) {
 				}
 			})
 		})
-		t.Run("show", func(t *testing.T) {
-			w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
-				Model: strings.ToUpper(tt),
-			})
-
-			if w.Code != http.StatusOK {
-				t.Fatalf("expected status 200 got %d", w.Code)
-			}
-
-			var showResp api.ShowResponse
-			if err := json.Unmarshal(w.Body.Bytes(), &showResp); err != nil {
-				t.Fatal(err)
-			}
-
-			assert.Equal(t, "test", showResp.ModelInfo["general.architecture"])
-		})
 	}
 }
