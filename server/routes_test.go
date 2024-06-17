@@ -19,7 +19,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -265,11 +264,9 @@ func TestCase(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt, func(t *testing.T) {
 			w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
-				Name: tt,
-				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
-					"general.architecture": "test",
-				}, nil)),
-				Stream: &stream,
+				Name:      tt,
+				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+				Stream:    &stream,
 			})
 
 			if w.Code != http.StatusOK {
