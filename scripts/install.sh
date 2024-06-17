@@ -135,6 +135,7 @@ $SUDO install -o0 -g0 -m755 ${TEMP_DIR}/${UNINSTALL_SCRIPT} ${BINDIR}/${UNINSTAL
 install_success() {
     status 'The Ollama API is now available at 127.0.0.1:11434.'
     status 'Install complete. Run "ollama" from the command line.'
+    status "Run \"${UNINSTALL_SCRIPT}\" from the command line to uninstall."
 }
 trap install_success EXIT
 
