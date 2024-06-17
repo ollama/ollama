@@ -19,6 +19,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -212,6 +213,7 @@ func Test_Routes(t *testing.T) {
 					"top_p 0.9",
 				}
 				assert.Equal(t, expectedParams, params)
+				assert.InDelta(t, 0, showResp.ModelInfo["general.parameter_count"], 1e-9, "Parameter count should be 0")
 			},
 		},
 	}
@@ -263,9 +265,11 @@ func TestCase(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt, func(t *testing.T) {
 			w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
-				Name:      tt,
-				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-				Stream:    &stream,
+				Name: tt,
+				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
+					"general.architecture": "test",
+				}, nil)),
+				Stream: &stream,
 			})
 
 			if w.Code != http.StatusOK {
@@ -322,6 +326,22 @@ func TestCase(t *testing.T) {
 					t.Fatalf("expected error %s got %s", expect, w.Body.String())
 				}
 			})
+		})
+		t.Run("show", func(t *testing.T) {
+			w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
+				Model: strings.ToUpper(tt),
+			})
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200 got %d", w.Code)
+			}
+
+			var showResp api.ShowResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &showResp); err != nil {
+				t.Fatal(err)
+			}
+
+			assert.Equal(t, "test", showResp.ModelInfo["general.architecture"])
 		})
 	}
 }
