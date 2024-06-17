@@ -159,18 +159,21 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool `json:"numa,omitempty"`
-	NumCtx    int  `json:"num_ctx,omitempty"`
-	NumBatch  int  `json:"num_batch,omitempty"`
-	NumGPU    int  `json:"num_gpu,omitempty"`
-	MainGPU   int  `json:"main_gpu,omitempty"`
-	LowVRAM   bool `json:"low_vram,omitempty"`
-	F16KV     bool `json:"f16_kv,omitempty"`
-	LogitsAll bool `json:"logits_all,omitempty"`
-	VocabOnly bool `json:"vocab_only,omitempty"`
-	UseMMap   bool `json:"use_mmap,omitempty"`
-	UseMLock  bool `json:"use_mlock,omitempty"`
-	NumThread int  `json:"num_thread,omitempty"`
+	UseNUMA        bool   `json:"numa,omitempty"`
+	NumCtx         int    `json:"num_ctx,omitempty"`
+	NumBatch       int    `json:"num_batch,omitempty"`
+	NumGPU         int    `json:"num_gpu,omitempty"`
+	MainGPU        int    `json:"main_gpu,omitempty"`
+	LowVRAM        bool   `json:"low_vram,omitempty"`
+	F16KV          bool   `json:"f16_kv,omitempty"`
+	LogitsAll      bool   `json:"logits_all,omitempty"`
+	VocabOnly      bool   `json:"vocab_only,omitempty"`
+	UseMMap        bool   `json:"use_mmap,omitempty"`
+	UseMLock       bool   `json:"use_mlock,omitempty"`
+	NumThread      int    `json:"num_thread,omitempty"`
+	FlashAttention bool   `json:"flash_attn,omitempty"`
+	CacheTypeK     string `json:"cache_type_k,omitempty"`
+	CacheTypeV     string `json:"cache_type_v,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].

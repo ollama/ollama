@@ -188,7 +188,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--memory-f32")
 	}
 
-	flashAttnEnabled := envconfig.FlashAttention
+	flashAttnEnabled := envconfig.FlashAttention || opts.FlashAttention
 
 	for _, g := range gpus {
 		// only cuda (compute capability 7+) and metal support flash attention
@@ -206,6 +206,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	if flashAttnEnabled {
 		params = append(params, "--flash-attn")
+
+		// Setting the KV cache type is only supported with flash attention
+		if opts.CacheTypeK != "" {
+			params = append(params, "--cache-type-k", opts.CacheTypeK)
+		}
+
+		if opts.CacheTypeV != "" {
+			params = append(params, "--cache-type-v", opts.CacheTypeV)
+		}
 	}
 
 	if !opts.UseMMap {
@@ -704,6 +713,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"penalize_nl":       req.Options.PenalizeNewline,
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
+		"cache_type_k":      req.Options.CacheTypeK,
+		"cache_type_v":      req.Options.CacheTypeV,
 		"image_data":        req.Images,
 		"cache_prompt":      true,
 	}
