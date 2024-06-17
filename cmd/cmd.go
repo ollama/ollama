@@ -667,7 +667,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		{renderSubTable(modelData, false)},
 	}
 
-	if slices.Contains(resp.Details.Families, "clip") {
+	if resp.ProjectorInfo != nil {
 		projectorData := [][]string{
 			{"arch", "clip"},
 			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
