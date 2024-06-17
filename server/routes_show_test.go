@@ -17,9 +17,14 @@ func TestShow(t *testing.T) {
 	envconfig.LoadConfig()
 
 	var s Server
+
 	createRequest(t, s.CreateModelHandler, api.CreateRequest{
-		Name:      "show-model",
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{"general.architecture": "test"}, nil)),
+		Name: "show-model",
+		Modelfile: fmt.Sprintf(
+			"FROM %s\nFROM %s",
+			createBinFile(t, llm.KV{"general.architecture": "test"}, nil),
+			createBinFile(t, llm.KV{"general.architecture": "clip"}, nil),
+		),
 	})
 
 	w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
@@ -36,4 +41,5 @@ func TestShow(t *testing.T) {
 	}
 
 	assert.Equal(t, "test", resp.ModelInfo["general.architecture"])
+	assert.Equal(t, "clip", resp.ProjectorInfo["general.architecture"])
 }
