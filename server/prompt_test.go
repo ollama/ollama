@@ -1,215 +1,214 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/template"
 )
 
-func TestPrompt(t *testing.T) {
-	tests := []struct {
-		name     string
-		template string
-		system   string
-		prompt   string
-		response string
-		generate bool
-		want     string
-	}{
-		{
-			name:     "simple prompt",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			system:   "You are a Wizard.",
-			prompt:   "What are the potion ingredients?",
-			want:     "[INST] You are a Wizard. What are the potion ingredients? [/INST]",
-		},
-		{
-			name:     "implicit response",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST]",
-			system:   "You are a Wizard.",
-			prompt:   "What are the potion ingredients?",
-			response: "I don't know.",
-			want:     "[INST] You are a Wizard. What are the potion ingredients? [/INST]I don't know.",
-		},
-		{
-			name:     "response",
-			template: "[INST] {{ .System }} {{ .Prompt }} [/INST] {{ .Response }}",
-			system:   "You are a Wizard.",
-			prompt:   "What are the potion ingredients?",
-			response: "I don't know.",
-			want:     "[INST] You are a Wizard. What are the potion ingredients? [/INST] I don't know.",
-		},
-		{
-			name:     "cut",
-			template: "<system>{{ .System }}</system><user>{{ .Prompt }}</user><assistant>{{ .Response }}</assistant>",
-			system:   "You are a Wizard.",
-			prompt:   "What are the potion ingredients?",
-			response: "I don't know.",
-			generate: true,
-			want:     "<system>You are a Wizard.</system><user>What are the potion ingredients?</user><assistant>I don't know.",
-		},
-		{
-			name:     "nocut",
-			template: "<system>{{ .System }}</system><user>{{ .Prompt }}</user><assistant>{{ .Response }}</assistant>",
-			system:   "You are a Wizard.",
-			prompt:   "What are the potion ingredients?",
-			response: "I don't know.",
-			want:     "<system>You are a Wizard.</system><user>What are the potion ingredients?</user><assistant>I don't know.</assistant>",
-		},
+type mock struct {
+	llm.LlamaServer
+}
+
+func (m mock) Tokenize(_ context.Context, s string) (tokens []int, err error) {
+	for range strings.Fields(s) {
+		tokens = append(tokens, len(tokens))
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tmpl, err := template.Parse(tc.template)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			got, err := Prompt(tmpl, tc.system, tc.prompt, tc.response, tc.generate)
-			if err != nil {
-				t.Errorf("error = %v", err)
-			}
-
-			if got != tc.want {
-				t.Errorf("got = %v, want %v", got, tc.want)
-			}
-		})
-	}
+	return
 }
 
 func TestChatPrompt(t *testing.T) {
-	tests := []struct {
-		name     string
-		template string
-		messages []api.Message
-		window   int
-		want     string
+	type expect struct {
+		prompt string
+		images [][]byte
+	}
+
+	cases := []struct {
+		name  string
+		limit int
+		msgs  []api.Message
+		expect
 	}{
 		{
-			name:     "simple prompt",
-			template: "[INST] {{ .Prompt }} [/INST]",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
+			name:  "messages",
+			limit: 64,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
-			window: 1024,
-			want:   "[INST] Hello [/INST]",
+			expect: expect{
+				prompt: "You're a test, Harry! I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
+			},
 		},
 		{
-			name:     "with system message",
-			template: "[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>> {{ end }}{{ .Prompt }} [/INST]",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a Wizard."},
-				{Role: "user", Content: "Hello"},
+			name: "truncate messages",
+			limit: 1,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
-			window: 1024,
-			want:   "[INST] <<SYS>>You are a Wizard.<</SYS>> Hello [/INST]",
+			expect: expect{
+				prompt: "A test. And a thumping good one at that, I'd wager. ",
+			},
 		},
 		{
-			name:     "with response",
-			template: "[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>> {{ end }}{{ .Prompt }} [/INST] {{ .Response }}",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a Wizard."},
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "I am?"},
+			name: "truncate messages with image",
+			limit: 64,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("something")}},
 			},
-			window: 1024,
-			want:   "[INST] <<SYS>>You are a Wizard.<</SYS>> Hello [/INST] I am?",
+			expect: expect{
+				prompt: "[img-0] A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("something"),
+				},
+			},
 		},
 		{
-			name:     "with implicit response",
-			template: "[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>> {{ end }}{{ .Prompt }} [/INST]",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a Wizard."},
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "I am?"},
+			name: "truncate messages with images",
+			limit: 64,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
 			},
-			window: 1024,
-			want:   "[INST] <<SYS>>You are a Wizard.<</SYS>> Hello [/INST]I am?",
+			expect: expect{
+				prompt: "[img-0] A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("somethingelse"),
+				},
+			},
 		},
 		{
-			name:     "with conversation",
-			template: "[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>> {{ end }}{{ .Prompt }} [/INST] {{ .Response }} ",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a Wizard."},
-				{Role: "user", Content: "What are the potion ingredients?"},
-				{Role: "assistant", Content: "sugar"},
-				{Role: "user", Content: "Anything else?"},
+			name: "messages with images",
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
 			},
-			window: 1024,
-			want:   "[INST] <<SYS>>You are a Wizard.<</SYS>> What are the potion ingredients? [/INST] sugar [INST] Anything else? [/INST] ",
+			expect: expect{
+				prompt: "[img-0] You're a test, Harry! I-I'm a what? [img-1] A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("something"),
+					[]byte("somethingelse"),
+				},
+			},
 		},
 		{
-			name:     "with truncation",
-			template: "{{ .System }} {{ .Prompt }} {{ .Response }} ",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a Wizard."},
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "I am?"},
-				{Role: "user", Content: "Why is the sky blue?"},
-				{Role: "assistant", Content: "The sky is blue from rayleigh scattering"},
+			name: "message with image tag",
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry! [img]", Images: []api.ImageData{[]byte("something")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
 			},
-			window: 10,
-			want:   "You are a Wizard. Why is the sky blue? The sky is blue from rayleigh scattering",
+			expect: expect{
+				prompt: "You're a test, Harry! [img-0] I-I'm a what? [img-1] A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("something"),
+					[]byte("somethingelse"),
+				},
+			},
 		},
 		{
-			name:     "images",
-			template: "{{ .System }} {{ .Prompt }}",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a Wizard."},
-				{Role: "user", Content: "Hello", Images: []api.ImageData{[]byte("base64")}},
+			name: "messages with interleaved images",
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "user", Images: []api.ImageData{[]byte("something")}},
+				{Role: "user", Images: []api.ImageData{[]byte("somethingelse")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
-			window: 1024,
-			want:   "You are a Wizard. [img-0] Hello",
+			expect: expect{
+				prompt: "You're a test, Harry!\n\n[img-0]\n\n[img-1] I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("something"),
+					[]byte("somethingelse"),
+				},
+			},
 		},
 		{
-			name:     "images truncated",
-			template: "{{ .System }} {{ .Prompt }}",
-			messages: []api.Message{
-				{Role: "system", Content: "You are a Wizard."},
-				{Role: "user", Content: "Hello", Images: []api.ImageData{[]byte("img1"), []byte("img2")}},
+			name: "truncate message with interleaved images",
+			limit: 1024,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "user", Images: []api.ImageData{[]byte("something")}},
+				{Role: "user", Images: []api.ImageData{[]byte("somethingelse")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
-			window: 1024,
-			want:   "You are a Wizard. [img-0] [img-1] Hello",
+			expect: expect{
+				prompt: "[img-0] I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("somethingelse"),
+				},
+			},
 		},
 		{
-			name:     "empty list",
-			template: "{{ .System }} {{ .Prompt }}",
-			messages: []api.Message{},
-			window:   1024,
-			want:     "",
-		},
-		{
-			name:     "empty prompt",
-			template: "[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>> {{ end }}{{ .Prompt }} [/INST] {{ .Response }} ",
-			messages: []api.Message{
-				{Role: "user", Content: ""},
+			name: "message with system prompt",
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "system", Content: "You are the Test Who Lived."},
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
-			window: 1024,
-			want:   "",
+			expect: expect{
+				prompt: "You're a test, Harry! I-I'm a what? You are the Test Who Lived. A test. And a thumping good one at that, I'd wager. ",
+			},
 		},
 	}
 
-	encode := func(s string) ([]int, error) {
-		words := strings.Fields(s)
-		return make([]int, len(words)), nil
+	tmpl, err := template.Parse(`
+{{- if .System }}{{ .System }} {{ end }}
+{{- if .Prompt }}{{ .Prompt }} {{ end }}
+{{- if .Response }}{{ .Response }} {{ end }}`)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tmpl, err := template.Parse(tc.template)
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			r := runnerRef{
+				llama:   mock{},
+				model:   &Model{Template: tmpl, ProjectorPaths: []string{"vision"}},
+				Options: &api.Options{},
+			}
+
+			r.NumCtx = tt.limit
+			prompt, images, err := chatPrompt(context.TODO(), &r, tt.msgs)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			got, err := ChatPrompt(tmpl, tc.messages, tc.window, encode)
-			if err != nil {
-				t.Errorf("error = %v", err)
+			if tt.prompt != prompt {
+				t.Errorf("expected %q, got %q", tt.prompt, prompt)
 			}
 
-			if got != tc.want {
-				t.Errorf("got: %q, want: %q", got, tc.want)
+			if len(images) != len(tt.images) {
+				t.Fatalf("expected %d images, got %d", len(tt.images), len(images))
+			}
+
+			for i := range images {
+				if images[i].ID != i {
+					t.Errorf("expected ID %d, got %d", i, images[i].ID)
+				}
+
+				if !bytes.Equal(images[i].Data, tt.images[i]) {
+					t.Errorf("expected %q, got %q", tt.images[i], images[i])
+				}
 			}
 		})
 	}
