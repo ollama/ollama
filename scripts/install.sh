@@ -79,9 +79,15 @@ UNINSTALL_SCRIPT=ollama_uninstall.sh
 
 cat <<'EOF' | $SUDO tee ${TEMP_DIR}/${UNINSTALL_SCRIPT} >/dev/null
 #!/bin/bash
+
+set -eu
+
 TMPFILE=$(mktemp -t ollama_uninstallXXXX.log)
 
-echo "Uninstalling ollama. Logs are in ${TMPFILE}"
+# Helper functions
+status() { echo ">>> $*" >&2; }
+error() { echo "ERROR $*"; exit 1; }
+warning() { echo "WARNING: $*"; }
 
 function run_redirect() {
     echo "Running: '$*'" >> ${TMPFILE} 2>&1
@@ -89,18 +95,39 @@ function run_redirect() {
     echo "" >> ${TMPFILE}  2>&1
 }
 
+# Check to see if sudo is needed. Set SUDO if so.
+SUDO=
+if [ "$(id -u)" -ne 0 ]; then
+    # Running as root, no need for sudo
+    if ! command -v sudo >/dev/null; then
+        error "This script requires superuser permissions. Please re-run as root."
+    fi
+    SUDO="sudo"
+fi
+
+status "Uninstalling ollama. Logs are in ${TMPFILE}"
+
+
 run_redirect sudo systemctl stop ollama 
 run_redirect sudo systemctl disable ollama
 run_redirect sudo rm /etc/systemd/system/ollama.service
 
-run_redirect sudo rm $(which ollama) 
-run_redirect sudo rm $(which ollama_uninstall.sh)
+OLLAMA_PATH=$(command -v ollama || true)
+UNINSTALL_SCRIPT_PATH=$(command -v ollama_uninstall.sh || true)
+
+if [ -n "$OLLAMA_PATH" ]; then
+    run_redirect $SUDO rm $OLLAMA_PATH
+fi
+
+if [ -n "$UNINSTALL_SCRIPT_PATH" ]; then
+    run_redirect $SUDO rm $UNINSTALL_SCRIPT_PATH
+fi
 
 run_redirect sudo rm -r /usr/share/ollama
-run_redirect sudo userdel ollama 
-run_redirect sudo groupdel ollama
+run_redirect sudo userdel ollama  || true
+run_redirect sudo groupdel ollama || true
 
-echo "Uninstall completed"
+status "Uninstall completed"
 EOF
 
 $SUDO install -o0 -g0 -m755 ${TEMP_DIR}/${UNINSTALL_SCRIPT} ${BINDIR}/${UNINSTALL_SCRIPT}
