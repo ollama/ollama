@@ -200,7 +200,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if g.Library == "metal" &&
 			uint64(opts.NumGPU) > 0 &&
 			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
-			opts.UseMMap = false
+			opts.UseMMap = api.TriStateFalse
 		}
 	}
 
@@ -208,7 +208,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--flash-attn")
 	}
 
-	if !opts.UseMMap {
+	// Windows CUDA should not use mmap for best performance
+	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda") || opts.UseMMap == api.TriStateFalse {
 		params = append(params, "--no-mmap")
 	}
 

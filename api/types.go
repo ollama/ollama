@@ -159,18 +159,49 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool `json:"numa,omitempty"`
-	NumCtx    int  `json:"num_ctx,omitempty"`
-	NumBatch  int  `json:"num_batch,omitempty"`
-	NumGPU    int  `json:"num_gpu,omitempty"`
-	MainGPU   int  `json:"main_gpu,omitempty"`
-	LowVRAM   bool `json:"low_vram,omitempty"`
-	F16KV     bool `json:"f16_kv,omitempty"`
-	LogitsAll bool `json:"logits_all,omitempty"`
-	VocabOnly bool `json:"vocab_only,omitempty"`
-	UseMMap   bool `json:"use_mmap,omitempty"`
-	UseMLock  bool `json:"use_mlock,omitempty"`
-	NumThread int  `json:"num_thread,omitempty"`
+	UseNUMA   bool     `json:"numa,omitempty"`
+	NumCtx    int      `json:"num_ctx,omitempty"`
+	NumBatch  int      `json:"num_batch,omitempty"`
+	NumGPU    int      `json:"num_gpu,omitempty"`
+	MainGPU   int      `json:"main_gpu,omitempty"`
+	LowVRAM   bool     `json:"low_vram,omitempty"`
+	F16KV     bool     `json:"f16_kv,omitempty"`
+	LogitsAll bool     `json:"logits_all,omitempty"`
+	VocabOnly bool     `json:"vocab_only,omitempty"`
+	UseMMap   TriState `json:"use_mmap,omitempty"`
+	UseMLock  bool     `json:"use_mlock,omitempty"`
+	NumThread int      `json:"num_thread,omitempty"`
+}
+
+type TriState int
+
+const (
+	TriStateUndefined TriState = -1
+	TriStateFalse     TriState = 0
+	TriStateTrue      TriState = 1
+)
+
+func (b *TriState) UnmarshalJSON(data []byte) error {
+	var v bool
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	if v {
+		*b = TriStateTrue
+	}
+	*b = TriStateFalse
+	return nil
+}
+
+func (b *TriState) MarshalJSON() ([]byte, error) {
+	if *b == TriStateUndefined {
+		return nil, nil
+	}
+	var v bool
+	if *b == TriStateTrue {
+		v = true
+	}
+	return json.Marshal(v)
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -403,6 +434,19 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 				continue
 			}
 
+			if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
+				val, ok := val.(bool)
+				if !ok {
+					return fmt.Errorf("option %q must be of type boolean", key)
+				}
+				if val {
+					field.SetInt(int64(TriStateTrue))
+				} else {
+					field.SetInt(int64(TriStateFalse))
+				}
+				continue
+			}
+
 			switch field.Kind() {
 			case reflect.Int:
 				switch t := val.(type) {
@@ -491,7 +535,7 @@ func DefaultOptions() Options {
 			LowVRAM:   false,
 			F16KV:     true,
 			UseMLock:  false,
-			UseMMap:   true,
+			UseMMap:   TriStateUndefined,
 			UseNUMA:   false,
 		},
 	}
