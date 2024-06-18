@@ -49,6 +49,18 @@ type MemoryEstimate struct {
 
 	// For multi-GPU scenarios, this is the size in bytes per GPU
 	GPUSizes []uint64
+
+	// internal fields for logging purposes
+	inferenceLibrary    string
+	layersRequested     int
+	layersModel         int
+	availableList       []string
+	kv                  uint64
+	allocationsList     []string
+	memoryWeights       uint64
+	memoryLayerOutput   uint64
+	graphFullOffload    uint64
+	graphPartialOffload uint64
 }
 
 // Given a model and one or more GPU targets, predict how many layers and bytes we can load, and the total size
@@ -252,78 +264,86 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		allocationsList = append(allocationsList, format.HumanBytes2(a))
 	}
 
+	estimate := MemoryEstimate{
+		TotalSize: memoryRequiredTotal,
+		Layers:    0,
+		Graph:     0,
+		VRAMSize:  0,
+		GPUSizes:  []uint64{},
+
+		inferenceLibrary:    gpus[0].Library,
+		layersRequested:     opts.NumGPU,
+		layersModel:         int(ggml.KV().BlockCount()) + 1,
+		availableList:       availableList,
+		kv:                  kv,
+		allocationsList:     allocationsList,
+		memoryWeights:       memoryWeights,
+		memoryLayerOutput:   memoryLayerOutput,
+		graphFullOffload:    graphFullOffload,
+		graphPartialOffload: graphPartialOffload,
+	}
+
+	if gpus[0].Library == "cpu" {
+		return estimate
+	}
+	if layerCount == 0 {
+		slog.Debug("insufficient VRAM to load any model layers")
+		return estimate
+	}
+	estimate.Layers = layerCount
+	estimate.Graph = graphOffload
+	estimate.VRAMSize = memoryRequiredPartial
+	estimate.TotalSize = memoryRequiredTotal
+	estimate.TensorSplit = tensorSplit
+	estimate.GPUSizes = gpuAllocations
+	return estimate
+}
+
+func (m MemoryEstimate) log() {
 	slog.Info(
-		"offload to gpu",
+		"offload to "+m.inferenceLibrary,
 		slog.Group(
 			"layers",
 			// requested number of layers to offload
-			"requested", opts.NumGPU,
+			"requested", m.layersRequested,
 			// The number of layers the model has (including output)
-			"model", int(ggml.KV().BlockCount())+1,
+			"model", m.layersModel,
 			// estimated number of layers that can be offloaded
-			"offload", layerCount,
-			// multi-gpu split for tesnors
-			"split", tensorSplit,
+			"offload", m.Layers,
+			// multi-gpu split for tensors
+			"split", m.TensorSplit,
 		),
 		slog.Group(
 			"memory",
 			// memory available by GPU for offloading
-			"available", availableList,
+			"available", m.availableList,
 			slog.Group(
 				"required",
 				// memory required for full offloading
-				"full", format.HumanBytes2(memoryRequiredTotal),
+				"full", format.HumanBytes2(m.TotalSize),
 				// memory required to offload layers.estimate layers
-				"partial", format.HumanBytes2(memoryRequiredPartial),
+				"partial", format.HumanBytes2(m.VRAMSize),
 				// memory of KV cache
-				"kv", format.HumanBytes2(kv),
+				"kv", format.HumanBytes2(m.kv),
 				// Allocations across the GPUs
-				"allocations", allocationsList,
+				"allocations", m.allocationsList,
 			),
 			slog.Group(
 				"weights",
 				// memory of the weights
-				"total", format.HumanBytes2(memoryWeights),
+				"total", format.HumanBytes2(m.memoryWeights),
 				// memory of repeating layers
-				"repeating", format.HumanBytes2(memoryWeights-memoryLayerOutput),
+				"repeating", format.HumanBytes2(m.memoryWeights-m.memoryLayerOutput),
 				// memory of non-repeating layers
-				"nonrepeating", format.HumanBytes2(memoryLayerOutput),
+				"nonrepeating", format.HumanBytes2(m.memoryLayerOutput),
 			),
 			slog.Group(
 				"graph",
 				// memory of graph when fully offloaded
-				"full", format.HumanBytes2(graphFullOffload),
+				"full", format.HumanBytes2(m.graphFullOffload),
 				// memory of graph when not fully offloaded
-				"partial", format.HumanBytes2(graphPartialOffload),
+				"partial", format.HumanBytes2(m.graphPartialOffload),
 			),
 		),
 	)
-	if gpus[0].Library == "cpu" {
-		return MemoryEstimate{
-			Layers:    0,
-			Graph:     0,
-			VRAMSize:  0,
-			TotalSize: memoryRequiredTotal,
-			GPUSizes:  []uint64{},
-		}
-	}
-	if layerCount == 0 {
-		slog.Debug("insufficient VRAM to load any model layers")
-		return MemoryEstimate{
-			Layers:    0,
-			Graph:     0,
-			VRAMSize:  0,
-			TotalSize: memoryRequiredTotal,
-			GPUSizes:  []uint64{},
-		}
-	}
-
-	return MemoryEstimate{
-		Layers:      layerCount,
-		Graph:       graphOffload,
-		VRAMSize:    memoryRequiredPartial,
-		TotalSize:   memoryRequiredTotal,
-		TensorSplit: tensorSplit,
-		GPUSizes:    gpuAllocations,
-	}
 }

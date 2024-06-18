@@ -116,6 +116,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 	}
 
+	estimate.log()
+
 	// Loop through potential servers
 	finalErr := errors.New("no suitable llama servers found")
 
