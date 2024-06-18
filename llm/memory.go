@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -179,6 +180,11 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 
 	// For all the layers, find where they can fit on the GPU(s)
 	for i := range int(ggml.KV().BlockCount()) {
+		// Some models have inconsistent layer sizes
+		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
+			layerSize = blk.size()
+			layerSize += kv / ggml.KV().BlockCount()
+		}
 		memoryWeights += layerSize
 
 		if opts.NumGPU >= 0 && layerCount >= opts.NumGPU {
