@@ -46,6 +46,16 @@ type Scheduler struct {
 	reschedDelay time.Duration
 }
 
+// Default automatic value for number of models we allow per GPU
+// Model will still need to fit in VRAM, but loading many small models
+// on a large GPU can cause stalling
+var defaultModelsPerGPU = 3
+
+// Default automatic value for parallel setting
+// Model will still need to fit in VRAM.  If this setting wont fit
+// we'll back off down to 1 to try to get it to fit
+var defaultParallel = 4
+
 var ErrMaxQueue = fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
 
 func InitScheduler(ctx context.Context) *Scheduler {
@@ -100,7 +110,6 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) processPending(ctx context.Context) {
-	maxRunnerFactor := 1 // number of GPUs or 1
 	for {
 		select {
 		case <-ctx.Done():
@@ -143,7 +152,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
-				} else if envconfig.MaxRunners > 0 && loadedCount >= (maxRunnerFactor*envconfig.MaxRunners) {
+				} else if envconfig.MaxRunners > 0 && loadedCount >= envconfig.MaxRunners {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
 					runnerToExpire = s.findRunnerToUnload()
 				} else {
@@ -155,7 +164,26 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else {
 						gpus = s.getGpuFn()
 					}
-					maxRunnerFactor = max(len(gpus), 1)
+
+					if envconfig.MaxRunners <= 0 {
+						// No user specified MaxRunners, so figure out what automatic setting to use
+						// If all GPUs have reliable free memory reporting, defaultModelsPerGPU * the number of GPUs
+						// if any GPU has unreliable free memory reporting, 1x the number of GPUs
+						allReliable := true
+						for _, gpu := range gpus {
+							if gpu.UnreliableFreeMemory {
+								allReliable = false
+								break
+							}
+						}
+						if allReliable {
+							envconfig.MaxRunners = defaultModelsPerGPU * len(gpus)
+							slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", envconfig.MaxRunners, "gpu_count", len(gpus))
+						} else {
+							slog.Info("one or more GPUs detected that are unable to accurately report free memory - disabling default concurrency")
+							envconfig.MaxRunners = len(gpus)
+						}
+					}
 
 					// Load model for fitting
 					ggml, err := llm.LoadModel(pending.model.ModelPath)
@@ -647,7 +675,7 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numP
 	var numParallelToTry []int
 	if *numParallel <= 0 {
 		// If no specific parallel setting was provided, try larger then smaller, always end with 1
-		numParallelToTry = append(numParallelToTry, 4, 1)
+		numParallelToTry = append(numParallelToTry, defaultParallel, 1)
 	} else {
 		numParallelToTry = []int{*numParallel}
 	}
