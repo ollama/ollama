@@ -174,6 +174,38 @@ type Runner struct {
 	FlashAttention bool   `json:"flash_attn,omitempty"`
 	CacheTypeK     string `json:"cache_type_k,omitempty"`
 	CacheTypeV     string `json:"cache_type_v,omitempty"`
+	UseMMap      TriState `json:"use_mmap,omitempty"`     
+}
+
+type TriState int
+
+const (
+	TriStateUndefined TriState = -1
+	TriStateFalse     TriState = 0
+	TriStateTrue      TriState = 1
+)
+
+func (b *TriState) UnmarshalJSON(data []byte) error {
+	var v bool
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	if v {
+		*b = TriStateTrue
+	}
+	*b = TriStateFalse
+	return nil
+}
+
+func (b *TriState) MarshalJSON() ([]byte, error) {
+	if *b == TriStateUndefined {
+		return nil, nil
+	}
+	var v bool
+	if *b == TriStateTrue {
+		v = true
+	}
+	return json.Marshal(v)
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -406,6 +438,19 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 				continue
 			}
 
+			if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
+				val, ok := val.(bool)
+				if !ok {
+					return fmt.Errorf("option %q must be of type boolean", key)
+				}
+				if val {
+					field.SetInt(int64(TriStateTrue))
+				} else {
+					field.SetInt(int64(TriStateFalse))
+				}
+				continue
+			}
+
 			switch field.Kind() {
 			case reflect.Int:
 				switch t := val.(type) {
@@ -494,7 +539,7 @@ func DefaultOptions() Options {
 			LowVRAM:   false,
 			F16KV:     true,
 			UseMLock:  false,
-			UseMMap:   true,
+			UseMMap:   TriStateUndefined,
 			UseNUMA:   false,
 		},
 	}

@@ -367,6 +367,17 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 			4*batch*(vocab+2*embedding),
 			fullOffload,
 		)
+	case "deepseek2":
+		keys := uint64(llm.KV()["deepseek2.attention.key_length"].(uint32))
+		fullOffload = max(
+			4*batch*(3*embedding+vocab),
+			4*batch*(3*embedding+2+context*(1+headsKV)+2*keys*headsKV),
+		)
+
+		partialOffload = max(
+			4*batch*(3*embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(2*embedding+1+2*keys*headsKV+context+context*headsKV)+4*keys*context*headsKV+embedding*keys*headsKV*9/16,
+		)
 	}
 
 	return
