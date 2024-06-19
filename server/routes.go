@@ -734,7 +734,42 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, m.String())
 	resp.Modelfile = sb.String()
 
+	kvData, err := getKVData(m.ModelPath, req.Verbose)
+	if err != nil {
+		return nil, err
+	}
+	delete(kvData, "general.name")
+	delete(kvData, "tokenizer.chat_template")
+	resp.ModelInfo = kvData
+
+	if len(m.ProjectorPaths) > 0 {
+		projectorData, err := getKVData(m.ProjectorPaths[0], req.Verbose)
+		if err != nil {
+			return nil, err
+		}
+		resp.ProjectorInfo = projectorData
+	}
+
 	return resp, nil
+}
+
+func getKVData(digest string, verbose bool) (llm.KV, error) {
+	kvData, err := llm.LoadModel(digest)
+	if err != nil {
+		return nil, err
+	}
+
+	kv := kvData.KV()
+
+	if !verbose {
+		for k := range kv {
+			if t, ok := kv[k].([]any); len(t) > 5 && ok {
+				kv[k] = []any{}
+			}
+		}
+	}
+
+	return kv, nil
 }
 
 func (s *Server) ListModelsHandler(c *gin.Context) {
