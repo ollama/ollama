@@ -356,6 +356,27 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
+	// if we want to stick with the one prompt format, we can use custom unmarshalling
+	// otherwise just have separate fields
+
+	switch req.Prompt.(type) {
+	case string:
+	case []interface{}:
+		prompts := make([]string, len(req.Prompt.([]interface{})))
+		for i, p := range req.Prompt.([]interface{}) {
+			if str, ok := p.(string); ok {
+				prompts[i] = str
+			} else {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "prompt must be a string or list of strings"})
+				return
+			}
+		}
+		req.Prompt = prompts
+	default:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "prompt must be a string or list of strings"})
+		return
+	}
+
 	model, err := GetModel(req.Model)
 	if err != nil {
 		var pErr *fs.PathError
@@ -389,13 +410,26 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	// an empty request loads the model
-	if req.Prompt == "" {
-		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
+	var embedding [][]float64
+
+	switch prompt := req.Prompt.(type) {
+	case string:
+		if prompt == "" {
+			c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: [][]float64{}})
+			return
+		}
+		embedding, err = runner.llama.Embedding(c.Request.Context(), prompt)
+	case []string:
+		if len(prompt) == 0 {
+			c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: [][]float64{}})
+			return
+		}
+		embedding, err = runner.llama.Embedding(c.Request.Context(), prompt)
+	default:
+		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
-	embedding, err := runner.llama.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})

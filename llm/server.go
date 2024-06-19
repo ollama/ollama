@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -33,7 +34,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embedding(ctx context.Context, prompt string) ([]float64, error)
+	Embedding(ctx context.Context, prompts interface{}) ([][]float64, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -849,7 +850,7 @@ type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
-func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, error) {
+func (s *llmServer) Embedding(ctx context.Context, prompts interface{}) ([][]float64, error) {
 	if err := s.sem.Acquire(ctx, 1); err != nil {
 		slog.Error("Failed to acquire semaphore", "error", err)
 		return nil, err
@@ -864,6 +865,52 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
+	switch prompts := prompts.(type) {
+	case string:
+		// single prompt
+		embedding, err := s.EmbeddingSingle(ctx, prompts)
+		if err != nil {
+			return nil, err
+		}
+		return [][]float64{embedding}, nil
+	case []string:
+		// multiple prompts
+		errCh := make(chan error, 1)
+		successCh := make(chan [][]float64, 1)
+		num_prompts := len(prompts)
+		embeddings := make([][]float64, num_prompts)
+		var wg sync.WaitGroup
+		wg.Add(num_prompts)
+		for i, p := range prompts {
+			go func(i int, p string) {
+				defer wg.Done()
+				slog.Info("embedding", "prompt", p)
+				embedding, err := s.EmbeddingSingle(ctx, p)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				embeddings[i] = embedding
+			}(i, p)
+		}
+
+		go func() {
+			wg.Wait()
+			successCh <- embeddings
+		}()
+
+		select {
+		case err := <-errCh:
+			return nil, err
+		case embeddings := <-successCh:
+			return embeddings, nil
+		}
+	default:
+		return nil, fmt.Errorf("unsupported prompt type: %T", prompts)
+	}
+}
+
+func (s *llmServer) EmbeddingSingle(ctx context.Context, prompt string) ([]float64, error) {
 	data, err := json.Marshal(TokenizeRequest{Content: prompt})
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
