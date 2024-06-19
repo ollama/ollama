@@ -1,5 +1,7 @@
 #!powershell
 
+$ErrorActionPreference = "Stop"
+
 function amdGPUs {
     if ($env:AMDGPU_TARGETS) {
         return $env:AMDGPU_TARGETS
@@ -37,7 +39,8 @@ function init_vars {
     }
     $script:cmakeDefs = @(
         "-DBUILD_SHARED_LIBS=on",
-        "-DLLAMA_NATIVE=off"
+        "-DLLAMA_NATIVE=off",
+        "-DLLAMA_OPENMP=off"
         )
     $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
     $script:ARCH = $Env:PROCESSOR_ARCHITECTURE.ToLower()
@@ -83,9 +86,9 @@ function init_vars {
 function git_module_setup {
     # TODO add flags to skip the init/patch logic to make it easier to mod llama.cpp code in-repo
     & git submodule init
-    if ($LASTEXITCODE -ne 0) { throw($LASTEXITCODE)}
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     & git submodule update --force "${script:llamacppDir}"
-    if ($LASTEXITCODE -ne 0) { throw($LASTEXITCODE)}
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
 function apply_patches {
@@ -119,7 +122,7 @@ function build {
     write-host "generating config with: cmake -S ${script:llamacppDir} -B $script:buildDir $script:cmakeDefs"
     & cmake --version
     & cmake -S "${script:llamacppDir}" -B $script:buildDir $script:cmakeDefs
-    if ($LASTEXITCODE -ne 0) { throw($LASTEXITCODE)}
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ($cmakeDefs -contains "-G") {
         $extra=@("-j8")
     } else {
@@ -127,7 +130,7 @@ function build {
     }
     write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ }) $extra"
     & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ }) $extra
-    if ($LASTEXITCODE -ne 0) { write-host "cmake build exit status $LASTEXITCODE"; throw($LASTEXITCODE)}
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     # Rearrange output to be consistent between different generators
     if ($null -ne ${script:config} -And (test-path -path "${script:buildDir}/bin/${script:config}" ) ) {
         mv -force "${script:buildDir}/bin/${script:config}/*" "${script:buildDir}/bin/"
@@ -141,7 +144,7 @@ function sign {
         foreach ($file in @(get-childitem "${script:buildDir}/bin/*.exe") + @(get-childitem "${script:buildDir}/bin/*.dll")){
             & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
                 /csp "Google Cloud KMS Provider" /kc "${env:KEY_CONTAINER}" $file
-            if ($LASTEXITCODE -ne 0) { throw($LASTEXITCODE)}
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
 }
@@ -206,7 +209,8 @@ function build_static() {
             "-DLLAMA_AVX2=off",
             "-DLLAMA_AVX512=off",
             "-DLLAMA_F16C=off",
-            "-DLLAMA_FMA=off")
+            "-DLLAMA_FMA=off",
+            "-DLLAMA_OPENMP=off")
         $script:buildDir="../build/windows/${script:ARCH}_static"
         write-host "Building static library"
         build
@@ -216,13 +220,7 @@ function build_static() {
     }
 }
 
-function build_cpu() {
-    if ($script:ARCH -eq "arm64") {
-        $gen_arch = "ARM64"
-    } else { # amd64
-        $gen_arch = "x64"
-    }
-
+function build_cpu($gen_arch) {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
         # remaining llama.cpp builds use MSVC 
         init_vars
@@ -285,7 +283,7 @@ function build_cuda() {
             "-DLLAMA_AVX=on",
             "-DLLAMA_AVX2=off",
             "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR",
-            "-DCMAKE_CUDA_FLAGS=-t8"
+            "-DCMAKE_CUDA_FLAGS=-t8",
             "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}"
             )
         if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
@@ -297,10 +295,12 @@ function build_cuda() {
         sign
         install
 
-        write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-        cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-        cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-        cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
+        rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        md "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\" -ea 0 > $null
+        write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
     } else {
         write-host "Skipping CUDA generation step"
     }
@@ -334,16 +334,18 @@ function build_oneapi() {
     sign
     install
 
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libirngmd.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libmmd.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_level_zero.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_unified_runtime.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_win_proxy_loader.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\svml_dispmd.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\sycl7.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_core.2.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_sycl_blas.4.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_tbb_thread.2.dll" "${script:distDir}"
+    rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    md "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\" -ea 0 > $null
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libirngmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libmmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_level_zero.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_unified_runtime.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_win_proxy_loader.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\svml_dispmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\sycl7.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_core.2.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_sycl_blas.4.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_tbb_thread.2.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
   } else {
     Write-Host "Skipping oneAPI generation step"
   }
@@ -408,29 +410,16 @@ init_vars
 if ($($args.count) -eq 0) {
     git_module_setup
     apply_patches
-
-    $tasks = @("build_static", "build_cpu")
-    $jobs = @()
-    if ($script:ARCH -ne "arm64") {
-        $tasks += $("build_cpu_avx", "build_cpu_avx2", "build_cuda", "build_oneapi", "build_rocm")
-    }
-    foreach ($t in $tasks) {
-        $jobs += @(Start-ThreadJob -ThrottleLimit 12 -FilePath .\gen_windows.ps1 -ArgumentList $t -Name $t)
-    }
-    get-job
-    foreach ($job in $jobs) {
-        write-host "----" $job.Name output follows
-        receive-job -wait -job $job
-        write-host "----" $job.Name $job.State
-        write-host ""
-        if ($job.State -contains 'Failed') {
-            cleanup
-            write-host "Terminating remaining jobs (this takes a while, you can ^C)"
-            # TODO find some way to kill the spawned cmake processes faster
-            remove-job -force -job $jobs
-            exit(-1)
-        }
-        get-job
+    build_static
+    if ($script:ARCH -eq "arm64") {
+        build_cpu("ARM64")
+    } else { # amd64
+        build_cpu("x64")
+        build_cpu_avx
+        build_cpu_avx2
+        build_cuda
+        build_oneapi
+        build_rocm
     }
 
     cleanup

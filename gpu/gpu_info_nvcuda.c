@@ -43,7 +43,7 @@ void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp) {
 
   for (i = 0; l[i].s != NULL; i++) {
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
-    if (!*l[i].p) {
+    if (!*(l[i].p)) {
       char *msg = LOAD_ERR();
       LOG(resp->ch.verbose, "dlerr: %s\n", msg);
       UNLOAD_LIBRARY(resp->ch.handle);

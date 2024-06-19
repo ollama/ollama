@@ -116,6 +116,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 	}
 
+	estimate.log()
+
 	// Loop through potential servers
 	finalErr := errors.New("no suitable llama servers found")
 
@@ -200,7 +202,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if g.Library == "metal" &&
 			uint64(opts.NumGPU) > 0 &&
 			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
-			opts.UseMMap = false
+			opts.UseMMap = api.TriStateFalse
 		}
 	}
 
@@ -208,7 +210,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--flash-attn")
 	}
 
-	if !opts.UseMMap {
+	// Windows CUDA should not use mmap for best performance
+	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda") || opts.UseMMap == api.TriStateFalse {
 		params = append(params, "--no-mmap")
 	}
 
@@ -271,8 +274,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
-		// prepend the server directory to LD_LIBRARY_PATH/PATH
-		libraryPaths := []string{dir}
+		// prepend the server directory to LD_LIBRARY_PATH/PATH and the parent dir for common dependencies
+		libraryPaths := []string{dir, filepath.Dir(dir)}
 
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			// Append our runner directory to the path
