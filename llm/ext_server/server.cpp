@@ -56,7 +56,6 @@ struct server_params {
     std::string hostname = "127.0.0.1";
     std::vector<std::string> api_keys;
     std::string public_path = "examples/server/public";
-    std::string chat_template = "";
     int32_t port = 8080;
     int32_t read_timeout = 600;
     int32_t write_timeout = 600;
@@ -425,16 +424,6 @@ struct llama_server_context
         add_bos_token = llama_should_add_bos_token(model);
 
         return true;
-    }
-
-    void validate_model_chat_template(server_params & sparams) {
-        llama_chat_message chat[] = {{"user", "test"}};
-        std::vector<char> buf(1);
-        int res = llama_chat_apply_template(model, nullptr, chat, 1, true, buf.data(), buf.size());
-        if (res < 0) {
-            LOG_ERROR("The chat template comes with this model is not yet supported, falling back to chatml. This may cause the model to output suboptimal responses", {});
-            sparams.chat_template = "chatml";
-        }
     }
 
     void initialize() {
@@ -2535,7 +2524,6 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            sparams.chat_template = argv[i];
         }
         else if (arg == "--override-kv")
         {
@@ -3007,11 +2995,6 @@ int main(int argc, char **argv) {
         LOG_INFO("model loaded", {});
     }
     const auto model_meta = llama.model_meta();
-
-    if (sparams.chat_template.empty()) { // custom chat template is not supplied
-        // check if the template comes with the model is supported by us
-        llama.validate_model_chat_template(sparams);
-    }
 
     // Middleware for API key validation
     auto validate_api_key = [&sparams](const httplib::Request &req, httplib::Response &res) -> bool {
