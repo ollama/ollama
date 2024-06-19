@@ -30,6 +30,9 @@ sudo chmod +x /usr/bin/ollama
 ```
 
 ### Adding Ollama as a startup service (recommended)
+*Note:* After completing the above steps, you can run ollama with `ollama serve`,
+you do not need to set it up as a service. These steps are designed for increased
+convenience if you are using ollama regularly. 
 
 Create a user for Ollama:
 
