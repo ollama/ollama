@@ -738,6 +738,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	delete(kvData, "general.name")
 	delete(kvData, "tokenizer.chat_template")
 	resp.ModelInfo = kvData
 
