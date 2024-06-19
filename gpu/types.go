@@ -105,6 +105,7 @@ func (l GpuInfoList) LogDetails() {
 		slog.Info("inference compute",
 			"id", g.ID,
 			"library", g.Library,
+			"variant", g.Variant,
 			"compute", g.Compute,
 			"driver", fmt.Sprintf("%d.%d", g.DriverMajor, g.DriverMinor),
 			"name", g.Name,
