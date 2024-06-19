@@ -814,7 +814,6 @@ curl http://localhost:11434/api/show -d '{
   "model_info": {
     "general.architecture": "llama",
     "general.file_type": 2,
-    "general.name": "Meta-Llama-3-8B-Instruct",
     "general.parameter_count": 8030261248,
     "general.quantization_version": 2,
     "llama.attention.head_count": 32,
