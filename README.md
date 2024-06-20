@@ -309,6 +309,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [tlm](https://github.com/yusufcanb/tlm)
 - [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 - [gollama](https://github.com/sammcj/gollama)
+- [x-cmd ollama](https://x-cmd.com/mod/ollama)
 
 ### Database
 
