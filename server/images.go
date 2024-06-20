@@ -38,7 +38,10 @@ var errCapabilityCompletion = errors.New("completion")
 
 type Capability string
 
-const CapabilityCompletion = Capability("completion")
+const (
+	CapabilityCompletion = Capability("completion")
+	CapabilityTools      = Capability("tools")
+)
 
 type registryOptions struct {
 	Insecure bool
@@ -87,6 +90,10 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 
 			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
 				errs = append(errs, errCapabilityCompletion)
+			}
+		case CapabilityTools:
+			if !slices.Contains(m.Template.Vars(), "tools") {
+				errs = append(errs, errors.New("tools"))
 			}
 		default:
 			slog.Error("unknown capability", "capability", cap)
