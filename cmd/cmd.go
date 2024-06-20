@@ -656,7 +656,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 	modelData := [][]string{
 		{"arch", arch},
-		{"parameters", resp.Details.ParameterSize},
+		{"parameters", format.HumanNumber(uint64(resp.ModelInfo["general.parameter_count"].(float64)))},
 		{"quantization", resp.Details.QuantizationLevel},
 		{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
 		{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
