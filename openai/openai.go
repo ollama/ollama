@@ -175,7 +175,7 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 	}
 }
 
-func toRetrieveCompletion(r api.ShowResponse, model string) Model {
+func toModel(r api.ShowResponse, model string) Model {
 	return Model{
 		Id:      model,
 		Object:  "model",
@@ -366,7 +366,7 @@ func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
 
 	// retrieve completion
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(toRetrieveCompletion(showResponse, w.model))
+	err = json.NewEncoder(w.ResponseWriter).Encode(toModel(showResponse, w.model))
 	if err != nil {
 		return 0, err
 	}
