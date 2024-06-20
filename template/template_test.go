@@ -8,12 +8,105 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 	"text/template"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 )
+
+func TestFuncs(t *testing.T) {
+	t.Run("toJson", func(t *testing.T) {
+		cases := []struct {
+			input    any
+			expected string
+		}{
+			{nil, "null"},
+			{true, "true"},
+			{false, "false"},
+			{0, "0"},
+			{1, "1"},
+			{1.0, "1"},
+			{1.1, "1.1"},
+			{"", `""`},
+			{"hello", `"hello"`},
+			{[]int{1, 2, 3}, "[1,2,3]"},
+			{[]string{"a", "b", "c"}, `["a","b","c"]`},
+			{map[string]int{"a": 1, "b": 2}, `{"a":1,"b":2}`},
+			{map[string]string{"a": "b", "c": "d"}, `{"a":"b","c":"d"}`},
+		}
+
+		for _, tt := range cases {
+			t.Run(tt.expected, func(t *testing.T) {
+				toJson, ok := funcs["toJson"].(func(any) string)
+				if !ok {
+					t.Fatal("toJson is not a function")
+				}
+
+				if s := toJson(tt.input); s != tt.expected {
+					t.Errorf("expected %q, got %q", tt.expected, s)
+				}
+			})
+		}
+	})
+
+	t.Run("add", func(t *testing.T) {
+		cases := []struct {
+			a, b     int
+			expected int
+		}{
+			{0, 0, 0},
+			{0, 1, 1},
+			{1, 0, 1},
+			{1, 1, 2},
+			{1, -1, 0},
+			{-1, 1, 0},
+			{-1, -1, -2},
+		}
+
+		for _, tt := range cases {
+			t.Run(strconv.Itoa(tt.expected), func(t *testing.T) {
+				add, ok := funcs["add"].(func(int, int) int)
+				if !ok {
+					t.Fatal("add is not a function")
+				}
+
+				if n := add(tt.a, tt.b); n != tt.expected {
+					t.Errorf("expected %d, got %d", tt.expected, n)
+				}
+			})
+		}
+	})
+
+	t.Run("sub", func(t *testing.T) {
+		cases := []struct {
+			a, b     int
+			expected int
+		}{
+			{0, 0, 0},
+			{0, 1, -1},
+			{1, 0, 1},
+			{1, 1, 0},
+			{1, -1, 2},
+			{-1, 1, -2},
+			{-1, -1, 0},
+		}
+
+		for _, tt := range cases {
+			t.Run(strconv.Itoa(tt.expected), func(t *testing.T) {
+				sub, ok := funcs["sub"].(func(int, int) int)
+				if !ok {
+					t.Fatal("sub is not a function")
+				}
+
+				if n := sub(tt.a, tt.b); n != tt.expected {
+					t.Errorf("expected %d, got %d", tt.expected, n)
+				}
+			})
+		}
+	})
+}
 
 func TestNamed(t *testing.T) {
 	f, err := os.Open(filepath.Join("testdata", "templates.jsonl"))
@@ -89,77 +182,86 @@ func TestParse(t *testing.T) {
 }
 
 func TestExecuteWithMessages(t *testing.T) {
+	type template struct {
+		name     string
+		template string
+	}
 	cases := []struct {
-		templates []string
+		name      string
+		templates []template
 		values    Values
 		expected  string
 	}{
 		{
-			[]string{
-				`[INST] {{ if .System }}{{ .System }}{{ print "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `,
-				`[INST] {{ if .System }}{{ .System }}{{ print "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`,
-				`{{- range .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if and (isLastMessage $.Messages .) $.System }}{{ $.System }}{{ print "\n\n" }}
+			"mistral",
+			[]template{
+				{"no response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `{{- range .Messages }}
+{{- if eq .Role "user" }}[INST] {{ if and (eq (index $.Messages (sub (len $.Messages) 1)) .) $.System }}{{ $.System }}{{ "\n\n" }}
 {{- end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}
 {{- end }}
-{{- end }}`,
+{{- end }}`},
 			},
 			Values{
 				Messages: []api.Message{
 					{Role: "user", Content: "Hello friend!"},
 					{Role: "assistant", Content: "Hello human!"},
-					{Role: "user", Content: "Yay!"},
+					{Role: "user", Content: "What is your name?"},
 				},
 			},
-			`[INST] Hello friend![/INST] Hello human![INST] Yay![/INST] `,
+			`[INST] Hello friend![/INST] Hello human![INST] What is your name?[/INST] `,
 		},
 		{
-			[]string{
-				`[INST] {{ if .System }}{{ .System }}{{ print "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `,
-				`[INST] {{ if .System }}{{ .System }}{{ print "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`,
-				`
+			"mistral system",
+			[]template{
+				{"no response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `
 {{- range .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if and (isLastMessage $.Messages .) $.System }}{{ $.System }}{{ print "\n\n" }}
+{{- if eq .Role "user" }}[INST] {{ if and (eq (index $.Messages (sub (len $.Messages) 1)) .) $.System }}{{ $.System }}{{ "\n\n" }}
 {{- end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}
 {{- end }}
-{{- end }}`,
+{{- end }}`},
 			},
 			Values{
 				Messages: []api.Message{
 					{Role: "system", Content: "You are a helpful assistant!"},
 					{Role: "user", Content: "Hello friend!"},
 					{Role: "assistant", Content: "Hello human!"},
-					{Role: "user", Content: "Yay!"},
+					{Role: "user", Content: "What is your name?"},
 				},
 			},
 			`[INST] Hello friend![/INST] Hello human![INST] You are a helpful assistant!
 
-Yay![/INST] `,
+What is your name?[/INST] `,
 		},
 		{
-			[]string{
-				`{{ if .System }}<|im_start|>system
+			"chatml",
+			[]template{
+				// this does not have a "no response" test because it's impossible to render the same output
+				{"response", `{{ if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
 {{ end }}{{ if .Prompt }}<|im_start|>user
 {{ .Prompt }}<|im_end|>
 {{ end }}<|im_start|>assistant
 {{ .Response }}<|im_end|>
-`,
-				`
+`},
+				{"messages", `
 {{- range .Messages }}
-{{- if and (eq .Role "user") (isLastMessage $.Messages .) $.System }}<|im_start|>system
-{{ $.System }}<|im_end|>{{ print "\n" }}
+{{- if and (eq .Role "user") (eq (index $.Messages (sub (len $.Messages) 1)) .) $.System }}<|im_start|>system
+{{ $.System }}<|im_end|>{{ "\n" }}
 {{- end }}<|im_start|>{{ .Role }}
-{{ .Content }}<|im_end|>{{ print "\n" }}
+{{ .Content }}<|im_end|>{{ "\n" }}
 {{- end }}<|im_start|>assistant
-`,
+`},
 			},
 			Values{
 				Messages: []api.Message{
 					{Role: "system", Content: "You are a helpful assistant!"},
 					{Role: "user", Content: "Hello friend!"},
 					{Role: "assistant", Content: "Hello human!"},
-					{Role: "user", Content: "Yay!"},
+					{Role: "user", Content: "What is your name?"},
 				},
 			},
 			`<|im_start|>user
@@ -169,23 +271,25 @@ Hello human!<|im_end|>
 <|im_start|>system
 You are a helpful assistant!<|im_end|>
 <|im_start|>user
-Yay!<|im_end|>
+What is your name?<|im_end|>
 <|im_start|>assistant
 `,
 		},
 		{
-			[]string{
-				`{{ if .Prompt }}Question: {{ .Prompt }}
+			"moondream",
+			[]template{
+				// this does not have a "no response" test because it's impossible to render the same output
+				{"response", `{{ if .Prompt }}Question: {{ .Prompt }}
 
 {{ end }}Answer: {{ .Response }}
 
-`,
-				`
+`},
+				{"messages", `
 {{- range .Messages }}
-{{- if eq .Role "user" }}Question: {{ .Content }}{{ print "\n\n" }}
-{{- else if eq .Role "assistant" }}Answer: {{ .Content }}{{ print "\n\n" }}
+{{- if eq .Role "user" }}Question: {{ .Content }}{{ "\n\n" }}
+{{- else if eq .Role "assistant" }}Answer: {{ .Content }}{{ "\n\n" }}
 {{- end }}
-{{- end }}Answer: `,
+{{- end }}Answer: `},
 			},
 			Values{
 				Messages: []api.Message{
@@ -211,10 +315,10 @@ Answer: `,
 	}
 
 	for _, tt := range cases {
-		t.Run("", func(t *testing.T) {
-			for _, tmpl := range tt.templates {
-				t.Run("", func(t *testing.T) {
-					tmpl, err := Parse(tmpl)
+		t.Run(tt.name, func(t *testing.T) {
+			for _, ttt := range tt.templates {
+				t.Run(ttt.name, func(t *testing.T) {
+					tmpl, err := Parse(ttt.template)
 					if err != nil {
 						t.Fatal(err)
 					}

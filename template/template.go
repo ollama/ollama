@@ -83,6 +83,7 @@ type Template struct {
 	raw string
 }
 
+// response is a template node that can be added to templates that don't already have one
 var response = parse.ActionNode{
 	NodeType: parse.NodeAction,
 	Pipe: &parse.PipeNode{
@@ -101,28 +102,25 @@ var response = parse.ActionNode{
 	},
 }
 
+var funcs = template.FuncMap{
+	"toJson": func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+
+		return string(b)
+	},
+	"add": func(a, b int) int {
+		return a + b
+	},
+	"sub": func(a, b int) int {
+		return a - b
+	},
+}
+
 func Parse(s string) (*Template, error) {
-	tmpl := template.New("").Option("missingkey=zero").Funcs(template.FuncMap{
-		"toJson": func(v any) string {
-			b, err := json.Marshal(v)
-			if err != nil {
-				return ""
-			}
-
-			return string(b)
-		},
-		"isLastMessage": func(s []*api.Message, m *api.Message) bool {
-			for i := len(s) - 1; i >= 0; i-- {
-				if m.Role != s[i].Role {
-					continue
-				}
-
-				return m == s[i]
-			}
-
-			return false
-		},
-	})
+	tmpl := template.New("").Option("missingkey=zero").Funcs(funcs)
 
 	tmpl, err := tmpl.Parse(s)
 	if err != nil {
@@ -218,7 +216,13 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	return err
 }
 
-func collate(msgs []api.Message) (system string, collated []*api.Message) {
+type messages []*api.Message
+
+// collate messages based on role. consecutive messages of the same role are merged
+// into a single message. collate also pulls out and merges messages with Role == "system"
+// which are templated separately. As a side effect, it mangles message content adding image
+// tags ([img-%d]) as needed
+func collate(msgs []api.Message) (system string, collated messages) {
 	var n int
 	for i := range msgs {
 		msg := msgs[i]
