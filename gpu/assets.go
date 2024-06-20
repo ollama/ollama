@@ -87,6 +87,8 @@ func cleanupTmpDirs() {
 			}
 		} else {
 			slog.Debug("failed to open ollama.pid", "path", d, "error", err)
+			// No pid, ignore this tmpdir
+			continue
 		}
 		err = os.RemoveAll(d)
 		if err != nil {
