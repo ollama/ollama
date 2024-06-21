@@ -1224,6 +1224,11 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 		models = append(models, mr)
 	}
 
+	slices.SortStableFunc(models, func(i, j api.ProcessModelResponse) int {
+		// longest duration remaining listed first
+		return cmp.Compare(j.ExpiresAt.Unix(), i.ExpiresAt.Unix())
+	})
+
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
