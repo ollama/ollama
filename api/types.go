@@ -608,6 +608,19 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 		} else {
 			field := valueOpts.FieldByName(opt.Name)
 			if field.IsValid() && field.CanSet() {
+				if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
+					boolVal, err := strconv.ParseBool(vals[0])
+					if err != nil {
+						return nil, fmt.Errorf("invalid bool value %s", vals)
+					}
+					if boolVal {
+						out[key] = TriStateTrue
+					} else {
+						out[key] = TriStateFalse
+					}
+					continue
+				}
+
 				switch field.Kind() {
 				case reflect.Float32:
 					floatVal, err := strconv.ParseFloat(vals[0], 32)
