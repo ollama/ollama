@@ -1,6 +1,8 @@
 OS := $(shell uname -s)
 ARCH := $(or $(ARCH), $(shell uname -m))
 NVCC := nvcc
+HIPCC := "$(HIP_PATH)/bin/hipcc.bin.exe"
+
 
 export CGO_CFLAGS_ALLOW = -mfma|-mf16c
 export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
@@ -12,7 +14,8 @@ endif
 ifneq (,$(findstring MINGW,$(OS)))
 	OBJ_EXT := obj
 	SHARED_EXT := dll
-	HIP_PATH := $(shell cygpath -w -s "$(HIP_PATH)")
+	CUDA_LIB := $(shell cygpath -w -s "$(CUDA_PATH)\lib\x64")
+	HIP_LIB := $(shell cygpath -w -s "$(HIP_PATH)\lib")
 else
 	OBJ_EXT := o
 	SHARED_EXT := so
@@ -62,7 +65,6 @@ CUDA_FLAGS := \
 HIP_ARCHS := gfx900 gfx940 gfx941 gfx942 gfx1010 gfx1012 gfx1030 gfx1100 gfx1101 gfx1102
 LINUX_HIP_ARCHS := gfx906:xnack- gfx908:xnack- gfx90a:xnack+ gfx90a:xnack-
 
-HIPCC := "$(HIP_PATH)/bin/hipcc.bin.exe"
 HIP_FLAGS := \
 	-c \
 	-O3 \
@@ -142,10 +144,10 @@ ollama_runner_avx2:
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,avx2 -o $@ ./runner
 
 ollama_runner_cuda: ggml_cuda.dll
-	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(CUDA_LIB)" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
 
 ollama_runner_rocm: ggml_hipblas.dll
-	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,rocm -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(HIP_LIB)" go build -ldflags "-s -w" -tags avx,rocm -o $@ ./runner
 
 clean:
 	rm -f $(CUDA_OBJS) $(HIP_OBJS) ggml_cuda.$(SHARED_EXT) ggml_cuda.* ggml_hipblas.* ollama_runner*
