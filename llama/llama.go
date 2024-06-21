@@ -25,8 +25,8 @@ package llama
 #cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm LDFLAGS: -L${SRCDIR} -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
-#cgo windows,cuda LDFLAGS: -L${SRCDIR} -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.3/lib/x64" -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt
-#cgo windows,rocm LDFLAGS: -L${SRCDIR} -L"C:/Program Files/AMD/ROCm/5.7/lib" -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
+#cgo windows,cuda LDFLAGS: -L${SRCDIR} -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt
+#cgo windows,rocm LDFLAGS: -L${SRCDIR} -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
 #cgo linux,cuda LDFLAGS: -L${SRCDIR} -L/usr/local/cuda/lib64 -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt
 #cgo linux,rocm LDFLAGS: -L/opt/rocm/lib
 
