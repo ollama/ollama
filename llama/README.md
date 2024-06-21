@@ -1,5 +1,7 @@
 # `llama`
 
+> Note: this package is not used in Ollama yet. For now, see the [`llm`](https://github.com/ollama/ollama/tree/main/llm) package.
+
 This package integrates the [llama.cpp](https://github.com/ggerganov/llama.cpp) library as a Go package and makes it easy to build it with tags for different CPU and GPU processors.
 
 Supported:
