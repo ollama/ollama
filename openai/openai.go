@@ -3,6 +3,7 @@ package openai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,7 +29,7 @@ type ErrorResponse struct {
 
 type Message struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
 }
 
 type Choice struct {
@@ -178,7 +179,33 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
-		messages = append(messages, api.Message{Role: msg.Role, Content: msg.Content})
+		switch content := msg.Content.(type) {
+		case string:
+			messages = append(messages, api.Message{Role: msg.Role, Content: content})
+		case []any:
+			for _, c := range content {
+				if data, ok := c.(map[string]any); ok {
+					message := api.Message{Role: msg.Role}
+					switch data["type"] {
+					case "text":
+						if text, ok := data["text"].(string); ok {
+							message.Content = text
+						}
+					case "image_url":
+						if urlMap, ok := data["image_url"].(map[string]any); ok {
+							if url, ok := urlMap["url"].(string); ok {
+								if img, err := base64.StdEncoding.DecodeString(url); err == nil {
+									message.Images = append(message.Images, img)
+								}
+							}
+						}
+					}
+					if message.Content != "" || len(message.Images) > 0 {
+						messages = append(messages, message)
+					}
+				}
+			}
+		}
 	}
 
 	options := make(map[string]interface{})
