@@ -42,7 +42,7 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
     // LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
 
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
-    if (!l[i].p) {
+    if (!*(l[i].p)) {
       resp->ch.handle = NULL;
       char *msg = LOAD_ERR();
       LOG(resp->ch.verbose, "dlerr: %s\n", msg);

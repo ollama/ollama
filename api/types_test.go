@@ -105,3 +105,39 @@ func TestDurationMarshalUnmarshal(t *testing.T) {
 		})
 	}
 }
+
+func TestUseMmapParsingFromJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		req  string
+		exp  TriState
+	}{
+		{
+			name: "Undefined",
+			req:  `{ }`,
+			exp:  TriStateUndefined,
+		},
+		{
+			name: "True",
+			req:  `{ "use_mmap": true }`,
+			exp:  TriStateTrue,
+		},
+		{
+			name: "False",
+			req:  `{ "use_mmap": false }`,
+			exp:  TriStateFalse,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var oMap map[string]interface{}
+			err := json.Unmarshal([]byte(test.req), &oMap)
+			require.NoError(t, err)
+			opts := DefaultOptions()
+			err = opts.FromMap(oMap)
+			require.NoError(t, err)
+			assert.Equal(t, test.exp, opts.UseMMap)
+		})
+	}
+}

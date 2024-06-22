@@ -58,7 +58,7 @@ func availableServers() map[string]string {
 	}
 
 	// glob payloadsDir for files that start with ollama_
-	pattern := filepath.Join(payloadsDir, "*")
+	pattern := filepath.Join(payloadsDir, "*", "ollama_*")
 
 	files, err := filepath.Glob(pattern)
 	if err != nil {
@@ -69,7 +69,7 @@ func availableServers() map[string]string {
 	servers := make(map[string]string)
 	for _, file := range files {
 		slog.Debug("availableServers : found", "file", file)
-		servers[filepath.Base(file)] = file
+		servers[filepath.Base(filepath.Dir(file))] = filepath.Dir(file)
 	}
 
 	return servers

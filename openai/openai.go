@@ -338,7 +338,6 @@ func (w *ListWriter) writeResponse(data []byte) (int, error) {
 		return 0, err
 	}
 
-	// list completion
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w.ResponseWriter).Encode(toListCompletion(listResponse))
 	if err != nil {
