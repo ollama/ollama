@@ -62,6 +62,38 @@ func TestMiddleware(t *testing.T) {
 			},
 		},
 		{
+			Name:       "OpenAI Completions Handler",
+			Method:     http.MethodPost,
+			Path:       "/api/generate",
+			TestPath:   "/api/generate",
+			Middleware: CompletionMiddleware,
+			Endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.GenerateResponse{
+					Response: "Hello!",
+				})
+			},
+			Setup: func(t *testing.T, req *http.Request) {
+				body := CompletionRequest{
+					Model:  "test-model",
+					Prompt: "Hello",
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				var completionResp Completion
+				if err := json.NewDecoder(resp.Body).Decode(&completionResp); err != nil {
+					t.Fatal(err)
+				}
+
+				assert.Equal(t, "text_completion", completionResp.Object)
+				assert.Equal(t, "Hello!", completionResp.Choices[0].Text)
+			},
+		},
+		{
 			Name:       "OpenAI List Handler",
 			Method:     http.MethodGet,
 			Path:       "/api/tags",
