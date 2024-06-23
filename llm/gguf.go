@@ -316,7 +316,7 @@ func writeGGUFString(llm *gguf, w io.Writer, s string) error {
 	return err
 }
 
-func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
+func readGGUFV1Array(llm *gguf, r io.Reader) (*array, error) {
 	t, err := readGGUF[uint32](llm, r)
 	if err != nil {
 		return nil, err
@@ -326,6 +326,8 @@ func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
 	if err != nil {
 		return nil, err
 	}
+
+	a := &array{size: uint64(n)}
 
 	for i := 0; uint32(i) < n; i++ {
 		var e any
@@ -361,13 +363,27 @@ func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
 			return nil, err
 		}
 
-		a = append(a, e)
+		if len(a.values) < arrayMaxSize {
+			a.values = append(a.values, e)
+		}
 	}
 
-	return
+	return a, nil
 }
 
-func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
+const arrayMaxSize = 1000
+
+type array struct {
+	size uint64
+
+	// values is the slice of values in the array.
+	//
+	// Its length may be less than size if the array is too big to reaonably
+	// fit in memory. The current limit si arrayMaxSize.
+	values []any
+}
+
+func readGGUFArray(llm *gguf, r io.Reader) (*array, error) {
 	if llm.Version == 1 {
 		return readGGUFV1Array(llm, r)
 	}
@@ -381,6 +397,8 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 	if err != nil {
 		return nil, err
 	}
+
+	a := &array{size: n}
 
 	for i := 0; uint64(i) < n; i++ {
 		var e any
@@ -416,10 +434,16 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 			return nil, err
 		}
 
-		a = append(a, e)
+		// TODO(bmizerany): We may want to only enforce this limit
+		// on certain fields, however, as of now, I (bmizerany) do
+		// not know of any array fields that are needed by Ollama that
+		// exceed this limit.
+		if len(a.values) < arrayMaxSize {
+			a.values = append(a.values, e)
+		}
 	}
 
-	return
+	return a, nil
 }
 
 func writeGGUFArray[S ~[]E, E any](llm *gguf, w io.Writer, t uint32, s S) error {
