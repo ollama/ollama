@@ -468,7 +468,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```json
 {
-  "model": "registry.ollama.ai/library/llama3:latest",
+  "model": "ollama.com/library/llama3:latest",
   "created_at": "2023-12-12T14:13:43.416799Z",
   "message": {
     "role": "assistant",
@@ -606,7 +606,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```json
 {
-  "model": "registry.ollama.ai/library/llama3:latest",
+  "model": "ollama.com/library/llama3:latest",
   "created_at": "2023-12-12T14:13:43.416799Z",
   "message": {
     "role": "assistant",

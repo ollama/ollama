@@ -35,7 +35,7 @@ func Unqualified(n Name) error {
 const MissingPart = "!MISSING!"
 
 const (
-	defaultHost      = "registry.ollama.ai"
+	defaultHost      = "ollama.com"
 	defaultNamespace = "library"
 	defaultTag       = "latest"
 )
@@ -43,7 +43,7 @@ const (
 // DefaultName returns a name with the default values for the host, namespace,
 // and tag parts. The model and digest parts are empty.
 //
-//   - The default host is ("registry.ollama.ai")
+//   - The default host is ("ollama.com")
 //   - The default namespace is ("library")
 //   - The default tag is ("latest")
 func DefaultName() Name {
