@@ -1,21 +1,36 @@
 OS := $(shell uname -s)
 ARCH := $(or $(ARCH), $(shell uname -m))
-NVCC := nvcc
-HIPCC := "$(HIP_PATH)/bin/hipcc.bin.exe"
-
 
 export CGO_CFLAGS_ALLOW = -mfma|-mf16c
 export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
+export HIP_PLATFORM = amd
 
 ifeq ($(ARCH),x86_64)
 	ARCH := amd64
 endif
 
-ifneq (,$(findstring MINGW,$(OS)))
+ifneq (,$(findstring MINGW,$(OS))$(findstring MSYS,$(OS)))
 	OBJ_EXT := obj
 	SHARED_EXT := dll
+	EXE_EXT := .exe
+	SHARED_PREFIX := ""
 	CUDA_LIB := $(shell cygpath -w -s "$(CUDA_PATH)\lib\x64")
 	HIP_LIB := $(shell cygpath -w -s "$(HIP_PATH)\lib")
+	NVCC := nvcc
+	# If HIP_PATH has spaces, hipcc trips over them when subprocessing
+	HIP_PATH := $(shell cygpath -m -s "$(HIP_PATH)\")
+	export HIP_PATH
+	HIPCC := $(HIP_PATH)bin/hipcc.bin.exe
+else ifeq ($(OS),Linux)
+	OBJ_EXT := o
+	SHARED_EXT := so
+	SHARED_PREFIX := lib
+	CUDA_PATH?=/usr/local/cuda
+	HIP_PATH?=/opt/rocm
+	CUDA_LIB := "$(CUDA_PATH)/lib64"
+	HIP_LIB := "$(HIP_PATH)/lib"
+	NVCC := nvcc
+	HIPCC := hipcc
 else
 	OBJ_EXT := o
 	SHARED_EXT := so
@@ -88,24 +103,27 @@ HIP_FLAGS := \
 	-Wno-pass-failed \
 	-Wno-deprecated-declarations \
 	-Wno-unused-result \
-	-Xclang \
-	--dependent-lib=msvcrt \
 	-I. \
 	$(foreach arch, $(HIP_ARCHS), --offload-arch=$(arch))
 
 ifeq ($(OS), Linux)
-	HIP_FLAGS += $(foreach arch, $(LINUX_HIP_ARCHS), --offload-arch=$(arch))
+	HIP_FLAGS += $(foreach arch, $(LINUX_HIP_ARCHS), --offload-arch=$(arch)) -fPIC
+	CUDA_FLAGS += -fPIC 
+	CFLAGS += -Xcompiler -fPIC -D_GNU_SOURCE
+	CXXFLAGS += -Xcompiler -fPIC -D_GNU_SOURCE
+else ifneq (,$(findstring MINGW,$(OS)))
+	HIP_FLAGS += -Xclang --dependent-lib=msvcrt
 endif
 
-RUNNERS := ollama_runner
+RUNNERS := ollama_runner$(EXE_EXT)
 ifeq ($(ARCH),amd64)
-	RUNNERS += ollama_runner_avx ollama_runner_avx2
+	RUNNERS += ollama_runner_avx$(EXE_EXT) ollama_runner_avx2$(EXE_EXT)
 endif
 ifneq ($(NVCC),)
-	RUNNERS += ollama_runner_cuda
+	RUNNERS += ollama_runner_cuda$(EXE_EXT)
 endif
 ifneq ($(HIPCC),)
-	RUNNERS += ollama_runner_rocm
+	RUNNERS += ollama_runner_rocm$(EXE_EXT)
 endif
 
 runners: $(RUNNERS)
@@ -119,8 +137,8 @@ runners: $(RUNNERS)
 %.cuda.$(OBJ_EXT): %.cpp
 	$(NVCC) -c $(CXXFLAGS) -o $@ $<
 
-ggml_cuda.$(SHARED_EXT): $(CUDA_OBJS)
-	nvcc --shared -lcuda -lcublas -lcudart -lcublasLt $(CUDA_FLAGS) $(CUDA_OBJS) -o $@
+$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_OBJS)
+	$(NVCC) --shared -lcuda -lcublas -lcudart -lcublasLt $(CUDA_FLAGS) $(CUDA_OBJS) -o $@
 
 %.hip.$(OBJ_EXT): %.cu
 	$(HIPCC) -c $(HIP_FLAGS) -o $@ $<
@@ -131,25 +149,29 @@ ggml_cuda.$(SHARED_EXT): $(CUDA_OBJS)
 %.hip.$(OBJ_EXT): %.cpp
 	$(HIPCC) -c $(CXXFLAGS) -o $@ $<
 
-ggml_hipblas.$(SHARED_EXT): $(HIP_OBJS)
+$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT): $(HIP_OBJS)
 	$(HIPCC) --shared -lhipblas -lamdhip64 -lrocblas $(HIP_OBJS) -o $@
 
-ollama_runner:
+ollama_runner$(EXE_EXT):
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -o $@ ./runner
 
-ollama_runner_avx:
+ollama_runner_avx$(EXE_EXT):
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx -o $@ ./runner
 
-ollama_runner_avx2:
+ollama_runner_avx2$(EXE_EXT):
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,avx2 -o $@ ./runner
 
-ollama_runner_cuda: ggml_cuda.dll
+ollama_runner_cuda$(EXE_EXT): $(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT)
 	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(CUDA_LIB)" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
 
-ollama_runner_rocm: ggml_hipblas.dll
+ollama_runner_rocm$(EXE_EXT): $(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT)
 	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(HIP_LIB)" go build -ldflags "-s -w" -tags avx,rocm -o $@ ./runner
 
 clean:
-	rm -f $(CUDA_OBJS) $(HIP_OBJS) ggml_cuda.$(SHARED_EXT) ggml_cuda.* ggml_hipblas.* ollama_runner*
+	rm -f $(CUDA_OBJS) $(HIP_OBJS) $(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) ggml_cuda.* $(SHARED_PREFIX)ggml_hipblas.* ollama_runner*
 
-.PHONY: runners clean ollama_runner ollama_runner_avx ollama_runner_avx2 ollama_runner_cuda ollama_runner_rocm
+.PHONY: runners clean ollama_runner$(EXE_EXT) ollama_runner_avx$(EXE_EXT) ollama_runner_avx2$(EXE_EXT) ollama_runner_cuda$(EXE_EXT) ollama_runner_rocm$(EXE_EXT)
+
+# Handy debugging for make variables
+print-%:
+	@echo '$*=$($*)'
