@@ -33,10 +33,26 @@ func TestMiddleware(t *testing.T) {
 			TestPath: "/api/chat",
 			Handler:  Middleware,
 			Endpoint: func(c *gin.Context) {
+				var chatReq api.ChatRequest
+				if err := c.ShouldBindJSON(&chatReq); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+					return
+				}
+
+				userMessage := chatReq.Messages[0].Content
+				var assistantMessage string
+
+				switch userMessage {
+				case "Hello":
+					assistantMessage = "Hello!"
+				default:
+					assistantMessage = "I'm not sure how to respond to that."
+				}
+
 				c.JSON(http.StatusOK, api.ChatResponse{
 					Message: api.Message{
 						Role:    "assistant",
-						Content: "Hello!",
+						Content: assistantMessage,
 					},
 				})
 			},
