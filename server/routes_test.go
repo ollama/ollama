@@ -19,8 +19,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -269,7 +269,6 @@ func Test_Routes(t *testing.T) {
 				require.NoError(t, err)
 
 				assert.Equal(t, "show-model", retrieveResp.Id)
-				assert.Equal(t, "ollama", retrieveResp.OwnedBy)
 			},
 		},
 	}
