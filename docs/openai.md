@@ -118,7 +118,7 @@ curl http://localhost:11434/v1/models
 #### Notes
 
 - `created` corresponds to when the model was last modified
-- `owned_by` corresponds to the ollama namespace construct, defaulting to `"library"`
+- `owned_by` corresponds to the ollama username, defaulting to `"library"`
 
 
 ## Models
