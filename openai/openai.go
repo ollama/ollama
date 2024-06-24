@@ -184,9 +184,9 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 		case string:
 			messages = append(messages, api.Message{Role: msg.Role, Content: content})
 		case []any:
+			message := api.Message{Role: msg.Role}
 			for _, c := range content {
 				if data, ok := c.(map[string]any); ok {
-					message := api.Message{Role: msg.Role}
 					switch data["type"] {
 					case "text":
 						if text, ok := data["text"].(string); ok {
@@ -205,10 +205,10 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 							}
 						}
 					}
-					if message.Content != "" || len(message.Images) > 0 {
-						messages = append(messages, message)
-					}
 				}
+			}
+			if message.Content != "" || len(message.Images) > 0 {
+				messages = append(messages, message)
 			}
 		}
 	}
