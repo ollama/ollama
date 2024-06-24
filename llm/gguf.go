@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"log/slog"
 )
 
 type containerGGUF struct {
@@ -61,7 +59,6 @@ func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
 	}
 
 	model := newGGUF(c)
-	slog.Debug(fmt.Sprintf("model = %#v", model))
 	if err := model.Decode(rs); err != nil {
 		return nil, err
 	}
@@ -190,8 +187,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	}
 
 	// decode tensors
-	for i := range llm.numTensor() {
-		fmt.Println("IIII:", i)
+	for range llm.numTensor() {
 		name, err := readGGUFString(llm, rs)
 		if err != nil {
 			return fmt.Errorf("failed to read tensor name: %w", err)
@@ -240,25 +236,19 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 		alignment = 32
 	}
 
-	offset, err := rs.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return fmt.Errorf("failed to get current offset: %w", err)
-	}
-
-	padding := llm.padding(offset, int64(alignment))
-	if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
-		return fmt.Errorf("failed to seek to init padding: %w", err)
-	}
-
-	for i, tensor := range llm.tensors {
-		fmt.Println("MIKEI:", i)
-		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
-			return fmt.Errorf("failed to seek to tensor: %w", err)
+	for _, tensor := range llm.tensors {
+		offset, err := rs.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return fmt.Errorf("failed to get current offset: %w", err)
 		}
 
-		padding := llm.padding(int64(tensor.Size()), int64(alignment))
+		padding := llm.padding(offset, int64(alignment))
 		if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
-			return fmt.Errorf("failed to seek to padding: %w", err)
+			return fmt.Errorf("failed to seek to init padding: %w", err)
+		}
+
+		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
+			return fmt.Errorf("failed to seek to tensor: %w", err)
 		}
 	}
 
