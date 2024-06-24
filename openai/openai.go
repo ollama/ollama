@@ -60,17 +60,17 @@ type ResponseFormat struct {
 }
 
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Stream           bool            `json:"stream"`
-	MaxTokens        *int            `json:"max_tokens"`
-	Seed             *int            `json:"seed"`
-	Stop             any             `json:"stop"`
-	Temperature      *float32        `json:"temperature"`
-	FrequencyPenalty *float32        `json:"frequency_penalty"`
-	PresencePenalty  *float32        `json:"presence_penalty_penalty"`
-	TopP             *float32        `json:"top_p"`
-	ResponseFormat   *ResponseFormat `json:"response_format"`
+	Model            string         `json:"model"`
+	Messages         []Message      `json:"messages"`
+	Stream           bool           `json:"stream"`
+	MaxTokens        *int           `json:"max_tokens"`
+	Seed             *int           `json:"seed"`
+	Stop             any            `json:"stop"`
+	Temperature      *float32       `json:"temperature"`
+	FrequencyPenalty float32        `json:"frequency_penalty"`
+	PresencePenalty  float32        `json:"presence_penalty_penalty"`
+	TopP             float32        `json:"top_p"`
+	ResponseFormat   ResponseFormat `json:"response_format"`
 }
 
 type ChatCompletion struct {
@@ -96,14 +96,14 @@ type ChatCompletionChunk struct {
 type CompletionRequest struct {
 	Model            string   `json:"model"`
 	Prompt           string   `json:"prompt"`
-	FrequencyPenalty *float32 `json:"frequency_penalty"`
+	FrequencyPenalty float32  `json:"frequency_penalty"`
 	MaxTokens        *int     `json:"max_tokens"`
-	PresencePenalty  *float32 `json:"presence_penalty"`
+	PresencePenalty  float32  `json:"presence_penalty"`
 	Seed             *int     `json:"seed"`
 	Stop             any      `json:"stop"`
 	Stream           bool     `json:"stream"`
 	Temperature      *float32 `json:"temperature"`
-	TopP             *float32 `json:"top_p"`
+	TopP             float32  `json:"top_p"`
 }
 
 type Completion struct {
@@ -260,7 +260,7 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 	}
 }
 
-func fromRequest(r ChatCompletionRequest) api.ChatRequest {
+func fromRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		messages = append(messages, api.Message{Role: msg.Role, Content: msg.Content})
@@ -271,14 +271,12 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	switch stop := r.Stop.(type) {
 	case string:
 		options["stop"] = []string{stop}
-	case []interface{}:
-		var stops []string
-		for _, s := range stop {
-			if str, ok := s.(string); ok {
-				stops = append(stops, str)
-			}
+	case []string:
+		options["stop"] = stop
+	default:
+		if r.Stop != nil {
+			return api.ChatRequest{}, fmt.Errorf("invalid type for 'stop' field: %T", r.Stop)
 		}
-		options["stop"] = stops
 	}
 
 	if r.MaxTokens != nil {
@@ -295,22 +293,18 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 		options["seed"] = *r.Seed
 	}
 
-	if r.FrequencyPenalty != nil {
-		options["frequency_penalty"] = *r.FrequencyPenalty * 2.0
-	}
+	options["frequency_penalty"] = r.FrequencyPenalty * 2.0
 
-	if r.PresencePenalty != nil {
-		options["presence_penalty"] = *r.PresencePenalty * 2.0
-	}
+	options["presence_penalty"] = r.PresencePenalty * 2.0
 
-	if r.TopP != nil {
-		options["top_p"] = *r.TopP
+	if r.TopP != 0.0 {
+		options["top_p"] = r.TopP
 	} else {
 		options["top_p"] = 1.0
 	}
 
 	var format string
-	if r.ResponseFormat != nil && r.ResponseFormat.Type == "json_object" {
+	if r.ResponseFormat.Type == "json_object" {
 		format = "json"
 	}
 
@@ -320,23 +314,21 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 		Format:   format,
 		Options:  options,
 		Stream:   &r.Stream,
-	}
+	}, nil
 }
 
-func fromCompleteRequest(r CompletionRequest) api.GenerateRequest {
+func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	options := make(map[string]interface{})
 
 	switch stop := r.Stop.(type) {
 	case string:
 		options["stop"] = []string{stop}
-	case []interface{}:
-		var stops []string
-		for _, s := range stop {
-			if str, ok := s.(string); ok {
-				stops = append(stops, str)
-			}
+	case []string:
+		options["stop"] = stop
+	default:
+		if r.Stop != nil {
+			return api.GenerateRequest{}, fmt.Errorf("invalid type for 'stop' field: %T", r.Stop)
 		}
-		options["stop"] = stops
 	}
 
 	if r.MaxTokens != nil {
@@ -353,16 +345,12 @@ func fromCompleteRequest(r CompletionRequest) api.GenerateRequest {
 		options["seed"] = *r.Seed
 	}
 
-	if r.FrequencyPenalty != nil {
-		options["frequency_penalty"] = *r.FrequencyPenalty * 2.0
-	}
+	options["frequency_penalty"] = r.FrequencyPenalty * 2.0
 
-	if r.PresencePenalty != nil {
-		options["presence_penalty"] = *r.PresencePenalty * 2.0
-	}
+	options["presence_penalty"] = r.PresencePenalty * 2.0
 
-	if r.TopP != nil {
-		options["top_p"] = *r.TopP
+	if r.TopP != 0.0 {
+		options["top_p"] = r.TopP
 	} else {
 		options["top_p"] = 1.0
 	}
@@ -372,7 +360,7 @@ func fromCompleteRequest(r CompletionRequest) api.GenerateRequest {
 		Prompt:  r.Prompt,
 		Options: options,
 		Stream:  &r.Stream,
-	}
+	}, nil
 }
 
 type BaseWriter struct {
@@ -556,7 +544,13 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(fromCompleteRequest(req)); err != nil {
+		genReq, err := fromCompleteRequest(req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if err := json.NewEncoder(&b).Encode(genReq); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}
@@ -590,7 +584,14 @@ func Middleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(fromRequest(req)); err != nil {
+
+		chatReq, err := fromRequest(req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}
