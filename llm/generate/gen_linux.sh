@@ -79,6 +79,7 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
         echo "OLLAMA_CUSTOM_CPU_DEFS=\"${OLLAMA_CUSTOM_CPU_DEFS}\""
         CMAKE_DEFS="${OLLAMA_CUSTOM_CPU_DEFS} -DBUILD_SHARED_LIBS=on -DCMAKE_POSITION_INDEPENDENT_CODE=on ${CMAKE_DEFS}"
         BUILD_DIR="../build/linux/${ARCH}/cpu"
+        DIST_DIR=${RUNNER_BASE}/cpu
         echo "Building custom CPU"
         build
         install
@@ -102,6 +103,7 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
             init_vars
             CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=off -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off ${CMAKE_DEFS}"
             BUILD_DIR="../build/linux/${ARCH}/cpu"
+            DIST_DIR=${RUNNER_BASE}/cpu
             echo "Building LCD CPU"
             build
             install
@@ -120,6 +122,7 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 init_vars
                 CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=on -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off ${CMAKE_DEFS}"
                 BUILD_DIR="../build/linux/${ARCH}/cpu_avx"
+                DIST_DIR=${RUNNER_BASE}/cpu_avx
                 echo "Building AVX CPU"
                 build
                 install
@@ -134,6 +137,7 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 init_vars
                 CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=on -DGGML_AVX2=on -DGGML_AVX512=off -DGGML_FMA=on -DGGML_F16C=on ${CMAKE_DEFS}"
                 BUILD_DIR="../build/linux/${ARCH}/cpu_avx2"
+                DIST_DIR=${RUNNER_BASE}/cpu_avx2
                 echo "Building AVX2 CPU"
                 build
                 install
