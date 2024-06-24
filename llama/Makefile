@@ -4,7 +4,11 @@ ifeq ($(ARCH),x86_64)
 	ARCH := amd64
 endif
 ifneq (,$(findstring MINGW,$(OS))$(findstring MSYS,$(OS)))
-	OS := Windows
+	OS := windows
+else ifeq ($(OS),Linux)
+	OS := linux
+else ifeq ($(OS),Darwin)
+	OS := darwin
 endif
 
 export CGO_CFLAGS_ALLOW = -mfma|-mf16c
@@ -12,9 +16,20 @@ export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
 export HIP_PLATFORM = amd
 
 SRC_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-BUILD_DIR := $(SRC_DIR)/build/$(OS)/$(ARCH)/
+BUILD_DIR := $(SRC_DIR)/build/$(OS)-$(ARCH)/
+DIST_DIR := $(abspath $(SRC_DIR)/../dist/$(OS)-$(ARCH))/
+RUNNERS_DIR := $(DIST_DIR)ollama_runners/
+ifeq ($(OS),darwin)
+DEFAULT_RUNNER_DIR := $(RUNNERS_DIR)metal/
+else
+DEFAULT_RUNNER_DIR := $(RUNNERS_DIR)cpu/
+endif
+CPU_AVX_RUNNER_DIR := $(RUNNERS_DIR)cpu_avx/
+CPU_AVX2_RUNNER_DIR := $(RUNNERS_DIR)cpu_avx2/
+CUDA_RUNNER_DIR := $(RUNNERS_DIR)cuda/
+ROCM_RUNNER_DIR := $(RUNNERS_DIR)rocm/
 
-ifeq ($(OS),Windows)
+ifeq ($(OS),windows)
 	OBJ_EXT := obj
 	SHARED_EXT := dll
 	EXE_EXT := .exe
@@ -26,7 +41,7 @@ ifeq ($(OS),Windows)
 	HIP_PATH := $(shell cygpath -m -s "$(HIP_PATH)\")
 	export HIP_PATH
 	HIPCC := $(HIP_PATH)bin/hipcc.bin.exe
-else ifeq ($(OS),Linux)
+else ifeq ($(OS),linux)
 	OBJ_EXT := o
 	SHARED_EXT := so
 	SHARED_PREFIX := lib
@@ -111,24 +126,24 @@ HIP_FLAGS := \
 	-I. \
 	$(foreach arch, $(HIP_ARCHS), --offload-arch=$(arch))
 
-ifeq ($(OS), Linux)
+ifeq ($(OS),linux)
 	HIP_FLAGS += $(foreach arch, $(LINUX_HIP_ARCHS), --offload-arch=$(arch)) -fPIC
-	CUDA_FLAGS += -fPIC 
+	CUDA_FLAGS += -fPIC
 	CFLAGS += -Xcompiler -fPIC -D_GNU_SOURCE
 	CXXFLAGS += -Xcompiler -fPIC -D_GNU_SOURCE
-else ifeq ($(OS),Windows)
+else ifeq ($(OS),windows)
 	HIP_FLAGS += -Xclang --dependent-lib=msvcrt
 endif
 
-RUNNERS := $(BUILD_DIR)ollama_runner$(EXE_EXT)
+RUNNERS := $(DEFAULT_RUNNER_DIR)ollama_runner$(EXE_EXT)
 ifeq ($(ARCH),amd64)
-	RUNNERS += $(BUILD_DIR)ollama_runner_avx$(EXE_EXT) $(BUILD_DIR)ollama_runner_avx2$(EXE_EXT)
+	RUNNERS += $(CPU_AVX_RUNNER_DIR)ollama_runner$(EXE_EXT) $(CPU_AVX2_RUNNER_DIR)ollama_runner$(EXE_EXT)
 endif
 ifneq ($(NVCC),)
-	RUNNERS += $(BUILD_DIR)ollama_runner_cuda$(EXE_EXT)
+	RUNNERS += $(CUDA_RUNNER_DIR)ollama_runner$(EXE_EXT)
 endif
 ifneq ($(HIPCC),)
-	RUNNERS += $(BUILD_DIR)ollama_runner_rocm$(EXE_EXT)
+	RUNNERS += $(ROCM_RUNNER_DIR)ollama_runner$(EXE_EXT)
 endif
 
 runners: $(RUNNERS)
@@ -144,6 +159,10 @@ $(BUILD_DIR)%.cuda.$(OBJ_EXT): %.c
 $(BUILD_DIR)%.cuda.$(OBJ_EXT): %.cpp
 	@-mkdir -p $(dir $@)
 	$(NVCC) -c $(CXXFLAGS) -o $@ $<
+
+$(CUDA_RUNNER_DIR)$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(BUILD_DIR)$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT)
+	@-mkdir -p $(dir $@)
+	cp $< $@
 
 $(BUILD_DIR)$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_OBJS)
 	@-mkdir -p $(dir $@)
@@ -161,29 +180,33 @@ $(BUILD_DIR)%.hip.$(OBJ_EXT): %.cpp
 	@-mkdir -p $(dir $@)
 	$(HIPCC) -c $(CXXFLAGS) -o $@ $<
 
+$(ROCM_RUNNER_DIR)$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT): $(BUILD_DIR)$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT)
+	@-mkdir -p $(dir $@)
+	cp $< $@
+
 $(BUILD_DIR)$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT): $(HIP_OBJS)
 	@-mkdir -p $(dir $@)
 	$(HIPCC) --shared -lhipblas -lamdhip64 -lrocblas $(HIP_OBJS) -o $@
 
-$(BUILD_DIR)ollama_runner$(EXE_EXT):
+$(DEFAULT_RUNNER_DIR)ollama_runner$(EXE_EXT):
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -o $@ ./runner
 
-$(BUILD_DIR)ollama_runner_avx$(EXE_EXT):
+$(CPU_AVX_RUNNER_DIR)ollama_runner$(EXE_EXT):
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx -o $@ ./runner
 
-$(BUILD_DIR)ollama_runner_avx2$(EXE_EXT):
+$(CPU_AVX2_RUNNER_DIR)ollama_runner$(EXE_EXT):
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,avx2 -o $@ ./runner
 
-$(BUILD_DIR)ollama_runner_cuda$(EXE_EXT): $(BUILD_DIR)$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT)
+$(CUDA_RUNNER_DIR)ollama_runner$(EXE_EXT): $(CUDA_RUNNER_DIR)$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT)
 	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(CUDA_LIB)" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
 
-$(BUILD_DIR)ollama_runner_rocm$(EXE_EXT): $(BUILD_DIR)$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT)
+$(ROCM_RUNNER_DIR)ollama_runner$(EXE_EXT): $(ROCM_RUNNER_DIR)$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT)
 	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(HIP_LIB)" go build -ldflags "-s -w" -tags avx,rocm -o $@ ./runner
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) $(DIST_DIR)
 
-.PHONY: runners clean ollama_runner$(EXE_EXT) ollama_runner_avx$(EXE_EXT) ollama_runner_avx2$(EXE_EXT) ollama_runner_cuda$(EXE_EXT) ollama_runner_rocm$(EXE_EXT)
+.PHONY: runners clean
 
 # Handy debugging for make variables
 print-%:
