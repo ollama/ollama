@@ -9,13 +9,18 @@ package llama
 #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 #cgo darwin,amd64 LDFLAGS: -framework Foundation
+#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/build/Darwin/amd64
 #cgo darwin,amd64,avx2 CFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo darwin,amd64,avx2 CXXFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo darwin,amd64,avx2 LDFLAGS: -framework Accelerate
 #cgo linux CFLAGS: -D_GNU_SOURCE
 #cgo linux CXXFLAGS: -D_GNU_SOURCE
+#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/Linux/arm64
+#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/Linux/amd64
 #cgo windows CFLAGS: -Wno-discarded-qualifiers
 #cgo windows LDFLAGS: -lmsvcrt
+#cgo windows,arm64 LDFLAGS: -L${SRCDIR}/build/Windows/arm64
+#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/build/Windows/amd64
 #cgo avx CFLAGS: -mavx
 #cgo avx CXXFLAGS: -mavx
 #cgo avx2 CFLAGS: -mavx2 -mfma
@@ -25,9 +30,9 @@ package llama
 #cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm LDFLAGS: -L${SRCDIR} -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
-#cgo windows,cuda LDFLAGS: -L${SRCDIR} -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt
-#cgo windows,rocm LDFLAGS: -L${SRCDIR} -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
-#cgo linux,cuda LDFLAGS: -L${SRCDIR} -L/usr/local/cuda/lib64 -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt
+#cgo windows,cuda LDFLAGS: -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt
+#cgo windows,rocm LDFLAGS: -lggml_hipblas -lhipblas -lamdhip64 -lrocblas
+#cgo linux,cuda LDFLAGS: -L/usr/local/cuda/lib64 -lggml_cuda -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt
 #cgo linux,rocm LDFLAGS: -L/opt/rocm/lib
 
 #include <stdlib.h>
