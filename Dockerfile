@@ -98,6 +98,32 @@ RUN --mount=type=cache,target=/root/.ccache \
 RUN mkdir -p ../../dist/linux-amd64-rocm/lib/ollama && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64-rocm/lib/ollama && tar xf - )
 
+# To create a local image for building linux binaries on mac
+# docker build --platform linux/amd64 -t builder -f Dockerfile --target unified-builder-amd64 .
+# docker run --platform linux/amd64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ builder
+FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete as unified-builder-amd64
+ARG CMAKE_VERSION
+ARG GOLANG_VERSION
+ARG CUDA_VERSION
+COPY ./scripts/rh_linux_deps.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
+RUN yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo && \
+    dnf clean all && \
+    dnf install -y \
+    zsh \
+    cuda-$(echo ${CUDA_VERSION} | cut -f1-2 -d. | sed -e "s/\./-/g") && \
+    ln -s /usr/local/cuda-* /usr/local/cuda
+# TODO intel oneapi goes here...
+ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH:/usr/local/cuda/bin
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/cuda/lib64
+ENV GOARCH amd64
+WORKDIR /go/src/github.com/ollama/ollama/
+ENTRYPOINT [ "zsh" ]
+
+FROM --platform=linux/amd64 unified-builder-amd64 as new-runners-amd64
+COPY . .
+RUN make -C llama -j 10
+
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
