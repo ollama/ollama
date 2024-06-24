@@ -64,7 +64,7 @@ if [ -z "${OLLAMA_SKIP_STATIC_GENERATE}" -o "${OLLAMA_CPU_TARGET}" = "static" ];
     # Static build for linking into the Go binary
     init_vars
     CMAKE_TARGETS="--target llama --target ggml"
-    CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DLLAMA_NATIVE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off ${CMAKE_DEFS}"
+    CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DLLAMA_NATIVE=off -DLLAMA_AVX=off -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DLLAMA_OPENMP=off ${CMAKE_DEFS}"
     BUILD_DIR="../build/linux/${ARCH}_static"
     echo "Building static library"
     build
@@ -167,9 +167,9 @@ fi
 if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
-    CUDA_MAJOR=$(ls "${CUDA_LIB_DIR}"/libcudart.so.* | head -1 | cut -f3 -d. || true)
-    if [ -n "${CUDA_MAJOR}" -a -z "${CUDA_VARIANT}" ]; then
-        CUDA_VARIANT=_v${CUDA_MAJOR}
+    CUDA_VERSION=$(nvcc --version | grep " release " | sed -e 's/^.* release \(.*\),.*$/\1/g' || true)
+    if [ -n "${CUDA_VERSION}" ]; then
+        CUDA_VARIANT=_v${CUDA_VERSION}
     fi
     if [ "${ARCH}" == "arm64" ]; then
         echo "ARM CPU detected - disabling unsupported AVX instructions"
@@ -259,8 +259,9 @@ fi
 
 if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
-    if [ -f ${ROCM_PATH}/lib/librocblas.so.*.*.????? ]; then
-        ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocblas.so.*.*.????? | cut -f5 -d. || true)
+    ROCM_VERSION=$(hipcc --version | grep "HIP version:" | cut -f2- -d: | xargs | cut -f1,2 -d. || true)
+    if [ -n "${ROCM_VERSION}" ]; then
+        ROCM_VARIANT=_v${ROCM_VERSION}
     fi
     init_vars
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DGGML_HIPBLAS=on -DLLAMA_CUDA_NO_PEER_COPY=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"

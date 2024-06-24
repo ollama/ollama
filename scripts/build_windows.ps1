@@ -16,6 +16,7 @@ function checkEnv() {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
+    get-command make
     # Locate CUDA versions
     # Note: this assumes every version found will be built
     $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
@@ -110,7 +111,9 @@ function buildOllama() {
             }
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & make -C llama -j 12
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }

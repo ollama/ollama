@@ -10,6 +10,7 @@ mkdir -p dist
 for TARGETARCH in arm64 amd64; do
     rm -rf llm/llama.cpp/build
     GOOS=darwin GOARCH=$TARGETARCH go generate ./...
+    ARCH=$TARGETARCH make -C llama -j 
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
 done

@@ -4,6 +4,8 @@ app
 macapp
 dist
 llm/llama.cpp
+llm/build
+llama/build
 .env
 .cache
 test_data

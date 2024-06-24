@@ -94,6 +94,7 @@ RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 ENV LIBRARY_PATH /opt/amdgpu/lib64
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+ENV GOARCH amd64
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG AMDGPU_TARGETS
@@ -134,6 +135,7 @@ ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+ENV GOARCH amd64
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 ARG OLLAMA_CUSTOM_CPU_DEFS
 ARG CGO_CFLAGS
@@ -172,8 +174,11 @@ FROM --platform=linux/amd64 cpu-build-amd64 AS build-amd64
 ENV CGO_ENABLED 1
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
+COPY --from=new-runners-amd64 /go/src/github.com/ollama/ollama/dist/ ./dist/
+COPY --from=new-runners-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=static-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/dist/ ./dist/
 COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
