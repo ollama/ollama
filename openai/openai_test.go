@@ -27,7 +27,7 @@ func TestMiddleware(t *testing.T) {
 
 	testCases := []testCase{
 		{
-			Name:     "Chat Handler",
+			Name:     "chat handler",
 			Method:   http.MethodPost,
 			Path:     "/api/chat",
 			TestPath: "/api/chat",
@@ -57,12 +57,17 @@ func TestMiddleware(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				assert.Equal(t, "chat.completion", chatResp.Object)
-				assert.Equal(t, "Hello!", chatResp.Choices[0].Message.Content)
+				if chatResp.Object != "chat.completion" {
+					t.Fatalf("expected chat.completion, got %s", chatResp.Object)
+				}
+
+				if chatResp.Choices[0].Message.Content != "Hello!" {
+					t.Fatalf("expected Hello!, got %s", chatResp.Choices[0].Message.Content)
+				}
 			},
 		},
 		{
-			Name:     "List Handler",
+			Name:     "list handler",
 			Method:   http.MethodGet,
 			Path:     "/api/tags",
 			TestPath: "/api/tags",
@@ -82,9 +87,17 @@ func TestMiddleware(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				assert.Equal(t, "list", listResp.Object)
-				assert.Len(t, listResp.Data, 1)
-				assert.Equal(t, "Test Model", listResp.Data[0].Id)
+				if listResp.Object != "list" {
+					t.Fatalf("expected list, got %s", listResp.Object)
+				}
+
+				if len(listResp.Data) != 1 {
+					t.Fatalf("expected 1, got %d", len(listResp.Data))
+				}
+
+				if listResp.Data[0].Id != "Test Model" {
+					t.Fatalf("expected Test Model, got %s", listResp.Data[0].Id)
+				}
 			},
 		},
 	}
