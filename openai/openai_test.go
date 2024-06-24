@@ -15,23 +15,23 @@ import (
 
 func TestMiddleware(t *testing.T) {
 	type testCase struct {
-		Name       string
-		Method     string
-		Path       string
-		TestPath   string
-		Middleware func() gin.HandlerFunc
-		Endpoint   func(c *gin.Context)
-		Setup      func(t *testing.T, req *http.Request)
-		Expected   func(t *testing.T, resp *httptest.ResponseRecorder)
+		Name     string
+		Method   string
+		Path     string
+		TestPath string
+		Handler  func() gin.HandlerFunc
+		Endpoint func(c *gin.Context)
+		Setup    func(t *testing.T, req *http.Request)
+		Expected func(t *testing.T, resp *httptest.ResponseRecorder)
 	}
 
 	testCases := []testCase{
 		{
-			Name:       "OpenAI Chat Handler",
-			Method:     http.MethodPost,
-			Path:       "/api/chat",
-			TestPath:   "/api/chat",
-			Middleware: Middleware,
+			Name:     "Chat Handler",
+			Method:   http.MethodPost,
+			Path:     "/api/chat",
+			TestPath: "/api/chat",
+			Handler:  Middleware,
 			Endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.ChatResponse{
 					Message: api.Message{
@@ -62,11 +62,11 @@ func TestMiddleware(t *testing.T) {
 			},
 		},
 		{
-			Name:       "OpenAI List Handler",
-			Method:     http.MethodGet,
-			Path:       "/api/tags",
-			TestPath:   "/api/tags",
-			Middleware: ListMiddleware,
+			Name:     "List Handler",
+			Method:   http.MethodGet,
+			Path:     "/api/tags",
+			TestPath: "/api/tags",
+			Handler:  ListMiddleware,
 			Endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.ListResponse{
 					Models: []api.ListModelResponse{
@@ -95,7 +95,7 @@ func TestMiddleware(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			router = gin.New()
-			router.Use(tc.Middleware())
+			router.Use(tc.Handler())
 			router.Handle(tc.Method, tc.Path, tc.Endpoint)
 			req, _ := http.NewRequest(tc.Method, tc.TestPath, nil)
 
