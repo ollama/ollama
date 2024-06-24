@@ -66,10 +66,10 @@ type ChatCompletionRequest struct {
 	MaxTokens        *int            `json:"max_tokens"`
 	Seed             *int            `json:"seed"`
 	Stop             any             `json:"stop"`
-	Temperature      *float64        `json:"temperature"`
-	FrequencyPenalty *float64        `json:"frequency_penalty"`
-	PresencePenalty  *float64        `json:"presence_penalty_penalty"`
-	TopP             *float64        `json:"top_p"`
+	Temperature      *float32        `json:"temperature"`
+	FrequencyPenalty *float32        `json:"frequency_penalty"`
+	PresencePenalty  *float32        `json:"presence_penalty_penalty"`
+	TopP             *float32        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 }
 
@@ -96,14 +96,14 @@ type ChatCompletionChunk struct {
 type CompletionRequest struct {
 	Model            string   `json:"model"`
 	Prompt           string   `json:"prompt"`
-	FrequencyPenalty *float64 `json:"frequency_penalty"`
+	FrequencyPenalty *float32 `json:"frequency_penalty"`
 	MaxTokens        *int     `json:"max_tokens"`
-	PresencePenalty  *float64 `json:"presence_penalty"`
+	PresencePenalty  *float32 `json:"presence_penalty"`
 	Seed             *int     `json:"seed"`
 	Stop             any      `json:"stop"`
 	Stream           bool     `json:"stream"`
-	Temperature      *float64 `json:"temperature"`
-	TopP             *float64 `json:"top_p"`
+	Temperature      *float32 `json:"temperature"`
+	TopP             *float32 `json:"top_p"`
 }
 
 type Completion struct {
