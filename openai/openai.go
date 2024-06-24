@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -194,6 +195,10 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 					case "image_url":
 						if urlMap, ok := data["image_url"].(map[string]any); ok {
 							if url, ok := urlMap["url"].(string); ok {
+								types := []string{"jpeg", "jpg", "png"}
+								for _, t := range types {
+									url = strings.TrimPrefix(url, "data:image/"+t+";base64,")
+								}
 								if img, err := base64.StdEncoding.DecodeString(url); err == nil {
 									message.Images = append(message.Images, img)
 								}
