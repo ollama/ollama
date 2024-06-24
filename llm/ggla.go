@@ -117,7 +117,7 @@ func (llm *ggla) decode(rs io.ReadSeeker) (retErr error) {
 			return err
 		}
 
-		if _, err := rs.Seek((offset+31)&-32, io.SeekStart); err != nil {
+		if _, err := rs.Seek((offset+31)&-32-offset, io.SeekCurrent); err != nil {
 			return err
 		}
 
