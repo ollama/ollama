@@ -92,9 +92,10 @@ type ChatCompletionChunk struct {
 	Choices           []ChunkChoice `json:"choices"`
 }
 
+// TODO (https://github.com/ollama/ollama/issues<5259>): support []string, []int and [][]int
 type CompletionRequest struct {
 	Model            string   `json:"model"`
-	Prompt           string   `json:"prompt"` // openai also accepts a list of strings if we want to do that
+	Prompt           string   `json:"prompt"`
 	FrequencyPenalty *float64 `json:"frequency_penalty"`
 	MaxTokens        *int     `json:"max_tokens"`
 	PresencePenalty  *float64 `json:"presence_penalty"`
@@ -545,7 +546,7 @@ func ListMiddleware() gin.HandlerFunc {
 	}
 }
 
-func CompletionMiddleware() gin.HandlerFunc {
+func CompletionsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CompletionRequest
 		err := c.ShouldBindJSON(&req)

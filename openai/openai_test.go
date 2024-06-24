@@ -87,7 +87,7 @@ func TestMiddleware(t *testing.T) {
 			Method:   http.MethodPost,
 			Path:     "/api/generate",
 			TestPath: "/api/generate",
-			Handler:  CompletionMiddleware,
+			Handler:  CompletionsMiddleware,
 			Endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.GenerateResponse{
 					Response: "Hello!",
