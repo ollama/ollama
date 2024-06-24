@@ -660,28 +660,6 @@ func (s *Server) ShowModelHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) RetrieveModelHandler(c *gin.Context) {
-	n := model.ParseName(c.Param("model"))
-	if !n.IsValid() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("name %q is invalid", c.Param("model"))})
-		return
-	}
-
-	m, err := ParseNamedManifest(n)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	resp := api.RetrieveModelResponse{
-		Id:      c.Param("model"),
-		Object:  "model",
-		Created: m.fi.ModTime().Unix(),
-		OwnedBy: "ollama",
-	}
-	c.JSON(http.StatusOK, resp)
-}
-
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	m, err := GetModel(req.Model)
 	if err != nil {

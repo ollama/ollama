@@ -175,12 +175,12 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 	}
 }
 
-func toModel(r api.ShowResponse, model string) Model {
+func toModel(r api.ShowResponse, m string) Model {
 	return Model{
-		Id:      model,
+		Id:      m,
 		Object:  "model",
 		Created: r.ModifiedAt.Unix(),
-		OwnedBy: "ollama",
+		OwnedBy: model.ParseName(m).Namespace,
 	}
 }
 

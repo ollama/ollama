@@ -32,7 +32,7 @@ func TestMiddleware(t *testing.T) {
 			Method:   http.MethodPost,
 			Path:     "/api/chat",
 			TestPath: "/api/chat",
-			Handler:  Middleware,
+			Handler:  ChatMiddleware,
 			Endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.ChatResponse{
 					Message: api.Message{
@@ -89,11 +89,11 @@ func TestMiddleware(t *testing.T) {
 			},
 		},
 		{
-			Name:       "OpenAI Retrieve Handler",
-			Method:     http.MethodGet,
-			Path:       "/api/show/:model",
-			TestPath:   "/api/show/test-model",
-			Middleware: RetrieveMiddleware,
+			Name:     "retrieve model",
+			Method:   http.MethodGet,
+			Path:     "/api/show/:model",
+			TestPath: "/api/show/test-model",
+			Handler:  RetrieveMiddleware,
 			Endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.ShowResponse{
 					ModifiedAt: time.Date(2024, 6, 17, 13, 45, 0, 0, time.UTC),
@@ -105,8 +105,13 @@ func TestMiddleware(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				assert.Equal(t, "model", retrieveResp.Object)
-				assert.Equal(t, "test-model", retrieveResp.Id)
+				if retrieveResp.Object != "model" {
+					t.Fatalf("Expected object to be model, got %s", retrieveResp.Object)
+				}
+
+				if retrieveResp.Id != "test-model" {
+					t.Fatalf("Expected id to be test-model, got %s", retrieveResp.Id)
+				}
 			},
 		},
 	}
