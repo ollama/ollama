@@ -269,6 +269,7 @@ func Test_Routes(t *testing.T) {
 				require.NoError(t, err)
 
 				assert.Equal(t, "show-model", retrieveResp.Id)
+				assert.Equal(t, "library", retrieveResp.OwnedBy)
 			},
 		},
 	}
