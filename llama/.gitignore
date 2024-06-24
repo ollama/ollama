@@ -1,9 +1,3 @@
 *.bin
 *.gguf
-*.lib
-*.exp
-*.dll
-*.so
-*.o
-*.obj
-ollama_runner*
+build/
