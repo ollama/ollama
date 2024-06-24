@@ -290,7 +290,7 @@ func (b *bufferedForwardOnlySeeker) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (b bufferedForwardOnlySeeker) Seek(offset int64, whence int) (int64, error) {
+func (b *bufferedForwardOnlySeeker) Seek(offset int64, whence int) (int64, error) {
 	if whence != io.SeekCurrent {
 		return 0, fmt.Errorf("bufferedForwardOnlySeeker: unsupported whence: %d", whence)
 	}
@@ -336,7 +336,9 @@ func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	}
 
 	model, err := c.Decode(rs)
-	if err != nil {
+	if errors.Is(err, io.EOF) {
+		// noop
+	} else if err != nil {
 		return nil, 0, err
 	}
 
