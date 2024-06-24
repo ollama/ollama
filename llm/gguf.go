@@ -3,11 +3,10 @@ package llm
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
-
-	"log/slog"
 )
 
 type containerGGUF struct {
@@ -29,6 +28,12 @@ type containerGGUF struct {
 		NumTensor uint64
 		NumKV     uint64
 	}
+
+	maxArraySize int
+}
+
+func (c *containerGGUF) canCollectArray(size int) bool {
+	return c.maxArraySize < 0 || size <= c.maxArraySize
 }
 
 func (c *containerGGUF) Name() string {
@@ -54,7 +59,6 @@ func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
 	}
 
 	model := newGGUF(c)
-	slog.Debug(fmt.Sprintf("model = %#v", model))
 	if err := model.Decode(rs); err != nil {
 		return nil, err
 	}
@@ -85,6 +89,8 @@ type gguf struct {
 	tensors []*Tensor
 
 	parameters uint64
+
+	scratch [16 << 10]byte
 }
 
 func newGGUF(container *containerGGUF) *gguf {
@@ -181,34 +187,34 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	}
 
 	// decode tensors
-	for i := 0; uint64(i) < llm.numTensor(); i++ {
+	for range llm.numTensor() {
 		name, err := readGGUFString(llm, rs)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read tensor name: %w", err)
 		}
 
 		// dims is the number of dimensions in the tensor
 		dims, err := readGGUF[uint32](llm, rs)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read tensor dimensions: %w", err)
 		}
 
 		shape := [4]uint64{1, 1, 1, 1}
 		for i := 0; uint32(i) < dims; i++ {
 			shape[i], err = readGGUF[uint64](llm, rs)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to read tensor shape: %w", err)
 			}
 		}
 
 		kind, err := readGGUF[uint32](llm, rs)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read tensor kind: %w", err)
 		}
 
 		offset, err := readGGUF[uint64](llm, rs)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read tensor offset: %w", err)
 		}
 
 		tensor := Tensor{
@@ -230,24 +236,19 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 		alignment = 32
 	}
 
-	offset, err := rs.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-
-	padding := llm.padding(offset, int64(alignment))
-	if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
-		return err
-	}
-
 	for _, tensor := range llm.tensors {
-		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
-			return err
+		offset, err := rs.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return fmt.Errorf("failed to get current offset: %w", err)
 		}
 
-		padding := llm.padding(int64(tensor.Size()), int64(alignment))
+		padding := llm.padding(offset, int64(alignment))
 		if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
-			return err
+			return fmt.Errorf("failed to seek to init padding: %w", err)
+		}
+
+		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
+			return fmt.Errorf("failed to seek to tensor: %w", err)
 		}
 	}
 
@@ -285,22 +286,48 @@ func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
 	return b.String(), nil
 }
 
+func discardGGUFString(llm *gguf, r io.Reader) error {
+	buf := llm.scratch[:8]
+	_, err := io.ReadFull(r, buf)
+	if err != nil {
+		return err
+	}
+
+	size := int(llm.ByteOrder.Uint64(buf))
+	for size > 0 {
+		n, err := r.Read(llm.scratch[:min(size, cap(llm.scratch))])
+		if err != nil {
+			return err
+		}
+		size -= n
+	}
+	return nil
+}
+
 func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 	if llm.Version == 1 {
 		return readGGUFV1String(llm, r)
 	}
 
-	var length uint64
-	if err := binary.Read(r, llm.ByteOrder, &length); err != nil {
+	buf := llm.scratch[:8]
+	_, err := io.ReadFull(r, buf)
+	if err != nil {
 		return "", err
 	}
 
-	var b bytes.Buffer
-	if _, err := io.CopyN(&b, r, int64(length)); err != nil {
+	length := int(llm.ByteOrder.Uint64(buf))
+	if length > len(llm.scratch) {
+		buf = make([]byte, length)
+	} else {
+		buf = llm.scratch[:length]
+	}
+	clear(buf)
+
+	_, err = io.ReadFull(r, buf)
+	if err != nil {
 		return "", err
 	}
-
-	return b.String(), nil
+	return string(buf), nil
 }
 
 func writeGGUFString(llm *gguf, w io.Writer, s string) error {
@@ -316,7 +343,16 @@ func writeGGUFString(llm *gguf, w io.Writer, s string) error {
 	return err
 }
 
-func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
+type array struct {
+	size   int
+	values []any
+}
+
+func (a *array) MarshalJSON() ([]byte, error) {
+	return json.Marshal(a.values)
+}
+
+func readGGUFV1Array(llm *gguf, r io.Reader) (*array, error) {
 	t, err := readGGUF[uint32](llm, r)
 	if err != nil {
 		return nil, err
@@ -327,7 +363,12 @@ func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
 		return nil, err
 	}
 
-	for i := 0; uint32(i) < n; i++ {
+	a := &array{size: int(n)}
+	if llm.canCollectArray(int(n)) {
+		a.values = make([]any, 0, int(n))
+	}
+
+	for i := range n {
 		var e any
 		switch t {
 		case ggufTypeUint8:
@@ -361,13 +402,15 @@ func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
 			return nil, err
 		}
 
-		a = append(a, e)
+		if a.values != nil {
+			a.values[i] = e
+		}
 	}
 
-	return
+	return a, nil
 }
 
-func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
+func readGGUFArray(llm *gguf, r io.Reader) (*array, error) {
 	if llm.Version == 1 {
 		return readGGUFV1Array(llm, r)
 	}
@@ -382,7 +425,12 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 		return nil, err
 	}
 
-	for i := 0; uint64(i) < n; i++ {
+	a := &array{size: int(n)}
+	if llm.canCollectArray(int(n)) {
+		a.values = make([]any, int(n))
+	}
+
+	for i := range n {
 		var e any
 		switch t {
 		case ggufTypeUint8:
@@ -408,7 +456,11 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 		case ggufTypeBool:
 			e, err = readGGUF[bool](llm, r)
 		case ggufTypeString:
-			e, err = readGGUFString(llm, r)
+			if a.values != nil {
+				e, err = readGGUFString(llm, r)
+			} else {
+				err = discardGGUFString(llm, r)
+			}
 		default:
 			return nil, fmt.Errorf("invalid array type: %d", t)
 		}
@@ -416,10 +468,12 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 			return nil, err
 		}
 
-		a = append(a, e)
+		if a.values != nil {
+			a.values[i] = e
+		}
 	}
 
-	return
+	return a, nil
 }
 
 func writeGGUFArray[S ~[]E, E any](llm *gguf, w io.Writer, t uint32, s S) error {
