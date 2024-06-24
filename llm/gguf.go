@@ -190,34 +190,35 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	}
 
 	// decode tensors
-	for i := 0; uint64(i) < llm.numTensor(); i++ {
+	for i := range llm.numTensor() {
+		fmt.Println("IIII:", i)
 		name, err := readGGUFString(llm, rs)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read tensor name: %w", err)
 		}
 
 		// dims is the number of dimensions in the tensor
 		dims, err := readGGUF[uint32](llm, rs)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read tensor dimensions: %w", err)
 		}
 
 		shape := [4]uint64{1, 1, 1, 1}
 		for i := 0; uint32(i) < dims; i++ {
 			shape[i], err = readGGUF[uint64](llm, rs)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to read tensor shape: %w", err)
 			}
 		}
 
 		kind, err := readGGUF[uint32](llm, rs)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read tensor kind: %w", err)
 		}
 
 		offset, err := readGGUF[uint64](llm, rs)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read tensor offset: %w", err)
 		}
 
 		tensor := Tensor{
@@ -241,22 +242,23 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get current offset: %w", err)
 	}
 
 	padding := llm.padding(offset, int64(alignment))
 	if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
-		return err
+		return fmt.Errorf("failed to seek to init padding: %w", err)
 	}
 
-	for _, tensor := range llm.tensors {
+	for i, tensor := range llm.tensors {
+		fmt.Println("MIKEI:", i)
 		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
-			return err
+			return fmt.Errorf("failed to seek to tensor: %w", err)
 		}
 
 		padding := llm.padding(int64(tensor.Size()), int64(alignment))
 		if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
-			return err
+			return fmt.Errorf("failed to seek to padding: %w", err)
 		}
 	}
 
@@ -311,6 +313,7 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 	} else {
 		buf = llm.scratch[:length]
 	}
+	clear(buf)
 
 	_, err = io.ReadFull(r, buf)
 	if err != nil {

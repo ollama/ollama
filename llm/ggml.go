@@ -336,9 +336,7 @@ func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	}
 
 	model, err := c.Decode(rs)
-	if errors.Is(err, io.EOF) {
-		// noop
-	} else if err != nil {
+	if err != nil {
 		return nil, 0, err
 	}
 
