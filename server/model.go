@@ -63,7 +63,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 			}
 			defer blob.Close()
 
-			ggml, _, err := llm.DecodeGGML(blob)
+			ggml, _, err := llm.DecodeGGML(blob, 0)
 			if err != nil {
 				return nil, err
 			}
@@ -176,7 +176,7 @@ func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(a
 	}
 	defer bin.Close()
 
-	ggml, _, err := llm.DecodeGGML(bin)
+	ggml, _, err := llm.DecodeGGML(bin, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 
 	var offset int64
 	for offset < stat.Size() {
-		ggml, n, err := llm.DecodeGGML(file)
+		ggml, n, err := llm.DecodeGGML(file, 0)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {

@@ -45,7 +45,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	}, tensors)
 	require.NoError(t, err)
 
-	ggml, err := LoadModel(f.Name())
+	ggml, err := LoadModel(f.Name(), 0)
 	require.NoError(t, err)
 
 	// Simple CPU scenario

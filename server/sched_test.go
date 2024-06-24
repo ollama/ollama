@@ -135,7 +135,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 
 	fname := f.Name()
 	model := &Model{Name: modelName, ModelPath: fname}
-	scenario.ggml, err = llm.LoadModel(model.ModelPath)
+	scenario.ggml, err = llm.LoadModel(model.ModelPath, 0)
 	require.NoError(t, err)
 
 	scenario.req = &LlmRequest{

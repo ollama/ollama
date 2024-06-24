@@ -754,7 +754,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 }
 
 func getKVData(digest string, verbose bool) (llm.KV, error) {
-	kvData, err := llm.LoadModel(digest)
+	maxArraySize := 0
+	if verbose {
+		maxArraySize = -1
+	}
+	kvData, err := llm.LoadModel(digest, maxArraySize)
 	if err != nil {
 		return nil, err
 	}

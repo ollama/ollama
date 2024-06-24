@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -278,7 +279,43 @@ func DetectGGMLType(b []byte) string {
 	}
 }
 
-func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
+type bufferedForwardOnlySeeker struct {
+	r *bufio.Reader
+	n int
+}
+
+func (b *bufferedForwardOnlySeeker) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.n += n
+	return n, err
+}
+
+func (b bufferedForwardOnlySeeker) Seek(offset int64, whence int) (int64, error) {
+	if whence != io.SeekCurrent {
+		return 0, fmt.Errorf("bufferedForwardOnlySeeker: unsupported whence: %d", whence)
+	}
+	if offset < 0 {
+		return 0, fmt.Errorf("bufferedForwardOnlySeeker: negative offset: %d", offset)
+	}
+
+	// Read and discard bytes
+	n, err := b.r.Discard(int(offset))
+	b.n += n
+	return int64(b.n), err
+}
+
+// DecodeGGML decodes a GGML model from the given reader.
+//
+// It collects array values for arrays with a size less than or equal to
+// maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
+// the maxArraySize is negative, all arrays are collected.
+func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
+	if maxArraySize == 0 {
+		maxArraySize = 1024
+	}
+
+	rs = &bufferedForwardOnlySeeker{r: bufio.NewReader(rs)}
+
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, 0, err
@@ -291,17 +328,15 @@ func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
 	case FILE_MAGIC_GGLA:
 		c = &containerGGLA{}
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{ByteOrder: binary.LittleEndian}
+		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize}
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{ByteOrder: binary.BigEndian}
+		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
 	default:
 		return nil, 0, errors.New("invalid file magic")
 	}
 
 	model, err := c.Decode(rs)
-	if errors.Is(err, io.EOF) {
-		// noop
-	} else if err != nil {
+	if err != nil {
 		return nil, 0, err
 	}
 
@@ -321,7 +356,7 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 	embedding := llm.KV().EmbeddingLength()
 	heads := llm.KV().HeadCount()
 	headsKV := llm.KV().HeadCountKV()
-	vocab := uint64(len(llm.KV()["tokenizer.ggml.tokens"].([]any)))
+	vocab := uint64(llm.KV()["tokenizer.ggml.tokens"].(*array).size)
 
 	embeddingHeads := llm.KV().EmbeddingHeadCount()
 	embeddingHeadsK := llm.KV().EmbeddingHeadCountK()

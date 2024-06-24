@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -29,6 +30,12 @@ type containerGGUF struct {
 		NumTensor uint64
 		NumKV     uint64
 	}
+
+	maxArraySize int
+}
+
+func (c *containerGGUF) canCollectArray(size int) bool {
+	return c.maxArraySize < 0 || size <= c.maxArraySize
 }
 
 func (c *containerGGUF) Name() string {
@@ -85,6 +92,8 @@ type gguf struct {
 	tensors []*Tensor
 
 	parameters uint64
+
+	scratch [16 << 10]byte
 }
 
 func newGGUF(container *containerGGUF) *gguf {
@@ -290,17 +299,24 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 		return readGGUFV1String(llm, r)
 	}
 
-	var length uint64
-	if err := binary.Read(r, llm.ByteOrder, &length); err != nil {
+	buf := llm.scratch[:8]
+	_, err := io.ReadFull(r, buf)
+	if err != nil {
 		return "", err
 	}
 
-	var b bytes.Buffer
-	if _, err := io.CopyN(&b, r, int64(length)); err != nil {
-		return "", err
+	length := int(llm.ByteOrder.Uint64(buf))
+	if length > len(llm.scratch) {
+		buf = make([]byte, length)
+	} else {
+		buf = llm.scratch[:length]
 	}
 
-	return b.String(), nil
+	_, err = io.ReadFull(r, buf)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
 }
 
 func writeGGUFString(llm *gguf, w io.Writer, s string) error {
@@ -316,7 +332,16 @@ func writeGGUFString(llm *gguf, w io.Writer, s string) error {
 	return err
 }
 
-func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
+type array struct {
+	size   int
+	values []any
+}
+
+func (a *array) MarshalJSON() ([]byte, error) {
+	return json.Marshal(a.values)
+}
+
+func readGGUFV1Array(llm *gguf, r io.Reader) (*array, error) {
 	t, err := readGGUF[uint32](llm, r)
 	if err != nil {
 		return nil, err
@@ -327,7 +352,12 @@ func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
 		return nil, err
 	}
 
-	for i := 0; uint32(i) < n; i++ {
+	a := &array{size: int(n)}
+	if llm.canCollectArray(int(n)) {
+		a.values = make([]any, 0, int(n))
+	}
+
+	for i := range n {
 		var e any
 		switch t {
 		case ggufTypeUint8:
@@ -361,13 +391,15 @@ func readGGUFV1Array(llm *gguf, r io.Reader) (a []any, err error) {
 			return nil, err
 		}
 
-		a = append(a, e)
+		if a.values != nil {
+			a.values[i] = e
+		}
 	}
 
-	return
+	return a, nil
 }
 
-func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
+func readGGUFArray(llm *gguf, r io.Reader) (*array, error) {
 	if llm.Version == 1 {
 		return readGGUFV1Array(llm, r)
 	}
@@ -382,7 +414,12 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 		return nil, err
 	}
 
-	for i := 0; uint64(i) < n; i++ {
+	a := &array{size: int(n)}
+	if llm.canCollectArray(int(n)) {
+		a.values = make([]any, int(n))
+	}
+
+	for i := range n {
 		var e any
 		switch t {
 		case ggufTypeUint8:
@@ -416,10 +453,12 @@ func readGGUFArray(llm *gguf, r io.Reader) (a []any, err error) {
 			return nil, err
 		}
 
-		a = append(a, e)
+		if a.values != nil {
+			a.values[i] = e
+		}
 	}
 
-	return
+	return a, nil
 }
 
 func writeGGUFArray[S ~[]E, E any](llm *gguf, w io.Writer, t uint32, s S) error {
