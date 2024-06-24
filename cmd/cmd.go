@@ -579,10 +579,6 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(args) != 1 {
-		return errors.New("missing model name")
-	}
-
 	license, errLicense := cmd.Flags().GetBool("license")
 	modelfile, errModelfile := cmd.Flags().GetBool("modelfile")
 	parameters, errParams := cmd.Flags().GetBool("parameters")
@@ -625,8 +621,29 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 	if flagsSet > 1 {
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
-	} else if flagsSet == 0 {
-		return errors.New("one of '--license', '--modelfile', '--parameters', '--system', or '--template' must be specified")
+	}
+
+	if flagsSet == 1 {
+		req := api.ShowRequest{Name: args[0]}
+		resp, err := client.Show(cmd.Context(), &req)
+		if err != nil {
+			return err
+		}
+
+		switch showType {
+		case "license":
+			fmt.Println(resp.License)
+		case "modelfile":
+			fmt.Println(resp.Modelfile)
+		case "parameters":
+			fmt.Println(resp.Parameters)
+		case "system":
+			fmt.Println(resp.System)
+		case "template":
+			fmt.Println(resp.Template)
+		}
+
+		return nil
 	}
 
 	req := api.ShowRequest{Name: args[0]}
@@ -635,20 +652,112 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch showType {
-	case "license":
-		fmt.Println(resp.License)
-	case "modelfile":
-		fmt.Println(resp.Modelfile)
-	case "parameters":
-		fmt.Println(resp.Parameters)
-	case "system":
-		fmt.Println(resp.System)
-	case "template":
-		fmt.Println(resp.Template)
+	arch := resp.ModelInfo["general.architecture"].(string)
+
+	modelData := [][]string{
+		{"arch", arch},
+		{"parameters", resp.Details.ParameterSize},
+		{"quantization", resp.Details.QuantizationLevel},
+		{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
+		{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
 	}
 
+	mainTableData := [][]string{
+		{"Model"},
+		{renderSubTable(modelData, false)},
+	}
+
+	if resp.ProjectorInfo != nil {
+		projectorData := [][]string{
+			{"arch", "clip"},
+			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
+			{"projector type", resp.ProjectorInfo["clip.projector_type"].(string)},
+			{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
+			{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
+		}
+
+		mainTableData = append(mainTableData,
+			[]string{"Projector"},
+			[]string{renderSubTable(projectorData, false)},
+		)
+	}
+
+	if resp.Parameters != "" {
+		mainTableData = append(mainTableData, []string{"Parameters"}, []string{formatParams(resp.Parameters)})
+	}
+
+	if resp.System != "" {
+		mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System), true)})
+	}
+
+	if resp.License != "" {
+		mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License), true)})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetAutoWrapText(false)
+	table.SetBorder(false)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	for _, v := range mainTableData {
+		table.Append(v)
+	}
+
+	table.Render()
+
 	return nil
+}
+
+func renderSubTable(data [][]string, file bool) string {
+	var buf bytes.Buffer
+	table := tablewriter.NewWriter(&buf)
+	table.SetAutoWrapText(!file)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("\t")
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	for _, v := range data {
+		table.Append(v)
+	}
+
+	table.Render()
+
+	renderedTable := buf.String()
+	lines := strings.Split(renderedTable, "\n")
+	for i, line := range lines {
+		lines[i] = "\t" + line
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func twoLines(s string) [][]string {
+	lines := strings.Split(s, "\n")
+	res := [][]string{}
+
+	count := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			count++
+			res = append(res, []string{line})
+			if count == 2 {
+				return res
+			}
+		}
+	}
+	return res
+}
+
+func formatParams(s string) string {
+	lines := strings.Split(s, "\n")
+	table := [][]string{}
+
+	for _, line := range lines {
+		table = append(table, strings.Fields(line))
+	}
+	return renderSubTable(table, false)
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {

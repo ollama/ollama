@@ -58,7 +58,7 @@ func availableServers() map[string]string {
 	}
 
 	// glob payloadsDir for files that start with ollama_
-	pattern := filepath.Join(payloadsDir, "*")
+	pattern := filepath.Join(payloadsDir, "*", "ollama_*")
 
 	files, err := filepath.Glob(pattern)
 	if err != nil {
@@ -69,7 +69,7 @@ func availableServers() map[string]string {
 	servers := make(map[string]string)
 	for _, file := range files {
 		slog.Debug("availableServers : found", "file", file)
-		servers[filepath.Base(file)] = file
+		servers[filepath.Base(filepath.Dir(file))] = filepath.Dir(file)
 	}
 
 	return servers
@@ -82,8 +82,8 @@ func serversForGpu(info gpu.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
 	availableServers := availableServers()
 	requested := info.Library
-	if info.Variant != "" {
-		requested += "_" + info.Variant
+	if info.Variant != gpu.CPUCapabilityNone {
+		requested += "_" + info.Variant.String()
 	}
 
 	servers := []string{}
@@ -117,14 +117,14 @@ func serversForGpu(info gpu.GpuInfo) []string {
 
 	// Load up the best CPU variant if not primary requested
 	if info.Library != "cpu" {
-		variant := gpu.GetCPUVariant()
+		variant := gpu.GetCPUCapability()
 		// If no variant, then we fall back to default
 		// If we have a variant, try that if we find an exact match
 		// Attempting to run the wrong CPU instructions will panic the
 		// process
-		if variant != "" {
+		if variant != gpu.CPUCapabilityNone {
 			for cmp := range availableServers {
-				if cmp == "cpu_"+variant {
+				if cmp == "cpu_"+variant.String() {
 					servers = append(servers, cmp)
 					break
 				}
@@ -146,11 +146,11 @@ func serverForCpu() string {
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 		return "metal"
 	}
-	variant := gpu.GetCPUVariant()
+	variant := gpu.GetCPUCapability()
 	availableServers := availableServers()
-	if variant != "" {
+	if variant != gpu.CPUCapabilityNone {
 		for cmp := range availableServers {
-			if cmp == "cpu_"+variant {
+			if cmp == "cpu_"+variant.String() {
 				return cmp
 			}
 		}

@@ -22,7 +22,7 @@ docker logs <container-name>
 If manually running `ollama serve` in a terminal, the logs will be on that terminal.
 
 When you run Ollama on **Windows**, there are a few different locations. You can view them in the explorer window by hitting `<cmd>+R` and type in:
-- `explorer %LOCALAPPDATA%\Ollama` to view logs
+- `explorer %LOCALAPPDATA%\Ollama` to view logs.  The most recent server logs will be in `server.log` and older logs will be in `server-#.log` 
 - `explorer %LOCALAPPDATA%\Programs\Ollama` to browse the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` to browse where models and configuration is stored
 - `explorer %TEMP%` where temporary executable files are stored in one or more `ollama*` directories

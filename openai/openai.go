@@ -178,9 +178,6 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 
 	if r.Seed != nil {
 		options["seed"] = *r.Seed
-
-		// temperature=0 is required for reproducible outputs
-		options["temperature"] = 0.0
 	}
 
 	if r.FrequencyPenalty != nil {

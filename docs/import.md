@@ -47,19 +47,13 @@ success
 
 ### Supported Quantizations
 
-<details>
-<summary>Legacy Quantization</summary>
-
 - `Q4_0`
 - `Q4_1`
 - `Q5_0`
 - `Q5_1`
 - `Q8_0`
 
-</details>
-
-<details>
-<summary>K-means Quantization</summary>`
+#### K-means Quantizations
 
 - `Q3_K_S`
 - `Q3_K_M`
@@ -69,11 +63,6 @@ success
 - `Q5_K_S`
 - `Q5_K_M`
 - `Q6_K`
-
-</details>
-
-> [!NOTE]
-> Activation-aware Weight Quantization (i.e. IQ) are not currently supported for automatic quantization however you can still import the quantized model into Ollama, see [Import GGUF](#import-gguf).
 
 ## Template Detection
 

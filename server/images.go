@@ -414,17 +414,22 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 							return err
 						}
 
-						layers, err := parseFromFile(ctx, temp, "", fn)
+						layer, err := NewLayer(temp, baseLayer.MediaType)
 						if err != nil {
 							return err
 						}
 
-						if len(layers) != 1 {
-							return errors.New("quantization failed")
+						if _, err := temp.Seek(0, io.SeekStart); err != nil {
+							return err
 						}
 
-						baseLayer.Layer = layers[0].Layer
-						baseLayer.GGML = layers[0].GGML
+						ggml, _, err := llm.DecodeGGML(temp)
+						if err != nil {
+							return err
+						}
+
+						baseLayer.Layer = layer
+						baseLayer.GGML = ggml
 					}
 				}
 
