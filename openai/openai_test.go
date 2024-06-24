@@ -15,28 +15,44 @@ import (
 
 func TestMiddleware(t *testing.T) {
 	type testCase struct {
-		Name       string
-		Method     string
-		Path       string
-		TestPath   string
-		Middleware func() gin.HandlerFunc
-		Endpoint   func(c *gin.Context)
-		Setup      func(t *testing.T, req *http.Request)
-		Expected   func(t *testing.T, resp *httptest.ResponseRecorder)
+		Name     string
+		Method   string
+		Path     string
+		TestPath string
+		Handler  func() gin.HandlerFunc
+		Endpoint func(c *gin.Context)
+		Setup    func(t *testing.T, req *http.Request)
+		Expected func(t *testing.T, resp *httptest.ResponseRecorder)
 	}
 
 	testCases := []testCase{
 		{
-			Name:       "OpenAI Chat Handler",
-			Method:     http.MethodPost,
-			Path:       "/api/chat",
-			TestPath:   "/api/chat",
-			Middleware: Middleware,
+			Name:     "chat handler",
+			Method:   http.MethodPost,
+			Path:     "/api/chat",
+			TestPath: "/api/chat",
+			Handler:  Middleware,
 			Endpoint: func(c *gin.Context) {
+				var chatReq api.ChatRequest
+				if err := c.ShouldBindJSON(&chatReq); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+					return
+				}
+
+				userMessage := chatReq.Messages[0].Content
+				var assistantMessage string
+
+				switch userMessage {
+				case "Hello":
+					assistantMessage = "Hello!"
+				default:
+					assistantMessage = "I'm not sure how to respond to that."
+				}
+
 				c.JSON(http.StatusOK, api.ChatResponse{
 					Message: api.Message{
 						Role:    "assistant",
-						Content: "Hello!",
+						Content: assistantMessage,
 					},
 				})
 			},
@@ -57,16 +73,21 @@ func TestMiddleware(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				assert.Equal(t, "chat.completion", chatResp.Object)
-				assert.Equal(t, "Hello!", chatResp.Choices[0].Message.Content)
+				if chatResp.Object != "chat.completion" {
+					t.Fatalf("expected chat.completion, got %s", chatResp.Object)
+				}
+
+				if chatResp.Choices[0].Message.Content != "Hello!" {
+					t.Fatalf("expected Hello!, got %s", chatResp.Choices[0].Message.Content)
+				}
 			},
 		},
 		{
-			Name:       "OpenAI Completions Handler",
-			Method:     http.MethodPost,
-			Path:       "/api/generate",
-			TestPath:   "/api/generate",
-			Middleware: CompletionMiddleware,
+			Name:     "completions handler",
+			Method:   http.MethodPost,
+			Path:     "/api/generate",
+			TestPath: "/api/generate",
+			Handler:  CompletionMiddleware,
 			Endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.GenerateResponse{
 					Response: "Hello!",
@@ -94,11 +115,11 @@ func TestMiddleware(t *testing.T) {
 			},
 		},
 		{
-			Name:       "OpenAI List Handler",
-			Method:     http.MethodGet,
-			Path:       "/api/tags",
-			TestPath:   "/api/tags",
-			Middleware: ListMiddleware,
+			Name:     "list handler",
+			Method:   http.MethodGet,
+			Path:     "/api/tags",
+			TestPath: "/api/tags",
+			Handler:  ListMiddleware,
 			Endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.ListResponse{
 					Models: []api.ListModelResponse{
@@ -114,9 +135,17 @@ func TestMiddleware(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				assert.Equal(t, "list", listResp.Object)
-				assert.Len(t, listResp.Data, 1)
-				assert.Equal(t, "Test Model", listResp.Data[0].Id)
+				if listResp.Object != "list" {
+					t.Fatalf("expected list, got %s", listResp.Object)
+				}
+
+				if len(listResp.Data) != 1 {
+					t.Fatalf("expected 1, got %d", len(listResp.Data))
+				}
+
+				if listResp.Data[0].Id != "Test Model" {
+					t.Fatalf("expected Test Model, got %s", listResp.Data[0].Id)
+				}
 			},
 		},
 	}
@@ -127,7 +156,7 @@ func TestMiddleware(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			router = gin.New()
-			router.Use(tc.Middleware())
+			router.Use(tc.Handler())
 			router.Handle(tc.Method, tc.Path, tc.Endpoint)
 			req, _ := http.NewRequest(tc.Method, tc.TestPath, nil)
 
