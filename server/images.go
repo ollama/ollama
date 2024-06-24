@@ -431,7 +431,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				if baseLayer.GGML != nil {
 					config.ModelFormat = cmp.Or(config.ModelFormat, baseLayer.GGML.Name())
 					config.ModelFamily = cmp.Or(config.ModelFamily, baseLayer.GGML.KV().Architecture())
-					config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(baseLayer.GGML.KV().ParameterCount()))
+					config.ModelType = cmp.Or(config.ModelType, format.RoundedParameter(baseLayer.GGML.KV().ParameterCount()))
 					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType().String())
 					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
 				}

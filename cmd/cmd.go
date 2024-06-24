@@ -656,7 +656,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 	modelData := [][]string{
 		{"arch", arch},
-		{"parameters", format.HumanNumber(uint64(resp.ModelInfo["general.parameter_count"].(float64)))},
+		{"parameters", format.Parameters(uint64(resp.ModelInfo["general.parameter_count"].(float64)))},
 		{"quantization", resp.Details.QuantizationLevel},
 		{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
 		{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
@@ -670,7 +670,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	if resp.ProjectorInfo != nil {
 		projectorData := [][]string{
 			{"arch", "clip"},
-			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
+			{"parameters", format.Parameters(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
 			{"projector type", resp.ProjectorInfo["clip.projector_type"].(string)},
 			{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
 			{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
