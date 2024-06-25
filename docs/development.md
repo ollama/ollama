@@ -148,3 +148,43 @@ In addition to the common Windows development tools described above, install AMD
 - [Strawberry Perl](https://strawberryperl.com/)
 
 Lastly, add `ninja.exe` included with MSVC to the system path (e.g. `C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`).
+
+#### Windows on ARM (ARM64)
+
+Building for Windows on ARM is supported, but cross compilation from an x64 machine is not supported at this time, thus the build **must** be done in a Windows 11 ARM64 machine.
+
+Windows 10 is also not supported since some of the tools require x64 emulation.
+
+The required tools are almost the same as the regular Windows builds, but the ARM64 equivalent ones are used instead:
+
+- Visual Studio 2022 - C/C++ Workload, CMake and MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools (Latest) as minimal requirements
+- Go version 1.22 for Windows ARM64
+- MSYS2 since this is the MinGW distribution that supports targetting ARM64
+
+Steps:
+- Install MSYS2 and open the `CLANGARM64` envrionment shell.
+- Do the post install update as recommended by the MSYS2 installation instructions: `pacman -Syuu` and restart the `CLANGARM64` environment.
+- Do the second post install update `pacman -Syuu` and finally install the requiremets: 
+```shell
+  pacman -S --needed --noconfirm base-devel mingw-w64-clang-aarch64-gcc mingw-w64-clang-aarch64-make
+```  
+- Close the MSYS2 shell and open `Developer PowerShell for VS 2022` created by Visual Studio's installation
+- Add the `CLANGARM64` binary folder to the PATH environment variable (adjust the path if not installed in the default installation folder):
+```powershell
+  $Env:Path+=";C:\msys64\clangarm64\bin" # Don't forget the leading semi-colon
+```  
+- Check that all the tools are found in the PATH. Type the following commands in the `Developer PowerShell for VS 2022` already opened. All must be found:
+  - `cl`
+  - `go version`
+  - `cmake --version`
+  - `gcc --version`
+  - `mingw32-make --version`
+
+- Finally build 
+```powershell
+  $env:CGO_ENABLED="1"
+  go generate ./...
+  go build .
+```
+
+As noted while installing `mingw-w64-clang-aarch64-gcc` what is actually being installed is LLVM/Clang. `gcc` is just an alias to clang since in MSYS2 only Clang supports building for Windows on ARM at this time.
