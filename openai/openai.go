@@ -61,6 +61,11 @@ type ResponseFormat struct {
 	Type string `json:"type"`
 }
 
+type EmbeddingRequest struct {
+	Input any    `json:"input"`
+	Model string `json:"model"`
+}
+
 type ChatCompletionRequest struct {
 	Model            string          `json:"model"`
 	Messages         []Message       `json:"messages"`
@@ -133,9 +138,22 @@ type Model struct {
 	OwnedBy string `json:"owned_by"`
 }
 
+type Embedding struct {
+	Object    string    `json:"object"`
+	Embedding []float64 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
 type ListCompletion struct {
 	Object string  `json:"object"`
 	Data   []Model `json:"data"`
+}
+
+type EmbeddingList struct {
+	Object string      `json:"object"`
+	Data   []Embedding `json:"data"`
+	Model  string      `json:"model"`
+	// Usage  Usage       `json:"usage,omitempty"`
 }
 
 func NewError(code int, message string) ErrorResponse {
@@ -270,7 +288,59 @@ func toModel(r api.ShowResponse, m string) Model {
 	}
 }
 
-func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
+func toEmbeddingCompletion(model string, r api.EmbeddingResponse) EmbeddingList {
+	if r.Embedding != nil {
+		return EmbeddingList{
+			Object: "list",
+			Data: []Embedding{{
+				Object:    "embedding",
+				Embedding: r.Embedding,
+				Index:     0,
+			}},
+			Model: model,
+		}
+	}
+
+	if r.EmbeddingBatch != nil {
+		var data []Embedding
+		for i, e := range r.EmbeddingBatch {
+			data = append(data, Embedding{
+				Object:    "embedding",
+				Embedding: e,
+				Index:     i,
+			})
+		}
+
+		return EmbeddingList{
+			Object: "list",
+			Data:   data,
+			Model:  model,
+		}
+	}
+
+	// return error
+	return EmbeddingList{}
+}
+
+func fromEmbeddingRequest(r EmbeddingRequest) api.EmbeddingRequest {
+	switch input := r.Input.(type) {
+	case string:
+		return api.EmbeddingRequest{
+			Model:  r.Model,
+			Prompt: input,
+		}
+	case []string:
+		return api.EmbeddingRequest{
+			Model:       r.Model,
+			PromptBatch: input,
+		}
+	default:
+		// return error
+		return api.EmbeddingRequest{}
+	}
+}
+
+func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		switch content := msg.Content.(type) {
@@ -464,6 +534,11 @@ type RetrieveWriter struct {
 	model string
 }
 
+type EmbeddingWriter struct {
+	BaseWriter
+	model string
+}
+
 func (w *BaseWriter) writeError(code int, data []byte) (int, error) {
 	var serr api.StatusError
 	err := json.Unmarshal(data, &serr)
@@ -603,16 +678,15 @@ func (w *ListWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
-func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
-	var showResponse api.ShowResponse
-	err := json.Unmarshal(data, &showResponse)
+func (w *EmbeddingWriter) writeResponse(data []byte) (int, error) {
+	var embeddingResponse api.EmbeddingResponse
+	err := json.Unmarshal(data, &embeddingResponse)
 	if err != nil {
 		return 0, err
 	}
 
-	// retrieve completion
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(toModel(showResponse, w.model))
+	err = json.NewEncoder(w.ResponseWriter).Encode(toEmbeddingCompletion(w.model, embeddingResponse))
 	if err != nil {
 		return 0, err
 	}
@@ -620,7 +694,7 @@ func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (w *RetrieveWriter) Write(data []byte) (int, error) {
+func (w *EmbeddingWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(code, data)
@@ -663,9 +737,9 @@ func RetrieveMiddleware() gin.HandlerFunc {
 	}
 }
 
-func CompletionsMiddleware() gin.HandlerFunc {
+func EmbeddingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req CompletionRequest
+		var req EmbeddingRequest
 		err := c.ShouldBindJSON(&req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
@@ -673,23 +747,23 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
+
 		genReq, err := fromCompleteRequest(req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
 			return
 		}
 
-		if err := json.NewEncoder(&b).Encode(genReq); err != nil {
+		if err := json.NewEncoder(&b).Encode(fromEmbeddingRequest(req)); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}
 
 		c.Request.Body = io.NopCloser(&b)
 
-		w := &CompleteWriter{
+		w := &EmbeddingWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			stream:     req.Stream,
-			id:         fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			model:      req.Model,
 		}
 
 		c.Writer = w
