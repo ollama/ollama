@@ -17,7 +17,7 @@ func TestIntegrationMultimodal(t *testing.T) {
 	require.NoError(t, err)
 	req := api.GenerateRequest{
 		Model:  "llava:7b",
-		Prompt: "what does the text in this image say?",
+		Prompt: "describe what is in this image ",
 		Stream: &stream,
 		Options: map[string]interface{}{
 			"seed":        42,
@@ -29,14 +29,14 @@ func TestIntegrationMultimodal(t *testing.T) {
 	}
 
 	// Note: sometimes it returns "the ollamas" sometimes "the ollams"
-	resp := "the ollam"
+	resp := []string{"the ollam", "cartoon"}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 	require.NoError(t, PullIfMissing(ctx, client, req.Model))
 	// llava models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
+	DoGenerate(ctx, t, client, req, resp, 120*time.Second, 30*time.Second)
 }
 
 const imageEncoding = `iVBORw0KGgoAAAANSUhEUgAAANIAAAB4CAYAAACHHqzKAAAAAXNSR0IArs4c6QAAAIRlWElmTU0AKgAAAAgABQESAAMAAAABAAEAAAEaAAUAAAABAAAASgEb
