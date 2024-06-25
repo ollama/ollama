@@ -423,7 +423,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 							return err
 						}
 
-						ggml, _, err := llm.DecodeGGML(temp)
+						ggml, _, err := llm.DecodeGGML(temp, 0)
 						if err != nil {
 							return err
 						}

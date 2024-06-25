@@ -144,7 +144,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Load model for fitting
-					ggml, err := llm.LoadModel(pending.model.ModelPath)
+					ggml, err := llm.LoadModel(pending.model.ModelPath, 0)
 					if err != nil {
 						pending.errCh <- err
 						break
