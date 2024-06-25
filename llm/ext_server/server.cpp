@@ -3166,26 +3166,36 @@ int main(int argc, char **argv) {
                     prompt = "";
                 }
 
-                json image_data;
-                if (body.count("image_data") != 0) {
-                    image_data = body["image_data"];
-                }
-                else
-                {
-                    image_data = "";
-                }
-
                 // create and queue the task
-                const int task_id = llama.queue_tasks.get_new_id();
-                llama.queue_results.add_waiting_task_id(task_id);
-                llama.request_completion(task_id, { {"prompt", prompt}, { "n_predict", 0}, {"image_data", image_data} }, true, -1);
+                json responses;
+                {
+                    const int id_task = llama.queue_tasks.get_new_id();
+                    llama.queue_results.add_waiting_task_id(id_task);
+                    llama.request_completion(id_task, {{"prompt", prompt}}, true, -1);
 
-                // get the result
-                task_result result = llama.queue_results.recv(task_id);
-                llama.queue_results.remove_waiting_task_id(task_id);
-
-                // send the result
-                return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
+                    // get the result
+                    task_result result = llama.queue_results.recv(id_task);
+                    llama.queue_results.remove_waiting_task_id(id_task);
+                    if (!result.error) {
+                        if (result.result_json.count("results")) {
+                            // result for multi-task
+                            responses = result.result_json.at("results");
+                        } else {
+                            // result for single task
+                            responses = std::vector<json>(1, result.result_json);
+                        }
+                        json embeddings = json::array();
+                        for (auto & elem : responses) {
+                            embeddings.push_back(json_value(elem, "embedding", json::array()));
+                        }
+                        // send the result
+                        json result = json{{"embedding", embeddings}};
+                        return res.set_content(result.dump(), "application/json; charset=utf-8");
+                    } else {
+                        // return error
+                        return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
+                    }
+                }
             });
 
     // GG: if I put the main loop inside a thread, it crashes on the first request when build in Debug!?
