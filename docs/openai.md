@@ -120,7 +120,6 @@ curl http://localhost:11434/v1/models
 - `created` corresponds to when the model was last modified
 - `owned_by` corresponds to the ollama username, defaulting to `"library"`
 
-
 ## Models
 
 Before using a model, pull it locally `ollama pull`:
