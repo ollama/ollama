@@ -152,6 +152,40 @@ curl http://localhost:11434/v1/completions \
 
 - `prompt` currently only accepts a string
 
+### `/v1/completions`
+
+#### Supported features
+
+- [x] Completions
+- [x] Streaming
+- [x] JSON mode
+- [x] Reproducible outputs
+- [ ] Logprobs
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `prompt`
+- [x] `frequency_penalty`
+- [x] `presence_penalty`
+- [x] `seed`
+- [x] `stop`
+- [x] `stream`
+- [x] `temperature`
+- [x] `top_p`
+- [x] `max_tokens`
+- [ ] `best_of`
+- [ ] `echo`
+- [ ] `suffix`
+- [ ] `logit_bias`
+- [ ] `user`
+- [ ] `n`
+
+#### Notes
+
+- `prompt` currently only accepts a string
+- `usage.prompt_tokens` will be 0 for completions where prompt evaluation is cached
+
 ## Models
 
 Before using a model, pull it locally `ollama pull`:
