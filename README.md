@@ -386,12 +386,12 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
-- [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
-- [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
-- [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Chat/moderation bot written in python. Uses Ollama to create personalities.
-- [Headless Ollama](https://github.com/nischalj10/headless-ollama) (Scripts to automatically install ollama client & models on any OS for apps that depends on ollama server)
+- [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Plugin do assistente de inteligência artificial para o Sublime Text 4 com suporte ao Ollama)
+- [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Bot Discord generalizado em TypeScript com documentação de ajustes)
+- [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Bot de chat/moderação escrito em Python. Usa o Ollama para criar personalidades.
+- [Headless Ollama](https://github.com/nischalj10/headless-ollama) (Scripts para instalar automaticamente o cliente e os modelos do Ollama em qualquer sistema operacional para aplicativos que dependem do servidor Ollama)
 
 ### Supported backends
 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) projeto fundado por Georgi Gerganov.
 
