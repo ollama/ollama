@@ -177,7 +177,7 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 	}
 }
 
-func fromRequest(r ChatCompletionRequest) api.ChatRequest {
+func fromRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		switch content := msg.Content.(type) {
@@ -191,6 +191,8 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 					case "text":
 						if text, ok := data["text"].(string); ok {
 							message.Content = text
+						} else {
+							return api.ChatRequest{}, fmt.Errorf("invalid message format")
 						}
 					case "image_url":
 						if urlMap, ok := data["image_url"].(map[string]any); ok {
@@ -202,14 +204,24 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 								if img, err := base64.StdEncoding.DecodeString(url); err == nil {
 									message.Images = append(message.Images, img)
 								}
+							} else {
+								return api.ChatRequest{}, fmt.Errorf("invalid message format")
 							}
+						} else {
+							return api.ChatRequest{}, fmt.Errorf("invalid message format")
 						}
+					default:
+						return api.ChatRequest{}, fmt.Errorf("invalid message format")
 					}
+				} else {
+					return api.ChatRequest{}, fmt.Errorf("invalid message format")
 				}
 			}
 			if message.Content != "" || len(message.Images) > 0 {
 				messages = append(messages, message)
 			}
+		default:
+			return api.ChatRequest{}, fmt.Errorf("invalid message content type: %T", content)
 		}
 	}
 
@@ -267,7 +279,7 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 		Format:   format,
 		Options:  options,
 		Stream:   &r.Stream,
-	}
+	}, nil
 }
 
 type BaseWriter struct {
@@ -401,7 +413,13 @@ func Middleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(fromRequest(req)); err != nil {
+
+		chatReq, err := fromRequest(req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+		}
+
+		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}
