@@ -236,11 +236,16 @@ func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRe
 	DoGenerate(ctx, t, client, genReq, anyResp, 30*time.Second, 10*time.Second)
 }
 
-func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) {
+// returns context
+func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) []int {
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
+	var context []int
 	fn := func(response api.GenerateResponse) error {
 		// fmt.Print(".")
+		if len(response.Context) > 0 {
+			context = response.Context
+		}
 		buf.Write([]byte(response.Response))
 		if !stallTimer.Reset(streamTimeout) {
 			return errors.New("stall was detected while streaming response, aborting")
@@ -280,6 +285,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 	case <-ctx.Done():
 		t.Error("outer test context done while waiting for generate")
 	}
+	return context
 }
 
 // Generate a set of requests
