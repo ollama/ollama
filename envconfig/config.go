@@ -31,6 +31,10 @@ var (
 	Debug bool
 	// Experimental flash attention
 	FlashAttention bool
+	// Set via OLLAMA_CACHE_TYPE_K in the environment
+	CacheTypeK string
+	// Set via OLLAMA_CACHE_TYPE_V in the environment
+	CacheTypeV string
 	// Set via OLLAMA_HOST in the environment
 	Host *OllamaHost
 	// Set via OLLAMA_KEEP_ALIVE in the environment
@@ -96,6 +100,8 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread, "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
+		"OLLAMA_CACHE_TYPE_K":      {"OLLAMA_CACHE_TYPE_K", CacheTypeK, "Type of cache for keys (default: f16)"},
+		"OLLAMA_CACHE_TYPE_V":      {"OLLAMA_CACHE_TYPE_V", CacheTypeV, "Type of cache for values (default: f16)"},
 	}
 	if runtime.GOOS != "darwin" {
 		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices, "Set which NVIDIA devices are visible"}
@@ -151,6 +157,14 @@ func LoadConfig() {
 		if err == nil {
 			FlashAttention = d
 		}
+	}
+
+	if cacheTypeK := clean("OLLAMA_CACHE_TYPE_K"); cacheTypeK != "" {
+		CacheTypeK = cacheTypeK
+	}
+
+	if cacheTypeV := clean("OLLAMA_CACHE_TYPE_V"); cacheTypeV != "" {
+		CacheTypeV = cacheTypeV
 	}
 
 	RunnersDir = clean("OLLAMA_RUNNERS_DIR")
