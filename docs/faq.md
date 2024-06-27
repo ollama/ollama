@@ -93,6 +93,14 @@ If Ollama is run as a systemd service, environment variables should be set using
    systemctl restart ollama
    ```
 
+If you need to run Ollama directly from the command line, environment variables should be set via `set -x`:
+```bash
+(set -x; \
+  OLLAMA_MODELS=/opt/analytics/d.burger/ollama/models \
+  ./ollama serve)
+```
+assuming your Ollama binary is in the local directory, executable, and called `ollama`.
+
 ### Setting environment variables on Windows
 
 On Windows, Ollama inherits your user and system environment variables.
