@@ -166,6 +166,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	params = append(params, "--log-disable")
 
+	params = append(params, "--timeout", fmt.Sprintf("%d", 600))
+
 	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
 	}
