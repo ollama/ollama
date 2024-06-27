@@ -125,6 +125,7 @@ func ParseFile(r io.Reader) (*File, error) {
 				// pass
 			case stateValue:
 				s, ok := unquote(b.String())
+
 				if !ok || isSpace(r) {
 					if _, err := b.WriteRune(r); err != nil {
 						return nil, err
@@ -158,7 +159,13 @@ func ParseFile(r io.Reader) (*File, error) {
 	case stateComment, stateNil:
 		// pass; nothing to flush
 	case stateValue:
-		s, ok := unquote(b.String())
+		var s string
+		var ok bool
+		if cmd.Name == "model" {
+			s, ok = unquote(strings.TrimSpace(b.String()))
+		} else {
+			s, ok = unquote(b.String())
+		}
 		if !ok {
 			return nil, io.ErrUnexpectedEOF
 		}

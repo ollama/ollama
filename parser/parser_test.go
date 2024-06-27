@@ -49,6 +49,26 @@ func TestParseFileFrom(t *testing.T) {
 		err      error
 	}{
 		{
+			"FROM \"FOO  BAR  \"",
+			[]Command{{Name: "model", Args: "FOO  BAR  "}},
+			nil,
+		},
+		{
+			"FROM \"FOO BAR\"\nPARAMETER param1 value1",
+			[]Command{{Name: "model", Args: "FOO BAR"}, {Name: "param1", Args: "value1"}},
+			nil,
+		},
+		{
+			"FROM     FOOO BAR    ",
+			[]Command{{Name: "model", Args: "FOOO BAR"}},
+			nil,
+		},
+		{
+			"FROM /what/is/the path ",
+			[]Command{{Name: "model", Args: "/what/is/the path"}},
+			nil,
+		},
+		{
 			"FROM foo",
 			[]Command{{Name: "model", Args: "foo"}},
 			nil,
@@ -84,6 +104,11 @@ func TestParseFileFrom(t *testing.T) {
 		{
 			"PARAMETER param1 value1\nFROM foo",
 			[]Command{{Name: "param1", Args: "value1"}, {Name: "model", Args: "foo"}},
+			nil,
+		},
+		{
+			"PARAMETER what the \nFROM lemons make lemonade ",
+			[]Command{{Name: "what", Args: "the "}, {Name: "model", Args: "lemons make lemonade"}},
 			nil,
 		},
 	}
