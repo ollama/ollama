@@ -1,0 +1,7 @@
+<|im_start|>user
+Hello, how are you?<|im_end|>
+<|im_start|>assistant
+I'm doing great. How can I help you today?<|im_end|>
+<|im_start|>user
+I'd like to show off how chat templating works!<|im_end|>
+<|im_start|>assistant

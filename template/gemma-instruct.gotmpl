@@ -1,4 +1,16 @@
+{{- if .Messages }}
+{{- range $index, $_ := .Messages }}<start_of_turn>
+{{- if eq .Role "user" }}user
+{{- if and $.System (eq $index 0) }}
+{{ $.System }}
+{{- end }}
+{{- else if eq .Role "assistant" }}model
+{{- end }}
+{{ .Content }}<end_of_turn>
+{{ end }}<start_of_turn>model
+{{ else }}
 <start_of_turn>user
 {{ if .System }}{{ .System }} {{ end }}{{ .Prompt }}<end_of_turn>
 <start_of_turn>model
 {{ .Response }}<end_of_turn>
+{{- end }}

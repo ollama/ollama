@@ -1,3 +1,14 @@
+{{- if .Messages }}
+{{- if .System }}{{ .System }}
+
+{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}USER: {{ .Content }}
+{{ else if eq .Role "assistant" }}ASSISTANT: {{ .Content }}</s>
+{{ end }}
+{{- end }}ASSISTANT:
+{{- else }}
 {{ if .System }}{{ .System }}
 {{ end }}{{ if .Prompt }}USER: {{ .Prompt }}
 {{ end }}ASSISTANT: {{ .Response }}
+{{- end }}

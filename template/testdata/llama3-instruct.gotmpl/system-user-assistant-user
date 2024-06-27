@@ -1,0 +1,10 @@
+<|start_header_id|>system<|end_header_id|>
+
+You are a helpful assistant.<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Hello, how are you?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+I'm doing great. How can I help you today?<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+I'd like to show off how chat templating works!<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
