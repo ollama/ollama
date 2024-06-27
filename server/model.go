@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
@@ -77,62 +78,80 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 	return layers, nil
 }
 
-func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
+func extractFromZipFile(p string, file *os.File, fn func(api.ProgressResponse)) error {
 	stat, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	r, err := zip.NewReader(file, stat.Size())
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	tempdir, err := os.MkdirTemp(filepath.Dir(file.Name()), "")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(tempdir)
 
 	fn(api.ProgressResponse{Status: "unpacking model metadata"})
 	for _, f := range r.File {
+		n := filepath.Join(p, f.Name)
+		if !strings.HasPrefix(n, p) {
+			slog.Warn("skipped extracting file outside of context", "name", f.Name)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(n), 0o750); err != nil {
+			return err
+		}
+
 		// TODO(mxyng): this should not write out all files to disk
-		outfile, err := os.Create(filepath.Join(tempdir, f.Name))
+		outfile, err := os.Create(n)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		defer outfile.Close()
 
 		infile, err := f.Open()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		defer infile.Close()
 
 		if _, err = io.Copy(outfile, infile); err != nil {
-			return nil, err
+			return err
 		}
 
 		if err := outfile.Close(); err != nil {
-			return nil, err
+			return err
 		}
 
 		if err := infile.Close(); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	mf, err := convert.GetModelFormat(tempdir)
+	return nil
+}
+
+func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
+	tempDir, err := os.MkdirTemp(filepath.Dir(file.Name()), "")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tempDir)
+
+	if err := extractFromZipFile(tempDir, file, fn); err != nil {
+		return nil, err
+	}
+
+	mf, err := convert.GetModelFormat(tempDir)
 	if err != nil {
 		return nil, err
 	}
 
-	params, err := mf.GetParams(tempdir)
+	params, err := mf.GetParams(tempDir)
 	if err != nil {
 		return nil, err
 	}
 
-	mArch, err := mf.GetModelArch("", tempdir, params)
+	mArch, err := mf.GetModelArch("", tempDir, params)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +169,7 @@ func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(a
 
 	// TODO(mxyng): this should write directly into a layer
 	// e.g. NewLayer(arch.Reader(), "application/vnd.ollama.image.model")
-	temp, err := os.CreateTemp(tempdir, "fp16")
+	temp, err := os.CreateTemp(tempDir, "fp16")
 	if err != nil {
 		return nil, err
 	}

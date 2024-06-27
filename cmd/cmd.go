@@ -162,9 +162,6 @@ func tempZipFiles(path string) (string, error) {
 	}
 	defer tempfile.Close()
 
-	zipfile := zip.NewWriter(tempfile)
-	defer zipfile.Close()
-
 	detectContentType := func(path string) (string, error) {
 		f, err := os.Open(path)
 		if err != nil {
@@ -232,6 +229,9 @@ func tempZipFiles(path string) (string, error) {
 		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
 		files = append(files, tks...)
 	}
+
+	zipfile := zip.NewWriter(tempfile)
+	defer zipfile.Close()
 
 	for _, file := range files {
 		f, err := os.Open(file)
