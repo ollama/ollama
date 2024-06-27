@@ -108,7 +108,7 @@ func TestParseFileFrom(t *testing.T) {
 		},
 		{
 			"PARAMETER what the \nFROM lemons make lemonade ",
-			[]Command{{Name: "what", Args: "the "}, {Name: "model", Args: "lemons make lemonade"}},
+			[]Command{{Name: "what", Args: "the"}, {Name: "model", Args: "lemons make lemonade"}},
 			nil,
 		},
 	}
@@ -424,7 +424,7 @@ func TestParseFileParameters(t *testing.T) {
 		"mirostat_eta 1.0":             {"mirostat_eta", "1.0"},
 		"penalize_newline true":        {"penalize_newline", "true"},
 		"stop ### User:":               {"stop", "### User:"},
-		"stop ### User: ":              {"stop", "### User: "},
+		"stop ### User: ":              {"stop", "### User:"},
 		"stop \"### User:\"":           {"stop", "### User:"},
 		"stop \"### User: \"":          {"stop", "### User: "},
 		"stop \"\"\"### User:\"\"\"":   {"stop", "### User:"},
