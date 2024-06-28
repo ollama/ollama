@@ -996,6 +996,25 @@ If `stream` is set to `false`, then the response is a single JSON object:
 { "status": "success" }
 ```
 
+```shell
+POST /api/embed
+```
+
+# Parameters
+- `model`
+- `input`: string or array of strings
+  - cap on string size and array size
+
+# Response
+- `embeddings`: array of embeddings (array of floats)
+  - normalized? definitely normalize for openai
+
+  - truncate flag defaults true, otherwise false if doesn't fit
+
+- deprecate /api/embeddings later
+
+
+
 ## Generate Embeddings
 
 ```shell
