@@ -15,8 +15,6 @@ type mixtral struct {
 	NumExpertsPerToken uint32 `json:"num_experts_per_tok"`
 }
 
-var _ Converter = (*mixtral)(nil)
-
 func (p *mixtral) KV(t *Tokenizer) llm.KV {
 	kv := p.llama.KV(t)
 
@@ -70,6 +68,13 @@ func (p *mixtral) Tensors(ts []Tensor) []llm.Tensor {
 	}
 
 	return append(out, p.llama.Tensors(ts)...)
+}
+
+func (p *mixtral) Replacements() []string {
+	return append(
+		p.llama.Replacements(),
+		"block_sparse_moe.gate", "ffn_gate_inp",
+	)
 }
 
 type experts []Tensor
