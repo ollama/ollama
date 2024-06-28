@@ -217,9 +217,7 @@ func fromRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 					return api.ChatRequest{}, fmt.Errorf("invalid message format")
 				}
 			}
-			if message.Content != "" || len(message.Images) > 0 {
-				messages = append(messages, message)
-			}
+			messages = append(messages, message)
 		default:
 			return api.ChatRequest{}, fmt.Errorf("invalid message content type: %T", content)
 		}
