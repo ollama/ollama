@@ -98,21 +98,28 @@ RUN --mount=type=cache,target=/root/.ccache \
 RUN mkdir -p ../../dist/linux-amd64-rocm/lib/ollama && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64-rocm/lib/ollama && tar xf - )
 
-# To create a local image for building linux binaries on mac
-# docker build --platform linux/amd64 -t builder -f Dockerfile --target unified-builder-amd64 .
-# docker run --platform linux/amd64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ builder
+### To create a local image for building linux binaries on mac or windows with efficient incremental builds
+#
+# docker build --platform linux/amd64 -t builder-amd64 -f Dockerfile --target unified-builder-amd64 .
+# docker run --platform linux/amd64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ builder-amd64
+#
+### Then incremental builds will be much faster in this container
+#
+# go generate ./... && make -C llama -j 10 && go build -trimpath -o dist/linux-amd64/ollama . && tar -C dist/linux-amd64 -cf - . | xz -9 > dist/ollama-linux-amd64.tar.xz
+#
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete as unified-builder-amd64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
-ARG CUDA_VERSION
+ARG CUDA_VERSION_11
+ARG CUDA_VERSION_12
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 RUN yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo && \
     dnf clean all && \
     dnf install -y \
     zsh \
-    cuda-$(echo ${CUDA_VERSION} | cut -f1-2 -d. | sed -e "s/\./-/g") && \
-    ln -s /usr/local/cuda-* /usr/local/cuda
+    cuda-$(echo ${CUDA_VERSION_11} | cut -f1-2 -d. | sed -e "s/\./-/g") \
+    cuda-$(echo ${CUDA_VERSION_12} | cut -f1-2 -d. | sed -e "s/\./-/g")
 # TODO intel oneapi goes here...
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH:/usr/local/cuda/bin
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/cuda/lib64
