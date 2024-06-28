@@ -226,10 +226,7 @@ type EmbeddingRequest struct {
 	Model string `json:"model"`
 
 	// Prompt is the textual prompt to embed.
-	Prompt string `json:"prompt,omitempty"`
-
-	// PromptBatch is a list of prompts to embed.
-	PromptBatch []string `json:"prompt_batch,omitempty"`
+	Prompt string `json:"prompt"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
@@ -246,8 +243,7 @@ type EmbedResponse struct {
 
 // EmbeddingResponse is the response from [Client.Embeddings].
 type EmbeddingResponse struct {
-	Embedding      []float64   `json:"embedding,omitempty"`
-	EmbeddingBatch [][]float64 `json:"embedding_batch,omitempty"`
+	Embedding []float64 `json:"embedding"`
 }
 
 // CreateRequest is the request passed to [Client.Create].
