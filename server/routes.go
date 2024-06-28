@@ -747,6 +747,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
+			Model:      trimLatest(n.DisplayShortest()),
 			Name:       trimLatest(n.DisplayShortest()),
 			Size:       m.Size(),
 			Digest:     m.digest,
@@ -1156,6 +1157,7 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 
 		mr := api.ProcessModelResponse{
 			Model:     trimLatest(model.ShortName),
+			Name:      trimLatest(model.ShortName),
 			Size:      int64(v.estimatedTotal),
 			SizeVRAM:  int64(v.estimatedVRAM),
 			Digest:    model.Digest,
