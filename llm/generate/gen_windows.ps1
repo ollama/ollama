@@ -39,7 +39,8 @@ function init_vars {
     }
     $script:cmakeDefs = @(
         "-DBUILD_SHARED_LIBS=on",
-        "-DLLAMA_NATIVE=off"
+        "-DLLAMA_NATIVE=off",
+        "-DLLAMA_OPENMP=off"
         )
     $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
     $script:ARCH = $Env:PROCESSOR_ARCHITECTURE.ToLower()
@@ -122,8 +123,13 @@ function build {
     & cmake --version
     & cmake -S "${script:llamacppDir}" -B $script:buildDir $script:cmakeDefs
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ })"
-    & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ })
+    if ($cmakeDefs -contains "-G") {
+        $extra=@("-j8")
+    } else {
+        $extra= @("--", "/p:CL_MPcount=8")
+    }
+    write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ }) $extra"
+    & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ }) $extra
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     # Rearrange output to be consistent between different generators
     if ($null -ne ${script:config} -And (test-path -path "${script:buildDir}/bin/${script:config}" ) ) {
@@ -203,7 +209,8 @@ function build_static() {
             "-DLLAMA_AVX2=off",
             "-DLLAMA_AVX512=off",
             "-DLLAMA_F16C=off",
-            "-DLLAMA_FMA=off")
+            "-DLLAMA_FMA=off",
+            "-DLLAMA_OPENMP=off")
         $script:buildDir="../build/windows/${script:ARCH}_static"
         write-host "Building static library"
         build
@@ -270,7 +277,15 @@ function build_cuda() {
         init_vars
         $script:buildDir="../build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
         $script:distDir="$script:DIST_BASE\cuda$script:CUDA_VARIANT"
-        $script:cmakeDefs += @("-A", "x64", "-DLLAMA_CUDA=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+        $script:cmakeDefs += @(
+            "-A", "x64",
+            "-DLLAMA_CUDA=ON",
+            "-DLLAMA_AVX=on",
+            "-DLLAMA_AVX2=off",
+            "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR",
+            "-DCMAKE_CUDA_FLAGS=-t8",
+            "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}"
+            )
         if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
             write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${env:OLLAMA_CUSTOM_CUDA_DEFS}`""
             $script:cmakeDefs +=@("${env:OLLAMA_CUSTOM_CUDA_DEFS}")
@@ -280,10 +295,12 @@ function build_cuda() {
         sign
         install
 
-        write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-        cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-        cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
-        cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\"
+        rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        md "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\" -ea 0 > $null
+        write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
     } else {
         write-host "Skipping CUDA generation step"
     }
@@ -317,16 +334,18 @@ function build_oneapi() {
     sign
     install
 
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libirngmd.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libmmd.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_level_zero.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_unified_runtime.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_win_proxy_loader.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\svml_dispmd.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\sycl7.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_core.2.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_sycl_blas.4.dll" "${script:distDir}"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_tbb_thread.2.dll" "${script:distDir}"
+    rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    md "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\" -ea 0 > $null
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libirngmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libmmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_level_zero.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_unified_runtime.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_win_proxy_loader.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\svml_dispmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\sycl7.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_core.2.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_sycl_blas.4.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_tbb_thread.2.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
   } else {
     Write-Host "Skipping oneAPI generation step"
   }

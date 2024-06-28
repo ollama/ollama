@@ -16,11 +16,12 @@ var (
 	AppDir     = "/opt/Ollama"
 	AppDataDir = "/opt/Ollama"
 	// TODO - should there be a distinct log dir?
-	UpdateStageDir = "/tmp"
-	AppLogFile     = "/tmp/ollama_app.log"
-	ServerLogFile  = "/tmp/ollama.log"
-	UpgradeLogFile = "/tmp/ollama_update.log"
-	Installer      = "OllamaSetup.exe"
+	UpdateStageDir   = "/tmp"
+	AppLogFile       = "/tmp/ollama_app.log"
+	ServerLogFile    = "/tmp/ollama.log"
+	UpgradeLogFile   = "/tmp/ollama_update.log"
+	Installer        = "OllamaSetup.exe"
+	LogRotationCount = 5
 )
 
 func init() {

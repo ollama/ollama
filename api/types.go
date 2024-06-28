@@ -159,18 +159,49 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool `json:"numa,omitempty"`
-	NumCtx    int  `json:"num_ctx,omitempty"`
-	NumBatch  int  `json:"num_batch,omitempty"`
-	NumGPU    int  `json:"num_gpu,omitempty"`
-	MainGPU   int  `json:"main_gpu,omitempty"`
-	LowVRAM   bool `json:"low_vram,omitempty"`
-	F16KV     bool `json:"f16_kv,omitempty"`
-	LogitsAll bool `json:"logits_all,omitempty"`
-	VocabOnly bool `json:"vocab_only,omitempty"`
-	UseMMap   bool `json:"use_mmap,omitempty"`
-	UseMLock  bool `json:"use_mlock,omitempty"`
-	NumThread int  `json:"num_thread,omitempty"`
+	UseNUMA   bool     `json:"numa,omitempty"`
+	NumCtx    int      `json:"num_ctx,omitempty"`
+	NumBatch  int      `json:"num_batch,omitempty"`
+	NumGPU    int      `json:"num_gpu,omitempty"`
+	MainGPU   int      `json:"main_gpu,omitempty"`
+	LowVRAM   bool     `json:"low_vram,omitempty"`
+	F16KV     bool     `json:"f16_kv,omitempty"`
+	LogitsAll bool     `json:"logits_all,omitempty"`
+	VocabOnly bool     `json:"vocab_only,omitempty"`
+	UseMMap   TriState `json:"use_mmap,omitempty"`
+	UseMLock  bool     `json:"use_mlock,omitempty"`
+	NumThread int      `json:"num_thread,omitempty"`
+}
+
+type TriState int
+
+const (
+	TriStateUndefined TriState = -1
+	TriStateFalse     TriState = 0
+	TriStateTrue      TriState = 1
+)
+
+func (b *TriState) UnmarshalJSON(data []byte) error {
+	var v bool
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	if v {
+		*b = TriStateTrue
+	}
+	*b = TriStateFalse
+	return nil
+}
+
+func (b *TriState) MarshalJSON() ([]byte, error) {
+	if *b == TriStateUndefined {
+		return nil, nil
+	}
+	var v bool
+	if *b == TriStateTrue {
+		v = true
+	}
+	return json.Marshal(v)
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -222,6 +253,7 @@ type ShowRequest struct {
 	Model    string `json:"model"`
 	System   string `json:"system"`
 	Template string `json:"template"`
+	Verbose  bool   `json:"verbose"`
 
 	Options map[string]interface{} `json:"options"`
 
@@ -231,13 +263,16 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License    string       `json:"license,omitempty"`
-	Modelfile  string       `json:"modelfile,omitempty"`
-	Parameters string       `json:"parameters,omitempty"`
-	Template   string       `json:"template,omitempty"`
-	System     string       `json:"system,omitempty"`
-	Details    ModelDetails `json:"details,omitempty"`
-	Messages   []Message    `json:"messages,omitempty"`
+	License       string         `json:"license,omitempty"`
+	Modelfile     string         `json:"modelfile,omitempty"`
+	Parameters    string         `json:"parameters,omitempty"`
+	Template      string         `json:"template,omitempty"`
+	System        string         `json:"system,omitempty"`
+	Details       ModelDetails   `json:"details,omitempty"`
+	Messages      []Message      `json:"messages,omitempty"`
+	ModelInfo     map[string]any `json:"model_info,omitempty"`
+	ProjectorInfo map[string]any `json:"projector_info,omitempty"`
+	ModifiedAt    time.Time      `json:"modified_at,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -402,6 +437,19 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 				continue
 			}
 
+			if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
+				val, ok := val.(bool)
+				if !ok {
+					return fmt.Errorf("option %q must be of type boolean", key)
+				}
+				if val {
+					field.SetInt(int64(TriStateTrue))
+				} else {
+					field.SetInt(int64(TriStateFalse))
+				}
+				continue
+			}
+
 			switch field.Kind() {
 			case reflect.Int:
 				switch t := val.(type) {
@@ -490,7 +538,7 @@ func DefaultOptions() Options {
 			LowVRAM:   false,
 			F16KV:     true,
 			UseMLock:  false,
-			UseMMap:   true,
+			UseMMap:   TriStateUndefined,
 			UseNUMA:   false,
 		},
 	}
@@ -560,6 +608,19 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 		} else {
 			field := valueOpts.FieldByName(opt.Name)
 			if field.IsValid() && field.CanSet() {
+				if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
+					boolVal, err := strconv.ParseBool(vals[0])
+					if err != nil {
+						return nil, fmt.Errorf("invalid bool value %s", vals)
+					}
+					if boolVal {
+						out[key] = TriStateTrue
+					} else {
+						out[key] = TriStateFalse
+					}
+					continue
+				}
+
 				switch field.Kind() {
 				case reflect.Float32:
 					floatVal, err := strconv.ParseFloat(vals[0], 32)

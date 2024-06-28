@@ -19,6 +19,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -212,6 +213,7 @@ func Test_Routes(t *testing.T) {
 					"top_p 0.9",
 				}
 				assert.Equal(t, expectedParams, params)
+				assert.InDelta(t, 0, showResp.ModelInfo["general.parameter_count"], 1e-9, "Parameter count should be 0")
 			},
 		},
 	}
@@ -323,5 +325,42 @@ func TestCase(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestShow(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	envconfig.LoadConfig()
+
+	var s Server
+
+	createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		Name: "show-model",
+		Modelfile: fmt.Sprintf(
+			"FROM %s\nFROM %s",
+			createBinFile(t, llm.KV{"general.architecture": "test"}, nil),
+			createBinFile(t, llm.KV{"general.architecture": "clip"}, nil),
+		),
+	})
+
+	w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
+		Name: "show-model",
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.ModelInfo["general.architecture"] != "test" {
+		t.Fatal("Expected model architecture to be 'test', but got", resp.ModelInfo["general.architecture"])
+	}
+
+	if resp.ProjectorInfo["general.architecture"] != "clip" {
+		t.Fatal("Expected projector architecture to be 'clip', but got", resp.ProjectorInfo["general.architecture"])
 	}
 }

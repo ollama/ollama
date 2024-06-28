@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
@@ -59,9 +60,9 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 
 	// Determine if the user has already pre-selected which GPUs to look at, then ignore the others
 	var visibleDevices []string
-	hipVD := os.Getenv("HIP_VISIBLE_DEVICES")   // zero based index only
-	rocrVD := os.Getenv("ROCR_VISIBLE_DEVICES") // zero based index or UUID, but consumer cards seem to not support UUID
-	gpuDO := os.Getenv("GPU_DEVICE_ORDINAL")    // zero based index
+	hipVD := envconfig.HipVisibleDevices   // zero based index only
+	rocrVD := envconfig.RocrVisibleDevices // zero based index or UUID, but consumer cards seem to not support UUID
+	gpuDO := envconfig.GpuDeviceOrdinal    // zero based index
 	switch {
 	// TODO is this priorty order right?
 	case hipVD != "":
@@ -74,7 +75,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 		visibleDevices = strings.Split(gpuDO, ",")
 	}
 
-	gfxOverride := os.Getenv("HSA_OVERRIDE_GFX_VERSION")
+	gfxOverride := envconfig.HsaOverrideGfxVersion
 	var supported []string
 	libDir := ""
 
@@ -330,6 +331,11 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			}
 		} else {
 			slog.Info("skipping rocm gfx compatibility check", "HSA_OVERRIDE_GFX_VERSION", gfxOverride)
+		}
+
+		// Check for env var workarounds
+		if name == "1002:687f" { // Vega RX 56
+			gpuInfo.EnvWorkarounds = append(gpuInfo.EnvWorkarounds, [2]string{"HSA_ENABLE_SDMA", "0"})
 		}
 
 		// The GPU has passed all the verification steps and is supported

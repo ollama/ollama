@@ -13,7 +13,7 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
   resp->oh.num_drivers = 0;
   const int buflen = 256;
   char buf[buflen + 1];
-  int i, d, count;
+  int i, d;
   struct lookup {
     char *s;
     void **p;
@@ -50,7 +50,7 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
     LOG(resp->oh.verbose, "dlsym: %s\n", l[i].s);
 
     *l[i].p = LOAD_SYMBOL(resp->oh.handle, l[i].s);
-    if (!l[i].p) {
+    if (!*(l[i].p)) {
       resp->oh.handle = NULL;
       char *msg = LOAD_ERR();
       LOG(resp->oh.verbose, "dlerr: %s\n", msg);
@@ -62,6 +62,8 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
     }
   }
 
+  LOG(resp->oh.verbose, "calling zesInit\n");
+
   ret = (*resp->oh.zesInit)(0);
   if (ret != ZE_RESULT_SUCCESS) {
     LOG(resp->oh.verbose, "zesInit err: %x\n", ret);
@@ -71,7 +73,7 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
     return;
   }
 
-  count = 0;
+  LOG(resp->oh.verbose, "calling zesDriverGet\n");
   ret = (*resp->oh.zesDriverGet)(&resp->oh.num_drivers, NULL);
   if (ret != ZE_RESULT_SUCCESS) {
     LOG(resp->oh.verbose, "zesDriverGet err: %x\n", ret);
@@ -96,6 +98,7 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
   }
 
   for (d = 0; d < resp->oh.num_drivers; d++) {
+    LOG(resp->oh.verbose, "calling zesDeviceGet count %d: %p\n", d, resp->oh.drivers[d]);
     ret = (*resp->oh.zesDeviceGet)(resp->oh.drivers[d],
                                    &resp->oh.num_devices[d], NULL);
     if (ret != ZE_RESULT_SUCCESS) {
@@ -116,7 +119,6 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
       oneapi_release(resp->oh);
       return;
     }
-    count += resp->oh.num_devices[d];
   }
 
   return;
@@ -160,7 +162,7 @@ void oneapi_check_vram(oneapi_handle_t h, int driver, int device,
     return;
   }
 
-  snprintf(&resp->gpu_name[0], GPU_NAME_LEN, props.modelName);
+  snprintf(&resp->gpu_name[0], GPU_NAME_LEN, "%s", props.modelName);
 
   // TODO this needs to map to ONEAPI_DEVICE_SELECTOR syntax
   // (this is probably wrong...)
