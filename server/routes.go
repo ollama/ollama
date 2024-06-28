@@ -397,13 +397,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float64{}})
 			return
 		}
-		embeddings, err = runner.llama.Embedding(c.Request.Context(), []string{reqEmbed})
+		embeddings, err = runner.llama.Embed(c.Request.Context(), []string{reqEmbed})
 	case []string:
 		if reqEmbed == nil {
 			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float64{}})
 			return
 		}
-		embeddings, err = runner.llama.Embedding(c.Request.Context(), reqEmbed)
+		embeddings, err = runner.llama.Embed(c.Request.Context(), reqEmbed)
 	default:
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
 	}

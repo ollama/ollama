@@ -3165,14 +3165,6 @@ int main(int argc, char **argv) {
                 {
                     input = "";
                 }
-                if (body.count("input") != 0)
-                {
-                    input = body["input"];
-                }
-                else
-                {
-                    input = "";
-                }
 
                 // create and queue the task
                 json responses;
