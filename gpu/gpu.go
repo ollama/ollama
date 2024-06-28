@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -57,9 +58,11 @@ var (
 )
 
 // With our current CUDA compile flags, older than 5.0 will not work properly
-var CudaComputeMin = [2]C.int{5, 0}
+// (string values used to allow ldflags overrides at build time)
+var CudaComputeMajorMin = "5"
+var CudaComputeMinorMin = "0"
 
-var RocmComputeMin = 9
+var RocmComputeMajorMin = "9"
 
 // TODO find a better way to detect iGPU instead of minimum memory
 const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
@@ -236,6 +239,14 @@ func GetGPUInfo() GpuInfoList {
 
 		// Load ALL libraries
 		cHandles = initCudaHandles()
+		minMajorVer, err := strconv.Atoi(CudaComputeMajorMin)
+		if err != nil {
+			slog.Error("invalid CudaComputeMajorMin setting", "value", CudaComputeMajorMin, "error", err)
+		}
+		minMinorVer, err := strconv.Atoi(CudaComputeMinorMin)
+		if err != nil {
+			slog.Error("invalid CudaComputeMinorMin setting", "value", CudaComputeMinorMin, "error", err)
+		}
 
 		// NVIDIA
 		for i := range cHandles.deviceCount {
@@ -260,7 +271,8 @@ func GetGPUInfo() GpuInfoList {
 					C.free(unsafe.Pointer(memInfo.err))
 					continue
 				}
-				if memInfo.major < CudaComputeMin[0] || (memInfo.major == CudaComputeMin[0] && memInfo.minor < CudaComputeMin[1]) {
+
+				if int(memInfo.major) < minMajorVer || (int(memInfo.major) == minMajorVer && int(memInfo.minor) < minMinorVer) {
 					slog.Info(fmt.Sprintf("[%d] CUDA GPU is too old. Compute Capability detected: %d.%d", i, memInfo.major, memInfo.minor))
 					continue
 				}
