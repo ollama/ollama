@@ -60,7 +60,12 @@ type llmServer struct {
 	sem *semaphore.Weighted
 }
 
-func LoadModel(model string) (*GGML, error) {
+// LoadModel will load a model from disk. The model must be in the GGML format.
+//
+// It collects array values for arrays with a size less than or equal to
+// maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
+// the maxArraySize is negative, all arrays are collected.
+func LoadModel(model string, maxArraySize int) (*GGML, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -71,7 +76,7 @@ func LoadModel(model string) (*GGML, error) {
 	}
 	defer f.Close()
 
-	ggml, _, err := DecodeGGML(f)
+	ggml, _, err := DecodeGGML(f, maxArraySize)
 	return ggml, err
 }
 
@@ -81,7 +86,17 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
-	var systemMemory uint64
+	var systemTotalMemory uint64
+	var systemFreeMemory uint64
+
+	systemMemInfo, err := gpu.GetCPUMem()
+	if err != nil {
+		slog.Error("failed to lookup system memory", "error", err)
+	} else {
+		systemTotalMemory = systemMemInfo.TotalMemory
+		systemFreeMemory = systemMemInfo.FreeMemory
+		slog.Debug("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", systemFreeMemory)
+	}
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
 	if opts.NumGPU == 0 {
@@ -91,19 +106,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		cpuRunner = serverForCpu()
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
 	} else {
-		if gpus[0].Library == "metal" {
-			memInfo, err := gpu.GetCPUMem()
-			if err != nil {
-				slog.Error("failed to lookup system memory", "error", err)
-			} else {
-				systemMemory = memInfo.TotalMemory
-				slog.Debug("system memory", "total", format.HumanBytes2(systemMemory))
-			}
-		}
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
 
 		switch {
-		case gpus[0].Library == "metal" && estimate.VRAMSize > systemMemory:
+		case gpus[0].Library == "metal" && estimate.VRAMSize > systemTotalMemory:
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
@@ -211,7 +217,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 
 	// Windows CUDA should not use mmap for best performance
-	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda") || opts.UseMMap == api.TriStateFalse {
+	// Linux  with a model larger than free space, mmap leads to thrashing
+	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == api.TriStateUndefined) ||
+		(runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && opts.UseMMap == api.TriStateUndefined) ||
+		opts.UseMMap == api.TriStateFalse {
 		params = append(params, "--no-mmap")
 	}
 
@@ -408,7 +417,7 @@ func projectorMemoryRequirements(filename string) uint64 {
 	}
 	defer file.Close()
 
-	ggml, _, err := DecodeGGML(file)
+	ggml, _, err := DecodeGGML(file, 0)
 	if err != nil {
 		return 0
 	}

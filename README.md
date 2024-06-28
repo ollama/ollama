@@ -53,8 +53,8 @@ Here are some example models that can be downloaded:
 | Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
 | Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`              |
 | Phi 3 Medium       | 14B        | 7.9GB | `ollama run phi3:medium`       |
-| Gemma              | 2B         | 1.4GB | `ollama run gemma:2b`          |
-| Gemma              | 7B         | 4.8GB | `ollama run gemma:7b`          |
+| Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`            |
+| Gemma 2            | 27B        | 16GB  | `ollama run gemma2:27b`        |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
 | Moondream 2        | 1.4B       | 829MB | `ollama run moondream`         |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`       |
@@ -180,6 +180,12 @@ The image features a yellow smiley face, which is likely the central focus of th
 ```
 $ ollama run llama3 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
+```
+
+### Show model information
+
+```
+ollama show llama3
 ```
 
 ### List models on your computer
