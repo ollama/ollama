@@ -480,6 +480,15 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
+	// assert that embedding is normalized
+	sum := 0.0
+	for _, v := range embedding {
+		sum += v * v
+	}
+	if math.Abs(sum-1) > 1e-6 {
+		slog.Info("embedding is not normalized", "sum", sum)
+	}
+
 	resp := api.EmbeddingResponse{
 		Embedding: embedding,
 	}
