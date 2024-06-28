@@ -68,6 +68,7 @@ func TestConvertFull(t *testing.T) {
 		// microsoft/Phi-3-mini-128-instruct@d548c233192db00165d842bf8edff054bb3212f8
 		"Phi-3-mini-128k-instruct",
 		"all-MiniLM-L6-v2",
+		"gemma-2-9b-it",
 	}
 
 	for i := range cases {
