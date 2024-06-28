@@ -1086,7 +1086,6 @@ A single JSON object will be returned.
 {
   "models": [
     {
-      "name": "mistral:latest",
       "model": "mistral:latest",
       "size": 5137025024,
       "digest": "2ae6f6dd7a3dd734790bbbf58b8909a606e0e7e97e94b7604e0aa7ae4490e6d8",
