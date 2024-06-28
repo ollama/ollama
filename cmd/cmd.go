@@ -672,10 +672,16 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		projectorData := [][]string{
 			{"arch", "clip"},
 			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
-			{"projector type", resp.ProjectorInfo["clip.projector_type"].(string)},
-			{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
-			{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
 		}
+
+		if projectorType, ok := resp.ProjectorInfo["clip.projector_type"]; ok {
+			projectorData = append(projectorData, []string{"projector type", projectorType.(string)})
+		}
+
+		projectorData = append(projectorData,
+			[]string{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
+			[]string{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
+		)
 
 		mainTableData = append(mainTableData,
 			[]string{"Projector"},
