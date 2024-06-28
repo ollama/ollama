@@ -3156,14 +3156,22 @@ int main(int argc, char **argv) {
             {
                 res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
                 const json body = json::parse(req.body);
-                json prompt;
+                json input;
                 if (body.count("content") != 0)
                 {
-                    prompt = body["content"];
+                    input = body["content"];
                 }
                 else
                 {
-                    prompt = "";
+                    input = "";
+                }
+                if (body.count("input") != 0)
+                {
+                    input = body["input"];
+                }
+                else
+                {
+                    input = "";
                 }
 
                 // create and queue the task
@@ -3171,7 +3179,7 @@ int main(int argc, char **argv) {
                 {
                     const int id_task = llama.queue_tasks.get_new_id();
                     llama.queue_results.add_waiting_task_id(id_task);
-                    llama.request_completion(id_task, {{"prompt", prompt}}, true, -1);
+                    llama.request_completion(id_task, {{"prompt", input}}, true, -1);
 
                     // get the result
                     task_result result = llama.queue_results.recv(id_task);
