@@ -288,7 +288,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 	return []api.GenerateRequest{
 			{
 				Model:     "orca-mini",
-				Prompt:    "why is the ocean blue?",
+				Prompt:    "why is the ocean blue?  Please answer in English",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
@@ -297,7 +297,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 				},
 			}, {
 				Model:     "orca-mini",
-				Prompt:    "why is the color of dirt brown?",
+				Prompt:    "why is the color of dirt brown?  Please answer in English",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
@@ -306,7 +306,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 				},
 			}, {
 				Model:     "orca-mini",
-				Prompt:    "what is the origin of the us thanksgiving holiday?",
+				Prompt:    "what is the origin of the us thanksgiving holiday?  Please answer in English",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
@@ -315,7 +315,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 				},
 			}, {
 				Model:     "orca-mini",
-				Prompt:    "what is the origin of independence day?",
+				Prompt:    "what is the origin of independence day?  Please answer in English",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
@@ -324,7 +324,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 				},
 			}, {
 				Model:     "orca-mini",
-				Prompt:    "what is the composition of air?",
+				Prompt:    "what is the composition of air?  Please answer in English",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
@@ -334,7 +334,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			},
 		},
 		[][]string{
-			[]string{"sunlight"},
+			[]string{"sunlight", "physics", "marine", "color", "elements"},
 			[]string{"soil", "organic", "earth", "black", "tan"},
 			[]string{"england", "english", "massachusetts", "pilgrims", "british"},
 			[]string{"fourth", "july", "declaration", "independence"},
