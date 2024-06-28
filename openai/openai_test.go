@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,7 +28,7 @@ func TestMiddleware(t *testing.T) {
 
 	testCases := []testCase{
 		{
-			Name:     "chat handler (default content)",
+			Name:     "chat handler",
 			Method:   http.MethodPost,
 			Path:     "/api/chat",
 			TestPath: "/api/chat",
@@ -85,7 +84,7 @@ func TestMiddleware(t *testing.T) {
 			},
 		},
 		{
-			Name:     "chat handler (image content)",
+			Name:     "chat handler with image content",
 			Method:   http.MethodPost,
 			Path:     "/api/chat",
 			TestPath: "/api/chat",
@@ -96,8 +95,6 @@ func TestMiddleware(t *testing.T) {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 					return
 				}
-
-				fmt.Print(chatReq)
 
 				userMessage := chatReq.Messages[0].Content
 				userImage := chatReq.Messages[0].Images[0]
