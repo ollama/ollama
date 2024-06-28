@@ -1,1 +1,2 @@
 llm/ext_server/* linguist-vendored
+llama/**/*.{cpp,hpp,h,c,cu,cuh,m} linguist-vendored

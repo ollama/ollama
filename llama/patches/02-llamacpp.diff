@@ -1,0 +1,41 @@
+diff --git a/llama/llama.cpp b/llama/llama.cpp
+index 8b675ea9..bcc6ae75 100644
+--- a/llama/llama.cpp
++++ b/llama/llama.cpp
+@@ -4645,16 +4645,7 @@ static void llm_load_vocab(
+ 
+         // for now, only BPE models have pre-tokenizers
+         if (vocab.type == LLAMA_VOCAB_TYPE_BPE) {
+-            if (tokenizer_pre.empty()) {
+-                LLAMA_LOG_WARN("%s: missing pre-tokenizer type, using: 'default'\n", __func__);
+-                LLAMA_LOG_WARN("%s:                                             \n", __func__);
+-                LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
+-                LLAMA_LOG_WARN("%s: GENERATION QUALITY WILL BE DEGRADED!        \n", __func__);
+-                LLAMA_LOG_WARN("%s: CONSIDER REGENERATING THE MODEL             \n", __func__);
+-                LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
+-                LLAMA_LOG_WARN("%s:                                             \n", __func__);
+-                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+-            } else if (tokenizer_pre == "default") {
++            if (tokenizer_pre == "default") {
+                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+             } else if (
+                     tokenizer_pre == "llama3"   ||
+@@ -4706,7 +4697,8 @@ static void llm_load_vocab(
+                 tokenizer_pre == "smaug-bpe") {
+                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_SMAUG;
+             } else {
+-                throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));
++                LLAMA_LOG_WARN("%s: missing or unrecognized pre-tokenizer type, using: 'default'\n", __func__);
++                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+             }
+         } else {
+             vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+@@ -7009,7 +7001,7 @@ static struct ggml_tensor * llm_build_kqv(
+         struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
+         cb(kq, "kq", il);
+ 
+-        if (model.arch == LLM_ARCH_PHI2 || model.arch == LLM_ARCH_PHI3 || model.arch == LLM_ARCH_GPTNEOX) {
++        if (model.arch == LLM_ARCH_PHI2 || model.arch == LLM_ARCH_PHI3 || model.arch == LLM_ARCH_GPTNEOX || model.arch == LLM_ARCH_QWEN2) {
+             // for this arch, we need to perform the KQ multiplication with F32 precision, otherwise we get NaNs
+             // ref: https://github.com/ggerganov/llama.cpp/pull/4490#issuecomment-1859055847
+             ggml_mul_mat_set_prec(kq, GGML_PREC_F32);
