@@ -63,11 +63,14 @@ func TestConvertFull(t *testing.T) {
 		"gemma-2b-it",
 		"Phi-3-mini-128k-instruct",
 		"all-MiniLM-L6-v2",
+		"gemma-2-9b-it",
 	}
 
 	for i := range cases {
 		tt := cases[i]
 		t.Run(tt, func(t *testing.T) {
+			t.Parallel()
+
 			p := filepath.Join("testdata", tt)
 			if testing.Short() {
 				t.Skip("skipping in short mode")

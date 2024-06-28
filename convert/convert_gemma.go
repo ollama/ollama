@@ -43,10 +43,10 @@ func (p *gemma) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *gemma) Tensors(ts []Tensor) []*llm.Tensor {
+func (p *gemma) Tensors(ts []Tensor, nameFunc NameFunc) []*llm.Tensor {
 	var out []*llm.Tensor
 	for _, t := range ts {
-		name := p.tensorName(t.Name())
+		name := nameFunc(t.Name())
 		if strings.HasSuffix(name, "_norm.weight") {
 			t.SetRepacker(p.addOne)
 		}
@@ -76,7 +76,6 @@ func (p *gemma) tensorName(n string) string {
 		"mlp.down_proj", "ffn_down",
 		"mlp.up_proj", "ffn_up",
 		"post_attention_layernorm", "ffn_norm",
-		"block_sparse_moe.gate", "ffn_inp",
 	).Replace(n)
 }
 

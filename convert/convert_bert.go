@@ -137,7 +137,7 @@ func replaceFunc[S ~[]E, E any](s S, f func(E) E) S {
 	return s
 }
 
-func (p *bert) Tensors(ts []Tensor) []*llm.Tensor {
+func (p *bert) Tensors(ts []Tensor, nameFunc NameFunc) []*llm.Tensor {
 	var out []*llm.Tensor
 	for _, t := range ts {
 		if slices.Contains([]string{
@@ -148,7 +148,7 @@ func (p *bert) Tensors(ts []Tensor) []*llm.Tensor {
 			continue
 		}
 
-		name := p.tensorName(t.Name())
+		name := nameFunc(t.Name())
 		out = append(out, &llm.Tensor{
 			Name:     name,
 			Kind:     t.Kind(),

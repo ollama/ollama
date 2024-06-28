@@ -66,7 +66,7 @@ func (p *phi3) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *phi3) Tensors(ts []Tensor) []*llm.Tensor {
+func (p *phi3) Tensors(ts []Tensor, nameFunc NameFunc) []*llm.Tensor {
 	out := []*llm.Tensor{
 		{
 			Name:     "rope_factors_long.weight",
@@ -83,7 +83,7 @@ func (p *phi3) Tensors(ts []Tensor) []*llm.Tensor {
 	}
 
 	for _, t := range ts {
-		name := p.tensorName(t.Name())
+		name := nameFunc(t.Name())
 		out = append(out, &llm.Tensor{
 			Name:     name,
 			Kind:     t.Kind(),

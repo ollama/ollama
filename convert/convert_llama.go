@@ -90,10 +90,10 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llama) Tensors(ts []Tensor) []*llm.Tensor {
+func (p *llama) Tensors(ts []Tensor, nameFunc NameFunc) []*llm.Tensor {
 	var out []*llm.Tensor
 	for _, t := range ts {
-		name := p.tensorName(t.Name())
+		name := nameFunc(t.Name())
 		if strings.HasSuffix(name, "attn_q.weight") ||
 			strings.HasSuffix(name, "attn_k.weight") {
 			t.SetRepacker(p.repack)
