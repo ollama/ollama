@@ -35,7 +35,16 @@ ifeq ($(OS),windows)
 	SHARED_EXT := dll
 	EXE_EXT := .exe
 	SHARED_PREFIX := 
-	CUDA_LIB_DIR := $(shell cygpath -m -s "$(CUDA_PATH)\bin")
+	
+	# TODO needs work for multiple cuda versions on windows
+
+	CUDA_BASE_DIR := $(dir $(shell cygpath -m -s "$(CUDA_PATH)\.."))
+	CUDA_11=$(shell ls -d $(CUDA_BASE_DIR)/v11.? 2>/dev/null)
+	CUDA_12=$(shell ls -d $(CUDA_BASE_DIR)/v12.? 2>/dev/null)
+	CUDA_11_LIB_DIR := $(CUDA_11)/bin
+	CUDA_12_LIB_DIR := $(CUDA_12)/bin
+
+
 	NVCC := $(shell X=$$(which nvcc 2>/dev/null) && cygpath -m -s "$$X")
 	ifneq ($(HIP_PATH),)
 		HIP_LIB_DIR := $(shell cygpath -m -s "$(HIP_PATH)\bin")
@@ -47,34 +56,39 @@ ifeq ($(OS),windows)
 	CP := cp
 	CUDA_LIBS = $(wildcard $(addsuffix 64*.$(SHARED_EXT),$(addprefix $(CUDA_LIB_DIR)/$(SHARED_PREFIX),$(CUDA_LIBS_SHORT))))
 else ifeq ($(OS),linux)
+	CP := cp -a
 	OBJ_EXT := o
 	SHARED_EXT := so
 	SHARED_PREFIX := lib
-	CUDA_PATH?=/usr/local/cuda
 	HIP_PATH?=/opt/rocm
-	CUDA_LIB_DIR := $(CUDA_PATH)/lib64
 	HIP_LIB_DIR := $(HIP_PATH)/lib
-	NVCC := $(shell X=$$(which nvcc 2>/dev/null) && echo $$X)
 	HIPCC := $(shell X=$$(which hipcc 2>/dev/null) && echo $$X)
-	CP := cp -a
-	CUDA_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT)*,$(addprefix $(CUDA_LIB_DIR)/$(SHARED_PREFIX),$(CUDA_LIBS_SHORT))))
+	CUDA_PATH?=/usr/local/cuda
+	CUDA_11=$(shell ls -d $(CUDA_PATH)-11 2>/dev/null)
+	CUDA_12=$(shell ls -d $(CUDA_PATH)-12 2>/dev/null)
+	CUDA_11_LIB_DIR := $(CUDA_11)/lib64
+	CUDA_12_LIB_DIR := $(CUDA_12)/lib64
 else
 	OBJ_EXT := o
 	SHARED_EXT := so
 	CP := cp -a
 endif
 
-# CUDA_RUNNER_DIR = $(RUNNERS_BUILD_DIR)cuda$(CUDA_VARIANT)/
-# ROCM_RUNNER_DIR = $(RUNNERS_BUILD_DIR)rocm$(ROCM_VARIANT)/
+CUDA_11_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT).*,$(addprefix $(CUDA_11_LIB_DIR)/$(SHARED_PREFIX),$(CUDA_LIBS_SHORT))))
+CUDA_12_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT).*,$(addprefix $(CUDA_12_LIB_DIR)/$(SHARED_PREFIX),$(CUDA_LIBS_SHORT))))
+NVCC_11 = $(CUDA_11)/bin/nvcc
+NVCC_12 = $(CUDA_12)/bin/nvcc
+
 CUDA_DEPS_DIR = $(DIST_BASE)cuda/
 ROCM_DEPS_DIR = $(DIST_BASE)rocm/
 
-ifneq ($(NVCC),)
-	CUDA_VERSION := $(word 3,$(subst $(comma),$(space),$(filter release %$(comma),%,$(shell $(NVCC) --version))))
-    ifneq (,$(CUDA_VERSION))
-		CUDA_VARIANT = _v$(CUDA_VERSION)
-	endif
-	CUDA_LIB_DEPS = $(addprefix $(CUDA_DEPS_DIR),$(notdir $(CUDA_LIBS)))
+ifneq ($(CUDA_11),)
+	CUDA_11_VARIANT= _v11
+	CUDA_11_LIB_DEPS = $(addprefix $(CUDA_DEPS_DIR),$(notdir $(CUDA_11_LIBS)))
+endif
+ifneq ($(CUDA_12),)
+	CUDA_12_VARIANT= _v12
+	CUDA_12_LIB_DEPS = $(addprefix $(CUDA_DEPS_DIR),$(notdir $(CUDA_12_LIBS)))
 endif
 ifeq ($(OLLAMA_SKIP_ROCM_GENERATE),)
 ifneq ($(HIPCC),)
@@ -98,21 +112,19 @@ CUDA_SRCS := \
 	$(wildcard ggml-cuda/template-instances/fattn-vec*f16-f16.cu) \
 	ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c sgemm.cpp
 
-CUDA_OBJS := $(CUDA_SRCS:.cu=.cuda.$(OBJ_EXT))
-CUDA_OBJS := $(CUDA_OBJS:.c=.cuda.$(OBJ_EXT))
-CUDA_OBJS := $(addprefix $(BUILD_DIR)/,$(CUDA_OBJS:.cpp=.cuda.$(OBJ_EXT)))
+CUDA_11_OBJS := $(CUDA_SRCS:.cu=.cuda.$(OBJ_EXT))
+CUDA_11_OBJS := $(CUDA_11_OBJS:.c=.cuda.$(OBJ_EXT))
+CUDA_11_OBJS := $(addprefix $(BUILD_DIR)/cuda_v11/,$(CUDA_11_OBJS:.cpp=.cuda.$(OBJ_EXT)))
+CUDA_12_OBJS := $(CUDA_SRCS:.cu=.cuda.$(OBJ_EXT))
+CUDA_12_OBJS := $(CUDA_12_OBJS:.c=.cuda.$(OBJ_EXT))
+CUDA_12_OBJS := $(addprefix $(BUILD_DIR)/cuda_v12/,$(CUDA_12_OBJS:.cpp=.cuda.$(OBJ_EXT)))
 
 HIP_OBJS := $(CUDA_SRCS:.cu=.hip.$(OBJ_EXT))
 HIP_OBJS := $(HIP_OBJS:.c=.hip.$(OBJ_EXT))
 HIP_OBJS := $(addprefix $(BUILD_DIR)/,$(HIP_OBJS:.cpp=.hip.$(OBJ_EXT)))
 
 CUDA_FLAGS := \
-	--generate-code=arch=compute_50,code=[compute_50,sm_50] \
-	--generate-code=arch=compute_52,code=[compute_52,sm_52] \
-	--generate-code=arch=compute_61,code=[compute_61,sm_61] \
-	--generate-code=arch=compute_70,code=[compute_70,sm_70] \
-	--generate-code=arch=compute_75,code=[compute_75,sm_75] \
-	--generate-code=arch=compute_80,code=[compute_80,sm_80] \
+	-t4 \
 	-DGGML_CUDA_DMMV_X=32 \
 	-DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 \
 	-DGGML_USE_CUDA=1 \
@@ -128,6 +140,34 @@ CUDA_FLAGS := \
 	-shared \
 	-I. \
 	-O3
+
+CUDA_11_FLAGS := \
+	--generate-code=arch=compute_50,code=[compute_50,sm_50] \
+	--generate-code=arch=compute_52,code=[compute_52,sm_52] \
+	--generate-code=arch=compute_53,code=[compute_53,sm_53] \
+	--generate-code=arch=compute_60,code=[compute_60,sm_60] \
+	--generate-code=arch=compute_61,code=[compute_61,sm_61] \
+	--generate-code=arch=compute_62,code=[compute_62,sm_62] \
+	--generate-code=arch=compute_70,code=[compute_70,sm_70] \
+	--generate-code=arch=compute_72,code=[compute_72,sm_72] \
+	--generate-code=arch=compute_75,code=[compute_75,sm_75] \
+	--generate-code=arch=compute_80,code=[compute_80,sm_80] \
+	--generate-code=arch=compute_86,code=[compute_86,sm_86]
+
+CUDA_12_FLAGS := \
+	--generate-code=arch=compute_60,code=[compute_60,sm_60] \
+	--generate-code=arch=compute_61,code=[compute_61,sm_61] \
+	--generate-code=arch=compute_62,code=[compute_62,sm_62] \
+	--generate-code=arch=compute_70,code=[compute_70,sm_70] \
+	--generate-code=arch=compute_72,code=[compute_72,sm_72] \
+	--generate-code=arch=compute_75,code=[compute_75,sm_75] \
+	--generate-code=arch=compute_80,code=[compute_80,sm_80] \
+	--generate-code=arch=compute_86,code=[compute_86,sm_86] \
+	--generate-code=arch=compute_87,code=[compute_87,sm_87] \
+	--generate-code=arch=compute_89,code=[compute_89,sm_89] \
+	--generate-code=arch=compute_90,code=[compute_90,sm_90] \
+	--generate-code=arch=compute_90a,code=[compute_90a,sm_90a] \
+	-DGGML_CUDA_USE_GRAPHS=on
 
 HIP_ARCHS := gfx900 gfx940 gfx941 gfx942 gfx1010 gfx1012 gfx1030 gfx1100 gfx1101 gfx1102
 LINUX_HIP_ARCHS := gfx906:xnack- gfx908:xnack- gfx90a:xnack+ gfx90a:xnack-
@@ -182,8 +222,11 @@ ifeq ($(ARCH),amd64)
 endif
 endif
 ifeq ($(OLLAMA_SKIP_CUDA_GENERATE),)
-ifneq ($(NVCC),)
-	RUNNERS += cuda$(CUDA_VARIANT)
+ifneq ($(CUDA_11),)
+	RUNNERS += cuda_v11
+endif
+ifneq ($(CUDA_12),)
+	RUNNERS += cuda_v12
 endif
 endif
 ifeq ($(OLLAMA_SKIP_ROCM_GENERATE),)
@@ -209,32 +252,54 @@ endif
 
 runners: $(BUILD_RUNNERS)
 
-$(BUILD_DIR)/%.cuda.$(OBJ_EXT): %.cu
+$(BUILD_DIR)/cuda_v11/%.cuda.$(OBJ_EXT): %.cu
 	@-mkdir -p $(dir $@)
-	$(NVCC) -c $(CUDA_FLAGS) -o $@ $<
+	$(NVCC_11) -c $(CUDA_FLAGS) $(CUDA_11_FLAGS) -o $@ $<
 
-$(BUILD_DIR)/%.cuda.$(OBJ_EXT): %.c
+$(BUILD_DIR)/cuda_v11/%.cuda.$(OBJ_EXT): %.c
 	@-mkdir -p $(dir $@)
-	$(NVCC) -c $(NVCC_CFLAGS) -o $@ $<
+	$(NVCC_11) -c $(NVCC_CFLAGS) -o $@ $<
 
-$(BUILD_DIR)/%.cuda.$(OBJ_EXT): %.cpp
+$(BUILD_DIR)/cuda_v11/%.cuda.$(OBJ_EXT): %.cpp
 	@-mkdir -p $(dir $@)
-	$(NVCC) -c $(NVCC_CXXFLAGS) -o $@ $<
+	$(NVCC_11) -c $(NVCC_CXXFLAGS) -o $@ $<
+
+$(BUILD_DIR)/cuda_v12/%.cuda.$(OBJ_EXT): %.cu
+	@-mkdir -p $(dir $@)
+	$(NVCC_12) -c $(CUDA_FLAGS) $(CUDA_12_FLAGS) -o $@ $<
+
+$(BUILD_DIR)/cuda_v12/%.cuda.$(OBJ_EXT): %.c
+	@-mkdir -p $(dir $@)
+	$(NVCC_12) -c $(NVCC_CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/cuda_v12/%.cuda.$(OBJ_EXT): %.cpp
+	@-mkdir -p $(dir $@)
+	$(NVCC_12) -c $(NVCC_CXXFLAGS) -o $@ $<
 
 $(RUNNERS_DIST_DIR)/%: $(RUNNERS_BUILD_DIR)/%
 	@-mkdir -p $(dir $@)
 	cp $< $@
 
-$(RUNNERS_DIST_DIR)/cuda$(CUDA_VARIANT)/ollama_runner$(EXE_EXT): $(RUNNERS_DIST_DIR)/cuda$(CUDA_VARIANT)/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT)
-$(RUNNERS_PAYLOAD_DIR)/cuda$(CUDA_VARIANT)/bin/ollama_runner$(EXE_EXT).gz: $(RUNNERS_PAYLOAD_DIR)/cuda$(CUDA_VARIANT)/bin/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT).gz
+$(RUNNERS_DIST_DIR)/cuda_v11/ollama_runner$(EXE_EXT): $(RUNNERS_DIST_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT)
+$(RUNNERS_PAYLOAD_DIR)/cuda_v11/bin/ollama_runner$(EXE_EXT).gz: $(RUNNERS_PAYLOAD_DIR)/cuda_v11/bin/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT).gz
+$(RUNNERS_DIST_DIR)/cuda_v12/ollama_runner$(EXE_EXT): $(RUNNERS_DIST_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT)
+$(RUNNERS_PAYLOAD_DIR)/cuda_v12/bin/ollama_runner$(EXE_EXT).gz: $(RUNNERS_PAYLOAD_DIR)/cuda_v12/bin/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT).gz
 
-$(RUNNERS_BUILD_DIR)/cuda$(CUDA_VARIANT)/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_OBJS) $(CUDA_LIB_DEPS)
+$(RUNNERS_BUILD_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_11_OBJS) $(CUDA_11_LIB_DEPS)
 	@-mkdir -p $(dir $@)
-	$(NVCC) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_OBJS) -o $@
+	$(NVCC_11) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_11_FLAGS) $(CUDA_11_OBJS) -o $@
 
-$(CUDA_LIB_DEPS): 
+$(RUNNERS_BUILD_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_12_OBJS) $(CUDA_12_LIB_DEPS)
 	@-mkdir -p $(dir $@)
-	$(CP) $(CUDA_LIB_DIR)/$(notdir $@)* $(dir $@)
+	$(NVCC_12) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_12_FLAGS) $(CUDA_12_OBJS) -o $@
+
+$(CUDA_11_LIB_DEPS): 
+	@-mkdir -p $(dir $@)
+	$(CP) $(CUDA_11_LIB_DIR)/$(notdir $@)* $(dir $@)
+
+$(CUDA_12_LIB_DEPS): 
+	@-mkdir -p $(dir $@)
+	$(CP) $(CUDA_12_LIB_DIR)/$(notdir $@)* $(dir $@)
 
 $(BUILD_DIR)/%.hip.$(OBJ_EXT): %.cu
 	@-mkdir -p $(dir $@)
@@ -271,9 +336,13 @@ $(RUNNERS_BUILD_DIR)/cpu_avx2/ollama_runner$(EXE_EXT): *.go ./runner/*.go
 	@-mkdir -p $(dir $@)
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,avx2 -o $@ ./runner
 
-$(RUNNERS_BUILD_DIR)/cuda$(CUDA_VARIANT)/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda$(CUDA_VARIANT)/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go
+$(RUNNERS_BUILD_DIR)/cuda_v11/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go
 	@-mkdir -p $(dir $@)
-	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda$(CUDA_VARIANT)/" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda_v11/" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
+
+$(RUNNERS_BUILD_DIR)/cuda_v12/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go
+	@-mkdir -p $(dir $@)
+	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda_v12/" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT) *.go ./runner/*.go 
 	@-mkdir -p $(dir $@)
@@ -290,7 +359,10 @@ $(ROCBLAS_DEP_MANIFEST):
 $(RUNNERS_PAYLOAD_DIR)/%/bin/ollama_runner.gz: $(RUNNERS_BUILD_DIR)/%/ollama_runner
 	@-mkdir -p $(dir $@)
 	gzip --best -c $< > $@
-$(RUNNERS_PAYLOAD_DIR)/cuda$(CUDA_VARIANT)/bin/%.gz: $(RUNNERS_BUILD_DIR)/cuda$(CUDA_VARIANT)/%
+$(RUNNERS_PAYLOAD_DIR)/cuda_v11/bin/%.gz: $(RUNNERS_BUILD_DIR)/cuda_v11/%
+	@-mkdir -p $(dir $@)
+	gzip --best -c $< > $@
+$(RUNNERS_PAYLOAD_DIR)/cuda_v12/bin/%.gz: $(RUNNERS_BUILD_DIR)/cuda_v12/%
 	@-mkdir -p $(dir $@)
 	gzip --best -c $< > $@
 $(RUNNERS_PAYLOAD_DIR)/rocm$(ROCM_VARIANT)/bin/%.gz: $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/%

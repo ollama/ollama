@@ -97,6 +97,7 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
           go generate -x ./...
+          make -C llama -j 8
         name: go generate
       - uses: actions/upload-artifact@v4
         with:
@@ -164,6 +165,7 @@ jobs:
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
           go generate -x ./...
+          make -C llama -j 8
         name: go generate
       - name: 'gather rocm dependencies'
         run: |
@@ -247,6 +249,7 @@ jobs:
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           go generate -x ./...
+          make -C llama -j 8
       - name: 'gather cuda dependencies'
         run: |
           $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]

@@ -67,17 +67,15 @@ jobs:
           cache: true
       - run: go get ./...
       - run: |
-          $gopath=(get-command go).source | split-path -parent
-          $gccpath=(get-command gcc).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
           go generate -x ./...
+          make -C llama -j 8
         if: ${{ startsWith(matrix.os, 'windows-') }}
         name: 'Windows Go Generate'
-      - run: go generate -x ./...
+      - run: |
+          go generate -x ./...
+          make -C llama -j 8
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
         name: 'Unix Go Generate'
       - run: go build .
@@ -112,6 +110,7 @@ jobs:
       - run: |
           git config --global --add safe.directory /__w/ollama/ollama
           go generate -x ./...
+          make -C llama -j 8
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       - uses: actions/upload-artifact@v4
@@ -145,6 +144,7 @@ jobs:
       - run: |
           git config --global --add safe.directory /__w/ollama/ollama
           go generate -x ./...
+          make -C llama -j 8
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       - uses: actions/upload-artifact@v4
@@ -179,13 +179,15 @@ jobs:
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
+          $makepath=(get-command make).source | split-path -parent
+          $gccpath=(get-command gcc).source | split-path -parent
           & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
           cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
-          $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
+          $env:PATH="$gopath;$makepath;$gccpath;$env:PATH" 
+          echo $env:PATH
           go generate -x ./...
+          make -C llama -j 8
         name: go generate
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
@@ -222,13 +224,16 @@ jobs:
       - name: go generate
         run: |
           $gopath=(get-command go).source | split-path -parent
-          $cudabin=(get-command nvcc).source | split-path
+          $makepath=(get-command make).source | split-path -parent
+          $gccpath=(get-command gcc).source | split-path -parent
+          $cudabin=(get-command nvcc).source | split-path -parent
           & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
           cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$cudabin;$env:PATH"
-          $env:OLLAMA_SKIP_CPU_GENERATE="1"
+          $env:PATH="$gopath;$makepath;$gccpath;$cudabin;$env:PATH" 
+          echo $env:PATH
           go generate -x ./...
+          make -C llama -j 8
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       # TODO - do we need any artifacts?

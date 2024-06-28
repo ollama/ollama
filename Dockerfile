@@ -103,21 +103,22 @@ RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
 RUN mkdir -p ../../dist/linux-amd64/rocm && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64/rocm && tar xf - )
 
-# To create a local image for building linux binaries on mac
+# To create a local image for building linux binaries on mac or windows
 # docker build --platform linux/amd64 -t builder -f Dockerfile --target unified-builder-amd64 .
 # docker run --platform linux/amd64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ builder
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete as unified-builder-amd64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
-ARG CUDA_VERSION
+ARG CUDA_VERSION_11
+ARG CUDA_VERSION_12
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 RUN yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo && \
     dnf clean all && \
     dnf install -y \
     zsh \
-    cuda-$(echo ${CUDA_VERSION} | cut -f1-2 -d. | sed -e "s/\./-/g") && \
-    ln -s /usr/local/cuda-* /usr/local/cuda
+    cuda-$(echo ${CUDA_VERSION_11} | cut -f1-2 -d. | sed -e "s/\./-/g") \
+    cuda-$(echo ${CUDA_VERSION_12} | cut -f1-2 -d. | sed -e "s/\./-/g")
 # TODO intel oneapi goes here...
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH:/usr/local/cuda/bin
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/cuda/lib64
@@ -178,7 +179,6 @@ COPY --from=new-runners-amd64 /go/src/github.com/ollama/ollama/dist/ ./dist/
 COPY --from=new-runners-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=static-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
-COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/dist/ ./dist/
 COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
