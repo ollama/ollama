@@ -398,12 +398,22 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return
 		}
 		embeddings, err = runner.llama.Embed(c.Request.Context(), []string{reqEmbed})
-	case []string:
+	case []any:
 		if reqEmbed == nil {
 			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float64{}})
 			return
 		}
-		embeddings, err = runner.llama.Embed(c.Request.Context(), reqEmbed)
+
+		reqEmbedArray := make([]string, len(reqEmbed))
+		for i, v := range reqEmbed {
+			if s, ok := v.(string); ok {
+				reqEmbedArray[i] = s
+			} else {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+				return
+			}
+		}
+		embeddings, err = runner.llama.Embed(c.Request.Context(), reqEmbedArray)
 	default:
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
 	}
@@ -412,6 +422,19 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
+	}
+
+	// assert that embedding is normalized
+	for _, e := range embeddings {
+		sum := 0.0
+		for _, v := range e {
+			sum += v * v
+		}
+		if math.Abs(sum-1) > 1e-6 {
+			slog.Info("embedding is not normalized", "sum", sum)
+		} else {
+			slog.Info("embedding is normalized", "sum", sum)
+		}
 	}
 
 	resp := api.EmbedResponse{Embeddings: embeddings}
@@ -486,7 +509,9 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	for _, v := range embedding {
 		sum += v * v
 	}
-	if math.Abs(sum-1) > 1e-6 {
+	if math.Abs(sum-1) < 1e-6 {
+		slog.Info("embedding is normalized", "sum", sum)
+	} else {
 		slog.Info("embedding is not normalized", "sum", sum)
 	}
 
