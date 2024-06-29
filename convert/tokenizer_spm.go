@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"slices"
 
 	"google.golang.org/protobuf/proto"
@@ -14,8 +14,8 @@ import (
 	"github.com/ollama/ollama/convert/sentencepiece"
 )
 
-func parseSentencePiece(d string) (*Vocabulary, error) {
-	bts, err := os.ReadFile(filepath.Join(d, "tokenizer.model"))
+func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
+	bts, err := fs.ReadFile(fsys, "tokenizer.model")
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func parseSentencePiece(d string) (*Vocabulary, error) {
 		}
 	}
 
-	f, err := os.Open(filepath.Join(d, "added_tokens.json"))
+	f, err := fsys.Open("added_tokens.json")
 	if errors.Is(err, os.ErrNotExist) {
 		return &v, nil
 	} else if err != nil {

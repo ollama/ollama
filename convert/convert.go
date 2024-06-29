@@ -5,9 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
 
 	"github.com/ollama/ollama/llm"
 )
@@ -67,8 +66,8 @@ type Converter interface {
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func Convert(path string, ws io.WriteSeeker) error {
-	bts, err := os.ReadFile(filepath.Join(path, "config.json"))
+func Convert(fsys fs.FS, ws io.WriteSeeker) error {
+	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
 		return err
 	}
@@ -98,7 +97,7 @@ func Convert(path string, ws io.WriteSeeker) error {
 		return err
 	}
 
-	t, err := parseTokenizer(path, conv.specialTokenTypes())
+	t, err := parseTokenizer(fsys, conv.specialTokenTypes())
 	if err != nil {
 		return err
 	}
@@ -114,7 +113,7 @@ func Convert(path string, ws io.WriteSeeker) error {
 		slog.Debug("vocabulary", "size", len(t.Vocabulary.Tokens))
 	}
 
-	ts, err := parseTensors(path)
+	ts, err := parseTensors(fsys)
 	if err != nil {
 		return err
 	}

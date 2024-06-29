@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"math"
 	"os"
@@ -17,7 +18,7 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-func convertFull(t *testing.T, d string) (*os.File, llm.KV, llm.Tensors) {
+func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, llm.Tensors) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "f16")
@@ -26,7 +27,7 @@ func convertFull(t *testing.T, d string) (*os.File, llm.KV, llm.Tensors) {
 	}
 	defer f.Close()
 
-	if err := Convert(d, f); err != nil {
+	if err := Convert(fsys, f); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,7 +77,7 @@ func TestConvertFull(t *testing.T) {
 				t.Skipf("%s not found", p)
 			}
 
-			f, kv, tensors := convertFull(t, p)
+			f, kv, tensors := convertFull(t, os.DirFS(p))
 			actual := make(map[string]string)
 			for k, v := range kv {
 				if s, ok := v.(json.Marshaler); !ok {

@@ -2,12 +2,13 @@ package convert
 
 import (
 	"io"
+	"io/fs"
 
 	"github.com/nlpodyssey/gopickle/pytorch"
 	"github.com/nlpodyssey/gopickle/types"
 )
 
-func parseTorch(ps ...string) ([]Tensor, error) {
+func parseTorch(fsys fs.FS, ps ...string) ([]Tensor, error) {
 	var ts []Tensor
 	for _, p := range ps {
 		pt, err := pytorch.Load(p)
