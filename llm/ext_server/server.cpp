@@ -1650,26 +1650,46 @@ struct llama_server_context
                     }
                     slot.params.n_keep = std::min(slot.n_ctx - 4, slot.params.n_keep);
 
+                    char buf[256];
+                    auto sliding_window = false;
+                    llama_model_meta_val_str(model, "general.architecture", buf, 256);
+                    if (strcmp(buf, "gemma2") == 0 ||
+                        strcmp(buf, "gemma") == 0 ||
+                        strcmp(buf, "phi3") == 0)
+                    {
+                        sliding_window = true;
+                    }
+
+                    auto truncate_at = slot.n_ctx;
+
+                    // truncate at 2/3 of the context length for sliding window models
+                    // as they do not support context shifts. this way, prompts that almost
+                    // fit the context length can still be processed without a sudden stop
+                    if (sliding_window) {
+                        truncate_at = 2 * slot.n_ctx / 3;
+                    }
+
                     // if input prompt is too big, truncate it, if group attention self-extend is disabled
-                    if (slot.ga_n == 1 && slot.n_prompt_tokens >= slot.n_ctx)
+                    if (slot.ga_n == 1 && slot.n_prompt_tokens >= truncate_at)
                     {
                         const int n_left = slot.n_ctx - slot.params.n_keep;
-                        const int n_block_size = n_left / 2;
-                        const int erased_blocks = (slot.n_prompt_tokens - slot.params.n_keep - n_block_size) / n_block_size;
+                        const int n_shift = n_left / 2;
+                        const int n_erase = slot.n_prompt_tokens - slot.params.n_keep - n_shift;
 
                         std::vector<llama_token> new_tokens(
                             prompt_tokens.begin(),
                             prompt_tokens.begin() + slot.params.n_keep);
                         new_tokens.insert(
                             new_tokens.end(),
-                            prompt_tokens.begin() + slot.params.n_keep + erased_blocks * n_block_size,
+                            prompt_tokens.begin() + slot.params.n_keep + n_erase,
                             prompt_tokens.end());
 
-                        LOG_VERBOSE("input truncated", {
-                            {"n_ctx",      slot.n_ctx},
-                            {"n_keep",     slot.params.n_keep},
-                            {"n_left",     n_left},
-                            {"new_tokens", tokens_to_str(ctx, new_tokens.cbegin(), new_tokens.cend())},
+                        LOG_INFO("input truncated", {
+                            {"n_ctx",        slot.n_ctx},
+                            {"n_keep",       slot.params.n_keep},
+                            {"n_left",       n_left},
+                            {"n_shift",      n_shift},
+                            {"n_erase",      n_erase},
                         });
                         slot.truncated = true;
                         prompt_tokens = new_tokens;
@@ -1680,12 +1700,7 @@ struct llama_server_context
 
                     // Models with sliding window attention do not work with context shifts, so
                     // limit their prediction to the context length
-                    char buf[256];
-                    llama_model_meta_val_str(model, "general.architecture", buf, 256);
-                    if (strcmp(buf, "gemma2") == 0 ||
-                        strcmp(buf, "gemma") == 0 ||
-                        strcmp(buf, "phi3") == 0)
-                    {
+                    if (sliding_window) {
                         auto limit = slot.n_ctx - slot.n_prompt_tokens;
                         slot.n_predict = limit;
                         slot.params.n_predict = limit;
