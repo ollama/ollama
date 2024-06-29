@@ -52,7 +52,7 @@ For example, if you're running Ollama in:
   - When using `docker run`, you can set these variables with the `-e` flag.
   - When using docker compose under the `environment` key, or in a configured ("`env_files:`") `.env` file.
 - Linux / macOS (see [faq](faq.md))
-  - Using `export` in your shell if you're running Ollama from the command line, e.g. `export OLLAMA_HOST="0.0.0.0" ollama serve llama3`.
+  - Using `export` in your shell if you're running Ollama from the command line, e.g. `OLLAMA_HOST="0.0.0.0" ollama serve llama3`.
 - Linux (see [linux](linux.md))
   - Using `systemd` service files if you're running Ollama as a service with systemd, e.g. `systemctl edit ollama.service`.
 - MacOS
