@@ -117,7 +117,6 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			}(r.DoneReason),
 		}},
 		Usage: Usage{
-			// TODO: ollama returns 0 for prompt eval if the prompt was cached, but openai returns the actual count
 			PromptTokens:     r.PromptEvalCount,
 			CompletionTokens: r.EvalCount,
 			TotalTokens:      r.PromptEvalCount + r.EvalCount,
@@ -205,6 +204,7 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 		Format:   format,
 		Options:  options,
 		Stream:   &r.Stream,
+		OpenAI:   true,
 	}
 }
 

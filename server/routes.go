@@ -1372,6 +1372,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		fn := func(r llm.CompletionResponse) {
+			if req.OpenAI {
+				r.PromptEvalCount = r.TokensEval
+			}
 			resp := api.ChatResponse{
 				Model:      req.Model,
 				CreatedAt:  time.Now().UTC(),
