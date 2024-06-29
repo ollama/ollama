@@ -1651,21 +1651,16 @@ struct llama_server_context
                     slot.params.n_keep = std::min(slot.n_ctx - 4, slot.params.n_keep);
 
                     char buf[256];
-                    auto sliding_window = false;
                     llama_model_meta_val_str(model, "general.architecture", buf, 256);
-                    if (strcmp(buf, "gemma2") == 0 ||
-                        strcmp(buf, "gemma") == 0 ||
-                        strcmp(buf, "phi3") == 0)
-                    {
-                        sliding_window = true;
-                    }
+                    bool gemma2 = strcmp(buf, "gemma2") == 0;
 
-                    auto truncate_at = slot.n_ctx;
+                    int32_t truncate_at = slot.n_ctx;
 
-                    // truncate at 2/3 of the context length for sliding window models
-                    // as they do not support context shifts. this way, prompts that almost
-                    // fit the context length can still be processed without a sudden stop
-                    if (sliding_window) {
+                    // truncate at 2/3 of the context length for gemma2 models
+                    // as they do not support context shifts (from the sliding window implementation).
+                    // this way, prompts that almost fit the context length can still generate a full
+                    // response without a sudden stop from hitting the context limit
+                    if (gemma2) {
                         truncate_at = 2 * slot.n_ctx / 3;
                     }
 
@@ -1700,8 +1695,8 @@ struct llama_server_context
 
                     // Models with sliding window attention do not work with context shifts, so
                     // limit their prediction to the context length
-                    if (sliding_window) {
-                        auto limit = slot.n_ctx - slot.n_prompt_tokens;
+                    if (gemma2) {
+                        int32_t limit = slot.n_ctx - slot.n_prompt_tokens;
                         slot.n_predict = limit;
                         slot.params.n_predict = limit;
                         LOG_INFO("model does not support sliding window, limiting generation", {
