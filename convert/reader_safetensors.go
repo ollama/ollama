@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
+	"io/fs"
 	"slices"
 
 	"github.com/d4l3k/go-bfloat16"
@@ -20,10 +20,10 @@ type safetensorMetadata struct {
 	Offsets []int64  `json:"data_offsets"`
 }
 
-func parseSafetensors(ps ...string) ([]Tensor, error) {
+func parseSafetensors(fsys fs.FS, ps ...string) ([]Tensor, error) {
 	var ts []Tensor
 	for _, p := range ps {
-		f, err := os.Open(p)
+		f, err := fsys.Open(p)
 		if err != nil {
 			return nil, err
 		}
@@ -50,6 +50,7 @@ func parseSafetensors(ps ...string) ([]Tensor, error) {
 		for _, key := range keys {
 			if value := headers[key]; value.Type != "" {
 				ts = append(ts, safetensor{
+					fs:     fsys,
 					path:   p,
 					dtype:  value.Type,
 					offset: safetensorsPad(n, value.Offsets[0]),
@@ -72,6 +73,7 @@ func safetensorsPad(n, offset int64) int64 {
 }
 
 type safetensor struct {
+	fs     fs.FS
 	path   string
 	dtype  string
 	offset int64
@@ -80,14 +82,20 @@ type safetensor struct {
 }
 
 func (st safetensor) WriteTo(w io.Writer) (int64, error) {
-	f, err := os.Open(st.path)
+	f, err := st.fs.Open(st.path)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
 
-	if _, err = f.Seek(st.offset, io.SeekStart); err != nil {
-		return 0, err
+	if seeker, ok := f.(io.Seeker); ok {
+		if _, err := seeker.Seek(st.offset, io.SeekStart); err != nil {
+			return 0, err
+		}
+	} else {
+		if _, err := io.CopyN(io.Discard, f, st.offset); err != nil {
+			return 0, err
+		}
 	}
 
 	var f32s []float32

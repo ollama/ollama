@@ -3,7 +3,7 @@ package convert
 import (
 	"errors"
 	"io"
-	"path/filepath"
+	"io/fs"
 	"strings"
 )
 
@@ -55,8 +55,8 @@ func (t *tensorBase) SetRepacker(fn repacker) {
 
 type repacker func(string, []float32, []uint64) ([]float32, error)
 
-func parseTensors(d string) ([]Tensor, error) {
-	patterns := map[string]func(...string) ([]Tensor, error){
+func parseTensors(fsys fs.FS) ([]Tensor, error) {
+	patterns := map[string]func(fs.FS, ...string) ([]Tensor, error){
 		"model-*-of-*.safetensors": parseSafetensors,
 		"model.safetensors":        parseSafetensors,
 		"pytorch_model-*-of-*.bin": parseTorch,
@@ -65,13 +65,13 @@ func parseTensors(d string) ([]Tensor, error) {
 	}
 
 	for pattern, parseFn := range patterns {
-		matches, err := filepath.Glob(filepath.Join(d, pattern))
+		matches, err := fs.Glob(fsys, pattern)
 		if err != nil {
 			return nil, err
 		}
 
 		if len(matches) > 0 {
-			return parseFn(matches...)
+			return parseFn(fsys, matches...)
 		}
 	}
 
