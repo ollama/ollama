@@ -356,6 +356,11 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	if req.Truncate == nil {
+		truncate := true
+		req.Truncate = &truncate
+	}
+
 	model, err := GetModel(req.Model)
 	if err != nil {
 		var pErr *fs.PathError

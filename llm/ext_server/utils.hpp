@@ -658,7 +658,7 @@ static json probs_vector_to_json(const llama_context *ctx, const std::vector<com
 }
 
 // normalize a vector
-std::vector<float> normalize_vector(const std::vector<float>& vec, int size) {
+static std::vector<float> normalize_vector(const std::vector<float>& vec, int size) {
     double sum = 0.0;
     for (float value : vec) {
         sum += value * value;
