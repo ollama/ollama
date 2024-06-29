@@ -1678,6 +1678,24 @@ struct llama_server_context
                         GGML_ASSERT(slot.n_prompt_tokens < slot.n_ctx);
                     }
 
+                    // Models with sliding window attention do not work with context shifts, so
+                    // limit their prediction to the context length
+                    char buf[256];
+                    llama_model_meta_val_str(model, "general.architecture", buf, 256);
+                    if (strcmp(buf, "gemma2") == 0 ||
+                        strcmp(buf, "gemma") == 0 ||
+                        strcmp(buf, "phi3") == 0)
+                    {
+                        auto limit = slot.n_ctx - slot.n_prompt_tokens;
+                        slot.n_predict = limit;
+                        slot.params.n_predict = limit;
+                        LOG_INFO("model does not support sliding window, limiting generation", {
+                            {"n_ctx", slot.n_ctx},
+                            {"n_prompt_tokens", slot.n_prompt_tokens},
+                            {"n_predict", slot.n_predict}
+                        });
+                    }
+
                     if (!slot.params.cache_prompt)
                     {
                         llama_sampling_reset(slot.ctx_sampling);
