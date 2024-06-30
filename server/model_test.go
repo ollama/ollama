@@ -3,10 +3,12 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -39,13 +41,31 @@ func TestExtractFromZipFile(t *testing.T) {
 	cases := []struct {
 		name   string
 		expect []string
+		err    error
 	}{
 		{
 			name:   "good",
 			expect: []string{"good"},
 		},
 		{
-			name: filepath.Join("..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "bad"),
+			name:   strings.Join([]string{"path", "..", "to", "good"}, string(os.PathSeparator)),
+			expect: []string{filepath.Join("to", "good")},
+		},
+		{
+			name:   strings.Join([]string{"path", "..", "to", "..", "good"}, string(os.PathSeparator)),
+			expect: []string{"good"},
+		},
+		{
+			name:   strings.Join([]string{"path", "to", "..", "..", "good"}, string(os.PathSeparator)),
+			expect: []string{"good"},
+		},
+		{
+			name: strings.Join([]string{"..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "bad"}, string(os.PathSeparator)),
+			err:  zip.ErrInsecurePath,
+		},
+		{
+			name: strings.Join([]string{"path", "..", "..", "to", "bad"}, string(os.PathSeparator)),
+			err:  zip.ErrInsecurePath,
 		},
 	}
 
@@ -55,7 +75,7 @@ func TestExtractFromZipFile(t *testing.T) {
 			defer f.Close()
 
 			tempDir := t.TempDir()
-			if err := extractFromZipFile(tempDir, f, func(api.ProgressResponse) {}); err != nil {
+			if err := extractFromZipFile(tempDir, f, func(api.ProgressResponse) {}); !errors.Is(err, tt.err) {
 				t.Fatal(err)
 			}
 

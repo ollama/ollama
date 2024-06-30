@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
@@ -91,12 +90,11 @@ func extractFromZipFile(p string, file *os.File, fn func(api.ProgressResponse)) 
 
 	fn(api.ProgressResponse{Status: "unpacking model metadata"})
 	for _, f := range r.File {
-		n := filepath.Join(p, f.Name)
-		if !strings.HasPrefix(n, p) {
-			slog.Warn("skipped extracting file outside of context", "name", f.Name)
-			continue
+		if !filepath.IsLocal(f.Name) {
+			return fmt.Errorf("%w: %s", zip.ErrInsecurePath, f.Name)
 		}
 
+		n := filepath.Join(p, f.Name)
 		if err := os.MkdirAll(filepath.Dir(n), 0o750); err != nil {
 			return err
 		}
