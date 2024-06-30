@@ -5,10 +5,11 @@ package readline
 import (
 	"syscall"
 	"unsafe"
+	"golang.org/x/sys/unix"
 )
 
-const tcgets = 0x5401
-const tcsets = 0x5402
+const tcgets = unix.TCGETS
+const tcsets = unix.TCSETSF
 
 func getTermios(fd uintptr) (*Termios, error) {
 	termios := new(Termios)
