@@ -70,6 +70,10 @@ var (
 	GpuDeviceOrdinal string
 	// Set via HSA_OVERRIDE_GFX_VERSION in the environment
 	HsaOverrideGfxVersion string
+	// Set via MTHREADS_VISIBLE_DEVICES in the environment
+	MthreadsVisibleDevices string
+	// Set via MUSA_VISIBLE_DEVICES in the environment
+	MusaVisibleDevices string
 )
 
 type EnvVar struct {
@@ -104,6 +108,8 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal, "Set which AMD devices are visible"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion, "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGpu, "Enable experimental Intel GPU detection"}
+		ret["MTHREADS_VISIBLE_DEVICES"] = EnvVar{"MTHREADS_VISIBLE_DEVICES", MthreadsVisibleDevices, "Set which Moore Threads devices are visible"}
+		ret["MUSA_VISIBLE_DEVICES"] = EnvVar{"MUSA_VISIBLE_DEVICES", MusaVisibleDevices, "Set which Moore Threads devices are visible"}
 	}
 	return ret
 }
@@ -288,6 +294,8 @@ func LoadConfig() {
 	RocrVisibleDevices = clean("ROCR_VISIBLE_DEVICES")
 	GpuDeviceOrdinal = clean("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = clean("HSA_OVERRIDE_GFX_VERSION")
+	MthreadsVisibleDevices = clean("MTHREADS_VISIBLE_DEVICES")
+	MusaVisibleDevices = clean("MUSA_VISIBLE_DEVICES")
 }
 
 func getModelsDir() (string, error) {

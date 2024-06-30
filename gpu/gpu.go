@@ -39,6 +39,7 @@ type oneapiHandles struct {
 const (
 	cudaMinimumMemory = 457 * format.MebiByte
 	rocmMinimumMemory = 457 * format.MebiByte
+	musaMinimumMemory = 457 * format.MebiByte
 	// TODO OneAPI minimum memory
 )
 
@@ -54,6 +55,7 @@ var (
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
+	musaGPUs      []MusaGPUInfo
 )
 
 // With our current CUDA compile flags, older than 5.0 will not work properly
@@ -319,6 +321,8 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		rocmGPUs = AMDGetGPUInfo()
+
+		musaGPUs = MUSAGetGPUInfo()
 		bootstrapped = true
 	}
 
@@ -409,6 +413,11 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			slog.Debug("problem refreshing ROCm free memory", "error", err)
 		}
+
+		err = MusaGPUInfoList(musaGPUs).RefreshFreeMemory()
+		if err != nil {
+			slog.Debug("problem refreshing MUSA free memory", "error", err)
+		}
 	}
 
 	resp := []GpuInfo{}
@@ -419,6 +428,9 @@ func GetGPUInfo() GpuInfoList {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	for _, gpu := range oneapiGPUs {
+		resp = append(resp, gpu.GpuInfo)
+	}
+	for _, gpu := range musaGPUs {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	if len(resp) == 0 {
