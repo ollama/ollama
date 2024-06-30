@@ -27,6 +27,8 @@ chat_completion = client.chat.completions.create(
     ],
     model='llama3',
 )
+
+list_completion = client.models.list()
 ```
 
 ### OpenAI JavaScript library
@@ -45,6 +47,8 @@ const chatCompletion = await openai.chat.completions.create({
   messages: [{ role: 'user', content: 'Say this is a test' }],
   model: 'llama3',
 })
+
+const listCompletion = await openai.models.list()
 ```
 
 ### `curl`
@@ -65,6 +69,8 @@ curl http://localhost:11434/v1/chat/completions \
             }
         ]
     }'
+
+curl http://localhost:11434/v1/models
 ```
 
 ## Endpoints
@@ -105,6 +111,13 @@ curl http://localhost:11434/v1/chat/completions \
 #### Notes
 
 - `usage.prompt_tokens` will be 0 for completions where prompt evaluation is cached
+
+### `/v1/models`
+
+#### Notes
+
+- `created` corresponds to when the model was last modified
+- `owned_by` corresponds to the ollama username, defaulting to `"library"`
 
 ## Models
 
