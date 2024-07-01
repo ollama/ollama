@@ -25,6 +25,8 @@ func (o OllamaHost) String() string {
 var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 var (
+	// Set via OLLAMA_APIKEY in the environment
+	ApiKey string
 	// Set via OLLAMA_ORIGINS in the environment
 	AllowOrigins []string
 	// Set via OLLAMA_DEBUG in the environment
@@ -80,6 +82,7 @@ type EnvVar struct {
 
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
+		"OLLAMA_APIKEY":            {"OLLAMA_APIKEY", ApiKey, "API Key for the ollama server"},
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host, "IP Address for the ollama server (default 127.0.0.1:11434)"},
@@ -137,6 +140,8 @@ func init() {
 }
 
 func LoadConfig() {
+	ApiKey = clean("OLLAMA_APIKEY")
+
 	if debug := clean("OLLAMA_DEBUG"); debug != "" {
 		d, err := strconv.ParseBool(debug)
 		if err == nil {
