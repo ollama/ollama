@@ -120,6 +120,11 @@ journalctl -e -u ollama
 
 ## Uninstall
 
+### Uninstall script
+A script will be created in the same location as the `ollama` binary called `ollama_uninstall.sh`. Running it will remove the installation from the sustem.
+
+### Manual uninstall
+
 Remove the ollama service:
 
 ```bash
