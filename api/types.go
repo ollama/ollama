@@ -240,6 +240,7 @@ type EmbeddingRequest struct {
 
 // EmbedResponse is the response from [Client.Embed].
 type EmbedResponse struct {
+	Model      string      `json:"model"`
 	Embeddings [][]float64 `json:"embeddings,omitempty"`
 }
 

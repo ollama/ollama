@@ -27,6 +27,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
@@ -458,20 +459,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	// assert that embedding is normalized
-	for _, e := range embeddings {
-		sum := 0.0
-		for _, v := range e {
-			sum += v * v
-		}
-		if math.Abs(sum-1) > 1e-6 {
-			slog.Info("embedding is not normalized", "sum", sum)
-		} else {
-			slog.Info("embedding is normalized", "sum", sum)
-		}
+	for i, e := range embeddings {
+		embeddings[i] = format.Normalize(e)
 	}
 
-	resp := api.EmbedResponse{Embeddings: embeddings}
+	resp := api.EmbedResponse{
+		Model:      req.Model,
+		Embeddings: embeddings,
+	}
 	c.JSON(http.StatusOK, resp)
 }
 

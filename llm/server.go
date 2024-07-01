@@ -843,8 +843,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 }
 
 type EmbedRequest struct {
-	Content   []string `json:"content"`
-	Normalize bool     `json:"normalize"`
+	Content []string `json:"content"`
 }
 
 type EmbedResponse struct {
@@ -866,7 +865,7 @@ func (s *llmServer) Embed(ctx context.Context, input []string) ([][]float64, err
 		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	data, err := json.Marshal(EmbedRequest{Content: input, Normalize: true})
+	data, err := json.Marshal(EmbedRequest{Content: input})
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}
@@ -902,8 +901,7 @@ func (s *llmServer) Embed(ctx context.Context, input []string) ([][]float64, err
 }
 
 type EmbeddingRequest struct {
-	Content   string `json:"content"`
-	Normalize bool   `json:"normalize"`
+	Content string `json:"content"`
 }
 
 type EmbeddingResponse struct {
@@ -925,7 +923,7 @@ func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, er
 		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	data, err := json.Marshal(EmbeddingRequest{Content: prompt, Normalize: false})
+	data, err := json.Marshal(EmbeddingRequest{Content: prompt})
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}

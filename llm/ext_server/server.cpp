@@ -3191,21 +3191,11 @@ int main(int argc, char **argv) {
                             responses = std::vector<json>(1, result.result_json);
                         }
                         json embeddings = json::array();
-                        if (body["normalize"]) {
-                            for (auto & elem : responses) {
-                                std::vector<float> embedding = elem.at("embedding").get<std::vector<float>>();
-                                embedding = normalize_vector(embedding, embedding.size());
-                                embeddings.push_back(embedding);
-                            }
-                        } else {
-                            for (auto & elem : responses) {
-                                embeddings.push_back(elem.at("embedding"));
-                            }
+                        for (auto & elem : responses) {
+                            embeddings.push_back(elem.at("embedding"));
                         }
                         // send the result
                         json result = json{{"embedding", embeddings}};
-                        // log result
-
                         return res.set_content(result.dump(), "application/json; charset=utf-8");
                     } else {
                         // return error
