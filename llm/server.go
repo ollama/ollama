@@ -116,6 +116,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
 			cpuRunner = serverForCpu()
+			// If fallback to CPU, clear the VRAMSize
+			estimate.VRAMSize = 0
 			gpus = gpu.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
@@ -137,6 +139,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		servers = []string{cpuRunner}
 	} else {
 		servers = serversForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
+		if strings.Split(servers[0], "_")[0] == "cpu" {
+			estimate.VRAMSize = 0
+			slog.Warn("CPU runner selected instead of GPU")
+		}
 	}
 	demandLib := envconfig.LLMLibrary
 	if demandLib != "" {
