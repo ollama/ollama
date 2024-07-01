@@ -341,3 +341,17 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			[]string{"nitrogen", "oxygen", "carbon", "dioxide"},
 		}
 }
+
+func EmbedTestHelper(ctx context.Context, t *testing.T, req api.EmbedRequest) *api.EmbedResponse {
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+
+	response, err := client.Embed(ctx, &req)
+
+	if err != nil {
+		t.Fatalf("Error making request: %v", err)
+	}
+
+	return response
+}
