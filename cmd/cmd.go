@@ -85,8 +85,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	fsys := os.DirFS(createCtx)
 
 	for i := range modelfile.Commands {
-		switch modelfile.Commands[i].Name {
-		case "model", "adapter":
+		if slices.Contains([]string{"model", "adapter", "license", "template", "system"}, modelfile.Commands[i].Name) {
 			p := filepath.Clean(modelfile.Commands[i].Args)
 
 			fi, err := fs.Stat(fsys, p)
@@ -96,28 +95,40 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			if fi.IsDir() {
-				// this is likely a safetensors or pytorch directory
-				// TODO make this work w/ adapters
-				sub, err := fs.Sub(fsys, p)
-				if err != nil {
-					return err
-				}
+			switch modelfile.Commands[i].Name {
+			case "model", "adapter":
+				if fi.IsDir() {
+					// this is likely a safetensors or pytorch directory
+					// TODO make this work w/ adapters
+					sub, err := fs.Sub(fsys, p)
+					if err != nil {
+						return err
+					}
 
-				temp, err := os.CreateTemp(createCtx, "*.zip")
-				if err != nil {
-					return err
-				}
-				defer temp.Close()
-				defer os.RemoveAll(temp.Name())
+					temp, err := os.CreateTemp(createCtx, "*.zip")
+					if err != nil {
+						return err
+					}
+					defer temp.Close()
+					defer os.RemoveAll(temp.Name())
 
-				if err := zipFiles(sub, temp); err != nil {
-					return err
-				}
+					if err := zipFiles(sub, temp); err != nil {
+						return err
+					}
 
-				p, err = filepath.Rel(createCtx, temp.Name())
-				if err != nil {
+					p, err = filepath.Rel(createCtx, temp.Name())
+					if err != nil {
+						return err
+					}
+				}
+			case "license", "template", "system":
+				t, err := detectContentType(fsys, p)
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				} else if err != nil {
 					return err
+				} else if t != "text/plain" {
+					return fmt.Errorf("invalid content type for %s: %s", modelfile.Commands[i].Name, p)
 				}
 			}
 
@@ -164,23 +175,23 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func zipFiles(fsys fs.FS, w io.Writer) error {
-	detectContentType := func(name string) (string, error) {
-		f, err := fsys.Open(name)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
+func detectContentType(fsys fs.FS, name string) (string, error) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
 
-		bts, err := io.ReadAll(io.LimitReader(f, 512))
-		if err != nil {
-			return "", err
-		}
-
-		contentType, _, _ := strings.Cut(http.DetectContentType(bts), ";")
-		return contentType, nil
+	bts, err := io.ReadAll(io.LimitReader(f, 512))
+	if err != nil {
+		return "", err
 	}
 
+	contentType, _, _ := strings.Cut(http.DetectContentType(bts), ";")
+	return contentType, nil
+}
+
+func zipFiles(fsys fs.FS, w io.Writer) error {
 	glob := func(pattern, contentType string) ([]string, error) {
 		matches, err := fs.Glob(fsys, pattern)
 		if err != nil {
@@ -188,7 +199,7 @@ func zipFiles(fsys fs.FS, w io.Writer) error {
 		}
 
 		for _, match := range matches {
-			if ct, err := detectContentType(match); err != nil {
+			if ct, err := detectContentType(fsys, match); err != nil {
 				return nil, err
 			} else if ct != contentType {
 				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, match)

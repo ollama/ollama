@@ -459,7 +459,22 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				})
 			}
 
-			blob := strings.NewReader(c.Args)
+			var blob io.Reader = strings.NewReader(c.Args)
+			if strings.HasPrefix(c.Args, "@") {
+				p, err := GetBlobsPath(strings.TrimPrefix(c.Args, "@"))
+				if err != nil {
+					return err
+				}
+
+				b, err := os.Open(p)
+				if err != nil {
+					return err
+				}
+				defer b.Close()
+
+				blob = b
+			}
+
 			layer, err := NewLayer(blob, mediatype)
 			if err != nil {
 				return err
