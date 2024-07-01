@@ -60,17 +60,17 @@ type ResponseFormat struct {
 }
 
 type ChatCompletionRequest struct {
-	Model            string         `json:"model"`
-	Messages         []Message      `json:"messages"`
-	Stream           bool           `json:"stream"`
-	MaxTokens        *int           `json:"max_tokens"`
-	Seed             *int           `json:"seed"`
-	Stop             any            `json:"stop"`
-	Temperature      *float32       `json:"temperature"`
-	FrequencyPenalty float32        `json:"frequency_penalty"`
-	PresencePenalty  float32        `json:"presence_penalty_penalty"`
-	TopP             float32        `json:"top_p"`
-	ResponseFormat   ResponseFormat `json:"response_format"`
+	Model            string          `json:"model"`
+	Messages         []Message       `json:"messages"`
+	Stream           bool            `json:"stream"`
+	MaxTokens        *int            `json:"max_tokens"`
+	Seed             *int            `json:"seed"`
+	Stop             any             `json:"stop"`
+	Temperature      *float64        `json:"temperature"`
+	FrequencyPenalty *float64        `json:"frequency_penalty"`
+	PresencePenalty  *float64        `json:"presence_penalty_penalty"`
+	TopP             *float64        `json:"top_p"`
+	ResponseFormat   *ResponseFormat `json:"response_format"`
 }
 
 type ChatCompletion struct {
@@ -318,7 +318,7 @@ func fromRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 }
 
 func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
-	options := make(map[string]interface{})
+	options := make(map[string]any)
 
 	switch stop := r.Stop.(type) {
 	case string:
