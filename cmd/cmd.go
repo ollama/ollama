@@ -1091,6 +1091,48 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 	return err
 }
 
+func StopHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
+	if !ok {
+		generateContext = []int{}
+	}
+
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	model := args[0]
+
+	duration, err := time.ParseDuration("0s")
+
+	request := api.GenerateRequest{
+		Model:     model,
+		Context:   generateContext,
+		KeepAlive: &api.Duration{Duration: duration},
+	}
+
+	fn := func(response api.GenerateResponse) error {
+		content := response.Response
+		fmt.Printf("%v\n", content)
+		return nil
+	}
+
+	if err := client.Generate(ctx, &request, fn); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	}
+
+	fmt.Printf("Model %v stopped.\n", model)
+
+	return nil
+}
+
 func initializeKeypair() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -1254,6 +1296,17 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+
+	stopCmd := &cobra.Command{
+		Use:     "stop MODEL ",
+		Short:   "Stop a running model",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    StopHandler,
+	}
+
+	stopCmd.Flags().String("model", "", "Name of the model to stop (e.g. llama3, gemma)")
+
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
@@ -1321,6 +1374,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		stopCmd,
 		pullCmd,
 		pushCmd,
 		listCmd,
@@ -1358,6 +1412,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		stopCmd,
 		pullCmd,
 		pushCmd,
 		listCmd,
