@@ -34,6 +34,19 @@ func (w *StatusWriter) Write(b []byte) (int, error) {
 			errMsg = prefix + string(bytes.TrimSpace(after))
 		}
 	}
+
+	if bytes.Contains(b, []byte("unknown model architecture")) {
+		if _, after, ok := bytes.Cut(b, []byte("architecture")); ok {
+			errMsg = "error" + string(bytes.TrimSpace(after))
+
+			if before, _, ok := bytes.Cut(after, []byte("llama_load")); ok {
+				errMsg = "error" + string(bytes.TrimSpace(before))
+			}
+
+			errMsg = errMsg + "\nYour current version of Ollama doesn't support this model architecture. Consider upgrading."
+		}
+	}
+
 	if errMsg != "" {
 		w.LastErrMsg = errMsg
 	}
