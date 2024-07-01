@@ -160,14 +160,23 @@ func (t *Template) Vars() []string {
 
 type Values struct {
 	Messages []api.Message
+	Prompt   string
+	Suffix   string
 }
 
 func (t *Template) Execute(w io.Writer, v Values) error {
 	system, collated := collate(v.Messages)
-	if slices.Contains(t.Vars(), "messages") {
+	if v.Prompt != "" && v.Suffix != "" {
+		return t.Template.Execute(w, map[string]any{
+			"Prompt": v.Prompt,
+			"Suffix": v.Suffix,
+		})
+	} else if slices.Contains(t.Vars(), "messages") {
 		return t.Template.Execute(w, map[string]any{
 			"System":   system,
 			"Messages": collated,
+			"Prefix":   v.Prompt,
+			"Suffix":   v.Suffix,
 		})
 	}
 
