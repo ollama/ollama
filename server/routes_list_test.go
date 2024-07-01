@@ -18,12 +18,12 @@ func TestList(t *testing.T) {
 	expectNames := []string{
 		"mistral:7b-instruct-q4_0",
 		"zephyr:7b-beta-q5_K_M",
-		"apple/OpenELM:latest",
+		"apple/OpenELM",
 		"boreas:2b-code-v1.5-q6_K",
 		"notus:7b-v1-IQ2_S",
 		// TODO: host:port currently fails on windows (#4107)
 		// "localhost:5000/library/eurus:700b-v0.5-iq3_XXS",
-		"mynamespace/apeliotes:latest",
+		"mynamespace/apeliotes",
 		"myhost/mynamespace/lips:code",
 	}
 
