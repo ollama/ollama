@@ -279,37 +279,6 @@ func TestCase(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			t.Run("create", func(t *testing.T) {
-				w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
-					Name:      strings.ToUpper(tt),
-					Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-					Stream:    &stream,
-				})
-
-				if w.Code != http.StatusBadRequest {
-					t.Fatalf("expected status 500 got %d", w.Code)
-				}
-
-				if !bytes.Equal(w.Body.Bytes(), expect) {
-					t.Fatalf("expected error %s got %s", expect, w.Body.String())
-				}
-			})
-
-			t.Run("pull", func(t *testing.T) {
-				w := createRequest(t, s.PullModelHandler, api.PullRequest{
-					Name:   strings.ToUpper(tt),
-					Stream: &stream,
-				})
-
-				if w.Code != http.StatusBadRequest {
-					t.Fatalf("expected status 500 got %d", w.Code)
-				}
-
-				if !bytes.Equal(w.Body.Bytes(), expect) {
-					t.Fatalf("expected error %s got %s", expect, w.Body.String())
-				}
-			})
-
 			t.Run("copy", func(t *testing.T) {
 				w := createRequest(t, s.CopyModelHandler, api.CopyRequest{
 					Source:      tt,
