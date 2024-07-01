@@ -459,24 +459,18 @@ func (s *Server) PullModelHandler(c *gin.Context) {
 }
 
 func (s *Server) PushModelHandler(c *gin.Context) {
-	var req api.PushRequest
-	err := c.ShouldBindJSON(&req)
-	switch {
-	case errors.Is(err, io.EOF):
+	var r api.PushRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
-	case err != nil:
+	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	var model string
-	if req.Model != "" {
-		model = req.Model
-	} else if req.Name != "" {
-		model = req.Name
-	} else {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+	n := model.ParseName(cmp.Or(r.Model, r.Name))
+	if !n.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("name %q is invalid", cmp.Or(r.Model, r.Name))})
 		return
 	}
 
@@ -487,19 +481,15 @@ func (s *Server) PushModelHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		regOpts := &registryOptions{
-			Insecure: req.Insecure,
-		}
-
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := PushModel(ctx, model, regOpts, fn); err != nil {
+		if err := PushModel(ctx, n, registryOptions{Insecure: r.Insecure}, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if r.Stream != nil && !*r.Stream {
 		waitForStream(c, ch)
 		return
 	}
