@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
@@ -1111,10 +1112,16 @@ func getValue(header, key string) string {
 func parseRegistryChallenge(authStr string) registryChallenge {
 	authStr = strings.TrimPrefix(authStr, "Bearer ")
 
+	s, err := strconv.ParseInt(getValue(authStr, "timestamp"), 10, 64)
+	if err != nil {
+		s = time.Now().Unix()
+	}
+
 	return registryChallenge{
-		Realm:   getValue(authStr, "realm"),
-		Service: getValue(authStr, "service"),
-		Scope:   getValue(authStr, "scope"),
+		Realm:     getValue(authStr, "realm"),
+		Service:   getValue(authStr, "service"),
+		Scope:     getValue(authStr, "scope"),
+		Timestamp: time.Unix(s, 0),
 	}
 }
 
