@@ -84,9 +84,8 @@ func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	}
 
 	slog.Debug("hipDriverGetVersion", "version", version)
-	// TODO - this isn't actually right, but the docs claim hipDriverGetVersion isn't accurate anyway...
-	driverMajor = version / 1000
-	driverMinor = (version - (driverMajor * 1000)) / 10
+	driverMajor = version / 10000000
+	driverMinor = (version - (driverMajor * 10000000)) / 100000
 
 	return driverMajor, driverMinor, nil
 }
