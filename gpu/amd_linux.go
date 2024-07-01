@@ -347,6 +347,17 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	return resp
 }
 
+func dirExists(target string) bool {
+	_, err := os.Stat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+        } else if err != nil {
+		return false
+        }
+
+	return true
+}
+
 // Quick check for AMD driver so we can skip amdgpu discovery if not present
 func AMDDetected() bool {
 	// Some driver versions (older?) don't have a version file, so just lookup the parent dir
@@ -372,6 +383,10 @@ func AMDValidateLibDir() (string, error) {
 
 	// Well known ollama installer path
 	installedRocmDir := "/usr/share/ollama/lib/rocm"
+	if dirExists("/usr/local/share/ollama/lib/rocm") {
+		installedRocmDir = "/usr/local/share/ollama/lib/rocm"
+	}
+
 	if rocmLibUsable(installedRocmDir) {
 		return installedRocmDir, nil
 	}
