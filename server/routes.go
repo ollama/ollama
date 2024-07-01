@@ -402,7 +402,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 
 		if len(tokens) > opts.NumCtx {
-			tokens = tokens[len(tokens)-opts.NumCtx:]
+			tokens = tokens[:opts.NumCtx]
 			return runner.llama.Detokenize(c.Request.Context(), tokens)
 		}
 
