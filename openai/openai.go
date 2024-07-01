@@ -271,12 +271,14 @@ func fromRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 	switch stop := r.Stop.(type) {
 	case string:
 		options["stop"] = []string{stop}
-	case []string:
-		options["stop"] = stop
-	default:
-		if r.Stop != nil {
-			return api.ChatRequest{}, fmt.Errorf("invalid type for 'stop' field: %T", r.Stop)
+	case []any:
+		var stops []string
+		for _, s := range stop {
+			if str, ok := s.(string); ok {
+				stops = append(stops, str)
+			}
 		}
+		options["stop"] = stops
 	}
 
 	if r.MaxTokens != nil {
@@ -293,18 +295,22 @@ func fromRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 		options["seed"] = *r.Seed
 	}
 
-	options["frequency_penalty"] = r.FrequencyPenalty * 2.0
+	if r.FrequencyPenalty != nil {
+		options["frequency_penalty"] = *r.FrequencyPenalty * 2.0
+	}
 
-	options["presence_penalty"] = r.PresencePenalty * 2.0
+	if r.PresencePenalty != nil {
+		options["presence_penalty"] = *r.PresencePenalty * 2.0
+	}
 
-	if r.TopP != 0.0 {
-		options["top_p"] = r.TopP
+	if r.TopP != nil {
+		options["top_p"] = *r.TopP
 	} else {
 		options["top_p"] = 1.0
 	}
 
 	var format string
-	if r.ResponseFormat.Type == "json_object" {
+	if r.ResponseFormat != nil && r.ResponseFormat.Type == "json_object" {
 		format = "json"
 	}
 
