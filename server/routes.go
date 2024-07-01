@@ -800,7 +800,6 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
-			Model:      n.DisplayShortest(),
 			Name:       n.DisplayShortest(),
 			Size:       m.Size(),
 			Digest:     m.digest,
@@ -1219,7 +1218,6 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 
 		mr := api.ProcessModelResponse{
 			Model:     model.ShortName,
-			Name:      model.ShortName,
 			Size:      int64(v.estimatedTotal),
 			SizeVRAM:  int64(v.estimatedVRAM),
 			Digest:    model.Digest,

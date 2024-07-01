@@ -526,7 +526,7 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	var data [][]string
 
 	for _, m := range models.Models {
-		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
+		if len(args) == 0 || strings.HasPrefix(m.Model, args[0]) {
 			var procStr string
 			switch {
 			case m.SizeVRAM == 0:
@@ -540,7 +540,7 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 				cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
 				procStr = fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
 			}
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, format.HumanTime(m.ExpiresAt, "Never")})
+			data = append(data, []string{m.Model, m.Digest[:12], format.HumanBytes(m.Size), procStr, format.HumanTime(m.ExpiresAt, "Never")})
 		}
 	}
 
