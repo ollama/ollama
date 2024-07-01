@@ -1,0 +1,1026 @@
+openapi: 3.1.0
+info:
+  title: Ollama API
+  description: API for interacting with the Ollama service.
+  version: 0.1.44
+  contact:
+    name: Ollama
+    url: https://github.com/ollama/ollama
+servers:
+  - url: http://{host}:{port}
+    description: Ollama API server
+    variables:
+      host:
+        default: 127.0.0.1
+      port:
+        default: '11434'
+
+tags:
+  - name: generate
+    description: Generate responses
+  - name: chat
+    description: Generate chat responses
+  - name: models
+    description: Manage models
+  - name: blobs
+    description: Manage blobs
+  - name: embeddings
+    description: Generate embeddings
+  - name: server
+    description: Server information
+
+paths:
+  /api/generate:
+    post:
+      operationId: generateResponse
+      tags:
+        - generate
+      description: |
+        Generate a response for a given prompt with a provided model. This is 
+        a streaming endpoint, so there will be a series of responses. The 
+        final response object will include statistics and additional data from 
+        the request.
+      summary: |
+        Generate a response for a given prompt with a provided model. This is 
+        a streaming endpoint, so there will be a series of responses. The final 
+        response object will include statistics and additional data from the 
+        request.
+      requestBody:
+        required: true
+        description: Request to generate a response
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+      responses:
+        '200':
+          description: A response was successfully generated for the prompt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateResponse'
+
+  /api/chat:
+    post:
+      operationId: generateChat
+      tags:
+        - chat
+        - generate
+      description: | 
+        Generate the next message in a chat with a provided model. This is a 
+        streaming endpoint, so there will be a series of responses. Streaming 
+        can be disabled using "stream": false. The final response object will 
+        include statistics and additional data from the request.
+      summary: |
+        Generate the next message in a chat with a provided model. This is a 
+        streaming endpoint, so there will be a series of responses. Streaming 
+        can be disabled using "stream": false. The final response object will 
+        include statistics and additional data from the request.
+      requestBody:
+        required: true
+        description: Request to generate a response in a chat
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: The next message was successfully generated for the chat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+                
+  /api/create:
+    post:
+      operationId: createModel
+      tags:
+        - models
+      description: |
+        Create a model from a Modelfile. It is recommended to set modelfile 
+        to the content of the Modelfile rather than just set path. This is a 
+        requirement for remote create. Remote model creation must also create 
+        any file blobs, fields such as FROM and ADAPTER, explicitly with the 
+        server using Create a Blob and the value to the path indicated in the 
+        response.
+      summary: | 
+        Create a model from a Modelfile. It is recommended to set modelfile to 
+        the content of the Modelfile rather than just set path. This is a 
+        requirement for remote create. Remote model creation must also create 
+        any file blobs, fields such as FROM and ADAPTER, explicitly with the 
+        server using Create a Blob and the value to the path indicated in the 
+        response.
+      requestBody:
+        required: true
+        description: Request to create a model
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRequest'
+      responses:
+        '200':
+          description: The model was successfully created
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: '#/components/schemas/ProgressResponse'
+
+  /api/blobs/{digest}:
+    get:
+      operationId: getBlob
+      tags:
+        - blobs
+      description: |
+        Ensures that the file blob used for a FROM or ADAPTER field exists on 
+        the server. This is checking your Ollama server and not Ollama.ai.
+      summary: |
+        Ensures that the file blob used for a FROM or ADAPTER field exists on 
+        the server. This is checking your Ollama server and not Ollama.ai.
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          description: The SHA256 digest of the blob
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The blob exists on the server
+        '404':
+          description: The blob does not exist on the server
+    post:
+      operationId: createBlob
+      tags:
+        - blobs
+      description: Create a blob from a file on the server
+      summary: Create a blob from a file on the server
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          description: The SHA256 digest of the blob
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: The file to create the blob from
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Blob was successfully created
+        '400':
+          description: The digest used is not expected
+                
+  /api/tags:
+    get:
+      operationId: getModels
+      tags:
+        - models
+      description: List models that are available locally
+      summary: List models that are available locally
+      responses:
+        '200':
+          description: The models were successfully fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+
+
+  /api/show:
+    post:
+      operationId: showModel
+      tags:
+        - models
+      description: |
+        Show information about a model including details, modelfile, template, 
+        parameters, license, and system prompt.
+      summary: |
+        Show information about a model including details, modelfile, template, 
+        parameters, license, and system prompt.
+      requestBody:
+        required: true
+        description: Request to show a model
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShowRequest'
+      responses:
+        '200':
+          description: The model's information was successfully fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShowResponse'
+
+  /api/copy:
+    post:
+      operationId: copyModel
+      tags:
+        - models
+      description: |
+        Copy a model. Creates a model with another name from an existing model.
+      summary: |
+        Copy a model. Creates a model with another name from an existing model.
+      requestBody:
+        required: true
+        description: Request to copy a model
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CopyRequest'
+      responses:
+        '200':
+          description: Model was successfully copied
+        '404':
+          description: Source model does not exist
+          
+  /api/delete:
+    delete:
+      operationId: deleteModel
+      tags:
+        - models
+      description: Delete a model and its data
+      summary: 'Delete a model and its data'
+      requestBody:
+        required: true
+        description: Request to delete a model
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRequest'
+      responses:
+        '200':
+          description: Model was successfully deleted
+        '404':
+          description: Model does not exist
+          
+  /api/pull:
+    post:
+      operationId: pullModel
+      tags:
+        - models
+      description: | 
+        Download a model from the ollama library. Cancelled pulls are resumed 
+        from where they left off, and multiple calls will share the same 
+        download progress.
+      summary: |
+        Download a model from the ollama library. Cancelled pulls are resumed 
+        from where they left off, and multiple calls will share the same 
+        download progress.
+      requestBody:
+        required: true
+        description: Request to pull a model
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullRequest'
+      responses:
+        '200':
+          description: Model was successfully pulled to the server
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: '#/components/schemas/ProgressResponse'
+
+  /api/push:
+    post:
+      operationId: pushModel
+      tags:
+        - models
+      description: |
+        Upload a model to a model library. Requires registering for ollama.ai 
+        and adding a public key first.
+      summary: |
+        Upload a model to a model library. Requires registering for ollama.ai 
+        and adding a public key first.'
+      requestBody:
+        required: true
+        description: Request to push a model
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushRequest'
+      responses:
+        '200':
+          description: Model was successfully pushed to the server
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: '#/components/schemas/ProgressResponse'
+
+
+  /api/embeddings:
+    post:
+      operationId: generateEmbeddings
+      tags:
+        - embeddings
+        - generate
+      description: Generate embeddings from a model
+      summary: Generate embeddings from a model
+      requestBody:
+        required: true
+        description: Request to generate embeddings
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+      responses:
+        '200':
+          description: The embeddings were successfully generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingResponse'
+
+
+  /api/ps:
+    get:
+      operationId: getRunningModels
+      tags:
+        - models
+      description: List running models
+      summary: List running models
+      responses:
+        '200':
+          description: The list of running models was successfully fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessResponse'
+
+  /api/version:
+    get:
+      operationId: getOllamaVersion
+      tags:
+        - server
+      description: Return the Ollama server version
+      summary: Return the Ollama server version
+      responses:
+        '200':
+          description: The Ollama server version was successfully fetched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+
+components:
+  schemas:
+    GenerateRequest:
+      type: object
+      description: Request to generate a response
+      properties:
+        model:
+          type: string
+          description: The model name
+        prompt:
+          type: string
+          description: The prompt to generate a response for
+        images:
+          type: array
+          items:
+            type: string
+            format: byte
+          description: |
+            A list of base64-encoded images (for multimodal models such as 
+            llava)        
+        format:
+          type: string
+          description: |
+            The format to return a response in. Currently the only accepted 
+            value is json
+        options:
+          $ref: '#/components/schemas/Options'
+        system:
+          type: string
+          description: |
+            System message to (overrides what is defined in the Modelfile)
+        template:
+          type: string
+          description: |
+            The prompt template to use (overrides what is defined in the 
+            Modelfile)
+        context:
+          type: array
+          items:
+            type: integer
+          description: |
+            The context parameter returned from a previous request to generate, 
+            this can be used to keep a short conversational memory
+          example: []
+        stream:
+          type: boolean
+          description: |
+            If false the response will be returned as a single response object, 
+            rather than a stream of objects
+        raw:
+          type: boolean
+          description: |
+            If true no formatting will be applied to the prompt. You may choose 
+            to use the raw parameter if you are specifying a full templated 
+            prompt in your request to the API
+        keep_alive:
+          $ref: '#/components/schemas/Duration'
+      required:
+        - model
+        - prompt
+
+    GenerateResponse:
+      type: object
+      description: Response from a generate request
+      properties:
+        model:
+          type: string
+          description: The model name that generated the response
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp of the response
+        response:
+          type: string
+          description: |
+            The textual response itself. When done, empty if the response was 
+            streamed, if not streamed, this will contain the full response
+        done:
+          type: boolean
+          description: Specifies if the response is complete
+        context:
+          type: array
+          items:
+            type: integer
+          description: |
+            When done, encoding of the conversation used in this response
+        total_duration:
+          type: number
+          description: When done, time spent generating the response
+        load_duration:
+          type: number
+          description: When done, time spent in nanoseconds loading the model
+        prompt_eval_count:
+          type: integer
+          description: When done, number of tokens in the prompt
+        prompt_eval_duration:
+          type: number
+          description: |
+            When done, time spent in nanoseconds evaluating the prompt
+        eval_count:
+          type: integer
+          description: When done, number of tokens in the response
+        eval_duration:
+          type: number
+          description: |
+            When done, time in nanoseconds spent generating the response 
+
+    ChatRequest:
+      type: object
+      description: Request to generate a response in a chat
+      properties:
+        model:
+          type: string
+          description: The model name
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+          description: Messages of the chat - can be used to keep a chat memory
+        stream:
+          type: boolean
+          description: Enable streaming of returned response
+        format:
+          type: string
+          description: Format to return the response in (e.g. "json")
+        keep_alive:
+          $ref: '#/components/schemas/Duration'
+        options:
+          $ref: '#/components/schemas/Options'
+
+    ChatResponse:
+      type: object
+      description: Response from a chat request
+      properties:
+        model:
+          type: string
+          description: The model name
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp of the response
+        message:
+          $ref: '#/components/schemas/Message'
+        done_reason:
+          type: string
+          description: Reason the model stopped generating text
+        done:
+          type: boolean
+          description: Specifies if the response is complete
+        total_duration:
+          type: number
+          description: Total duration of the request
+        load_duration:
+          type: string
+          description: Load duration of the request
+        prompt_eval_count:
+          type: integer
+          description: Count of prompt evaluations
+        prompt_eval_duration:
+          type: string
+          description: Duration of prompt evaluations
+        eval_count:
+          type: integer
+          description: Count of evaluations
+        eval_duration:
+          type: string
+          description: Duration of evaluations
+          
+    CreateRequest:
+      type: object
+      description: Request to create a model
+      properties:
+        model:
+          type: string
+          description: The name of the model to create
+          example: mario
+        path:
+          type: string
+          description: The path to the model file
+        modelfile:
+          type: string
+          description: The modelfile content
+          example: FROM llama3\nSYSTEM You are mario from Super Mario Bros.
+        stream:
+          type: boolean
+          description: |
+            If false the response will be returned as a single response object, 
+            rather than a stream of objects
+        quantize:
+          type: string
+          description: Specifies the quantization level of the model
+      required:
+        - model
+        
+    ListResponse:
+      type: object
+      description: Response from a list request
+      properties:
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListModelResponse'
+
+    ListModelResponse:
+      type: object
+      description: Response from a list request
+      properties:
+        name:
+          type: string
+        model:
+          type: string
+        modified_at:
+          type: string
+          format: date-time
+        size:
+          type: integer
+        digest:
+          type: string
+        details:
+          $ref: '#/components/schemas/ModelDetails'
+        
+    ShowRequest:
+      type: object
+      description: Request to show a model
+      properties:
+        model:
+          type: string
+          description: The name of the model to show
+      required:
+        - model
+
+    ShowResponse:
+      type: object
+      description: Response from a show request
+      properties:
+        license:
+          type: string
+          description: The model license
+        modelfile:
+          type: string
+          description: The modelfile content
+        parameters:
+          type: string
+          description: The model parameters
+        template:
+          type: string
+          description: The model template
+        system:
+          type: string
+          description: The model system message/prompt
+        details:
+          $ref: '#/components/schemas/ModelDetails'
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+            
+    CopyRequest:
+      type: object
+      description: Request to copy a model
+      properties:
+        source:
+          type: string
+        destination:
+          type: string
+          
+    DeleteRequest:
+      type: object
+      description: Request to delete a model
+      properties:
+        model:
+          type: string
+          description: The name of the model to delete
+      required:
+        - model
+
+    PullRequest:
+      type: object
+      description: Request to pull a model
+      properties:
+        model:
+          type: string
+          description: The name of the model to pull
+          example: llama3
+        insecure:
+          type: boolean
+          description: |
+            allow insecure connections to the library. Only use this if you are
+             pulling from your own library during development.
+        stream:
+          type: boolean
+          description: |
+            If false the response will be returned as a single response object, 
+            rather than a stream of objects
+      required: 
+        - model
+
+    PushRequest:
+      type: object
+      description: Request to push a model
+      properties:
+        model:
+          type: string
+          description: |  
+            The name of the model to push in the form of <namespace>/<model>:<tag>
+        insecure:
+          type: boolean
+          description: |
+            Whether to allow insecure connections to the library. Only use this 
+            if you are pushing to your library during development
+        stream:
+          type: boolean
+          description: |
+            If false the response will be returned as a single response object, 
+            rather than a stream of objects
+      required: 
+        - model
+        
+    ProgressResponse:
+      type: object
+      description: The response returned from various streaming endpoints
+      properties:
+        status:
+          type: string
+          description: The status of the request
+        digest:
+          type: string
+          description: The SHA256 digest of the blob
+        total:
+          type: integer
+          description: The total size of the task
+        completed:
+          type: integer
+          description: The completed size of the task
+
+    EmbeddingRequest:
+      type: object
+      description: Request to generate embeddings
+      properties:
+        model:
+          type: string
+          description: The name of model to generate embeddings from
+        prompt:
+          type: string
+          description: The text to generate embeddings for
+        keep_alive:
+          $ref: '#/components/schemas/Duration'
+        options:
+          $ref: '#/components/schemas/Options'
+      required:
+        - model
+        - prompt
+
+    EmbeddingResponse:
+      type: object
+      description: Response from an embedding request
+      properties:
+        embedding:
+          type: array
+          items:
+            type: number
+          description: The generated embeddings
+          
+    ProcessResponse:
+      type: object
+      description: Response with a list of running models
+      properties:
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProcessModelResponse'
+
+    ProcessModelResponse:
+      type: object
+      description: Running model description
+      properties:
+        name:
+          type: string
+        model:
+          type: string
+        size:
+          type: integer
+        digest:
+          type: string
+        details:
+          $ref: '#/components/schemas/ModelDetails'
+        expires_at:
+          type: string
+          format: date-time
+        size_vram:
+          type: integer
+
+    Message:
+      type: object
+      description: A message in a chat
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+            format: byte
+
+    ModelDetails:
+      type: object
+      description: Details about a model
+      properties:
+        parent_model:
+          type: string
+        format:
+          type: string
+        family:
+          type: string
+        families:
+          type: array
+          items:
+            type: string
+        parameter_size:
+          type: string
+        quantization_level:
+          type: string
+
+    Duration:
+      type: string
+      description: A string representing the duration
+      example: "5m"
+
+    Options:
+      type: object
+      description: |
+        Advanced model and runner options for generation and chat requests
+      properties:
+        num_keep:
+          type: integer
+          description: | 
+            Specifies the number of tokens from the beginning of 
+            the context ot retain when the context limit is reached. 
+            (Default: 4)
+          example: 4
+        seed:
+          type: integer
+          description: |
+            Sets the random number seed to use for generation. Setting this to 
+            a specific number will make the model generate the same text for 
+            the same prompt. 
+            (Default: 0)
+          example: -1
+        num_predict:
+          type: integer
+          description: |
+            Maximum number of tokens to predict when generating text. 
+            (Default: 128, -1 = infinite generation, -2 = fill context)
+          example: -1
+        top_k:
+          type: integer
+          description: |
+            Reduces the probability of generating nonsense. A higher value 
+            (e.g. 100) will give more diverse answers, while a lower value 
+            (e.g. 10) will be more conservative. 
+            (Default: 40)
+          example: 40
+        top_p:
+          type: number
+          format: float
+          description: |
+            Works together with top-k. A higher value (e.g., 0.95) will lead to 
+            more diverse text, while a lower value (e.g., 0.5) will generate 
+            more focused and conservative text. 
+            (Default: 0.9)
+          example: 0.9
+        tfs_z:
+          type: number
+          format: float
+          description: |
+            Tail free sampling is used to reduce the impact of less probable 
+            tokens from the output. A higher value (e.g., 2.0) will reduce the 
+            impact more, while a value of 1.0 disables this setting. 
+            (default: 1)
+          example: 1.0
+        typical_p:
+          type: number
+          format: float
+          description: |
+            Controls the selection of typical words based on their probability 
+            distribution. A higher value (e.g., 0.95) focuses on more typical 
+            words, reducing the chance of unusual words being selected. 
+            (Default: 1.0)
+          example: 1.0
+        repeat_last_n:
+          type: integer
+          description: |
+            Sets how far back for the model to look back to prevent repetition. 
+            (Default: 64, 0 = disabled, -1 = num_ctx)
+          example: 64
+        temperature:
+          type: number
+          format: float
+          description: |
+            The temperature of the model. Increasing the temperature will make 
+            the model answer more creatively. 
+            (Default: 0.8)
+          example: 0.8
+        repeat_penalty:
+          type: number
+          format: float
+          description: |
+            Sets how strongly to penalize repetitions. A higher value 
+            (e.g., 1.5) will penalize repetitions more strongly, while a lower 
+            value (e.g., 0.9) will be more lenient. 
+            (Default: 1.1)
+          example: 1.1
+        presence_penalty:
+          type: number
+          format: float
+          description: |
+            Applies a penalty to tokens that have already appeared in the 
+            generated text, encouraging the model to introduce new tokens. A 
+            higher value increases this penalty, promoting more varied and less 
+            repetitive output. 
+            (Default: 0.8)
+          example: 0.8
+        frequency_penalty:
+          type: number
+          format: float
+          description: |
+            Penalizes tokens based on their frequency in the generated text so 
+            far. A higher value reduces the likelihood of frequent tokens being 
+            generated again, promoting more diverse outputs. 
+            (Default: 0.8)
+          example: 0.8
+        mirostat:
+          type: number
+          format: float
+          description: |
+            Enable Mirostat sampling for controlling perplexity. 
+            (default: 0, 0 = disabled, 1 = Mirostat, 2 = Mirostat 2.0)
+          example: 0
+        mirostat_tau:
+          type: number
+          format: float
+          description: |
+            Controls the balance between coherence and diversity of the output.
+            A lower value will result in more focused and coherent text. 
+            (Default: 5.0)
+          example: 5.8
+        mirostat_eta:
+          type: number
+          format: float
+          description: | 
+            Influences how quickly the algorithm responds to feedback from the 
+            generated text. A lower learning rate will result in slower 
+            adjustments, while a higher learning rate will make the algorithm 
+            more responsive. 
+            (Default: 0.1)
+          example: 0.1
+        penalize_newline:
+          type: boolean
+          description: |
+            Determines whether the model should penalize the generation of 
+            newlines, which can help control the structure and formatting of 
+            the output. 
+            (Default: true)
+          example: true
+        stop:
+          type: array
+          items:
+            type: string
+          description: |
+            Sets the stop sequences to use. When this pattern is encountered 
+            the LLM will stop generating text and return. Multiple stop patterns 
+            may be set by specifying multiple separate stop parameters in a 
+            modelfile.
+          example: ['AI assistant.']
+        numa:
+          type: boolean
+          description: |
+            Indicates whether to use Non-Uniform Memory Access (NUMA) for 
+            optimizing memory usage and performance on multi-processor systems. 
+            (Default: false)
+          example: false
+        num_ctx:
+          type: integer
+          description: |
+            Sets the size of the context window used to generate the next token. 
+            (Default: 2048)
+          example: 2048
+        num_batch:
+          type: integer
+          description: |
+            Specifies the number of batches for processing. 
+            (Default: 512)
+          example: 512
+        num_gpu:
+          type: integer
+          description: |
+            Specifies the number of GPUs to use. A value of -1 uses all 
+            available GPUs. 
+            (Default: -1)
+          example: -1
+        main_gpu:
+          type: integer
+          description: |
+            Specifies the primary GPU to use for processing. 
+            (Default: 0)
+        low_vram:
+          type: boolean
+          description: | 
+            Indicates whether to optimize the model for low VRAM usage. 
+            (Default: false)
+          example: false
+        f16_kv:
+          type: boolean
+          description: |
+            Indicates whether to use 16-bit floating point precision for 
+            key-value pairs, reducing memory usage. 
+            (Default: false)
+          example: true
+        logits_all:
+          type: boolean
+          description: |
+            Specifies whether to output logits for all tokens. 
+            (Default: false)
+          example: false
+        vocab_only:
+          type: boolean
+          description: |
+            Indicates whether to only load the vocabulary without the full model. 
+            (Default: false)
+          example: false
+        use_mmap:
+          type: boolean
+          description: |
+            Determines whether to use memory-mapped files for loading the model, 
+            improving performance on large models. 
+            (Default: true)
+          example: true
+        use_mlock:
+          type: boolean
+          description: |
+            Determines whether to use memory locking to prevent swapping the 
+            model out of RAM. 
+            (Default: false)
+          example: false
+        num_thread:
+          type: integer
+          description: |
+            Specifies the number of threads to use for processing. A value of 
+            0 uses all available threads. 
+            (Default: 0)
+          example: 0

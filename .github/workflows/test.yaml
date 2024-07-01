@@ -231,6 +231,16 @@ jobs:
           OLLAMA_SKIP_CPU_GENERATE: '1'
       # TODO - do we need any artifacts?
 
+  validate-openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: stoplightio/spectral-action@latest
+        with:
+          file_glob: 'specs/*.yaml'
+
   lint:
     strategy:
       matrix:
