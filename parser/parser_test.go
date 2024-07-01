@@ -48,6 +48,39 @@ TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 	assert.Equal(t, expectedCommands, modelfile.Commands)
 }
 
+func TestParseFileTrimSpace(t *testing.T) {
+	input := `
+FROM "     model 1"
+ADAPTER      adapter3
+LICENSE "MIT       "
+PARAMETER param1        value1
+PARAMETER param2    value2
+TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
+
+{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ .Response }}<|eot_id|>   """    
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	expectedCommands := []Command{
+		{Name: "model", Args: "     model 1"},
+		{Name: "adapter", Args: "adapter3"},
+		{Name: "license", Args: "MIT       "},
+		{Name: "param1", Args: "value1"},
+		{Name: "param2", Args: "value2"},
+		{Name: "template", Args: "   {{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>   "},
+	}
+
+	assert.Equal(t, expectedCommands, modelfile.Commands)
+}
+
 func TestParseFileFrom(t *testing.T) {
 	var cases = []struct {
 		input    string
