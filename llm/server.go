@@ -561,7 +561,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 				msg = s.status.LastErrMsg
 			}
 			if strings.Contains(msg, "unknown model") {
-				return fmt.Errorf("this model is not supported by your version of Ollama. You may need to upgrade.")
+				return fmt.Errorf("this model is not supported by your version of Ollama. You may need to upgrade")
 			}
 			return fmt.Errorf("llama runner process has terminated: %v %s", err, msg)
 		default:
