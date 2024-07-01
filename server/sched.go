@@ -23,7 +23,7 @@ type LlmRequest struct {
 	ctx             context.Context //nolint:containedctx
 	model           *Model
 	opts            api.Options
-	origNumCTX      int // Track the initial ctx request
+	origNumCtx      int // Track the initial ctx request
 	sessionDuration time.Duration
 	successCh       chan *runnerRef
 	errCh           chan error
@@ -118,8 +118,8 @@ func (s *Scheduler) processPending(ctx context.Context) {
 		case pending := <-s.pendingReqCh:
 			// Block other requests until we get this pending request running
 			pending.schedAttempts++
-			if pending.origNumCTX == 0 {
-				pending.origNumCTX = pending.opts.NumCtx
+			if pending.origNumCtx == 0 {
+				pending.origNumCtx = pending.opts.NumCtx
 			}
 
 			if pending.ctx.Err() != nil {
@@ -135,7 +135,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			}
 			// Keep NumCtx and numParallel in sync
 			if numParallel > 1 {
-				pending.opts.NumCtx = pending.origNumCTX * numParallel
+				pending.opts.NumCtx = pending.origNumCtx * numParallel
 			}
 
 			for {
@@ -197,7 +197,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						// simplifying assumption of defaultParallel when in CPU mode
 						if numParallel <= 0 {
 							numParallel = defaultParallel
-							pending.opts.NumCtx = pending.origNumCTX * numParallel
+							pending.opts.NumCtx = pending.origNumCtx * numParallel
 						}
 
 						if loadedCount == 0 {
@@ -691,7 +691,7 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numP
 
 		// First attempt to fit the model into a single GPU
 		for _, p := range numParallelToTry {
-			req.opts.NumCtx = req.origNumCTX * p
+			req.opts.NumCtx = req.origNumCtx * p
 			if !envconfig.SchedSpread {
 				for _, g := range sgl {
 					if ok, estimatedVRAM = llm.PredictServerFit([]gpu.GpuInfo{g}, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
@@ -709,7 +709,7 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numP
 
 		// Now try all the GPUs
 		for _, p := range numParallelToTry {
-			req.opts.NumCtx = req.origNumCTX * p
+			req.opts.NumCtx = req.origNumCtx * p
 			if ok, estimatedVRAM = llm.PredictServerFit(sgl, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
 				slog.Info("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", sgl[0].Library, "parallel", p, "required", format.HumanBytes2(estimatedVRAM))
 				*numParallel = p
