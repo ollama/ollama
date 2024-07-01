@@ -194,6 +194,18 @@ ollama show llama3
 ollama list
 ```
 
+### Save a model from your computer
+
+```
+ollama save -o llama3.tar llama3
+```
+
+### Load a model from ollama save
+
+```
+ollama load -i llama3.tar
+```
+
 ### Start Ollama
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
