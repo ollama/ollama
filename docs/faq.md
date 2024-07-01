@@ -257,3 +257,11 @@ If you wish to override the `OLLAMA_KEEP_ALIVE` setting, use the `keep_alive` AP
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
 If too many requests are sent to the server, it will respond with a 503 error indicating the server is overloaded.  You can adjust how many requests may be queue by setting `OLLAMA_MAX_QUEUE`.
+
+## How do I make Ollama load multiple models simultaneously?
+
+By default, Ollama will only load one model at a time. It will unload previous models before loading the new one. You can set the maximum number of models to be loaded with `OLLAMA_MAX_LOADED_MODELS`.
+
+## Does Ollama handle multiple requests concurrently?
+
+By default, Ollama will only handle one request at a time, and other requests wait in a queue. You can set how many requests for a single model can be handled at the same time with `OLLAMA_NUM_PARALLEL`.
