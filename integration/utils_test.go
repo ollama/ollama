@@ -342,7 +342,7 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 		}
 }
 
-func EmbedTestHelper(ctx context.Context, t *testing.T, req api.EmbedRequest) *api.EmbedResponse {
+func EmbedTestHelper(ctx context.Context, t *testing.T, req api.EmbedRequest) (*api.EmbedResponse, error) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 	require.NoError(t, PullIfMissing(ctx, client, req.Model))
@@ -350,8 +350,8 @@ func EmbedTestHelper(ctx context.Context, t *testing.T, req api.EmbedRequest) *a
 	response, err := client.Embed(ctx, &req)
 
 	if err != nil {
-		t.Fatalf("Error making request: %v", err)
+		return nil, err
 	}
 
-	return response
+	return response, nil
 }
