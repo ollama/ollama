@@ -833,6 +833,63 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+const (
+	successPrefix = "\033[1;32mSuccess:\033[0m"
+	failedPrefix  = "\033[0;31mFailed:\033[0m"
+)
+
+type Layer struct {
+	Digest    string `json:"digest"`
+	MediaType string `json:"mediaType"`
+}
+
+type Manifest struct {
+	Layers []Layer `json:"layers"`
+}
+
+func ExportModelHandler(cmd *cobra.Command, args []string) error {
+	if len(args) < 2 {
+		fmt.Println("Usage: ollama export <model_name> <target_path>")
+		return nil
+	}
+
+	modelName := args[0]
+	targetPath := args[1]
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	req := api.ExportRequest{Model: modelName}
+	tarBytes, err := client.Export(cmd.Context(), &req)
+	if err != nil {
+		fmt.Printf("%s Failed to export model: %v\n", failedPrefix, err)
+		return err
+	}
+
+	if err := os.WriteFile(targetPath, *tarBytes, 0644); err != nil {
+		fmt.Printf("%s Failed to write tarball to target path: %v\n", failedPrefix, err)
+		return err
+	}
+
+	fmt.Printf("%s Model \"%s\" has been exported to \"%s\"!\n", successPrefix, modelName, targetPath)
+	return nil
+}
+
+func appendToFile(filePath, text string) {
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		fmt.Printf("%s Failed to open file for appending: %v\n", failedPrefix, err)
+		return
+	}
+	defer f.Close()
+
+	if _, err = f.WriteString(text); err != nil {
+		fmt.Printf("%s Failed to write to file: %v\n", failedPrefix, err)
+	}
+}
+
 type generateContextKey string
 
 type runOptions struct {
@@ -1282,6 +1339,13 @@ func NewCLI() *cobra.Command {
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 
+	exportCmd := &cobra.Command{
+		Use:   "export MODEL TARGET",
+		Short: "Export a model to the specified target path",
+		Args:  cobra.ExactArgs(2),
+		RunE:  ExportModelHandler,
+	}
+
 	listCmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -1360,6 +1424,7 @@ func NewCLI() *cobra.Command {
 		runCmd,
 		pullCmd,
 		pushCmd,
+		exportCmd,
 		listCmd,
 		psCmd,
 		copyCmd,

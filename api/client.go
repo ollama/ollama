@@ -274,6 +274,15 @@ func (c *Client) Push(ctx context.Context, req *PushRequest, fn PushProgressFunc
 	})
 }
 
+// Export downloads a model from the ollama library as a tarball.
+func (c *Client) Export(ctx context.Context, req *ExportRequest) (*[]byte, error) {
+	var resp []byte
+	if err := c.do(ctx, http.MethodPost, "/api/export", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // CreateProgressFunc is a function that [Client.Create] invokes when progress
 // is made.
 // It's similar to other progress function types like [PullProgressFunc].
