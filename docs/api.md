@@ -45,6 +45,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
+- `grammar`: the [GBNF grammar](https://github.com/ggerganov/llama.cpp/tree/master/grammars) to constrain generated output to
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
@@ -159,6 +160,21 @@ curl http://localhost:11434/api/generate -d '{
   "model": "llama3",
   "prompt": "What color is the sky at different times of the day? Respond using JSON",
   "format": "json",
+  "stream": false
+}'
+```
+
+#### Request (GBNF mode)
+
+> When `grammar` is set to a [GBNF grammar](https://github.com/ggerganov/llama.cpp/tree/master/grammars) output will be constrained to the grammar's rules. This method does not rely upon the prompt containing references to how it should output. Before you call with this property, the environment variable `OLLAMA_GRAMMAR=true` must be set.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama3",
+  "prompt": "Are llamas amazing?",
+  "grammar": "root ::= \"yes\" | \"no\"",
   "stream": false
 }'
 ```

@@ -66,6 +66,9 @@ type GenerateRequest struct {
 	// Format specifies the format to return a response in.
 	Format string `json:"format"`
 
+	// Grammar specifies the GBNF grammar string to constrain generation output.
+	Grammar string `json:"grammar"`
+
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
@@ -92,6 +95,9 @@ type ChatRequest struct {
 
 	// Format is the format to return the response in (e.g. "json").
 	Format string `json:"format"`
+
+	// Grammar specifies the GBNF grammar string to constrain generation output.
+	Grammar string `json:"grammar"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
 	// followin the request.

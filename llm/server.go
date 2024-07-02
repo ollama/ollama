@@ -56,6 +56,7 @@ type llmServer struct {
 	gpus         gpu.GpuInfoList // Recorded just before the model loaded, free space will be incorrect
 	loadDuration time.Duration   // Record how long it took the model to load
 	loadProgress float32
+	grammarEnabled bool
 
 	sem *semaphore.Weighted
 }
@@ -319,6 +320,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			totalLayers: ggml.KV().BlockCount() + 1,
 			gpus:        gpus,
 			done:        make(chan error, 1),
+			grammarEnabled: os.Getenv("OLLAMA_GRAMMAR") == "true",
 		}
 
 		s.cmd.Env = os.Environ()
@@ -664,6 +666,7 @@ type completion struct {
 type CompletionRequest struct {
 	Prompt  string
 	Format  string
+	Grammar string
 	Images  []ImageData
 	Options api.Options
 }
@@ -729,6 +732,24 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
 			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
 		}
+	}
+
+	if req.Grammar != "" {
+		if req.Format == "json" {
+			return fmt.Errorf("grammar and format cannot be used together")
+		}
+
+		if !s.grammarEnabled {
+			return fmt.Errorf("grammar is specified, but OLLAMA_GRAMMAR is not enabled")
+		}
+
+		err := ValidateGrammar(req.Grammar)
+
+		if err != nil {
+			return fmt.Errorf("invalid grammar: %v", err)
+		}
+
+		request["grammar"] = req.Grammar
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
