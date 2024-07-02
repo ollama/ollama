@@ -624,13 +624,13 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
-	if flagsSet == 1 {
-		req := api.ShowRequest{Name: args[0]}
-		resp, err := client.Show(cmd.Context(), &req)
-		if err != nil {
-			return err
-		}
+	req := api.ShowRequest{Name: args[0]}
+	resp, err := client.Show(cmd.Context(), &req)
+	if err != nil {
+		return err
+	}
 
+	if flagsSet == 1 {
 		switch showType {
 		case "license":
 			fmt.Println(resp.License)
@@ -647,12 +647,12 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	req := api.ShowRequest{Name: args[0]}
-	resp, err := client.Show(cmd.Context(), &req)
-	if err != nil {
-		return err
-	}
+	showInfo(resp)
 
+	return nil
+}
+
+func showInfo(resp *api.ShowResponse) {
 	arch := resp.ModelInfo["general.architecture"].(string)
 
 	modelData := [][]string{
@@ -711,8 +711,6 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	table.Render()
-
-	return nil
 }
 
 func renderSubTable(data [][]string, file bool) string {
