@@ -404,3 +404,12 @@ func Authorization(ctx context.Context, request *http.Request) (string, error) {
 	key, sig, _ := strings.Cut(token, ":")
 	return fmt.Sprintf("%s:%s:%s", key, base64.StdEncoding.EncodeToString(data), sig), nil
 }
+
+// EnvConfig returns the environment configuration for the server.
+func (c *Client) ServerConfig(ctx context.Context) (*ServerConfig, error) {
+	var config ServerConfig
+	if err := c.do(ctx, http.MethodGet, "/api/config", nil, &config); err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
