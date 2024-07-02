@@ -18,7 +18,7 @@ Check your compute compatibility to see if your card is supported:
 |                    | Quadro              | `RTX 8000` `RTX 6000` `RTX 5000` `RTX 4000`                                                                 |
 | 7.0                | NVIDIA              | `TITAN V` `V100` `Quadro GV100`                                                                             |
 | 6.1                | NVIDIA TITAN        | `TITAN Xp` `TITAN X`                                                                                        |
-|                    | GeForce GTX         | `GTX 1080 Ti` `GTX 1080` `GTX 1070 Ti` `GTX 1070` `GTX 1060` `GTX 1050`                                     |
+|                    | GeForce GTX         | `GTX 1080 Ti` `GTX 1080` `GTX 1070 Ti` `GTX 1070` `GTX 1060` `GTX 1050 Ti` `GTX 1050`                       |
 |                    | Quadro              | `P6000` `P5200` `P4200` `P3200` `P5000` `P4000` `P3000` `P2200` `P2000` `P1000` `P620` `P600` `P500` `P520` |
 |                    | Tesla               | `P40` `P4`                                                                                                  |
 | 6.0                | NVIDIA              | `Tesla P100` `Quadro GP100`                                                                                 |
