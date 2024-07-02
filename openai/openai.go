@@ -329,7 +329,7 @@ func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
 		Format:   format,
 		Options:  options,
 		Stream:   &r.Stream,
-	}, nil
+	}
 }
 
 func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
@@ -509,31 +509,6 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 }
 
 func (w *CompleteWriter) Write(data []byte) (int, error) {
-	code := w.ResponseWriter.Status()
-	if code != http.StatusOK {
-		return w.writeError(code, data)
-	}
-
-	return w.writeResponse(data)
-}
-
-func (w *ListWriter) writeResponse(data []byte) (int, error) {
-	var listResponse api.ListResponse
-	err := json.Unmarshal(data, &listResponse)
-	if err != nil {
-		return 0, err
-	}
-
-	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(toListCompletion(listResponse))
-	if err != nil {
-		return 0, err
-	}
-
-	return len(data), nil
-}
-
-func (w *ListWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(code, data)
