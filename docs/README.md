@@ -1,21 +1,24 @@
 # Documentation
 
-### Getting Started
+## Getting Started
+
 * [Quickstart](../README.md#quickstart)
 * [Examples](../examples)
 * [Importing models](./import.md)
 * [Linux Documentation](./linux.md)
 * [Windows Documentation](./windows.md)
 * [Docker Documentation](./docker.md)
+* [Configuration and Environment Variables](./configuration.md)
 
-### Reference
+## Reference
 
 * [API Reference](./api.md)
 * [Modelfile Reference](./modelfile.md)
 * [OpenAI Compatibility](./openai.md)
 
-### Resources
+## Resources
 
 * [Troubleshooting Guide](./troubleshooting.md)
 * [FAQ](./faq.md)
 * [Development guide](./development.md)
+* [GPU Support](./gpu.md)
