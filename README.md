@@ -66,6 +66,32 @@ Here are some example models that can be downloaded:
 
 > Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
+## Knowledge cutoff dates
+
+This provides information about the "Knowledge Cutoff" for various AI models. The "Knowledge Cutoff" refers to the point in time until which the model has been trained and is aware of the information.
+
+| Model              | Knowledge Cutoff |
+| ------------------ | ---------------- |
+| Llama 2            | [September 2022](https://scontent.fbom6-1.fna.fbcdn.net/v/t39.2365-6/10000000_662098952474184_2584067087619170692_n.pdf?_nc_cat=105&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=A5rmtVvQnJEAb5W1IfR&_nc_ht=scontent.fbom6-1.fna&oh=00_AfASQyrUfHfWbsoxjiht5X2ya0o78HkwfMz57C_nARAPJA&oe=661797BF) |
+| Mistral            | [December 2023](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.2/discussions/69)  |
+| Dolphin Phi        | Not Specified    |
+| Phi-2              | Not Specified    |
+| Neural Chat        | Not Specified    |
+| Starling           | Not Specified    |
+| Code Llama         | [September 2022](https://scontent.fbom6-1.fna.fbcdn.net/v/t39.2365-6/10000000_662098952474184_2584067087619170692_n.pdf?_nc_cat=105&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=A5rmtVvQnJEAb5W1IfR&_nc_ht=scontent.fbom6-1.fna&oh=00_AfASQyrUfHfWbsoxjiht5X2ya0o78HkwfMz57C_nARAPJA&oe=661797BF) |
+| Llama 2 Uncensored | [September 2022](https://scontent.fbom6-1.fna.fbcdn.net/v/t39.2365-6/10000000_662098952474184_2584067087619170692_n.pdf?_nc_cat=105&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=A5rmtVvQnJEAb5W1IfR&_nc_ht=scontent.fbom6-1.fna&oh=00_AfASQyrUfHfWbsoxjiht5X2ya0o78HkwfMz57C_nARAPJA&oe=661797BF) |
+| Llama 2 13B        | [September 2022](https://scontent.fbom6-1.fna.fbcdn.net/v/t39.2365-6/10000000_662098952474184_2584067087619170692_n.pdf?_nc_cat=105&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=A5rmtVvQnJEAb5W1IfR&_nc_ht=scontent.fbom6-1.fna&oh=00_AfASQyrUfHfWbsoxjiht5X2ya0o78HkwfMz57C_nARAPJA&oe=661797BF) |
+| Llama 2 70B        | [September 2022](https://scontent.fbom6-1.fna.fbcdn.net/v/t39.2365-6/10000000_662098952474184_2584067087619170692_n.pdf?_nc_cat=105&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=A5rmtVvQnJEAb5W1IfR&_nc_ht=scontent.fbom6-1.fna&oh=00_AfASQyrUfHfWbsoxjiht5X2ya0o78HkwfMz57C_nARAPJA&oe=661797BF) |
+| Orca Mini          | Not Specified    |
+| Vicuna             | Not Specified    |
+| LLaVA              | Not Specified    |
+| Gemma (2B)         | Not Specified    |
+| Gemma (7B)         | Not Specified    |
+
+Please note that for some models, the "Knowledge Cutoff" is not specified. This could mean that the model is continuously updated, or that the cutoff date is not publicly disclosed.
+
+For more information about these models, please refer to the official documentation or the respective sources.
+
 ## Customize a model
 
 ### Import from GGUF
