@@ -176,11 +176,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = req.Prompt
 	case req.Prompt != "":
 		if req.Template == "" {
-			model.Template, err = template.Parse(req.Template)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
+			tmpl = model.Template
 		}
 
 		if req.System == "" {
