@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Error struct {
@@ -85,6 +86,18 @@ type ChatCompletionChunk struct {
 	Choices           []ChunkChoice `json:"choices"`
 }
 
+type Model struct {
+	Id      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+type ListCompletion struct {
+	Object string  `json:"object"`
+	Data   []Model `json:"data"`
+}
+
 func NewError(code int, message string) ErrorResponse {
 	var etype string
 	switch code {
@@ -142,6 +155,23 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 				return nil
 			}(r.DoneReason),
 		}},
+	}
+}
+
+func toListCompletion(r api.ListResponse) ListCompletion {
+	var data []Model
+	for _, m := range r.Models {
+		data = append(data, Model{
+			Id:      m.Name,
+			Object:  "model",
+			Created: m.ModifiedAt.Unix(),
+			OwnedBy: model.ParseName(m.Name).Namespace,
+		})
+	}
+
+	return ListCompletion{
+		Object: "list",
+		Data:   data,
 	}
 }
 
@@ -208,13 +238,21 @@ func fromRequest(r ChatCompletionRequest) api.ChatRequest {
 	}
 }
 
-type writer struct {
-	stream bool
-	id     string
+type BaseWriter struct {
 	gin.ResponseWriter
 }
 
-func (w *writer) writeError(code int, data []byte) (int, error) {
+type ChatWriter struct {
+	stream bool
+	id     string
+	BaseWriter
+}
+
+type ListWriter struct {
+	BaseWriter
+}
+
+func (w *BaseWriter) writeError(code int, data []byte) (int, error) {
 	var serr api.StatusError
 	err := json.Unmarshal(data, &serr)
 	if err != nil {
@@ -230,7 +268,7 @@ func (w *writer) writeError(code int, data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (w *writer) writeResponse(data []byte) (int, error) {
+func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	var chatResponse api.ChatResponse
 	err := json.Unmarshal(data, &chatResponse)
 	if err != nil {
@@ -270,13 +308,50 @@ func (w *writer) writeResponse(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (w *writer) Write(data []byte) (int, error) {
+func (w *ChatWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(code, data)
 	}
 
 	return w.writeResponse(data)
+}
+
+func (w *ListWriter) writeResponse(data []byte) (int, error) {
+	var listResponse api.ListResponse
+	err := json.Unmarshal(data, &listResponse)
+	if err != nil {
+		return 0, err
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(toListCompletion(listResponse))
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *ListWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(code, data)
+	}
+
+	return w.writeResponse(data)
+}
+
+func ListMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		w := &ListWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+		}
+
+		c.Writer = w
+
+		c.Next()
+	}
 }
 
 func Middleware() gin.HandlerFunc {
@@ -301,10 +376,10 @@ func Middleware() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
-		w := &writer{
-			ResponseWriter: c.Writer,
-			stream:         req.Stream,
-			id:             fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+		w := &ChatWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			stream:     req.Stream,
+			id:         fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
 		}
 
 		c.Writer = w
