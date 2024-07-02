@@ -81,6 +81,17 @@ func NewClient(base *url.URL, http *http.Client) *Client {
 	}
 }
 
+// check whether incoming request Authorization contains envconfig.ApiKey
+func checkAPIKey(req *http.Request) bool {
+	if envconfig.ApiKey == "" {
+		// If the API key is empty, consider it a success by default
+		return true
+	}
+	authorization := req.Header.Get("Authorization")
+	expectedApiKey := "Bearer " + envconfig.ApiKey
+	return authorization == expectedApiKey
+}
+
 func (c *Client) do(ctx context.Context, method, path string, reqData, respData any) error {
 	var reqBody io.Reader
 	var data []byte
@@ -110,6 +121,13 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	if !checkAPIKey(request) {
+		return &StatusError{
+			StatusCode:   http.StatusUnauthorized,
+			ErrorMessage: "Unauthorized: Invalid API key",
+		}
+	}
 
 	respObj, err := c.http.Do(request)
 	if err != nil {
@@ -156,6 +174,13 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/x-ndjson")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	if !checkAPIKey(request) {
+		return &StatusError{
+			StatusCode:   http.StatusUnauthorized,
+			ErrorMessage: "Unauthorized: Invalid API key",
+		}
+	}
 
 	response, err := c.http.Do(request)
 	if err != nil {
