@@ -108,25 +108,27 @@ func TestDurationMarshalUnmarshal(t *testing.T) {
 }
 
 func TestUseMmapParsingFromJSON(t *testing.T) {
+	tr := true
+	fa := false
 	tests := []struct {
 		name string
 		req  string
-		exp  TriState
+		exp  *bool
 	}{
 		{
 			name: "Undefined",
 			req:  `{ }`,
-			exp:  TriStateUndefined,
+			exp:  nil,
 		},
 		{
 			name: "True",
 			req:  `{ "use_mmap": true }`,
-			exp:  TriStateTrue,
+			exp:  &tr,
 		},
 		{
 			name: "False",
 			req:  `{ "use_mmap": false }`,
-			exp:  TriStateFalse,
+			exp:  &fa,
 		},
 	}
 
@@ -144,50 +146,52 @@ func TestUseMmapParsingFromJSON(t *testing.T) {
 }
 
 func TestUseMmapFormatParams(t *testing.T) {
+	tr := true
+	fa := false
 	tests := []struct {
 		name string
 		req  map[string][]string
-		exp  TriState
+		exp  *bool
 		err  error
 	}{
 		{
 			name: "True",
 			req: map[string][]string{
-				"use_mmap": []string{"true"},
+				"use_mmap": {"true"},
 			},
-			exp: TriStateTrue,
+			exp: &tr,
 			err: nil,
 		},
 		{
 			name: "False",
 			req: map[string][]string{
-				"use_mmap": []string{"false"},
+				"use_mmap": {"false"},
 			},
-			exp: TriStateFalse,
+			exp: &fa,
 			err: nil,
 		},
 		{
 			name: "Numeric True",
 			req: map[string][]string{
-				"use_mmap": []string{"1"},
+				"use_mmap": {"1"},
 			},
-			exp: TriStateTrue,
+			exp: &tr,
 			err: nil,
 		},
 		{
 			name: "Numeric False",
 			req: map[string][]string{
-				"use_mmap": []string{"0"},
+				"use_mmap": {"0"},
 			},
-			exp: TriStateFalse,
+			exp: &fa,
 			err: nil,
 		},
 		{
 			name: "invalid string",
 			req: map[string][]string{
-				"use_mmap": []string{"foo"},
+				"use_mmap": {"foo"},
 			},
-			exp: TriStateUndefined,
+			exp: nil,
 			err: fmt.Errorf("invalid bool value [foo]"),
 		},
 	}
@@ -195,11 +199,11 @@ func TestUseMmapFormatParams(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			resp, err := FormatParams(test.req)
-			require.Equal(t, err, test.err)
+			require.Equal(t, test.err, err)
 			respVal, ok := resp["use_mmap"]
-			if test.exp != TriStateUndefined {
+			if test.exp != nil {
 				assert.True(t, ok, "resp: %v", resp)
-				assert.Equal(t, test.exp, respVal)
+				assert.Equal(t, *test.exp, *respVal.(*bool))
 			}
 		})
 	}
