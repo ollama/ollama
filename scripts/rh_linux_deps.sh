@@ -6,10 +6,21 @@ set -ex
 MACHINE=$(uname -m)
 
 if grep -i "centos" /etc/system-release >/dev/null; then
+    # As of 7/1/2024 mirrorlist.centos.org has been taken offline, so adjust accordingly
+    sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
+    sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
+    sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
+
     # Centos 7 derivatives have too old of a git version to run our generate script
     # uninstall and ignore failures
     yum remove -y git
     yum -y install epel-release centos-release-scl
+
+    # The release packages reinstate the mirrors, undo that again
+    sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
+    sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
+    sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
+
     yum -y install dnf
     if [ "${MACHINE}" = "x86_64" ]; then
         yum -y install https://repo.ius.io/ius-release-el7.rpm
