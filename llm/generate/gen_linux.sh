@@ -160,7 +160,7 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     echo "CUDA libraries detected - building dynamic CUDA library"
     init_vars
     CUDA_MAJOR=$(ls "${CUDA_LIB_DIR}"/libcudart.so.* | head -1 | cut -f3 -d. || true)
-    if [ -n "${CUDA_MAJOR}" ]; then
+    if [ -n "${CUDA_MAJOR}" -a -z "${CUDA_VARIANT}" ]; then
         CUDA_VARIANT=_v${CUDA_MAJOR}
     fi
     if [ "${ARCH}" == "arm64" ]; then

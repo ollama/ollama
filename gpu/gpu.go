@@ -215,7 +215,7 @@ func GetGPUInfo() GpuInfoList {
 			GpuInfo: GpuInfo{
 				memInfo: mem,
 				Library: "cpu",
-				Variant: cpuCapability,
+				Variant: cpuCapability.String(),
 				ID:      "0",
 			},
 		}}
@@ -234,6 +234,14 @@ func GetGPUInfo() GpuInfoList {
 			depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "cuda")
 		}
 
+		var cudaVariant string
+		if runtime.GOARCH == "arm64" && CudaTegra != "" {
+			ver := strings.Split(CudaTegra, ".")
+			if len(ver) > 0 {
+				cudaVariant = "jetpack" + ver[0]
+			}
+		}
+
 		// Load ALL libraries
 		cHandles = initCudaHandles()
 
@@ -243,6 +251,7 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo := CudaGPUInfo{
 					GpuInfo: GpuInfo{
 						Library: "cuda",
+						Variant: cudaVariant,
 					},
 					index: i,
 				}

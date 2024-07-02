@@ -82,8 +82,8 @@ func serversForGpu(info gpu.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
 	availableServers := availableServers()
 	requested := info.Library
-	if info.Variant != gpu.CPUCapabilityNone {
-		requested += "_" + info.Variant.String()
+	if info.Variant != gpu.CPUCapabilityNone.String() {
+		requested += "_" + info.Variant
 	}
 
 	servers := []string{}
