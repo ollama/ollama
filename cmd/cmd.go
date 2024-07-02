@@ -512,6 +512,61 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func SaveModelHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+	output, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+	var dst io.Writer
+	if output != "" {
+		fi, err := os.OpenFile(output, os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer fi.Close()
+		dst = fi
+	} else {
+		dst = os.Stdout
+	}
+
+	req := api.LoadModelRequest{Model: args[0]}
+	err = client.SaveModel(cmd.Context(), &req, dst)
+	return err
+}
+
+func LoadModelHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+	input, err := cmd.Flags().GetString("input")
+	if err != nil {
+		return err
+	}
+
+	var inputFile io.ReadCloser
+	if input != "" {
+		inputFile, err = os.Open(input)
+		if err != nil {
+			return err
+		}
+		defer inputFile.Close()
+	} else {
+		inputFile = os.Stdin
+	}
+
+	resp, err := client.LoadModel(cmd.Context(), inputFile)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("loaded: '%s'\n", strings.Trim(fmt.Sprint(resp.Models), "[]"))
+	return nil
+}
+
 func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -1297,6 +1352,22 @@ func NewCLI() *cobra.Command {
 		RunE:    ListRunningHandler,
 	}
 
+	saveCmd := &cobra.Command{
+		Use:     "save MODEL -o LOCALFILE.tar",
+		Short:   "Save a model",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SaveModelHandler,
+	}
+	saveCmd.Flags().StringP("output", "o", "", "Name of the local file")
+
+	loadCmd := &cobra.Command{
+		Use:   "load -i LOCALFILE.tar",
+		Short: "load a model from file or from STDIN",
+		RunE:  LoadModelHandler,
+	}
+	loadCmd.Flags().StringP("input", "i", "", "Name of the local tar file to load")
+
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
 		Short:   "Copy a model",
@@ -1328,6 +1399,8 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		saveCmd,
+		loadCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -1364,6 +1437,8 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		saveCmd,
+		loadCmd,
 	)
 
 	return rootCmd
