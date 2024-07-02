@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -17,7 +16,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -55,8 +53,6 @@ func init() {
 
 	gin.SetMode(mode)
 }
-
-var defaultSessionDuration = 5 * time.Minute
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
@@ -133,14 +129,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	var sessionDuration time.Duration
-	if req.KeepAlive == nil {
-		sessionDuration = getDefaultSessionDuration()
-	} else {
-		sessionDuration = req.KeepAlive.Duration
-	}
-
-	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, sessionDuration)
+	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, req.KeepAlive)
 	var runner *runnerRef
 	select {
 	case runner = <-rCh:
@@ -320,32 +309,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func getDefaultSessionDuration() time.Duration {
-	if envconfig.KeepAlive != "" {
-		v, err := strconv.Atoi(envconfig.KeepAlive)
-		if err != nil {
-			d, err := time.ParseDuration(envconfig.KeepAlive)
-			if err != nil {
-				return defaultSessionDuration
-			}
-
-			if d < 0 {
-				return time.Duration(math.MaxInt64)
-			}
-
-			return d
-		}
-
-		d := time.Duration(v) * time.Second
-		if d < 0 {
-			return time.Duration(math.MaxInt64)
-		}
-		return d
-	}
-
-	return defaultSessionDuration
-}
-
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	var req api.EmbeddingRequest
 	err := c.ShouldBindJSON(&req)
@@ -380,14 +343,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	var sessionDuration time.Duration
-	if req.KeepAlive == nil {
-		sessionDuration = getDefaultSessionDuration()
-	} else {
-		sessionDuration = req.KeepAlive.Duration
-	}
-
-	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, sessionDuration)
+	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, req.KeepAlive)
 	var runner *runnerRef
 	select {
 	case runner = <-rCh:
@@ -1318,14 +1274,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	var sessionDuration time.Duration
-	if req.KeepAlive == nil {
-		sessionDuration = getDefaultSessionDuration()
-	} else {
-		sessionDuration = req.KeepAlive.Duration
-	}
-
-	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, sessionDuration)
+	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, req.KeepAlive)
 	var runner *runnerRef
 	select {
 	case runner = <-rCh:

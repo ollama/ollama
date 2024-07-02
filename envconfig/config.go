@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type OllamaHost struct {
@@ -34,7 +36,7 @@ var (
 	// Set via OLLAMA_HOST in the environment
 	Host *OllamaHost
 	// Set via OLLAMA_KEEP_ALIVE in the environment
-	KeepAlive string
+	KeepAlive time.Duration
 	// Set via OLLAMA_LLM_LIBRARY in the environment
 	LLMLibrary string
 	// Set via OLLAMA_MAX_LOADED_MODELS in the environment
@@ -132,6 +134,7 @@ func init() {
 	NumParallel = 0 // Autoselect
 	MaxRunners = 0  // Autoselect
 	MaxQueuedRequests = 512
+	KeepAlive = 5 * time.Minute
 
 	LoadConfig()
 }
@@ -266,7 +269,10 @@ func LoadConfig() {
 		}
 	}
 
-	KeepAlive = clean("OLLAMA_KEEP_ALIVE")
+	ka := clean("OLLAMA_KEEP_ALIVE")
+	if ka != "" {
+		loadKeepAlive(ka)
+	}
 
 	var err error
 	ModelsDir, err = getModelsDir()
@@ -343,4 +349,25 @@ func getOllamaHost() (*OllamaHost, error) {
 		Host:   host,
 		Port:   port,
 	}, nil
+}
+
+func loadKeepAlive(ka string) {
+	v, err := strconv.Atoi(ka)
+	if err != nil {
+		d, err := time.ParseDuration(ka)
+		if err == nil {
+			if d < 0 {
+				KeepAlive = time.Duration(math.MaxInt64)
+			} else {
+				KeepAlive = d
+			}
+		}
+	} else {
+		d := time.Duration(v) * time.Second
+		if d < 0 {
+			KeepAlive = time.Duration(math.MaxInt64)
+		} else {
+			KeepAlive = d
+		}
+	}
 }
