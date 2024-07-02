@@ -1026,7 +1026,7 @@ If `stream` is set to `false`, then the response is a single JSON object:
 ## Generate Embeddings
 
 ```shell
-POST /api/embeddings
+POST /api/embed
 ```
 
 Generate embeddings from a model
@@ -1034,10 +1034,11 @@ Generate embeddings from a model
 ### Parameters
 
 - `model`: name of model to generate embeddings from
-- `prompt`: text to generate embeddings for
+- `input`: text or list of text to generate embeddings for
 
 Advanced parameters:
 
+- `truncate`: truncates the end of each input to fit within context length. Returns error if `false` and context length is exceeded. Defaults to `true`
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
@@ -1046,9 +1047,9 @@ Advanced parameters:
 #### Request
 
 ```shell
-curl http://localhost:11434/api/embeddings -d '{
+curl http://localhost:11434/api/embed -d '{
   "model": "all-minilm",
-  "prompt": "Here is an article about llamas..."
+  "input": ["Why is the sky blue?", "Why is the grass green?]
 }'
 ```
 
@@ -1056,10 +1057,14 @@ curl http://localhost:11434/api/embeddings -d '{
 
 ```json
 {
-  "embedding": [
+  "model": "all-minilm",
+  "embeddings": [[
     0.5670403838157654, 0.009260174818336964, 0.23178744316101074, -0.2916173040866852, -0.8924556970596313,
     0.8785552978515625, -0.34576427936553955, 0.5742510557174683, -0.04222835972905159, -0.137906014919281
-  ]
+  ],[
+   -0.1234567890123456, 0.9876543210987654, -0.2468013579246801, 0.1357924680246803, 0.3579246801357924,
+   -0.5792468013579246, 0.2468013579246801, -0.1357924680246803, 0.9876543210987654, -0.3579246801357924
+  ]]
 }
 ```
 
@@ -1103,6 +1108,46 @@ A single JSON object will be returned.
       "expires_at": "2024-06-04T14:38:31.83753-07:00",
       "size_vram": 5137025024
     }
+  ]
+}
+```
+
+## Generate Embeddings <span style="font-weight: lighter;">*Legacy*</span>
+
+```shell
+POST /api/embeddings
+```
+
+Generate embeddings from a model
+
+### Parameters
+
+- `model`: name of model to generate embeddings from
+- `prompt`: text to generate embeddings for
+
+Advanced parameters:
+
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/embeddings -d '{
+  "model": "all-minilm",
+  "prompt": "Here is an article about llamas..."
+}'
+```
+
+#### Response
+
+```json
+{
+  "embedding": [
+    0.5670403838157654, 0.009260174818336964, 0.23178744316101074, -0.2916173040866852, -0.8924556970596313,
+    0.8785552978515625, -0.34576427936553955, 0.5742510557174683, -0.04222835972905159, -0.137906014919281
   ]
 }
 ```
