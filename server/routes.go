@@ -414,12 +414,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return s, nil
 	}
 
-	embeddings := [][]float64{}
+	embeddings := [][]float32{}
 
 	switch reqEmbed := req.Input.(type) {
 	case string:
 		if reqEmbed == "" {
-			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float64{}})
+			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float32{}})
 			return
 		}
 		reqEmbed, err = checkFit(reqEmbed, *req.Truncate)
@@ -430,7 +430,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		embeddings, err = runner.llama.Embed(c.Request.Context(), []string{reqEmbed})
 	case []any:
 		if reqEmbed == nil {
-			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float64{}})
+			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float32{}})
 			return
 		}
 

@@ -210,7 +210,7 @@ type EmbedRequest struct {
 	Model string `json:"model"`
 
 	// Input is the input to embed.
-	Input any `json:"input,omitempty"`
+	Input any `json:"input"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
@@ -220,6 +220,12 @@ type EmbedRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+}
+
+// EmbedResponse is the response from [Client.Embed].
+type EmbedResponse struct {
+	Model      string      `json:"model"`
+	Embeddings [][]float32 `json:"embeddings,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -236,12 +242,6 @@ type EmbeddingRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
-}
-
-// EmbedResponse is the response from [Client.Embed].
-type EmbedResponse struct {
-	Model      string      `json:"model"`
-	Embeddings [][]float64 `json:"embeddings,omitempty"`
 }
 
 // EmbeddingResponse is the response from [Client.Embeddings].

@@ -610,7 +610,7 @@ type mockLlm struct {
 	completionResp     error
 	embeddingResp      []float64
 	embeddingRespErr   error
-	embedResp          [][]float64
+	embedResp          [][]float32
 	embedRespErr       error
 	tokenizeResp       []int
 	tokenizeRespErr    error
@@ -631,7 +631,7 @@ func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn 
 func (s *mockLlm) Embedding(ctx context.Context, prompt string) ([]float64, error) {
 	return s.embeddingResp, s.embeddingRespErr
 }
-func (s *mockLlm) Embed(ctx context.Context, input []string) ([][]float64, error) {
+func (s *mockLlm) Embed(ctx context.Context, input []string) ([][]float32, error) {
 	return s.embedResp, s.embedRespErr
 }
 func (s *mockLlm) Tokenize(ctx context.Context, content string) ([]int, error) {
