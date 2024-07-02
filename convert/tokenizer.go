@@ -3,19 +3,148 @@ package convert
 import (
 	"cmp"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
+)
 
-	"golang.org/x/exp/maps"
+const (
+	_ int32 = iota
+	tokenTypeNormal
+	tokenTypeUnknown
+	tokenTypeControl
+	tokenTypeUserDefined
+	tokenTypeUnused
+	tokenTypeByte
 )
 
 type Tokenizer struct {
-	Version     string         `json:"version"`
-	AddedTokens []Token        `json:"added_tokens"`
-	Model       TokenizerModel `json:"model"`
+	*Vocabulary
+	SpecialVocabulary []*SpecialVocabulary
+	Merges            []string
+
+	Pre      string
+	Template string
+}
+
+func parseTokenizer(d string, specialTypes []string) (*Tokenizer, error) {
+	v, err := parseVocabulary(d)
+	if err != nil {
+		return nil, err
+	}
+
+	t := &Tokenizer{
+		Vocabulary: v,
+		Pre:        "default",
+	}
+
+	addedTokens := make(map[string]token)
+	if f, err := os.Open(filepath.Join(d, "tokenizer.json")); errors.Is(err, os.ErrNotExist) {
+	} else if err != nil {
+		return nil, err
+	} else {
+		defer f.Close()
+
+		var tt tokenizer
+		if err := json.NewDecoder(f).Decode(&tt); err != nil {
+			return nil, err
+		}
+
+		for _, t := range tt.AddedTokens {
+			addedTokens[t.Content] = t
+		}
+
+		t.Merges = tt.Model.Merges
+
+		sha256sum := sha256.New()
+		for _, pt := range tt.PreTokenizer.PreTokenizers {
+			switch pt.Type {
+			case "Split":
+				if pt.Pattern.Regex != "" {
+					sha256sum.Write([]byte(pt.Pattern.Regex))
+				}
+			}
+		}
+
+		switch digest := hex.EncodeToString(sha256sum.Sum(nil)); digest {
+		case "d98f9631be1e9607a9848c26c1f9eac1aa9fc21ac6ba82a2fc0741af9780a48f":
+			t.Pre = "llama-bpe"
+		case "03df5c5863ad70781dcfdef491ead25140f895fe8010964be0daefe27be32b02":
+			t.Pre = "deepseek-llm"
+		case "21cde974d587f0d54dc8d56b183cc1e6239600172035c68fbd6d4b9f8da0576e":
+			t.Pre = "deepseek-coder"
+		case "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
+			// noop, empty pretokenizer
+		default:
+			slog.Warn("unknown pretokenizer, using default", "digest", digest)
+		}
+	}
+
+	if f, err := os.Open(filepath.Join(d, "tokenizer_config.json")); errors.Is(err, os.ErrNotExist) {
+	} else if err != nil {
+		return nil, err
+	} else {
+		defer f.Close()
+
+		var p map[string]json.RawMessage
+		if err := json.NewDecoder(f).Decode(&p); err != nil {
+			return nil, err
+		}
+
+		if template, ok := p["chat_template"]; ok {
+			if err := json.Unmarshal(template, &t.Template); err != nil {
+				return nil, err
+			}
+		}
+
+		for _, st := range specialTypes {
+			sv := SpecialVocabulary{Type: st}
+			if bts, ok := p[fmt.Sprintf("add_%s_token", st)]; ok {
+				if err := json.Unmarshal(bts, &sv.AddToken); err != nil {
+					return nil, err
+				}
+			}
+
+			if bts, ok := p[fmt.Sprintf("%s_token", st)]; ok {
+				var content string
+				if err := json.Unmarshal(bts, &content); err != nil {
+					var mm map[string]any
+					if err := json.Unmarshal(bts, &mm); err != nil {
+						continue
+					}
+
+					content, ok = mm["content"].(string)
+					if !ok {
+						continue
+					}
+				}
+
+				sv.Content = content
+			}
+
+			if id, ok := addedTokens[sv.Content]; ok {
+				sv.ID = id.ID
+				t.SpecialVocabulary = append(t.SpecialVocabulary, &sv)
+			}
+		}
+	}
+
+	return t, nil
+}
+
+type tokenizer struct {
+	Version     string  `json:"version"`
+	AddedTokens []token `json:"added_tokens"`
+	Model       struct {
+		Type   string         `json:"type"`
+		Vocab  map[string]int `json:"vocab"`
+		Merges []string       `json:"merges"`
+	} `json:"model"`
 
 	PreTokenizer struct {
 		PreTokenizers []struct {
@@ -27,80 +156,106 @@ type Tokenizer struct {
 	} `json:"pre_tokenizer"`
 }
 
-type TokenizerModel struct {
-	Type   string         `json:"type"`
-	Vocab  map[string]int `json:"vocab"`
-	Merges []string       `json:"merges"`
-	Tokens []Token
-}
-
-type Token struct {
+type token struct {
 	ID          int    `json:"id"`
 	Content     string `json:"content"`
 	Special     bool   `json:"special"`
 	UserDefined bool
 }
 
-func (t *Token) Type() int32 {
-	switch {
-	case t.Special:
-		return tokenTypeControl
-	case t.UserDefined:
-		return tokenTypeUserDefined
-	default:
-		return tokenTypeNormal
-	}
+type Vocabulary struct {
+	Model  string
+	Tokens []string
+	Scores []float32
+	Types  []int32
 }
 
-func (t *Tokenizer) maxID() int {
-	return max(
-		slices.Max(maps.Values(t.Model.Vocab)),
-		slices.MaxFunc(t.AddedTokens, func(a, b Token) int {
-			return cmp.Compare(a.ID, b.ID)
-		}).ID,
-	)
-}
-
-func parseTokens(dirpath string) (pre string, tokens []Token, merges []string, err error) {
-	f, err := os.Open(dirpath)
+func parseVocabularyFromTokenizer(p string) (*Vocabulary, error) {
+	f, err := os.Open(filepath.Join(p, "tokenizer.json"))
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer f.Close()
 
-	var t Tokenizer
+	var t tokenizer
 	if err := json.NewDecoder(f).Decode(&t); err != nil {
-		return "", nil, nil, err
+		return nil, err
 	}
 
-	tokens = make([]Token, t.maxID()+1)
+	var tokens []token
 	for k, v := range t.Model.Vocab {
-		tokens[v] = Token{ID: v, Content: k, Special: false, UserDefined: false}
+		tokens = append(tokens, token{
+			ID:      v,
+			Content: k,
+		})
 	}
 
-	for _, v := range t.AddedTokens {
-		v.UserDefined = true
-		tokens[v.ID] = v
+	for _, t := range t.AddedTokens {
+		t.UserDefined = true
+		tokens = append(tokens, t)
 	}
 
-	sha256sum := sha256.New()
-	for _, pt := range t.PreTokenizer.PreTokenizers {
-		if pt.Type == "Split" && pt.Pattern.Regex != "" {
-			sha256sum.Write([]byte(pt.Pattern.Regex))
+	slices.SortFunc(tokens, func(i, j token) int {
+		return cmp.Compare(i.ID, j.ID)
+	})
+
+	v := Vocabulary{Model: "gpt2"}
+	for _, t := range tokens {
+		v.Tokens = append(v.Tokens, t.Content)
+		v.Scores = append(v.Scores, float32(t.ID))
+
+		switch {
+		case t.Special:
+			v.Types = append(v.Types, tokenTypeControl)
+		case t.UserDefined:
+			v.Types = append(v.Types, tokenTypeUserDefined)
+		default:
+			v.Types = append(v.Types, tokenTypeNormal)
 		}
 	}
 
-	switch digest := fmt.Sprintf("%x", sha256sum.Sum(nil)); digest {
-	case "d98f9631be1e9607a9848c26c1f9eac1aa9fc21ac6ba82a2fc0741af9780a48f":
-		pre = "llama-bpe"
-	case "03df5c5863ad70781dcfdef491ead25140f895fe8010964be0daefe27be32b02":
-		pre = "deepseek-llm"
-	case "21cde974d587f0d54dc8d56b183cc1e6239600172035c68fbd6d4b9f8da0576e":
-		pre = "deepseek-coder"
-	default:
-		slog.Warn("unknown pretokenizer, using default", "digest", digest)
-		pre = "default"
+	return &v, nil
+}
+
+func parseVocabulary(d string) (*Vocabulary, error) {
+	patterns := map[string]func(string) (*Vocabulary, error){
+		"tokenizer.model": parseSentencePiece,
+		"tokenizer.json":  parseVocabularyFromTokenizer,
 	}
 
-	return pre, tokens, t.Model.Merges, nil
+	for pattern, parseFn := range patterns {
+		matches, err := filepath.Glob(filepath.Join(d, pattern))
+		if err != nil {
+			return nil, err
+		}
+
+		if len(matches) > 0 {
+			return parseFn(d)
+		}
+	}
+
+	return nil, errors.New("unknown tensor format")
+}
+
+type SpecialVocabulary struct {
+	Type     string
+	ID       int
+	Content  string
+	AddToken bool
+}
+
+func (sv SpecialVocabulary) Key() string {
+	switch t := sv.Type; t {
+	case "bos", "eos", "cls", "mask":
+		return t
+	case "unk":
+		return "unknown"
+	case "sep":
+		//nolint:misspell // this is an upstream typo
+		return "seperator"
+	case "pad":
+		return "padding"
+	}
+
+	panic("unknown special vocabulary type")
 }
