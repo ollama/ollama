@@ -678,6 +678,32 @@ func (w *ListWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
+func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
+	var showResponse api.ShowResponse
+	err := json.Unmarshal(data, &showResponse)
+	if err != nil {
+		return 0, err
+	}
+
+	// retrieve completion
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(toModel(showResponse, w.model))
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *RetrieveWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(code, data)
+	}
+
+	return w.writeResponse(data)
+}
+
 func (w *EmbeddingWriter) writeResponse(data []byte) (int, error) {
 	var embeddingResponse api.EmbeddingResponse
 	err := json.Unmarshal(data, &embeddingResponse)
