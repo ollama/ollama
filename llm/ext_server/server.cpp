@@ -1704,7 +1704,7 @@ struct llama_server_context
                             slot.n_past -= 1;
                         }
 
-                        slot.n_prompt_tokens_processed = slot.n_prompt_tokens - slot.n_past;
+                        slot.n_prompt_tokens_processed = slot.n_prompt_tokens;
 
                         if (slot.ga_n != 1)
                         {
