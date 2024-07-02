@@ -28,6 +28,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <unordered_map>
+#include <cassert>
 
 #include "json.hpp"
 
