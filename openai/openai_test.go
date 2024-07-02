@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
@@ -33,7 +34,7 @@ func TestMiddleware(t *testing.T) {
 			Method:   http.MethodPost,
 			Path:     "/api/chat",
 			TestPath: "/api/chat",
-			Handler:  Middleware,
+			Handler:  ChatMiddleware,
 			Endpoint: func(c *gin.Context) {
 				var chatReq api.ChatRequest
 				if err := c.ShouldBindJSON(&chatReq); err != nil {
@@ -71,6 +72,7 @@ func TestMiddleware(t *testing.T) {
 			},
 			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
 				assert.Equal(t, http.StatusOK, resp.Code)
+
 				var chatResp ChatCompletion
 				if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 					t.Fatal(err)
@@ -226,6 +228,7 @@ func TestMiddleware(t *testing.T) {
 			},
 			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
 				assert.Equal(t, http.StatusOK, resp.Code)
+
 				var listResp ListCompletion
 				if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 					t.Fatal(err)
@@ -241,6 +244,32 @@ func TestMiddleware(t *testing.T) {
 
 				if listResp.Data[0].Id != "Test Model" {
 					t.Fatalf("expected Test Model, got %s", listResp.Data[0].Id)
+				}
+			},
+		},
+		{
+			Name:     "retrieve model",
+			Method:   http.MethodGet,
+			Path:     "/api/show/:model",
+			TestPath: "/api/show/test-model",
+			Handler:  RetrieveMiddleware,
+			Endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ShowResponse{
+					ModifiedAt: time.Date(2024, 6, 17, 13, 45, 0, 0, time.UTC),
+				})
+			},
+			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				var retrieveResp Model
+				if err := json.NewDecoder(resp.Body).Decode(&retrieveResp); err != nil {
+					t.Fatal(err)
+				}
+
+				if retrieveResp.Object != "model" {
+					t.Fatalf("Expected object to be model, got %s", retrieveResp.Object)
+				}
+
+				if retrieveResp.Id != "test-model" {
+					t.Fatalf("Expected id to be test-model, got %s", retrieveResp.Id)
 				}
 			},
 		},

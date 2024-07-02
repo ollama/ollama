@@ -162,9 +162,6 @@ func tempZipFiles(path string) (string, error) {
 	}
 	defer tempfile.Close()
 
-	zipfile := zip.NewWriter(tempfile)
-	defer zipfile.Close()
-
 	detectContentType := func(path string) (string, error) {
 		f, err := os.Open(path)
 		if err != nil {
@@ -233,6 +230,9 @@ func tempZipFiles(path string) (string, error) {
 		files = append(files, tks...)
 	}
 
+	zipfile := zip.NewWriter(tempfile)
+	defer zipfile.Close()
+
 	for _, file := range files {
 		f, err := os.Open(file)
 		if err != nil {
@@ -287,38 +287,12 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	name := args[0]
-
-	// check if the model exists on the server
-	show, err := client.Show(cmd.Context(), &api.ShowRequest{Name: name})
-	var statusError api.StatusError
-	switch {
-	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
-		if err := PullHandler(cmd, []string{name}); err != nil {
-			return err
-		}
-
-		show, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
-		if err != nil {
-			return err
-		}
-	case err != nil:
-		return err
-	}
-
 	interactive := true
 
 	opts := runOptions{
-		Model:       args[0],
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
-		Options:     map[string]interface{}{},
-		MultiModal:  slices.Contains(show.Details.Families, "clip"),
-		ParentModel: show.Details.ParentModel,
+		Model:    args[0],
+		WordWrap: os.Getenv("TERM") == "xterm-256color",
+		Options:  map[string]interface{}{},
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -362,11 +336,38 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.WordWrap = !nowrap
 
-	if !interactive {
-		return generate(cmd, opts)
+	// Fill out the rest of the options based on information about the
+	// model.
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
 	}
 
-	return generateInteractive(cmd, opts)
+	name := args[0]
+	info, err := func() (*api.ShowResponse, error) {
+		showReq := &api.ShowRequest{Name: name}
+		info, err := client.Show(cmd.Context(), showReq)
+		var se api.StatusError
+		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+			if err := PullHandler(cmd, []string{name}); err != nil {
+				return nil, err
+			}
+			return client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+		}
+		return info, err
+	}()
+	if err != nil {
+		return err
+	}
+
+	opts.MultiModal = slices.Contains(info.Details.Families, "clip")
+	opts.ParentModel = info.Details.ParentModel
+	opts.Messages = append(opts.Messages, info.Messages...)
+
+	if interactive {
+		return generateInteractive(cmd, opts)
+	}
+	return generate(cmd, opts)
 }
 
 func errFromUnknownKey(unknownKeyErr error) error {
@@ -623,13 +624,13 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
-	if flagsSet == 1 {
-		req := api.ShowRequest{Name: args[0]}
-		resp, err := client.Show(cmd.Context(), &req)
-		if err != nil {
-			return err
-		}
+	req := api.ShowRequest{Name: args[0]}
+	resp, err := client.Show(cmd.Context(), &req)
+	if err != nil {
+		return err
+	}
 
+	if flagsSet == 1 {
 		switch showType {
 		case "license":
 			fmt.Println(resp.License)
@@ -646,12 +647,12 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	req := api.ShowRequest{Name: args[0]}
-	resp, err := client.Show(cmd.Context(), &req)
-	if err != nil {
-		return err
-	}
+	showInfo(resp)
 
+	return nil
+}
+
+func showInfo(resp *api.ShowResponse) {
 	arch := resp.ModelInfo["general.architecture"].(string)
 
 	modelData := [][]string{
@@ -671,10 +672,16 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		projectorData := [][]string{
 			{"arch", "clip"},
 			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
-			{"projector type", resp.ProjectorInfo["clip.projector_type"].(string)},
-			{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
-			{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
 		}
+
+		if projectorType, ok := resp.ProjectorInfo["clip.projector_type"]; ok {
+			projectorData = append(projectorData, []string{"projector type", projectorType.(string)})
+		}
+
+		projectorData = append(projectorData,
+			[]string{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
+			[]string{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
+		)
 
 		mainTableData = append(mainTableData,
 			[]string{"Projector"},
@@ -704,8 +711,6 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	table.Render()
-
-	return nil
 }
 
 func renderSubTable(data [][]string, file bool) string {
