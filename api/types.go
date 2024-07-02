@@ -253,6 +253,7 @@ type ShowRequest struct {
 	Model    string `json:"model"`
 	System   string `json:"system"`
 	Template string `json:"template"`
+	Verbose  bool   `json:"verbose"`
 
 	Options map[string]interface{} `json:"options"`
 
@@ -262,14 +263,16 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License    string       `json:"license,omitempty"`
-	Modelfile  string       `json:"modelfile,omitempty"`
-	Parameters string       `json:"parameters,omitempty"`
-	Template   string       `json:"template,omitempty"`
-	System     string       `json:"system,omitempty"`
-	Details    ModelDetails `json:"details,omitempty"`
-	Messages   []Message    `json:"messages,omitempty"`
-	ModifiedAt time.Time    `json:"modified_at,omitempty"`
+	License       string         `json:"license,omitempty"`
+	Modelfile     string         `json:"modelfile,omitempty"`
+	Parameters    string         `json:"parameters,omitempty"`
+	Template      string         `json:"template,omitempty"`
+	System        string         `json:"system,omitempty"`
+	Details       ModelDetails   `json:"details,omitempty"`
+	Messages      []Message      `json:"messages,omitempty"`
+	ModelInfo     map[string]any `json:"model_info,omitempty"`
+	ProjectorInfo map[string]any `json:"projector_info,omitempty"`
+	ModifiedAt    time.Time      `json:"modified_at,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -340,6 +343,13 @@ type ProcessModelResponse struct {
 	Details   ModelDetails `json:"details,omitempty"`
 	ExpiresAt time.Time    `json:"expires_at"`
 	SizeVRAM  int64        `json:"size_vram"`
+}
+
+type RetrieveModelResponse struct {
+	Id      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
 }
 
 type TokenResponse struct {
@@ -605,6 +615,19 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 		} else {
 			field := valueOpts.FieldByName(opt.Name)
 			if field.IsValid() && field.CanSet() {
+				if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
+					boolVal, err := strconv.ParseBool(vals[0])
+					if err != nil {
+						return nil, fmt.Errorf("invalid bool value %s", vals)
+					}
+					if boolVal {
+						out[key] = TriStateTrue
+					} else {
+						out[key] = TriStateFalse
+					}
+					continue
+				}
+
 				switch field.Kind() {
 				case reflect.Float32:
 					floatVal, err := strconv.ParseFloat(vals[0], 32)

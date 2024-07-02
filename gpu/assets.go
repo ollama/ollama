@@ -77,20 +77,27 @@ func cleanupTmpDirs() {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(d, "ollama.pid"))
-		if err == nil {
-			pid, err := strconv.Atoi(string(raw))
-			if err == nil {
-				if proc, err := os.FindProcess(pid); err == nil && !errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
-					// Another running ollama, ignore this tmpdir
-					continue
-				}
-			}
-		} else {
-			slog.Debug("failed to open ollama.pid", "path", d, "error", err)
-		}
-		err = os.RemoveAll(d)
 		if err != nil {
-			slog.Debug("unable to cleanup stale tmpdir", "path", d, "error", err)
+			slog.Warn("failed to read ollama.pid", "path", d, "error", err)
+			// No pid, ignore this tmpdir
+			continue
+		}
+
+		pid, err := strconv.Atoi(string(raw))
+		if err != nil {
+			slog.Warn("failed to parse pid", "path", d, "error", err)
+			continue
+		}
+
+		proc, err := os.FindProcess(pid)
+		if err == nil && !errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+			slog.Warn("found running ollama", "pid", pid, "path", d)
+			// Another running ollama, ignore this tmpdir
+			continue
+		}
+
+		if err := os.Remove(d); err != nil {
+			slog.Warn("unable to cleanup stale tmpdir", "path", d, "error", err)
 		}
 	}
 }

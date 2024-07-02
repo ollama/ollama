@@ -28,10 +28,15 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+type Capability string
+
+const CapabilityCompletion = Capability("completion")
 
 type registryOptions struct {
 	Insecure bool
@@ -48,16 +53,43 @@ type Model struct {
 	ParentModel    string
 	AdapterPaths   []string
 	ProjectorPaths []string
-	Template       string
 	System         string
 	License        []string
 	Digest         string
 	Options        map[string]interface{}
 	Messages       []Message
+
+	Template *template.Template
 }
 
-func (m *Model) IsEmbedding() bool {
-	return slices.Contains(m.Config.ModelFamilies, "bert") || slices.Contains(m.Config.ModelFamilies, "nomic-bert")
+func (m *Model) Has(caps ...Capability) bool {
+	for _, cap := range caps {
+		switch cap {
+		case CapabilityCompletion:
+			f, err := os.Open(m.ModelPath)
+			if err != nil {
+				slog.Error("couldn't open model file", "error", err)
+				continue
+			}
+			defer f.Close()
+
+			// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
+			ggml, _, err := llm.DecodeGGML(f, 0)
+			if err != nil {
+				slog.Error("couldn't decode ggml", "error", err)
+				continue
+			}
+
+			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
+				return false
+			}
+		default:
+			slog.Error("unknown capability", "capability", cap)
+			return false
+		}
+	}
+
+	return true
 }
 
 func (m *Model) String() string {
@@ -82,10 +114,10 @@ func (m *Model) String() string {
 		})
 	}
 
-	if m.Template != "" {
+	if m.Template != nil {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "template",
-			Args: m.Template,
+			Args: m.Template.String(),
 		})
 	}
 
@@ -135,13 +167,6 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-type ManifestV2 struct {
-	SchemaVersion int      `json:"schemaVersion"`
-	MediaType     string   `json:"mediaType"`
-	Config        *Layer   `json:"config"`
-	Layers        []*Layer `json:"layers"`
-}
-
 type ConfigV2 struct {
 	ModelFormat   string   `json:"model_format"`
 	ModelFamily   string   `json:"model_family"`
@@ -160,7 +185,7 @@ type RootFS struct {
 	DiffIDs []string `json:"diff_ids"`
 }
 
-func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
+func GetManifest(mp ModelPath) (*Manifest, string, error) {
 	fp, err := mp.GetManifestPath()
 	if err != nil {
 		return nil, "", err
@@ -170,7 +195,7 @@ func GetManifest(mp ModelPath) (*ManifestV2, string, error) {
 		return nil, "", err
 	}
 
-	var manifest *ManifestV2
+	var manifest *Manifest
 
 	bts, err := os.ReadFile(fp)
 	if err != nil {
@@ -198,8 +223,7 @@ func GetModel(name string) (*Model, error) {
 		Name:      mp.GetFullTagname(),
 		ShortName: mp.GetShortTagname(),
 		Digest:    digest,
-		Template:  "{{ .Prompt }}",
-		License:   []string{},
+		Template:  template.DefaultTemplate,
 	}
 
 	filename, err := GetBlobsPath(manifest.Config.Digest)
@@ -235,13 +259,17 @@ func GetModel(name string) (*Model, error) {
 			model.AdapterPaths = append(model.AdapterPaths, filename)
 		case "application/vnd.ollama.image.projector":
 			model.ProjectorPaths = append(model.ProjectorPaths, filename)
-		case "application/vnd.ollama.image.template":
+		case "application/vnd.ollama.image.prompt",
+			"application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err
 			}
 
-			model.Template = string(bts)
+			model.Template, err = template.Parse(string(bts))
+			if err != nil {
+				return nil, err
+			}
 		case "application/vnd.ollama.image.system":
 			bts, err := os.ReadFile(filename)
 			if err != nil {
@@ -249,13 +277,6 @@ func GetModel(name string) (*Model, error) {
 			}
 
 			model.System = string(bts)
-		case "application/vnd.ollama.image.prompt":
-			bts, err := os.ReadFile(filename)
-			if err != nil {
-				return nil, err
-			}
-
-			model.Template = string(bts)
 		case "application/vnd.ollama.image.params":
 			params, err := os.Open(filename)
 			if err != nil {
@@ -414,17 +435,22 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 							return err
 						}
 
-						layers, err := parseFromFile(ctx, temp, "", fn)
+						layer, err := NewLayer(temp, baseLayer.MediaType)
 						if err != nil {
 							return err
 						}
 
-						if len(layers) != 1 {
-							return errors.New("quantization failed")
+						if _, err := temp.Seek(0, io.SeekStart); err != nil {
+							return err
 						}
 
-						baseLayer.Layer = layers[0].Layer
-						baseLayer.GGML = layers[0].GGML
+						ggml, _, err := llm.DecodeGGML(temp, 0)
+						if err != nil {
+							return err
+						}
+
+						baseLayer.Layer = layer
+						baseLayer.GGML = ggml
 					}
 				}
 
@@ -817,7 +843,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
-	var manifest *ManifestV2
+	var manifest *Manifest
 	var err error
 	var noprune string
 
@@ -924,7 +950,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*ManifestV2, error) {
+func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
@@ -935,7 +961,7 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptio
 	}
 	defer resp.Body.Close()
 
-	var m *ManifestV2
+	var m *Manifest
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
 		return nil, err
 	}

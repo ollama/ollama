@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -138,6 +139,68 @@ func TestUseMmapParsingFromJSON(t *testing.T) {
 			err = opts.FromMap(oMap)
 			require.NoError(t, err)
 			assert.Equal(t, test.exp, opts.UseMMap)
+		})
+	}
+}
+
+func TestUseMmapFormatParams(t *testing.T) {
+	tests := []struct {
+		name string
+		req  map[string][]string
+		exp  TriState
+		err  error
+	}{
+		{
+			name: "True",
+			req: map[string][]string{
+				"use_mmap": []string{"true"},
+			},
+			exp: TriStateTrue,
+			err: nil,
+		},
+		{
+			name: "False",
+			req: map[string][]string{
+				"use_mmap": []string{"false"},
+			},
+			exp: TriStateFalse,
+			err: nil,
+		},
+		{
+			name: "Numeric True",
+			req: map[string][]string{
+				"use_mmap": []string{"1"},
+			},
+			exp: TriStateTrue,
+			err: nil,
+		},
+		{
+			name: "Numeric False",
+			req: map[string][]string{
+				"use_mmap": []string{"0"},
+			},
+			exp: TriStateFalse,
+			err: nil,
+		},
+		{
+			name: "invalid string",
+			req: map[string][]string{
+				"use_mmap": []string{"foo"},
+			},
+			exp: TriStateUndefined,
+			err: fmt.Errorf("invalid bool value [foo]"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp, err := FormatParams(test.req)
+			require.Equal(t, err, test.err)
+			respVal, ok := resp["use_mmap"]
+			if test.exp != TriStateUndefined {
+				assert.True(t, ok, "resp: %v", resp)
+				assert.Equal(t, test.exp, respVal)
+			}
 		})
 	}
 }
