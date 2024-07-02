@@ -186,7 +186,7 @@ func toModel(r api.ShowResponse, m string) Model {
 	}
 }
 
-func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
+func fromChatRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		switch content := msg.Content.(type) {
@@ -474,7 +474,7 @@ func ChatMiddleware() gin.HandlerFunc {
 
 		var b bytes.Buffer
 
-		chatReq, err := fromRequest(req)
+		chatReq, err := fromChatRequest(req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
 		}
