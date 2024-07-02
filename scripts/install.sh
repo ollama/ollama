@@ -177,7 +177,25 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
     exit 0
 fi
 
+PACKAGE_MANAGER=
+for PACKAGE_MANAGER in dnf yum apt-get; do
+    if available $PACKAGE_MANAGER; then
+        break
+    fi
+done
+
+install_rocm_dnf() {
+    if [ "$PACKAGE_MANAGER" = "dnf" ] || [ "$PACKAGE_MANAGER" = "yum" ]; then
+        $PACKAGE_MANAGER install -y rocminfo || true
+        $PACKAGE_MANAGER install -y rocm-opencl || true
+        $PACKAGE_MANAGER install -y rocm-clinfo || true
+        $PACKAGE_MANAGER install -y rocm-hip || true
+    fi
+}
+
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
+    install_rocm_dnf
+
     # Look for pre-existing ROCm v6 before downloading the dependencies
     for search in "${HIP_PATH:-''}" "${ROCM_PATH:-''}" "/opt/rocm" "/usr/lib64"; do
         if [ -n "${search}" ] && [ -e "${search}/libhipblas.so.2" -o -e "${search}/lib/libhipblas.so.2" ]; then
@@ -263,13 +281,6 @@ fi
 
 OS_NAME=$ID
 OS_VERSION=$VERSION_ID
-
-PACKAGE_MANAGER=
-for PACKAGE_MANAGER in dnf yum apt-get; do
-    if available $PACKAGE_MANAGER; then
-        break
-    fi
-done
 
 if [ -z "$PACKAGE_MANAGER" ]; then
     error "Unknown package manager. Skipping CUDA installation."
