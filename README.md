@@ -6,7 +6,7 @@
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-Get up and running with large language models.
+Comece e avance com modelos de linguagem avançados.
 
 ### macOS
 
@@ -22,32 +22,32 @@ Get up and running with large language models.
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
+[Instruções de instalação manual](https://github.com/ollama/ollama/blob/main/docs/linux.md)
 
 ### Docker
 
-The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
+A Imagem oficial [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` está disponível no Docker Hub.
 
-### Libraries
+### Bibliotecas
 
 - [ollama-python](https://github.com/ollama/ollama-python)
 - [ollama-js](https://github.com/ollama/ollama-js)
 
-## Quickstart
+## Início rápido
 
-To run and chat with [Llama 3](https://ollama.com/library/llama3):
+Para executar e conversar [Llama 3](https://ollama.com/library/llama3):
 
 ```
 ollama run llama3
 ```
 
-## Model library
+## Biblioteca de modelos
 
-Ollama supports a list of models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
+Ollama suporta uma lista de modelos disponíveis em [ollama.com/library](https://ollama.com/library 'ollama model library')
 
-Here are some example models that can be downloaded:
+Aqui estão alguns exemplos de modelos que podem ser baixados:
 
-| Model              | Parameters | Size  | Download                       |
+| Modelo              | Parâmetros | Tamanho  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
 | Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
 | Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
@@ -64,45 +64,45 @@ Here are some example models that can be downloaded:
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 | Solar              | 10.7B      | 6.1GB | `ollama run solar`             |
 
-> Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
+> Nota: Você deve ter pelo menos 8 GB de RAM disponível para executar os modelos de 7B, 16 GB para os modelos de 13B e 32 GB para os modelos de 33B.
 
-## Customize a model
+## Customize um modelo
 
-### Import from GGUF
+### Importe do GGUF
 
-Ollama supports importing GGUF models in the Modelfile:
+Ollama suporta importar modelos GGUF no arquivo de modelo:
 
-1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
+1. Crie um arquivo com o nome de `Modelfile`, com uma `FROM` instrução com o caminho local do arquivo do modelo que você deseja importar.
 
    ```
    FROM ./vicuna-33b.Q4_0.gguf
    ```
 
-2. Create the model in Ollama
+2. Crie o modelo no Ollama
 
    ```
    ollama create example -f Modelfile
    ```
 
-3. Run the model
+3. Execute o modelo
 
    ```
    ollama run example
    ```
 
-### Import from PyTorch or Safetensors
+### Importe do PyTorch ou do Safetensors
 
-See the [guide](docs/import.md) on importing models for more information.
+Veja o [guia](docs/import.md) sobre a importação de modelos para mais informações.
 
-### Customize a prompt
+### Personalize um prompt.
 
-Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3` model:
+Os modelos da biblioteca Ollama podem ser personalizados com um prompt. Por exemplo, para personalizar o modelo llama3:
 
 ```
 ollama pull llama3
 ```
 
-Create a `Modelfile`:
+Crie um `Modelfile`:
 
 ```
 FROM llama3
@@ -116,7 +116,7 @@ You are Mario from Super Mario Bros. Answer as Mario, the assistant, only.
 """
 ```
 
-Next, create and run the model:
+Proximo, crie e execute o modelo:
 
 ```
 ollama create mario -f ./Modelfile
@@ -125,7 +125,7 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
+Para mais exemplos, veja o diretorio de [exemplos](examples). Para mais informações para trabalhar com um arquivo Modelfile, veja a documentação do [Modelfile](docs/modelfile.md).
 
 ## CLI Reference
 
@@ -387,12 +387,12 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
-- [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
-- [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
-- [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Chat/moderation bot written in python. Uses Ollama to create personalities.
-- [Headless Ollama](https://github.com/nischalj10/headless-ollama) (Scripts to automatically install ollama client & models on any OS for apps that depends on ollama server)
+- [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Plugin do assistente de inteligência artificial para o Sublime Text 4 com suporte ao Ollama)
+- [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Bot Discord generalizado em TypeScript com documentação de ajustes)
+- [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Bot de chat/moderação escrito em Python. Usa o Ollama para criar personalidades.
+- [Headless Ollama](https://github.com/nischalj10/headless-ollama) (Scripts para instalar automaticamente o cliente e os modelos do Ollama em qualquer sistema operacional para aplicativos que dependem do servidor Ollama)
 
 ### Supported backends
 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) projeto fundado por Georgi Gerganov.
 
