@@ -1,3 +1,15 @@
+{{- if .Messages }}
+{{- if .System }}{{ .System }}
+
+{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}@@ Instruction
+{{- else if eq .Role "assistant" }}@@ Response
+{{- end }}
+{{ .Content }}
+
+{{ end }}@@ Response
+{{ else }}
 {{ if .System }}{{ .System }}
 
 {{ end }}{{ if .Prompt }}@@ Instruction
@@ -5,3 +17,4 @@
 
 {{ end }}@@ Response
 {{ .Response }}
+{{- end }}

@@ -1,0 +1,9 @@
+<|system|>
+You are a helpful assistant.</s>
+<|user|>
+Hello, how are you?</s>
+<|assistant|>
+I'm doing great. How can I help you today?</s>
+<|user|>
+I'd like to show off how chat templating works!</s>
+<|assistant|>
