@@ -115,8 +115,6 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			continue
 		}
 
-		// TODO revisit this once ROCm v6 is available on windows.
-		// v5.7 only reports VRAM used by this process, so it's completely wrong and unusable
 		slog.Debug("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
 		slog.Debug("amdgpu memory", "gpu", i, "available", format.HumanBytes2(freeMemory))
 		gpuInfo := RocmGPUInfo{
@@ -126,6 +124,9 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 					TotalMemory: totalMemory,
 					FreeMemory:  freeMemory,
 				},
+				// Free memory reporting on Windows is not reliable until we bump to ROCm v6.2
+				UnreliableFreeMemory: true,
+
 				ID:             strconv.Itoa(i), // TODO this is probably wrong if we specify visible devices
 				DependencyPath: libDir,
 				MinimumMemory:  rocmMinimumMemory,
