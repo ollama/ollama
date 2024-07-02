@@ -92,7 +92,7 @@ type ChatCompletionChunk struct {
 	Choices           []ChunkChoice `json:"choices"`
 }
 
-// TODO (https://github.com/ollama/ollama/issues<5259>): support []string, []int and [][]int
+// TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
 type CompletionRequest struct {
 	Model            string   `json:"model"`
 	Prompt           string   `json:"prompt"`
@@ -650,7 +650,6 @@ func ChatMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "[] is too short - 'messages'"))
 			return
 		}
-
 		var b bytes.Buffer
 
 		if err := json.NewEncoder(&b).Encode(fromChatRequest(req)); err != nil {
