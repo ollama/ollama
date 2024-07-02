@@ -605,6 +605,28 @@ func ListMiddleware() gin.HandlerFunc {
 	}
 }
 
+func RetrieveMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(api.ShowRequest{Name: c.Param("model")}); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+			return
+		}
+
+		c.Request.Body = io.NopCloser(&b)
+
+		// response writer
+		w := &RetrieveWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			model:      c.Param("model"),
+		}
+
+		c.Writer = w
+
+		c.Next()
+	}
+}
+
 func CompletionsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CompletionRequest
