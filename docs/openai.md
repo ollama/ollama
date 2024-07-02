@@ -121,7 +121,6 @@ curl https://api.openai.com/v1/completions \
 
 #### Notes
 
-- `finish_reason` will always be `stop`
 - `usage.prompt_tokens` will be 0 for completions where prompt evaluation is cached
 
 ### `/v1/completions`

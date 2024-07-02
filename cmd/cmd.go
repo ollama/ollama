@@ -162,9 +162,6 @@ func tempZipFiles(path string) (string, error) {
 	}
 	defer tempfile.Close()
 
-	zipfile := zip.NewWriter(tempfile)
-	defer zipfile.Close()
-
 	detectContentType := func(path string) (string, error) {
 		f, err := os.Open(path)
 		if err != nil {
@@ -232,6 +229,9 @@ func tempZipFiles(path string) (string, error) {
 		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
 		files = append(files, tks...)
 	}
+
+	zipfile := zip.NewWriter(tempfile)
+	defer zipfile.Close()
 
 	for _, file := range files {
 		f, err := os.Open(file)
@@ -624,13 +624,13 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
-	if flagsSet == 1 {
-		req := api.ShowRequest{Name: args[0]}
-		resp, err := client.Show(cmd.Context(), &req)
-		if err != nil {
-			return err
-		}
+	req := api.ShowRequest{Name: args[0]}
+	resp, err := client.Show(cmd.Context(), &req)
+	if err != nil {
+		return err
+	}
 
+	if flagsSet == 1 {
 		switch showType {
 		case "license":
 			fmt.Println(resp.License)
@@ -647,12 +647,12 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	req := api.ShowRequest{Name: args[0]}
-	resp, err := client.Show(cmd.Context(), &req)
-	if err != nil {
-		return err
-	}
+	showInfo(resp)
 
+	return nil
+}
+
+func showInfo(resp *api.ShowResponse) {
 	arch := resp.ModelInfo["general.architecture"].(string)
 
 	modelData := [][]string{
@@ -672,10 +672,16 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		projectorData := [][]string{
 			{"arch", "clip"},
 			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
-			{"projector type", resp.ProjectorInfo["clip.projector_type"].(string)},
-			{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
-			{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
 		}
+
+		if projectorType, ok := resp.ProjectorInfo["clip.projector_type"]; ok {
+			projectorData = append(projectorData, []string{"projector type", projectorType.(string)})
+		}
+
+		projectorData = append(projectorData,
+			[]string{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
+			[]string{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
+		)
 
 		mainTableData = append(mainTableData,
 			[]string{"Projector"},
@@ -705,8 +711,6 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	table.Render()
-
-	return nil
 }
 
 func renderSubTable(data [][]string, file bool) string {
