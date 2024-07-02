@@ -1,4 +1,4 @@
-package format
+package server
 
 import (
 	"math"
@@ -32,7 +32,7 @@ func TestNormalize(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("", func(t *testing.T) {
-			normalized := Normalize(tc.input)
+			normalized := normalize(tc.input)
 			if !assertNorm(normalized) {
 				t.Errorf("Vector %v is not normalized", tc.input)
 			}

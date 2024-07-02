@@ -27,7 +27,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
@@ -460,7 +459,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	for i, e := range embeddings {
-		embeddings[i] = format.Normalize(e)
+		embeddings[i] = normalize(e)
 	}
 
 	resp := api.EmbedResponse{
@@ -468,6 +467,28 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		Embeddings: embeddings,
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+func normalize(vec []float32) []float32 {
+	var sum float64
+	for _, v := range vec {
+		sum += float64(v * v)
+	}
+
+	sum = math.Sqrt(sum)
+
+	var norm float32
+
+	if sum > 0 {
+		norm = float32(1.0 / sum)
+	} else {
+		norm = 0.0
+	}
+
+	for i := range vec {
+		vec[i] *= norm
+	}
+	return vec
 }
 
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
