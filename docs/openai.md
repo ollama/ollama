@@ -65,6 +65,7 @@ curl http://localhost:11434/v1/chat/completions \
             }
         ]
     }'
+
 ```
 
 ## Endpoints
