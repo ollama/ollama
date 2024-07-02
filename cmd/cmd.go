@@ -421,6 +421,10 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	useHttp, err := cmd.Flags().GetBool("http")
+	if err != nil {
+		return err
+	}
 
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
@@ -456,7 +460,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PushRequest{Name: args[0], Insecure: insecure}
+	request := api.PushRequest{Name: args[0], Insecure: insecure, HTTP: useHttp}
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
@@ -784,6 +788,10 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	useHttp, err := cmd.Flags().GetBool("http")
+	if err != nil {
+		return err
+	}
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -825,7 +833,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
+	request := api.PullRequest{Name: args[0], Insecure: insecure, HTTP: useHttp}
 	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -1251,7 +1259,8 @@ func NewCLI() *cobra.Command {
 
 	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
-	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	runCmd.Flags().Bool("insecure", false, "Do not verify registry TLS")
+	runCmd.Flags().Bool("http", false, "Use an http registry instead of https")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
 	serveCmd := &cobra.Command{
@@ -1270,7 +1279,8 @@ func NewCLI() *cobra.Command {
 		RunE:    PullHandler,
 	}
 
-	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("insecure", false, "Do not verify registry TLS")
+	pullCmd.Flags().Bool("http", false, "Use an http registry instead of https")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
@@ -1280,7 +1290,8 @@ func NewCLI() *cobra.Command {
 		RunE:    PushHandler,
 	}
 
-	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pushCmd.Flags().Bool("insecure", false, "Do not verify registry TLS")
+	pushCmd.Flags().Bool("http", false, "Use an http registry instead of https")
 
 	listCmd := &cobra.Command{
 		Use:     "list",
