@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/template"
 )
 
 func TestPrompt(t *testing.T) {
@@ -61,7 +62,12 @@ func TestPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Prompt(tc.template, tc.system, tc.prompt, tc.response, tc.generate)
+			tmpl, err := template.Parse(tc.template)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := Prompt(tmpl, tc.system, tc.prompt, tc.response, tc.generate)
 			if err != nil {
 				t.Errorf("error = %v", err)
 			}
@@ -192,7 +198,12 @@ func TestChatPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ChatPrompt(tc.template, tc.messages, tc.window, encode)
+			tmpl, err := template.Parse(tc.template)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := ChatPrompt(tmpl, tc.messages, tc.window, encode)
 			if err != nil {
 				t.Errorf("error = %v", err)
 			}

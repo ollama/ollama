@@ -25,7 +25,7 @@ func createManifest(t *testing.T, path, name string) {
 	}
 	defer f.Close()
 
-	if err := json.NewEncoder(f).Encode(ManifestV2{}); err != nil {
+	if err := json.NewEncoder(f).Encode(Manifest{}); err != nil {
 		t.Fatal(err)
 	}
 }

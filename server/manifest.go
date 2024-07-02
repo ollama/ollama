@@ -14,7 +14,10 @@ import (
 )
 
 type Manifest struct {
-	ManifestV2
+	SchemaVersion int      `json:"schemaVersion"`
+	MediaType     string   `json:"mediaType"`
+	Config        *Layer   `json:"config"`
+	Layers        []*Layer `json:"layers"`
 
 	filepath string
 	fi       os.FileInfo
@@ -66,7 +69,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 
 	p := filepath.Join(manifests, n.Filepath())
 
-	var m ManifestV2
+	var m Manifest
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, err
@@ -83,12 +86,11 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 		return nil, err
 	}
 
-	return &Manifest{
-		ManifestV2: m,
-		filepath:   p,
-		fi:         fi,
-		digest:     fmt.Sprintf("%x", sha256sum.Sum(nil)),
-	}, nil
+	m.filepath = p
+	m.fi = fi
+	m.digest = fmt.Sprintf("%x", sha256sum.Sum(nil))
+
+	return &m, nil
 }
 
 func WriteManifest(name model.Name, config *Layer, layers []*Layer) error {
@@ -108,7 +110,7 @@ func WriteManifest(name model.Name, config *Layer, layers []*Layer) error {
 	}
 	defer f.Close()
 
-	m := ManifestV2{
+	m := Manifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
 		Config:        config,
