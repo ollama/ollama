@@ -374,3 +374,23 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 
 	return version.Version, nil
 }
+
+// IsLocal checks whether the client is connecting to a local server.
+func (c *Client) IsLocal() bool {
+	// Resolve the host to an IP address and check if the IP is local
+	// Currently, only checks if it is localhost or loopback
+	host, _, err := net.SplitHostPort(c.base.Host)
+	if err != nil {
+		host = c.base.Host
+	}
+
+	if host == "" || host == "localhost" {
+		return true
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+
+	return false
+}
