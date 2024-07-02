@@ -656,7 +656,6 @@ type completion struct {
 	Prompt       string `json:"prompt"`
 	Stop         bool   `json:"stop"`
 	StoppedLimit bool   `json:"stopped_limit"`
-	TokensEval   int    `json:"tokens_evaluated"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -681,7 +680,6 @@ type CompletionResponse struct {
 	PromptEvalDuration time.Duration
 	EvalCount          int
 	EvalDuration       time.Duration
-	TokensEval         int
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -830,7 +828,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 					EvalCount:          c.Timings.PredictedN,
 					EvalDuration:       parseDurationMs(c.Timings.PredictedMS),
-					TokensEval:         c.TokensEval,
 				})
 				return nil
 			}

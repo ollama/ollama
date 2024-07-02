@@ -94,14 +94,11 @@ type ChatRequest struct {
 	Format string `json:"format"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
-	// following the request.
+	// followin the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
-
-	// OpenAI indicates redirection from the compatibility endpoint.
-	OpenAI bool `json:"openai,omitempty"`
 }
 
 // Message is a single message in a chat sequence. The message contains the
