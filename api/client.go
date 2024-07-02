@@ -394,3 +394,12 @@ func (c *Client) IsLocal() bool {
 
 	return false
 }
+
+// EnvConfig returns the environment configuration for the server.
+func (c *Client) ServerConfig(ctx context.Context) (*ServerConfig, error) {
+	var config ServerConfig
+	if err := c.do(ctx, http.MethodGet, "/api/config", nil, &config); err != nil {
+		return nil, err
+	}
+	return &config, nil
+}

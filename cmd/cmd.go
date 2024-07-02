@@ -290,7 +290,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	// Resolve server to IP
 	// Check if server is local
 	if client.IsLocal() {
-		err := createBlobLocal(cmd, client, digest)
+		err := createBlobLocal(cmd.Context(), client, path, digest)
 		if err == nil {
 			return digest, nil
 		}
@@ -302,10 +302,66 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	return digest, nil
 }
 
-func createBlobLocal(cmd *cobra.Command, client *api.Client, digest string) error {
+func createBlobLocal(ctx context.Context, client *api.Client, path string, digest string) error {
 	// This function should be called if the server is local
 	// It should find the model directory, copy the blob over, and return the digest
 
+	// Get the model directory
+	config, err := client.ServerConfig(ctx)
+	if err != nil {
+		return err
+	}
+
+	modelDir := config.ModelDir
+
+	// Get blob destination
+	digest = strings.ReplaceAll(digest, ":", "-")
+	dest := filepath.Join(modelDir, "blobs", digest)
+	dirPath := filepath.Dir(dest)
+	if digest == "" {
+		dirPath = dest
+	}
+
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		return err
+	}
+
+	// Check blob exists
+	_, err = os.Stat(dest)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// noop
+	case err != nil:
+		return err
+	default:
+		// blob already exists
+		return nil
+	}
+
+	// Copy blob over
+	sourceFile, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("could not open source file: %v", err)
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dest)
+	if err != nil {
+		return fmt.Errorf("could not create destination file: %v", err)
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	if err != nil {
+		return fmt.Errorf("error copying file: %v", err)
+	}
+
+	err = destFile.Sync()
+	if err != nil {
+		return fmt.Errorf("error flushing file: %v", err)
+	}
+
+	return nil
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
