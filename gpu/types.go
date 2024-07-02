@@ -29,6 +29,11 @@ type GpuInfo struct {
 	// Extra environment variables specific to the GPU as list of [key,value]
 	EnvWorkarounds [][2]string `json:"envs,omitempty"`
 
+	// Set to true if we can NOT reliably discover FreeMemory.  A value of true indicates
+	// the FreeMemory is best effort, and may over or under report actual memory usage
+	// False indicates FreeMemory can generally be trusted on this GPU
+	UnreliableFreeMemory bool
+
 	// GPU information
 	ID      string `json:"gpu_id"`  // string to use for selection of this specific GPU
 	Name    string `json:"name"`    // user friendly name if available
