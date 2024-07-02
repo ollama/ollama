@@ -175,7 +175,16 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 	}
 }
 
-func fromRequest(r ChatCompletionRequest) api.ChatRequest {
+func toModel(r api.ShowResponse, m string) Model {
+	return Model{
+		Id:      m,
+		Object:  "model",
+		Created: r.ModifiedAt.Unix(),
+		OwnedBy: model.ParseName(m).Namespace,
+	}
+}
+
+func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		messages = append(messages, api.Message{Role: msg.Role, Content: msg.Content})
@@ -250,6 +259,11 @@ type ChatWriter struct {
 
 type ListWriter struct {
 	BaseWriter
+}
+
+type RetrieveWriter struct {
+	BaseWriter
+	model string
 }
 
 func (w *BaseWriter) writeError(code int, data []byte) (int, error) {
@@ -342,6 +356,32 @@ func (w *ListWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
+func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
+	var showResponse api.ShowResponse
+	err := json.Unmarshal(data, &showResponse)
+	if err != nil {
+		return 0, err
+	}
+
+	// retrieve completion
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(toModel(showResponse, w.model))
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *RetrieveWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(code, data)
+	}
+
+	return w.writeResponse(data)
+}
+
 func ListMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		w := &ListWriter{
@@ -354,7 +394,29 @@ func ListMiddleware() gin.HandlerFunc {
 	}
 }
 
-func Middleware() gin.HandlerFunc {
+func RetrieveMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(api.ShowRequest{Name: c.Param("model")}); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+			return
+		}
+
+		c.Request.Body = io.NopCloser(&b)
+
+		// response writer
+		w := &RetrieveWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			model:      c.Param("model"),
+		}
+
+		c.Writer = w
+
+		c.Next()
+	}
+}
+
+func ChatMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req ChatCompletionRequest
 		err := c.ShouldBindJSON(&req)
@@ -369,7 +431,7 @@ func Middleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(fromRequest(req)); err != nil {
+		if err := json.NewEncoder(&b).Encode(fromChatRequest(req)); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}
