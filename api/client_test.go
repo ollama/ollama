@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/ollama/ollama/envconfig"
@@ -42,6 +44,83 @@ func TestClientFromEnvironment(t *testing.T) {
 
 			if client.base.String() != v.expect {
 				t.Fatalf("expected %s, got %s", v.expect, client.base.String())
+			}
+		})
+	}
+}
+
+// Test function
+func TestIsLocal(t *testing.T) {
+	type test struct {
+		client *Client
+		want   bool
+		err    error
+	}
+
+	tests := map[string]test{
+		"localhost": {
+			client: func() *Client {
+				baseURL, _ := url.Parse("http://localhost:1234")
+				return &Client{base: baseURL, http: &http.Client{}}
+			}(),
+			want: true,
+			err:  nil,
+		},
+		"127.0.0.1": {
+			client: func() *Client {
+				baseURL, _ := url.Parse("http://127.0.0.1:1234")
+				return &Client{base: baseURL, http: &http.Client{}}
+			}(),
+			want: true,
+			err:  nil,
+		},
+		"example.com": {
+			client: func() *Client {
+				baseURL, _ := url.Parse("http://example.com:1111")
+				return &Client{base: baseURL, http: &http.Client{}}
+			}(),
+			want: false,
+			err:  nil,
+		},
+		"8.8.8.8": {
+			client: func() *Client {
+				baseURL, _ := url.Parse("http://8.8.8.8:1234")
+				return &Client{base: baseURL, http: &http.Client{}}
+			}(),
+			want: false,
+			err:  nil,
+		},
+		"empty host with port": {
+			client: func() *Client {
+				baseURL, _ := url.Parse("http://:1234")
+				return &Client{base: baseURL, http: &http.Client{}}
+			}(),
+			want: true,
+			err:  nil,
+		},
+		"empty host without port": {
+			client: func() *Client {
+				baseURL, _ := url.Parse("http://")
+				return &Client{base: baseURL, http: &http.Client{}}
+			}(),
+			want: true,
+			err:  nil,
+		},
+		"remote host without port": {
+			client: func() *Client {
+				baseURL, _ := url.Parse("http://example.com")
+				return &Client{base: baseURL, http: &http.Client{}}
+			}(),
+			want: false,
+			err:  nil,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := tc.client.IsLocal()
+			if got != tc.want {
+				t.Errorf("test %s failed: got %v, want %v", name, got, tc.want)
 			}
 		})
 	}
