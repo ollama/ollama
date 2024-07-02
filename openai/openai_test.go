@@ -89,7 +89,7 @@ func TestMiddleware(t *testing.T) {
 			Method:   http.MethodPost,
 			Path:     "/api/chat",
 			TestPath: "/api/chat",
-			Handler:  Middleware,
+			Handler:  ChatMiddleware,
 			Endpoint: func(c *gin.Context) {
 				var chatReq api.ChatRequest
 				if err := c.ShouldBindJSON(&chatReq); err != nil {
