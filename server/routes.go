@@ -339,6 +339,158 @@ func getDefaultSessionDuration() time.Duration {
 	return defaultSessionDuration
 }
 
+func (s *Server) EmbedHandler(c *gin.Context) {
+	var req api.EmbedRequest
+	err := c.ShouldBindJSON(&req)
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Model == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	if req.Truncate == nil {
+		truncate := true
+		req.Truncate = &truncate
+	}
+
+	model, err := GetModel(req.Model)
+	if err != nil {
+		var pErr *fs.PathError
+		if errors.As(err, &pErr) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found, try pulling it first", req.Model)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	opts, err := modelOptions(model, req.Options)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var sessionDuration time.Duration
+	if req.KeepAlive == nil {
+		sessionDuration = getDefaultSessionDuration()
+	} else {
+		sessionDuration = req.KeepAlive.Duration
+	}
+
+	rCh, eCh := s.sched.GetRunner(c.Request.Context(), model, opts, sessionDuration)
+	var runner *runnerRef
+	select {
+	case runner = <-rCh:
+	case err = <-eCh:
+		handleErrorResponse(c, err)
+		return
+	}
+
+	checkFit := func(s string, truncate bool) (string, error) {
+		tokens, err := runner.llama.Tokenize(c.Request.Context(), s)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return "", err
+		}
+
+		if len(tokens) > opts.NumCtx {
+			if truncate {
+				tokens = tokens[:opts.NumCtx]
+				return runner.llama.Detokenize(c.Request.Context(), tokens)
+			} else {
+				return "", fmt.Errorf("input length exceeds maximum context length")
+			}
+		}
+
+		return s, nil
+	}
+
+	embeddings := [][]float32{}
+
+	switch reqEmbed := req.Input.(type) {
+	case string:
+		if reqEmbed == "" {
+			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float32{}})
+			return
+		}
+		reqEmbed, err = checkFit(reqEmbed, *req.Truncate)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		embeddings, err = runner.llama.Embed(c.Request.Context(), []string{reqEmbed})
+	case []any:
+		if reqEmbed == nil {
+			c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: [][]float32{}})
+			return
+		}
+
+		reqEmbedArray := make([]string, len(reqEmbed))
+		for i, v := range reqEmbed {
+			if s, ok := v.(string); ok {
+				s, err = checkFit(s, *req.Truncate)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				reqEmbedArray[i] = s
+			} else {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+				return
+			}
+		}
+		embeddings, err = runner.llama.Embed(c.Request.Context(), reqEmbedArray)
+	default:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+	}
+
+	if err != nil {
+		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
+		return
+	}
+
+	for i, e := range embeddings {
+		embeddings[i] = normalize(e)
+	}
+
+	resp := api.EmbedResponse{
+		Model:      req.Model,
+		Embeddings: embeddings,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func normalize(vec []float32) []float32 {
+	var sum float64
+	for _, v := range vec {
+		sum += float64(v * v)
+	}
+
+	sum = math.Sqrt(sum)
+
+	var norm float32
+
+	if sum > 0 {
+		norm = float32(1.0 / sum)
+	} else {
+		norm = 0.0
+	}
+
+	for i := range vec {
+		vec[i] *= norm
+	}
+	return vec
+}
+
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	var req api.EmbeddingRequest
 	err := c.ShouldBindJSON(&req)
@@ -1028,7 +1180,8 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/pull", s.PullModelHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
-	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/embed", s.EmbedHandler)
+	r.POST("/api/embeddings", s.EmbeddingsHandler) // legacy
 	r.POST("/api/create", s.CreateModelHandler)
 	r.POST("/api/push", s.PushModelHandler)
 	r.POST("/api/copy", s.CopyModelHandler)
