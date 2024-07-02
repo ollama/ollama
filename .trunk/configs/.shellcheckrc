@@ -1,0 +1,7 @@
+enable=all
+source-path=SCRIPTDIR
+disable=SC2154
+
+# If you're having issues with shellcheck following source, disable the errors via:
+# disable=SC1090
+# disable=SC1091
