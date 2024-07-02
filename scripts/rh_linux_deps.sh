@@ -5,6 +5,8 @@
 set -ex
 MACHINE=$(uname -m)
 
+. /etc/os-release
+
 if grep -i "centos" /etc/system-release >/dev/null; then
     # As of 7/1/2024 mirrorlist.centos.org has been taken offline, so adjust accordingly
     sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
@@ -30,7 +32,13 @@ if grep -i "centos" /etc/system-release >/dev/null; then
         ln -s /opt/rh/rh-git227/root/usr/bin/git /usr/local/bin/git
     fi
     dnf install -y devtoolset-10-gcc devtoolset-10-gcc-c++
-elif grep -i "rocky" /etc/system-release >/dev/null; then
+elif [ "${ID}" = "rocky" -a "${ROCKY_SUPPORT_PRODUCT}" = "Rocky-Linux-9" ]; then
+    if ! gcc --version ; then
+        dnf install -y gcc g++
+    fi
+    dnf install -y git
+
+elif [ "${ID}" = "rocky" ]; then # Assume rocky 8
     # Temporary workaround until rocky 8 AppStream ships GCC 10.4 (10.3 is incompatible with NVCC)
     cat << EOF > /etc/yum.repos.d/Rocky-Vault.repo
 [vault]
