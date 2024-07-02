@@ -2,10 +2,7 @@
 	"artifacts" : 
 	[
 		{
-			"path" : "Debug/ollama_llama_server.exe"
-		},
-		{
-			"path" : "Debug/ollama_llama_server.pdb"
+			"path" : "ollama_llama_server"
 		}
 	],
 	"backtrace" : 1,
@@ -15,8 +12,6 @@
 		[
 			"add_executable",
 			"install",
-			"target_link_libraries",
-			"TARGET_LINK_LIBRARIES",
 			"target_compile_definitions",
 			"include_directories"
 		],
@@ -44,23 +39,11 @@
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 10,
-				"parent" : 0
-			},
-			{
-				"command" : 3,
-				"file" : 0,
-				"line" : 12,
-				"parent" : 0
-			},
-			{
-				"command" : 4,
-				"file" : 0,
 				"line" : 7,
 				"parent" : 0
 			},
 			{
-				"command" : 5,
+				"command" : 3,
 				"file" : 0,
 				"line" : 4,
 				"parent" : 0
@@ -73,21 +56,21 @@
 			"compileCommandFragments" : 
 			[
 				{
-					"fragment" : "/DWIN32 /D_WINDOWS /W3 /GR /EHsc /MDd /Zi /Ob0 /Od /RTC1"
+					"fragment" : "-g  "
 				}
 			],
 			"defines" : 
 			[
 				{
-					"backtrace" : 5,
+					"backtrace" : 3,
 					"define" : "SERVER_VERBOSE=1"
 				}
 			],
 			"includes" : 
 			[
 				{
-					"backtrace" : 6,
-					"path" : "B:/New/ollama/llm/ext_server"
+					"backtrace" : 4,
+					"path" : "/workspaces/ollama/llm/ext_server"
 				}
 			],
 			"language" : "CXX",
@@ -95,12 +78,6 @@
 			[
 				0
 			]
-		}
-	],
-	"dependencies" : 
-	[
-		{
-			"id" : "ZERO_CHECK::@6890427a1f51a3e7e1df"
 		}
 	],
 	"id" : "ollama_llama_server::@6890427a1f51a3e7e1df",
@@ -115,7 +92,7 @@
 		],
 		"prefix" : 
 		{
-			"path" : "C:/Program Files (x86)/Project"
+			"path" : "/usr/local"
 		}
 	},
 	"link" : 
@@ -123,37 +100,26 @@
 		"commandFragments" : 
 		[
 			{
-				"fragment" : "/DWIN32 /D_WINDOWS /W3 /GR /EHsc /MDd /Zi /Ob0 /Od /RTC1",
+				"fragment" : "-g",
 				"role" : "flags"
 			},
 			{
-				"fragment" : "/machine:X86 /debug /INCREMENTAL /subsystem:console",
+				"fragment" : "-rdynamic",
 				"role" : "flags"
 			},
 			{
-				"backtrace" : 3,
-				"fragment" : "common.lib",
+				"fragment" : "-lcommon",
 				"role" : "libraries"
 			},
 			{
-				"backtrace" : 3,
-				"fragment" : "llava.lib",
-				"role" : "libraries"
-			},
-			{
-				"backtrace" : 4,
-				"fragment" : "ws2_32.lib",
-				"role" : "libraries"
-			},
-			{
-				"fragment" : "kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib",
+				"fragment" : "-lllava",
 				"role" : "libraries"
 			}
 		],
 		"language" : "CXX"
 	},
 	"name" : "ollama_llama_server",
-	"nameOnDisk" : "ollama_llama_server.exe",
+	"nameOnDisk" : "ollama_llama_server",
 	"paths" : 
 	{
 		"build" : ".",

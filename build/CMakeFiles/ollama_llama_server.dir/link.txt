@@ -1,0 +1,1 @@
+/usr/bin/clang++  -g  -rdynamic CMakeFiles/ollama_llama_server.dir/server.o  -o ollama_llama_server  -lcommon -lllava 
