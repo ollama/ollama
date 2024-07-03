@@ -31,65 +31,40 @@ const (
 )
 
 func loadModel(cmd *cobra.Command, opts *runOptions) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
 	p := progress.NewProgress(os.Stderr)
 	defer p.StopAndClear()
 
 	spinner := progress.NewSpinner("")
 	p.Add("", spinner)
 
-	showReq := api.ShowRequest{Name: opts.Model}
-	showResp, err := client.Show(cmd.Context(), &showReq)
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
-	opts.MultiModal = slices.Contains(showResp.Details.Families, "clip")
-	opts.ParentModel = showResp.Details.ParentModel
-
-	if len(showResp.Messages) > 0 {
-		opts.Messages = append(opts.Messages, showResp.Messages...)
-	}
 
 	chatReq := &api.ChatRequest{
-		Model:    opts.Model,
-		Messages: []api.Message{},
+		Model:     opts.Model,
+		KeepAlive: opts.KeepAlive,
 	}
 
-	if opts.KeepAlive != nil {
-		chatReq.KeepAlive = opts.KeepAlive
-	}
-
-	err = client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
+	return client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
 		p.StopAndClear()
-		if len(opts.Messages) > 0 {
-			for _, msg := range opts.Messages {
-				switch msg.Role {
-				case "user":
-					fmt.Printf(">>> %s\n", msg.Content)
-				case "assistant":
-					state := &displayResponseState{}
-					displayResponse(msg.Content, opts.WordWrap, state)
-					fmt.Println()
-					fmt.Println()
-				}
+		for _, msg := range opts.Messages {
+			switch msg.Role {
+			case "user":
+				fmt.Printf(">>> %s\n", msg.Content)
+			case "assistant":
+				state := &displayResponseState{}
+				displayResponse(msg.Content, opts.WordWrap, state)
+				fmt.Println()
+				fmt.Println()
 			}
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
-	opts.Messages = make([]api.Message, 0)
-
 	err := loadModel(cmd, &opts)
 	if err != nil {
 		return err
@@ -429,15 +404,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				switch args[1] {
 				case "info":
-					fmt.Println("Model details:")
-					if len(resp.Details.Families) > 0 {
-						fmt.Printf("Family              %s\n", strings.Join(resp.Details.Families, ", "))
-					} else if resp.Details.Family != "" {
-						fmt.Printf("Family              %s\n", resp.Details.Family)
-					}
-					fmt.Printf("Parameter Size      %s\n", resp.Details.ParameterSize)
-					fmt.Printf("Quantization Level  %s\n", resp.Details.QuantizationLevel)
-					fmt.Println("")
+					showInfo(resp)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")

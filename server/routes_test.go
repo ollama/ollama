@@ -20,6 +20,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -106,6 +108,24 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
+			Name:   "openai empty list",
+			Method: http.MethodGet,
+			Path:   "/v1/models",
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var modelList openai.ListCompletion
+				err = json.Unmarshal(body, &modelList)
+				require.NoError(t, err)
+
+				assert.Equal(t, "list", modelList.Object)
+				assert.Empty(t, modelList.Data)
+			},
+		},
+		{
 			Name:   "Tags Handler (yes tags)",
 			Method: http.MethodGet,
 			Path:   "/api/tags",
@@ -126,6 +146,25 @@ func Test_Routes(t *testing.T) {
 
 				assert.Len(t, modelList.Models, 1)
 				assert.Equal(t, "test-model:latest", modelList.Models[0].Name)
+			},
+		},
+		{
+			Name:   "openai list models with tags",
+			Method: http.MethodGet,
+			Path:   "/v1/models",
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var modelList openai.ListCompletion
+				err = json.Unmarshal(body, &modelList)
+				require.NoError(t, err)
+
+				assert.Len(t, modelList.Data, 1)
+				assert.Equal(t, "test-model:latest", modelList.Data[0].Id)
+				assert.Equal(t, "library", modelList.Data[0].OwnedBy)
 			},
 		},
 		{
@@ -213,6 +252,25 @@ func Test_Routes(t *testing.T) {
 					"top_p 0.9",
 				}
 				assert.Equal(t, expectedParams, params)
+				assert.InDelta(t, 0, showResp.ModelInfo["general.parameter_count"], 1e-9, "Parameter count should be 0")
+			},
+		},
+		{
+			Name:   "openai retrieve model handler",
+			Method: http.MethodGet,
+			Path:   "/v1/models/show-model",
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var retrieveResp api.RetrieveModelResponse
+				err = json.Unmarshal(body, &retrieveResp)
+				require.NoError(t, err)
+
+				assert.Equal(t, "show-model", retrieveResp.Id)
+				assert.Equal(t, "library", retrieveResp.OwnedBy)
 			},
 		},
 	}
@@ -327,6 +385,43 @@ func TestCase(t *testing.T) {
 	}
 }
 
+func TestShow(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	envconfig.LoadConfig()
+
+	var s Server
+
+	createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		Name: "show-model",
+		Modelfile: fmt.Sprintf(
+			"FROM %s\nFROM %s",
+			createBinFile(t, llm.KV{"general.architecture": "test"}, nil),
+			createBinFile(t, llm.KV{"general.architecture": "clip"}, nil),
+		),
+	})
+
+	w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
+		Name: "show-model",
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.ModelInfo["general.architecture"] != "test" {
+		t.Fatal("Expected model architecture to be 'test', but got", resp.ModelInfo["general.architecture"])
+	}
+
+	if resp.ProjectorInfo["general.architecture"] != "clip" {
+		t.Fatal("Expected projector architecture to be 'clip', but got", resp.ProjectorInfo["general.architecture"])
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	type testCase struct {
 		input []float32
@@ -359,5 +454,5 @@ func TestNormalize(t *testing.T) {
 				t.Errorf("Vector %v is not normalized", tc.input)
 			}
 		})
-	}
+  }
 }

@@ -50,7 +50,7 @@ void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
     LOG(resp->oh.verbose, "dlsym: %s\n", l[i].s);
 
     *l[i].p = LOAD_SYMBOL(resp->oh.handle, l[i].s);
-    if (!l[i].p) {
+    if (!*(l[i].p)) {
       resp->oh.handle = NULL;
       char *msg = LOAD_ERR();
       LOG(resp->oh.verbose, "dlerr: %s\n", msg);

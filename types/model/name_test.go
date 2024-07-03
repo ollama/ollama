@@ -284,40 +284,6 @@ func TestFilepathAllocs(t *testing.T) {
 	}
 }
 
-const (
-	validSha256    = "sha256-1000000000000000000000000000000000000000000000000000000000000000"
-	validSha256Old = "sha256:1000000000000000000000000000000000000000000000000000000000000000"
-)
-
-func TestParseDigest(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{"", ""},           // empty
-		{"sha123-12", ""},  // invalid type
-		{"sha256-", ""},    // invalid sum
-		{"sha256-123", ""}, // invalid odd length sum
-
-		{validSha256, validSha256},
-		{validSha256Old, validSha256},
-	}
-	for _, tt := range cases {
-		t.Run(tt.in, func(t *testing.T) {
-			got, err := ParseDigest(tt.in)
-			if err != nil {
-				if tt.want != "" {
-					t.Errorf("parseDigest(%q) = %v; want %v", tt.in, err, tt.want)
-				}
-				return
-			}
-			if got.String() != tt.want {
-				t.Errorf("parseDigest(%q).String() = %q; want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseNameFromFilepath(t *testing.T) {
 	cases := map[string]Name{
 		filepath.Join("host", "namespace", "model", "tag"):      {Host: "host", Namespace: "namespace", Model: "model", Tag: "tag"},

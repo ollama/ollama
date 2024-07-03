@@ -231,7 +231,7 @@ func GetGPUInfo() GpuInfoList {
 		// On windows we bundle the nvidia library one level above the runner dir
 		depPath := ""
 		if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
-			depPath = filepath.Dir(envconfig.RunnersDir)
+			depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "cuda")
 		}
 
 		// Load ALL libraries
@@ -282,6 +282,12 @@ func GetGPUInfo() GpuInfoList {
 		// Intel
 		if envconfig.IntelGpu {
 			oHandles = initOneAPIHandles()
+			// On windows we bundle the oneapi library one level above the runner dir
+			depPath = ""
+			if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
+				depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "oneapi")
+			}
+
 			for d := range oHandles.oneapi.num_drivers {
 				if oHandles.oneapi == nil {
 					// shouldn't happen
@@ -306,7 +312,7 @@ func GetGPUInfo() GpuInfoList {
 					gpuInfo.FreeMemory = uint64(memInfo.free)
 					gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 					gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-					// TODO dependency path?
+					gpuInfo.DependencyPath = depPath
 					oneapiGPUs = append(oneapiGPUs, gpuInfo)
 				}
 			}
