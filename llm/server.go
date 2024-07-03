@@ -131,7 +131,20 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	availableServers := availableServers()
+	availableServers := getAvailableServers()
+	if len(availableServers) == 0 {
+		if runtime.GOOS != "windows" {
+			slog.Warn("llama server binary disappeared, reinitializing payloads")
+			err = Init()
+			if err != nil {
+				slog.Warn("failed to reinitialize payloads", "error", err)
+				return nil, err
+			}
+			availableServers = getAvailableServers()
+		} else {
+			return nil, finalErr
+		}
+	}
 	var servers []string
 	if cpuRunner != "" {
 		servers = []string{cpuRunner}
