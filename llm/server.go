@@ -131,7 +131,20 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	availableServers := availableServers()
+	availableServers := getAvailableServers()
+	if len(availableServers) == 0 {
+		if runtime.GOOS != "windows" {
+			slog.Warn("llama server binary disappeared, reinitializing payloads")
+			err = Init()
+			if err != nil {
+				slog.Warn("failed to reinitialize payloads", "error", err)
+				return nil, err
+			}
+			availableServers = getAvailableServers()
+		} else {
+			return nil, finalErr
+		}
+	}
 	var servers []string
 	if cpuRunner != "" {
 		servers = []string{cpuRunner}
@@ -208,7 +221,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if g.Library == "metal" &&
 			uint64(opts.NumGPU) > 0 &&
 			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
-			opts.UseMMap = api.TriStateFalse
+			opts.UseMMap = new(bool)
+			*opts.UseMMap = false
 		}
 	}
 
@@ -219,10 +233,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	// Windows CUDA should not use mmap for best performance
 	// Linux  with a model larger than free space, mmap leads to thrashing
 	// For CPU loads we want the memory to be allocated, not FS cache
-	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == api.TriStateUndefined) ||
-		(runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && opts.UseMMap == api.TriStateUndefined) ||
-		(gpus[0].Library == "cpu" && opts.UseMMap == api.TriStateUndefined) ||
-		opts.UseMMap == api.TriStateFalse {
+	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == nil) ||
+		(runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && opts.UseMMap == nil) ||
+		(gpus[0].Library == "cpu" && opts.UseMMap == nil) ||
+		(opts.UseMMap != nil && !*opts.UseMMap) {
 		params = append(params, "--no-mmap")
 	}
 

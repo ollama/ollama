@@ -159,49 +159,18 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool     `json:"numa,omitempty"`
-	NumCtx    int      `json:"num_ctx,omitempty"`
-	NumBatch  int      `json:"num_batch,omitempty"`
-	NumGPU    int      `json:"num_gpu,omitempty"`
-	MainGPU   int      `json:"main_gpu,omitempty"`
-	LowVRAM   bool     `json:"low_vram,omitempty"`
-	F16KV     bool     `json:"f16_kv,omitempty"`
-	LogitsAll bool     `json:"logits_all,omitempty"`
-	VocabOnly bool     `json:"vocab_only,omitempty"`
-	UseMMap   TriState `json:"use_mmap,omitempty"`
-	UseMLock  bool     `json:"use_mlock,omitempty"`
-	NumThread int      `json:"num_thread,omitempty"`
-}
-
-type TriState int
-
-const (
-	TriStateUndefined TriState = -1
-	TriStateFalse     TriState = 0
-	TriStateTrue      TriState = 1
-)
-
-func (b *TriState) UnmarshalJSON(data []byte) error {
-	var v bool
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	if v {
-		*b = TriStateTrue
-	}
-	*b = TriStateFalse
-	return nil
-}
-
-func (b *TriState) MarshalJSON() ([]byte, error) {
-	if *b == TriStateUndefined {
-		return nil, nil
-	}
-	var v bool
-	if *b == TriStateTrue {
-		v = true
-	}
-	return json.Marshal(v)
+	UseNUMA   bool  `json:"numa,omitempty"`
+	NumCtx    int   `json:"num_ctx,omitempty"`
+	NumBatch  int   `json:"num_batch,omitempty"`
+	NumGPU    int   `json:"num_gpu,omitempty"`
+	MainGPU   int   `json:"main_gpu,omitempty"`
+	LowVRAM   bool  `json:"low_vram,omitempty"`
+	F16KV     bool  `json:"f16_kv,omitempty"`
+	LogitsAll bool  `json:"logits_all,omitempty"`
+	VocabOnly bool  `json:"vocab_only,omitempty"`
+	UseMMap   *bool `json:"use_mmap,omitempty"`
+	UseMLock  bool  `json:"use_mlock,omitempty"`
+	NumThread int   `json:"num_thread,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -444,19 +413,6 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 				continue
 			}
 
-			if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
-				val, ok := val.(bool)
-				if !ok {
-					return fmt.Errorf("option %q must be of type boolean", key)
-				}
-				if val {
-					field.SetInt(int64(TriStateTrue))
-				} else {
-					field.SetInt(int64(TriStateFalse))
-				}
-				continue
-			}
-
 			switch field.Kind() {
 			case reflect.Int:
 				switch t := val.(type) {
@@ -503,6 +459,17 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					slice[i] = str
 				}
 				field.Set(reflect.ValueOf(slice))
+			case reflect.Pointer:
+				var b bool
+				if field.Type() == reflect.TypeOf(&b) {
+					val, ok := val.(bool)
+					if !ok {
+						return fmt.Errorf("option %q must be of type boolean", key)
+					}
+					field.Set(reflect.ValueOf(&val))
+				} else {
+					return fmt.Errorf("unknown type loading config params: %v %v", field.Kind(), field.Type())
+				}
 			default:
 				return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 			}
@@ -545,7 +512,7 @@ func DefaultOptions() Options {
 			LowVRAM:   false,
 			F16KV:     true,
 			UseMLock:  false,
-			UseMMap:   TriStateUndefined,
+			UseMMap:   nil,
 			UseNUMA:   false,
 		},
 	}
@@ -615,19 +582,6 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 		} else {
 			field := valueOpts.FieldByName(opt.Name)
 			if field.IsValid() && field.CanSet() {
-				if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
-					boolVal, err := strconv.ParseBool(vals[0])
-					if err != nil {
-						return nil, fmt.Errorf("invalid bool value %s", vals)
-					}
-					if boolVal {
-						out[key] = TriStateTrue
-					} else {
-						out[key] = TriStateFalse
-					}
-					continue
-				}
-
 				switch field.Kind() {
 				case reflect.Float32:
 					floatVal, err := strconv.ParseFloat(vals[0], 32)
@@ -655,6 +609,17 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 				case reflect.Slice:
 					// TODO: only string slices are supported right now
 					out[key] = vals
+				case reflect.Pointer:
+					var b bool
+					if field.Type() == reflect.TypeOf(&b) {
+						boolVal, err := strconv.ParseBool(vals[0])
+						if err != nil {
+							return nil, fmt.Errorf("invalid bool value %s", vals)
+						}
+						out[key] = &boolVal
+					} else {
+						return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
+					}
 				default:
 					return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
 				}

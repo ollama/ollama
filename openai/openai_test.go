@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +72,8 @@ func TestMiddleware(t *testing.T) {
 				req.Header.Set("Content-Type", "application/json")
 			},
 			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Equal(t, http.StatusOK, resp.Code)
+
 				var chatResp ChatCompletion
 				if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 					t.Fatal(err)
@@ -84,7 +88,7 @@ func TestMiddleware(t *testing.T) {
 				}
 			},
 		},
-		{
+    		{
 			Name:     "chat handler with image content",
 			Method:   http.MethodPost,
 			Path:     "/api/chat",
@@ -159,6 +163,129 @@ func TestMiddleware(t *testing.T) {
 			},
 		},
 		{
+			Name:     "completions handler",
+			Method:   http.MethodPost,
+			Path:     "/api/generate",
+			TestPath: "/api/generate",
+			Handler:  CompletionsMiddleware,
+			Endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.GenerateResponse{
+					Response: "Hello!",
+				})
+			},
+			Setup: func(t *testing.T, req *http.Request) {
+				body := CompletionRequest{
+					Model:  "test-model",
+					Prompt: "Hello",
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Equal(t, http.StatusOK, resp.Code)
+				var completionResp Completion
+				if err := json.NewDecoder(resp.Body).Decode(&completionResp); err != nil {
+					t.Fatal(err)
+				}
+
+				if completionResp.Object != "text_completion" {
+					t.Fatalf("expected text_completion, got %s", completionResp.Object)
+				}
+
+				if completionResp.Choices[0].Text != "Hello!" {
+					t.Fatalf("expected Hello!, got %s", completionResp.Choices[0].Text)
+				}
+			},
+		},
+		{
+			Name:     "completions handler with params",
+			Method:   http.MethodPost,
+			Path:     "/api/generate",
+			TestPath: "/api/generate",
+			Handler:  CompletionsMiddleware,
+			Endpoint: func(c *gin.Context) {
+				var generateReq api.GenerateRequest
+				if err := c.ShouldBindJSON(&generateReq); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+					return
+				}
+				temperature := generateReq.Options["temperature"].(float64)
+				var assistantMessage string
+
+				switch temperature {
+				case 1.6:
+					assistantMessage = "Received temperature of 1.6"
+				default:
+					assistantMessage = fmt.Sprintf("Received temperature of %f", temperature)
+				}
+
+				c.JSON(http.StatusOK, api.GenerateResponse{
+					Response: assistantMessage,
+				})
+			},
+			Setup: func(t *testing.T, req *http.Request) {
+				temp := float32(0.8)
+				body := CompletionRequest{
+					Model:       "test-model",
+					Prompt:      "Hello",
+					Temperature: &temp,
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Equal(t, http.StatusOK, resp.Code)
+				var completionResp Completion
+				if err := json.NewDecoder(resp.Body).Decode(&completionResp); err != nil {
+					t.Fatal(err)
+				}
+
+				if completionResp.Object != "text_completion" {
+					t.Fatalf("expected text_completion, got %s", completionResp.Object)
+				}
+
+				if completionResp.Choices[0].Text != "Received temperature of 1.6" {
+					t.Fatalf("expected Received temperature of 1.6, got %s", completionResp.Choices[0].Text)
+				}
+			},
+		},
+		{
+			Name:     "completions handler with error",
+			Method:   http.MethodPost,
+			Path:     "/api/generate",
+			TestPath: "/api/generate",
+			Handler:  CompletionsMiddleware,
+			Endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			},
+			Setup: func(t *testing.T, req *http.Request) {
+				body := CompletionRequest{
+					Model:  "test-model",
+					Prompt: "Hello",
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				if resp.Code != http.StatusBadRequest {
+					t.Fatalf("expected 400, got %d", resp.Code)
+				}
+
+				if !strings.Contains(resp.Body.String(), `"invalid request"`) {
+					t.Fatalf("error was not forwarded")
+				}
+			},
+		},
+		{
 			Name:     "list handler",
 			Method:   http.MethodGet,
 			Path:     "/api/tags",
@@ -174,6 +301,8 @@ func TestMiddleware(t *testing.T) {
 				})
 			},
 			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Equal(t, http.StatusOK, resp.Code)
+
 				var listResp ListCompletion
 				if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 					t.Fatal(err)
@@ -236,8 +365,6 @@ func TestMiddleware(t *testing.T) {
 
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
-
-			assert.Equal(t, http.StatusOK, resp.Code)
 
 			tc.Expected(t, resp)
 		})
