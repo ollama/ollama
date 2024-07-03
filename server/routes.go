@@ -482,14 +482,9 @@ func normalize(vec []float32) []float32 {
 		sum += float64(v * v)
 	}
 
-	sum = math.Sqrt(sum)
-
-	var norm float32
-
+	norm := float32(0.0)
 	if sum > 0 {
-		norm = float32(1.0 / sum)
-	} else {
-		norm = 0.0
+		norm = float32(1.0 / math.Sqrt(sum))
 	}
 
 	for i := range vec {
