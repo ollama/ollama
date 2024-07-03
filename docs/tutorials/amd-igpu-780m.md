@@ -101,9 +101,3 @@ $ollama run llama2:latest "where was beethoven born?" --verbose
 *NOTE* 
 - Performance in Tokens/s
 - LLM is quantized as Q4_0 at default in Ollama
-
-
-
-
-
-
