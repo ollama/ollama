@@ -44,7 +44,7 @@ func TestLoad(t *testing.T) {
 		opts:            api.DefaultOptions(),
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
-		sessionDuration: 2,
+		sessionDuration: &api.Duration{Duration: 2 * time.Second},
 	}
 	// Fail to load model first
 	s.newServerFn = func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
@@ -142,7 +142,7 @@ func newScenario(t *testing.T, ctx context.Context, modelName string, estimatedV
 		ctx:             scenario.ctx,
 		model:           model,
 		opts:            api.DefaultOptions(),
-		sessionDuration: 5 * time.Millisecond,
+		sessionDuration: &api.Duration{Duration: 5 * time.Millisecond},
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 	}
@@ -156,18 +156,18 @@ func TestRequests(t *testing.T) {
 
 	// Same model, same request
 	scenario1a := newScenario(t, ctx, "ollama-model-1", 10)
-	scenario1a.req.sessionDuration = 5 * time.Millisecond
+	scenario1a.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
 	scenario1b := newScenario(t, ctx, "ollama-model-1", 11)
 	scenario1b.req.model = scenario1a.req.model
 	scenario1b.ggml = scenario1a.ggml
-	scenario1b.req.sessionDuration = 0
+	scenario1b.req.sessionDuration = &api.Duration{Duration: 0}
 
 	// simple reload of same model
 	scenario2a := newScenario(t, ctx, "ollama-model-1", 20)
 	tmpModel := *scenario1a.req.model
 	scenario2a.req.model = &tmpModel
 	scenario2a.ggml = scenario1a.ggml
-	scenario2a.req.sessionDuration = 5 * time.Millisecond
+	scenario2a.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
 
 	// Multiple loaded models
 	scenario3a := newScenario(t, ctx, "ollama-model-3a", 1*format.GigaByte)
@@ -318,11 +318,11 @@ func TestGetRunner(t *testing.T) {
 	defer done()
 
 	scenario1a := newScenario(t, ctx, "ollama-model-1a", 10)
-	scenario1a.req.sessionDuration = 0
+	scenario1a.req.sessionDuration = &api.Duration{Duration: 0}
 	scenario1b := newScenario(t, ctx, "ollama-model-1b", 10)
-	scenario1b.req.sessionDuration = 0
+	scenario1b.req.sessionDuration = &api.Duration{Duration: 0}
 	scenario1c := newScenario(t, ctx, "ollama-model-1c", 10)
-	scenario1c.req.sessionDuration = 0
+	scenario1c.req.sessionDuration = &api.Duration{Duration: 0}
 	envconfig.MaxQueuedRequests = 1
 	s := InitScheduler(ctx)
 	s.getGpuFn = func() gpu.GpuInfoList {
@@ -402,7 +402,7 @@ func TestPrematureExpired(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
-	time.Sleep(scenario1a.req.sessionDuration)
+	time.Sleep(scenario1a.req.sessionDuration.Duration)
 	scenario1a.ctxDone()
 	time.Sleep(20 * time.Millisecond)
 	require.LessOrEqual(t, len(s.finishedReqCh), 1)
@@ -423,7 +423,7 @@ func TestUseLoadedRunner(t *testing.T) {
 		ctx:             ctx,
 		opts:            api.DefaultOptions(),
 		successCh:       make(chan *runnerRef, 1),
-		sessionDuration: 2,
+		sessionDuration: &api.Duration{Duration: 2},
 	}
 	finished := make(chan *LlmRequest)
 	llm1 := &mockLlm{estimatedVRAMByGPU: map[string]uint64{}}
@@ -614,7 +614,7 @@ func TestAlreadyCanceled(t *testing.T) {
 	dctx, done2 := context.WithCancel(ctx)
 	done2()
 	scenario1a := newScenario(t, dctx, "ollama-model-1", 10)
-	scenario1a.req.sessionDuration = 0
+	scenario1a.req.sessionDuration = &api.Duration{Duration: 0}
 	s := InitScheduler(ctx)
 	slog.Info("scenario1a")
 	s.pendingReqCh <- scenario1a.req
