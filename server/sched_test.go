@@ -648,10 +648,6 @@ func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitRes
 func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	return s.completionResp
 }
-
-//	func (s *mockLlm) Embedding(ctx context.Context, prompt string) ([]float64, error) {
-//		return s.embeddingResp, s.embeddingRespErr
-//	}
 func (s *mockLlm) Embed(ctx context.Context, input []string) ([][]float32, error) {
 	return s.embedResp, s.embedRespErr
 }
