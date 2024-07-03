@@ -43,10 +43,10 @@ var (
 	MaxRunners int
 	// Set via OLLAMA_MAX_QUEUE in the environment
 	MaxQueuedRequests int
-	// Set via OLLAMA_MODELS in the environment
-	ModelsDir string
 	// Set via OLLAMA_MAX_VRAM in the environment
 	MaxVRAM uint64
+	// Set via OLLAMA_MODELS in the environment
+	ModelsDir string
 	// Set via OLLAMA_NOHISTORY in the environment
 	NoHistory bool
 	// Set via OLLAMA_NOPRUNE in the environment
