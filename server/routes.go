@@ -630,6 +630,64 @@ func (s *Server) DeleteModelHandler(c *gin.Context) {
 	}
 }
 
+func (s *Server) SaveModelHandler(c *gin.Context) {
+	var req api.LoadModelRequest
+	err := c.ShouldBindJSON(&req)
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Model == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid model name"})
+		return
+	}
+
+	c.Header("Content-Type", "application/x-tar")
+	c.Stream(func(w io.Writer) bool {
+		if err := saveModel(name, w); err != nil {
+			slog.Error(fmt.Sprintf("save model failed with: %v", err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+
+		return false
+	})
+}
+
+func (s *Server) LoadModelHandler(c *gin.Context) {
+	var resp api.LoadModelResponse
+	req := c.Request
+
+	if req == nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	}
+	err := req.ParseForm()
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	model, err := loadModel(req.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	resp.Models = append(resp.Models, model)
+	c.JSON(http.StatusOK, resp)
+}
+
 func (s *Server) ShowModelHandler(c *gin.Context) {
 	var req api.ShowRequest
 	err := c.ShouldBindJSON(&req)
@@ -1042,11 +1100,13 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/create", s.CreateModelHandler)
 	r.POST("/api/push", s.PushModelHandler)
 	r.POST("/api/copy", s.CopyModelHandler)
+	r.POST("/api/load", s.LoadModelHandler)
 	r.DELETE("/api/delete", s.DeleteModelHandler)
 	r.POST("/api/show", s.ShowModelHandler)
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.ProcessHandler)
+	r.GET("/api/save", s.SaveModelHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)

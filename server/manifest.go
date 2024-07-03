@@ -24,6 +24,13 @@ type Manifest struct {
 	digest   string
 }
 
+const schemaVersion = "0.0.1"
+
+type Index struct {
+	SchemaVersion string   `json:"schemaVersion"`
+	Manifests     []string `json:"manifests"`
+}
+
 func (m *Manifest) Size() (size int64) {
 	for _, layer := range append(m.Layers, m.Config) {
 		size += layer.Size

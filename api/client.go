@@ -197,6 +197,85 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	return nil
 }
 
+func (c *Client) stream_raw(ctx context.Context, method, path string, data any, wr io.Writer) error {
+	var buf *bytes.Buffer
+	if data != nil {
+		bts, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+
+		buf = bytes.NewBuffer(bts)
+	}
+
+	requestURL := c.base.JoinPath(path)
+	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), buf)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/x-tar")
+	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	response, err := c.http.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode >= http.StatusBadRequest {
+		respBody, err := io.ReadAll(response.Body)
+		if err != nil {
+			return err
+		}
+
+		var errorResponse struct {
+			Error string `json:"error,omitempty"`
+		}
+
+		if err := json.Unmarshal(respBody, &errorResponse); err != nil {
+			return fmt.Errorf("unmarshal: %w", err)
+		}
+		return fmt.Errorf("Failed to save model: %v", errorResponse.Error)
+	}
+	if _, err := io.Copy(wr, response.Body); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) do_raw(ctx context.Context, method, path string, rd io.Reader, resp any) error {
+	requestURL := c.base.JoinPath(path)
+	request, err := http.NewRequestWithContext(ctx, method, requestURL.String(), rd)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Content-Type", "application/x-tar")
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	respObj, err := c.http.Do(request)
+	if err != nil {
+		return err
+	}
+	defer respObj.Body.Close()
+	respBody, err := io.ReadAll(respObj.Body)
+	if err != nil {
+		return err
+	}
+
+	if err = checkError(respObj, respBody); err != nil {
+		return err
+	}
+
+	if err := json.Unmarshal(respBody, resp); err != nil {
+		return err
+	}
+	return nil
+}
+
 // GenerateResponseFunc is a function that [Client.Generate] invokes every time
 // a response is received from the service. If this function returns an error,
 // [Client.Generate] will stop generating and return this error.
@@ -301,6 +380,20 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 		return nil, err
 	}
 	return &lr, nil
+}
+
+// Save a model to a tarball.
+func (c *Client) SaveModel(ctx context.Context, req *LoadModelRequest, wr io.Writer) error {
+	return c.stream_raw(ctx, http.MethodGet, "/api/save", req, wr)
+}
+
+// LoadModel loads a model from a tarball.
+func (c *Client) LoadModel(ctx context.Context, rd io.Reader) (*LoadModelResponse, error) {
+	var resp LoadModelResponse
+	if err := c.do_raw(ctx, http.MethodPost, "/api/load", rd, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // List running models.
