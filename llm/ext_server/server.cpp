@@ -3191,7 +3191,6 @@ int main(int argc, char **argv) {
                         if (result.result_json.count("results")) {
                             // result for multi-task
                             responses = result.result_json.at("results");
-                            LOG_INFO("results", {result.result_json});
                         } else {
                             // result for single task
                             responses = std::vector<json>(1, result.result_json);

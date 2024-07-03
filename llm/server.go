@@ -33,7 +33,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embedding(ctx context.Context, prompt string) ([]float64, error)
+	// Embedding(ctx context.Context, prompt string) ([]float64, error)
 	Embed(ctx context.Context, input []string) ([][]float32, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
@@ -903,64 +903,6 @@ func (s *llmServer) Embed(ctx context.Context, input []string) ([][]float32, err
 	}
 
 	return embedding.Embedding, nil
-}
-
-type EmbeddingRequest struct {
-	Content string `json:"content"`
-}
-
-type EmbeddingResponse struct {
-	Embedding [][]float64 `json:"embedding"`
-}
-
-func (s *llmServer) Embedding(ctx context.Context, prompt string) ([]float64, error) {
-	if err := s.sem.Acquire(ctx, 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
-		return nil, err
-	}
-	defer s.sem.Release(1)
-
-	// Make sure the server is ready
-	status, err := s.getServerStatusRetry(ctx)
-	if err != nil {
-		return nil, err
-	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
-	data, err := json.Marshal(EmbeddingRequest{Content: prompt})
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling embed data: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
-	if err != nil {
-		return nil, fmt.Errorf("error creating embed request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do embedding request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading embed response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		log.Printf("llm encode error: %s", body)
-		return nil, fmt.Errorf("%s", body)
-	}
-
-	var embedding EmbeddingResponse
-	if err := json.Unmarshal(body, &embedding); err != nil {
-		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
-	}
-
-	return embedding.Embedding[0], nil
 }
 
 type TokenizeRequest struct {

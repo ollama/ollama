@@ -554,11 +554,11 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if req.Prompt == "" {
-		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
+		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float32{}})
 		return
 	}
 
-	embedding, err := runner.llama.Embedding(c.Request.Context(), req.Prompt)
+	embedding, err := runner.llama.Embed(c.Request.Context(), []string{req.Prompt})
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
@@ -566,7 +566,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	}
 
 	resp := api.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding: embedding[0],
 	}
 	c.JSON(http.StatusOK, resp)
 }
