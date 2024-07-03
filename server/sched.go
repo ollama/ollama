@@ -139,6 +139,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			}
 
 			for {
+				cpus := s.getCpuFn()
+				var systemMem gpu.GpuInfo
+				if len(cpus) > 0 {
+					systemMem = cpus[0]
+				}
 				var runnerToExpire *runnerRef
 				s.loadedMu.Lock()
 				runner := s.loaded[pending.model.ModelPath]
@@ -189,6 +194,27 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					ggml, err := llm.LoadModel(pending.model.ModelPath, 0)
 					if err != nil {
 						pending.errCh <- err
+						break
+					}
+
+					// Block attempting to load a model larger than system memory + GPU memory
+					estimate := llm.EstimateGPULayers(gpus, ggml, pending.model.ProjectorPaths, pending.opts)
+					maxSize := systemMem.FreeMemory
+					for _, gpu := range gpus {
+						if gpu.Library == "cpu" {
+							continue
+						}
+						if loadedCount == 0 {
+							// If no other models are loaded, set the limit based on what's available
+							maxSize += gpu.FreeMemory
+						} else {
+							// Other models could be unloaded, favor total memory for limit
+							maxSize += gpu.TotalMemory
+						}
+					}
+					if estimate.TotalSize > maxSize {
+						slog.Warn("model request too large for system", "requested", format.HumanBytes2(estimate.TotalSize), "system", format.HumanBytes2(maxSize))
+						pending.errCh <- fmt.Errorf("requested model (%s) is too large for this system (%s)", format.HumanBytes2(estimate.TotalSize), format.HumanBytes2(maxSize))
 						break
 					}
 

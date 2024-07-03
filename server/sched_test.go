@@ -199,6 +199,8 @@ func TestRequests(t *testing.T) {
 		require.Equal(t, resp.llama, scenario1a.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, scenario1a.req.errCh)
+	case err := <-scenario1a.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
@@ -212,6 +214,8 @@ func TestRequests(t *testing.T) {
 		require.Equal(t, resp.llama, scenario1a.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, scenario1b.req.errCh)
+	case err := <-scenario1b.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
@@ -230,6 +234,8 @@ func TestRequests(t *testing.T) {
 		require.Equal(t, resp.llama, scenario2a.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, scenario2a.req.errCh)
+	case err := <-scenario2a.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
@@ -246,6 +252,8 @@ func TestRequests(t *testing.T) {
 		require.Equal(t, resp.llama, scenario3a.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, scenario3a.req.errCh)
+	case err := <-scenario3a.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
@@ -262,6 +270,8 @@ func TestRequests(t *testing.T) {
 		require.Equal(t, resp.llama, scenario3b.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, scenario3b.req.errCh)
+	case err := <-scenario3b.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
@@ -278,6 +288,8 @@ func TestRequests(t *testing.T) {
 		require.Equal(t, resp.llama, scenario3c.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, scenario3c.req.errCh)
+	case err := <-scenario3c.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
