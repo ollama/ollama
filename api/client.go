@@ -358,7 +358,11 @@ func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*Embedd
 
 // CreateBlob creates a blob from a file on the server. digest is the
 // expected SHA256 digest of the file, and r represents the file.
-func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {
+func (c *Client) CreateBlob(ctx context.Context, digest string, local bool, r io.Reader) error {
+	headers := make(http.Header)
+	if local {
+		headers.Set("X-Redirect-Create", "1")
+	}
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil)
 }
 
