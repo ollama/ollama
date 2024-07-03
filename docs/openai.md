@@ -27,6 +27,11 @@ chat_completion = client.chat.completions.create(
     ],
     model='llama3',
 )
+
+embeddings = client.embeddings.create(
+    model="all-minilm",
+    input=["why is the sky blue?", "why is the grass green?"]
+)
 ```
 
 ### OpenAI JavaScript library
@@ -45,6 +50,12 @@ const chatCompletion = await openai.chat.completions.create({
   messages: [{ role: 'user', content: 'Say this is a test' }],
   model: 'llama3',
 })
+
+const embedding = await openai.embeddings.create({
+  model: "all-minilm",
+  input: ["why is the sky blue?", "why is the grass green?"],
+});
+
 ```
 
 ### `curl`
@@ -66,6 +77,12 @@ curl http://localhost:11434/v1/chat/completions \
         ]
     }'
 
+curl http://localhost:11434/v1/embeddings \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "all-minilm",
+        "input": ["why is the sky blue?", "why is the grass green?"]
+    }'
 ```
 
 ## Endpoints
@@ -106,6 +123,24 @@ curl http://localhost:11434/v1/chat/completions \
 #### Notes
 
 - `usage.prompt_tokens` will be 0 for completions where prompt evaluation is cached
+
+### `/v1/embeddings`
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `input`
+  - [x] string
+  - [x] array of strings
+  - [ ] array of tokens
+  - [ ] array of token arrays
+- [ ] `encoding format`
+- [ ] `dimensions`
+- [ ] `user`
+
+## Notes
+
+- TODO: update with usage choice
 
 ## Models
 
