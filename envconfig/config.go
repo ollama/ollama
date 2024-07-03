@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,16 +14,6 @@ import (
 	"strings"
 	"time"
 )
-
-type OllamaHost struct {
-	Scheme string
-	Host   string
-	Port   string
-}
-
-func (o OllamaHost) String() string {
-	return fmt.Sprintf("%s://%s:%s", o.Scheme, o.Host, o.Port)
-}
 
 var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
@@ -41,13 +32,54 @@ func Debug() bool {
 	return false
 }
 
+// Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable.
+// Default is scheme "http" and host "127.0.0.1:11434"
+func Host() *url.URL {
+	defaultPort := "11434"
+
+	s := os.Getenv("OLLAMA_HOST")
+	s = strings.TrimSpace(strings.Trim(strings.TrimSpace(s), "\"'"))
+	scheme, hostport, ok := strings.Cut(s, "://")
+	switch {
+	case !ok:
+		scheme, hostport = "http", s
+	case scheme == "http":
+		defaultPort = "80"
+	case scheme == "https":
+		defaultPort = "443"
+	}
+
+	// trim trailing slashes
+	hostport = strings.TrimRight(hostport, "/")
+
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host, port = "127.0.0.1", defaultPort
+		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
+			host = ip.String()
+		} else if hostport != "" {
+			host = hostport
+		}
+	}
+
+	if n, err := strconv.ParseInt(port, 10, 32); err != nil || n > 65535 || n < 0 {
+		return &url.URL{
+			Scheme: scheme,
+			Host:   net.JoinHostPort(host, defaultPort),
+		}
+	}
+
+	return &url.URL{
+		Scheme: scheme,
+		Host:   net.JoinHostPort(host, port),
+	}
+}
+
 var (
 	// Set via OLLAMA_ORIGINS in the environment
 	AllowOrigins []string
 	// Experimental flash attention
 	FlashAttention bool
-	// Set via OLLAMA_HOST in the environment
-	Host *OllamaHost
 	// Set via OLLAMA_KEEP_ALIVE in the environment
 	KeepAlive time.Duration
 	// Set via OLLAMA_LLM_LIBRARY in the environment
@@ -95,7 +127,7 @@ func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", Host, "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
@@ -271,11 +303,6 @@ func LoadConfig() {
 		slog.Error("invalid setting", "OLLAMA_MODELS", ModelsDir, "error", err)
 	}
 
-	Host, err = getOllamaHost()
-	if err != nil {
-		slog.Error("invalid setting", "OLLAMA_HOST", Host, "error", err, "using default port", Host.Port)
-	}
-
 	if set, err := strconv.ParseBool(clean("OLLAMA_INTEL_GPU")); err == nil {
 		IntelGpu = set
 	}
@@ -296,50 +323,6 @@ func getModelsDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".ollama", "models"), nil
-}
-
-func getOllamaHost() (*OllamaHost, error) {
-	defaultPort := "11434"
-
-	hostVar := os.Getenv("OLLAMA_HOST")
-	hostVar = strings.TrimSpace(strings.Trim(strings.TrimSpace(hostVar), "\"'"))
-
-	scheme, hostport, ok := strings.Cut(hostVar, "://")
-	switch {
-	case !ok:
-		scheme, hostport = "http", hostVar
-	case scheme == "http":
-		defaultPort = "80"
-	case scheme == "https":
-		defaultPort = "443"
-	}
-
-	// trim trailing slashes
-	hostport = strings.TrimRight(hostport, "/")
-
-	host, port, err := net.SplitHostPort(hostport)
-	if err != nil {
-		host, port = "127.0.0.1", defaultPort
-		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
-			host = ip.String()
-		} else if hostport != "" {
-			host = hostport
-		}
-	}
-
-	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 0 {
-		return &OllamaHost{
-			Scheme: scheme,
-			Host:   host,
-			Port:   defaultPort,
-		}, ErrInvalidHostPort
-	}
-
-	return &OllamaHost{
-		Scheme: scheme,
-		Host:   host,
-		Port:   port,
-	}, nil
 }
 
 func loadKeepAlive(ka string) {
