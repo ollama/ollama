@@ -88,7 +88,7 @@ func TestMiddleware(t *testing.T) {
 				}
 			},
 		},
-    		{
+		{
 			Name:     "chat handler with image content",
 			Method:   http.MethodPost,
 			Path:     "/api/chat",
@@ -212,6 +212,7 @@ func TestMiddleware(t *testing.T) {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 					return
 				}
+
 				temperature := generateReq.Options["temperature"].(float64)
 				var assistantMessage string
 
