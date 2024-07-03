@@ -8,14 +8,14 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestEstimateGPULayers(t *testing.T) {
-	envconfig.Debug = true
+	t.Setenv("OLLAMA_DEBUG", "1")
+
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)
 	require.NoError(t, err)

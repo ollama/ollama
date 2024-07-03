@@ -1093,7 +1093,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 func Serve(ln net.Listener) error {
 	level := slog.LevelInfo
-	if envconfig.Debug {
+	if envconfig.Debug() {
 		level = slog.LevelDebug
 	}
 

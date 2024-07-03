@@ -611,7 +611,7 @@ func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
 }
 
 func getVerboseState() C.uint16_t {
-	if envconfig.Debug {
+	if envconfig.Debug() {
 		return C.uint16_t(1)
 	}
 	return C.uint16_t(0)

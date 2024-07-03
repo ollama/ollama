@@ -26,11 +26,24 @@ func (o OllamaHost) String() string {
 
 var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
+// Debug returns true if the OLLAMA_DEBUG environment variable is set to a truthy value.
+func Debug() bool {
+	if s := clean("OLLAMA_DEBUG"); s != "" {
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			// non-empty value is truthy
+			return true
+		}
+
+		return b
+	}
+
+	return false
+}
+
 var (
 	// Set via OLLAMA_ORIGINS in the environment
 	AllowOrigins []string
-	// Set via OLLAMA_DEBUG in the environment
-	Debug bool
 	// Experimental flash attention
 	FlashAttention bool
 	// Set via OLLAMA_HOST in the environment
@@ -80,7 +93,7 @@ type EnvVar struct {
 
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
-		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host, "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
@@ -137,15 +150,6 @@ func init() {
 }
 
 func LoadConfig() {
-	if debug := clean("OLLAMA_DEBUG"); debug != "" {
-		d, err := strconv.ParseBool(debug)
-		if err == nil {
-			Debug = d
-		} else {
-			Debug = true
-		}
-	}
-
 	if fa := clean("OLLAMA_FLASH_ATTENTION"); fa != "" {
 		d, err := strconv.ParseBool(fa)
 		if err == nil {
