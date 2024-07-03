@@ -8,105 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"testing"
 	"text/template"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 )
-
-func TestFuncs(t *testing.T) {
-	t.Run("toJson", func(t *testing.T) {
-		cases := []struct {
-			input    any
-			expected string
-		}{
-			{nil, "null"},
-			{true, "true"},
-			{false, "false"},
-			{0, "0"},
-			{1, "1"},
-			{1.0, "1"},
-			{1.1, "1.1"},
-			{"", `""`},
-			{"hello", `"hello"`},
-			{[]int{1, 2, 3}, "[1,2,3]"},
-			{[]string{"a", "b", "c"}, `["a","b","c"]`},
-			{map[string]int{"a": 1, "b": 2}, `{"a":1,"b":2}`},
-			{map[string]string{"a": "b", "c": "d"}, `{"a":"b","c":"d"}`},
-		}
-
-		for _, tt := range cases {
-			t.Run(tt.expected, func(t *testing.T) {
-				toJson, ok := funcs["toJson"].(func(any) string)
-				if !ok {
-					t.Fatal("toJson is not a function")
-				}
-
-				if s := toJson(tt.input); s != tt.expected {
-					t.Errorf("expected %q, got %q", tt.expected, s)
-				}
-			})
-		}
-	})
-
-	t.Run("add", func(t *testing.T) {
-		cases := []struct {
-			a, b     int
-			expected int
-		}{
-			{0, 0, 0},
-			{0, 1, 1},
-			{1, 0, 1},
-			{1, 1, 2},
-			{1, -1, 0},
-			{-1, 1, 0},
-			{-1, -1, -2},
-		}
-
-		for _, tt := range cases {
-			t.Run(strconv.Itoa(tt.expected), func(t *testing.T) {
-				add, ok := funcs["add"].(func(int, int) int)
-				if !ok {
-					t.Fatal("add is not a function")
-				}
-
-				if n := add(tt.a, tt.b); n != tt.expected {
-					t.Errorf("expected %d, got %d", tt.expected, n)
-				}
-			})
-		}
-	})
-
-	t.Run("sub", func(t *testing.T) {
-		cases := []struct {
-			a, b     int
-			expected int
-		}{
-			{0, 0, 0},
-			{0, 1, -1},
-			{1, 0, 1},
-			{1, 1, 0},
-			{1, -1, 2},
-			{-1, 1, -2},
-			{-1, -1, 0},
-		}
-
-		for _, tt := range cases {
-			t.Run(strconv.Itoa(tt.expected), func(t *testing.T) {
-				sub, ok := funcs["sub"].(func(int, int) int)
-				if !ok {
-					t.Fatal("sub is not a function")
-				}
-
-				if n := sub(tt.a, tt.b); n != tt.expected {
-					t.Errorf("expected %d, got %d", tt.expected, n)
-				}
-			})
-		}
-	})
-}
 
 func TestNamed(t *testing.T) {
 	f, err := os.Open(filepath.Join("testdata", "templates.jsonl"))
@@ -197,8 +104,8 @@ func TestExecuteWithMessages(t *testing.T) {
 			[]template{
 				{"no response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `},
 				{"response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
-				{"messages", `{{- range .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if and (eq (index $.Messages (sub (len $.Messages) 1)) .) $.System }}{{ $.System }}{{ "\n\n" }}
+				{"messages", `{{- range $index, $_ := .Messages }}
+{{- if eq .Role "user" }}[INST] {{ if and (eq (len (slice $.Messages $index)) 1) $.System }}{{ $.System }}{{ "\n\n" }}
 {{- end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}
 {{- end }}
 {{- end }}`},
@@ -218,8 +125,8 @@ func TestExecuteWithMessages(t *testing.T) {
 				{"no response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `},
 				{"response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
 				{"messages", `
-{{- range .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if and (eq (index $.Messages (sub (len $.Messages) 1)) .) $.System }}{{ $.System }}{{ "\n\n" }}
+{{- range $index, $_ := .Messages }}
+{{- if eq .Role "user" }}[INST] {{ if and (eq (len (slice $.Messages $index)) 1) $.System }}{{ $.System }}{{ "\n\n" }}
 {{- end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}
 {{- end }}
 {{- end }}`},
@@ -248,8 +155,8 @@ What is your name?[/INST] `,
 {{ .Response }}<|im_end|>
 `},
 				{"messages", `
-{{- range .Messages }}
-{{- if and (eq .Role "user") (eq (index $.Messages (sub (len $.Messages) 1)) .) $.System }}<|im_start|>system
+{{- range $index, $_ := .Messages }}
+{{- if and (eq .Role "user") (eq (len (slice $.Messages $index)) 1) $.System }}<|im_start|>system
 {{ $.System }}<|im_end|>{{ "\n" }}
 {{- end }}<|im_start|>{{ .Role }}
 {{ .Content }}<|im_end|>{{ "\n" }}

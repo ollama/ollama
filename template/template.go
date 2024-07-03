@@ -102,25 +102,8 @@ var response = parse.ActionNode{
 	},
 }
 
-var funcs = template.FuncMap{
-	"toJson": func(v any) string {
-		b, err := json.Marshal(v)
-		if err != nil {
-			return ""
-		}
-
-		return string(b)
-	},
-	"add": func(a, b int) int {
-		return a + b
-	},
-	"sub": func(a, b int) int {
-		return a - b
-	},
-}
-
 func Parse(s string) (*Template, error) {
-	tmpl := template.New("").Option("missingkey=zero").Funcs(funcs)
+	tmpl := template.New("").Option("missingkey=zero")
 
 	tmpl, err := tmpl.Parse(s)
 	if err != nil {
