@@ -33,8 +33,8 @@ func TestAllMiniLMEmbed(t *testing.T) {
 		t.Fatalf("expected 384 floats, got %d", len(res.Embeddings[0]))
 	}
 
-	if res.Embeddings[0][0] != 0.010071029038540258 {
-		t.Fatalf("expected 0.010071029038540258, got %f", res.Embeddings[0][0])
+	if res.Embeddings[0][0] != 0.010071029 {
+		t.Fatalf("expected 0.010071029, got %f", res.Embeddings[0][0])
 	}
 }
 
@@ -61,8 +61,8 @@ func TestAllMiniLMBatchEmbed(t *testing.T) {
 		t.Fatalf("expected 384 floats, got %d", len(res.Embeddings[0]))
 	}
 
-	if res.Embeddings[0][0] != 0.010071029038540258 || res.Embeddings[1][0] != -0.00980270794235093 {
-		t.Fatalf("expected 0.010071029038540258 and -0.00980270794235093, got %f and %f", res.Embeddings[0][0], res.Embeddings[1][0])
+	if res.Embeddings[0][0] != 0.010071029 || res.Embeddings[1][0] != -0.0098027075 {
+		t.Fatalf("expected 0.010071029 and -0.0098027075, got %f and %f", res.Embeddings[0][0], res.Embeddings[1][0])
 	}
 }
 
