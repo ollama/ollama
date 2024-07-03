@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -121,8 +122,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if model.IsEmbedding() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "embedding models do not support generate"})
+	if !model.Has(CapabilityCompletion) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s does not support generate", req.Model)})
 		return
 	}
 
@@ -161,6 +162,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	tmpl, err := template.Parse(req.Template)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	checkpointLoaded := time.Now()
 
 	var prompt string
@@ -169,7 +176,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = req.Prompt
 	case req.Prompt != "":
 		if req.Template == "" {
-			req.Template = model.Template
+			tmpl = model.Template
 		}
 
 		if req.System == "" {
@@ -187,7 +194,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		sb.WriteString(req.Prompt)
 
-		p, err := Prompt(req.Template, req.System, sb.String(), "", true)
+		p, err := Prompt(tmpl, req.System, sb.String(), "", true)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -242,7 +249,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				resp.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
 				if !req.Raw {
-					p, err := Prompt(req.Template, req.System, req.Prompt, generated.String(), false)
+					p, err := Prompt(tmpl, req.System, req.Prompt, generated.String(), false)
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 						return
@@ -680,7 +687,10 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	if req.Template != "" {
-		m.Template = req.Template
+		m.Template, err = template.Parse(req.Template)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	msgs := make([]api.Message, 0)
@@ -701,7 +711,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	resp := &api.ShowResponse{
 		License:    strings.Join(m.License, "\n"),
 		System:     m.System,
-		Template:   m.Template,
+		Template:   m.Template.String(),
 		Details:    modelDetails,
 		Messages:   msgs,
 		ModifiedAt: manifest.fi.ModTime(),
@@ -1040,6 +1050,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
+	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListModelsHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowModelHandler)
 
@@ -1248,7 +1259,7 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
-func chatPrompt(ctx context.Context, runner *runnerRef, template string, messages []api.Message, numCtx int) (string, error) {
+func chatPrompt(ctx context.Context, runner *runnerRef, template *template.Template, messages []api.Message, numCtx int) (string, error) {
 	encode := func(s string) ([]int, error) {
 		return runner.llama.Tokenize(ctx, s)
 	}
@@ -1296,8 +1307,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	if model.IsEmbedding() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "embedding models do not support chat"})
+	if !model.Has(CapabilityCompletion) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s does not support chat", req.Model)})
 		return
 	}
 

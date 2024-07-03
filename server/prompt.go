@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"text/template"
+
 	"text/template/parse"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/template"
 )
 
 // isResponseNode checks if the node contains .Response
@@ -53,13 +54,8 @@ func formatTemplateForResponse(tmpl *template.Template, generate bool) {
 
 // Prompt renders a prompt from a template. If generate is set to true,
 // the response and parts of the template following it are not rendered
-func Prompt(tmpl, system, prompt, response string, generate bool) (string, error) {
-	parsed, err := template.New("").Option("missingkey=zero").Parse(tmpl)
-	if err != nil {
-		return "", err
-	}
-
-	formatTemplateForResponse(parsed, generate)
+func Prompt(tmpl *template.Template, system, prompt, response string, generate bool) (string, error) {
+	formatTemplateForResponse(tmpl, generate)
 
 	vars := map[string]any{
 		"System":   system,
@@ -68,14 +64,14 @@ func Prompt(tmpl, system, prompt, response string, generate bool) (string, error
 	}
 
 	var sb strings.Builder
-	if err := parsed.Execute(&sb, vars); err != nil {
+	if err := tmpl.Execute(&sb, vars); err != nil {
 		return "", err
 	}
 
 	return sb.String(), nil
 }
 
-func countTokens(tmpl string, system string, prompt string, response string, encode func(string) ([]int, error)) (int, error) {
+func countTokens(tmpl *template.Template, system string, prompt string, response string, encode func(string) ([]int, error)) (int, error) {
 	rendered, err := Prompt(tmpl, system, prompt, response, false)
 	if err != nil {
 		return 0, err
@@ -91,7 +87,7 @@ func countTokens(tmpl string, system string, prompt string, response string, enc
 }
 
 // ChatPrompt builds up a prompt from a series of messages, truncating based on context window size
-func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(string) ([]int, error)) (string, error) {
+func ChatPrompt(tmpl *template.Template, messages []api.Message, window int, encode func(string) ([]int, error)) (string, error) {
 	type prompt struct {
 		System   string
 		Prompt   string
