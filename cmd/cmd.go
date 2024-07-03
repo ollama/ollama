@@ -265,6 +265,8 @@ func tempZipFiles(path string) (string, error) {
 	return tempfile.Name(), nil
 }
 
+var ErrBlobExists = errors.New("blob exists")
+
 func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, error) {
 	bin, err := os.Open(path)
 	if err != nil {
@@ -311,13 +313,13 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	} */
 	if client.IsLocal() {
 		config, err := getLocalPath(cmd.Context(), digest)
-		if err != nil {
-			return "", err
+
+		if errors.Is(err, ErrBlobExists) {
+			return digest, nil
 		}
 
-		if config == nil {
-			fmt.Println("config is nil")
-			return digest, nil
+		if err != nil {
+			return "", err
 		}
 
 		fmt.Println("HI")
@@ -333,7 +335,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	}
 
 	fmt.Println("DEFAULT")
-	if err = client.CreateBlob(cmd.Context(), digest, false, bin); err != nil {
+	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
 		return "", err
 	}
 	return digest, nil
@@ -383,11 +385,13 @@ func getLocalPath(ctx context.Context, digest string) (*api.ServerConfig, error)
 			fmt.Println("error unmarshalling response data")
 			return nil, err
 		}
+
+		return &respData, nil
 	}
 
 	fmt.Println("!!!!!!!!!!")
 	fmt.Println(respData)
-	return &respData, nil
+	return nil, ErrBlobExists
 }
 
 func createBlobLocal(path string, dest string) error {

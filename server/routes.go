@@ -782,20 +782,10 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-	fmt.Println("HEIAHOEIHFOAHAEFHAO")
-	fmt.Println(c.GetHeader("X-Redirect-Create"))
-	if c.GetHeader("X-Redirect-Create") == "1" {
-		response := api.ServerConfig{ModelDir: path}
-		fmt.Println("Hit redirect")
-		resp, err := json.Marshal(response)
-		fmt.Println("marshalled response")
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
 
-		c.Header("loc", string(resp))
-		fmt.Println("!!!!!!!!!", string(resp))
+	if c.GetHeader("X-Redirect-Create") == "1" {
+		c.Header("Location", path)
+		fmt.Println("!!!!!!!!!", string(path))
 		c.Status(http.StatusTemporaryRedirect)
 		return
 	}
