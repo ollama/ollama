@@ -273,6 +273,54 @@ func Test_Routes(t *testing.T) {
 				assert.Equal(t, "library", retrieveResp.OwnedBy)
 			},
 		},
+		{
+			Name:   "Embed Handler Empty Input",
+			Method: http.MethodPost,
+			Path:   "/api/embed",
+			Setup: func(t *testing.T, req *http.Request) {
+				embedReq := api.EmbedRequest{
+					Model: "t-bone",
+					Input: "",
+				}
+				jsonData, err := json.Marshal(embedReq)
+				require.NoError(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json; charset=utf-8", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var embedResp api.EmbedResponse
+				err = json.Unmarshal(body, &embedResp)
+				require.NoError(t, err)
+
+				assert.Equal(t, "t-bone", embedResp.Model)
+				assert.Nil(t, embedResp.Embeddings)
+			},
+		},
+		{
+			Name:   "Embed Handler Invalid Input",
+			Method: http.MethodPost,
+			Path:   "/api/embed",
+			Setup: func(t *testing.T, req *http.Request) {
+				embedReq := api.EmbedRequest{
+					Model: "t-bone",
+					Input: 2,
+				}
+				jsonData, err := json.Marshal(embedReq)
+				require.NoError(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json; charset=utf-8", contentType)
+				_, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				assert.Equal(t, 400, resp.StatusCode)
+			},
+		},
 	}
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
@@ -454,5 +502,5 @@ func TestNormalize(t *testing.T) {
 				t.Errorf("Vector %v is not normalized", tc.input)
 			}
 		})
-  }
+	}
 }
