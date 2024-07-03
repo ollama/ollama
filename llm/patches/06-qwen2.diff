@@ -1,7 +1,7 @@
-diff --git a/llama.cpp b/llama.cpp
+diff --git a/src/llama.cpp b/src/llama.cpp
 index 40d2ec2c..f34eb79a 100644
---- a/llama.cpp
-+++ b/llama.cpp
+--- a/src/llama.cpp
++++ b/src/llama.cpp
 @@ -6943,7 +6943,7 @@ static struct ggml_tensor * llm_build_kqv(
          struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
          cb(kq, "kq", il);
