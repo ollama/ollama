@@ -99,6 +99,21 @@ func Origins() (origins []string) {
 	return origins
 }
 
+// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
+// Default is $HOME/.ollama/models
+func Models() string {
+	if s, ok := os.LookupEnv("OLLAMA_MODELS"); ok {
+		return s
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	return filepath.Join(home, ".ollama", "models")
+}
+
 var (
 	// Experimental flash attention
 	FlashAttention bool
@@ -154,7 +169,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", ModelsDir, "The path to the models directory"},
+		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests"},
@@ -295,12 +310,6 @@ func LoadConfig() {
 		loadKeepAlive(ka)
 	}
 
-	var err error
-	ModelsDir, err = getModelsDir()
-	if err != nil {
-		slog.Error("invalid setting", "OLLAMA_MODELS", ModelsDir, "error", err)
-	}
-
 	if set, err := strconv.ParseBool(clean("OLLAMA_INTEL_GPU")); err == nil {
 		IntelGpu = set
 	}
@@ -310,17 +319,6 @@ func LoadConfig() {
 	RocrVisibleDevices = clean("ROCR_VISIBLE_DEVICES")
 	GpuDeviceOrdinal = clean("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = clean("HSA_OVERRIDE_GFX_VERSION")
-}
-
-func getModelsDir() (string, error) {
-	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
-		return models, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ollama", "models"), nil
 }
 
 func loadKeepAlive(ka string) {
