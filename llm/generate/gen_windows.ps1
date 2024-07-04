@@ -224,7 +224,7 @@ function build_cpu($gen_arch) {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
         # remaining llama.cpp builds use MSVC 
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DGGML_AVX=off", "-DGGML_AVX2=off", "-DGGML_AVX512=off", "-DGGML_FMA=off", "-DGGML_F16C=off") + $script:cmakeDefs
         $script:buildDir="../build/windows/${script:ARCH}/cpu"
         $script:distDir="$script:DIST_BASE\cpu"
         write-host "Building LCD CPU"
@@ -239,7 +239,7 @@ function build_cpu($gen_arch) {
 function build_cpu_avx() {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx"))) {
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DGGML_AVX=on", "-DGGML_AVX2=off", "-DGGML_AVX512=off", "-DGGML_FMA=off", "-DGGML_F16C=off") + $script:cmakeDefs
         $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
         $script:distDir="$script:DIST_BASE\cpu_avx"
         write-host "Building AVX CPU"
@@ -254,7 +254,7 @@ function build_cpu_avx() {
 function build_cpu_avx2() {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx2"))) {
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DGGML_AVX=on", "-DGGML_AVX2=on", "-DGGML_AVX512=off", "-DGGML_FMA=on", "-DGGML_F16C=on") + $script:cmakeDefs
         $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
         $script:distDir="$script:DIST_BASE\cpu_avx2"
         write-host "Building AVX2 CPU"
@@ -279,9 +279,9 @@ function build_cuda() {
         $script:distDir="$script:DIST_BASE\cuda$script:CUDA_VARIANT"
         $script:cmakeDefs += @(
             "-A", "x64",
-            "-DLLAMA_CUDA=ON",
-            "-DLLAMA_AVX=on",
-            "-DLLAMA_AVX2=off",
+            "-DGGML_CUDA=ON",
+            "-DGGML_AVX=on",
+            "-DGGML_AVX2=off",
             "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR",
             "-DCMAKE_CUDA_FLAGS=-t8",
             "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}"
@@ -319,7 +319,7 @@ function build_oneapi() {
     $script:distDir ="$script:DIST_BASE\oneapi$script:ONEAPI_VARIANT"
     $script:cmakeDefs += @(
       "-G", "MinGW Makefiles",
-      "-DLLAMA_SYCL=ON",
+      "-DGGML_SYCL=ON",
       "-DCMAKE_C_COMPILER=icx",
       "-DCMAKE_CXX_COMPILER=icx",
       "-DCMAKE_BUILD_TYPE=Release"
@@ -365,10 +365,10 @@ function build_rocm() {
             "-G", "Ninja", 
             "-DCMAKE_C_COMPILER=clang.exe",
             "-DCMAKE_CXX_COMPILER=clang++.exe",
-            "-DLLAMA_HIPBLAS=on",
+            "-DGGML_HIPBLAS=on",
             "-DHIP_PLATFORM=amd",
-            "-DLLAMA_AVX=on",
-            "-DLLAMA_AVX2=off",
+            "-DGGML_AVX=on",
+            "-DGGML_AVX2=off",
             "-DCMAKE_POSITION_INDEPENDENT_CODE=on",
             "-DAMDGPU_TARGETS=$(amdGPUs)",
             "-DGPU_TARGETS=$(amdGPUs)"
