@@ -1048,7 +1048,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	for _, prop := range openAIProperties {
 		config.AllowHeaders = append(config.AllowHeaders, "x-stainless-"+prop)
 	}
-	config.AllowOrigins = envconfig.AllowOrigins
+	config.AllowOrigins = envconfig.Origins()
 
 	r := gin.Default()
 	r.Use(

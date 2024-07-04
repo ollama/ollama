@@ -75,9 +75,31 @@ func Host() *url.URL {
 	}
 }
 
+// Origins returns a list of allowed origins. Origins can be configured via the OLLAMA_ORIGINS environment variable.
+func Origins() (origins []string) {
+	if s := clean("OLLAMA_ORIGINS"); s != "" {
+		origins = strings.Split(s, ",")
+	}
+
+	for _, origin := range []string{"localhost", "127.0.0.1", "0.0.0.0"} {
+		origins = append(origins,
+			fmt.Sprintf("http://%s", origin),
+			fmt.Sprintf("https://%s", origin),
+			fmt.Sprintf("http://%s", net.JoinHostPort(origin, "*")),
+			fmt.Sprintf("https://%s", net.JoinHostPort(origin, "*")),
+		)
+	}
+
+	origins = append(origins,
+		"app://*",
+		"file://*",
+		"tauri://*",
+	)
+
+	return origins
+}
+
 var (
-	// Set via OLLAMA_ORIGINS in the environment
-	AllowOrigins []string
 	// Experimental flash attention
 	FlashAttention bool
 	// Set via OLLAMA_KEEP_ALIVE in the environment
@@ -136,7 +158,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests"},
-		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
+		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread, "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
@@ -158,12 +180,6 @@ func Values() map[string]string {
 		vals[k] = fmt.Sprintf("%v", v.Value)
 	}
 	return vals
-}
-
-var defaultAllowOrigins = []string{
-	"localhost",
-	"127.0.0.1",
-	"0.0.0.0",
 }
 
 // Clean quotes and spaces from the value
@@ -254,24 +270,6 @@ func LoadConfig() {
 	if noprune := clean("OLLAMA_NOPRUNE"); noprune != "" {
 		NoPrune = true
 	}
-
-	if origins := clean("OLLAMA_ORIGINS"); origins != "" {
-		AllowOrigins = strings.Split(origins, ",")
-	}
-	for _, allowOrigin := range defaultAllowOrigins {
-		AllowOrigins = append(AllowOrigins,
-			fmt.Sprintf("http://%s", allowOrigin),
-			fmt.Sprintf("https://%s", allowOrigin),
-			fmt.Sprintf("http://%s", net.JoinHostPort(allowOrigin, "*")),
-			fmt.Sprintf("https://%s", net.JoinHostPort(allowOrigin, "*")),
-		)
-	}
-
-	AllowOrigins = append(AllowOrigins,
-		"app://*",
-		"file://*",
-		"tauri://*",
-	)
 
 	maxRunners := clean("OLLAMA_MAX_LOADED_MODELS")
 	if maxRunners != "" {

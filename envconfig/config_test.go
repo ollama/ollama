@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 )
 
-func TestConfig(t *testing.T) {
+func TestSmoke(t *testing.T) {
 	t.Setenv("OLLAMA_DEBUG", "")
 	require.False(t, Debug())
 
@@ -38,7 +39,7 @@ func TestConfig(t *testing.T) {
 	require.Equal(t, time.Duration(math.MaxInt64), KeepAlive)
 }
 
-func TestClientFromEnvironment(t *testing.T) {
+func TestHost(t *testing.T) {
 	cases := map[string]struct {
 		value  string
 		expect string
@@ -67,6 +68,96 @@ func TestClientFromEnvironment(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", tt.value)
 			if host := Host(); host.Host != tt.expect {
 				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.Host)
+			}
+		})
+	}
+}
+
+func TestOrigins(t *testing.T) {
+	cases := []struct {
+		value  string
+		expect []string
+	}{
+		{"", []string{
+			"http://localhost",
+			"https://localhost",
+			"http://localhost:*",
+			"https://localhost:*",
+			"http://127.0.0.1",
+			"https://127.0.0.1",
+			"http://127.0.0.1:*",
+			"https://127.0.0.1:*",
+			"http://0.0.0.0",
+			"https://0.0.0.0",
+			"http://0.0.0.0:*",
+			"https://0.0.0.0:*",
+			"app://*",
+			"file://*",
+			"tauri://*",
+		}},
+		{"http://10.0.0.1", []string{
+			"http://10.0.0.1",
+			"http://localhost",
+			"https://localhost",
+			"http://localhost:*",
+			"https://localhost:*",
+			"http://127.0.0.1",
+			"https://127.0.0.1",
+			"http://127.0.0.1:*",
+			"https://127.0.0.1:*",
+			"http://0.0.0.0",
+			"https://0.0.0.0",
+			"http://0.0.0.0:*",
+			"https://0.0.0.0:*",
+			"app://*",
+			"file://*",
+			"tauri://*",
+		}},
+		{"http://172.16.0.1,https://192.168.0.1", []string{
+			"http://172.16.0.1",
+			"https://192.168.0.1",
+			"http://localhost",
+			"https://localhost",
+			"http://localhost:*",
+			"https://localhost:*",
+			"http://127.0.0.1",
+			"https://127.0.0.1",
+			"http://127.0.0.1:*",
+			"https://127.0.0.1:*",
+			"http://0.0.0.0",
+			"https://0.0.0.0",
+			"http://0.0.0.0:*",
+			"https://0.0.0.0:*",
+			"app://*",
+			"file://*",
+			"tauri://*",
+		}},
+		{"http://totally.safe,http://definitely.legit", []string{
+			"http://totally.safe",
+			"http://definitely.legit",
+			"http://localhost",
+			"https://localhost",
+			"http://localhost:*",
+			"https://localhost:*",
+			"http://127.0.0.1",
+			"https://127.0.0.1",
+			"http://127.0.0.1:*",
+			"https://127.0.0.1:*",
+			"http://0.0.0.0",
+			"https://0.0.0.0",
+			"http://0.0.0.0:*",
+			"https://0.0.0.0:*",
+			"app://*",
+			"file://*",
+			"tauri://*",
+		}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Setenv("OLLAMA_ORIGINS", tt.value)
+
+			if diff := cmp.Diff(Origins(), tt.expect); diff != "" {
+				t.Errorf("%s: mismatch (-want +got):\n%s", tt.value, diff)
 			}
 		})
 	}
