@@ -322,26 +322,20 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 			return "", err
 		}
 
-		fmt.Println("HI")
-		dest := config.ModelDir
-		fmt.Println("dest is ", dest)
+		dest := config
 		err = createBlobLocal(path, dest)
 		if err == nil {
-			fmt.Println("createlocalblob succeed")
 			return digest, nil
 		}
-		fmt.Println("err is ", err)
-		fmt.Println("createlocalblob faileds")
 	}
 
-	fmt.Println("DEFAULT")
 	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
 		return "", err
 	}
 	return digest, nil
 }
 
-func getLocalPath(ctx context.Context, digest string) (*api.ServerConfig, error) {
+func getLocalPath(ctx context.Context, digest string) (string, error) {
 	ollamaHost := envconfig.Host
 
 	client := http.DefaultClient
@@ -351,10 +345,9 @@ func getLocalPath(ctx context.Context, digest string) (*api.ServerConfig, error)
 	}
 
 	var reqBody io.Reader
-	var respData api.ServerConfig
 	data, err := json.Marshal(digest)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	reqBody = bytes.NewReader(data)
@@ -362,7 +355,7 @@ func getLocalPath(ctx context.Context, digest string) (*api.ServerConfig, error)
 	requestURL := base.JoinPath(path)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), reqBody)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	request.Header.Set("Content-Type", "application/json")
@@ -370,38 +363,26 @@ func getLocalPath(ctx context.Context, digest string) (*api.ServerConfig, error)
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 	request.Header.Set("X-Redirect-Create", "1")
 
-	fmt.Println("request", request)
 	resp, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
-	fmt.Println("made it here")
-	fmt.Println("resp", resp)
 
 	if resp.StatusCode == http.StatusTemporaryRedirect {
-		fmt.Println("redirect")
-		if err := json.Unmarshal([]byte(resp.Header.Get("loc")), &respData); err != nil {
-			fmt.Println("error unmarshalling response data")
-			return nil, err
-		}
+		dest := resp.Header.Get("LocalLocation")
 
-		return &respData, nil
+		return dest, nil
 	}
-
-	fmt.Println("!!!!!!!!!!")
-	fmt.Println(respData)
-	return nil, ErrBlobExists
+	return "", ErrBlobExists
 }
 
 func createBlobLocal(path string, dest string) error {
 	// This function should be called if the server is local
 	// It should find the model directory, copy the blob over, and return the digest
 	dirPath := filepath.Dir(dest)
-	fmt.Println("dirpath is ", dirPath)
 
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
-		fmt.Println("failed to create directory")
 		return err
 	}
 
