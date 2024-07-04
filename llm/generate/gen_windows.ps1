@@ -40,7 +40,7 @@ function init_vars {
     $script:cmakeDefs = @(
         "-DBUILD_SHARED_LIBS=on",
         "-DLLAMA_NATIVE=off",
-        "-DLLAMA_OPENMP=off"
+        "-DGGML_OPENMP=off"
         )
     $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
     $script:ARCH = $Env:PROCESSOR_ARCHITECTURE.ToLower()
@@ -210,7 +210,7 @@ function build_static() {
             "-DLLAMA_AVX512=off",
             "-DLLAMA_F16C=off",
             "-DLLAMA_FMA=off",
-            "-DLLAMA_OPENMP=off")
+            "-DGGML_OPENMP=off")
         $script:buildDir="../build/windows/${script:ARCH}_static"
         write-host "Building static library"
         build
