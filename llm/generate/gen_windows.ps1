@@ -39,7 +39,7 @@ function init_vars {
     }
     $script:cmakeDefs = @(
         "-DBUILD_SHARED_LIBS=on",
-        "-DLLAMA_NATIVE=off",
+        "-DGGML_NATIVE=off",
         "-DGGML_OPENMP=off"
         )
     $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
@@ -182,9 +182,9 @@ function cleanup {
 }
 
 
-# -DLLAMA_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
-# -DLLAMA_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
-# -DLLAMA_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
+# -DGGML_AVX -- 2011 Intel Sandy Bridge & AMD Bulldozer
+# -DGGML_AVX2 -- 2013 Intel Haswell & 2015 AMD Excavator / 2017 AMD Zen
+# -DGGML_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
 
 function build_static() {
@@ -204,12 +204,12 @@ function build_static() {
             "-DCMAKE_C_COMPILER=gcc.exe",
             "-DCMAKE_CXX_COMPILER=g++.exe",
             "-DBUILD_SHARED_LIBS=off",
-            "-DLLAMA_NATIVE=off",
-            "-DLLAMA_AVX=off",
-            "-DLLAMA_AVX2=off",
-            "-DLLAMA_AVX512=off",
-            "-DLLAMA_F16C=off",
-            "-DLLAMA_FMA=off",
+            "-DGGML_NATIVE=off",
+            "-DGGML_AVX=off",
+            "-DGGML_AVX2=off",
+            "-DGGML_AVX512=off",
+            "-DGGML_F16C=off",
+            "-DGGML_FMA=off",
             "-DGGML_OPENMP=off")
         $script:buildDir="../build/windows/${script:ARCH}_static"
         write-host "Building static library"
