@@ -114,15 +114,18 @@ If you have Docker available, you can build linux binaries with `./scripts/build
 
 ### Windows
 
-Note: The windows build for Ollama is still under development.
+Note: The Windows build for Ollama is still under development.
 
-Install required tools:
+First, install required tools:
 
 - MSVC toolchain - C/C++ and cmake as minimal requirements
 - Go version 1.22 or higher
 - MinGW (pick one variant) with GCC.
   - [MinGW-w64](https://www.mingw-w64.org/)
   - [MSYS2](https://www.msys2.org/)
+- The `ThreadJob` Powershell module: `Install-Module -Name ThreadJob -Scope CurrentUser`
+
+Then, build the `ollama` binary:
 
 ```powershell
 $env:CGO_ENABLED="1"

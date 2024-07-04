@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -160,18 +159,18 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool `json:"numa,omitempty"`
-	NumCtx    int  `json:"num_ctx,omitempty"`
-	NumBatch  int  `json:"num_batch,omitempty"`
-	NumGPU    int  `json:"num_gpu,omitempty"`
-	MainGPU   int  `json:"main_gpu,omitempty"`
-	LowVRAM   bool `json:"low_vram,omitempty"`
-	F16KV     bool `json:"f16_kv,omitempty"`
-	LogitsAll bool `json:"logits_all,omitempty"`
-	VocabOnly bool `json:"vocab_only,omitempty"`
-	UseMMap   bool `json:"use_mmap,omitempty"`
-	UseMLock  bool `json:"use_mlock,omitempty"`
-	NumThread int  `json:"num_thread,omitempty"`
+	UseNUMA   bool  `json:"numa,omitempty"`
+	NumCtx    int   `json:"num_ctx,omitempty"`
+	NumBatch  int   `json:"num_batch,omitempty"`
+	NumGPU    int   `json:"num_gpu,omitempty"`
+	MainGPU   int   `json:"main_gpu,omitempty"`
+	LowVRAM   bool  `json:"low_vram,omitempty"`
+	F16KV     bool  `json:"f16_kv,omitempty"`
+	LogitsAll bool  `json:"logits_all,omitempty"`
+	VocabOnly bool  `json:"vocab_only,omitempty"`
+	UseMMap   *bool `json:"use_mmap,omitempty"`
+	UseMLock  bool  `json:"use_mlock,omitempty"`
+	NumThread int   `json:"num_thread,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -223,6 +222,7 @@ type ShowRequest struct {
 	Model    string `json:"model"`
 	System   string `json:"system"`
 	Template string `json:"template"`
+	Verbose  bool   `json:"verbose"`
 
 	Options map[string]interface{} `json:"options"`
 
@@ -232,13 +232,16 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License    string       `json:"license,omitempty"`
-	Modelfile  string       `json:"modelfile,omitempty"`
-	Parameters string       `json:"parameters,omitempty"`
-	Template   string       `json:"template,omitempty"`
-	System     string       `json:"system,omitempty"`
-	Details    ModelDetails `json:"details,omitempty"`
-	Messages   []Message    `json:"messages,omitempty"`
+	License       string         `json:"license,omitempty"`
+	Modelfile     string         `json:"modelfile,omitempty"`
+	Parameters    string         `json:"parameters,omitempty"`
+	Template      string         `json:"template,omitempty"`
+	System        string         `json:"system,omitempty"`
+	Details       ModelDetails   `json:"details,omitempty"`
+	Messages      []Message      `json:"messages,omitempty"`
+	ModelInfo     map[string]any `json:"model_info,omitempty"`
+	ProjectorInfo map[string]any `json:"projector_info,omitempty"`
+	ModifiedAt    time.Time      `json:"modified_at,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -282,19 +285,40 @@ type PushRequest struct {
 
 // ListResponse is the response from [Client.List].
 type ListResponse struct {
-	Models []ModelResponse `json:"models"`
+	Models []ListModelResponse `json:"models"`
 }
 
-// ModelResponse is a single model description in [ListResponse].
-type ModelResponse struct {
+// ProcessResponse is the response from [Client.Process].
+type ProcessResponse struct {
+	Models []ProcessModelResponse `json:"models"`
+}
+
+// ListModelResponse is a single model description in [ListResponse].
+type ListModelResponse struct {
 	Name       string       `json:"name"`
 	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at,omitempty"`
+	ModifiedAt time.Time    `json:"modified_at"`
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
 	Details    ModelDetails `json:"details,omitempty"`
-	ExpiresAt  time.Time    `json:"expires_at,omitempty"`
-	SizeVRAM   int64        `json:"size_vram,omitempty"`
+}
+
+// ProcessModelResponse is a single model description in [ProcessResponse].
+type ProcessModelResponse struct {
+	Name      string       `json:"name"`
+	Model     string       `json:"model"`
+	Size      int64        `json:"size"`
+	Digest    string       `json:"digest"`
+	Details   ModelDetails `json:"details,omitempty"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	SizeVRAM  int64        `json:"size_vram"`
+}
+
+type RetrieveModelResponse struct {
+	Id      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
 }
 
 type TokenResponse struct {
@@ -306,7 +330,7 @@ type GenerateResponse struct {
 	// Model is the model name that generated the response.
 	Model string `json:"model"`
 
-	//CreatedAt is the timestamp of the response.
+	// CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`
 
 	// Response is the textual response itself.
@@ -362,8 +386,6 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
 	}
 }
-
-var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
@@ -437,6 +459,17 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					slice[i] = str
 				}
 				field.Set(reflect.ValueOf(slice))
+			case reflect.Pointer:
+				var b bool
+				if field.Type() == reflect.TypeOf(&b) {
+					val, ok := val.(bool)
+					if !ok {
+						return fmt.Errorf("option %q must be of type boolean", key)
+					}
+					field.Set(reflect.ValueOf(&val))
+				} else {
+					return fmt.Errorf("unknown type loading config params: %v %v", field.Kind(), field.Type())
+				}
 			default:
 				return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 			}
@@ -479,7 +512,7 @@ func DefaultOptions() Options {
 			LowVRAM:   false,
 			F16KV:     true,
 			UseMLock:  false,
-			UseMMap:   true,
+			UseMMap:   nil,
 			UseNUMA:   false,
 		},
 	}
@@ -576,6 +609,17 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 				case reflect.Slice:
 					// TODO: only string slices are supported right now
 					out[key] = vals
+				case reflect.Pointer:
+					var b bool
+					if field.Type() == reflect.TypeOf(&b) {
+						boolVal, err := strconv.ParseBool(vals[0])
+						if err != nil {
+							return nil, fmt.Errorf("invalid bool value %s", vals)
+						}
+						out[key] = &boolVal
+					} else {
+						return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
+					}
 				default:
 					return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
 				}

@@ -56,7 +56,6 @@ struct server_params {
     std::string hostname = "127.0.0.1";
     std::vector<std::string> api_keys;
     std::string public_path = "examples/server/public";
-    std::string chat_template = "";
     int32_t port = 8080;
     int32_t read_timeout = 600;
     int32_t write_timeout = 600;
@@ -359,7 +358,6 @@ struct llama_server_context
 
     // slots / clients
     std::vector<server_slot> slots;
-    json default_generation_settings_for_props;
 
     llama_server_queue    queue_tasks;
     llama_server_response queue_results;
@@ -428,16 +426,6 @@ struct llama_server_context
         return true;
     }
 
-    void validate_model_chat_template(server_params & sparams) {
-        llama_chat_message chat[] = {{"user", "test"}};
-        std::vector<char> buf(1);
-        int res = llama_chat_apply_template(model, nullptr, chat, 1, true, buf.data(), buf.size());
-        if (res < 0) {
-            LOG_ERROR("The chat template comes with this model is not yet supported, falling back to chatml. This may cause the model to output suboptimal responses", {});
-            sparams.chat_template = "chatml";
-        }
-    }
-
     void initialize() {
         // create slots
         all_slots_are_idle = true;
@@ -482,9 +470,6 @@ struct llama_server_context
 
             slots.push_back(slot);
         }
-
-        default_generation_settings_for_props = get_formated_generation(slots.front());
-        default_generation_settings_for_props["seed"] = -1;
 
         batch = llama_batch_init(n_ctx, 0, params.n_parallel);
     }
@@ -584,7 +569,7 @@ struct llama_server_context
         slot->sparams.mirostat_eta      = json_value(data, "mirostat_eta",      default_sparams.mirostat_eta);
         slot->sparams.penalize_nl       = json_value(data, "penalize_nl",       default_sparams.penalize_nl);
         slot->params.n_keep             = json_value(data, "n_keep",            slot->params.n_keep);
-        slot->params.seed               = json_value(data, "seed",              default_params.seed);
+        slot->sparams.seed              = json_value(data, "seed",              default_params.seed);
         slot->sparams.grammar           = json_value(data, "grammar",           default_sparams.grammar);
         slot->sparams.n_probs           = json_value(data, "n_probs",           default_sparams.n_probs);
         slot->sparams.min_keep          = json_value(data, "min_keep",          default_sparams.min_keep);
@@ -811,7 +796,6 @@ struct llama_server_context
             llama_sampling_free(slot->ctx_sampling);
         }
         slot->ctx_sampling = llama_sampling_init(slot->sparams);
-        llama_set_rng_seed(ctx, slot->params.seed);
         slot->command = LOAD_PROMPT;
 
         all_slots_are_idle = false;
@@ -835,7 +819,7 @@ struct llama_server_context
         system_tokens.clear();
 
         if (!system_prompt.empty()) {
-            system_tokens = ::llama_tokenize(ctx, system_prompt, add_bos_token);
+            system_tokens = ::llama_tokenize(ctx, system_prompt, true);
 
             llama_batch_clear(batch);
 
@@ -1656,7 +1640,7 @@ struct llama_server_context
                     slot.t_start_process_prompt = ggml_time_us();
                     slot.t_start_genereration = 0;
 
-                    prompt_tokens = tokenize(slot.prompt, system_prompt.empty() && add_bos_token);  // add BOS if there isn't system prompt
+                    prompt_tokens = tokenize(slot.prompt, system_prompt.empty());  // add BOS if there isn't system prompt
 
                     slot.n_prompt_tokens = prompt_tokens.size();
 
@@ -1666,32 +1650,60 @@ struct llama_server_context
                     }
                     slot.params.n_keep = std::min(slot.n_ctx - 4, slot.params.n_keep);
 
+                    char buf[256];
+                    llama_model_meta_val_str(model, "general.architecture", buf, 256);
+                    bool gemma2 = strcmp(buf, "gemma2") == 0;
+
+                    int32_t truncate_at = slot.n_ctx;
+
+                    // truncate at 2/3 of the context length for gemma2 models
+                    // as they do not support context shifts (from the sliding window implementation).
+                    // this way, prompts that almost fit the context length can still generate a full
+                    // response without a sudden stop from hitting the context limit
+                    if (gemma2) {
+                        truncate_at = 2 * slot.n_ctx / 3;
+                    }
+
                     // if input prompt is too big, truncate it, if group attention self-extend is disabled
-                    if (slot.ga_n == 1 && slot.n_prompt_tokens >= slot.n_ctx)
+                    if (slot.ga_n == 1 && slot.n_prompt_tokens >= truncate_at)
                     {
                         const int n_left = slot.n_ctx - slot.params.n_keep;
-                        const int n_block_size = n_left / 2;
-                        const int erased_blocks = (slot.n_prompt_tokens - slot.params.n_keep - n_block_size) / n_block_size;
+                        const int n_shift = n_left / 2;
+                        const int n_erase = slot.n_prompt_tokens - slot.params.n_keep - n_shift;
 
                         std::vector<llama_token> new_tokens(
                             prompt_tokens.begin(),
                             prompt_tokens.begin() + slot.params.n_keep);
                         new_tokens.insert(
                             new_tokens.end(),
-                            prompt_tokens.begin() + slot.params.n_keep + erased_blocks * n_block_size,
+                            prompt_tokens.begin() + slot.params.n_keep + n_erase,
                             prompt_tokens.end());
 
-                        LOG_VERBOSE("input truncated", {
-                            {"n_ctx",      slot.n_ctx},
-                            {"n_keep",     slot.params.n_keep},
-                            {"n_left",     n_left},
-                            {"new_tokens", tokens_to_str(ctx, new_tokens.cbegin(), new_tokens.cend())},
+                        LOG_INFO("input truncated", {
+                            {"n_ctx",        slot.n_ctx},
+                            {"n_keep",       slot.params.n_keep},
+                            {"n_left",       n_left},
+                            {"n_shift",      n_shift},
+                            {"n_erase",      n_erase},
                         });
                         slot.truncated = true;
                         prompt_tokens = new_tokens;
 
                         slot.n_prompt_tokens = prompt_tokens.size();
                         GGML_ASSERT(slot.n_prompt_tokens < slot.n_ctx);
+                    }
+
+                    // Models with sliding window attention do not work with context shifts, so
+                    // limit their prediction to the context length
+                    if (gemma2) {
+                        int32_t limit = slot.n_ctx - slot.n_prompt_tokens;
+                        slot.n_predict = limit;
+                        slot.params.n_predict = limit;
+                        LOG_INFO("model does not support sliding window, limiting generation", {
+                            {"n_ctx", slot.n_ctx},
+                            {"n_prompt_tokens", slot.n_prompt_tokens},
+                            {"n_predict", slot.n_predict}
+                        });
                     }
 
                     if (!slot.params.cache_prompt)
@@ -1720,7 +1732,7 @@ struct llama_server_context
                             slot.n_past -= 1;
                         }
 
-                        slot.n_prompt_tokens_processed = slot.n_prompt_tokens - slot.n_past;
+                        slot.n_prompt_tokens_processed = slot.n_prompt_tokens;
 
                         if (slot.ga_n != 1)
                         {
@@ -2340,9 +2352,9 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-#ifndef GGML_USE_CUBLAS
-            fprintf(stderr, "warning: llama.cpp was compiled without cuBLAS. Setting the split mode has no effect.\n");
-#endif // GGML_USE_CUBLAS
+#ifndef GGML_USE_CUDA
+            fprintf(stderr, "warning: llama.cpp was compiled without CUDA. Setting the split mode has no effect.\n");
+#endif // GGML_USE_CUDA
         }
         else if (arg == "--tensor-split" || arg == "-ts")
         {
@@ -2351,7 +2363,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-#if defined(GGML_USE_CUBLAS) || defined(GGML_USE_SYCL)
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_SYCL)
             std::string arg_next = argv[i];
 
             // split string by , and /
@@ -2372,8 +2384,8 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 }
             }
 #else
-            LOG_WARNING("llama.cpp was compiled without cuBLAS. It is not possible to set a tensor split.\n", {});
-#endif // GGML_USE_CUBLAS
+            LOG_WARNING("llama.cpp was compiled without CUDA. It is not possible to set a tensor split.\n", {});
+#endif // GGML_USE_CUDA
         }
         else if (arg == "--main-gpu" || arg == "-mg")
         {
@@ -2382,7 +2394,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-#if defined(GGML_USE_CUBLAS) || defined(GGML_USE_SYCL)
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_SYCL)
             params.main_gpu = std::stoi(argv[i]);
 #else
             LOG_WARNING("llama.cpp was compiled without cuBLAS. It is not possible to set a main GPU.", {});
@@ -2540,7 +2552,6 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            sparams.chat_template = argv[i];
         }
         else if (arg == "--override-kv")
         {
@@ -3012,11 +3023,6 @@ int main(int argc, char **argv) {
         LOG_INFO("model loaded", {});
     }
     const auto model_meta = llama.model_meta();
-
-    if (sparams.chat_template.empty()) { // custom chat template is not supplied
-        // check if the template comes with the model is supported by us
-        llama.validate_model_chat_template(sparams);
-    }
 
     // Middleware for API key validation
     auto validate_api_key = [&sparams](const httplib::Request &req, httplib::Response &res) -> bool {

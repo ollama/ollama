@@ -10,6 +10,9 @@ import (
 	"unicode/utf16"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/unicode"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -19,13 +22,19 @@ ADAPTER adapter1
 LICENSE MIT
 PARAMETER param1 value1
 PARAMETER param2 value2
-TEMPLATE template1
+TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
+
+{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ .Response }}<|eot_id|>"""    
 `
 
 	reader := strings.NewReader(input)
 
 	modelfile, err := ParseFile(reader)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	expectedCommands := []Command{
 		{Name: "model", Args: "model1"},
@@ -33,7 +42,40 @@ TEMPLATE template1
 		{Name: "license", Args: "MIT"},
 		{Name: "param1", Args: "value1"},
 		{Name: "param2", Args: "value2"},
-		{Name: "template", Args: "template1"},
+		{Name: "template", Args: "{{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>"},
+	}
+
+	assert.Equal(t, expectedCommands, modelfile.Commands)
+}
+
+func TestParseFileTrimSpace(t *testing.T) {
+	input := `
+FROM "     model 1"
+ADAPTER      adapter3
+LICENSE "MIT       "
+PARAMETER param1        value1
+PARAMETER param2    value2
+TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
+
+{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ .Response }}<|eot_id|>   """    
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	expectedCommands := []Command{
+		{Name: "model", Args: "     model 1"},
+		{Name: "adapter", Args: "adapter3"},
+		{Name: "license", Args: "MIT       "},
+		{Name: "param1", Args: "value1"},
+		{Name: "param2", Args: "value2"},
+		{Name: "template", Args: "   {{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>   "},
 	}
 
 	assert.Equal(t, expectedCommands, modelfile.Commands)
@@ -45,6 +87,26 @@ func TestParseFileFrom(t *testing.T) {
 		expected []Command
 		err      error
 	}{
+		{
+			"FROM \"FOO  BAR  \"",
+			[]Command{{Name: "model", Args: "FOO  BAR  "}},
+			nil,
+		},
+		{
+			"FROM \"FOO BAR\"\nPARAMETER param1 value1",
+			[]Command{{Name: "model", Args: "FOO BAR"}, {Name: "param1", Args: "value1"}},
+			nil,
+		},
+		{
+			"FROM     FOOO BAR    ",
+			[]Command{{Name: "model", Args: "FOOO BAR"}},
+			nil,
+		},
+		{
+			"FROM /what/is/the path ",
+			[]Command{{Name: "model", Args: "/what/is/the path"}},
+			nil,
+		},
 		{
 			"FROM foo",
 			[]Command{{Name: "model", Args: "foo"}},
@@ -83,12 +145,17 @@ func TestParseFileFrom(t *testing.T) {
 			[]Command{{Name: "param1", Args: "value1"}, {Name: "model", Args: "foo"}},
 			nil,
 		},
+		{
+			"PARAMETER what the \nFROM lemons make lemonade ",
+			[]Command{{Name: "what", Args: "the"}, {Name: "model", Args: "lemons make lemonade"}},
+			nil,
+		},
 	}
 
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c.input))
-			assert.ErrorIs(t, err, c.err)
+			require.ErrorIs(t, err, c.err)
 			if modelfile != nil {
 				assert.Equal(t, c.expected, modelfile.Commands)
 			}
@@ -105,7 +172,7 @@ PARAMETER param1
 	reader := strings.NewReader(input)
 
 	_, err := ParseFile(reader)
-	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
 func TestParseFileBadCommand(t *testing.T) {
@@ -114,8 +181,7 @@ FROM foo
 BADCOMMAND param1 value1
 `
 	_, err := ParseFile(strings.NewReader(input))
-	assert.ErrorIs(t, err, errInvalidCommand)
-
+	require.ErrorIs(t, err, errInvalidCommand)
 }
 
 func TestParseFileMessages(t *testing.T) {
@@ -201,7 +267,7 @@ MESSAGE system`,
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c.input))
-			assert.ErrorIs(t, err, c.err)
+			require.ErrorIs(t, err, c.err)
 			if modelfile != nil {
 				assert.Equal(t, c.expected, modelfile.Commands)
 			}
@@ -355,7 +421,7 @@ TEMPLATE """
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c.multiline))
-			assert.ErrorIs(t, err, c.err)
+			require.ErrorIs(t, err, c.err)
 			if modelfile != nil {
 				assert.Equal(t, c.expected, modelfile.Commands)
 			}
@@ -397,7 +463,7 @@ func TestParseFileParameters(t *testing.T) {
 		"mirostat_eta 1.0":             {"mirostat_eta", "1.0"},
 		"penalize_newline true":        {"penalize_newline", "true"},
 		"stop ### User:":               {"stop", "### User:"},
-		"stop ### User: ":              {"stop", "### User: "},
+		"stop ### User: ":              {"stop", "### User:"},
 		"stop \"### User:\"":           {"stop", "### User:"},
 		"stop \"### User: \"":          {"stop", "### User: "},
 		"stop \"\"\"### User:\"\"\"":   {"stop", "### User:"},
@@ -413,7 +479,7 @@ func TestParseFileParameters(t *testing.T) {
 			fmt.Fprintln(&b, "FROM foo")
 			fmt.Fprintln(&b, "PARAMETER", k)
 			modelfile, err := ParseFile(&b)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			assert.Equal(t, []Command{
 				{Name: "model", Args: "foo"},
@@ -442,7 +508,7 @@ FROM foo
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c.input))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, c.expected, modelfile.Commands)
 		})
 	}
@@ -501,15 +567,14 @@ SYSTEM ""
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {
 			modelfile, err := ParseFile(strings.NewReader(c))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			modelfile2, err := ParseFile(strings.NewReader(modelfile.String()))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			assert.Equal(t, modelfile, modelfile2)
 		})
 	}
-
 }
 
 func TestParseFileUTF16ParseFile(t *testing.T) {
@@ -518,14 +583,6 @@ PARAMETER param1 1
 PARAMETER param2 4096
 SYSTEM You are a utf16 file.
 `
-	// simulate a utf16 le file
-	utf16File := utf16.Encode(append([]rune{'\ufffe'}, []rune(data)...))
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, utf16File)
-	assert.NoError(t, err)
-
-	actual, err := ParseFile(buf)
-	assert.NoError(t, err)
 
 	expected := []Command{
 		{Name: "model", Args: "bob"},
@@ -534,14 +591,52 @@ SYSTEM You are a utf16 file.
 		{Name: "system", Args: "You are a utf16 file."},
 	}
 
-	assert.Equal(t, expected, actual.Commands)
+	t.Run("le", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, binary.Write(&b, binary.LittleEndian, []byte{0xff, 0xfe}))
+		require.NoError(t, binary.Write(&b, binary.LittleEndian, utf16.Encode([]rune(data))))
 
-	// simulate a utf16 be file
-	buf = new(bytes.Buffer)
-	err = binary.Write(buf, binary.BigEndian, utf16File)
-	assert.NoError(t, err)
+		actual, err := ParseFile(&b)
+		require.NoError(t, err)
 
-	actual, err = ParseFile(buf)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, actual.Commands)
+		assert.Equal(t, expected, actual.Commands)
+	})
+
+	t.Run("be", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, binary.Write(&b, binary.BigEndian, []byte{0xfe, 0xff}))
+		require.NoError(t, binary.Write(&b, binary.BigEndian, utf16.Encode([]rune(data))))
+
+		actual, err := ParseFile(&b)
+		require.NoError(t, err)
+		assert.Equal(t, expected, actual.Commands)
+	})
+}
+
+func TestParseMultiByte(t *testing.T) {
+	input := `FROM test
+	SYSTEM 你好👋`
+
+	expect := []Command{
+		{Name: "model", Args: "test"},
+		{Name: "system", Args: "你好👋"},
+	}
+
+	encodings := []encoding.Encoding{
+		unicode.UTF8,
+		unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
+		unicode.UTF16(unicode.BigEndian, unicode.UseBOM),
+	}
+
+	for _, encoding := range encodings {
+		t.Run(fmt.Sprintf("%s", encoding), func(t *testing.T) {
+			s, err := encoding.NewEncoder().String(input)
+			require.NoError(t, err)
+
+			actual, err := ParseFile(strings.NewReader(s))
+			require.NoError(t, err)
+
+			assert.Equal(t, expect, actual.Commands)
+		})
+	}
 }

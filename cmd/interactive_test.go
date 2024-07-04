@@ -6,6 +6,7 @@ import (
 	"text/template"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
 )
@@ -85,11 +86,11 @@ MESSAGE assistant """Yes it is true, I am half horse, half shark."""
 `
 
 	tmpl, err := template.New("").Parse(expectedModelfile)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, opts)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, buf.String(), mf)
 
 	opts.ParentModel = "horseshark"
@@ -107,10 +108,10 @@ MESSAGE assistant """Yes it is true, I am half horse, half shark."""
 `
 
 	tmpl, err = template.New("").Parse(expectedModelfile)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 
 	var parentBuf bytes.Buffer
 	err = tmpl.Execute(&parentBuf, opts)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, parentBuf.String(), mf)
 }

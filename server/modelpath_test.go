@@ -6,12 +6,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestGetBlobsPath(t *testing.T) {
 	// GetBlobsPath expects an actual directory to exist
 	dir, err := os.MkdirTemp("", "ollama-test")
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
 	tests := []struct {
@@ -60,10 +63,11 @@ func TestGetBlobsPath(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("OLLAMA_MODELS", dir)
+			envconfig.LoadConfig()
 
 			got, err := GetBlobsPath(tc.digest)
 
-			assert.ErrorIs(t, tc.err, err, tc.name)
+			require.ErrorIs(t, tc.err, err, tc.name)
 			assert.Equal(t, tc.expected, got, tc.name)
 		})
 	}

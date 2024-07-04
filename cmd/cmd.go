@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -29,7 +30,6 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
@@ -162,9 +162,6 @@ func tempZipFiles(path string) (string, error) {
 	}
 	defer tempfile.Close()
 
-	zipfile := zip.NewWriter(tempfile)
-	defer zipfile.Close()
-
 	detectContentType := func(path string) (string, error) {
 		f, err := os.Open(path)
 		if err != nil {
@@ -233,6 +230,9 @@ func tempZipFiles(path string) (string, error) {
 		files = append(files, tks...)
 	}
 
+	zipfile := zip.NewWriter(tempfile)
+	defer zipfile.Close()
+
 	for _, file := range files {
 		f, err := os.Open(file)
 		if err != nil {
@@ -287,38 +287,12 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	name := args[0]
-
-	// check if the model exists on the server
-	show, err := client.Show(cmd.Context(), &api.ShowRequest{Name: name})
-	var statusError api.StatusError
-	switch {
-	case errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound:
-		if err := PullHandler(cmd, []string{name}); err != nil {
-			return err
-		}
-
-		show, err = client.Show(cmd.Context(), &api.ShowRequest{Name: name})
-		if err != nil {
-			return err
-		}
-	case err != nil:
-		return err
-	}
-
 	interactive := true
 
 	opts := runOptions{
-		Model:       args[0],
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
-		Options:     map[string]interface{}{},
-		MultiModal:  slices.Contains(show.Details.Families, "clip"),
-		ParentModel: show.Details.ParentModel,
+		Model:    args[0],
+		WordWrap: os.Getenv("TERM") == "xterm-256color",
+		Options:  map[string]interface{}{},
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -362,11 +336,38 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.WordWrap = !nowrap
 
-	if !interactive {
-		return generate(cmd, opts)
+	// Fill out the rest of the options based on information about the
+	// model.
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
 	}
 
-	return generateInteractive(cmd, opts)
+	name := args[0]
+	info, err := func() (*api.ShowResponse, error) {
+		showReq := &api.ShowRequest{Name: name}
+		info, err := client.Show(cmd.Context(), showReq)
+		var se api.StatusError
+		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+			if err := PullHandler(cmd, []string{name}); err != nil {
+				return nil, err
+			}
+			return client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+		}
+		return info, err
+	}()
+	if err != nil {
+		return err
+	}
+
+	opts.MultiModal = slices.Contains(info.Details.Families, "clip")
+	opts.ParentModel = info.Details.ParentModel
+	opts.Messages = append(opts.Messages, info.Messages...)
+
+	if interactive {
+		return generateInteractive(cmd, opts)
+	}
+	return generate(cmd, opts)
 }
 
 func errFromUnknownKey(unknownKeyErr error) error {
@@ -579,10 +580,6 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(args) != 1 {
-		return errors.New("missing model name")
-	}
-
 	license, errLicense := cmd.Flags().GetBool("license")
 	modelfile, errModelfile := cmd.Flags().GetBool("modelfile")
 	parameters, errParams := cmd.Flags().GetBool("parameters")
@@ -625,8 +622,6 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 	if flagsSet > 1 {
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
-	} else if flagsSet == 0 {
-		return errors.New("one of '--license', '--modelfile', '--parameters', '--system', or '--template' must be specified")
 	}
 
 	req := api.ShowRequest{Name: args[0]}
@@ -635,20 +630,139 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch showType {
-	case "license":
-		fmt.Println(resp.License)
-	case "modelfile":
-		fmt.Println(resp.Modelfile)
-	case "parameters":
-		fmt.Println(resp.Parameters)
-	case "system":
-		fmt.Println(resp.System)
-	case "template":
-		fmt.Println(resp.Template)
+	if flagsSet == 1 {
+		switch showType {
+		case "license":
+			fmt.Println(resp.License)
+		case "modelfile":
+			fmt.Println(resp.Modelfile)
+		case "parameters":
+			fmt.Println(resp.Parameters)
+		case "system":
+			fmt.Println(resp.System)
+		case "template":
+			fmt.Println(resp.Template)
+		}
+
+		return nil
 	}
 
+	showInfo(resp)
+
 	return nil
+}
+
+func showInfo(resp *api.ShowResponse) {
+	arch := resp.ModelInfo["general.architecture"].(string)
+
+	modelData := [][]string{
+		{"arch", arch},
+		{"parameters", resp.Details.ParameterSize},
+		{"quantization", resp.Details.QuantizationLevel},
+		{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
+		{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
+	}
+
+	mainTableData := [][]string{
+		{"Model"},
+		{renderSubTable(modelData, false)},
+	}
+
+	if resp.ProjectorInfo != nil {
+		projectorData := [][]string{
+			{"arch", "clip"},
+			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
+		}
+
+		if projectorType, ok := resp.ProjectorInfo["clip.projector_type"]; ok {
+			projectorData = append(projectorData, []string{"projector type", projectorType.(string)})
+		}
+
+		projectorData = append(projectorData,
+			[]string{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
+			[]string{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
+		)
+
+		mainTableData = append(mainTableData,
+			[]string{"Projector"},
+			[]string{renderSubTable(projectorData, false)},
+		)
+	}
+
+	if resp.Parameters != "" {
+		mainTableData = append(mainTableData, []string{"Parameters"}, []string{formatParams(resp.Parameters)})
+	}
+
+	if resp.System != "" {
+		mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System), true)})
+	}
+
+	if resp.License != "" {
+		mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License), true)})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetAutoWrapText(false)
+	table.SetBorder(false)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	for _, v := range mainTableData {
+		table.Append(v)
+	}
+
+	table.Render()
+}
+
+func renderSubTable(data [][]string, file bool) string {
+	var buf bytes.Buffer
+	table := tablewriter.NewWriter(&buf)
+	table.SetAutoWrapText(!file)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("\t")
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	for _, v := range data {
+		table.Append(v)
+	}
+
+	table.Render()
+
+	renderedTable := buf.String()
+	lines := strings.Split(renderedTable, "\n")
+	for i, line := range lines {
+		lines[i] = "\t" + line
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func twoLines(s string) [][]string {
+	lines := strings.Split(s, "\n")
+	res := [][]string{}
+
+	count := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			count++
+			res = append(res, []string{line})
+			if count == 2 {
+				return res
+			}
+		}
+	}
+	return res
+}
+
+func formatParams(s string) string {
+	lines := strings.Split(s, "\n")
+	table := [][]string{}
+
+	for _, line := range lines {
+		table = append(table, strings.Fields(line))
+	}
+	return renderSubTable(table, false)
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
@@ -746,7 +860,6 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
-
 				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
 					fmt.Printf("%s%c", state.wordBuffer, ch)
 					state.wordBuffer = ""
@@ -961,17 +1074,11 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 }
 
 func RunServer(cmd *cobra.Command, _ []string) error {
-	// retrieve the OLLAMA_HOST environment variable
-	ollamaHost, err := api.GetOllamaHost()
-	if err != nil {
-		return err
-	}
-
 	if err := initializeKeypair(); err != nil {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(ollamaHost.Host, ollamaHost.Port))
+	ln, err := net.Listen("tcp", net.JoinHostPort(envconfig.Host.Host, envconfig.Host.Port))
 	if err != nil {
 		return err
 	}
@@ -1028,24 +1135,6 @@ func initializeKeypair() error {
 		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
 	}
 	return nil
-}
-
-//nolint:unused
-func waitForServer(ctx context.Context, client *api.Client) error {
-	// wait for the server to start
-	timeout := time.After(5 * time.Second)
-	tick := time.Tick(500 * time.Millisecond)
-	for {
-		select {
-		case <-timeout:
-			return errors.New("timed out waiting for server to start")
-		case <-tick:
-			if err := client.Heartbeat(ctx); err == nil {
-				return nil // server has started
-			}
-		}
-	}
-
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {

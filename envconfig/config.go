@@ -1,14 +1,30 @@
 package envconfig
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
+
+type OllamaHost struct {
+	Scheme string
+	Host   string
+	Port   string
+}
+
+func (o OllamaHost) String() string {
+	return fmt.Sprintf("%s://%s:%s", o.Scheme, o.Host, o.Port)
+}
+
+var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
 var (
 	// Set via OLLAMA_ORIGINS in the environment
@@ -17,8 +33,10 @@ var (
 	Debug bool
 	// Experimental flash attention
 	FlashAttention bool
+	// Set via OLLAMA_HOST in the environment
+	Host *OllamaHost
 	// Set via OLLAMA_KEEP_ALIVE in the environment
-	KeepAlive string
+	KeepAlive time.Duration
 	// Set via OLLAMA_LLM_LIBRARY in the environment
 	LLMLibrary string
 	// Set via OLLAMA_MAX_LOADED_MODELS in the environment
@@ -27,6 +45,8 @@ var (
 	MaxQueuedRequests int
 	// Set via OLLAMA_MAX_VRAM in the environment
 	MaxVRAM uint64
+	// Set via OLLAMA_MODELS in the environment
+	ModelsDir string
 	// Set via OLLAMA_NOHISTORY in the environment
 	NoHistory bool
 	// Set via OLLAMA_NOPRUNE in the environment
@@ -35,12 +55,24 @@ var (
 	NumParallel int
 	// Set via OLLAMA_RUNNERS_DIR in the environment
 	RunnersDir string
+	// Set via OLLAMA_SCHED_SPREAD in the environment
+	SchedSpread bool
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
-	// Set via OLLAMA_MODELS in the environment
-	OllamaModels string
 	// Set via OLLAMA_HOME in the environment
 	OllamaHome string
+	// Set via OLLAMA_INTEL_GPU in the environment
+	IntelGpu bool
+	// Set via CUDA_VISIBLE_DEVICES in the environment
+	CudaVisibleDevices string
+	// Set via HIP_VISIBLE_DEVICES in the environment
+	HipVisibleDevices string
+	// Set via ROCR_VISIBLE_DEVICES in the environment
+	RocrVisibleDevices string
+	// Set via GPU_DEVICE_ORDINAL in the environment
+	GpuDeviceOrdinal string
+	// Set via HSA_OVERRIDE_GFX_VERSION in the environment
+	HsaOverrideGfxVersion string
 )
 
 type EnvVar struct {
@@ -50,24 +82,34 @@ type EnvVar struct {
 }
 
 func AsMap() map[string]EnvVar {
-	return map[string]EnvVar{
+	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug, "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", "", "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_HOST":              {"OLLAMA_HOST", Host, "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
-		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models (default 1)"},
+		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", OllamaModels, "The path to the models directory"},
 		"OLLAMA_HOME":              {"OLLAMA_HOME", OllamaHome, "The path to the ollama home directory"},
 		"OLLAMA_MAX_VRAM":          {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
+		"OLLAMA_MODELS":            {"OLLAMA_MODELS", ModelsDir, "The path to the models directory"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests (default 1)"},
+		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
+		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread, "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
 	}
+	if runtime.GOOS != "darwin" {
+		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices, "Set which NVIDIA devices are visible"}
+		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices, "Set which AMD devices are visible"}
+		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices, "Set which AMD devices are visible"}
+		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal, "Set which AMD devices are visible"}
+		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion, "Override the gfx used for all detected AMD GPUs"}
+		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGpu, "Enable experimental Intel GPU detection"}
+	}
+	return ret
 }
 
 func Values() map[string]string {
@@ -91,9 +133,10 @@ func clean(key string) string {
 
 func init() {
 	// default values
-	NumParallel = 1
-	MaxRunners = 1
+	NumParallel = 0 // Autoselect
+	MaxRunners = 0  // Autoselect
 	MaxQueuedRequests = 512
+	KeepAlive = 5 * time.Minute
 
 	LoadConfig()
 }
@@ -131,7 +174,7 @@ func LoadConfig() {
 		var paths []string
 		for _, root := range []string{filepath.Dir(appExe), cwd} {
 			paths = append(paths,
-				filepath.Join(root),
+				root,
 				filepath.Join(root, "windows-"+runtime.GOARCH),
 				filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
 			)
@@ -171,8 +214,8 @@ func LoadConfig() {
 
 	if onp := clean("OLLAMA_NUM_PARALLEL"); onp != "" {
 		val, err := strconv.Atoi(onp)
-		if err != nil || val <= 0 {
-			slog.Error("invalid setting must be greater than zero", "OLLAMA_NUM_PARALLEL", onp, "error", err)
+		if err != nil {
+			slog.Error("invalid setting, ignoring", "OLLAMA_NUM_PARALLEL", onp, "error", err)
 		} else {
 			NumParallel = val
 		}
@@ -180,6 +223,15 @@ func LoadConfig() {
 
 	if nohistory := clean("OLLAMA_NOHISTORY"); nohistory != "" {
 		NoHistory = true
+	}
+
+	if spread := clean("OLLAMA_SCHED_SPREAD"); spread != "" {
+		s, err := strconv.ParseBool(spread)
+		if err == nil {
+			SchedSpread = s
+		} else {
+			SchedSpread = true
+		}
 	}
 
 	if noprune := clean("OLLAMA_NOPRUNE"); noprune != "" {
@@ -193,16 +245,22 @@ func LoadConfig() {
 		AllowOrigins = append(AllowOrigins,
 			fmt.Sprintf("http://%s", allowOrigin),
 			fmt.Sprintf("https://%s", allowOrigin),
-			fmt.Sprintf("http://%s:*", allowOrigin),
-			fmt.Sprintf("https://%s:*", allowOrigin),
+			fmt.Sprintf("http://%s", net.JoinHostPort(allowOrigin, "*")),
+			fmt.Sprintf("https://%s", net.JoinHostPort(allowOrigin, "*")),
 		)
 	}
+
+	AllowOrigins = append(AllowOrigins,
+		"app://*",
+		"file://*",
+		"tauri://*",
+	)
 
 	maxRunners := clean("OLLAMA_MAX_LOADED_MODELS")
 	if maxRunners != "" {
 		m, err := strconv.Atoi(maxRunners)
 		if err != nil {
-			slog.Error("invalid setting", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "error", err)
+			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "error", err)
 		} else {
 			MaxRunners = m
 		}
@@ -211,13 +269,113 @@ func LoadConfig() {
 	if onp := os.Getenv("OLLAMA_MAX_QUEUE"); onp != "" {
 		p, err := strconv.Atoi(onp)
 		if err != nil || p <= 0 {
-			slog.Error("invalid setting", "OLLAMA_MAX_QUEUE", onp, "error", err)
+			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_QUEUE", onp, "error", err)
 		} else {
 			MaxQueuedRequests = p
 		}
 	}
 
-	KeepAlive = clean("OLLAMA_KEEP_ALIVE")
+	ka := clean("OLLAMA_KEEP_ALIVE")
+	if ka != "" {
+		loadKeepAlive(ka)
+	}
+
+	var err error
+	ModelsDir, err = getModelsDir()
+	if err != nil {
+		slog.Error("invalid setting", "OLLAMA_MODELS", ModelsDir, "error", err)
+	}
+
+	Host, err = getOllamaHost()
+	if err != nil {
+		slog.Error("invalid setting", "OLLAMA_HOST", Host, "error", err, "using default port", Host.Port)
+	}
+
+	if set, err := strconv.ParseBool(clean("OLLAMA_INTEL_GPU")); err == nil {
+		IntelGpu = set
+	}
+
+	CudaVisibleDevices = clean("CUDA_VISIBLE_DEVICES")
+	HipVisibleDevices = clean("HIP_VISIBLE_DEVICES")
+	RocrVisibleDevices = clean("ROCR_VISIBLE_DEVICES")
+	GpuDeviceOrdinal = clean("GPU_DEVICE_ORDINAL")
+	HsaOverrideGfxVersion = clean("HSA_OVERRIDE_GFX_VERSION")
+}
+
+func getModelsDir() (string, error) {
+	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
+		return models, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".ollama", "models"), nil
+}
+
+func getOllamaHost() (*OllamaHost, error) {
+	defaultPort := "11434"
+
+	hostVar := os.Getenv("OLLAMA_HOST")
+	hostVar = strings.TrimSpace(strings.Trim(strings.TrimSpace(hostVar), "\"'"))
+
+	scheme, hostport, ok := strings.Cut(hostVar, "://")
+	switch {
+	case !ok:
+		scheme, hostport = "http", hostVar
+	case scheme == "http":
+		defaultPort = "80"
+	case scheme == "https":
+		defaultPort = "443"
+	}
+
+	// trim trailing slashes
+	hostport = strings.TrimRight(hostport, "/")
+
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host, port = "127.0.0.1", defaultPort
+		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
+			host = ip.String()
+		} else if hostport != "" {
+			host = hostport
+		}
+	}
+
+	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 0 {
+		return &OllamaHost{
+			Scheme: scheme,
+			Host:   host,
+			Port:   defaultPort,
+		}, ErrInvalidHostPort
+	}
+
+	return &OllamaHost{
+		Scheme: scheme,
+		Host:   host,
+		Port:   port,
+	}, nil
+}
+
+func loadKeepAlive(ka string) {
+	v, err := strconv.Atoi(ka)
+	if err != nil {
+		d, err := time.ParseDuration(ka)
+		if err == nil {
+			if d < 0 {
+				KeepAlive = time.Duration(math.MaxInt64)
+			} else {
+				KeepAlive = d
+			}
+		}
+	} else {
+		d := time.Duration(v) * time.Second
+		if d < 0 {
+			KeepAlive = time.Duration(math.MaxInt64)
+		} else {
+			KeepAlive = d
+		}
+	}
 }
 
 // HomeDir returns the ollama home directory. This can be user-defined through

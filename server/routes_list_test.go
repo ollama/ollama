@@ -8,10 +8,12 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestList(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	envconfig.LoadConfig()
 
 	expectNames := []string{
 		"mistral:7b-instruct-q4_0",
@@ -29,7 +31,7 @@ func TestList(t *testing.T) {
 	for _, n := range expectNames {
 		createRequest(t, s.CreateModelHandler, api.CreateRequest{
 			Name:      n,
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t)),
+			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 		})
 	}
 

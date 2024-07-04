@@ -2,7 +2,7 @@ ARG GOLANG_VERSION=1.22.1
 ARG CMAKE_VERSION=3.22.1
 # this CUDA_VERSION corresponds with the one specified in docs/gpu.md
 ARG CUDA_VERSION=11.3.1
-ARG ROCM_VERSION=6.0.2
+ARG ROCM_VERSION=6.1.1
 
 # Copy the minimal context we need to run the generate scripts
 FROM scratch AS llm-code
@@ -70,12 +70,12 @@ RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx" sh gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx2-build-amd64
 RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx2" sh gen_linux.sh
 
-FROM --platform=linux/arm64 centos:7 AS cpu-builder-arm64
+FROM --platform=linux/arm64 rockylinux:8 AS cpu-builder-arm64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
-ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 ARG OLLAMA_CUSTOM_CPU_DEFS
 ARG CGO_CFLAGS
