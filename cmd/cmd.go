@@ -77,9 +77,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	status := ""
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
+	status := "starting model create..."
 
 	for i := range modelfile.Commands {
 		switch modelfile.Commands[i].Name {
@@ -113,7 +111,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 				path = tempfile
 			}
-			spinner.Stop()
+
 			digest, err := createBlob(cmd, client, path)
 			if err != nil {
 				return err
@@ -126,8 +124,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
-			spinner.Stop()
-
 			bar, ok := bars[resp.Digest]
 			if !ok {
 				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
@@ -137,10 +133,8 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 			bar.Set(resp.Completed)
 		} else if status != resp.Status {
-			spinner.Stop()
-
 			status = resp.Status
-			spinner = progress.NewSpinner(status)
+			spinner := progress.NewSpinner(status)
 			p.Add(status, spinner)
 		}
 
@@ -294,7 +288,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	// Create a progress bar and start a goroutine to update it
 	p := progress.NewProgress(os.Stderr)
 	bar := progress.NewBar("transferring model data...", fileSize, 0)
-	p.Add("", bar)
+	p.Add("transferring model data", bar)
 
 	ticker := time.NewTicker(60 * time.Millisecond)
 	done := make(chan struct{})
@@ -345,6 +339,8 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
 	}
+	bar.Set(fileSize)
+	close(done)
 	return digest, nil
 }
 
