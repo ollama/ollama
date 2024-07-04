@@ -17,21 +17,6 @@ import (
 
 var ErrInvalidHostPort = errors.New("invalid port specified in OLLAMA_HOST")
 
-// Debug returns true if the OLLAMA_DEBUG environment variable is set to a truthy value.
-func Debug() bool {
-	if s := clean("OLLAMA_DEBUG"); s != "" {
-		b, err := strconv.ParseBool(s)
-		if err != nil {
-			// non-empty value is truthy
-			return true
-		}
-
-		return b
-	}
-
-	return false
-}
-
 // Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable.
 // Default is scheme "http" and host "127.0.0.1:11434"
 func Host() *url.URL {
@@ -77,7 +62,7 @@ func Host() *url.URL {
 
 // Origins returns a list of allowed origins. Origins can be configured via the OLLAMA_ORIGINS environment variable.
 func Origins() (origins []string) {
-	if s := clean("OLLAMA_ORIGINS"); s != "" {
+	if s := getenv("OLLAMA_ORIGINS"); s != "" {
 		origins = strings.Split(s, ",")
 	}
 
@@ -114,9 +99,37 @@ func Models() string {
 	return filepath.Join(home, ".ollama", "models")
 }
 
+func Bool(k string) func() bool {
+	return func() bool {
+		if s := getenv(k); s != "" {
+			b, err := strconv.ParseBool(s)
+			if err != nil {
+				return true
+			}
+
+			return b
+		}
+
+		return false
+	}
+}
+
 var (
-	// Experimental flash attention
-	FlashAttention bool
+	// Debug enabled additional debug information.
+	Debug = Bool("OLLAMA_DEBUG")
+	// FlashAttention enables the experimental flash attention feature.
+	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
+	// NoHistory disables readline history.
+	NoHistory = Bool("OLLAMA_NOHISTORY")
+	// NoPrune disables pruning of model blobs on startup.
+	NoPrune = Bool("OLLAMA_NOPRUNE")
+	// SchedSpread allows scheduling models across all GPUs.
+	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
+	// IntelGPU enables experimental Intel GPU detection.
+	IntelGPU = Bool("OLLAMA_INTEL_GPU")
+)
+
+var (
 	// Set via OLLAMA_KEEP_ALIVE in the environment
 	KeepAlive time.Duration
 	// Set via OLLAMA_LLM_LIBRARY in the environment
@@ -125,22 +138,12 @@ var (
 	MaxRunners int
 	// Set via OLLAMA_MAX_QUEUE in the environment
 	MaxQueuedRequests int
-	// Set via OLLAMA_MODELS in the environment
-	ModelsDir string
-	// Set via OLLAMA_NOHISTORY in the environment
-	NoHistory bool
-	// Set via OLLAMA_NOPRUNE in the environment
-	NoPrune bool
 	// Set via OLLAMA_NUM_PARALLEL in the environment
 	NumParallel int
 	// Set via OLLAMA_RUNNERS_DIR in the environment
 	RunnersDir string
-	// Set via OLLAMA_SCHED_SPREAD in the environment
-	SchedSpread bool
 	// Set via OLLAMA_TMPDIR in the environment
 	TmpDir string
-	// Set via OLLAMA_INTEL_GPU in the environment
-	IntelGpu bool
 
 	// Set via CUDA_VISIBLE_DEVICES in the environment
 	CudaVisibleDevices string
@@ -163,19 +166,19 @@ type EnvVar struct {
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention, "Enabled flash attention"},
+		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
-		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
-		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
+		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
+		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
-		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread, "Always schedule model across all GPUs"},
+		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
 	}
 	if runtime.GOOS != "darwin" {
@@ -184,7 +187,7 @@ func AsMap() map[string]EnvVar {
 		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices, "Set which AMD devices are visible"}
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal, "Set which AMD devices are visible"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion, "Override the gfx used for all detected AMD GPUs"}
-		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGpu, "Enable experimental Intel GPU detection"}
+		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
 	}
 	return ret
 }
@@ -197,8 +200,8 @@ func Values() map[string]string {
 	return vals
 }
 
-// Clean quotes and spaces from the value
-func clean(key string) string {
+// getenv returns an environment variable stripped of leading and trailing quotes or spaces
+func getenv(key string) string {
 	return strings.Trim(os.Getenv(key), "\"' ")
 }
 
@@ -213,14 +216,7 @@ func init() {
 }
 
 func LoadConfig() {
-	if fa := clean("OLLAMA_FLASH_ATTENTION"); fa != "" {
-		d, err := strconv.ParseBool(fa)
-		if err == nil {
-			FlashAttention = d
-		}
-	}
-
-	RunnersDir = clean("OLLAMA_RUNNERS_DIR")
+	RunnersDir = getenv("OLLAMA_RUNNERS_DIR")
 	if runtime.GOOS == "windows" && RunnersDir == "" {
 		// On Windows we do not carry the payloads inside the main executable
 		appExe, err := os.Executable()
@@ -256,11 +252,11 @@ func LoadConfig() {
 		}
 	}
 
-	TmpDir = clean("OLLAMA_TMPDIR")
+	TmpDir = getenv("OLLAMA_TMPDIR")
 
-	LLMLibrary = clean("OLLAMA_LLM_LIBRARY")
+	LLMLibrary = getenv("OLLAMA_LLM_LIBRARY")
 
-	if onp := clean("OLLAMA_NUM_PARALLEL"); onp != "" {
+	if onp := getenv("OLLAMA_NUM_PARALLEL"); onp != "" {
 		val, err := strconv.Atoi(onp)
 		if err != nil {
 			slog.Error("invalid setting, ignoring", "OLLAMA_NUM_PARALLEL", onp, "error", err)
@@ -269,24 +265,7 @@ func LoadConfig() {
 		}
 	}
 
-	if nohistory := clean("OLLAMA_NOHISTORY"); nohistory != "" {
-		NoHistory = true
-	}
-
-	if spread := clean("OLLAMA_SCHED_SPREAD"); spread != "" {
-		s, err := strconv.ParseBool(spread)
-		if err == nil {
-			SchedSpread = s
-		} else {
-			SchedSpread = true
-		}
-	}
-
-	if noprune := clean("OLLAMA_NOPRUNE"); noprune != "" {
-		NoPrune = true
-	}
-
-	maxRunners := clean("OLLAMA_MAX_LOADED_MODELS")
+	maxRunners := getenv("OLLAMA_MAX_LOADED_MODELS")
 	if maxRunners != "" {
 		m, err := strconv.Atoi(maxRunners)
 		if err != nil {
@@ -305,20 +284,16 @@ func LoadConfig() {
 		}
 	}
 
-	ka := clean("OLLAMA_KEEP_ALIVE")
+	ka := getenv("OLLAMA_KEEP_ALIVE")
 	if ka != "" {
 		loadKeepAlive(ka)
 	}
 
-	if set, err := strconv.ParseBool(clean("OLLAMA_INTEL_GPU")); err == nil {
-		IntelGpu = set
-	}
-
-	CudaVisibleDevices = clean("CUDA_VISIBLE_DEVICES")
-	HipVisibleDevices = clean("HIP_VISIBLE_DEVICES")
-	RocrVisibleDevices = clean("ROCR_VISIBLE_DEVICES")
-	GpuDeviceOrdinal = clean("GPU_DEVICE_ORDINAL")
-	HsaOverrideGfxVersion = clean("HSA_OVERRIDE_GFX_VERSION")
+	CudaVisibleDevices = getenv("CUDA_VISIBLE_DEVICES")
+	HipVisibleDevices = getenv("HIP_VISIBLE_DEVICES")
+	RocrVisibleDevices = getenv("ROCR_VISIBLE_DEVICES")
+	GpuDeviceOrdinal = getenv("GPU_DEVICE_ORDINAL")
+	HsaOverrideGfxVersion = getenv("HSA_OVERRIDE_GFX_VERSION")
 }
 
 func loadKeepAlive(ka string) {

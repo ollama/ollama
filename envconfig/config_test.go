@@ -20,8 +20,8 @@ func TestSmoke(t *testing.T) {
 	require.True(t, Debug())
 
 	t.Setenv("OLLAMA_FLASH_ATTENTION", "1")
-	LoadConfig()
-	require.True(t, FlashAttention)
+	require.True(t, FlashAttention())
+
 	t.Setenv("OLLAMA_KEEP_ALIVE", "")
 	LoadConfig()
 	require.Equal(t, 5*time.Minute, KeepAlive)
@@ -158,6 +158,30 @@ func TestOrigins(t *testing.T) {
 
 			if diff := cmp.Diff(Origins(), tt.expect); diff != "" {
 				t.Errorf("%s: mismatch (-want +got):\n%s", tt.value, diff)
+			}
+		})
+	}
+}
+
+func TestBool(t *testing.T) {
+	cases := map[string]struct {
+		value  string
+		expect bool
+	}{
+		"empty":     {"", false},
+		"true":      {"true", true},
+		"false":     {"false", false},
+		"1":         {"1", true},
+		"0":         {"0", false},
+		"random":    {"random", true},
+		"something": {"something", true},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_BOOL", tt.value)
+			if b := Bool("OLLAMA_BOOL"); b() != tt.expect {
+				t.Errorf("%s: expected %t, got %t", name, tt.expect, b())
 			}
 		})
 	}

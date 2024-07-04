@@ -221,7 +221,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--memory-f32")
 	}
 
-	flashAttnEnabled := envconfig.FlashAttention
+	flashAttnEnabled := envconfig.FlashAttention()
 
 	for _, g := range gpus {
 		// only cuda (compute capability 7+) and metal support flash attention

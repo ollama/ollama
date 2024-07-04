@@ -302,7 +302,7 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		// Intel
-		if envconfig.IntelGpu {
+		if envconfig.IntelGPU() {
 			oHandles = initOneAPIHandles()
 			// On windows we bundle the oneapi library one level above the runner dir
 			depPath = ""
