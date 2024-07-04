@@ -747,10 +747,11 @@ A single JSON object will be returned.
       "size": 7365960935,
       "digest": "9f438cb9cd581fc025612d27f7c1a6669ff83a8bb0ed86c94fcf4c5440555697",
       "details": {
+        "parent_model": "",
         "format": "gguf",
         "family": "llama",
         "families": null,
-        "parameter_size": "13B",
+        "parameter_size": "13.0B",
         "quantization_level": "Q4_0"
       }
     },
@@ -760,10 +761,13 @@ A single JSON object will be returned.
       "size": 3825819519,
       "digest": "fe938a131f40e6f6d40083c9f0f430a515233eb2edaa6d72eb85c50d64f2300e",
       "details": {
+        "parent_model": "",
         "format": "gguf",
         "family": "llama",
-        "families": null,
-        "parameter_size": "7B",
+        "families": [
+          "llama"
+        ],
+        "parameter_size": "7.0B",
         "quantization_level": "Q4_0"
       }
     }
