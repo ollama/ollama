@@ -312,20 +312,17 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 		}
 	} */
 	if client.IsLocal() {
-		config, err := getLocalPath(cmd.Context(), digest)
+		dest, err := getLocalPath(cmd.Context(), digest)
 
 		if errors.Is(err, ErrBlobExists) {
 			return digest, nil
 		}
 
-		if err != nil {
-			return "", err
-		}
-
-		dest := config
-		err = createBlobLocal(path, dest)
 		if err == nil {
-			return digest, nil
+			err = createBlobLocal(path, dest)
+			if err == nil {
+				return digest, nil
+			}
 		}
 	}
 
@@ -344,13 +341,12 @@ func getLocalPath(ctx context.Context, digest string) (string, error) {
 		Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
 	}
 
-	var reqBody io.Reader
 	data, err := json.Marshal(digest)
 	if err != nil {
 		return "", err
 	}
 
-	reqBody = bytes.NewReader(data)
+	reqBody := bytes.NewReader(data)
 	path := fmt.Sprintf("/api/blobs/%s", digest)
 	requestURL := base.JoinPath(path)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), reqBody)
