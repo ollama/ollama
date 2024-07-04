@@ -1,24 +1,4 @@
-package llm
 
-import "fmt"
-
-type fileType uint32
-
-const (
-	fileTypeF32 fileType = iota
-	fileTypeF16
-	fileTypeQ4_0
-	fileTypeQ4_1
-	fileTypeQ4_1_F16
-	fileTypeQ4_2 // unused
-	fileTypeQ4_3 // unused
-	fileTypeQ8_0
-	fileTypeQ5_0
-	fileTypeQ5_1
-	fileTypeQ2_K
-	fileTypeQ3_K_S
-	fileTypeQ3_K_M
-	fileTypeQ3_K_L
 	fileTypeQ4_K_S
 	fileTypeQ4_K_M
 	fileTypeQ5_K_S

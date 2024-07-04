@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "charactergen": "tsx character-generator.ts", 
+    "charactergen": "tsx character-generator.ts",
     "start": "tsx mentors.ts"
   },
   "dependencies": {
@@ -9,7 +9,7 @@
     "path": "^0.12.7"
   },
   "devDependencies": {
-    "tsx": "^4.6.2",
-    "typescript": "^5.3.3"
+    "tsx": "^4.16.0",
+    "typescript": "^5.6.0-dev.20240702"
   }
 }

@@ -2,6 +2,8 @@
 import subprocess
 import sys
 from urllib.parse import urlparse
+
+
 from git import Repo
 
 # Helper script to be able to build on remote repos using git to push local changes
@@ -16,7 +18,7 @@ from git import Repo
 #        receivepack = powershell git receive-pack
 #
 
-# TODO - add argpare and make this more configurable 
+# TODO - add argpare and make this more configurable
 # - force flag becomes optional
 # - generate, build or test ...
 
@@ -25,8 +27,8 @@ from git import Repo
 repo = Repo(".")
 
 # On linux, add links in /usr/local/bin to the go binaries to avoid needing this
-# GoCmd = "/usr/local/go/bin/go" 
-GoCmd = "go" 
+# GoCmd = "/usr/local/go/bin/go"
+GoCmd = "go"
 
 if repo.is_dirty():
     print("Tree is dirty.  Commit your changes before running this script")

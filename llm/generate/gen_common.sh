@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # common logic across linux and darwin
 
 init_vars() {
