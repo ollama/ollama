@@ -942,8 +942,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 	}
 
 	if c.GetHeader("X-Redirect-Create") == "1" {
-		c.Header("Location", path)
-		fmt.Println("!!!!!!!!!", string(path))
+		c.Header("LocalLocation", path)
 		c.Status(http.StatusTemporaryRedirect)
 		return
 	}
