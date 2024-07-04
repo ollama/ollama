@@ -293,6 +293,10 @@ type ProcessResponse struct {
 	Models []ProcessModelResponse `json:"models"`
 }
 
+type DeviceResponse struct {
+	Devices []ListDeviceResponse `json:"devices"`
+}
+
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
 	Name       string       `json:"name"`
@@ -319,6 +323,14 @@ type RetrieveModelResponse struct {
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	OwnedBy string `json:"owned_by"`
+}
+
+type ListDeviceResponse struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Library     string `json:"library"`
+	TotalMemory uint64 `json:"total_memory,omitempty"`
+	FreeMemory  uint64 `json:"free_memory,omitempty"`
 }
 
 type TokenResponse struct {

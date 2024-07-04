@@ -558,6 +558,43 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func ListDeviceHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	devices, err := client.ListDevice(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	var data [][]string
+
+	for _, gpu := range devices.Devices {
+		gpuName := gpu.Name
+		if len(gpuName) == 0 {
+			gpuName = "Unknown"
+		}
+		data = append(data, []string{gpu.ID, gpuName, gpu.Library,
+			format.HumanBytes2(gpu.TotalMemory),
+			format.HumanBytes2(gpu.FreeMemory)})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"ID", "NAME", "LIBRARY", "TOTAL_MEMORY", "FREE_MEMORY"})
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("\t")
+	table.AppendBulk(data)
+	table.Render()
+
+	return nil
+}
+
 func DeleteHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -1297,6 +1334,13 @@ func NewCLI() *cobra.Command {
 		RunE:    ListRunningHandler,
 	}
 
+	deviceCmd := &cobra.Command{
+		Use:     "device",
+		Short:   "List devices",
+		PreRunE: checkServerHeartbeat,
+		RunE:    ListDeviceHandler,
+	}
+
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
 		Short:   "Copy a model",
@@ -1325,6 +1369,7 @@ func NewCLI() *cobra.Command {
 		pushCmd,
 		listCmd,
 		psCmd,
+		deviceCmd,
 		copyCmd,
 		deleteCmd,
 		serveCmd,
@@ -1362,6 +1407,7 @@ func NewCLI() *cobra.Command {
 		pushCmd,
 		listCmd,
 		psCmd,
+		deviceCmd,
 		copyCmd,
 		deleteCmd,
 	)
