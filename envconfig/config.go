@@ -213,13 +213,22 @@ func RunnersDir() (p string) {
 	return p
 }
 
+func Int(k string, n int) func() int {
+	return func() int {
+		if s := getenv(k); s != "" {
+			if n, err := strconv.ParseInt(s, 10, 64); err == nil && n >= 0 {
+				return int(n)
+			}
+		}
+
+		return n
+	}
+}
+
 var (
-	// Set via OLLAMA_MAX_LOADED_MODELS in the environment
-	MaxRunners int
-	// Set via OLLAMA_MAX_QUEUE in the environment
-	MaxQueuedRequests int
-	// Set via OLLAMA_NUM_PARALLEL in the environment
-	NumParallel int
+	NumParallel = Int("OLLAMA_NUM_PARALLEL", 0)
+	MaxRunners  = Int("OLLAMA_MAX_LOADED_MODELS", 0)
+	MaxQueue    = Int("OLLAMA_MAX_QUEUE", 512)
 )
 
 type EnvVar struct {
@@ -235,12 +244,12 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
-		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
-		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
+		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
+		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests"},
+		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir(), "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
@@ -268,43 +277,4 @@ func Values() map[string]string {
 // getenv returns an environment variable stripped of leading and trailing quotes or spaces
 func getenv(key string) string {
 	return strings.Trim(os.Getenv(key), "\"' ")
-}
-
-func init() {
-	// default values
-	NumParallel = 0 // Autoselect
-	MaxRunners = 0  // Autoselect
-	MaxQueuedRequests = 512
-
-	LoadConfig()
-}
-
-func LoadConfig() {
-	if onp := getenv("OLLAMA_NUM_PARALLEL"); onp != "" {
-		val, err := strconv.Atoi(onp)
-		if err != nil {
-			slog.Error("invalid setting, ignoring", "OLLAMA_NUM_PARALLEL", onp, "error", err)
-		} else {
-			NumParallel = val
-		}
-	}
-
-	maxRunners := getenv("OLLAMA_MAX_LOADED_MODELS")
-	if maxRunners != "" {
-		m, err := strconv.Atoi(maxRunners)
-		if err != nil {
-			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "error", err)
-		} else {
-			MaxRunners = m
-		}
-	}
-
-	if onp := os.Getenv("OLLAMA_MAX_QUEUE"); onp != "" {
-		p, err := strconv.Atoi(onp)
-		if err != nil || p <= 0 {
-			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_QUEUE", onp, "error", err)
-		} else {
-			MaxQueuedRequests = p
-		}
-	}
 }
