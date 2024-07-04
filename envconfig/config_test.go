@@ -21,22 +21,6 @@ func TestSmoke(t *testing.T) {
 
 	t.Setenv("OLLAMA_FLASH_ATTENTION", "1")
 	require.True(t, FlashAttention())
-
-	t.Setenv("OLLAMA_KEEP_ALIVE", "")
-	LoadConfig()
-	require.Equal(t, 5*time.Minute, KeepAlive)
-	t.Setenv("OLLAMA_KEEP_ALIVE", "3")
-	LoadConfig()
-	require.Equal(t, 3*time.Second, KeepAlive)
-	t.Setenv("OLLAMA_KEEP_ALIVE", "1h")
-	LoadConfig()
-	require.Equal(t, 1*time.Hour, KeepAlive)
-	t.Setenv("OLLAMA_KEEP_ALIVE", "-1s")
-	LoadConfig()
-	require.Equal(t, time.Duration(math.MaxInt64), KeepAlive)
-	t.Setenv("OLLAMA_KEEP_ALIVE", "-1")
-	LoadConfig()
-	require.Equal(t, time.Duration(math.MaxInt64), KeepAlive)
 }
 
 func TestHost(t *testing.T) {
@@ -182,6 +166,39 @@ func TestBool(t *testing.T) {
 			t.Setenv("OLLAMA_BOOL", tt.value)
 			if b := Bool("OLLAMA_BOOL"); b() != tt.expect {
 				t.Errorf("%s: expected %t, got %t", name, tt.expect, b())
+			}
+		})
+	}
+}
+
+func TestKeepAlive(t *testing.T) {
+	cases := map[string]time.Duration{
+		"":       5 * time.Minute,
+		"1s":     time.Second,
+		"1m":     time.Minute,
+		"1h":     time.Hour,
+		"5m0s":   5 * time.Minute,
+		"1h2m3s": 1*time.Hour + 2*time.Minute + 3*time.Second,
+		"0":      time.Duration(0),
+		"60":     60 * time.Second,
+		"120":    2 * time.Minute,
+		"3600":   time.Hour,
+		"-0":     time.Duration(0),
+		"-1":     time.Duration(math.MaxInt64),
+		"-1m":    time.Duration(math.MaxInt64),
+		// invalid values
+		" ":   5 * time.Minute,
+		"???": 5 * time.Minute,
+		"1d":  5 * time.Minute,
+		"1y":  5 * time.Minute,
+		"1w":  5 * time.Minute,
+	}
+
+	for tt, expect := range cases {
+		t.Run(tt, func(t *testing.T) {
+			t.Setenv("OLLAMA_KEEP_ALIVE", tt)
+			if actual := KeepAlive(); actual != expect {
+				t.Errorf("%s: expected %s, got %s", tt, expect, actual)
 			}
 		})
 	}

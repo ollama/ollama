@@ -99,6 +99,26 @@ func Models() string {
 	return filepath.Join(home, ".ollama", "models")
 }
 
+// KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
+// Negative values are treated as infinite. Zero is treated as no keep alive.
+// Default is 5 minutes.
+func KeepAlive() (keepAlive time.Duration) {
+	keepAlive = 5 * time.Minute
+	if s := os.Getenv("OLLAMA_KEEP_ALIVE"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			keepAlive = d
+		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			keepAlive = time.Duration(n) * time.Second
+		}
+	}
+
+	if keepAlive < 0 {
+		return time.Duration(math.MaxInt64)
+	}
+
+	return keepAlive
+}
+
 func Bool(k string) func() bool {
 	return func() bool {
 		if s := getenv(k); s != "" {
@@ -130,8 +150,6 @@ var (
 )
 
 var (
-	// Set via OLLAMA_KEEP_ALIVE in the environment
-	KeepAlive time.Duration
 	// Set via OLLAMA_LLM_LIBRARY in the environment
 	LLMLibrary string
 	// Set via OLLAMA_MAX_LOADED_MODELS in the environment
@@ -168,7 +186,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive, "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
@@ -210,7 +228,6 @@ func init() {
 	NumParallel = 0 // Autoselect
 	MaxRunners = 0  // Autoselect
 	MaxQueuedRequests = 512
-	KeepAlive = 5 * time.Minute
 
 	LoadConfig()
 }
@@ -284,35 +301,9 @@ func LoadConfig() {
 		}
 	}
 
-	ka := getenv("OLLAMA_KEEP_ALIVE")
-	if ka != "" {
-		loadKeepAlive(ka)
-	}
-
 	CudaVisibleDevices = getenv("CUDA_VISIBLE_DEVICES")
 	HipVisibleDevices = getenv("HIP_VISIBLE_DEVICES")
 	RocrVisibleDevices = getenv("ROCR_VISIBLE_DEVICES")
 	GpuDeviceOrdinal = getenv("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = getenv("HSA_OVERRIDE_GFX_VERSION")
-}
-
-func loadKeepAlive(ka string) {
-	v, err := strconv.Atoi(ka)
-	if err != nil {
-		d, err := time.ParseDuration(ka)
-		if err == nil {
-			if d < 0 {
-				KeepAlive = time.Duration(math.MaxInt64)
-			} else {
-				KeepAlive = d
-			}
-		}
-	} else {
-		d := time.Duration(v) * time.Second
-		if d < 0 {
-			KeepAlive = time.Duration(math.MaxInt64)
-		} else {
-			KeepAlive = d
-		}
-	}
 }

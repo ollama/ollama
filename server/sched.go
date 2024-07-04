@@ -401,7 +401,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, 
 	if numParallel < 1 {
 		numParallel = 1
 	}
-	sessionDuration := envconfig.KeepAlive
+	sessionDuration := envconfig.KeepAlive()
 	if req.sessionDuration != nil {
 		sessionDuration = req.sessionDuration.Duration
 	}
