@@ -359,11 +359,6 @@ type ModelDetails struct {
 	QuantizationLevel string   `json:"quantization_level"`
 }
 
-// EnvConfig is the configuration for the environment.
-type ServerConfig struct {
-	ModelDir string `json:"model_dir"`
-}
-
 func (m *Metrics) Summary() {
 	if m.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", m.TotalDuration)
