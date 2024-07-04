@@ -53,7 +53,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	}
 
 	var supported []string
-	gfxOverride := envconfig.HsaOverrideGfxVersion
+	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	if gfxOverride == "" {
 		supported, err = GetSupportedGFX(libDir)
 		if err != nil {

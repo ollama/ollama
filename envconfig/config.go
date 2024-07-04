@@ -149,30 +149,77 @@ var (
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 )
 
+func String(s string) func() string {
+	return func() string {
+		return getenv(s)
+	}
+}
+
 var (
-	// Set via OLLAMA_LLM_LIBRARY in the environment
-	LLMLibrary string
+	LLMLibrary = String("OLLAMA_LLM_LIBRARY")
+	TmpDir     = String("OLLAMA_TMPDIR")
+
+	CudaVisibleDevices    = String("CUDA_VISIBLE_DEVICES")
+	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
+	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
+	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
+	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
+)
+
+func RunnersDir() (p string) {
+	if p := getenv("OLLAMA_RUNNERS_DIR"); p != "" {
+		return p
+	}
+
+	if runtime.GOOS != "windows" {
+		return
+	}
+
+	defer func() {
+		if p == "" {
+			slog.Error("unable to locate llm runner directory. Set OLLAMA_RUNNERS_DIR to the location of 'ollama_runners'")
+		}
+	}()
+
+	// On Windows we do not carry the payloads inside the main executable
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+
+	var paths []string
+	for _, root := range []string{filepath.Dir(exe), cwd} {
+		paths = append(paths,
+			root,
+			filepath.Join(root, "windows-"+runtime.GOARCH),
+			filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
+		)
+	}
+
+	// Try a few variations to improve developer experience when building from source in the local tree
+	for _, path := range paths {
+		candidate := filepath.Join(path, "ollama_runners")
+		if _, err := os.Stat(candidate); err == nil {
+			p = candidate
+			break
+		}
+	}
+
+	return p
+}
+
+var (
 	// Set via OLLAMA_MAX_LOADED_MODELS in the environment
 	MaxRunners int
 	// Set via OLLAMA_MAX_QUEUE in the environment
 	MaxQueuedRequests int
 	// Set via OLLAMA_NUM_PARALLEL in the environment
 	NumParallel int
-	// Set via OLLAMA_RUNNERS_DIR in the environment
-	RunnersDir string
-	// Set via OLLAMA_TMPDIR in the environment
-	TmpDir string
-
-	// Set via CUDA_VISIBLE_DEVICES in the environment
-	CudaVisibleDevices string
-	// Set via HIP_VISIBLE_DEVICES in the environment
-	HipVisibleDevices string
-	// Set via ROCR_VISIBLE_DEVICES in the environment
-	RocrVisibleDevices string
-	// Set via GPU_DEVICE_ORDINAL in the environment
-	GpuDeviceOrdinal string
-	// Set via HSA_OVERRIDE_GFX_VERSION in the environment
-	HsaOverrideGfxVersion string
 )
 
 type EnvVar struct {
@@ -187,7 +234,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
-		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
+		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
@@ -195,16 +242,16 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
-		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
+		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir(), "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
-		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir, "Location for temporary files"},
+		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir(), "Location for temporary files"},
 	}
 	if runtime.GOOS != "darwin" {
-		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices, "Set which NVIDIA devices are visible"}
-		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices, "Set which AMD devices are visible"}
-		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices, "Set which AMD devices are visible"}
-		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal, "Set which AMD devices are visible"}
-		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion, "Override the gfx used for all detected AMD GPUs"}
+		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}
+		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which AMD devices are visible"}
+		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices(), "Set which AMD devices are visible"}
+		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible"}
+		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
 	}
 	return ret
@@ -233,46 +280,6 @@ func init() {
 }
 
 func LoadConfig() {
-	RunnersDir = getenv("OLLAMA_RUNNERS_DIR")
-	if runtime.GOOS == "windows" && RunnersDir == "" {
-		// On Windows we do not carry the payloads inside the main executable
-		appExe, err := os.Executable()
-		if err != nil {
-			slog.Error("failed to lookup executable path", "error", err)
-		}
-
-		cwd, err := os.Getwd()
-		if err != nil {
-			slog.Error("failed to lookup working directory", "error", err)
-		}
-
-		var paths []string
-		for _, root := range []string{filepath.Dir(appExe), cwd} {
-			paths = append(paths,
-				root,
-				filepath.Join(root, "windows-"+runtime.GOARCH),
-				filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
-			)
-		}
-
-		// Try a few variations to improve developer experience when building from source in the local tree
-		for _, p := range paths {
-			candidate := filepath.Join(p, "ollama_runners")
-			_, err := os.Stat(candidate)
-			if err == nil {
-				RunnersDir = candidate
-				break
-			}
-		}
-		if RunnersDir == "" {
-			slog.Error("unable to locate llm runner directory.  Set OLLAMA_RUNNERS_DIR to the location of 'ollama_runners'")
-		}
-	}
-
-	TmpDir = getenv("OLLAMA_TMPDIR")
-
-	LLMLibrary = getenv("OLLAMA_LLM_LIBRARY")
-
 	if onp := getenv("OLLAMA_NUM_PARALLEL"); onp != "" {
 		val, err := strconv.Atoi(onp)
 		if err != nil {
@@ -300,10 +307,4 @@ func LoadConfig() {
 			MaxQueuedRequests = p
 		}
 	}
-
-	CudaVisibleDevices = getenv("CUDA_VISIBLE_DEVICES")
-	HipVisibleDevices = getenv("HIP_VISIBLE_DEVICES")
-	RocrVisibleDevices = getenv("ROCR_VISIBLE_DEVICES")
-	GpuDeviceOrdinal = getenv("GPU_DEVICE_ORDINAL")
-	HsaOverrideGfxVersion = getenv("HSA_OVERRIDE_GFX_VERSION")
 }
