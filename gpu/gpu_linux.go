@@ -39,8 +39,9 @@ var NvcudaGlobs = []string{
 }
 
 var OneapiGlobs = []string{
-	"/usr/lib/x86_64-linux-gnu/libze_intel_gpu.so*",
-	"/usr/lib*/libze_intel_gpu.so*",
+	"/home/zhe/zhe/ollama/gpu/libollama_detect_intel_gpu.so*",
+	// "/usr/lib/x86_64-linux-gnu/libze_intel_gpu.so*",
+	// "/usr/lib*/libze_intel_gpu.so*",
 }
 
 var CudartMgmtName = "libcudart.so*"

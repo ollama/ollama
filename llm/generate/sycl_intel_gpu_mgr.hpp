@@ -31,8 +31,9 @@ struct dev_info {
 
 struct runtime_info {
   char driver_version[SYCL_MAX_CHAR_BUF_SIZE];
-  uint32_t global_mem_size;
-  uint32_t free_mem;
+  int level_zero_idx;
+  uint64_t global_mem_size;
+  uint64_t free_mem;
 };
 
 struct gpu_info {

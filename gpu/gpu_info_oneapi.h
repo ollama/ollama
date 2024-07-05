@@ -13,14 +13,15 @@ struct dev_info {
 
 struct runtime_info {
   char driver_version[SYCL_MAX_CHAR_BUF_SIZE];
-  uint32_t global_mem_size;
-  uint32_t free_mem;
+  int level_zero_idx;
+  uint64_t global_mem_size;
+  uint64_t free_mem;
 };
 
-struct gpu_info {
+typedef struct gpu_info {
   struct dev_info dev;
   struct runtime_info runtime;
-};
+} gpu_info_t;
 
 // Just enough typedef's to dlopen/dlsym for memory information
 typedef struct oneapi_handle {

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -193,12 +194,12 @@ func GetGPUInfo() GpuInfoList {
 				C.nvml_release(*cHandles.nvml)
 			}
 		}
-		if oHandles != nil {
-			if oHandles.oneapi != nil {
-				// TODO - is this needed?
-				C.oneapi_release(*oHandles.oneapi)
-			}
-		}
+		// if oHandles != nil {
+		// 	if oHandles.oneapi != nil {
+		// 		// TODO - is this needed?
+		// 		C.oneapi_release(*oHandles.oneapi)
+		// 	}
+		// }
 	}()
 
 	if !bootstrapped {
@@ -288,34 +289,27 @@ func GetGPUInfo() GpuInfoList {
 				depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "oneapi")
 			}
 
-			for d := range oHandles.oneapi.num_drivers {
-				if oHandles.oneapi == nil {
-					// shouldn't happen
-					slog.Warn("nil oneapi handle with driver count", "count", int(oHandles.oneapi.num_drivers))
-					continue
+			devCount := C.oneapi_get_device_count(*oHandles.oneapi)
+			for i := range devCount {
+				gpuInfo := OneapiGPUInfo{
+					GpuInfo: GpuInfo{
+						Library: "oneapi",
+					},
+					gpuIndex: int(i),
 				}
-				devCount := C.oneapi_get_device_count(*oHandles.oneapi, C.int(d))
-				for i := range devCount {
-					gpuInfo := OneapiGPUInfo{
-						GpuInfo: GpuInfo{
-							Library: "oneapi",
-						},
-						driverIndex: int(d),
-						gpuIndex:    int(i),
-					}
-					// TODO - split bootstrapping from updating free memory
-					C.oneapi_check_vram(*oHandles.oneapi, C.int(d), i, &memInfo)
-					// TODO - convert this to MinimumMemory based on testing...
-					var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-					memInfo.free = C.uint64_t(totalFreeMem)
-					gpuInfo.TotalMemory = uint64(memInfo.total)
-					gpuInfo.FreeMemory = uint64(memInfo.free)
-					gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
-					gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-					gpuInfo.DependencyPath = depPath
-					oneapiGPUs = append(oneapiGPUs, gpuInfo)
-				}
+				// TODO - split bootstrapping from updating free memory
+				var intelGpuInfo C.gpu_info_t
+				C.oneapi_check_dev(*oHandles.oneapi, i, &intelGpuInfo)
+				// TODO - convert this to MinimumMemory based on testing...
+				var totalFreeMem float64 = float64(intelGpuInfo.runtime.free_mem) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+				gpuInfo.TotalMemory = uint64(intelGpuInfo.runtime.global_mem_size)
+				gpuInfo.FreeMemory = uint64(C.uint64_t(totalFreeMem))
+				gpuInfo.ID = strconv.FormatInt(int64(intelGpuInfo.runtime.level_zero_idx), 10)
+				gpuInfo.Name = C.GoString(&intelGpuInfo.dev.device_name[0])
+				gpuInfo.DependencyPath = depPath
+				oneapiGPUs = append(oneapiGPUs, gpuInfo)
 			}
+
 		}
 
 		rocmGPUs = AMDGetGPUInfo()
@@ -395,17 +389,17 @@ func GetGPUInfo() GpuInfoList {
 		if oHandles == nil && len(oneapiGPUs) > 0 {
 			oHandles = initOneAPIHandles()
 		}
-		for i, gpu := range oneapiGPUs {
+		for i, _ := range oneapiGPUs {
 			if oHandles.oneapi == nil {
 				// shouldn't happen
 				slog.Warn("nil oneapi handle with device count", "count", oHandles.deviceCount)
 				continue
 			}
-			C.oneapi_check_vram(*oHandles.oneapi, C.int(gpu.driverIndex), C.int(gpu.gpuIndex), &memInfo)
+			var intelGpuInfo C.gpu_info_t
+			C.oneapi_check_dev(*oHandles.oneapi, C.int(i), &intelGpuInfo)
 			// TODO - convert this to MinimumMemory based on testing...
-			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-			memInfo.free = C.uint64_t(totalFreeMem)
-			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
+			var totalFreeMem float64 = float64(intelGpuInfo.runtime.free_mem) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+			oneapiGPUs[i].FreeMemory = uint64(C.uint64_t(totalFreeMem))
 		}
 
 		err = RocmGPUInfoList(rocmGPUs).RefreshFreeMemory()
@@ -571,9 +565,7 @@ func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
 			slog.Debug("Unable to load oneAPI management library", "library", libPath, "error", C.GoString(resp.err))
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			for i := range resp.oh.num_drivers {
-				num_devices += int(C.oneapi_get_device_count(resp.oh, C.int(i)))
-			}
+			num_devices = int(C.oneapi_get_device_count(resp.oh))
 			return num_devices, &resp.oh, libPath
 		}
 	}
