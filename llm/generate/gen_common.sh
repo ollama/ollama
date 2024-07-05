@@ -81,6 +81,7 @@ apply_patches() {
 build() {
     cmake -S ${LLAMACPP_DIR} -B ${BUILD_DIR} ${CMAKE_DEFS}
     cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8
+    cmake --install ${BUILD_DIR} --component ollama_llama_server
 }
 
 compress() {
