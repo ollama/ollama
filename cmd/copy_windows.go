@@ -1,12 +1,12 @@
 package cmd
 
-import (
-	"os"
-	"path/filepath"
-	"syscall"
-)
+import "errors"
 
 func localCopy(src, target string) error {
+	return errors.New("no local copy implementation for windows")
+}
+
+/* func localCopy(src, target string) error {
 	dirPath := filepath.Dir(target)
 
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
@@ -51,3 +51,4 @@ func copyFileEx(srcHandle, dstHandle syscall.Handle) error {
 
 	return nil
 }
+*/
