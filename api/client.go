@@ -402,7 +402,6 @@ func (c *Client) IsLocal() bool {
 }
 
 func Authorization(ctx context.Context, request *http.Request) (string, error) {
-
 	data := []byte(fmt.Sprintf("%s,%s,%d", request.Method, request.URL.RequestURI(), time.Now().Unix()))
 
 	home, err := os.UserHomeDir()
