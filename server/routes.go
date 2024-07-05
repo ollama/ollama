@@ -970,7 +970,6 @@ func (s *Server) IsLocal(c *gin.Context) bool {
 	fmt.Println("entered islocal")
 	fmt.Println(c.GetHeader("Authorization"), " is authorization")
 	if authz := c.GetHeader("Authorization"); authz != "" {
-
 		parts := strings.Split(authz, ":")
 		if len(parts) != 3 {
 			fmt.Println("failed at lenParts")
