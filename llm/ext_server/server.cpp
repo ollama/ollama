@@ -1382,12 +1382,50 @@ struct llama_server_context
         }
     }
 
+    std::string common_prefix(const std::string& str1, const std::string& str2) {
+        auto mismatch_pair = std::mismatch(str1.begin(), str1.end(), str2.begin());
+        return std::string(str1.begin(), mismatch_pair.first);
+    }
+
+    // Find the slot that has the greatest common prefix
+    server_slot *prefix_slot(const json &prompt) {
+        if (!prompt.is_string()) {
+            return nullptr;
+        }
+
+        std::string prompt_str = prompt.get<std::string>();
+        server_slot *slot = nullptr;
+        size_t longest = 0;
+
+        for (server_slot &s : slots) {
+            if (s.available() && s.prompt.is_string()) {
+                std::string s_prompt = s.prompt.get<std::string>();
+                std::string prefix = common_prefix(s_prompt, prompt_str);
+
+                if (prefix.size() > longest) {
+                    slot = &s;
+                    longest = prefix.size();
+                }
+            }
+        }
+
+        if (!slot) {
+            return get_slot(-1);
+        }
+
+        LOG_INFO("slot with common prefix found", {{
+            "slot_id", slot->id,
+            "characters", longest
+        }});
+        return slot;
+    }
+
     void process_single_task(task_server& task)
     {
         switch (task.type)
         {
             case TASK_TYPE_COMPLETION: {
-                server_slot *slot = get_slot(json_value(task.data, "slot_id", -1));
+                server_slot *slot = prefix_slot(task.data["prompt"]);
                 if (slot == nullptr)
                 {
                     // if no slot is available, we defer this task for processing later
