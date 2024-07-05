@@ -26,6 +26,7 @@ func privateKey() (ssh.Signer, error) {
 	}
 
 	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
+	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if errors.Is(err, os.ErrNotExist) {
 		err := initializeKeypair()
@@ -37,7 +38,15 @@ func privateKey() (ssh.Signer, error) {
 	} else if err != nil {
 		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
 		return nil, err
+		return nil, err
 	}
+
+	return ssh.ParsePrivateKey(privateKeyFile)
+}
+
+func GetPublicKey() (ssh.PublicKey, error) {
+	privateKey, err := keyPath()
+	// if privateKey, try public key directly
 
 	return ssh.ParsePrivateKey(privateKeyFile)
 }

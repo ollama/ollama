@@ -351,6 +351,12 @@ func getLocalPath(ctx context.Context, digest string) (string, error) {
 		return "", err
 	}
 
+	authz, err := api.Authorization(ctx, request)
+	if err != nil {
+		return "", err
+	}
+
+	request.Header.Set("Authorization", authz)
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 	request.Header.Set("X-Redirect-Create", "1")
 
