@@ -1404,19 +1404,20 @@ struct llama_server_context
 
                 if (prefix.size() > longest) {
                     slot = &s;
-                    longest = s_prompt.size();
+                    longest = prefix.size();
                 }
             }
         }
 
-        if (slot) {
-            LOG_INFO("Slot with common prefix found", {{
-                "slot_id", slot->id,
-                "characters", longest
-            }});
+        if (!slot) {
+            return get_slot(-1);
         }
 
-        return get_slot(-1);
+        LOG_INFO("slot with common prefix found", {{
+            "slot_id", slot->id,
+            "characters", longest
+        }});
+        return slot;
     }
 
     void process_single_task(task_server& task)
