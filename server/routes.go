@@ -769,13 +769,11 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		}
 	}
 
-	fmt.Println("path2", c.Param("digest"))
 	path, err := GetBlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	fmt.Println("path1", path)
 	_, err = os.Stat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
