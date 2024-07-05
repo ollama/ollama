@@ -1,8 +1,8 @@
-diff --git a/llama.cpp b/llama.cpp
-index 61948751..61fe7b57 100644
---- a/llama.cpp
-+++ b/llama.cpp
-@@ -7591,14 +7591,14 @@ struct llm_build_context {
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 721b8f4e..cfe7ac40 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -8420,14 +8420,14 @@ struct llm_build_context {
      }
  
      struct ggml_tensor * build_inp_mean() {
@@ -19,7 +19,7 @@ index 61948751..61fe7b57 100644
          cb(lctx.inp_cls, "inp_cls", -1);
          ggml_set_input(lctx.inp_cls);
          return lctx.inp_cls;
-@@ -12062,19 +12062,16 @@ static void llama_set_inputs(llama_context & lctx, const llama_batch & batch) {
+@@ -13847,19 +13847,16 @@ static void llama_set_inputs(llama_context & lctx, const llama_batch & batch) {
          GGML_ASSERT(ggml_backend_buffer_is_host(lctx.inp_mean->buffer));
  
          float * data = (float *) lctx.inp_mean->data;
@@ -42,7 +42,7 @@ index 61948751..61fe7b57 100644
              const uint64_t s = sum[i];
              if (s > 0) {
                  div[i] = 1.0f/float(s);
-@@ -12094,14 +12091,11 @@ static void llama_set_inputs(llama_context & lctx, const llama_batch & batch) {
+@@ -13879,14 +13876,11 @@ static void llama_set_inputs(llama_context & lctx, const llama_batch & batch) {
          GGML_ASSERT(ggml_backend_buffer_is_host(lctx.inp_cls->buffer));
  
          uint32_t * data = (uint32_t *) lctx.inp_cls->data;
