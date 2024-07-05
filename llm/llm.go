@@ -1,6 +1,6 @@
 package llm
 
-// #cgo CFLAGS: -Illama.cpp/include -Illama.cpp/ggml/include
+// #cgo CFLAGS: -Illama.cpp -Illama.cpp/include -Illama.cpp/ggml/include
 // #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/build/darwin/arm64_static/src/libllama.a ${SRCDIR}/build/darwin/arm64_static/ggml/src/libggml.a -lstdc++ -framework Accelerate -framework Metal
 // #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/build/darwin/x86_64_static/src/libllama.a ${SRCDIR}/build/darwin/x86_64_static/ggml/src/libggml.a -lstdc++ -framework Accelerate -framework Metal
 // #cgo windows,amd64 LDFLAGS: ${SRCDIR}/build/windows/amd64_static/src/libllama.a ${SRCDIR}/build/windows/amd64_static/ggml/src/libggml.a  -static -lstdc++
