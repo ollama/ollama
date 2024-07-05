@@ -6,7 +6,7 @@ package llm
 // #cgo windows,amd64 LDFLAGS: ${SRCDIR}/build/windows/amd64_static/src/libllama.a ${SRCDIR}/build/windows/amd64_static/ggml/src/libggml.a  -static -lstdc++
 // #cgo windows,arm64 LDFLAGS: ${SRCDIR}/build/windows/arm64_static/src/libllama.a ${SRCDIR}/build/windows/arm64_static/ggml/src/libggml.a -static -lstdc++
 // #cgo linux,amd64 LDFLAGS: ${SRCDIR}/build/linux/x86_64_static/src/libllama.a ${SRCDIR}/build/linux/x86_64_static/ggml/src/libggml.a -lstdc++
-// #cgo linux,arm64 LDFLAGS: ${SRCDIR}/build/linux/arm64_static/src/libllama.a ${SRCDIR}/build/linux/arm64_static/ggml/src/libggml. -lstdc++
+// #cgo linux,arm64 LDFLAGS: ${SRCDIR}/build/linux/arm64_static/src/libllama.a ${SRCDIR}/build/linux/arm64_static/ggml/src/libggml.a -lstdc++
 // #include <stdlib.h>
 // #include "llama.h"
 import "C"
