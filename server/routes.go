@@ -1019,7 +1019,7 @@ func (s *Server) IsLocal(c *gin.Context) bool {
 			return false
 		}
 
-		if err := clientPublicKey.Verify([]byte(requestData), &ssh.Signature{Format: clientPublicKey.Type(), Blob: signature}); err != nil {
+		if err := clientPublicKey.Verify(requestData, &ssh.Signature{Format: clientPublicKey.Type(), Blob: signature}); err != nil {
 			fmt.Println("failed at verify")
 			fmt.Println(err)
 			return false
