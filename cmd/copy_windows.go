@@ -1,34 +1,39 @@
+//go:build windows
+// +build windows
+
 package cmd
 
-import "errors"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
+	"unsafe"
+)
 
 func localCopy(src, target string) error {
-	return errors.New("no local copy implementation for windows")
-}
-
-/* func localCopy(src, target string) error {
+	// Create target directory if it doesn't exist
 	dirPath := filepath.Dir(target)
-
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
 		return err
 	}
 
+	// Open source file
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer sourceFile.Close()
 
+	// Create target file
 	targetFile, err := os.Create(target)
 	if err != nil {
 		return err
 	}
 	defer targetFile.Close()
 
-	sourceHandle := syscall.Handle(sourceFile.Fd())
-	targetHandle := syscall.Handle(targetFile.Fd())
-
-	err = copyFileEx(sourceHandle, targetHandle)
+	// Use CopyFileExW to copy the file
+	err = copyFileEx(src, target)
 	if err != nil {
 		return err
 	}
@@ -36,13 +41,24 @@ func localCopy(src, target string) error {
 	return nil
 }
 
-func copyFileEx(srcHandle, dstHandle syscall.Handle) error {
+func copyFileEx(src, dst string) error {
+	fmt.Println("HELELELLEEOEOEOEO")
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	copyFileEx := kernel32.NewProc("CopyFileExW")
 
+	srcPtr, err := syscall.UTF16PtrFromString(src)
+	if err != nil {
+		return err
+	}
+
+	dstPtr, err := syscall.UTF16PtrFromString(dst)
+	if err != nil {
+		return err
+	}
+
 	r1, _, err := copyFileEx.Call(
-		uintptr(srcHandle),
-		uintptr(dstHandle),
+		uintptr(unsafe.Pointer(srcPtr)),
+		uintptr(unsafe.Pointer(dstPtr)),
 		0, 0, 0, 0)
 
 	if r1 == 0 {
@@ -51,4 +67,3 @@ func copyFileEx(srcHandle, dstHandle syscall.Handle) error {
 
 	return nil
 }
-*/
