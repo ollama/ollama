@@ -413,3 +413,28 @@ func (c *Client) ServerConfig(ctx context.Context) (*ServerConfig, error) {
 	}
 	return &config, nil
 }
+
+func Authorization(ctx context.Context, request *http.Request) (string, error) {
+
+	data := []byte(fmt.Sprintf("%s,%s,%d", request.Method, request.URL.RequestURI(), time.Now().Unix()))
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	knownHostsFile, err := os.OpenFile(filepath.Join(home, ".ollama", "known_hosts"), os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		return "", err
+	}
+	defer knownHostsFile.Close()
+
+	token, err := auth.Sign(ctx, data)
+	if err != nil {
+		return "", err
+	}
+
+	// interleave request data into the token
+	key, sig, _ := strings.Cut(token, ":")
+	return fmt.Sprintf("%s:%s:%s", key, base64.StdEncoding.EncodeToString(data), sig), nil
+}
