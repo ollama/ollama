@@ -28,7 +28,7 @@ std::vector<level_zero_device> get_supported_gpu_devices() {
 
 int get_device_num() { return get_supported_gpu_devices().size(); }
 
-void get_dev_info(int dev_idx, gpu_info* info) {
+void get_dev_info(int dev_idx, intel_gpu_info* info) {
   auto gpu_devices = get_supported_gpu_devices();
   if (dev_idx < gpu_devices.size() && dev_idx >= 0) {
     auto dev = gpu_devices[dev_idx].dev;

@@ -36,11 +36,11 @@ struct runtime_info {
   uint64_t free_mem;
 };
 
-struct gpu_info {
+struct intel_gpu_info {
   dev_info dev;
   runtime_info runtime;
 };
 
 int get_device_num();
-void get_dev_info(int dev_idx, gpu_info* info);
+void get_dev_info(int dev_idx, intel_gpu_info* info);
 }

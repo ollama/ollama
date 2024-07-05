@@ -1,5 +1,6 @@
 #ifndef __APPLE__
 
+#include <string.h>
 #include "gpu_info_oneapi.h"
 
 void oneapi_init(char* oneapi_lib_path, oneapi_init_resp_t* resp) {
@@ -40,7 +41,7 @@ void oneapi_init(char* oneapi_lib_path, oneapi_init_resp_t* resp) {
   return;
 }
 
-void oneapi_check_dev(oneapi_handle_t h, int dev_idx, struct gpu_info* resp) { (*h.get_dev_info)(dev_idx, resp); }
+void oneapi_check_dev(oneapi_handle_t h, int dev_idx, struct intel_gpu_info* resp) { (*h.get_dev_info)(dev_idx, resp); }
 
 int oneapi_get_device_count(oneapi_handle_t h) { return (*h.get_device_num)(); }
 

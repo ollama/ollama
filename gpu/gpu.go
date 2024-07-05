@@ -298,7 +298,7 @@ func GetGPUInfo() GpuInfoList {
 					gpuIndex: int(i),
 				}
 				// TODO - split bootstrapping from updating free memory
-				var intelGpuInfo C.gpu_info_t
+				var intelGpuInfo C.intel_gpu_info_t
 				C.oneapi_check_dev(*oHandles.oneapi, i, &intelGpuInfo)
 				// TODO - convert this to MinimumMemory based on testing...
 				var totalFreeMem float64 = float64(intelGpuInfo.runtime.free_mem) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
@@ -395,7 +395,7 @@ func GetGPUInfo() GpuInfoList {
 				slog.Warn("nil oneapi handle with device count", "count", oHandles.deviceCount)
 				continue
 			}
-			var intelGpuInfo C.gpu_info_t
+			var intelGpuInfo C.intel_gpu_info_t
 			C.oneapi_check_dev(*oHandles.oneapi, C.int(i), &intelGpuInfo)
 			// TODO - convert this to MinimumMemory based on testing...
 			var totalFreeMem float64 = float64(intelGpuInfo.runtime.free_mem) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
