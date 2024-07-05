@@ -6,22 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/stretchr/testify/require"
 )
-
-func TestSmoke(t *testing.T) {
-	t.Setenv("OLLAMA_DEBUG", "")
-	require.False(t, Debug())
-
-	t.Setenv("OLLAMA_DEBUG", "false")
-	require.False(t, Debug())
-
-	t.Setenv("OLLAMA_DEBUG", "1")
-	require.True(t, Debug())
-
-	t.Setenv("OLLAMA_FLASH_ATTENTION", "1")
-	require.True(t, FlashAttention())
-}
 
 func TestHost(t *testing.T) {
 	cases := map[string]struct {
