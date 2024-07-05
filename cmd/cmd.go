@@ -78,6 +78,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	status := "starting model create..."
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
+	defer p.Stop()
 
 	for i := range modelfile.Commands {
 		switch modelfile.Commands[i].Name {
@@ -112,10 +115,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = tempfile
 			}
 
-			digest, err := createBlob(cmd, client, path)
+			// spinner.Stop()
+			digest, err := createBlob(cmd, client, path, spinner)
 			if err != nil {
 				return err
 			}
+			spinner.SetMessage("transferring model data 100%")
 
 			modelfile.Commands[i].Args = "@" + digest
 		}
@@ -261,7 +266,7 @@ func tempZipFiles(path string) (string, error) {
 
 var ErrBlobExists = errors.New("blob exists")
 
-func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, error) {
+func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (string, error) {
 	bin, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -286,22 +291,26 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 
 	var pw progressWriter
 	// Create a progress bar and start a goroutine to update it
-	p := progress.NewProgress(os.Stderr)
-	bar := progress.NewBar("transferring model data...", fileSize, 0)
-	p.Add("transferring model data", bar)
+	// JK Let's use a percetage
+
+	//bar := progress.NewBar("transferring model data...", fileSize, 0)
+	//p.Add("transferring model data", bar)
+
+	status := "transferring model data 0%"
+	spinner.SetMessage(status)
 
 	ticker := time.NewTicker(60 * time.Millisecond)
 	done := make(chan struct{})
-	defer p.Stop()
+	defer close(done)
 
 	go func() {
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				bar.Set(pw.n)
+				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", int(100*pw.n/fileSize)))
 			case <-done:
-				bar.Set(fileSize)
+				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", 100))
 				return
 			}
 		}
@@ -339,8 +348,6 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
 	}
-	bar.Set(fileSize)
-	close(done)
 	return digest, nil
 }
 
