@@ -10,42 +10,37 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/crypto/ssh"
 )
 
 const defaultPrivateKey = "id_ed25519"
 
-func keyPath() (string, error) {
+func keyPath() (ssh.Signer, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return filepath.Join(home, ".ollama", defaultPrivateKey), nil
-}
-
-func GetPublicKey() (string, error) {
-	keyPath, err := keyPath()
-	if err != nil {
-		return "", err
-	}
-
+	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if err != nil {
 		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
-		return "", err
+		return nil, err
 	}
 
-	privateKey, err := ssh.ParsePrivateKey(privateKeyFile)
+	return ssh.ParsePrivateKey(privateKeyFile)
+}
+
+func GetPublicKey() (ssh.PublicKey, error) {
+	privateKey, err := keyPath()
+	// if privateKey, try public key directly
+
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	publicKey := ssh.MarshalAuthorizedKey(privateKey.PublicKey())
-
-	return strings.TrimSpace(string(publicKey)), nil
+	return privateKey.PublicKey(), nil
 }
 
 func NewNonce(r io.Reader, length int) (string, error) {
@@ -58,25 +53,20 @@ func NewNonce(r io.Reader, length int) (string, error) {
 }
 
 func Sign(ctx context.Context, bts []byte) (string, error) {
-	keyPath, err := keyPath()
-	if err != nil {
-		return "", err
-	}
-
-	privateKeyFile, err := os.ReadFile(keyPath)
-	if err != nil {
-		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
-		return "", err
-	}
-
-	privateKey, err := ssh.ParsePrivateKey(privateKeyFile)
+	privateKey, err := keyPath()
 	if err != nil {
 		return "", err
 	}
 
 	// get the pubkey, but remove the type
-	publicKey := ssh.MarshalAuthorizedKey(privateKey.PublicKey())
-	parts := bytes.Split(publicKey, []byte(" "))
+	publicKey, err := GetPublicKey()
+	if err != nil {
+		return "", err
+	}
+
+	publicKeyBytes := ssh.MarshalAuthorizedKey(publicKey)
+
+	parts := bytes.Split(publicKeyBytes, []byte(" "))
 	if len(parts) < 2 {
 		return "", fmt.Errorf("malformed public key")
 	}

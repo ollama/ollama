@@ -32,6 +32,7 @@ import (
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"golang.org/x/crypto/ssh"
 )
 
 var errCapabilityCompletion = errors.New("completion")
@@ -1064,11 +1065,12 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 	if anonymous {
 		// no user is associated with the public key, and the request requires non-anonymous access
 		pubKey, nestedErr := auth.GetPublicKey()
+		localPubKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pubKey)))
 		if nestedErr != nil {
 			slog.Error(fmt.Sprintf("couldn't get public key: %v", nestedErr))
 			return nil, errUnauthorized
 		}
-		return nil, &errtypes.UnknownOllamaKey{Key: pubKey}
+		return nil, &errtypes.UnknownOllamaKey{Key: localPubKey}
 	}
 	// user is associated with the public key, but is not authorized to make the request
 	return nil, errUnauthorized
