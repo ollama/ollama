@@ -319,7 +319,12 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 		}
 
 		if err == nil {
-			err = createBlobLocal(path, dest)
+			err = localCopy(path, dest)
+			if err == nil {
+				return digest, nil
+			}
+
+			err = defaultCopy(path, dest)
 			if err == nil {
 				return digest, nil
 			}
@@ -377,7 +382,7 @@ func getLocalPath(ctx context.Context, digest string) (string, error) {
 	return "", ErrBlobExists
 }
 
-func createBlobLocal(path string, dest string) error {
+func defaultCopy(path string, dest string) error {
 	// This function should be called if the server is local
 	// It should find the model directory, copy the blob over, and return the digest
 	dirPath := filepath.Dir(dest)

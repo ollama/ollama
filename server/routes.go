@@ -769,12 +769,13 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		}
 	}
 
+	fmt.Println("path2", c.Param("digest"))
 	path, err := GetBlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
+	fmt.Println("path1", path)
 	_, err = os.Stat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -786,8 +787,10 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-
+	fmt.Println("hello")
+	fmt.Println(s.IsLocal(c))
 	if c.GetHeader("X-Redirect-Create") == "1" && s.IsLocal(c) {
+		fmt.Println("entered redirect")
 		c.Header("LocalLocation", path)
 		c.Status(http.StatusTemporaryRedirect)
 		return
@@ -808,25 +811,32 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 }
 
 func (s *Server) IsLocal(c *gin.Context) bool {
+	fmt.Println("entered islocal")
+	fmt.Println(c.GetHeader("Authorization"), " is authorization")
 	if authz := c.GetHeader("Authorization"); authz != "" {
+
 		parts := strings.Split(authz, ":")
 		if len(parts) != 3 {
+			fmt.Println("failed at lenParts")
 			return false
 		}
 
 		clientPublicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(fmt.Sprintf("ssh-ed25519 %s", parts[0])))
 		if err != nil {
+			fmt.Println("failed at parseAuthorizedKey")
 			return false
 		}
 
 		// partialRequestData is formatted as http.Method,http.requestURI,timestamp,nonce
-		partialRequestData, err := base64.StdEncoding.DecodeString(parts[1])
+		requestData, err := base64.StdEncoding.DecodeString(parts[1])
 		if err != nil {
+			fmt.Println("failed at decodeString")
 			return false
 		}
 
-		partialRequestDataParts := strings.Split(string(partialRequestData), ",")
-		if len(partialRequestDataParts) != 4 {
+		partialRequestDataParts := strings.Split(string(requestData), ",")
+		if len(partialRequestDataParts) != 3 {
+			fmt.Println("failed at lenPartialRequestDataParts")
 			return false
 		}
 
@@ -849,22 +859,24 @@ func (s *Server) IsLocal(c *gin.Context) bool {
 
 		signature, err := base64.StdEncoding.DecodeString(parts[2])
 		if err != nil {
+			fmt.Println("failed at decodeString stdEncoding")
+			return false
+		}
+
+		if err := clientPublicKey.Verify([]byte(requestData), &ssh.Signature{Format: clientPublicKey.Type(), Blob: signature}); err != nil {
+			fmt.Println("failed at verify")
+			fmt.Println(err)
 			return false
 		}
 
 		serverPublicKey, err := auth.GetPublicKey()
 		if err != nil {
+			fmt.Println("failed at getPublicKey")
 			log.Fatal(err)
 		}
 
-		_, key, _ := bytes.Cut(bytes.TrimSpace(ssh.MarshalAuthorizedKey(serverPublicKey)), []byte(" "))
-		requestData := fmt.Sprintf("%s,%s", key, partialRequestData)
-
-		if err := clientPublicKey.Verify([]byte(requestData), &ssh.Signature{Format: clientPublicKey.Type(), Blob: signature}); err != nil {
-			return false
-		}
-
 		if bytes.Equal(serverPublicKey.Marshal(), clientPublicKey.Marshal()) {
+			fmt.Println("true")
 			return true
 		}
 
