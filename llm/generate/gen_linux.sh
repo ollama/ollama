@@ -77,7 +77,7 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
     if [ -n "${OLLAMA_CUSTOM_CPU_DEFS}" ]; then
         init_vars
         echo "OLLAMA_CUSTOM_CPU_DEFS=\"${OLLAMA_CUSTOM_CPU_DEFS}\""
-        CMAKE_DEFS="${OLLAMA_CUSTOM_CPU_DEFS} -DCMAKE_POSITION_INDEPENDENT_CODE=on ${CMAKE_DEFS}"
+        CMAKE_DEFS="${OLLAMA_CUSTOM_CPU_DEFS} -DBUILD_SHARED_LIBS=off -DCMAKE_POSITION_INDEPENDENT_CODE=on ${CMAKE_DEFS}"
         BUILD_DIR="../build/linux/${ARCH}/cpu"
         echo "Building custom CPU"
         build
@@ -93,7 +93,7 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
         # -DGGML_AVX512_VBMI -- 2018 Intel Cannon Lake
         # -DGGML_AVX512_VNNI -- 2021 Intel Alder Lake
 
-        COMMON_CPU_DEFS="-DCMAKE_POSITION_INDEPENDENT_CODE=on -DGGML_NATIVE=off -DGGML_OPENMP=off"
+        COMMON_CPU_DEFS="-DBUILD_SHARED_LIBS=off -DCMAKE_POSITION_INDEPENDENT_CODE=on -DGGML_NATIVE=off -DGGML_OPENMP=off"
         if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu" ]; then
             #
             # CPU first for the default library, set up as lowest common denominator for maximum compatibility (including Rosetta)
