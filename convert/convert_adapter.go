@@ -16,7 +16,7 @@ func (p *adapter) KV(t *Tokenizer) llm.KV {
 	// todo - need a way to pass these in
 	kv := llm.KV{
 		"r":     uint32(8),
-		"alpha": uint32(16),
+		"alpha": uint32(160),
 	}
 	return kv
 }
