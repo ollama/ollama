@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -259,13 +260,27 @@ func detectChatTemplate(layers []*layerGGML) ([]*layerGGML, error) {
 			if t, err := template.Named(s); err != nil {
 				slog.Debug("template detection", "error", err)
 			} else {
-				tmpl, err := NewLayer(t.Reader(), "application/vnd.ollama.image.template")
+				layer, err := NewLayer(t.Reader(), "application/vnd.ollama.image.template")
 				if err != nil {
 					return nil, err
 				}
 
-				tmpl.status = fmt.Sprintf("using autodetected template %s", t.Name)
-				layers = append(layers, &layerGGML{tmpl, nil})
+				layer.status = fmt.Sprintf("using autodetected template %s", t.Name)
+				layers = append(layers, &layerGGML{layer, nil})
+
+				if t.Parameters != nil {
+					var b bytes.Buffer
+					if err := json.NewEncoder(&b).Encode(t.Parameters); err != nil {
+						return nil, err
+					}
+
+					layer, err := NewLayer(&b, "application/vnd.ollama.image.params")
+					if err != nil {
+						return nil, err
+					}
+
+					layers = append(layers, &layerGGML{layer, nil})
+				}
 			}
 		}
 	}
