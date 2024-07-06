@@ -304,6 +304,10 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: remove unwanted mingw dll.a files
+        run: |
+          Remove-Item "C:\mingw64\x86_64-w64-mingw32\lib\libpthread.dll.a"
+          Remove-Item "C:\mingw64\x86_64-w64-mingw32\lib\libwinpthread.dll.a"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
