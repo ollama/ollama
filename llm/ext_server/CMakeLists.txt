@@ -1,4 +1,3 @@
-
 set(TARGET ollama_llama_server)
 option(LLAMA_SERVER_VERBOSE "Build verbose logging option for Server" ON)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
