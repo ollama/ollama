@@ -24,38 +24,32 @@ The iGPU is not detected by Ollama at default. We need extra steps to enable it.
 1. Stop the ollama.service
    
 	`sudo systemctl stop ollama.service`
-	
-   Then find out the pid of ollama.service by 'ps -elf | grep ollama' and then 'kill -p [pid]'
-   
-2. for iGPU 780 w/ ROCm ( not work in WSL, need run in Linux)
+	   
+2. Modify the ollama.service setting to enable ROCm for iGPU 780 w/ ROCm (not work in WSL, need run in Linux)
 
-	`HSA_OVERRIDE_GFX_VERSION="11.0.0" ollama serve &`
+	`sudo systemctl edit ollama.service`
 
-3. Run ollama
+	Add the contents into the /etc/systemd/system/ollama.service.d/override.conf and save it.
+
+	```
+	[Service]
+	Environment="HSA_OVERRIDE_GFX_VERSION=11.0.0"
+	```
+
+	Then restart ollama.service with new settings.
+
+	  `sudo system restart ollama.service`
+
+3. Run llm with ollama
    
    `ollama run tinyllama`
    
    Use rocm-smi to watch the utilization of iGPU When run ollama with ROCm.
 
-Another way to replace the step-2 above is to config the ollama.service for iGPU with ROCm as default.
-	
-  `sudo systemctl edit ollama.service`
-
-Add the contents into the /etc/systemd/system/ollama.service.d/override.conf
-
-```
-[Service]
-Environment="HSA_OVERRIDE_GFX_VERSION=11.0.0"
-```
-
-Then Reboot the Linux or just restart the ollama.srevice by,
-	 
-  `sudo system restart ollama.service`
-
 
 ### Check iGPU utilizaion
 
-Run `ollama ps`
+Run `ollama ps` to check if the GPU is working when you run llm with ollama
 
 ```
 $ ollama ps
@@ -89,7 +83,7 @@ $ollama run llama2:latest "where was beethoven born?" --verbose
 `ollama run tinyllama "where was beethoven born?" --verbose`
 
 `for run in {1..10}; do echo "where was beethoven born?" | ollama run tinyllama --verbose 2>&1 >/dev/null | grep "eval rate:"; done`   
-
+ 
 | Model          | Model Size | Radeon 780M<br>(@ubuntu+ROCm6) |
 | -------------- | ---------- | --------------------------- |
 | tinyllama      | 637MB      | 92                          |
