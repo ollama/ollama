@@ -1,8 +1,10 @@
 package convert
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/llm"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/maps"
 )
 
@@ -122,4 +125,73 @@ func TestConvertFull(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConvertNPZ(t *testing.T) {
+	cases := []string{
+		"adapters.npz",
+	}
+
+	for _, fn := range cases {
+		ts, err := parseNPZ(filepath.Join("testdata", fn))
+		assert.Nil(t, err)
+		assert.Equal(t, len(ts), 16*2*2) // 16 layers, 2 tensors, 2 loras
+
+		a := adapter{}
+
+		for _, m := range ts {
+			at := m.(adapterTensor)
+			assert.Equal(t, at.path, filepath.Join("testdata", fn))
+			assert.Equal(t, at.dtype, "F32") // only float32s supported
+			assert.Equal(t, len(at.tensorBase.shape), 2)
+		}
+
+		var ws io.WriteSeeker = &memWriter{}
+		err = llm.WriteGGLA(ws, a.KV(nil), a.Tensors(ts))
+		assert.Nil(t, err)
+
+		mw := ws.(*memWriter)
+		slog.Info(fmt.Sprintf("buffer len = %d", len(mw.buf)))
+		rs := bytes.NewReader(mw.buf)
+		ggml, _, err := llm.DecodeGGML(rs, len(mw.buf))
+		assert.Nil(t, err)
+		assert.NotNil(t, ggml)
+	}
+}
+
+type memWriter struct {
+	buf []byte
+	pos int
+}
+
+func (m *memWriter) Write(p []byte) (n int, err error) {
+	minCap := m.pos + len(p)
+	if minCap > cap(m.buf) {
+		buf2 := make([]byte, len(m.buf), minCap+len(p)) // add some extra
+		copy(buf2, m.buf)
+		m.buf = buf2
+	}
+	if minCap > len(m.buf) {
+		m.buf = m.buf[:minCap]
+	}
+	copy(m.buf[m.pos:], p)
+	m.pos += len(p)
+	return len(p), nil
+}
+
+func (m *memWriter) Seek(offset int64, whence int) (int64, error) {
+	newPos, offs := 0, int(offset)
+	switch whence {
+	case io.SeekStart:
+		newPos = offs
+	case io.SeekCurrent:
+		newPos = m.pos + offs
+	case io.SeekEnd:
+		newPos = len(m.buf) + offs
+	}
+	if newPos < 0 {
+		return 0, errors.New("negative result pos")
+	}
+	m.pos = newPos
+	return int64(newPos), nil
 }

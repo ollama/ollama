@@ -21,6 +21,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/nlpodyssey/gopickle v0.3.0
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
+	github.com/sbinet/npyio v0.9.0
 )
 
 require (
@@ -71,7 +72,7 @@ require (
 	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/sys v0.20.0
 	golang.org/x/term v0.20.0
-	golang.org/x/text v0.15.0 // indirect
+	golang.org/x/text v0.15.0
 	google.golang.org/protobuf v1.34.1
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
