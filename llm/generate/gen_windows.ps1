@@ -204,6 +204,7 @@ function build_static() {
             "-DCMAKE_C_COMPILER=gcc.exe",
             "-DCMAKE_CXX_COMPILER=g++.exe",
             "-DBUILD_SHARED_LIBS=off",
+            "-DGGML_STATIC=on",
             "-DGGML_NATIVE=off",
             "-DGGML_AVX=off",
             "-DGGML_AVX2=off",
