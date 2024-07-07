@@ -221,8 +221,8 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					if estimate.TotalSize > maxSize {
 						slog.Warn("model request too large for system", "requested", format.HumanBytes2(estimate.TotalSize), "system", format.HumanBytes2(maxSize))
 
-						// Linux will crash if over-allocating memory, so 
-						// return an error to the user
+						// Linux will crash if over-allocating memory - return an error to the user.
+						// TODO (jmorganca): add reasonable upper limits for darwin and windows as well
 						if runtime.GOOS == "linux" {
 							pending.errCh <- fmt.Errorf("requested model (%s) is too large for this system (%s)", format.HumanBytes2(estimate.TotalSize), format.HumanBytes2(maxSize))
 							break
