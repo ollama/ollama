@@ -1413,7 +1413,7 @@ struct llama_server_context
             return get_slot(-1);
         }
 
-        LOG_INFO("slot with common prefix found", {{
+        LOG_DEBUG("slot with common prefix found", {{
             "slot_id", slot->id,
             "characters", longest
         }});
