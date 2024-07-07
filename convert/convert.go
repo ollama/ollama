@@ -63,6 +63,17 @@ type Converter interface {
 	writeFile(io.WriteSeeker, llm.KV, []*llm.Tensor) error
 }
 
+func ConvertAdapter(d string, ws io.WriteSeeker) error {
+	c := &adapter{}
+
+	ts, err := parseNPZ(d)
+	if err != nil {
+		return err
+	}
+
+	return c.writeFile(ws, c.KV(nil), c.Tensors(ts))
+}
+
 func Convert(d string, ws io.WriteSeeker) error {
 	f, err := os.Open(filepath.Join(d, "config.json"))
 	if err != nil {

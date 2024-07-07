@@ -1,6 +1,7 @@
 package convert
 
 import (
+	"io"
 	"strings"
 
 	"github.com/ollama/ollama/llm"
@@ -11,6 +12,10 @@ type adapter struct {
 }
 
 var _ Converter = (*adapter)(nil)
+
+func (p *adapter) writeFile(ws io.WriteSeeker, kv llm.KV, ts []*llm.Tensor) error {
+	return llm.WriteGGLA(ws, kv, ts)
+}
 
 func (p *adapter) KV(t *Tokenizer) llm.KV {
 	// todo - need a way to pass these in

@@ -18,6 +18,20 @@ type adapterTensor struct {
 	*tensorBase
 }
 
+func DetectNPZ(fn string) (bool, error) {
+	f, err := npz.Open(fn)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	if len(f.Keys()) > 0 && strings.HasSuffix(f.Keys()[0], ".npy") {
+		return true, nil
+	}
+
+	return false, nil
+}
+
 func parseNPZ(fn string) ([]Tensor, error) {
 	var ts []Tensor
 
