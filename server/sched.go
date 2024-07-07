@@ -197,25 +197,36 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
-					// Block attempting to load a model larger than system memory + GPU memory
 					estimate := llm.EstimateGPULayers(gpus, ggml, pending.model.ProjectorPaths, pending.opts)
 					maxSize := systemMem.FreeMemory
-					for _, gpu := range gpus {
-						if gpu.Library == "cpu" {
-							continue
-						}
-						if loadedCount == 0 {
-							// If no other models are loaded, set the limit based on what's available
-							maxSize += gpu.FreeMemory
-						} else {
-							// Other models could be unloaded, favor total memory for limit
-							maxSize += gpu.TotalMemory
+
+					// Add available GPU memory to the total pool
+					// macOS hardware has unified memory so don't double count
+					if runtime.GOOS != "darwin" {
+						for _, gpu := range gpus {
+							if gpu.Library == "cpu" {
+								continue
+							}
+							if loadedCount == 0 {
+								// If no other models are loaded, set the limit based on what's available
+								maxSize += gpu.FreeMemory
+							} else {
+								// Other models could be unloaded, favor total memory for limit
+								maxSize += gpu.TotalMemory
+							}
 						}
 					}
+
+					// Block attempting to load a model larger than system memory + GPU memory
 					if estimate.TotalSize > maxSize {
 						slog.Warn("model request too large for system", "requested", format.HumanBytes2(estimate.TotalSize), "system", format.HumanBytes2(maxSize))
-						pending.errCh <- fmt.Errorf("requested model (%s) is too large for this system (%s)", format.HumanBytes2(estimate.TotalSize), format.HumanBytes2(maxSize))
-						break
+
+						// Linux will crash if over-allocating memory - return an error to the user.
+						// TODO (jmorganca): add reasonable upper limits for darwin and windows as well
+						if runtime.GOOS == "linux" {
+							pending.errCh <- fmt.Errorf("requested model (%s) is too large for this system (%s)", format.HumanBytes2(estimate.TotalSize), format.HumanBytes2(maxSize))
+							break
+						}
 					}
 
 					// Evaluate if the model will fit in the available system memory, or if we should unload a model first
