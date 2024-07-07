@@ -61,6 +61,8 @@ var (
 	TmpDir string
 	// Set via OLLAMA_INTEL_GPU in the environment
 	IntelGpu bool
+	// Set via OLLAMA_SPLIT_MODE_ROWS in the environment
+	SplitModeRows bool
 
 	// Set via CUDA_VISIBLE_DEVICES in the environment
 	CudaVisibleDevices string
@@ -106,6 +108,7 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal, "Set which AMD devices are visible"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion, "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGpu, "Enable experimental Intel GPU detection"}
+		ret["OLLAMA_SPLIT_MODE_ROWS"] = EnvVar{"OLLAMA_SPLIT_MODE_ROWS", IntelGpu, "Split model across multiple GPUS by rows rather than layers"}
 	}
 	return ret
 }
@@ -146,6 +149,15 @@ func LoadConfig() {
 			Debug = d
 		} else {
 			Debug = true
+		}
+	}
+
+	if sm := clean("OLLAMA_SPLIT_MODE_ROWS"); sm != "" {
+		d, err := strconv.ParseBool(sm)
+		if err == nil {
+			SplitModeRows = d
+		} else {
+			SplitModeRows = false
 		}
 	}
 
