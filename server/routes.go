@@ -785,7 +785,6 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-	fmt.Println(s.IsLocal(c))
 	if c.GetHeader("X-Redirect-Create") == "1" && s.IsLocal(c) {
 		c.Header("LocalLocation", path)
 		c.Status(http.StatusTemporaryRedirect)
@@ -810,49 +809,40 @@ func (s *Server) IsLocal(c *gin.Context) bool {
 	if authz := c.GetHeader("Authorization"); authz != "" {
 		parts := strings.Split(authz, ":")
 		if len(parts) != 3 {
-			fmt.Println("failed at lenParts")
 			return false
 		}
 
 		clientPublicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(fmt.Sprintf("ssh-ed25519 %s", parts[0])))
 		if err != nil {
-			fmt.Println("failed at parseAuthorizedKey")
 			return false
 		}
 
 		// partialRequestData is formatted as http.Method,http.requestURI,timestamp,nonce
 		requestData, err := base64.StdEncoding.DecodeString(parts[1])
 		if err != nil {
-			fmt.Println("failed at decodeString")
 			return false
 		}
 
 		partialRequestDataParts := strings.Split(string(requestData), ",")
 		if len(partialRequestDataParts) != 3 {
-			fmt.Println("failed at lenPartialRequestDataParts")
 			return false
 		}
 
 		signature, err := base64.StdEncoding.DecodeString(parts[2])
 		if err != nil {
-			fmt.Println("failed at decodeString stdEncoding")
 			return false
 		}
 
 		if err := clientPublicKey.Verify(requestData, &ssh.Signature{Format: clientPublicKey.Type(), Blob: signature}); err != nil {
-			fmt.Println("failed at verify")
-			fmt.Println(err)
 			return false
 		}
 
 		serverPublicKey, err := auth.GetPublicKey()
 		if err != nil {
-			fmt.Println("failed at getPublicKey")
 			log.Fatal(err)
 		}
 
 		if bytes.Equal(serverPublicKey.Marshal(), clientPublicKey.Marshal()) {
-			fmt.Println("true")
 			return true
 		}
 
