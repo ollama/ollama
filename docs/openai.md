@@ -76,7 +76,7 @@ curl http://localhost:11434/v1/chat/completions \
         ]
     }'
 
-curl https://localhost:11434/v1/completions \
+curl http://localhost:11434/v1/completions \
     -H "Content-Type: application/json" \
     -d '{
         "model": "llama3",
