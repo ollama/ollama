@@ -77,7 +77,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	status := "transferring model data..."
+	status := "transferring model data 0%"
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 	defer p.Stop()
@@ -291,7 +291,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 
 	var pw progressWriter
 	// Create a progress bar and start a goroutine to update it
-	// JK Let's use a percetage
+	// JK Let's use a percentage
 
 	//bar := progress.NewBar("transferring model data...", fileSize, 0)
 	//p.Add("transferring model data", bar)
