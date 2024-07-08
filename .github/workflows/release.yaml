@@ -363,7 +363,6 @@ jobs:
       - run: |
           ./scripts/build_linux.sh
           ./scripts/build_docker.sh
-          mv dist/deps/* dist/
       - uses: actions/upload-artifact@v4
         with:
           name: dist-linux-amd64
