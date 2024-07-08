@@ -413,7 +413,8 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				return fmt.Errorf("invalid model reference: %s", c.Args)
 			}
 
-			for _, baseLayer := range baseLayers {
+			layerCount := len(baseLayers)
+			for i, baseLayer := range baseLayers {
 				if quantization != "" &&
 					baseLayer.MediaType == "application/vnd.ollama.image.model" &&
 					baseLayer.GGML != nil &&
@@ -427,8 +428,6 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
 						return errors.New("quantization is only supported for F16 and F32 models")
 					} else if want != ft {
-						fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantization)})
-
 						blob, err := GetBlobsPath(baseLayer.Digest)
 						if err != nil {
 							return err
@@ -472,8 +471,18 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
 				}
 
+				fn(api.ProgressResponse{
+					Status:   fmt.Sprintf("quantizing model %d%%", i*100/layerCount),
+					Quantize: quantization,
+				})
+
 				layers = append(layers, baseLayer.Layer)
 			}
+
+			fn(api.ProgressResponse{
+				Status:   fmt.Sprintf("quantizing model %d%%", 100),
+				Quantize: quantization,
+			})
 		case "license", "template", "system":
 			if c.Name != "license" {
 				// replace

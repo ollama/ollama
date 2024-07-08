@@ -267,6 +267,7 @@ type PullRequest struct {
 type ProgressResponse struct {
 	Status    string `json:"status"`
 	Digest    string `json:"digest,omitempty"`
+	Quantize  string `json:"quantize,omitempty"`
 	Total     int64  `json:"total,omitempty"`
 	Completed int64  `json:"completed,omitempty"`
 }
