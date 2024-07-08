@@ -64,15 +64,22 @@ if [ -n "$NEEDS" ]; then
 fi
 
 status "Downloading ollama..."
-curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
+OLLAMA_INSTALL_DIR=${OLLAMA_INSTALL_DIR:-${BINDIR}}
 
-status "Installing ollama to $BINDIR..."
+status "Installing ollama to $OLLAMA_INSTALL_DIR..."
 $SUDO install -o0 -g0 -m755 -d $BINDIR
-$SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
+$SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR"
+curl --fail --show-error --location --progress-bar \
+    "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
+    tar -czf - -C "$OLLAMA_INSTALL_DIR" || \
+    curl --fail --show-error --location --progress-bar -o "$OLLAMA_INSTALL_DIR/ollama"\
+    "https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
+
+$SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
 
 install_success() {
     status 'The Ollama API is now available at 127.0.0.1:11434.'

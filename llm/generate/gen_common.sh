@@ -9,7 +9,10 @@ init_vars() {
         ARCH="arm64"
         ;;
     *)
-        ARCH=$(uname -m | sed -e "s/aarch64/arm64/g")
+        echo "GOARCH must be set"
+        echo "this script is meant to be run from within go generate"
+        exit 1
+        ;;
     esac
 
     LLAMACPP_DIR=../llama.cpp
@@ -27,6 +30,7 @@ init_vars() {
         WHOLE_ARCHIVE="-Wl,-force_load"
         NO_WHOLE_ARCHIVE=""
         GCC_ARCH="-arch ${ARCH}"
+        DIST_BASE=../../dist/darwin-${GOARCH}/ollama_runners
         ;;
     "Linux")
         LIB_EXT="so"
@@ -35,6 +39,7 @@ init_vars() {
 
         # Cross compiling not supported on linux - Use docker
         GCC_ARCH=""
+        DIST_BASE=../../dist/linux-${GOARCH}/ollama_runners
         ;;
     *)
         ;;
@@ -103,6 +108,14 @@ compress() {
         wait $pid
     done
     echo "Finished compression"
+}
+
+install() {
+    echo "Installing binaries to dist dir ${DIST_DIR}"
+    mkdir -p "${DIST_DIR}"
+    for f in ${BUILD_DIR}/bin/* ; do
+        cp -a "${f}" "${DIST_DIR}"
+    done
 }
 
 # Keep the local tree clean after we're done with the build

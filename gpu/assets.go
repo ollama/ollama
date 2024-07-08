@@ -34,33 +34,35 @@ func PayloadsDir() (string, error) {
 		}
 
 		// The remainder only applies on non-windows where we still carry payloads in the main executable
-		cleanupTmpDirs()
-		tmpDir := envconfig.TmpDir
-		if tmpDir == "" {
-			tmpDir, err = os.MkdirTemp("", "ollama")
-			if err != nil {
-				return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+		if runtime.GOOS == "darwin" {
+			cleanupTmpDirs()
+			tmpDir := envconfig.TmpDir
+			if tmpDir == "" {
+				tmpDir, err = os.MkdirTemp("", "ollama")
+				if err != nil {
+					return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+				}
+			} else {
+				err = os.MkdirAll(tmpDir, 0755)
+				if err != nil {
+					return "", fmt.Errorf("failed to generate tmp dir %s: %w", tmpDir, err)
+				}
 			}
-		} else {
-			err = os.MkdirAll(tmpDir, 0755)
+
+			// Track our pid so we can clean up orphaned tmpdirs
+			pidFilePath := filepath.Join(tmpDir, "ollama.pid")
+			pidFile, err := os.OpenFile(pidFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
 			if err != nil {
-				return "", fmt.Errorf("failed to generate tmp dir %s: %w", tmpDir, err)
+				return "", err
 			}
-		}
+			if _, err := pidFile.Write([]byte(fmt.Sprint(os.Getpid()))); err != nil {
+				return "", err
+			}
 
-		// Track our pid so we can clean up orphaned tmpdirs
-		pidFilePath := filepath.Join(tmpDir, "ollama.pid")
-		pidFile, err := os.OpenFile(pidFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-		if err != nil {
-			return "", err
+			// We create a distinct subdirectory for payloads within the tmpdir
+			// This will typically look like /tmp/ollama3208993108/runners on linux
+			payloadsDir = filepath.Join(tmpDir, "runners")
 		}
-		if _, err := pidFile.Write([]byte(fmt.Sprint(os.Getpid()))); err != nil {
-			return "", err
-		}
-
-		// We create a distinct subdirectory for payloads within the tmpdir
-		// This will typically look like /tmp/ollama3208993108/runners on linux
-		payloadsDir = filepath.Join(tmpDir, "runners")
 	}
 	return payloadsDir, nil
 }
@@ -106,7 +108,7 @@ func Cleanup() {
 	lock.Lock()
 	defer lock.Unlock()
 	runnersDir := envconfig.RunnersDir
-	if payloadsDir != "" && runnersDir == "" && runtime.GOOS != "windows" {
+	if payloadsDir != "" && runnersDir == "" && runtime.GOOS == "darwin" {
 		// We want to fully clean up the tmpdir parent of the payloads dir
 		tmpDir := filepath.Clean(filepath.Join(payloadsDir, ".."))
 		slog.Debug("cleaning up", "dir", tmpDir)
@@ -123,7 +125,7 @@ func Cleanup() {
 }
 
 func UpdatePath(dir string) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" { // TODO - does this need linux treatment...
 		tmpDir := filepath.Dir(dir)
 		pathComponents := strings.Split(os.Getenv("PATH"), ";")
 		i := 0

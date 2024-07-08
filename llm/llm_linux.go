@@ -2,5 +2,5 @@ package llm
 
 import "embed"
 
-//go:embed build/linux/*/*/bin/*
+// unused on linux
 var libEmbed embed.FS

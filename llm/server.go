@@ -133,7 +133,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	availableServers := getAvailableServers()
 	if len(availableServers) == 0 {
-		if runtime.GOOS != "windows" {
+		if runtime.GOOS == "darwin" {
 			slog.Warn("llama server binary disappeared, reinitializing payloads")
 			err = Init()
 			if err != nil {

@@ -228,9 +228,9 @@ func GetGPUInfo() GpuInfoList {
 			return GpuInfoList{cpus[0].GpuInfo}
 		}
 
-		// On windows we bundle the nvidia library one level above the runner dir
+		// On windows/linux we bundle the nvidia library one level above the runner dir
 		depPath := ""
-		if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
+		if runtime.GOOS != "darwin" && envconfig.RunnersDir != "" {
 			depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "cuda")
 		}
 
@@ -282,9 +282,9 @@ func GetGPUInfo() GpuInfoList {
 		// Intel
 		if envconfig.IntelGpu {
 			oHandles = initOneAPIHandles()
-			// On windows we bundle the oneapi library one level above the runner dir
+			// On windows/linux we bundle the oneapi library one level above the runner dir
 			depPath = ""
-			if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
+			if runtime.GOOS != "darwin" && envconfig.RunnersDir != "" {
 				depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "oneapi")
 			}
 

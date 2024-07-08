@@ -157,8 +157,8 @@ func LoadConfig() {
 	}
 
 	RunnersDir = clean("OLLAMA_RUNNERS_DIR")
-	if runtime.GOOS == "windows" && RunnersDir == "" {
-		// On Windows we do not carry the payloads inside the main executable
+	if runtime.GOOS != "darwin" && RunnersDir == "" {
+		// On Windows/linux we do not carry the payloads inside the main executable
 		appExe, err := os.Executable()
 		if err != nil {
 			slog.Error("failed to lookup executable path", "error", err)
@@ -173,8 +173,8 @@ func LoadConfig() {
 		for _, root := range []string{filepath.Dir(appExe), cwd} {
 			paths = append(paths,
 				root,
-				filepath.Join(root, "windows-"+runtime.GOARCH),
-				filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
+				filepath.Join(root, runtime.GOOS+"-"+runtime.GOARCH),
+				filepath.Join(root, "dist", runtime.GOOS+"-"+runtime.GOARCH),
 			)
 		}
 

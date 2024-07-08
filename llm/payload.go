@@ -26,7 +26,7 @@ func Init() error {
 		return err
 	}
 
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS == "Darwin" {
 		slog.Info("extracting embedded files", "dir", payloadsDir)
 		binGlob := "build/*/*/*/bin/*"
 
