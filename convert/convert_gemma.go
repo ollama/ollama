@@ -43,15 +43,15 @@ func (p *gemma) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *gemma) Tensors(ts []Tensor) []*llm.Tensor {
-	var out []*llm.Tensor
+func (p *gemma) Tensors(ts []Tensor) []llm.Tensor {
+	var out []llm.Tensor
 	for _, t := range ts {
 		name := p.tensorName(t.Name())
 		if strings.HasSuffix(name, "_norm.weight") {
 			t.SetRepacker(p.addOne)
 		}
 
-		out = append(out, &llm.Tensor{
+		out = append(out, llm.Tensor{
 			Name:     name,
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

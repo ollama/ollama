@@ -489,6 +489,7 @@ func readGGUFArray(llm *gguf, r io.Reader) (*array, error) {
 	return a, nil
 }
 
+// writeGGUFArray writes a slice s of type E to the write with a gguf type of t
 func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 	if err := binary.Write(w, binary.LittleEndian, ggufTypeArray); err != nil {
 		return err
@@ -502,16 +503,10 @@ func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 		return err
 	}
 
-	for _, e := range s {
-		if err := binary.Write(w, binary.LittleEndian, e); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return binary.Write(w, binary.LittleEndian, s)
 }
 
-func WriteGGUF(ws io.WriteSeeker, kv KV, ts []*Tensor) error {
+func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 	if err := binary.Write(ws, binary.LittleEndian, []byte("GGUF")); err != nil {
 		return err
 	}
@@ -537,7 +532,7 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []*Tensor) error {
 		}
 	}
 
-	slices.SortFunc(ts, func(a, b *Tensor) int {
+	slices.SortFunc(ts, func(a, b Tensor) int {
 		var i, j int
 		if n, err := fmt.Sscanf(a.Name, "blk.%d", &i); err != nil || n != 1 {
 			return cmp.Compare(a.Name, b.Name)
@@ -622,7 +617,7 @@ func ggufWriteKV(ws io.WriteSeeker, k string, v any) error {
 	return err
 }
 
-func ggufWriteTensorInfo(ws io.WriteSeeker, t *Tensor) error {
+func ggufWriteTensorInfo(ws io.WriteSeeker, t Tensor) error {
 	slog.Debug(t.Name, "kind", t.Kind, "shape", t.Shape, "offset", t.Offset)
 	if err := binary.Write(ws, binary.LittleEndian, uint64(len(t.Name))); err != nil {
 		return err
@@ -649,7 +644,7 @@ func ggufWriteTensorInfo(ws io.WriteSeeker, t *Tensor) error {
 	return binary.Write(ws, binary.LittleEndian, t.Offset)
 }
 
-func ggufWriteTensor(ws io.WriteSeeker, t *Tensor, alignment int64) error {
+func ggufWriteTensor(ws io.WriteSeeker, t Tensor, alignment int64) error {
 	offset, err := ws.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err

@@ -32,7 +32,7 @@ type Tokenizer struct {
 	Template string
 }
 
-func parseTokenizer(d string, specialTypes []string) (*Tokenizer, error) {
+func parseTokenizer(d string, specialTokenTypes []string) (*Tokenizer, error) {
 	v, err := parseVocabulary(d)
 	if err != nil {
 		return nil, err
@@ -66,6 +66,8 @@ func parseTokenizer(d string, specialTypes []string) (*Tokenizer, error) {
 			switch pt.Type {
 			case "Split":
 				if pt.Pattern.Regex != "" {
+					// create a checksum of all Split pretokenizers which should be sufficient
+					// to identify the pretokenizer
 					sha256sum.Write([]byte(pt.Pattern.Regex))
 				}
 			}
@@ -102,7 +104,7 @@ func parseTokenizer(d string, specialTypes []string) (*Tokenizer, error) {
 			}
 		}
 
-		for _, st := range specialTypes {
+		for _, st := range specialTokenTypes {
 			sv := SpecialVocabulary{Type: st}
 			if bts, ok := p[fmt.Sprintf("add_%s_token", st)]; ok {
 				if err := json.Unmarshal(bts, &sv.AddToken); err != nil {
@@ -224,14 +226,13 @@ func parseVocabulary(d string) (*Vocabulary, error) {
 	}
 
 	for pattern, parseFn := range patterns {
-		matches, err := filepath.Glob(filepath.Join(d, pattern))
-		if err != nil {
+		if _, err := os.Stat(filepath.Join(d, pattern)); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
 			return nil, err
 		}
 
-		if len(matches) > 0 {
-			return parseFn(d)
-		}
+		return parseFn(d)
 	}
 
 	return nil, errors.New("unknown tensor format")
