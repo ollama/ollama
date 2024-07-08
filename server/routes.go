@@ -785,10 +785,8 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-	fmt.Println("hello")
 	fmt.Println(s.IsLocal(c))
 	if c.GetHeader("X-Redirect-Create") == "1" && s.IsLocal(c) {
-		fmt.Println("entered redirect")
 		c.Header("LocalLocation", path)
 		c.Status(http.StatusTemporaryRedirect)
 		return
@@ -809,8 +807,6 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 }
 
 func (s *Server) IsLocal(c *gin.Context) bool {
-	fmt.Println("entered islocal")
-	fmt.Println(c.GetHeader("Authorization"), " is authorization")
 	if authz := c.GetHeader("Authorization"); authz != "" {
 		parts := strings.Split(authz, ":")
 		if len(parts) != 3 {
@@ -836,23 +832,6 @@ func (s *Server) IsLocal(c *gin.Context) bool {
 			fmt.Println("failed at lenPartialRequestDataParts")
 			return false
 		}
-
-		/* timestamp, err := strconv.ParseInt(partialRequestDataParts[2], 10, 0)
-		if err != nil {
-			return false
-		}
-
-		t := time.Unix(timestamp, 0)
-		if time.Since(t) > 5*time.Minute || time.Until(t) > 5*time.Minute {
-			// token is invalid if timestamp +/- 5 minutes from current time
-			return false
-		} */
-
-		/* nonce := partialRequestDataParts[3]
-		if nonceCache.has(nonce) {
-			return false
-		}
-		nonceCache.add(nonce, 5*time.Minute) */
 
 		signature, err := base64.StdEncoding.DecodeString(parts[2])
 		if err != nil {
