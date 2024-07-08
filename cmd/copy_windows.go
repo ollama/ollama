@@ -4,7 +4,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -42,7 +41,6 @@ func localCopy(src, target string) error {
 }
 
 func copyFileEx(src, dst string) error {
-	fmt.Println("HELELELLEEOEOEOEO")
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	copyFileEx := kernel32.NewProc("CopyFileExW")
 
