@@ -224,6 +224,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				CreatedAt:  time.Now().UTC(),
 				Done:       r.Done,
 				Response:   r.Content,
+				CompletionProbabilities: r.CompletionProbabilities,
 				DoneReason: r.DoneReason,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
@@ -1344,6 +1345,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				CreatedAt:  time.Now().UTC(),
 				Message:    api.Message{Role: "assistant", Content: r.Content},
 				Done:       r.Done,
+				CompletionProbabilities: r.CompletionProbabilities,
 				DoneReason: r.DoneReason,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
