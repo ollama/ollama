@@ -21,11 +21,9 @@ for TARGETARCH in ${BUILD_ARCH}; do
         -t builder:$TARGETARCH \
         .
     docker create --platform linux/$TARGETARCH --name builder-$TARGETARCH builder:$TARGETARCH
-    docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/ollama ./dist/ollama-linux-$TARGETARCH
-
-    if [ "$TARGETARCH" = "amd64" ]; then
-        docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/dist/deps/ ./dist/
-    fi
-
+    docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/dist/linux-$TARGETARCH ./dist
     docker rm builder-$TARGETARCH
+    echo "Compressing final linux bundle..."
+    rm -f ./dist/ollama-linux-$TARGETARCH.tgz
+    (cd dist/linux-$TARGETARCH && tar cf - . | gzip --best > ../ollama-linux-$TARGETARCH.tgz )
 done

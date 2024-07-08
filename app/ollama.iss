@@ -91,16 +91,7 @@ Source: "..\ollama.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit
 Source: "..\dist\windows-{#ARCH}\ollama_runners\*"; DestDir: "{app}\ollama_runners"; Flags: ignoreversion 64bit recursesubdirs
 Source: "..\dist\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
-#if DirExists("..\dist\windows-amd64\cuda")
-  Source: "..\dist\windows-amd64\cuda\*"; DestDir: "{app}\cuda\"; Flags: ignoreversion recursesubdirs
-#endif
-#if DirExists("..\dist\windows-amd64\oneapi")
-  Source: "..\dist\windows-amd64\oneapi\*"; DestDir: "{app}\oneapi\"; Flags: ignoreversion recursesubdirs
-#endif
-#if DirExists("..\dist\windows-amd64\rocm")
-  Source: "..\dist\windows-amd64\rocm\*"; DestDir: "{app}\rocm\"; Flags: ignoreversion recursesubdirs
-#endif
-
+Source: "..\dist\windows-amd64\ollama_libs\*"; DestDir: "{app}\ollama_libs\"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
