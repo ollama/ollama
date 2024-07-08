@@ -65,3 +65,8 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 	// No-op on darwin
 	return "", ""
 }
+
+// Unused on Darwin
+func GetDepDir() string {
+	return ""
+}
