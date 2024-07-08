@@ -29,6 +29,11 @@ func (t tensorBase) Shape() []uint64 {
 	return t.shape
 }
 
+const (
+	tensorKindF32 uint32 = iota
+	tensorKindF16
+)
+
 func (t tensorBase) Kind() uint32 {
 	if strings.HasSuffix(t.name, ".block_sparse_moe.gate.weight") {
 		return 0
@@ -38,9 +43,9 @@ func (t tensorBase) Kind() uint32 {
 	case 0:
 		panic("invalid tensor shape")
 	case 1:
-		return 0
+		return tensorKindF32
 	default:
-		return 1
+		return tensorKindF16
 	}
 }
 

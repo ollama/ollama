@@ -66,6 +66,7 @@ func parseSafetensors(ps ...string) ([]Tensor, error) {
 	return ts, nil
 }
 
+// safetensorsPad returns the padded size of the safetensors file given a length n and offset s
 func safetensorsPad(n, s int64) int64 {
 	return 8 + n + s
 }
@@ -125,9 +126,9 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	switch st.Kind() {
-	case 0:
+	case tensorKindF32:
 		return 0, binary.Write(w, binary.LittleEndian, f32s)
-	case 1:
+	case tensorKindF16:
 		f16s := make([]uint16, len(f32s))
 		for i := range f32s {
 			f16s[i] = float16.Fromfloat32(f32s[i]).Bits()

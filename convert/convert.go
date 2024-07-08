@@ -40,13 +40,13 @@ func (Parameters) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (Parameters) specialTypes() []string {
+func (Parameters) specialTokenTypes() []string {
 	return []string{
 		"bos", "eos", "unk", "sep", "pad", "cls", "mask",
 	}
 }
 
-func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []*llm.Tensor) error {
+func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
 	return llm.WriteGGUF(ws, kv, ts)
 }
 
@@ -54,24 +54,27 @@ type Converter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) llm.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
-	Tensors([]Tensor) []*llm.Tensor
+	Tensors([]Tensor) []llm.Tensor
 
 	// tensorName returns the LLM tensor name for a specific input name
 	tensorName(string) string
-	// specialTypes returns any special token types the model uses
-	specialTypes() []string
-	writeFile(io.WriteSeeker, llm.KV, []*llm.Tensor) error
+	// specialTokenTypes returns any special token types the model uses
+	specialTokenTypes() []string
+	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
 }
 
-func Convert(d string, ws io.WriteSeeker) error {
-	f, err := os.Open(filepath.Join(d, "config.json"))
+// Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
+// and files it finds in the input path.
+// Supported input model formats include safetensors.
+// Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
+func Convert(path string, ws io.WriteSeeker) error {
+	bts, err := os.ReadFile(filepath.Join(path, "config.json"))
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	var p Parameters
-	if err := json.NewDecoder(f).Decode(&p); err != nil {
+	if err := json.Unmarshal(bts, &p); err != nil {
 		return err
 	}
 
@@ -79,28 +82,23 @@ func Convert(d string, ws io.WriteSeeker) error {
 		return errors.New("unknown architecture")
 	}
 
-	var c Converter
+	var conv Converter
 	switch p.Architectures[0] {
 	case "LlamaForCausalLM", "MistralForCausalLM":
-		c = &llama{}
+		conv = &llama{}
 	case "MixtralForCausalLM":
-		c = &mixtral{}
+		conv = &mixtral{}
 	case "GemmaForCausalLM":
-		c = &gemma{}
+		conv = &gemma{}
 	default:
 		return errors.New("unsupported architecture")
 	}
 
-	bts, err := os.ReadFile(filepath.Join(d, "config.json"))
-	if err != nil {
+	if err := json.Unmarshal(bts, conv); err != nil {
 		return err
 	}
 
-	if err := json.Unmarshal(bts, c); err != nil {
-		return err
-	}
-
-	t, err := parseTokenizer(d, c.specialTypes())
+	t, err := parseTokenizer(path, conv.specialTokenTypes())
 	if err != nil {
 		return err
 	}
@@ -112,12 +110,14 @@ func Convert(d string, ws io.WriteSeeker) error {
 			t.Vocabulary.Scores = append(t.Vocabulary.Scores, -1)
 			t.Vocabulary.Types = append(t.Vocabulary.Types, tokenTypeUserDefined)
 		}
+	} else {
+		slog.Debug("vocabulary", "size", len(t.Vocabulary.Tokens))
 	}
 
-	ts, err := parseTensors(d)
+	ts, err := parseTensors(path)
 	if err != nil {
 		return err
 	}
 
-	return c.writeFile(ws, c.KV(t), c.Tensors(ts))
+	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts))
 }

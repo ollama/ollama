@@ -19,7 +19,7 @@ import (
 
 var stream bool = false
 
-func createBinFile(t *testing.T, kv map[string]any, ti []*llm.Tensor) string {
+func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) string {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "")
