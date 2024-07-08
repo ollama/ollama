@@ -295,7 +295,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 		return digest, nil
 	}
 
-	// Successfuly found the model directory
+	// Successfully found the model directory
 	if err == nil {
 		// Copy blob in via OS specific copy
 		// Linux errors out to use io.copy
