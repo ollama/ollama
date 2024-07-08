@@ -38,7 +38,7 @@ func Init() error {
 	}
 
 	var variants []string
-	for v := range availableServers() {
+	for v := range getAvailableServers() {
 		variants = append(variants, v)
 	}
 	slog.Info(fmt.Sprintf("Dynamic LLM libraries %v", variants))
@@ -50,7 +50,7 @@ func Init() error {
 // binary names may contain an optional variant separated by '_'
 // For example, "ollama_rocm_v6" and "ollama_rocm_v5" or "ollama_cpu" and "ollama_cpu_avx2"
 // Any library without a variant is the lowest common denominator
-func availableServers() map[string]string {
+func getAvailableServers() map[string]string {
 	payloadsDir, err := gpu.PayloadsDir()
 	if err != nil {
 		slog.Error("payload lookup error", "error", err)
@@ -80,7 +80,7 @@ func availableServers() map[string]string {
 // TODO - switch to metadata based mapping
 func serversForGpu(info gpu.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
-	availableServers := availableServers()
+	availableServers := getAvailableServers()
 	requested := info.Library
 	if info.Variant != gpu.CPUCapabilityNone {
 		requested += "_" + info.Variant.String()
@@ -115,27 +115,29 @@ func serversForGpu(info gpu.GpuInfo) []string {
 		servers = append(servers, alt...)
 	}
 
-	// Load up the best CPU variant if not primary requested
-	if info.Library != "cpu" {
-		variant := gpu.GetCPUCapability()
-		// If no variant, then we fall back to default
-		// If we have a variant, try that if we find an exact match
-		// Attempting to run the wrong CPU instructions will panic the
-		// process
-		if variant != gpu.CPUCapabilityNone {
-			for cmp := range availableServers {
-				if cmp == "cpu_"+variant.String() {
-					servers = append(servers, cmp)
-					break
+	if !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") {
+		// Load up the best CPU variant if not primary requested
+		if info.Library != "cpu" {
+			variant := gpu.GetCPUCapability()
+			// If no variant, then we fall back to default
+			// If we have a variant, try that if we find an exact match
+			// Attempting to run the wrong CPU instructions will panic the
+			// process
+			if variant != gpu.CPUCapabilityNone {
+				for cmp := range availableServers {
+					if cmp == "cpu_"+variant.String() {
+						servers = append(servers, cmp)
+						break
+					}
 				}
+			} else {
+				servers = append(servers, "cpu")
 			}
-		} else {
-			servers = append(servers, "cpu")
 		}
-	}
 
-	if len(servers) == 0 {
-		servers = []string{"cpu"}
+		if len(servers) == 0 {
+			servers = []string{"cpu"}
+		}
 	}
 
 	return servers
@@ -147,7 +149,7 @@ func serverForCpu() string {
 		return "metal"
 	}
 	variant := gpu.GetCPUCapability()
-	availableServers := availableServers()
+	availableServers := getAvailableServers()
 	if variant != gpu.CPUCapabilityNone {
 		for cmp := range availableServers {
 			if cmp == "cpu_"+variant.String() {
