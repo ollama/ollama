@@ -285,52 +285,33 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 
-	// Here, we want to check if the server is local
-	// If true, call, createBlobLocal
-	// This should find the model directory, copy blob over, and return the digest
-	// If this fails, just upload it
-	// If this is successful, return the digest
+	// We check if we can find the models directory locally
+	// If we can, we return the path to the directory
+	// If we can't, we return an error
+	// If the blob exists already, we return the digest
+	dest, err := getLocalPath(cmd.Context(), digest)
 
-	// Resolve server to IP
-	// Check if server is local
-	/* if client.IsLocal() {
-		digest = strings.ReplaceAll(digest, ":", "-")
-		config, err := client.HeadBlob(cmd.Context(), digest)
-		if err != nil {
-			return "", err
-		}
+	if errors.Is(err, ErrBlobExists) {
+		return digest, nil
+	}
 
-		modelDir := config.ModelDir
-
-		// Get blob destination
-
-		dest := filepath.Join(modelDir, "blobs", digest)
-
-		err = createBlobLocal(path, dest)
+	// Successfuly found the model directory
+	if err == nil {
+		// Copy blob in via OS specific copy
+		// Linux errors out to use io.copy
+		err = localCopy(path, dest)
 		if err == nil {
 			return digest, nil
 		}
-	} */
-	if client.IsLocal() {
-		dest, err := getLocalPath(cmd.Context(), digest)
 
-		if errors.Is(err, ErrBlobExists) {
-			return digest, nil
-		}
-
+		// Default copy using io.copy
+		err = defaultCopy(path, dest)
 		if err == nil {
-			err = localCopy(path, dest)
-			if err == nil {
-				return digest, nil
-			}
-
-			err = defaultCopy(path, dest)
-			if err == nil {
-				return digest, nil
-			}
+			return digest, nil
 		}
 	}
 
+	// If at any point copying the blob over locally fails, we default to the copy through the server
 	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
 		return "", err
 	}
