@@ -110,11 +110,9 @@ func (t adapterTensor) WriteTo(w io.Writer) (int64, error) {
 		}
 
 		return 0, binary.Write(w, binary.LittleEndian, f32s)
-	default:
-		return 0, fmt.Errorf("unknown data type: %s", t.dtype)
 	}
 
-	return 0, fmt.Errorf("unknown error")
+	return 0, fmt.Errorf("unknown data type: %s", t.dtype)
 }
 
 func transpose(f32s []float32, shape []uint64) ([]float32, error) {

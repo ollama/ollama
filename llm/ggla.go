@@ -86,7 +86,7 @@ func (llm *ggla) decode(rs io.ReadSeeker) error {
 		var dims uint32
 		if err := binary.Read(rs, binary.LittleEndian, &dims); err != nil {
 			if errors.Is(err, io.EOF) {
-				return nil
+				break
 			}
 			return err
 		}
@@ -180,7 +180,7 @@ func WriteGGLA(ws io.WriteSeeker, kv KV, ts []*Tensor) error {
 
 	for _, t := range ts {
 		dims := 0
-		for cnt := 0; cnt < len(t.Shape); cnt++ {
+		for cnt := range len(t.Shape) {
 			if t.Shape[cnt] > 0 {
 				dims++
 			}
@@ -198,7 +198,7 @@ func WriteGGLA(ws io.WriteSeeker, kv KV, ts []*Tensor) error {
 			return err
 		}
 
-		for cnt := 0; cnt < dims; cnt++ {
+		for cnt := range dims {
 			if err := binary.Write(ws, binary.LittleEndian, uint32(t.Shape[dims-1-cnt])); err != nil {
 				return err
 			}

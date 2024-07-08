@@ -134,8 +134,8 @@ func TestConvertNPZ(t *testing.T) {
 
 	for _, fn := range cases {
 		ts, err := parseNPZ(filepath.Join("testdata", fn))
-		assert.Nil(t, err)
-		assert.Equal(t, 16*2*2, len(ts)) // 16 layers, 2 tensors, 2 loras
+		assert.NoError(t, err)
+		assert.Len(t, ts, 16*2*2) // 16 layers, 2 tensors, 2 loras
 
 		a := adapter{}
 
@@ -143,19 +143,19 @@ func TestConvertNPZ(t *testing.T) {
 			at := m.(adapterTensor)
 			assert.Equal(t, filepath.Join("testdata", fn), at.path)
 			assert.Equal(t, "F32", at.dtype) // only float32s supported
-			assert.Equal(t, 2, len(at.tensorBase.shape))
+			assert.Len(t, at.tensorBase.shape, 2)
 		}
 
 		var ws io.WriteSeeker = &memWriter{}
 		err = llm.WriteGGLA(ws, a.KV(nil), a.Tensors(ts))
-		assert.Nil(t, err)
+		assert.NoError(t, err)
 
 		mw := ws.(*memWriter)
 		slog.Info(fmt.Sprintf("buffer len = %d", len(mw.buf)))
-		assert.NotEqual(t, 0, len(mw.buf))
+		assert.NotEmpty(t, mw.buf)
 		rs := bytes.NewReader(mw.buf)
 		ggml, _, err := llm.DecodeGGML(rs, len(mw.buf))
-		assert.Nil(t, err, "decode ggml failed")
+		assert.NoError(t, err, "decode ggml failed")
 		assert.NotNil(t, ggml, "ggml was empty")
 
 		kv := ggml.KV()
