@@ -129,7 +129,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
-			numParallel := envconfig.NumParallel()
+			numParallel := int(envconfig.NumParallel())
 			// TODO (jmorganca): multimodal models don't support parallel yet
 			// see https://github.com/ollama/ollama/issues/4165
 			if len(pending.model.ProjectorPaths) > 0 && numParallel != 1 {
@@ -151,7 +151,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
-				} else if envconfig.MaxRunners() > 0 && loadedCount >= envconfig.MaxRunners() {
+				} else if envconfig.MaxRunners() > 0 && loadedCount >= int(envconfig.MaxRunners()) {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
 					runnerToExpire = s.findRunnerToUnload()
 				} else {

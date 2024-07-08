@@ -30,6 +30,10 @@ func TestHost(t *testing.T) {
 		"extra quotes":        {"\"1.2.3.4\"", "1.2.3.4:11434"},
 		"extra space+quotes":  {" \" 1.2.3.4 \" ", "1.2.3.4:11434"},
 		"extra single quotes": {"'1.2.3.4'", "1.2.3.4:11434"},
+		"http":                {"http://1.2.3.4", "1.2.3.4:80"},
+		"http port":           {"http://1.2.3.4:4321", "1.2.3.4:4321"},
+		"https":               {"https://1.2.3.4", "1.2.3.4:443"},
+		"https port":          {"https://1.2.3.4:4321", "1.2.3.4:4321"},
 	}
 
 	for name, tt := range cases {
@@ -133,24 +137,45 @@ func TestOrigins(t *testing.T) {
 }
 
 func TestBool(t *testing.T) {
-	cases := map[string]struct {
-		value  string
-		expect bool
-	}{
-		"empty":     {"", false},
-		"true":      {"true", true},
-		"false":     {"false", false},
-		"1":         {"1", true},
-		"0":         {"0", false},
-		"random":    {"random", true},
-		"something": {"something", true},
+	cases := map[string]bool{
+		"":      false,
+		"true":  true,
+		"false": false,
+		"1":     true,
+		"0":     false,
+		// invalid values
+		"random":    true,
+		"something": true,
 	}
 
-	for name, tt := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("OLLAMA_BOOL", tt.value)
-			if b := Bool("OLLAMA_BOOL"); b() != tt.expect {
-				t.Errorf("%s: expected %t, got %t", name, tt.expect, b())
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_BOOL", k)
+			if b := Bool("OLLAMA_BOOL")(); b != v {
+				t.Errorf("%s: expected %t, got %t", k, v, b)
+			}
+		})
+	}
+}
+
+func TestUint(t *testing.T) {
+	cases := map[string]uint{
+		"0":    0,
+		"1":    1,
+		"1337": 1337,
+		// default values
+		"":       11434,
+		"-1":     11434,
+		"0o10":   11434,
+		"0x10":   11434,
+		"string": 11434,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_UINT", k)
+			if i := Uint("OLLAMA_UINT", 11434)(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
 			}
 		})
 	}
@@ -184,6 +209,26 @@ func TestKeepAlive(t *testing.T) {
 			t.Setenv("OLLAMA_KEEP_ALIVE", tt)
 			if actual := KeepAlive(); actual != expect {
 				t.Errorf("%s: expected %s, got %s", tt, expect, actual)
+			}
+		})
+	}
+}
+
+func TestVar(t *testing.T) {
+	cases := map[string]string{
+		"value":       "value",
+		" value ":     "value",
+		" 'value' ":   "value",
+		` "value" `:   "value",
+		" ' value ' ": " value ",
+		` " value " `: " value ",
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_VAR", k)
+			if s := Var("OLLAMA_VAR"); s != v {
+				t.Errorf("%s: expected %q, got %q", k, v, s)
 			}
 		})
 	}
