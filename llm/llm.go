@@ -10,14 +10,17 @@ package llm
 // #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/linux/arm64_static -L${SRCDIR}/build/linux/arm64_static/src -L${SRCDIR}/build/linux/arm64_static/ggml/src
 // #include <stdlib.h>
 // #include "llama.h"
-// bool update_quantize_progress(int progress, void* data) {
-// 	*((int*)data) = progress;
+// static bool update_quantize_progress(float progress, void* data) {
+// 	*((float*)data) = progress;
 // 	return true;
 // }
 import "C"
 import (
 	"fmt"
 	"unsafe"
+	"time"
+
+	"github.com/ollama/ollama/api"
 )
 
 // SystemInfo is an unused example of calling llama.cpp functions using CGo
@@ -25,7 +28,7 @@ func SystemInfo() string {
 	return C.GoString(C.llama_print_system_info())
 }
 
-func Quantize(infile, outfile string, ftype fileType, count *int) error {
+func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressResponse) ) error {
 	cinfile := C.CString(infile)
 	defer C.free(unsafe.Pointer(cinfile))
 
@@ -37,7 +40,11 @@ func Quantize(infile, outfile string, ftype fileType, count *int) error {
 	params.ftype = ftype.Value()
 
 	// Initialize "global" to store progress
-	store := C.malloc(C.sizeof(int))
+	store := C.malloc(C.sizeof_float)
+    defer C.free(unsafe.Pointer(store))
+
+    // Initialize store value, e.g., setting initial progress to 0
+    *(*C.float)(store) = 0.0
 
 	params.quantize_callback_data = store
 	params.quantize_callback = C.update_quantize_progress
@@ -48,7 +55,11 @@ func Quantize(infile, outfile string, ftype fileType, count *int) error {
 			if params.quantize_callback_data == nil {
 				return
 			} else {
-				*count = int(*(*C.int)(store))
+				progress := *((*C.float)(store))
+                fn(api.ProgressResponse{
+                    Status:   fmt.Sprintf("quantizing model %d%%", int(progress*100)),
+                    Quantize: "quant",
+                })
 			}
 		}
 	}()
