@@ -77,7 +77,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	status := "transferring model data 0%"
+	status := "transferring model data"
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 	defer p.Stop()
@@ -312,7 +312,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 			case <-ticker.C:
 				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", int(100*pw.n/fileSize)))
 			case <-done:
-				spinner.SetMessage(fmt.Sprintf("transferring model data done"))
+				spinner.SetMessage("transferring model data 100%")
 				return
 			}
 		}
