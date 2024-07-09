@@ -139,6 +139,8 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 			bar.Set(resp.Completed)
 		} else if resp.Quantize != "" {
+			spinner.Stop()
+
 			if quantizeSpin != nil {
 				quantizeSpin.SetMessage(resp.Status)
 			} else {
