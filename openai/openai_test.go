@@ -79,6 +79,7 @@ func TestMiddlewareRequests(t *testing.T) {
 					Model:       "test-model",
 					Prompt:      "Hello",
 					Temperature: &temp,
+					Stop:        []string{"\n", "stop"},
 				}
 
 				bodyBytes, _ := json.Marshal(body)
@@ -98,6 +99,16 @@ func TestMiddlewareRequests(t *testing.T) {
 
 				if genReq.Options["temperature"] != 1.6 {
 					t.Fatalf("expected 1.6, got %f", genReq.Options["temperature"])
+				}
+
+				stopTokens, ok := genReq.Options["stop"].([]any)
+
+				if !ok {
+					t.Fatalf("expected stop tokens to be a list")
+				}
+
+				if stopTokens[0] != "\n" || stopTokens[1] != "stop" {
+					t.Fatalf("expected ['\\n', 'stop'], got %v", stopTokens)
 				}
 			},
 		},
