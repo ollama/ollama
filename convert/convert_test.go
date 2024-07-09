@@ -172,12 +172,12 @@ func TestConvertNPZ(t *testing.T) {
 			t.Fatal(err)
 		}
 		if ggml == nil {
-			t.Errorf("ggla didn't convert to ggml correctly")
+			t.Fatal(fmt.Errorf("ggla didn't convert to ggml correctly"))
 		}
 
 		kv := ggml.KV()
 		if kv == nil {
-			t.Errorf("no lora KVs were set")
+			t.Fatal(fmt.Errorf("no lora KVs were set"))
 		}
 
 		r, ok := kv["r"]
@@ -191,6 +191,9 @@ func TestConvertNPZ(t *testing.T) {
 		}
 
 		gts := ggml.Tensors()
+		if &gts == nil {
+			t.Fatal(fmt.Errorf("no tensors were found"))
+		}
 		if len(ts) != len(gts.Items) {
 			t.Errorf("got: %d want: %d tensors in ggla", len(gts.Items), len(ts))
 		}
