@@ -34,6 +34,8 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+var errCapabilityCompletion = errors.New("completion")
+
 type Capability string
 
 const CapabilityCompletion = Capability("completion")
@@ -62,7 +64,10 @@ type Model struct {
 	Template *template.Template
 }
 
-func (m *Model) Has(caps ...Capability) bool {
+// CheckCapabilities checks if the model has the specified capabilities returning an error describing
+// any missing or unknown capabilities
+func (m *Model) CheckCapabilities(caps ...Capability) error {
+	var errs []error
 	for _, cap := range caps {
 		switch cap {
 		case CapabilityCompletion:
@@ -81,15 +86,19 @@ func (m *Model) Has(caps ...Capability) bool {
 			}
 
 			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
-				return false
+				errs = append(errs, errCapabilityCompletion)
 			}
 		default:
 			slog.Error("unknown capability", "capability", cap)
-			return false
+			return fmt.Errorf("unknown capability: %s", cap)
 		}
 	}
 
-	return true
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("missing capabilities: %w", errors.Join(errs...))
+	}
+
+	return nil
 }
 
 func (m *Model) String() string {
