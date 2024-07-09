@@ -47,7 +47,7 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
     *(*C.float)(store) = 0.0
 
 	params.quantize_callback_data = store
-	params.quantize_callback = (C.llama_progress_callback)(C.update_quantize_progress)
+	params.quantize_callback = (C.llama_quantize_callback)(C.update_quantize_progress)
 
 	go func () {
 		for {
