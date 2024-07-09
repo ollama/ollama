@@ -338,12 +338,16 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	switch stop := r.Stop.(type) {
 	case string:
 		options["stop"] = []string{stop}
-	case []string:
-		options["stop"] = stop
-	default:
-		if r.Stop != nil {
-			return api.GenerateRequest{}, fmt.Errorf("invalid type for 'stop' field: %T", r.Stop)
+	case []any:
+		var stops []string
+		for _, s := range stop {
+			if str, ok := s.(string); ok {
+				stops = append(stops, str)
+			} else {
+				return api.GenerateRequest{}, fmt.Errorf("invalid type for 'stop' field: %T", s)
+			}
 		}
+		options["stop"] = stops
 	}
 
 	if r.MaxTokens != nil {
