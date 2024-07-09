@@ -120,8 +120,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			spinner.SetMessage("transferring model data done")
-
 			modelfile.Commands[i].Args = "@" + digest
 		}
 	}
