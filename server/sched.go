@@ -23,6 +23,7 @@ type LlmRequest struct {
 	ctx             context.Context //nolint:containedctx
 	model           *Model
 	opts            api.Options
+	origNumCtx      int // Track the initial ctx request
 	sessionDuration *api.Duration
 	successCh       chan *runnerRef
 	errCh           chan error
@@ -117,6 +118,10 @@ func (s *Scheduler) processPending(ctx context.Context) {
 		case pending := <-s.pendingReqCh:
 			// Block other requests until we get this pending request running
 			pending.schedAttempts++
+			if pending.origNumCtx == 0 {
+				pending.origNumCtx = pending.opts.NumCtx
+			}
+
 			if pending.ctx.Err() != nil {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
@@ -227,7 +232,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 							numParallel = defaultParallel
 						}
 
-						pending.opts.NumCtx *= numParallel
+						pending.opts.NumCtx = pending.origNumCtx * numParallel
 
 						if loadedCount == 0 {
 							slog.Debug("cpu mode with first model, loading")
@@ -724,11 +729,9 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numP
 		// Note: at present, this will favor more VRAM over faster GPU speed in mixed setups
 		sort.Sort(sort.Reverse(gpu.ByFreeMemory(sgl)))
 
-		numCtx := req.opts.NumCtx
-
 		// First attempt to fit the model into a single GPU
 		for _, p := range numParallelToTry {
-			req.opts.NumCtx = numCtx * p
+			req.opts.NumCtx = req.origNumCtx * p
 			if !envconfig.SchedSpread {
 				for _, g := range sgl {
 					if ok, estimatedVRAM = llm.PredictServerFit([]gpu.GpuInfo{g}, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
@@ -746,7 +749,7 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numP
 
 		// Now try all the GPUs
 		for _, p := range numParallelToTry {
-			req.opts.NumCtx = numCtx * p
+			req.opts.NumCtx = req.origNumCtx * p
 			if ok, estimatedVRAM = llm.PredictServerFit(sgl, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
 				slog.Info("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", sgl[0].Library, "parallel", p, "required", format.HumanBytes2(estimatedVRAM))
 				*numParallel = p
