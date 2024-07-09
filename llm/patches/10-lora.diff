@@ -1,8 +1,17 @@
-diff --git a/llama.cpp b/llama.cpp
-index 61948751..d54fc537 100644
---- a/llama.cpp
-+++ b/llama.cpp
-@@ -15940,6 +15940,20 @@ static int llama_apply_lora_from_file_internal(
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4f6cd687..b8c6896b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -189,3 +189,4 @@ if (LLAMA_BUILD_EXAMPLES)
+     add_subdirectory(examples)
+     add_subdirectory(pocs)
+ endif()
++add_subdirectory(../ext_server ext_server) # ollama
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 2b9ace28..b0151571 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -18609,6 +18609,20 @@ static int llama_apply_lora_from_file_internal(
              return 1;
          }
  
@@ -23,7 +32,7 @@ index 61948751..d54fc537 100644
          // load tensor data
          auto load_tensor = [&read_buf, &fin](const tensor_meta & tensor_meta, ggml_tensor * tensor) {
              read_buf.resize(ggml_nbytes(tensor));
-@@ -15950,6 +15964,9 @@ static int llama_apply_lora_from_file_internal(
+@@ -18619,6 +18633,9 @@ static int llama_apply_lora_from_file_internal(
          load_tensor(metaA, loraA);
          load_tensor(metaB, loraB);
  
@@ -33,7 +42,7 @@ index 61948751..d54fc537 100644
          // load base model tensor data
          if (ml) {
              ml->load_data_for(base_t);
-@@ -15964,8 +15981,10 @@ static int llama_apply_lora_from_file_internal(
+@@ -18633,8 +18650,10 @@ static int llama_apply_lora_from_file_internal(
          }
  
          if (base_t->ne[0] != loraA->ne[1] || base_t->ne[1] != loraB->ne[1]) {
@@ -46,13 +55,11 @@ index 61948751..d54fc537 100644
              ggml_free(lora_ctx);
              ggml_backend_buffer_free(lora_buf);
              ggml_backend_free(backend_cpu);
-@@ -15973,15 +15992,19 @@ static int llama_apply_lora_from_file_internal(
-         }
+@@ -18643,14 +18662,18 @@ static int llama_apply_lora_from_file_internal(
  
          auto build_lora_graph = [&]() {
--            // w = w + BA*s
+             // w = w + BA*s
 -            ggml_tensor * BA = ggml_mul_mat(lora_ctx, loraA, loraB);
-+            // Wlora = Worig + scaling * BA
 +            ggml_tensor * BA = ggml_mul_mat(lora_ctx, loraB, loraA);
              ggml_set_name(BA, "BA");
  
@@ -69,11 +76,3 @@ index 61948751..d54fc537 100644
              ggml_tensor * r;
              r = ggml_add_inplace(lora_ctx, base_t, BA);
              ggml_set_name(r, "r_add");
-@@ -16009,6 +16032,7 @@ static int llama_apply_lora_from_file_internal(
-         }
- 
-         ggml_backend_graph_compute(backend_cpu, gf);
-+        show_tensor("Result " + base_name, r);
- 
-         ggml_backend_tensor_set(model_t, r->data, 0, ggml_nbytes(r));
- 

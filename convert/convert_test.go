@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/llm"
-	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/maps"
 )
 
@@ -134,44 +133,67 @@ func TestConvertNPZ(t *testing.T) {
 
 	for _, fn := range cases {
 		ts, err := parseNPZ(filepath.Join("testdata", fn))
-		assert.NoError(t, err)
-		assert.Len(t, ts, 16*2*2) // 16 layers, 2 tensors, 2 loras
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ts) != 16*2*2 {
+			t.Errorf("got: %d want: %d total layers", len(ts), 16*2*2)
+		}
 
 		a := adapter{}
 
 		for _, m := range ts {
 			at := m.(adapterTensor)
-			assert.Equal(t, filepath.Join("testdata", fn), at.path)
-			assert.Equal(t, "F32", at.dtype) // only float32s supported
-			assert.Len(t, at.tensorBase.shape, 2)
+			if at.path != filepath.Join("testdata", fn) {
+				t.Errorf("got: %s want: %s", at.path, filepath.Join("testdata", fn))
+			}
+			if at.dtype != "F32" {
+				t.Errorf("got: %s but only F32s are currently supported", at.dtype)
+			}
+			if len(at.tensorBase.shape) != 2 {
+				t.Errorf("got: %d want: %d tensor shape", at.tensorBase.shape, 2)
+			}
 		}
 
 		var ws io.WriteSeeker = &memWriter{}
 		err = llm.WriteGGLA(ws, a.KV(nil), a.Tensors(ts))
-		assert.NoError(t, err)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		mw := ws.(*memWriter)
 		slog.Info(fmt.Sprintf("buffer len = %d", len(mw.buf)))
-		assert.NotEmpty(t, mw.buf)
+		if len(mw.buf) == 0 {
+			t.Errorf("ggla layer not written correctly")
+		}
 		rs := bytes.NewReader(mw.buf)
 		ggml, _, err := llm.DecodeGGML(rs, len(mw.buf))
-		assert.NoError(t, err, "decode ggml failed")
-		assert.NotNil(t, ggml, "ggml was empty")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ggml == nil {
+			t.Errorf("ggla didn't convert to ggml correctly")
+		}
 
 		kv := ggml.KV()
-		assert.NotNil(t, kv, "lora KVs not found")
+		if kv == nil {
+			t.Errorf("no lora KVs were set")
+		}
 
 		r, ok := kv["r"]
-		assert.Equal(t, true, ok, "lora rank not set")
-		assert.Equal(t, uint32(8), r, "lora rank was incorrect")
+		if !ok || r != uint32(8) {
+			t.Errorf("lora rank was not set correctly")
+		}
 
 		alpha, ok := kv["alpha"]
-		assert.Equal(t, true, ok, "lora alpha not set")
-		assert.Equal(t, uint32(160), alpha, "lora alpha value was incorrect")
+		if !ok || alpha != uint32(160) {
+			t.Errorf("lora alpha was not set correctly")
+		}
 
 		gts := ggml.Tensors()
-		assert.NotNil(t, gts, "no tensors found")
-		assert.Equal(t, len(ts), len(gts.Items))
+		if len(ts) != len(gts.Items) {
+			t.Errorf("got: %d want: %d tensors in ggla", len(gts.Items), len(ts))
+		}
 	}
 }
 
