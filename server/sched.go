@@ -23,7 +23,6 @@ type LlmRequest struct {
 	ctx             context.Context //nolint:containedctx
 	model           *Model
 	opts            api.Options
-	origNumCtx      int // Track the initial ctx request
 	sessionDuration *api.Duration
 	successCh       chan *runnerRef
 	errCh           chan error
@@ -118,24 +117,17 @@ func (s *Scheduler) processPending(ctx context.Context) {
 		case pending := <-s.pendingReqCh:
 			// Block other requests until we get this pending request running
 			pending.schedAttempts++
-			if pending.origNumCtx == 0 {
-				pending.origNumCtx = pending.opts.NumCtx
-			}
-
 			if pending.ctx.Err() != nil {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
+
 			numParallel := envconfig.NumParallel
 			// TODO (jmorganca): multimodal models don't support parallel yet
 			// see https://github.com/ollama/ollama/issues/4165
 			if len(pending.model.ProjectorPaths) > 0 && numParallel != 1 {
 				numParallel = 1
 				slog.Warn("multimodal models don't support parallel requests yet")
-			}
-			// Keep NumCtx and numParallel in sync
-			if numParallel > 1 {
-				pending.opts.NumCtx = pending.origNumCtx * numParallel
 			}
 
 			for {
@@ -234,8 +226,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						// simplifying assumption of defaultParallel when in CPU mode
 						if numParallel <= 0 {
 							numParallel = defaultParallel
-							pending.opts.NumCtx = pending.origNumCtx * numParallel
 						}
+
+						pending.opts.NumCtx *= numParallel
 
 						if loadedCount == 0 {
 							slog.Debug("cpu mode with first model, loading")
@@ -732,9 +725,11 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numP
 		// Note: at present, this will favor more VRAM over faster GPU speed in mixed setups
 		sort.Sort(sort.Reverse(gpu.ByFreeMemory(sgl)))
 
+		numCtx := req.opts.NumCtx
+
 		// First attempt to fit the model into a single GPU
 		for _, p := range numParallelToTry {
-			req.opts.NumCtx = req.origNumCtx * p
+			req.opts.NumCtx = numCtx * p
 			if !envconfig.SchedSpread {
 				for _, g := range sgl {
 					if ok, estimatedVRAM = llm.PredictServerFit([]gpu.GpuInfo{g}, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
@@ -752,7 +747,7 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numP
 
 		// Now try all the GPUs
 		for _, p := range numParallelToTry {
-			req.opts.NumCtx = req.origNumCtx * p
+			req.opts.NumCtx = numCtx * p
 			if ok, estimatedVRAM = llm.PredictServerFit(sgl, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
 				slog.Info("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", sgl[0].Library, "parallel", p, "required", format.HumanBytes2(estimatedVRAM))
 				*numParallel = p
