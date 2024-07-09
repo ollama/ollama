@@ -69,7 +69,7 @@ func TestMiddlewareRequests(t *testing.T) {
 				}
 			},
 		},
-    {
+		{
 			Name:    "completions handler",
 			Method:  http.MethodPost,
 			Path:    "/api/generate",
@@ -110,6 +110,50 @@ func TestMiddlewareRequests(t *testing.T) {
 
 				if stopTokens[0] != "\n" || stopTokens[1] != "stop" {
 					t.Fatalf("expected ['\\n', 'stop'], got %v", stopTokens)
+				}
+			},
+		},
+		{
+			Name:    "chat handler with image content",
+			Method:  http.MethodPost,
+			Path:    "/api/chat",
+			Handler: ChatMiddleware,
+			Setup: func(t *testing.T, req *http.Request) {
+				body := ChatCompletionRequest{
+					Model: "test-model",
+					Messages: []Message{
+						{
+							Role: "user", Content: []map[string]any{
+								{"type": "text", "text": "Hello"},
+								{"type": "image_url", "image_url": map[string]string{"url": imageEncoding}},
+							},
+						},
+					},
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, req *http.Request) {
+				var chatReq api.ChatRequest
+				if err := json.NewDecoder(req.Body).Decode(&chatReq); err != nil {
+					t.Fatal(err)
+				}
+
+				if chatReq.Messages[0].Role != "user" {
+					t.Fatalf("expected 'user', got %s", chatReq.Messages[0].Role)
+				}
+
+				if chatReq.Messages[0].Content != "Hello" {
+					t.Fatalf("expected 'Hello', got %s", chatReq.Messages[0].Content)
+				}
+
+				img, _ := base64.StdEncoding.DecodeString(imageEncoding)
+
+				if !bytes.Equal(chatReq.Messages[0].Images[0], img) {
+					t.Fatalf("expected image encoding, got %s", chatReq.Messages[0].Images[0])
 				}
 			},
 		},
