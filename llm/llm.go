@@ -49,17 +49,26 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
 	params.quantize_callback_data = store
 	params.quantize_callback = (C.llama_progress_callback)(C.update_quantize_progress)
 
-	go func () {
+	ticker := time.NewTicker(60 * time.Millisecond)
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		defer ticker.Stop()
 		for {
-			time.Sleep(60 * time.Millisecond)
-			if params.quantize_callback_data == nil {
-				return
-			} else {
+			select {
+			case <-ticker.C:
 				progress := *((*C.float)(store))
                 fn(api.ProgressResponse{
                     Status:   fmt.Sprintf("quantizing model %d%%", int(progress*100)),
                     Quantize: "quant",
+                })			
+			case <-done:
+                fn(api.ProgressResponse{
+                    Status:  "quantizing model",
+                    Quantize: "quant",
                 })
+				return
 			}
 		}
 	}()
