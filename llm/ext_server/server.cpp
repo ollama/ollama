@@ -3202,19 +3202,18 @@ int main(int argc, char **argv) {
                     // get the result
                     task_result result = llama.queue_results.recv(id_task);
                     llama.queue_results.remove_waiting_task_id(id_task);
-                    if (!result.error) {
-                        responses = result.result_json.value("results", std::vector<json>{result.result_json});
-                        json embeddings = json::array();
-                        for (auto & elem : responses) {
-                            embeddings.push_back(elem.at("embedding"));
-                        }
-                        // send the result
-                        json result = json{{"embedding", embeddings}};
-                        return res.set_content(result.dump(), "application/json; charset=utf-8");
-                    } else {
-                        // return error
+                    if (result.error) {
                         return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
                     }
+
+                    responses = result.result_json.value("results", std::vector<json>{result.result_json});
+                    json embeddings = json::array();
+                    for (auto & elem : responses) {
+                        embeddings.push_back(elem.at("embedding"));
+                    }
+                    // send the result
+                    json embedding_res = json{{"embedding", embeddings}};
+                    return res.set_content(embedding_res.dump(), "application/json; charset=utf-8");
                 }
             });
 
