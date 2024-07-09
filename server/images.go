@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
@@ -413,6 +414,8 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				return fmt.Errorf("invalid model reference: %s", c.Args)
 			}
 
+			var quantized int
+			tensorCount := 0
 			for _, baseLayer := range baseLayers {
 				if quantization != "" &&
 					baseLayer.MediaType == "application/vnd.ollama.image.model" &&
@@ -423,11 +426,27 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						return err
 					}
 
-					tensorCount := len(baseLayer.GGML.Tensors())
-					fn(api.ProgressResponse{
-						Status:   fmt.Sprintf("quantizing model %d tensors", tensorCount),
-						Quantize: quantization,
-					})
+					tensorCount = len(baseLayer.GGML.Tensors())
+					ticker := time.NewTicker(60 * time.Millisecond)
+					done := make(chan struct{})
+					defer close(done)
+
+					go func() {
+						defer ticker.Stop()
+						for {
+							select {
+							case <-ticker.C:
+								fn(api.ProgressResponse{
+									Status: fmt.Sprintf("quantizing model %d%%", quantized*100/tensorCount),
+									Quantize: quantization})
+							case <-done:
+								fn(api.ProgressResponse{
+									Status: "quantizing model",
+									Quantize: quantization})
+								}
+								return
+							}
+					}()
 
 					ft := baseLayer.GGML.KV().FileType()
 					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
@@ -447,7 +466,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 						// Quantizes per layer
 						// Save total quantized tensors
-						if err := llm.Quantize(blob, temp.Name(), want); err != nil {
+						if err := llm.Quantize(blob, temp.Name(), want, &quantized); err != nil {
 							return err
 						}
 

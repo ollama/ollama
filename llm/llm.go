@@ -10,6 +10,10 @@ package llm
 // #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/linux/arm64_static -L${SRCDIR}/build/linux/arm64_static/src -L${SRCDIR}/build/linux/arm64_static/ggml/src
 // #include <stdlib.h>
 // #include "llama.h"
+// bool update_quantize_progress(int progress, void* data) {
+// 	*((int*)data) = progress;
+// 	return true;
+// }
 import "C"
 import (
 	"fmt"
@@ -21,7 +25,7 @@ func SystemInfo() string {
 	return C.GoString(C.llama_print_system_info())
 }
 
-func Quantize(infile, outfile string, ftype fileType) error {
+func Quantize(infile, outfile string, ftype fileType, count *int) error {
 	cinfile := C.CString(infile)
 	defer C.free(unsafe.Pointer(cinfile))
 
@@ -31,6 +35,23 @@ func Quantize(infile, outfile string, ftype fileType) error {
 	params := C.llama_model_quantize_default_params()
 	params.nthread = -1
 	params.ftype = ftype.Value()
+
+	// Initialize "global" to store progress
+	store := C.malloc(C.sizeof(int))
+
+	params.quantize_callback_data = store
+	params.quantize_callback = C.update_quantize_progress
+
+	go func () {
+		for {
+			time.Sleep(60 * time.Millisecond)
+			if params.quantize_callback_data == nil {
+				return
+			} else {
+				*count = int(*(*C.int)(store))
+			}
+		}
+	}()
 
 	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
 		return fmt.Errorf("llama_model_quantize: %d", rc)
