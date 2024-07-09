@@ -191,7 +191,7 @@ func TestConvertNPZ(t *testing.T) {
 		}
 
 		gts := ggml.Tensors()
-		if len(ts) != len(gts.Items) { //nolint:errcheck
+		if len(ts) != len(gts.Items) {
 			t.Fatalf("got: %d want: %d tensors in ggla", len(gts.Items), len(ts))
 		}
 	}
