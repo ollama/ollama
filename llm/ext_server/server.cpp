@@ -3188,6 +3188,10 @@ int main(int argc, char **argv) {
                     prompt = "";
                 }
 
+                if (prompt.size() == 1) {
+                    prompt = prompt[0];
+                }
+
                 // create and queue the task
                 json responses;
                 {
