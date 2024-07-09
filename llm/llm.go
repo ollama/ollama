@@ -10,7 +10,7 @@ package llm
 // #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/linux/arm64_static -L${SRCDIR}/build/linux/arm64_static/src -L${SRCDIR}/build/linux/arm64_static/ggml/src
 // #include <stdlib.h>
 // #include "llama.h"
-// static bool update_quantize_progress(float progress, void* data) {
+// bool update_quantize_progress(float progress, void* data) {
 // 	*((float*)data) = progress;
 // 	return true;
 // }
