@@ -127,6 +127,8 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
+			spinner.Stop()
+
 			bar, ok := bars[resp.Digest]
 			if !ok {
 				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
@@ -136,6 +138,8 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 			bar.Set(resp.Completed)
 		} else if status != resp.Status {
+			spinner.Stop()
+
 			status = resp.Status
 			spinner := progress.NewSpinner(status)
 			p.Add(status, spinner)
