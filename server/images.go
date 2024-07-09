@@ -1013,7 +1013,7 @@ func getTokenSubject(token string) string {
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
 	anonymous := true // access will default to anonymous if no user is found associated with the public key
-	for range 2 {
+	for i := 0; i < 2; i++ {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
