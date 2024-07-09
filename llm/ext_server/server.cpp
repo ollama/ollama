@@ -1382,12 +1382,50 @@ struct llama_server_context
         }
     }
 
+    std::string common_prefix(const std::string& str1, const std::string& str2) {
+        auto mismatch_pair = std::mismatch(str1.begin(), str1.end(), str2.begin());
+        return std::string(str1.begin(), mismatch_pair.first);
+    }
+
+    // Find the slot that has the greatest common prefix
+    server_slot *prefix_slot(const json &prompt) {
+        if (!prompt.is_string()) {
+            return nullptr;
+        }
+
+        std::string prompt_str = prompt.get<std::string>();
+        server_slot *slot = nullptr;
+        size_t longest = 0;
+
+        for (server_slot &s : slots) {
+            if (s.available() && s.prompt.is_string()) {
+                std::string s_prompt = s.prompt.get<std::string>();
+                std::string prefix = common_prefix(s_prompt, prompt_str);
+
+                if (prefix.size() > longest) {
+                    slot = &s;
+                    longest = prefix.size();
+                }
+            }
+        }
+
+        if (!slot) {
+            return get_slot(-1);
+        }
+
+        LOG_DEBUG("slot with common prefix found", {{
+            "slot_id", slot->id,
+            "characters", longest
+        }});
+        return slot;
+    }
+
     void process_single_task(task_server& task)
     {
         switch (task.type)
         {
             case TASK_TYPE_COMPLETION: {
-                server_slot *slot = get_slot(json_value(task.data, "slot_id", -1));
+                server_slot *slot = prefix_slot(task.data["prompt"]);
                 if (slot == nullptr)
                 {
                     // if no slot is available, we defer this task for processing later
@@ -1650,22 +1688,8 @@ struct llama_server_context
                     }
                     slot.params.n_keep = std::min(slot.n_ctx - 4, slot.params.n_keep);
 
-                    char buf[256];
-                    llama_model_meta_val_str(model, "general.architecture", buf, 256);
-                    bool gemma2 = strcmp(buf, "gemma2") == 0;
-
-                    int32_t truncate_at = slot.n_ctx;
-
-                    // truncate at 2/3 of the context length for gemma2 models
-                    // as they do not support context shifts (from the sliding window implementation).
-                    // this way, prompts that almost fit the context length can still generate a full
-                    // response without a sudden stop from hitting the context limit
-                    if (gemma2) {
-                        truncate_at = 2 * slot.n_ctx / 3;
-                    }
-
                     // if input prompt is too big, truncate it, if group attention self-extend is disabled
-                    if (slot.ga_n == 1 && slot.n_prompt_tokens >= truncate_at)
+                    if (slot.ga_n == 1 && slot.n_prompt_tokens >= slot.n_ctx)
                     {
                         const int n_left = slot.n_ctx - slot.params.n_keep;
                         const int n_shift = n_left / 2;
@@ -1691,19 +1715,6 @@ struct llama_server_context
 
                         slot.n_prompt_tokens = prompt_tokens.size();
                         GGML_ASSERT(slot.n_prompt_tokens < slot.n_ctx);
-                    }
-
-                    // Models with sliding window attention do not work with context shifts, so
-                    // limit their prediction to the context length
-                    if (gemma2) {
-                        int32_t limit = slot.n_ctx - slot.n_prompt_tokens;
-                        slot.n_predict = limit;
-                        slot.params.n_predict = limit;
-                        LOG_INFO("model does not support sliding window, limiting generation", {
-                            {"n_ctx", slot.n_ctx},
-                            {"n_prompt_tokens", slot.n_prompt_tokens},
-                            {"n_predict", slot.n_predict}
-                        });
                     }
 
                     if (!slot.params.cache_prompt)

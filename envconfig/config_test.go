@@ -2,8 +2,10 @@ package envconfig
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,6 +25,21 @@ func TestConfig(t *testing.T) {
 	t.Setenv("OLLAMA_FLASH_ATTENTION", "1")
 	LoadConfig()
 	require.True(t, FlashAttention)
+	t.Setenv("OLLAMA_KEEP_ALIVE", "")
+	LoadConfig()
+	require.Equal(t, 5*time.Minute, KeepAlive)
+	t.Setenv("OLLAMA_KEEP_ALIVE", "3")
+	LoadConfig()
+	require.Equal(t, 3*time.Second, KeepAlive)
+	t.Setenv("OLLAMA_KEEP_ALIVE", "1h")
+	LoadConfig()
+	require.Equal(t, 1*time.Hour, KeepAlive)
+	t.Setenv("OLLAMA_KEEP_ALIVE", "-1s")
+	LoadConfig()
+	require.Equal(t, time.Duration(math.MaxInt64), KeepAlive)
+	t.Setenv("OLLAMA_KEEP_ALIVE", "-1")
+	LoadConfig()
+	require.Equal(t, time.Duration(math.MaxInt64), KeepAlive)
 }
 
 func TestClientFromEnvironment(t *testing.T) {

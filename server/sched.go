@@ -24,7 +24,7 @@ type LlmRequest struct {
 	model           *Model
 	opts            api.Options
 	origNumCtx      int // Track the initial ctx request
-	sessionDuration time.Duration
+	sessionDuration *api.Duration
 	successCh       chan *runnerRef
 	errCh           chan error
 	schedAttempts   uint
@@ -75,7 +75,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 }
 
 // context must be canceled to decrement ref count and release the runner
-func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration time.Duration) (chan *runnerRef, chan error) {
+func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -133,12 +133,13 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				numParallel = 1
 				slog.Warn("multimodal models don't support parallel requests yet")
 			}
-			// Keep NumCtx and numParallel in sync
-			if numParallel > 1 {
-				pending.opts.NumCtx = pending.origNumCtx * numParallel
-			}
 
 			for {
+				cpus := s.getCpuFn()
+				var systemMem gpu.GpuInfo
+				if len(cpus) > 0 {
+					systemMem = cpus[0]
+				}
 				var runnerToExpire *runnerRef
 				s.loadedMu.Lock()
 				runner := s.loaded[pending.model.ModelPath]
@@ -192,13 +193,46 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
+					estimate := llm.EstimateGPULayers(gpus, ggml, pending.model.ProjectorPaths, pending.opts)
+					maxSize := systemMem.FreeMemory
+
+					// Add available GPU memory to the total pool
+					// macOS hardware has unified memory so don't double count
+					if runtime.GOOS != "darwin" {
+						for _, gpu := range gpus {
+							if gpu.Library == "cpu" {
+								continue
+							}
+							if loadedCount == 0 {
+								// If no other models are loaded, set the limit based on what's available
+								maxSize += gpu.FreeMemory
+							} else {
+								// Other models could be unloaded, favor total memory for limit
+								maxSize += gpu.TotalMemory
+							}
+						}
+					}
+
+					// Block attempting to load a model larger than system memory + GPU memory
+					if estimate.TotalSize > maxSize {
+						slog.Warn("model request too large for system", "requested", format.HumanBytes2(estimate.TotalSize), "system", format.HumanBytes2(maxSize))
+
+						// Linux will crash if over-allocating memory - return an error to the user.
+						// TODO (jmorganca): add reasonable upper limits for darwin and windows as well
+						if runtime.GOOS == "linux" {
+							pending.errCh <- fmt.Errorf("requested model (%s) is too large for this system (%s)", format.HumanBytes2(estimate.TotalSize), format.HumanBytes2(maxSize))
+							break
+						}
+					}
+
 					// Evaluate if the model will fit in the available system memory, or if we should unload a model first
 					if len(gpus) == 1 && gpus[0].Library == "cpu" {
 						// simplifying assumption of defaultParallel when in CPU mode
 						if numParallel <= 0 {
 							numParallel = defaultParallel
-							pending.opts.NumCtx = pending.origNumCtx * numParallel
 						}
+
+						pending.opts.NumCtx = pending.origNumCtx * numParallel
 
 						if loadedCount == 0 {
 							slog.Debug("cpu mode with first model, loading")
@@ -389,7 +423,9 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
 	}
-	runner.sessionDuration = pending.sessionDuration
+	if pending.sessionDuration != nil {
+		runner.sessionDuration = pending.sessionDuration.Duration
+	}
 	pending.successCh <- runner
 	go func() {
 		<-pending.ctx.Done()
@@ -401,6 +437,10 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
 	if numParallel < 1 {
 		numParallel = 1
+	}
+	sessionDuration := envconfig.KeepAlive
+	if req.sessionDuration != nil {
+		sessionDuration = req.sessionDuration.Duration
 	}
 	llama, err := s.newServerFn(gpus, req.model.ModelPath, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
 	if err != nil {
@@ -419,7 +459,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, 
 		modelPath:       req.model.ModelPath,
 		llama:           llama,
 		Options:         &req.opts,
-		sessionDuration: req.sessionDuration,
+		sessionDuration: sessionDuration,
 		gpus:            gpus,
 		estimatedVRAM:   llama.EstimatedVRAM(),
 		estimatedTotal:  llama.EstimatedTotal(),

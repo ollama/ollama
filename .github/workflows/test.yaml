@@ -58,6 +58,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -79,6 +80,7 @@ jobs:
       - run: go generate -x ./...
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
         name: 'Unix Go Generate'
+      - run: go build .
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
