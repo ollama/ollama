@@ -137,6 +137,25 @@ type ListCompletion struct {
 	Data   []Model `json:"data"`
 }
 
+type EmbeddingRequest struct {
+	Input string `json:"input"`
+	Model string `json:"model"`
+	User  string `json:"user"`
+}
+
+type EmbeddingData struct {
+	Object    string    `json:"object"`
+	Embedding []float64 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
+type Embedding struct {
+	Object string          `json:"object"`
+	Data   []EmbeddingData `json:"data"`
+	Model  string          `json:"model"`
+	Usage  Usage           `json:"usage"`
+}
+
 func NewError(code int, message string) ErrorResponse {
 	var etype string
 	switch code {
@@ -269,6 +288,27 @@ func toModel(r api.ShowResponse, m string) Model {
 	}
 }
 
+func toEmbedding(model string, r api.EmbeddingResponse) Embedding {
+	return Embedding{
+		Object: "list",
+		Model:  model,
+		Data: []EmbeddingData{{
+			Object:    "embedding",
+			Index:     0,
+			Embedding: r.Embedding,
+		}},
+
+		// TODO:
+		/*
+			Usage: Usage{
+				PromptTokens:     0,
+				CompletionTokens: 0,
+				TotalTokens:      0,
+			},
+		*/
+	}
+}
+
 func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
 	var messages []api.Message
 	for _, msg := range r.Messages {
@@ -378,6 +418,13 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}, nil
 }
 
+func fromEmbeddingRequest(r EmbeddingRequest) api.EmbeddingRequest {
+	return api.EmbeddingRequest{
+		Prompt: r.Input,
+		Model:  r.Model,
+	}
+}
+
 type BaseWriter struct {
 	gin.ResponseWriter
 }
@@ -399,6 +446,11 @@ type ListWriter struct {
 }
 
 type RetrieveWriter struct {
+	BaseWriter
+	model string
+}
+
+type EmbeddingWriter struct {
 	BaseWriter
 	model string
 }
@@ -568,6 +620,31 @@ func (w *RetrieveWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
+func (w *EmbeddingWriter) writeResponse(data []byte) (int, error) {
+	var embeddingResponse api.EmbeddingResponse
+	err := json.Unmarshal(data, &embeddingResponse)
+	if err != nil {
+		return 0, err
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(toEmbedding(w.model, embeddingResponse))
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *EmbeddingWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(code, data)
+	}
+
+	return w.writeResponse(data)
+}
+
 func ListMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		w := &ListWriter{
@@ -663,6 +740,39 @@ func ChatMiddleware() gin.HandlerFunc {
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
 			stream:     req.Stream,
 			id:         fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+		}
+
+		c.Writer = w
+
+		c.Next()
+	}
+}
+
+func EmbeddingMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req EmbeddingRequest
+		err := c.ShouldBindJSON(&req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if len(req.Input) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "input is empty"))
+			return
+		}
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(fromEmbeddingRequest(req)); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+			return
+		}
+
+		c.Request.Body = io.NopCloser(&b)
+
+		w := &EmbeddingWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			model:      req.Model,
 		}
 
 		c.Writer = w

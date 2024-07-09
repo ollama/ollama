@@ -1009,6 +1009,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListModelsHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowModelHandler)
+	r.POST("/v1/embeddings", openai.EmbeddingMiddleware(), s.EmbeddingsHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
