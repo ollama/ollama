@@ -121,7 +121,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
-
 			numParallel := envconfig.NumParallel
 			// TODO (jmorganca): multimodal models don't support parallel yet
 			// see https://github.com/ollama/ollama/issues/4165
