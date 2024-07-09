@@ -280,34 +280,36 @@ func fromChatRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 		case []any:
 			message := api.Message{Role: msg.Role}
 			for _, c := range content {
-				if data, ok := c.(map[string]any); ok {
-					switch data["type"] {
-					case "text":
-						if text, ok := data["text"].(string); ok {
-							message.Content = text
-						} else {
-							return api.ChatRequest{}, fmt.Errorf("invalid message format")
-						}
-					case "image_url":
-						if urlMap, ok := data["image_url"].(map[string]any); ok {
-							if url, ok := urlMap["url"].(string); ok {
-								types := []string{"jpeg", "jpg", "png"}
-								for _, t := range types {
-									url = strings.TrimPrefix(url, "data:image/"+t+";base64,")
-								}
-								if img, err := base64.StdEncoding.DecodeString(url); err == nil {
-									message.Images = append(message.Images, img)
-								}
-							} else {
-								return api.ChatRequest{}, fmt.Errorf("invalid message format")
-							}
-						} else {
-							return api.ChatRequest{}, fmt.Errorf("invalid message format")
-						}
-					default:
+				data, ok := c.(map[string]any)
+				if !ok {
+					return api.ChatRequest{}, fmt.Errorf("invalid message format")
+				}
+				switch data["type"] {
+				case "text":
+					text, ok := data["text"].(string)
+					if !ok {
 						return api.ChatRequest{}, fmt.Errorf("invalid message format")
 					}
-				} else {
+					message.Content = text
+				case "image_url":
+					urlMap, ok := data["image_url"].(map[string]any)
+					if !ok {
+						return api.ChatRequest{}, fmt.Errorf("invalid message format")
+					}
+					url, ok := urlMap["url"].(string)
+					if !ok {
+						return api.ChatRequest{}, fmt.Errorf("invalid message format")
+					}
+					types := []string{"jpeg", "jpg", "png"}
+					for _, t := range types {
+						url = strings.TrimPrefix(url, "data:image/"+t+";base64,")
+					}
+					img, err := base64.StdEncoding.DecodeString(url)
+					if err != nil {
+						return api.ChatRequest{}, fmt.Errorf("invalid message format")
+					}
+					message.Images = append(message.Images, img)
+				default:
 					return api.ChatRequest{}, fmt.Errorf("invalid message format")
 				}
 			}
