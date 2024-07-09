@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -21,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chewxy/math32"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
@@ -443,14 +443,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 }
 
 func normalize(vec []float32) []float32 {
-	var sum float64
+	var sum float32
 	for _, v := range vec {
-		sum += float64(v * v)
+		sum += v * v
 	}
 
 	norm := float32(0.0)
 	if sum > 0 {
-		norm = float32(1.0 / math.Sqrt(sum))
+		norm = float32(1.0 / math32.Sqrt(sum))
 	}
 
 	for i := range vec {

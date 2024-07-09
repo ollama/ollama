@@ -3199,13 +3199,7 @@ int main(int argc, char **argv) {
                     task_result result = llama.queue_results.recv(id_task);
                     llama.queue_results.remove_waiting_task_id(id_task);
                     if (!result.error) {
-                        if (result.result_json.count("results")) {
-                            // result for multi-task
-                            responses = result.result_json.at("results");
-                        } else {
-                            // result for single task
-                            responses = std::vector<json>(1, result.result_json);
-                        }
+                        responses = result.result_json.value("results", std::vector<json>{result.result_json});
                         json embeddings = json::array();
                         for (auto & elem : responses) {
                             embeddings.push_back(elem.at("embedding"));
