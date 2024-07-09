@@ -504,7 +504,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	// an empty request loads the model
 	if req.Prompt == "" {
-		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float32{}})
+		c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: []float64{}})
 		return
 	}
 
@@ -515,8 +515,14 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
+	embedding64 := make([]float64, len(embedding[0]))
+
+	for i, v := range embedding[0] {
+		embedding64[i] = float64(v)
+	}
+
 	resp := api.EmbeddingResponse{
-		Embedding: embedding[0],
+		Embedding: embedding64,
 	}
 	c.JSON(http.StatusOK, resp)
 }
