@@ -440,6 +440,8 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						defer temp.Close()
 						defer os.Remove(temp.Name())
 
+						// Quantizes per layer
+						// Save total quantized tensors
 						if err := llm.Quantize(blob, temp.Name(), want); err != nil {
 							return err
 						}
@@ -480,7 +482,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 			}
 
 			fn(api.ProgressResponse{
-				Status:   fmt.Sprintf("quantizing model %d%%", 100),
+				Status:   "quantizing model done",
 				Quantize: quantization,
 			})
 		case "license", "template", "system":
