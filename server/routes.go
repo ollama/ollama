@@ -1003,6 +1003,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.ProcessHandler)
+	r.GET("/api/device", s.DeviceHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
@@ -1212,6 +1213,23 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
+}
+
+func (s *Server) DeviceHandler(c *gin.Context) {
+	devices := []api.ListDeviceResponse{}
+	for _, gpu := range gpu.GetGPUInfo() {
+		dr := api.ListDeviceResponse{
+			ID:          gpu.ID,
+			Name:        gpu.Name,
+			Library:     gpu.Library,
+			TotalMemory: gpu.TotalMemory,
+			FreeMemory:  gpu.FreeMemory,
+		}
+
+		devices = append(devices, dr)
+	}
+
+	c.JSON(http.StatusOK, api.DeviceResponse{Devices: devices})
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
