@@ -33,7 +33,7 @@ func Quantize(infile, outfile string, ftype fileType) error {
 	params.ftype = ftype.Value()
 
 	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
-		return fmt.Errorf("llama_model_quantize: %d", rc)
+		return fmt.Errorf("quantization of this model is not supported by your version of Ollama. You may need to upgrade")
 	}
 
 	return nil
