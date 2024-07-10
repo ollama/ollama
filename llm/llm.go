@@ -11,7 +11,7 @@ package llm
 // #include <stdlib.h>
 // #include "llama.h"
 // bool update_quantize_progress(float progress, void* data) {
-// 	*((float*)data) = 5;
+//  *((float*)data) = progress;
 // 	return true;
 // }
 import "C"
@@ -58,12 +58,11 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
 		for {
 			select {
 			case <-ticker.C:
-				progress := *((*C.float)(store))
                 fn(api.ProgressResponse{
-                    Status:   fmt.Sprintf("quantizing model %d%%", int(progress*100)),
+                    Status:   fmt.Sprintf("quantizing model %d%%", int(*((*C.float)(store))*100)),
                     Quantize: "quant",
                 })			
-				fmt.Println("Progress: ", progress)
+				fmt.Println("Progress: ", *((*C.float)(store)))
 			case <-done:
                 fn(api.ProgressResponse{
                     Status:  "quantizing model",
