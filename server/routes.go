@@ -320,6 +320,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	kvData, err := getKVData(model.ModelPath, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	checkFit := func(s string, truncate bool) (string, error) {
 		tokens, err := r.Tokenize(c.Request.Context(), s)
 		if err != nil {
@@ -327,9 +333,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return "", err
 		}
 
-		if len(tokens) > opts.NumCtx {
+		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
+		if len(tokens) > ctxLen {
 			if truncate {
-				tokens = tokens[:opts.NumCtx]
+				tokens = tokens[:ctxLen]
 				return r.Detokenize(c.Request.Context(), tokens)
 			} else {
 				return "", fmt.Errorf("input length exceeds maximum context length")
