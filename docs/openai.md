@@ -141,9 +141,9 @@ curl http://localhost:11434/v1/completions \
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
+- [x] `suffix`
 - [ ] `best_of`
 - [ ] `echo`
-- [ ] `suffix`
 - [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
