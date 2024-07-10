@@ -65,7 +65,7 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
 				fmt.Println("Progress: ", *((*C.float)(store)))
 			case <-done:
                 fn(api.ProgressResponse{
-                    Status:  "quantizing model",
+                    Status:   fmt.Sprintf("quantizing model %d/%d", tensorCount, tensorCount),
                     Quantize: "quant",
                 })
 				return
