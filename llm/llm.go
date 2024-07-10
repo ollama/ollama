@@ -63,6 +63,7 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
                     Status:   fmt.Sprintf("quantizing model %d%%", int(progress*100)),
                     Quantize: "quant",
                 })			
+				fmt.Println("Progress: ", progress)
 			case <-done:
                 fn(api.ProgressResponse{
                     Status:  "quantizing model",

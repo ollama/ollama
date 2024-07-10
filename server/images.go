@@ -422,12 +422,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					if err != nil {
 						return err
 					}
-
-					fn(api.ProgressResponse{
-						Status:   "quantizing model",
-						Quantize: "quant",
-					})
-
+					
 					ft := baseLayer.GGML.KV().FileType()
 					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
 						return errors.New("quantization is only supported for F16 and F32 models")
@@ -467,11 +462,6 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						baseLayer.Layer = layer
 						baseLayer.GGML = ggml
 					}
-
-					fn(api.ProgressResponse{
-						Status:   "quantizing model done",
-						Quantize: quantization,
-					})
 				}
 
 				if baseLayer.GGML != nil {
