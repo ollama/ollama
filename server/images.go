@@ -440,8 +440,6 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						defer temp.Close()
 						defer os.Remove(temp.Name())
 
-						// Quantizes per layer
-						// Save total quantized tensors
 						if err := llm.Quantize(blob, temp.Name(), want, fn, tensorCount); err != nil {
 							return err
 						}
@@ -472,11 +470,6 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType().String())
 					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
 				}
-
-				/* fn(api.ProgressResponse{
-					Status:   fmt.Sprintf("quantizing model %d%%", i*100/layerCount),
-					Quantize: quantization,
-				}) */
 
 				layers = append(layers, baseLayer.Layer)
 			}
