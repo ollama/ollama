@@ -3,6 +3,11 @@
 #include "gpu_info_oneapi.h"
 
 #include <string.h>
+#ifdef _WIN32
+  #include <windows.h>
+#else
+  #include <sys/sysinfo.h>
+#endif
 
 void oneapi_init(char *oneapi_lib_path, oneapi_init_resp_t *resp) {
   ze_result_t ret;
@@ -254,6 +259,18 @@ int oneapi_get_device_count(oneapi_handle_t h, int driver) {
     return 0;
   }
   return (int)h.num_devices[driver];
+}
+
+uint64_t check_total_host_mem() {
+#ifdef _WIN32
+  MEMORYSTATUSEX statex;
+  GlobalMemoryStatusEx(&statex);
+  return statex.ullTotalPhys;
+#else
+  struct sysinfo si;
+  sysinfo(&si);
+  return si.totalram;
+#endif
 }
 
 #endif // __APPLE__

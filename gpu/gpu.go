@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"unsafe"
 
 	"github.com/ollama/ollama/envconfig"
@@ -170,15 +169,10 @@ func GetCPUInfo() GpuInfoList {
 }
 
 func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
-	var mem syscall.Sysinfo_t
-	err := syscall.Sysinfo(&mem)
-	if err != nil {
-		slog.Warn("error looking up system memory", "error", err)
-		return
-	}
+	var totalram uint64 = uint64(C.check_total_host_mem())
 	// there will be half of total ram can be handle as iGPU vram
-	gpuInfo.FreeMemory = mem.Totalram / 2
-	gpuInfo.TotalMemory = (mem.Totalram / 2) - envconfig.IntelUsedSystemVRAM
+	gpuInfo.FreeMemory = totalram / 2
+	gpuInfo.TotalMemory = (totalram / 2) - envconfig.IntelUsedSystemVRAM
 }
 
 func GetGPUInfo() GpuInfoList {
