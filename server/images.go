@@ -422,6 +422,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					if err != nil {
 						return err
 					}
+					tensorCount := len(baseLayer.GGML.Tensors())
 					
 					ft := baseLayer.GGML.KV().FileType()
 					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
@@ -441,7 +442,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 						// Quantizes per layer
 						// Save total quantized tensors
-						if err := llm.Quantize(blob, temp.Name(), want, fn); err != nil {
+						if err := llm.Quantize(blob, temp.Name(), want, fn, tensorCount); err != nil {
 							return err
 						}
 

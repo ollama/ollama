@@ -28,7 +28,7 @@ func SystemInfo() string {
 	return C.GoString(C.llama_print_system_info())
 }
 
-func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressResponse) ) error {
+func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressResponse), tensorCount int) error {
 	cinfile := C.CString(infile)
 	defer C.free(unsafe.Pointer(cinfile))
 
@@ -59,7 +59,7 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
 			select {
 			case <-ticker.C:
                 fn(api.ProgressResponse{
-                    Status:   fmt.Sprintf("quantizing model %d%%", int(*((*C.float)(store))*100)),
+                    Status:   fmt.Sprintf("quantizing model %d/%d", int(*((*C.float)(store))), tensorCount),
                     Quantize: "quant",
                 })			
 				fmt.Println("Progress: ", *((*C.float)(store)))
