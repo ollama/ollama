@@ -28,7 +28,8 @@ func SystemInfo() string {
 	return C.GoString(C.llama_print_system_info())
 }
 
-func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressResponse), tensorCount int) error {	cinfile := C.CString(infile)
+func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressResponse), tensorCount int) error {	
+	cinfile := C.CString(infile)
 	defer C.free(unsafe.Pointer(cinfile))
 
 	coutfile := C.CString(outfile)

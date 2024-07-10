@@ -44,10 +44,9 @@ index 2b9ace28..ac640c02 100644
          /*.imatrix                     =*/ nullptr,
          /*.kv_overrides                =*/ nullptr,
 +        /*.quantize_callback           =*/ nullptr,
-++       /*.quantize_callback_data      =*/ nullptr,
++        /*.quantize_callback_data      =*/ nullptr,
      };
  
      return result;
 -- 
 2.39.3 (Apple Git-146)
-
