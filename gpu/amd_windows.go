@@ -22,8 +22,8 @@ const (
 
 var (
 	// Used to validate if the given ROCm lib is usable
-	ROCmLibGlobs          = []string{"hipblas.dll", "rocblas"}                 // TODO - probably include more coverage of files here...
-	RocmStandardLocations = []string{"C:\\Program Files\\AMD\\ROCm\\5.7\\bin"} // TODO glob?
+	ROCmLibGlobs          = []string{"hipblas.dll", "rocblas"}                 // This is not sufficient to discern v5 vs v6
+	RocmStandardLocations = []string{"C:\\Program Files\\AMD\\ROCm\\6.1\\bin"} // TODO glob?
 )
 
 func AMDGetGPUInfo() []RocmGPUInfo {
