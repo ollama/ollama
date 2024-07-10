@@ -18,6 +18,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
+	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 )
 
@@ -205,9 +206,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				fmt.Println("Set system message.")
 				sb.Reset()
 			case MultilineTemplate:
-				opts.Template = sb.String()
-				fmt.Println("Set prompt template.")
+				mTemplate := sb.String()
 				sb.Reset()
+				_, err := template.Parse(mTemplate)
+				if err != nil {
+					multiline = MultilineNone
+					scanner.Prompt.UseAlt = false
+					fmt.Println("The template is invalid.")
+					continue
+				}
+				opts.Template = mTemplate
+				fmt.Println("Set prompt template.")
 			}
 
 			multiline = MultilineNone
@@ -369,9 +378,15 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						fmt.Println("Set system message.")
 						sb.Reset()
 					} else if args[1] == "template" {
-						opts.Template = sb.String()
-						fmt.Println("Set prompt template.")
+						mTemplate := sb.String()
 						sb.Reset()
+						_, err := template.Parse(mTemplate)
+						if err != nil {
+							fmt.Println("The template is invalid.")
+							continue
+						}
+						opts.Template = mTemplate
+						fmt.Println("Set prompt template.")
 					}
 
 					sb.Reset()

@@ -84,6 +84,9 @@ type ChatRequest struct {
 	// Model is the model name, as in [GenerateRequest].
 	Model string `json:"model"`
 
+	// Template overrides the model's default prompt template.
+	Template string `json:"template"`
+
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
 
