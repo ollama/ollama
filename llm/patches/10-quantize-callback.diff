@@ -1,0 +1,52 @@
+From fa509abf281177eacdc71a2a14432c4e6ed74a47 Mon Sep 17 00:00:00 2001
+From: Josh Yan <jyan00017@gmail.com>
+Date: Wed, 10 Jul 2024 12:58:31 -0700
+Subject: [PATCH] quantize callback
+
+---
+ llama.cpp | 8 ++++++++
+ llama.h   | 3 +++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/llama.cpp b/llama.cpp
+index 61948751..d3126510 100644
+--- a/llama.cpp
++++ b/llama.cpp
+@@ -15586,6 +15586,12 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
+     const auto tn = LLM_TN(model.arch);
+     new_ofstream(0);
+     for (int i = 0; i < ml.n_tensors; ++i) {
++        if (params->quantize_callback){
++            if (!params->quantize_callback(i, params->quantize_callback_data)) {
++                return;
++            }
++        }
++
+         auto weight = ml.get_weight(i);
+         struct ggml_tensor * tensor = weight->tensor;
+         if (weight->idx != cur_split && params->keep_split) {
+@@ -16119,6 +16125,8 @@ struct llama_model_quantize_params llama_model_quantize_default_params() {
+         /*.keep_split                  =*/ false,
+         /*.imatrix                     =*/ nullptr,
+         /*.kv_overrides                =*/ nullptr,
++        /*.quantize_callback           =*/ nullptr,
++        /*.quantize_callback_data      =*/ nullptr,
+     };
+
+     return result;
+diff --git a/llama.h b/llama.h
+index da310ffa..3cbe6023 100644
+--- a/llama.h
++++ b/llama.h
+@@ -337,6 +337,9 @@ extern "C" {
+         bool keep_split;                     // quantize to the same number of shards
+         void * imatrix;                      // pointer to importance matrix data
+         void * kv_overrides;                 // pointer to vector containing overrides
++
++        llama_progress_callback quantize_callback;   // callback to report quantization progress
++        void * quantize_callback_data;               // user data for the callback
+     } llama_model_quantize_params;
+
+     // grammar types
+-- 
+2.39.3 (Apple Git-146)

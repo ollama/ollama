@@ -423,6 +423,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						return err
 					}
 
+					tensorCount := len(baseLayer.GGML.Tensors())
 					ft := baseLayer.GGML.KV().FileType()
 					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
 						return errors.New("quantization is only supported for F16 and F32 models")
@@ -441,7 +442,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						defer temp.Close()
 						defer os.Remove(temp.Name())
 
-						if err := llm.Quantize(blob, temp.Name(), want); err != nil {
+						if err := llm.Quantize(blob, temp.Name(), want, fn, tensorCount); err != nil {
 							return err
 						}
 
