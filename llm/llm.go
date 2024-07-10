@@ -1,6 +1,6 @@
 package llm
 
-// #cgo CFLAGS: -Illama.cpp -Illama.cpp/include -Illama.cpp/ggml/include
+// #cgo CPPFLAGS: -Illama.cpp/ggml/include
 // #cgo LDFLAGS: -lllama -lggml -lstdc++ -lpthread
 // #cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/build/darwin/arm64_static -L${SRCDIR}/build/darwin/arm64_static/src -L${SRCDIR}/build/darwin/arm64_static/ggml/src -framework Accelerate -framework Metal
 // #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/build/darwin/x86_64_static -L${SRCDIR}/build/darwin/x86_64_static/src -L${SRCDIR}/build/darwin/x86_64_static/ggml/src
@@ -61,13 +61,13 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
 			select {
 			case <-ticker.C:
 				fn(api.ProgressResponse{
-					Status:   fmt.Sprintf("quantizing model %d/%d", int(*((*C.float)(store))), tensorCount),
+					Status:   fmt.Sprintf("quantizing model tensors %d/%d", int(*((*C.float)(store))), tensorCount),
 					Quantize: "quant",
 				})			
 				fmt.Println("Progress: ", *((*C.float)(store)))
 			case <-done:
 				fn(api.ProgressResponse{
-					Status:   fmt.Sprintf("quantizing model %d/%d", tensorCount, tensorCount),
+					Status:   fmt.Sprintf("quantizing model tensors %d/%d", tensorCount, tensorCount),
 					Quantize: "quant",
 				})
 				return

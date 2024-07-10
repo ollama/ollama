@@ -428,7 +428,10 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
 						return errors.New("quantization is only supported for F16 and F32 models")
 					} else if want != ft {
-						fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantization)})
+						fn(api.ProgressResponse{
+							Status: "quantizing model tensors",
+							Quantize: "quant",
+						})
 
 						blob, err := GetBlobsPath(baseLayer.Digest)
 						if err != nil {
