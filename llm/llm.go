@@ -11,7 +11,7 @@ package llm
 // #include <stdlib.h>
 // #include "llama.h"
 // bool update_quantize_progress(float progress, void* data) {
-// 	*((float*)data) = progress;
+// 	*((float*)data) = 5;
 // 	return true;
 // }
 import "C"
