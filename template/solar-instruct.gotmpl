@@ -10,7 +10,7 @@
 {{ .Content }}</s>
 {{ end }}
 {{ end }}### Assistant:
-{{ else }}
+{{ else -}}
 {{ if .System }}### System:
 {{ .System }}
 
@@ -18,5 +18,6 @@
 {{ .Prompt }}
 
 {{ end }}### Assistant:
-{{ .Response }}
-{{- end }}
+{{ .Response }}</s>
+
+{{ end -}}

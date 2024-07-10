@@ -9,7 +9,7 @@
 {{ .Content }}
 
 {{ end }}@@ Response
-{{ else }}
+{{ else -}}
 {{ if .System }}{{ .System }}
 
 {{ end }}{{ if .Prompt }}@@ Instruction
@@ -17,4 +17,5 @@
 
 {{ end }}@@ Response
 {{ .Response }}
-{{- end }}
+
+{{ end -}}

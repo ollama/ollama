@@ -10,9 +10,8 @@
 {{ .Content }}
 
 {{ end }}Answer:
-{{ else }}
-{{ if .System }}
-System:
+{{ else -}}
+{{ if .System }}System:
 {{ .System }}
 
 {{ end }}{{ if .Prompt }}Question:
@@ -20,4 +19,5 @@ System:
 
 {{ end }}Answer:
 {{ .Response }}
-{{- end }}
+
+{{ end -}}

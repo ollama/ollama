@@ -9,8 +9,8 @@
 {{- else }} [/INST] {{ .Content }}</s><s>
 {{- end }}
 {{- end }} [/INST]
-{{- else }}
-[INST] <<SYS>>{{ .System }}<</SYS>>
+{{- else -}}
+[INST] <<SYS>>{{ if .System }}{{ .System }}{{ end }}<</SYS>>
 
-{{ .Prompt }} [/INST] {{ .Response }}
-{{- end }}
+{{ .Prompt }} [/INST] {{ .Response }}</s>
+{{- end -}}

@@ -5,5 +5,6 @@
 {{- else if eq .Role "assistant" }}[/INST] {{ .Content }}</s>
 {{- end }}
 {{- end }}[/INST]
-{{- else }}[INST] {{ if .System }}{{ .System }} {{ end }}{{ .Prompt }} [/INST] {{ .Response }}
-{{- end }}
+{{- else -}}
+[INST] {{ if .System }}{{ .System }} {{ end }}{{ .Prompt }}[/INST] {{ .Response }}</s>
+{{- end -}}

@@ -7,13 +7,13 @@
  {{ .Content }} <step> {{ end }}Source: assistant
 Destination: user
 
-{{ else }}
-{{ if .System }} Source: system
+ {{ else -}}
+{{ if .System }}Source: system
 
- {{ .System }} <step>{{ end }} Source: user
+ {{ .System }} <step> {{ end }}Source: user
 
  {{ .Prompt }} <step> Source: assistant
 Destination: user
 
- {{ .Response }}<step>
-{{- end }}
+ {{ .Response }} <step>
+{{- end -}}
