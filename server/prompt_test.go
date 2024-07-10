@@ -161,7 +161,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
 			expect: expect{
-				prompt: "You're a test, Harry! I-I'm a what? You are the Test Who Lived. A test. And a thumping good one at that, I'd wager. ",
+				prompt: "You are the Test Who Lived. You're a test, Harry! I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
 			},
 		},
 	}

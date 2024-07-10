@@ -143,11 +143,14 @@ func (t *Template) Vars() []string {
 
 type Values struct {
 	Messages []api.Message
+
+	// forceLegacy is a flag used to test compatibility with legacy templates
+	forceLegacy bool
 }
 
 func (t *Template) Execute(w io.Writer, v Values) error {
 	system, collated := collate(v.Messages)
-	if slices.Contains(t.Vars(), "messages") {
+	if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
 		return t.Template.Execute(w, map[string]any{
 			"System":   system,
 			"Messages": collated,
@@ -157,15 +160,19 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	var b bytes.Buffer
 	var prompt, response string
 	for i, m := range collated {
-		if m.Role == "user" {
+		switch m.Role {
+		case "user":
 			prompt = m.Content
-		} else {
+			if i != 0 {
+				system = ""
+			}
+		case "assistant":
 			response = m.Content
 		}
 
 		if i != len(collated)-1 && prompt != "" && response != "" {
 			if err := t.Template.Execute(&b, map[string]any{
-				"System":   "",
+				"System":   system,
 				"Prompt":   prompt,
 				"Response": response,
 			}); err != nil {
@@ -178,18 +185,21 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	}
 
 	var cut bool
-	tree := t.Template.Copy()
-	// for the last message, cut everything after "{{ .Response }}"
-	tree.Root.Nodes = slices.DeleteFunc(tree.Root.Nodes, func(n parse.Node) bool {
-		if slices.Contains(parseNode(n), "Response") {
-			cut = true
+	nodes := deleteNode(t.Template.Root.Copy(), func(n parse.Node) bool {
+		switch t := n.(type) {
+		case *parse.ActionNode:
+		case *parse.FieldNode:
+			if slices.Contains(t.Ident, "Response") {
+				cut = true
+			}
 		}
 
 		return cut
 	})
 
-	if err := template.Must(template.New("").AddParseTree("", tree)).Execute(&b, map[string]any{
-		"System": system,
+	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
+	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
+		"System": "",
 		"Prompt": prompt,
 	}); err != nil {
 		return err
@@ -285,4 +295,73 @@ func parseNode(n parse.Node) []string {
 	}
 
 	return nil
+}
+
+// deleteNode walks the node list and deletes nodes that match the predicate
+// this is currently to remove the {{ .Response }} node from templates
+func deleteNode(n parse.Node, fn func(parse.Node) bool) parse.Node {
+	var walk func(n parse.Node) parse.Node
+	walk = func(n parse.Node) parse.Node {
+		if fn(n) {
+			return nil
+		}
+
+		switch t := n.(type) {
+		case *parse.ListNode:
+			var nodes []parse.Node
+			for _, c := range t.Nodes {
+				if n := walk(c); n != nil {
+					nodes = append(nodes, n)
+				}
+			}
+
+			t.Nodes = nodes
+			return t
+		case *parse.IfNode:
+			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+		case *parse.WithNode:
+			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+		case *parse.RangeNode:
+			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+		case *parse.BranchNode:
+			t.List = walk(t.List).(*parse.ListNode)
+			if t.ElseList != nil {
+				t.ElseList = walk(t.ElseList).(*parse.ListNode)
+			}
+		case *parse.ActionNode:
+			n := walk(t.Pipe)
+			if n == nil {
+				return nil
+			}
+
+			t.Pipe = n.(*parse.PipeNode)
+		case *parse.PipeNode:
+			var commands []*parse.CommandNode
+			for _, c := range t.Cmds {
+				var args []parse.Node
+				for _, a := range c.Args {
+					if n := walk(a); n != nil {
+						args = append(args, n)
+					}
+				}
+
+				if len(args) == 0 {
+					return nil
+				}
+
+				c.Args = args
+				commands = append(commands, c)
+			}
+
+			if len(commands) == 0 {
+				return nil
+			}
+
+			t.Cmds = commands
+		}
+
+		return n
+	}
+
+	return walk(n)
 }
