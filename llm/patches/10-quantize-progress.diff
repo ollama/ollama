@@ -1,0 +1,43 @@
+diff --git a/llama.cpp b/llama.cpp
+index 61948751..2c683ef6 100644
+--- a/llama.cpp
++++ b/llama.cpp
+@@ -15586,6 +15586,15 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
+     const auto tn = LLM_TN(model.arch);
+     new_ofstream(0);
+     for (int i = 0; i < ml.n_tensors; ++i) {
++
++        if (params->quantize_callback){
++            LLAMA_LOG_INFO("ENTERED CALLBACK\n");
++            if (!params->quantize_callback(i, params->quantize_callback_data)) {
++                return;
++            }
++            LLAMA_LOG_INFO("CURRENTLY AT ", i/ml.n_tensors * 100);
++        }
++
+         auto weight = ml.get_weight(i);
+         struct ggml_tensor * tensor = weight->tensor;
+         if (weight->idx != cur_split && params->keep_split) {
+@@ -16119,6 +16128,8 @@ struct llama_model_quantize_params llama_model_quantize_default_params() {
+         /*.keep_split                  =*/ false,
+         /*.imatrix                     =*/ nullptr,
+         /*.kv_overrides                =*/ nullptr,
++        /*.quantize_callback           =*/ nullptr,
++        /*.quantize_callback_data      =*/ nullptr,
+     };
+ 
+     return result;
+diff --git a/llama.h b/llama.h
+index da310ffa..9b48d889 100644
+--- a/llama.h
++++ b/llama.h
+@@ -337,6 +337,9 @@ extern "C" {
+         bool keep_split;                     // quantize to the same number of shards
+         void * imatrix;                      // pointer to importance matrix data
+         void * kv_overrides;                 // pointer to vector containing overrides
++
++        llama_progress_callback quantize_callback;
++        void * quantize_callback_data;
+     } llama_model_quantize_params;
+ 
+     // grammar types
