@@ -51,5 +51,5 @@ func GetCPUMem() (memInfo, error) {
 	if r1 == 0 {
 		return memInfo{}, fmt.Errorf("GlobalMemoryStatusEx failed: %w", err)
 	}
-	return memInfo{TotalMemory: memStatus.TotalPhys, FreeMemory: memStatus.AvailPhys}, nil
+	return memInfo{TotalMemory: memStatus.TotalPhys, FreeMemory: memStatus.AvailPhys, FreeSwap: memStatus.AvailPageFile}, nil
 }
