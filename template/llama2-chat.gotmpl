@@ -1,16 +1,6 @@
-{{- if .Messages }}
-{{- range $index, $_ := .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if eq $index 0 }}<<SYS>>
-{{- if $.System }}
-{{ $.System }}
+[INST] <<SYS>>
+{{- if .System }}
+{{ .System }}
 {{ end }}<</SYS>>
 
-{{ end }}{{ .Content }}
-{{- else }} [/INST] {{ .Content }}</s><s>
-{{- end }}
-{{- end }} [/INST]
-{{- else -}}
-[INST] <<SYS>>{{ if .System }}{{ .System }}{{ end }}<</SYS>>
-
-{{ .Prompt }} [/INST] {{ .Response }}</s>
-{{- end -}}
+{{ .Prompt }} [/INST] {{ .Response }}</s><s>
