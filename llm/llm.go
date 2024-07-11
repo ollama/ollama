@@ -43,7 +43,7 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
 
 	// Initialize "global" to store progress
 	store := C.malloc(C.sizeof_float)
-	defer C.free(unsafe.Pointer(store))
+	defer C.free(store)
 
 	// Initialize store value, e.g., setting initial progress to 0
 	*(*C.float)(store) = 0.0
