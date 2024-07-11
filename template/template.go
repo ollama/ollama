@@ -103,15 +103,16 @@ var response = parse.ActionNode{
 }
 
 var funcs = template.FuncMap{
-	"aggregate": func(v []*api.Message, role string) string {
-		var aggregated []string
+	// contents returns the contents of messages with an optional role filter
+	"contents": func(v []*api.Message, role ...string) string {
+		var parts []string
 		for _, m := range v {
-			if m.Role == role {
-				aggregated = append(aggregated, m.Content)
+			if len(role) == 0 || role[0] == "" || m.Role == role[0] {
+				parts = append(parts, m.Content)
 			}
 		}
 
-		return strings.Join(aggregated, "\n\n")
+		return strings.Join(parts, "\n\n")
 	},
 }
 
