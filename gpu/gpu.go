@@ -171,8 +171,8 @@ func GetCPUInfo() GpuInfoList {
 func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 	var totalram uint64 = uint64(C.check_total_host_mem())
 	// there will be half of total ram can be handle as iGPU vram
-	gpuInfo.FreeMemory = totalram / 2
-	gpuInfo.TotalMemory = (totalram / 2) - envconfig.IntelUsedSystemVRAM
+	gpuInfo.TotalMemory = totalram / 2
+	gpuInfo.FreeMemory = (totalram / 2) - envconfig.IntelUsedSystemVRAM
 }
 
 func GetGPUInfo() GpuInfoList {
