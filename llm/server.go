@@ -122,6 +122,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 	}
 
+	// On linux, over-allocating CPU memory will almost always result in an error
+	if runtime.GOOS == "linux" {
+		systemMemoryRequired := estimate.TotalSize - estimate.VRAMSize
+		if systemMemoryRequired > systemTotalMemory {
+			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "system", format.HumanBytes2(systemTotalMemory))
+			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(systemTotalMemory))
+		}
+	}
+
 	estimate.log()
 
 	// Loop through potential servers
