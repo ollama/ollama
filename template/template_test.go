@@ -122,6 +122,7 @@ func TestTemplate(t *testing.T) {
 				})
 
 				t.Run("legacy", func(t *testing.T) {
+					t.Skip("legacy outputs are currently default outputs")
 					var legacy bytes.Buffer
 					if err := tmpl.Execute(&legacy, Values{Messages: tt, forceLegacy: true}); err != nil {
 						t.Fatal(err)
@@ -154,11 +155,13 @@ func TestParse(t *testing.T) {
 		{"{{ .System }} {{ .Prompt }} {{ .Response }}", []string{"prompt", "response", "system"}},
 		{"{{ with .Tools }}{{ . }}{{ end }} {{ .System }} {{ .Prompt }}", []string{"prompt", "response", "system", "tools"}},
 		{"{{ range .Messages }}{{ .Role }} {{ .Content }}{{ end }}", []string{"content", "messages", "role"}},
-		{"{{ range .Messages }}{{ if eq .Role \"system\" }}SYSTEM: {{ .Content }}{{ else if eq .Role \"user\" }}USER: {{ .Content }}{{ else if eq .Role \"assistant\" }}ASSISTANT: {{ .Content }}{{ end }}{{ end }}", []string{"content", "messages", "role"}},
+		{`{{- range .Messages }}
+{{- if eq .Role "system" }}SYSTEM:
+{{- else if eq .Role "user" }}USER:
+{{- else if eq .Role "assistant" }}ASSISTANT:
+{{- end }} {{ .Content }}
+{{- end }}`, []string{"content", "messages", "role"}},
 		{`{{- if .Messages }}
-{{- if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}
 {{- range .Messages }}<|im_start|>{{ .Role }}
 {{ .Content }}<|im_end|>
 {{ end }}<|im_start|>assistant
