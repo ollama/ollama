@@ -296,6 +296,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Terminal
 
+- [ParLlama](https://github.com/paulrobello/parllama) PAR LLAMA a new terminal based UI (TUI) for interfacing with Ollama
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
