@@ -127,39 +127,39 @@ Hello! It's your friend Mario.
 
 Para mais exemplos, veja o diretorio de [exemplos](examples). Para mais informações para trabalhar com um arquivo Modelfile, veja a documentação do [Modelfile](docs/modelfile.md).
 
-## CLI Reference
+## Referência de linha de comando
 
-### Create a model
+### Crie um modelo
 
-`ollama create` is used to create a model from a Modelfile.
+`ollama create` é usado para criar um modelo a partir de um arquivo de modelo.
 
 ```
 ollama create mymodel -f ./Modelfile
 ```
 
-### Pull a model
+### Fazer o pull de um modelo
 
 ```
 ollama pull llama3
 ```
 
-> This command can also be used to update a local model. Only the diff will be pulled.
+> Este comando também pode ser usado para atualizar um modelo local. Apenas a diferença será puxada..
 
-### Remove a model
+### Remover um modelo
 
 ```
 ollama rm llama3
 ```
 
-### Copy a model
+### Copie um modelo
 
 ```
 ollama cp llama3 my-model
 ```
 
-### Multiline input
+### Entrada multilinha
 
-For multiline input, you can wrap text with `"""`:
+Para entrada multilinha, você pode envolver o texto com `"""`:
 
 ```
 >>> """Hello,
@@ -168,49 +168,49 @@ For multiline input, you can wrap text with `"""`:
 I'm a basic program that prints the famous "Hello, world!" message to the console.
 ```
 
-### Multimodal models
+### Modelos multimodais
 
 ```
 >>> What's in this image? /Users/jmorgan/Desktop/smile.png
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
-### Pass the prompt as an argument
+### Passe o prompt como um argumento.
 
 ```
 $ ollama run llama3 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
-### Show model information
+### Mostre a informação do modelo
 
 ```
 ollama show llama3
 ```
 
-### List models on your computer
+### Liste os modelos no seu computador
 
 ```
 ollama list
 ```
 
-### Start Ollama
+### Inicie o Ollama
 
-`ollama serve` is used when you want to start ollama without running the desktop application.
+`ollama serve` é usado quando você deseja iniciar o Ollama sem executar o aplicativo de desktop.
 
 ## Building
 
-See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
+Veja o [guia de desenvolvimento](https://github.com/ollama/ollama/blob/main/docs/development.md)
 
-### Running local builds
+### Rodando builds locais
 
-Next, start the server:
+Em seguida, inicie o servidor.:
 
 ```
 ./ollama serve
 ```
 
-Finally, in a separate shell, run a model:
+Finalmente, em um shell separado, execute um modelo.:
 
 ```
 ./ollama run llama3
@@ -218,7 +218,7 @@ Finally, in a separate shell, run a model:
 
 ## REST API
 
-Ollama has a REST API for running and managing models.
+Ollama possui uma API REST para executar e gerenciar modelos..
 
 ### Generate a response
 
@@ -242,7 +242,7 @@ curl http://localhost:11434/api/chat -d '{
 
 See the [API documentation](./docs/api.md) for all endpoints.
 
-## Community Integrations
+## Integrações da comunidade
 
 ### Web & Desktop
 
@@ -275,23 +275,23 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [OllamaGUI](https://github.com/enoch1118/ollamaGUI)
 - [OpenAOE](https://github.com/InternLM/OpenAOE)
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
-- [LLM-X](https://github.com/mrdjohnson/llm-x) (Progressive Web App)
+- [LLM-X](https://github.com/mrdjohnson/llm-x) (Aplicativo Web Progressivo)
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
-- [QA-Pilot](https://github.com/reid41/QA-Pilot) (Chat with Code Repository)
-- [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
-- [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
-- [RAGFlow](https://github.com/infiniflow/ragflow) (Open-source Retrieval-Augmented Generation engine based on deep document understanding)
-- [StreamDeploy](https://github.com/StreamDeploy-DevRel/streamdeploy-llm-app-scaffold) (LLM Application Scaffold)
-- [chat](https://github.com/swuecho/chat) (chat web app for teams)
-- [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
-- [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) (Local Chat with multiple PDFs using Ollama and RAG)
-- [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
-- [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
-- [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
-- [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
-- [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
+- [QA-Pilot](https://github.com/reid41/QA-Pilot) (Chat com repositório de código)
+- [ChatOllama](https://github.com/sugarforever/chat-ollama) (Chatbot de código aberto baseado no Ollama com bases de conhecimento)
+- [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Busca web simples com RAG corretivo)
+- [RAGFlow](https://github.com/infiniflow/ragflow) (Motor de Geração com Recuperação Aumentada de código aberto baseado em compreensão profunda de documentos)
+- [StreamDeploy](https://github.com/StreamDeploy-DevRel/streamdeploy-llm-app-scaffold) (Estrutura de Aplicação para LLM)
+- [chat](https://github.com/swuecho/chat) (Aplicativo web de chat para equipes)
+- [Lobe Chat](https://github.com/lobehub/lobe-chat) com [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
+- [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) (Chat local com múltiplos PDFs usando Ollama e RAG)
+- [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Cliente nativo flexível com automação RAG e multi-agente)
+- [macai](https://github.com/Renset/macai) (Cliente para macOS compatível com Ollama, ChatGPT e outros back-ends de API compatíveis.)
+- [Olpaka](https://github.com/Otacon/olpaka) (Aplicativo web Flutter amigável para o Ollama)
+- [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Cliente Ollama para macOS)
+- [LLocal.in](https://github.com/kartikm7/llocal) (Cliente de desktop Electron fácil de usar para o Ollama)
 
 ### Terminal
 
@@ -309,30 +309,30 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ooo](https://github.com/npahlfer/ooo)
 - [shell-pilot](https://github.com/reid41/shell-pilot)
 - [tenere](https://github.com/pythops/tenere)
-- [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
+- [llm-ollama](https://github.com/taketwo/llm-ollama) para [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
 - [typechat-cli](https://github.com/anaisbetts/typechat-cli)
 - [ShellOracle](https://github.com/djcopley/ShellOracle)
 - [tlm](https://github.com/yusufcanb/tlm)
 - [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 - [gollama](https://github.com/sammcj/gollama)
 
-### Database
+### Banco de Dados
 
-- [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) (Connects Ollama models with nearly 200 data platforms and apps)
-- [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) with [example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama)
+- [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) (Conecta modelos do Ollama com quase 200 plataformas de dados e aplicativos.)
+- [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) com [exemplo](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama)
 
-### Package managers
+### Gerenciadores de pacotes
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
 
-### Libraries
+### Bibliotecas
 
-- [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
-- [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
-- [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
-- [LangChainRust](https://github.com/Abraxas-365/langchain-rust) with [example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
+- [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) e [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) com [exemplo](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
+- [LangChainGo](https://github.com/tmc/langchaingo/) com [exemplo](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
+- [LangChain4j](https://github.com/langchain4j/langchain4j) com [exemplo](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
+- [LangChainRust](https://github.com/Abraxas-365/langchain-rust) com [exemplo](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
@@ -354,7 +354,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
 - [Testcontainers](https://testcontainers.com/modules/ollama/)
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
-- [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
+- [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) com um [exemplo](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
 - [LlamaScript](https://github.com/Project-Llama/llamascript)
 
 ### Mobile
@@ -362,30 +362,30 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Enchanted](https://github.com/AugustDev/enchanted)
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 
-### Extensions & Plugins
+### Extensões e plugins
 
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
-- [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
+- [Discollama](https://github.com/mxyng/discollama) (Bot do Discord dentro do canal do Ollama no Discord)
 - [Continue](https://github.com/continuedev/continue)
 - [Obsidian Ollama plugin](https://github.com/hinterdupfinger/obsidian-ollama)
 - [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
-- [NotesOllama](https://github.com/andersrex/notesollama) (Apple Notes Ollama plugin)
+- [NotesOllama](https://github.com/andersrex/notesollama) (Plugin do Ollama para o Apple Notes)
 - [Dagger Chatbot](https://github.com/samalba/dagger-chatbot)
 - [Discord AI Bot](https://github.com/mekb-turtle/discord-ai-bot)
 - [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram)
 - [Hass Ollama Conversation](https://github.com/ej52/hass-ollama-conversation)
 - [Rivet plugin](https://github.com/abrenneke/rivet-plugin-ollama)
 - [Obsidian BMO Chatbot plugin](https://github.com/longy2k/obsidian-bmo-chatbot)
-- [Cliobot](https://github.com/herval/cliobot) (Telegram bot with Ollama support)
+- [Cliobot](https://github.com/herval/cliobot) (Bot do Telegram com suporte ao Ollama)
 - [Copilot for Obsidian plugin](https://github.com/logancyang/obsidian-copilot)
 - [Obsidian Local GPT plugin](https://github.com/pfrankov/obsidian-local-gpt)
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama)
-- [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
-- [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) (Proxy that allows you to use ollama as a copilot like Github copilot)
-- [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
-- [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)
-- [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
-- [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
+- [Llama Coder](https://github.com/ex3ndr/llama-coder) (Alternativa ao Copilot usando Ollama)
+- [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) (Proxy que permite usar Ollama como um copilot, similar ao Github Copilot)
+- [twinny](https://github.com/rjmacarthy/twinny) (Alternativa ao Copilot e Copilot Chat usando Ollama)
+- [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Alternativa ao Copilot: Código e Chat usando Ollama e HuggingFace)
+- [Page Assist](https://github.com/n4ze3m/page-assist) (Extensão do Chrome)
+- [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Bot do Telegram usando Ollama no backend)
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Plugin do assistente de inteligência artificial para o Sublime Text 4 com suporte ao Ollama)
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Bot Discord generalizado em TypeScript com documentação de ajustes)
 - [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Bot de chat/moderação escrito em Python. Usa o Ollama para criar personalidades.
