@@ -1,0 +1,19 @@
+{{- if .Messages }}
+{{- if .System }}Source: system
+
+ {{ .System }} <step> {{ end }}
+{{- range .Messages }}Source: {{ .Role }}
+
+ {{ .Content }} <step> {{ end }}Source: assistant
+Destination: user
+
+ {{ else -}}
+{{ if .System }}Source: system
+
+ {{ .System }} <step> {{ end }}Source: user
+
+ {{ .Prompt }} <step> Source: assistant
+Destination: user
+
+ {{ .Response }} <step>
+{{- end -}}

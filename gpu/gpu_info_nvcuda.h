@@ -7,9 +7,12 @@
 typedef enum cudaError_enum {
   CUDA_SUCCESS = 0,
   CUDA_ERROR_INVALID_VALUE = 1,
-  CUDA_ERROR_MEMORY_ALLOCATION = 2,
+  CUDA_ERROR_OUT_OF_MEMORY = 2,
   CUDA_ERROR_NOT_INITIALIZED = 3,
   CUDA_ERROR_INSUFFICIENT_DRIVER = 35,
+  CUDA_ERROR_NO_DEVICE = 100,
+  CUDA_ERROR_SYSTEM_DRIVER_MISMATCH = 803,
+  CUDA_ERROR_UNKNOWN = 999,
   // Other values omitted for now...
 } CUresult;
 
@@ -64,6 +67,7 @@ typedef struct nvcuda_init_resp {
   char *err;  // If err is non-null handle is invalid
   nvcuda_handle_t ch;
   int num_devices;
+  CUresult cudaErr;
 } nvcuda_init_resp_t;
 
 void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp);

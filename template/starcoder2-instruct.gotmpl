@@ -1,0 +1,23 @@
+{{- if .Messages }}
+{{- if .System }}{{ .System }}
+
+{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}### Instruction
+{{ .Content }}
+
+{{ else if eq .Role "assistant" }}### Response
+{{ .Content }}<|endoftext|>
+
+{{ end }}
+{{- end }}### Response
+{{ else -}}
+{{ if .System }}{{ .System }}
+
+{{ end }}{{ if .Prompt }}### Instruction
+{{ .Prompt }}
+
+{{ end }}### Response
+{{ .Response }}<|endoftext|>
+
+{{ end -}}

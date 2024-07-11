@@ -1382,12 +1382,50 @@ struct llama_server_context
         }
     }
 
+    std::string common_prefix(const std::string& str1, const std::string& str2) {
+        auto mismatch_pair = std::mismatch(str1.begin(), str1.end(), str2.begin());
+        return std::string(str1.begin(), mismatch_pair.first);
+    }
+
+    // Find the slot that has the greatest common prefix
+    server_slot *prefix_slot(const json &prompt) {
+        if (!prompt.is_string()) {
+            return nullptr;
+        }
+
+        std::string prompt_str = prompt.get<std::string>();
+        server_slot *slot = nullptr;
+        size_t longest = 0;
+
+        for (server_slot &s : slots) {
+            if (s.available() && s.prompt.is_string()) {
+                std::string s_prompt = s.prompt.get<std::string>();
+                std::string prefix = common_prefix(s_prompt, prompt_str);
+
+                if (prefix.size() > longest) {
+                    slot = &s;
+                    longest = prefix.size();
+                }
+            }
+        }
+
+        if (!slot) {
+            return get_slot(-1);
+        }
+
+        LOG_DEBUG("slot with common prefix found", {{
+            "slot_id", slot->id,
+            "characters", longest
+        }});
+        return slot;
+    }
+
     void process_single_task(task_server& task)
     {
         switch (task.type)
         {
             case TASK_TYPE_COMPLETION: {
-                server_slot *slot = get_slot(json_value(task.data, "slot_id", -1));
+                server_slot *slot = prefix_slot(task.data["prompt"]);
                 if (slot == nullptr)
                 {
                     // if no slot is available, we defer this task for processing later
@@ -1654,22 +1692,23 @@ struct llama_server_context
                     if (slot.ga_n == 1 && slot.n_prompt_tokens >= slot.n_ctx)
                     {
                         const int n_left = slot.n_ctx - slot.params.n_keep;
-                        const int n_block_size = n_left / 2;
-                        const int erased_blocks = (slot.n_prompt_tokens - slot.params.n_keep - n_block_size) / n_block_size;
+                        const int n_shift = n_left / 2;
+                        const int n_erase = slot.n_prompt_tokens - slot.params.n_keep - n_shift;
 
                         std::vector<llama_token> new_tokens(
                             prompt_tokens.begin(),
                             prompt_tokens.begin() + slot.params.n_keep);
                         new_tokens.insert(
                             new_tokens.end(),
-                            prompt_tokens.begin() + slot.params.n_keep + erased_blocks * n_block_size,
+                            prompt_tokens.begin() + slot.params.n_keep + n_erase,
                             prompt_tokens.end());
 
-                        LOG_VERBOSE("input truncated", {
-                            {"n_ctx",      slot.n_ctx},
-                            {"n_keep",     slot.params.n_keep},
-                            {"n_left",     n_left},
-                            {"new_tokens", tokens_to_str(ctx, new_tokens.cbegin(), new_tokens.cend())},
+                        LOG_INFO("input truncated", {
+                            {"n_ctx",        slot.n_ctx},
+                            {"n_keep",       slot.params.n_keep},
+                            {"n_left",       n_left},
+                            {"n_shift",      n_shift},
+                            {"n_erase",      n_erase},
                         });
                         slot.truncated = true;
                         prompt_tokens = new_tokens;
@@ -1704,7 +1743,7 @@ struct llama_server_context
                             slot.n_past -= 1;
                         }
 
-                        slot.n_prompt_tokens_processed = slot.n_prompt_tokens - slot.n_past;
+                        slot.n_prompt_tokens_processed = slot.n_prompt_tokens;
 
                         if (slot.ga_n != 1)
                         {
