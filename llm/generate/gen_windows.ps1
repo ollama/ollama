@@ -310,7 +310,7 @@ function build_oneapi() {
     $script:cmakeDefs += @(
       "-G", "MinGW Makefiles",
       "-DGGML_SYCL=ON",
-      "-DCMAKE_C_COMPILER=icx",
+      "-DCMAKE_C_COMPILER=cl",
       "-DCMAKE_CXX_COMPILER=icx",
       "-DCMAKE_BUILD_TYPE=Release"
     )

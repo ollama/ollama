@@ -264,6 +264,7 @@ int oneapi_get_device_count(oneapi_handle_t h, int driver) {
 uint64_t check_total_host_mem() {
 #ifdef _WIN32
   MEMORYSTATUSEX statex;
+  statex.dwLength = sizeof(statex);
   GlobalMemoryStatusEx(&statex);
   return statex.ullTotalPhys;
 #else
