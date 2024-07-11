@@ -126,8 +126,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	if runtime.GOOS == "linux" {
 		systemMemoryRequired := estimate.TotalSize - estimate.VRAMSize
 		if systemMemoryRequired > systemFreeMemory {
-			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(systemTotalMemory))
-			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(systemTotalMemory))
+			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", format.HumanBytes2(systemFreeMemory))
+			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(systemFreeMemory))
 		}
 	}
 
