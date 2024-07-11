@@ -271,7 +271,7 @@ func toModel(r api.ShowResponse, m string) Model {
 	}
 }
 
-func fromChatRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
+func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		switch content := msg.Content.(type) {
@@ -282,40 +282,57 @@ func fromChatRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
-					return api.ChatRequest{}, fmt.Errorf("invalid message format")
+					return nil, fmt.Errorf("invalid message format")
 				}
 				switch data["type"] {
 				case "text":
 					text, ok := data["text"].(string)
 					if !ok {
-						return api.ChatRequest{}, fmt.Errorf("invalid message format")
+						return nil, fmt.Errorf("invalid message format")
 					}
 					message.Content = text
 				case "image_url":
 					urlMap, ok := data["image_url"].(map[string]any)
-					if !ok {
-						return api.ChatRequest{}, fmt.Errorf("invalid message format")
+					var url string
+					if ok {
+						url, ok = urlMap["url"].(string)
+						if !ok {
+							return nil, fmt.Errorf("invalid message format")
+						}
+					} else {
+						url, ok = data["image_url"].(string)
+						if !ok {
+							return nil, fmt.Errorf("invalid message format")
+						}
 					}
-					url, ok := urlMap["url"].(string)
-					if !ok {
-						return api.ChatRequest{}, fmt.Errorf("invalid message format")
-					}
+
 					types := []string{"jpeg", "jpg", "png"}
+					valid := false
 					for _, t := range types {
-						url = strings.TrimPrefix(url, "data:image/"+t+";base64,")
+						prefix := "data:image/" + t + ";base64,"
+						if strings.HasPrefix(url, prefix) {
+							url = strings.TrimPrefix(url, prefix)
+							valid = true
+							break
+						}
 					}
+
+					if !valid {
+						return nil, fmt.Errorf("invalid image input")
+					}
+
 					img, err := base64.StdEncoding.DecodeString(url)
 					if err != nil {
-						return api.ChatRequest{}, fmt.Errorf("invalid message format")
+						return nil, fmt.Errorf("invalid message format")
 					}
 					message.Images = append(message.Images, img)
 				default:
-					return api.ChatRequest{}, fmt.Errorf("invalid message format")
+					return nil, fmt.Errorf("invalid message format")
 				}
 			}
 			messages = append(messages, message)
 		default:
-			return api.ChatRequest{}, fmt.Errorf("invalid message content type: %T", content)
+			return nil, fmt.Errorf("invalid message content type: %T", content)
 		}
 	}
 
@@ -367,7 +384,7 @@ func fromChatRequest(r ChatCompletionRequest) (api.ChatRequest, error) {
 		format = "json"
 	}
 
-	return api.ChatRequest{
+	return &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
 		Format:   format,

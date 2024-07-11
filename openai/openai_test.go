@@ -16,6 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const prefix = `data:image/jpeg;base64,`
+const image = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+const imageURL = prefix + image
+
 func TestMiddlewareRequests(t *testing.T) {
 	type testCase struct {
 		Name     string
@@ -125,7 +129,7 @@ func TestMiddlewareRequests(t *testing.T) {
 						{
 							Role: "user", Content: []map[string]any{
 								{"type": "text", "text": "Hello"},
-								{"type": "image_url", "image_url": map[string]string{"url": imageEncoding}},
+								{"type": "image_url", "image_url": map[string]string{"url": imageURL}},
 							},
 						},
 					},
@@ -150,7 +154,7 @@ func TestMiddlewareRequests(t *testing.T) {
 					t.Fatalf("expected 'Hello', got %s", chatReq.Messages[0].Content)
 				}
 
-				img, _ := base64.StdEncoding.DecodeString(imageEncoding)
+				img, _ := base64.StdEncoding.DecodeString(imageURL[len(prefix):])
 
 				if !bytes.Equal(chatReq.Messages[0].Images[0], img) {
 					t.Fatalf("expected image encoding, got %s", chatReq.Messages[0].Images[0])
@@ -314,5 +318,3 @@ func TestMiddlewareResponses(t *testing.T) {
 		})
 	}
 }
-
-const imageEncoding = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
