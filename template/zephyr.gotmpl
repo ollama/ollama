@@ -5,11 +5,11 @@
 {{- range .Messages }}<|{{ .Role }}|>
 {{ .Content }}</s>
 {{ end }}<|assistant|>
-{{ else }}
+{{ else -}}
 {{ if .System }}<|system|>
 {{ .System }}</s>
 {{ end }}{{ if .Prompt }}<|user|>
 {{ .Prompt }}</s>
 {{ end }}<|assistant|>
 {{ .Response }}</s>
-{{- end }}
+{{ end -}}

@@ -11,14 +11,13 @@
 
 {{ end }}
 {{- end }}### Response
-{{ else }}
+{{ else -}}
 {{ if .System }}{{ .System }}
 
 {{ end }}{{ if .Prompt }}### Instruction
 {{ .Prompt }}
 
-
 {{ end }}### Response
 {{ .Response }}<|endoftext|>
 
-{{- end }}
+{{ end -}}

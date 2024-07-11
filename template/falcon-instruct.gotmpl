@@ -6,8 +6,10 @@
 {{ else if eq .Role "assistant" }}Falcon:
 {{ end }}{{ .Content }}
 {{ end }}Falcon:
-{{ else }}
-{{ if .System }}{{ .System }}
-{{ end }}{{ if .Prompt }}User: {{ .Prompt }}
-{{ end }}Assistant: {{ .Response }}
-{{- end }}
+{{ else -}}
+{{ if .System }}System: {{ .System }}
+{{ end }}{{ if .Prompt }}User:
+{{ .Prompt }}
+{{ end }}Falcon:
+{{ .Response }}
+{{ end -}}
