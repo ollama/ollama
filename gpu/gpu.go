@@ -360,14 +360,17 @@ func GetGPUInfo() GpuInfoList {
 					"before",
 					"total", format.HumanBytes2(cpus[0].TotalMemory),
 					"free", format.HumanBytes2(cpus[0].FreeMemory),
+					"free_swap", format.HumanBytes2(cpus[0].FreeSwap),
 				),
 				slog.Group(
 					"now",
 					"total", format.HumanBytes2(mem.TotalMemory),
 					"free", format.HumanBytes2(mem.FreeMemory),
+					"free_swap", format.HumanBytes2(mem.FreeSwap),
 				),
 			)
 			cpus[0].FreeMemory = mem.FreeMemory
+			cpus[0].FreeSwap = mem.FreeSwap
 		}
 
 		var memInfo C.mem_info_t

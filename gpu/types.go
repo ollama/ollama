@@ -10,6 +10,7 @@ import (
 type memInfo struct {
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 	FreeMemory  uint64 `json:"free_memory,omitempty"`
+	FreeSwap    uint64 `json:"free_swap,omitempty"`
 }
 
 // Beginning of an `ollama info` command

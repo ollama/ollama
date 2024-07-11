@@ -57,6 +57,7 @@ func GetCPUMem() (memInfo, error) {
 	return memInfo{
 		TotalMemory: uint64(C.getPhysicalMemory()),
 		FreeMemory:  uint64(C.getFreeMemory()),
+		// FreeSwap omitted as Darwin uses dynamic paging
 	}, nil
 }
 

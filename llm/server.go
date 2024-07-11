@@ -88,6 +88,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	var estimate MemoryEstimate
 	var systemTotalMemory uint64
 	var systemFreeMemory uint64
+	var systemSwapFreeMemory uint64
 
 	systemMemInfo, err := gpu.GetCPUMem()
 	if err != nil {
@@ -95,7 +96,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	} else {
 		systemTotalMemory = systemMemInfo.TotalMemory
 		systemFreeMemory = systemMemInfo.FreeMemory
-		slog.Debug("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", systemFreeMemory)
+		systemSwapFreeMemory = systemMemInfo.FreeSwap
+		slog.Debug("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 	}
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
@@ -125,9 +127,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	// On linux, over-allocating CPU memory will almost always result in an error
 	if runtime.GOOS == "linux" {
 		systemMemoryRequired := estimate.TotalSize - estimate.VRAMSize
-		if systemMemoryRequired > systemTotalMemory {
-			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "system", format.HumanBytes2(systemTotalMemory))
-			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(systemTotalMemory))
+		available := min(systemTotalMemory, systemFreeMemory+systemSwapFreeMemory)
+		if systemMemoryRequired > available {
+			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", available, "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "swap", format.HumanBytes2(systemSwapFreeMemory))
+			return nil, fmt.Errorf("model requires more system memory (%s) than is available (%s)", format.HumanBytes2(systemMemoryRequired), format.HumanBytes2(available))
 		}
 	}
 
