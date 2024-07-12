@@ -3,6 +3,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
@@ -241,7 +243,24 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 			mediatype = "application/vnd.ollama.image.projector"
 		}
 
-		layer, err := NewLayer(io.NewSectionReader(file, offset, n), mediatype)
+		var reader io.Reader = io.NewSectionReader(file, offset, n)
+		if !slices.IsSortedFunc(ggml.Tensors(), func(a, b *llm.Tensor) int {
+			var i, j int
+			if n, err := fmt.Sscanf(a.Name, "blk.%d", &i); err != nil || n != 1 {
+				return cmp.Compare(a.Name, b.Name)
+			} else if n, err := fmt.Sscanf(b.Name, "blk.%d", &j); err != nil || n != 1 {
+				return cmp.Compare(a.Name, b.Name)
+			}
+
+			return cmp.Compare(i, j)
+		}) {
+			reader = &llm.GGUFWriter{
+				KV: ggml.KV(),
+				T:  ggml.Tensors(),
+			}
+		}
+
+		layer, err := NewLayer(reader, mediatype)
 		if err != nil {
 			return nil, err
 		}

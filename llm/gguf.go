@@ -2,11 +2,15 @@ package llm
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
+
+	"golang.org/x/exp/maps"
 )
 
 type containerGGUF struct {
@@ -711,5 +715,65 @@ func (GGUFWriter) Read([]byte) (int, error) {
 }
 
 func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
-	
+	if err := binary.Write(w, binary.LittleEndian, []byte("GGUF")); err != nil {
+		return 0, err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, uint32(3)); err != nil {
+		return 0, err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, uint64(len(gguf.T))); err != nil {
+		return 0, err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, uint64(len(gguf.KV))); err != nil {
+		return 0, err
+	}
+
+	keys := maps.Keys(gguf.KV)
+	slices.Sort(keys)
+
+	for _, key := range keys {
+		if err := ggufWriteKV(w, key, gguf.KV[key]); err != nil {
+			return err
+		}
+	}
+
+	slices.SortFunc(gguf.T, func(a, b *Tensor) int {
+		var i, j int
+		if n, err := fmt.Sscanf(a.Name, "blk.%d", &i); err != nil || n != 1 {
+			return cmp.Compare(a.Name, b.Name)
+		} else if n, err := fmt.Sscanf(b.Name, "blk.%d", &j); err != nil || n != 1 {
+			return cmp.Compare(a.Name, b.Name)
+		}
+
+		return cmp.Compare(i, j)
+	})
+
+	var s uint64
+	for _, t := range gguf.T {
+		t.Offset = s
+		if err := ggufWriteTensorInfo(w, t); err != nil {
+			return 0, err
+		}
+		s += t.Size()
+	}
+
+	var alignment int64 = 32
+	for _, t := range gguf.T {
+		if err := ggufWriteTensor(w, t, alignment); err != nil {
+			return 0, err
+		}
+	}
+
+	return 0, nil
+}
+
+func ggufWriteTensor(io.Writer, *Tensor, int64) error {
+
+}
+
+func ggufWriteTensorInfo(io.Writer, *Tensor) error {
+
 }

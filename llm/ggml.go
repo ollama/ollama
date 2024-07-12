@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -113,6 +114,26 @@ func (kv KV) ChatTemplate() string {
 }
 
 type Tensors []*Tensor
+
+func (ts Tensors) Less(i, j int) bool {
+	var x, y int
+	if n, err := fmt.Sscanf(ts[i].Name, "blk.%d", &x); err != nil || n != 1 {
+		return cmp.Less(ts[i].Name, ts[j].Name)
+	} else if n, err := fmt.Sscanf(ts[j].Name, "blk.%d", &y); err != nil || n != 1 {
+		return cmp.Less(ts[i].Name, ts[j].Name)
+	}
+
+	return cmp.Less(x, y)
+}
+
+func (ts Tensors) Len() int {
+	return len(ts)
+}
+
+func (ts Tensors) Swap(i, j int) {
+	var temp Tensor
+	
+}
 
 func (ts Tensors) Layers() map[string]Layer {
 	layers := make(map[string]Layer)
