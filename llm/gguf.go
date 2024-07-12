@@ -762,12 +762,45 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 	return 0, nil
 }
 
-func ggufWriteTensor(io.Writer, *Tensor, int64) error {
-	return nil
+func ggufWriteTensorInfo(ws io.Writer, t *Tensor, alignment int64) error {
+	if err := binary.Write(ws, binary.LittleEndian, uint64(len(t.Name))); err != nil {
+		return err
+	}
+
+	if err := binary.Write(ws, binary.LittleEndian, []byte(t.Name)); err != nil {
+		return err
+	}
+
+	if err := binary.Write(ws, binary.LittleEndian, uint32(len(t.Shape))); err != nil {
+		return err
+	}
+
+	for i := range len(t.Shape) {
+		if err := binary.Write(ws, binary.LittleEndian, t.Shape[len(t.Shape)-i-1]); err != nil {
+			return err
+		}
+	}
+
+	if err := binary.Write(ws, binary.LittleEndian, t.Kind); err != nil {
+		return err
+	}
+
+	return binary.Write(ws, binary.LittleEndian, t.Offset)
 }
 
-func ggufWriteTensorInfo(io.Writer, *Tensor) error {
-	return nil
+func ggufWriteTensor(ws io.Writer, t *Tensor, alignment int64) error {
+	slog.Debug(t.Name, "kind", t.Kind, "shape", t.Shape, "offset", t.Offset)
+	offset, err := ws.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+
+	if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(offset, alignment)))); err != nil {
+		return err
+	}
+
+	_, err = t.WriteTo(ws)
+	return err
 }
 
 func ggufWriteKV(ws io.WriteSeeker, k string, v any) error {
