@@ -288,16 +288,27 @@ func Test_Routes(t *testing.T) {
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
 				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, "application/json; charset=utf-8", contentType)
+				if contentType != "application/json; charset=utf-8" {
+					t.Fatalf("expected content type application/json; charset=utf-8, got %s", contentType)
+				}
 				body, err := io.ReadAll(resp.Body)
-				require.NoError(t, err)
+				if err != nil {
+					t.Fatal(err)
+				}
 
 				var embedResp api.EmbedResponse
 				err = json.Unmarshal(body, &embedResp)
-				require.NoError(t, err)
+				if err != nil {
+					t.Fatal(err)
+				}
 
-				assert.Equal(t, "t-bone", embedResp.Model)
-				assert.Nil(t, embedResp.Embeddings)
+				if embedResp.Model != "t-bone" {
+					t.Fatalf("expected model t-bone, got %s", embedResp.Model)
+				}
+
+				if embedResp.Embeddings != nil {
+					t.Fatalf("expected embeddings to be nil, got %v", embedResp.Embeddings)
+				}
 			},
 		},
 		{
@@ -315,10 +326,18 @@ func Test_Routes(t *testing.T) {
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
 				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, "application/json; charset=utf-8", contentType)
+				if contentType != "application/json; charset=utf-8" {
+					t.Fatalf("expected content type application/json; charset=utf-8, got %s", contentType)
+				}
 				_, err := io.ReadAll(resp.Body)
-				require.NoError(t, err)
-				assert.Equal(t, 400, resp.StatusCode)
+
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if resp.StatusCode != http.StatusBadRequest {
+					t.Fatalf("expected status code 400, got %d", resp.StatusCode)
+				}
 			},
 		},
 	}
