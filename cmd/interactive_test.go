@@ -59,7 +59,6 @@ func TestModelfileBuilder(t *testing.T) {
 	opts := runOptions{
 		Model:    "hork",
 		System:   "You are part horse and part shark, but all hork. Do horklike things",
-		Template: "This is a template.",
 		Messages: []api.Message{
 			{Role: "user", Content: "Hey there hork!"},
 			{Role: "assistant", Content: "Yes it is true, I am half horse, half shark."},
@@ -75,7 +74,6 @@ func TestModelfileBuilder(t *testing.T) {
 	mf := buildModelfile(opts)
 	expectedModelfile := `FROM {{.Model}}
 SYSTEM """{{.System}}"""
-TEMPLATE """{{.Template}}"""
 PARAMETER penalize_newline false
 PARAMETER seed 42
 PARAMETER stop [hi there]
@@ -97,7 +95,6 @@ MESSAGE assistant """Yes it is true, I am half horse, half shark."""
 	mf = buildModelfile(opts)
 	expectedModelfile = `FROM {{.ParentModel}}
 SYSTEM """{{.System}}"""
-TEMPLATE """{{.Template}}"""
 PARAMETER penalize_newline false
 PARAMETER seed 42
 PARAMETER stop [hi there]
