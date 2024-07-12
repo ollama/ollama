@@ -141,11 +141,13 @@ func (llm *gguf) numKV() uint64 {
 
 func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	// decode key-values
+	fmt.Println(llm.numKV())
 	for i := 0; uint64(i) < llm.numKV(); i++ {
 		k, err := readGGUFString(llm, rs)
 		if err != nil {
 			return err
 		}
+		fmt.Printf("k: %#v\n", k)
 
 		t, err := readGGUF[uint32](llm, rs)
 		if err != nil {
@@ -204,13 +206,15 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			return fmt.Errorf("failed to read tensor dimensions: %w", err)
 		}
 
-		shape := [4]uint64{1, 1, 1, 1}
+		shape := []uint64{}
 		for i := 0; uint32(i) < dims; i++ {
-			shape[i], err = readGGUF[uint64](llm, rs)
+			shapeVal, err := readGGUF[uint64](llm, rs)
 			if err != nil {
 				return fmt.Errorf("failed to read tensor shape: %w", err)
 			}
+			shape = append(shape, shapeVal)
 		}
+		fmt.Println("tensor ", name, " shape ", shape)
 
 		kind, err := readGGUF[uint32](llm, rs)
 		if err != nil {
@@ -226,7 +230,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			Name:   name,
 			Kind:   kind,
 			Offset: offset,
-			Shape:  shape[:],
+			Shape:  shape,
 		}
 
 		llm.tensors = append(llm.tensors, &tensor)
@@ -742,7 +746,7 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 		return 0, err
 	}
 
-	if err := binary.Write(wo, binary.LittleEndian, uint64(len(gguf.KV))); err != nil {
+	if err := binary.Write(wo, binary.LittleEndian, uint64(len(gguf.KV)-1)); err != nil {
 		return 0, err
 	}
 
@@ -793,6 +797,7 @@ func ggufWriteTensorInfo(ws io.Writer, t *Tensor) error {
 	if err := binary.Write(ws, binary.LittleEndian, uint32(len(t.Shape))); err != nil {
 		return err
 	}
+	fmt.Println("tensor ", t.Name, " shape ", t.Shape)
 
 	for i := range len(t.Shape) {
 		if err := binary.Write(ws, binary.LittleEndian, t.Shape[len(t.Shape)-i-1]); err != nil {

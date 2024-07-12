@@ -248,10 +248,15 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 			var tensors llm.Tensors
 
 			for _, tensor := range ggml.Tensors() {
+				shape := make([]uint64, len(tensor.Shape))
+				for i := range len(tensor.Shape) {
+					shape[i] = tensor.Shape[len(tensor.Shape)-i-1]
+				}
+
 				tensors = append(tensors, &llm.Tensor{
 					Name:  tensor.Name,
 					Kind:  tensor.Kind,
-					Shape: tensor.Shape,
+					Shape: shape,
 
 					WriterTo: &llm.TensorWriter{
 						Reader: io.NewSectionReader(file, int64(tensor.Offset), int64(tensor.Size())),
