@@ -91,7 +91,6 @@ type Name struct {
 	Namespace string
 	Model     string
 	Tag       string
-	RawDigest string
 }
 
 // ParseName parses and assembles a Name from a name string. The
@@ -142,11 +141,6 @@ func ParseName(s string) Name {
 func ParseNameBare(s string) Name {
 	var n Name
 	var promised bool
-
-	s, n.RawDigest, promised = cutLast(s, "@")
-	if promised && n.RawDigest == "" {
-		n.RawDigest = MissingPart
-	}
 
 	// "/" is an illegal tag character, so we can use it to split the host
 	if strings.LastIndex(s, ":") > strings.LastIndex(s, "/") {
@@ -222,10 +216,6 @@ func (n Name) String() string {
 		b.WriteByte(':')
 		b.WriteString(n.Tag)
 	}
-	if n.RawDigest != "" {
-		b.WriteByte('@')
-		b.WriteString(n.RawDigest)
-	}
 	return b.String()
 }
 
@@ -250,16 +240,18 @@ func (n Name) DisplayShortest() string {
 	return sb.String()
 }
 
-func IsValidNamespace(namespace string) bool {
-	return isValidPart(kindNamespace, namespace)
+// IsValidNamespace reports whether the provided string is a valid
+// namespace.
+func IsValidNamespace(s string) bool {
+	return isValidPart(kindNamespace, s)
 }
 
 // IsValid reports whether all parts of the name are present and valid. The
 // digest is a special case, and is checked for validity only if present.
+//
+// Note: The digest check has been removed as is planned to be added back in
+// at a later time.
 func (n Name) IsValid() bool {
-	if n.RawDigest != "" && !isValidPart(kindDigest, n.RawDigest) {
-		return false
-	}
 	return n.IsFullyQualified()
 }
 

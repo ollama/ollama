@@ -19,7 +19,7 @@ Logs will often be helpful in diagnosing the problem (see
 
 ## System Requirements
 
-* Windows 10 or newer, Home or Pro
+* Windows 10 22H2 or newer, Home or Pro
 * NVIDIA 452.39 or newer Drivers if you have an NVIDIA card
 * AMD Radeon Driver https://www.amd.com/en/support if you have a Radeon card
 

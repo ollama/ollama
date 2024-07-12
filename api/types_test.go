@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -107,25 +108,27 @@ func TestDurationMarshalUnmarshal(t *testing.T) {
 }
 
 func TestUseMmapParsingFromJSON(t *testing.T) {
+	tr := true
+	fa := false
 	tests := []struct {
 		name string
 		req  string
-		exp  TriState
+		exp  *bool
 	}{
 		{
 			name: "Undefined",
 			req:  `{ }`,
-			exp:  TriStateUndefined,
+			exp:  nil,
 		},
 		{
 			name: "True",
 			req:  `{ "use_mmap": true }`,
-			exp:  TriStateTrue,
+			exp:  &tr,
 		},
 		{
 			name: "False",
 			req:  `{ "use_mmap": false }`,
-			exp:  TriStateFalse,
+			exp:  &fa,
 		},
 	}
 
@@ -138,6 +141,70 @@ func TestUseMmapParsingFromJSON(t *testing.T) {
 			err = opts.FromMap(oMap)
 			require.NoError(t, err)
 			assert.Equal(t, test.exp, opts.UseMMap)
+		})
+	}
+}
+
+func TestUseMmapFormatParams(t *testing.T) {
+	tr := true
+	fa := false
+	tests := []struct {
+		name string
+		req  map[string][]string
+		exp  *bool
+		err  error
+	}{
+		{
+			name: "True",
+			req: map[string][]string{
+				"use_mmap": {"true"},
+			},
+			exp: &tr,
+			err: nil,
+		},
+		{
+			name: "False",
+			req: map[string][]string{
+				"use_mmap": {"false"},
+			},
+			exp: &fa,
+			err: nil,
+		},
+		{
+			name: "Numeric True",
+			req: map[string][]string{
+				"use_mmap": {"1"},
+			},
+			exp: &tr,
+			err: nil,
+		},
+		{
+			name: "Numeric False",
+			req: map[string][]string{
+				"use_mmap": {"0"},
+			},
+			exp: &fa,
+			err: nil,
+		},
+		{
+			name: "invalid string",
+			req: map[string][]string{
+				"use_mmap": {"foo"},
+			},
+			exp: nil,
+			err: fmt.Errorf("invalid bool value [foo]"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp, err := FormatParams(test.req)
+			require.Equal(t, test.err, err)
+			respVal, ok := resp["use_mmap"]
+			if test.exp != nil {
+				assert.True(t, ok, "resp: %v", resp)
+				assert.Equal(t, *test.exp, *respVal.(*bool))
+			}
 		})
 	}
 }
