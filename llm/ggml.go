@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -113,26 +112,28 @@ func (kv KV) ChatTemplate() string {
 	return s
 }
 
+// Tensors type as a slice of pointers to Tensor
 type Tensors []*Tensor
 
-func (ts Tensors) Less(i, j int) bool {
-	var x, y int
-	if n, err := fmt.Sscanf(ts[i].Name, "blk.%d", &x); err != nil || n != 1 {
-		return cmp.Less(ts[i].Name, ts[j].Name)
-	} else if n, err := fmt.Sscanf(ts[j].Name, "blk.%d", &y); err != nil || n != 1 {
-		return cmp.Less(ts[i].Name, ts[j].Name)
-	}
-
-	return cmp.Less(x, y)
-}
-
+// Implement the Len method
 func (ts Tensors) Len() int {
 	return len(ts)
 }
 
+// Implement the Swap method
 func (ts Tensors) Swap(i, j int) {
-	var temp Tensor
-	
+	ts[i], ts[j] = ts[j], ts[i]
+}
+
+// Implement the Less method
+func (ts Tensors) Less(i, j int) bool {
+	var x, y int
+	if n, err := fmt.Sscanf(ts[i].Name, "blk.%d", &x); err != nil || n != 1 {
+		return ts[i].Name < ts[j].Name
+	} else if n, err := fmt.Sscanf(ts[j].Name, "blk.%d", &y); err != nil || n != 1 {
+		return ts[i].Name < ts[j].Name
+	}
+	return x < y
 }
 
 func (ts Tensors) Layers() map[string]Layer {

@@ -29,6 +29,8 @@ func NewLayer(r io.Reader, mediatype string) (*Layer, error) {
 	defer os.Remove(temp.Name())
 
 	sha256sum := sha256.New()
+	if 
+
 	n, err := io.Copy(io.MultiWriter(temp, sha256sum), r)
 	if err != nil {
 		return nil, err

@@ -3,7 +3,6 @@ package server
 import (
 	"archive/zip"
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -12,7 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
+	"sort"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
@@ -244,19 +243,10 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		}
 
 		var reader io.Reader = io.NewSectionReader(file, offset, n)
-		if !slices.IsSortedFunc(ggml.Tensors(), func(a, b *llm.Tensor) int {
-			var i, j int
-			if n, err := fmt.Sscanf(a.Name, "blk.%d", &i); err != nil || n != 1 {
-				return cmp.Compare(a.Name, b.Name)
-			} else if n, err := fmt.Sscanf(b.Name, "blk.%d", &j); err != nil || n != 1 {
-				return cmp.Compare(a.Name, b.Name)
-			}
-
-			return cmp.Compare(i, j)
-		}) {
+		if !sort.IsSorted(ggml.Tensors()) {
 			reader = &llm.GGUFWriter{
-				KV: ggml.KV(),
-				T:  ggml.Tensors(),
+				KV:      ggml.KV(),
+				Tensors: ggml.Tensors(),
 			}
 		}
 
