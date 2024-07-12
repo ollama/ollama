@@ -306,9 +306,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	reqEmbedArray := make([]string, len(reqEmbed))
 	errCh := make(chan error, len(reqEmbed))
+	sem := make(chan struct{}, 5)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	sem := make(chan struct{}, 5)
 	for i, s := range reqEmbed {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -317,7 +317,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			defer func() { <-sem }()
 			tokens, err := r.Tokenize(c.Request.Context(), s)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				errCh <- err
 				return
 			}
 
@@ -327,18 +327,15 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 					tokens = tokens[:ctxLen]
 					s, err = r.Detokenize(c.Request.Context(), tokens)
 					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+						errCh <- err
 						return
 					}
 				} else {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "input length exceeds maximum context length"})
+					errCh <- err
 					return
 				}
 			}
-			if err != nil {
-				errCh <- err
-				return
-			}
+
 			mu.Lock()
 			reqEmbedArray[i] = s
 			mu.Unlock()
