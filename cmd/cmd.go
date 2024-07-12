@@ -291,12 +291,6 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 	}
 
 	var pw progressWriter
-	// Create a progress bar and start a goroutine to update it
-	// JK Let's use a percentage
-
-	//bar := progress.NewBar("transferring model data...", fileSize, 0)
-	//p.Add("transferring model data", bar)
-
 	status := "transferring model data 0%"
 	spinner.SetMessage(status)
 
