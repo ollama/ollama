@@ -1,7 +1,9 @@
 ARG GOLANG_VERSION=1.22.5
 ARG CMAKE_VERSION=3.22.1
 ARG CUDA_VERSION_11=11.3.1
+ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
 ARG CUDA_VERSION_12=12.4.0
+ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
 ARG ROCM_VERSION=6.1.2
 ARG JETPACK_6=r36.2.0
 ARG JETPACK_5=r35.4.1
@@ -21,10 +23,11 @@ ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
+ARG CUDA_V11_ARCHITECTURES
 ENV GOARCH amd64 
 RUN OLLAMA_SKIP_STATIC_GENERATE=1 \
     OLLAMA_SKIP_CPU_GENERATE=1 \
-    CMAKE_CUDA_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86" \
+    CMAKE_CUDA_ARCHITECTURES="${CUDA_V11_ARCHITECTURES}" \
     CUDA_VARIANT="_v11" \
     bash gen_linux.sh
 
@@ -36,11 +39,13 @@ ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
+ARG CUDA_V12_ARCHITECTURES
 ENV GOARCH amd64 
 RUN OLLAMA_SKIP_STATIC_GENERATE=1 \
     OLLAMA_SKIP_CPU_GENERATE=1 \
-    CMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a" \
+    CMAKE_CUDA_ARCHITECTURES="${CUDA_V12_ARCHITECTURES}" \
     CUDA_VARIANT="_v12" \
+    OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on" \
     bash gen_linux.sh
 
 FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION_11-devel-rockylinux8 AS cuda-11-build-server-arm64
@@ -51,8 +56,30 @@ ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
+ARG CUDA_V11_ARCHITECTURES
 ENV GOARCH arm64 
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
+RUN OLLAMA_SKIP_STATIC_GENERATE=1 \
+    OLLAMA_SKIP_CPU_GENERATE=1 \
+    CMAKE_CUDA_ARCHITECTURES="${CUDA_V11_ARCHITECTURES}" \
+    CUDA_VARIANT="_v11" \
+    bash gen_linux.sh
+
+FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION_12-devel-rockylinux8 AS cuda-12-build-server-arm64
+ARG CMAKE_VERSION
+COPY ./scripts/rh_linux_deps.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
+ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
+ARG CGO_CFLAGS
+ARG CUDA_V12_ARCHITECTURES
+ENV GOARCH arm64 
+RUN OLLAMA_SKIP_STATIC_GENERATE=1 \
+    OLLAMA_SKIP_CPU_GENERATE=1 \
+    CMAKE_CUDA_ARCHITECTURES="${CUDA_V12_ARCHITECTURES}" \
+    CUDA_VARIANT="_v12" \
+    OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on" \
+    bash gen_linux.sh
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_6} AS cuda-build-jetpack6-arm64
 ARG CMAKE_VERSION
@@ -167,6 +194,8 @@ COPY . .
 COPY --from=static-build-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cuda-11-build-server-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=cuda-11-build-server-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cuda-12-build-server-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
+COPY --from=cuda-12-build-server-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 ## arm binary += 381M 
 COPY --from=cuda-build-jetpack6-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cuda-build-jetpack6-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
