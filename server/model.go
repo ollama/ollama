@@ -228,7 +228,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 
 	var offset int64
 	for offset < stat.Size() {
-		ggml, n, err := llm.DecodeGGML(file, 0)
+		ggml, n, err := llm.DecodeGGML(file, -1)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
