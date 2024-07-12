@@ -7,6 +7,7 @@
 $ErrorActionPreference = "Stop"
 
 function checkEnv() {
+    $script:ARCH = $Env:PROCESSOR_ARCHITECTURE.ToLower()
     $script:TARGET_ARCH=$Env:PROCESSOR_ARCHITECTURE.ToLower()
     Write-host "Building for ${script:TARGET_ARCH}"
     write-host "Locating required tools and paths"
@@ -15,26 +16,23 @@ function checkEnv() {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
-    # Try to find the CUDA dir
-    if ($null -eq $env:NVIDIA_DIR) {
+    # Locate CUDA versions
+    # Note: this assumes every version found will be built
+    $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
+    if ($cudaList.length -eq 0) {
         $d=(get-command -ea 'silentlycontinue' nvcc).path
-        if ($d -ne $null) {
-            $script:NVIDIA_DIR=($d| split-path -parent)
-        } else {
-            $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
-            if ($cudaList.length > 0) {
-                $script:NVIDIA_DIR=$cudaList[0]
-            }
+        if ($null -ne $d) {
+            $script:CUDA_DIRS=@($d| split-path -parent)
         }
     } else {
-        $script:NVIDIA_DIR=$env:NVIDIA_DIR
+        $script:CUDA_DIRS=$cudaList
     }
     
     $script:INNO_SETUP_DIR=(get-item "C:\Program Files*\Inno Setup*\")[0]
 
     $script:DEPS_DIR="${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}"
     $env:CGO_ENABLED="1"
-    echo "Checking version"
+    Write-Output "Checking version"
     if (!$env:VERSION) {
         $data=(git describe --tags --first-parent --abbrev=7 --long --dirty --always)
         $pattern="v(.+)"
@@ -71,7 +69,48 @@ function checkEnv() {
 function buildOllama() {
     write-host "Building ollama CLI"
     if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
-        & go generate ./...
+        Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
+
+        # TODO - consider trying to parallelize this with Start-ThreadJob, but env vars can't be used to toggle
+        #        which targets to build
+
+        # Start by skipping CUDA to build everything else
+        pwsh -Command { $env:OLLAMA_SKIP_CUDA_GENERATE="1"; & go generate ./... }
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+
+        # Then skip everyhting else and build all the CUDA variants
+        foreach ($env:CUDA_LIB_DIR in $script:CUDA_DIRS) {
+            write-host "Building CUDA ${env:CUDA_LIB_DIR}"
+
+            if ($env:CUDA_LIB_DIR.Contains("v12")) {
+                pwsh -Command {
+                    $env:OLLAMA_SKIP_CUDA_GENERATE=""
+                    $env:OLLAMA_SKIP_STATIC_GENERATE="1"
+                    $env:OLLAMA_SKIP_CPU_GENERATE="1"
+                    $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
+                    $env:OLLAMA_SKIP_ROCM_GENERATE="1"
+                    $env:CMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
+                    $env:OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on"
+                    $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
+                    $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
+                    & go generate ./...
+                }
+            } else {
+                pwsh -Command {
+                    $env:OLLAMA_SKIP_CUDA_GENERATE=""
+                    $env:OLLAMA_SKIP_STATIC_GENERATE="1"
+                    $env:OLLAMA_SKIP_CPU_GENERATE="1"
+                    $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
+                    $env:OLLAMA_SKIP_ROCM_GENERATE="1"
+                    $env:CMAKE_CUDA_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
+                    $env:OLLAMA_CUSTOM_CUDA_DEFS=""
+                    $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
+                    $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
+                    & go generate ./...
+                }
+            }
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"

@@ -261,7 +261,7 @@ function build_cuda() {
     if ((-not "${env:OLLAMA_SKIP_CUDA_GENERATE}") -and ("${script:CUDA_LIB_DIR}")) {
         # Then build cuda as a dynamically loaded library
         $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
-        $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
+        $script:CUDA_VERSION=((get-item ($nvcc | split-path | split-path)).Basename -Split "\.")[0]
         if ($null -ne $script:CUDA_VERSION) {
             $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
         }
@@ -273,9 +273,9 @@ function build_cuda() {
             "-DGGML_CUDA=ON",
             "-DGGML_AVX=on",
             "-DGGML_AVX2=off",
-            "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR",
             "-DCMAKE_CUDA_FLAGS=-t8",
-            "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}"
+            "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}",
+            "-DCMAKE_CUDA_COMPILER_TOOLKIT_ROOT=$env:CUDA_PATH"
             )
         if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
             write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${env:OLLAMA_CUSTOM_CUDA_DEFS}`""
