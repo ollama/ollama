@@ -135,6 +135,7 @@ WizardReady=Ollama Windows Preview
 ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
 
+
 ;FinishedHeadingLabel=Run your first model
 ;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3
 ;ClickFinish=%n
