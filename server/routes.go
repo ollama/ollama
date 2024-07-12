@@ -335,7 +335,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 					return
 				}
 			}
-
 			mu.Lock()
 			reqEmbedArray[i] = s
 			mu.Unlock()
