@@ -183,8 +183,8 @@ jobs:
           name: windows-rocm-deps
           path: dist/deps/*
 
-  # CUDA generation step
-  generate-windows-cuda:
+  # CUDA v11 generation step
+  generate-windows-cuda-v11:
     environment: release
     runs-on: windows
     env:
@@ -256,7 +256,89 @@ jobs:
           cp "${NVIDIA_DIR}\cublasLt64_*.dll" "dist\deps\"
       - uses: actions/upload-artifact@v4
         with:
-          name: generate-windows-cuda
+          name: generate-windows-cuda-v11
+          path: |
+            llm/build/**/bin/*
+            dist/windows-amd64/**
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-cuda-deps
+          path: dist/deps/*
+
+  # CUDA v12 generation step
+  generate-windows-cuda-v12:
+    environment: release
+    runs-on: windows
+    env:
+      KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set Version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+      - uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: 'ollama'
+          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
+      - run: echo "${{ vars.OLLAMA_CERT }}" > ollama_inc.crt
+      - name: install Windows SDK 8.1 to get signtool
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading SDK"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
+          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
+          write-host "Win SDK 8.1 installed"
+          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
+      - name: install signing plugin
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading plugin"
+          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
+          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
+          write-host "Installing plugin"
+          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
+          write-host "plugin installed"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 'Install CUDA'
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading CUDA Installer"
+          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_551.61_windows.exe" -OutFile "${env:RUNNER_TEMP}\cuda-install.exe"
+          write-host "Installing CUDA"
+          Start-Process "${env:RUNNER_TEMP}\cuda-install.exe" -ArgumentList '-s' -NoNewWindow -Wait
+          write-host "Completed CUDA"
+          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
+          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
+          echo "$cudaPath\bin" >> $env:GITHUB_PATH
+          echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
+      - name: 'Verify CUDA'
+        run: nvcc -V
+      - run: go get ./...
+      - name: go generate
+        run: |
+          $gopath=(get-command go).source | split-path -parent
+          $cudabin=(get-command nvcc).source | split-path
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$cudabin;$env:PATH"
+          $env:OLLAMA_SKIP_CPU_GENERATE="1"
+          go generate -x ./...
+      - name: 'gather cuda dependencies'
+        run: |
+          $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
+          md "dist\deps"
+          cp "${NVIDIA_DIR}\cudart64_*.dll" "dist\deps\"
+          cp "${NVIDIA_DIR}\cublas64_*.dll" "dist\deps\"
+          cp "${NVIDIA_DIR}\cublasLt64_*.dll" "dist\deps\"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generate-windows-cuda-v12
           path: |
             llm/build/**/bin/*
             dist/windows-amd64/**
@@ -270,7 +352,8 @@ jobs:
     environment: release
     runs-on: windows
     needs:
-      - generate-windows-cuda
+      - generate-windows-cuda-v11
+      - generate-windows-cuda-v12
       - generate-windows-rocm
       - generate-windows-cpu
     env:
@@ -314,7 +397,7 @@ jobs:
           name: generate-windows-cpu
       - uses: actions/download-artifact@v4
         with:
-          name: generate-windows-cuda
+          name: generate-windows-cuda-v11
       - uses: actions/download-artifact@v4
         with:
           name: windows-cuda-deps
