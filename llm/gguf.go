@@ -266,12 +266,12 @@ func readGGUF[T any](llm *gguf, r io.Reader) (T, error) {
 	return t, err
 }
 
-func writeGGUF[V any](llm *gguf, w io.Writer, t uint32, v V) error {
-	if err := binary.Write(w, llm.ByteOrder, t); err != nil {
+func writeGGUF[V any](w io.Writer, t uint32, v V) error {
+	if err := binary.Write(w, binary.LittleEndian, t); err != nil {
 		return err
 	}
 
-	return binary.Write(w, llm.ByteOrder, v)
+	return binary.Write(w, binary.LittleEndian, v)
 }
 
 func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
@@ -335,12 +335,12 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 	return string(buf), nil
 }
 
-func writeGGUFString(llm *gguf, w io.Writer, s string) error {
-	if err := binary.Write(w, llm.ByteOrder, ggufTypeString); err != nil {
+func writeGGUFString(w io.Writer, s string) error {
+	if err := binary.Write(w, binary.LittleEndian, ggufTypeString); err != nil {
 		return err
 	}
 
-	if err := binary.Write(w, llm.ByteOrder, uint64(len(s))); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, uint64(len(s))); err != nil {
 		return err
 	}
 
@@ -481,21 +481,21 @@ func readGGUFArray(llm *gguf, r io.Reader) (*array, error) {
 	return a, nil
 }
 
-func writeGGUFArray[S ~[]E, E any](llm *gguf, w io.Writer, t uint32, s S) error {
-	if err := binary.Write(w, llm.ByteOrder, ggufTypeArray); err != nil {
+func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
+	if err := binary.Write(w, binary.LittleEndian, ggufTypeArray); err != nil {
 		return err
 	}
 
-	if err := binary.Write(w, llm.ByteOrder, t); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, t); err != nil {
 		return err
 	}
 
-	if err := binary.Write(w, llm.ByteOrder, uint64(len(s))); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, uint64(len(s))); err != nil {
 		return err
 	}
 
 	for _, e := range s {
-		if err := binary.Write(w, llm.ByteOrder, e); err != nil {
+		if err := binary.Write(w, binary.LittleEndian, e); err != nil {
 			return err
 		}
 	}
@@ -593,19 +593,19 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 		var err error
 		switch v := v.(type) {
 		case uint32:
-			err = writeGGUF(llm, ws, ggufTypeUint32, v)
+			err = writeGGUF(ws, ggufTypeUint32, v)
 		case float32:
-			err = writeGGUF(llm, ws, ggufTypeFloat32, v)
+			err = writeGGUF(ws, ggufTypeFloat32, v)
 		case bool:
-			err = writeGGUF(llm, ws, ggufTypeBool, v)
+			err = writeGGUF(ws, ggufTypeBool, v)
 		case string:
-			err = writeGGUFString(llm, ws, v)
+			err = writeGGUFString(ws, v)
 		case []int32:
-			err = writeGGUFArray(llm, ws, ggufTypeInt32, v)
+			err = writeGGUFArray(ws, ggufTypeInt32, v)
 		case []uint32:
-			err = writeGGUFArray(llm, ws, ggufTypeUint32, v)
+			err = writeGGUFArray(ws, ggufTypeUint32, v)
 		case []float32:
-			err = writeGGUFArray(llm, ws, ggufTypeFloat32, v)
+			err = writeGGUFArray(ws, ggufTypeFloat32, v)
 		case []string:
 			if err := binary.Write(ws, llm.ByteOrder, ggufTypeArray); err != nil {
 				return err
