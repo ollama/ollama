@@ -46,7 +46,7 @@ OutputDir=..\dist\
 ; Disable logging once everything's battle tested
 ; Filename will be %TEMP%\Setup Log*.txt
 SetupLogging=yes
-CloseApplications=force
+CloseApplications=yes
 RestartApplications=no
 
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
