@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/require"
 )
 
 func TestAllMiniLMEmbed(t *testing.T) {
@@ -116,11 +115,11 @@ func TestAllMiniLmEmbedTruncate(t *testing.T) {
 	}
 
 	if res["Target Truncation"].Embeddings[0][0] != res["Default Truncate"].Embeddings[0][0] {
-		t.Fatalf("expected default request to truncate correctly")
+		t.Fatal("expected default request to truncate correctly")
 	}
 
 	if res["Default Truncate"].Embeddings[0][0] != res["Explicit Truncate"].Embeddings[0][0] {
-		t.Fatalf("expected default request and truncate true request to be the same")
+		t.Fatal("expected default request and truncate true request to be the same")
 	}
 
 	// check that truncate set to false returns an error if context length is exceeded
@@ -132,14 +131,16 @@ func TestAllMiniLmEmbedTruncate(t *testing.T) {
 	})
 
 	if err == nil {
-		t.Fatalf("expected error, got nil")
+		t.Fatal("expected error, got nil")
 	}
 }
 
 func embedTestHelper(ctx context.Context, t *testing.T, req api.EmbedRequest) (*api.EmbedResponse, error) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
+		t.Fatalf("failed to pull model %s: %v", req.Model, err)
+	}
 
 	response, err := client.Embed(ctx, &req)
 

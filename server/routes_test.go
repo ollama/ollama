@@ -483,7 +483,7 @@ func TestNormalize(t *testing.T) {
 		{input: []float32{0, 0, 0}},
 	}
 
-	assertNorm := func(vec []float32) (res bool) {
+	isNormalized := func(vec []float32) (res bool) {
 		sum := 0.0
 		for _, v := range vec {
 			sum += float64(v * v)
@@ -498,7 +498,7 @@ func TestNormalize(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run("", func(t *testing.T) {
 			normalized := normalize(tc.input)
-			if !assertNorm(normalized) {
+			if !isNormalized(normalized) {
 				t.Errorf("Vector %v is not normalized", tc.input)
 			}
 		})
