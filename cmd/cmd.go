@@ -115,7 +115,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = tempfile
 			}
 
-			// spinner.Stop()
 			digest, err := createBlob(cmd, client, path, spinner)
 			if err != nil {
 				return err
