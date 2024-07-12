@@ -41,6 +41,7 @@ RUN OLLAMA_SKIP_STATIC_GENERATE=1 \
     OLLAMA_SKIP_CPU_GENERATE=1 \
     CMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a" \
     CUDA_VARIANT="_v12" \
+    OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on" \
     bash gen_linux.sh
 
 FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION_11-devel-rockylinux8 AS cuda-11-build-server-arm64
