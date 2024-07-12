@@ -1,15 +1,5 @@
-{{- if .Messages }}
-{{- if .System }}System: {{ .System }}
-{{ end }}
-{{- range .Messages }}
-{{- if eq .Role "user" }}User:
-{{ else if eq .Role "assistant" }}Falcon:
-{{ end }}{{ .Content }}
-{{ end }}Falcon:
-{{ else -}}
 {{ if .System }}System: {{ .System }}
 {{ end }}{{ if .Prompt }}User:
 {{ .Prompt }}
 {{ end }}Falcon:
 {{ .Response }}
-{{ end -}}
