@@ -128,6 +128,7 @@ Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
 ; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
 [InstallDelete]
+Type: filesandordirs; Name: "{%TEMP}\ollama*"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
 
 [Messages]
