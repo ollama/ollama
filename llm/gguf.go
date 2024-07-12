@@ -695,3 +695,21 @@ func (llm *gguf) Encode(ws io.WriteSeeker, kv KV, tensors []Tensor) error {
 func (gguf) padding(offset, align int64) int64 {
 	return (align - offset%align) % align
 }
+
+// Reader and WriterTo
+type GGUFWriter struct {
+	KV KV
+	T  []*Tensor
+}
+
+var _ io.Reader = (*GGUFWriter)(nil)
+
+var _ io.WriterTo = (*GGUFWriter)(nil)
+
+func (GGUFWriter) Read([]byte) (int, error) {
+	panic("not implemeneted")
+}
+
+func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
+	
+}
