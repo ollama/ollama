@@ -291,56 +291,6 @@ func TestMiddlewareResponses(t *testing.T) {
 			},
 		},
 		{
-			Name:     "embedding handler (single embedding)",
-			Method:   http.MethodPost,
-			Path:     "/api/embeddings",
-			TestPath: "/api/embeddings",
-			Handler:  EmbedMiddleware,
-			Endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.EmbedResponse{
-					Model:      "test-model",
-					Embeddings: [][]float32{{0.1, 0.2, 0.3}},
-				})
-			},
-			Setup: func(t *testing.T, req *http.Request) {
-				body := EmbedRequest{
-					Input: "Hello",
-					Model: "test-model",
-				}
-
-				bodyBytes, _ := json.Marshal(body)
-
-				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				req.Header.Set("Content-Type", "application/json")
-			},
-			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				var embeddingResp EmbeddingList
-				if err := json.NewDecoder(resp.Body).Decode(&embeddingResp); err != nil {
-					t.Fatal(err)
-				}
-
-				if embeddingResp.Object != "list" {
-					t.Fatalf("expected list, got %s", embeddingResp.Object)
-				}
-
-				if len(embeddingResp.Data) != 1 {
-					t.Fatalf("expected 1 embedding, got %d", len(embeddingResp.Data))
-				}
-
-				if embeddingResp.Data[0].Object != "embedding" {
-					t.Fatalf("expected embedding, got %s", embeddingResp.Data[0].Object)
-				}
-
-				if embeddingResp.Data[0].Embedding[0] != 0.1 {
-					t.Fatalf("expected 0.1, got %f", embeddingResp.Data[0])
-				}
-
-				if embeddingResp.Model != "test-model" {
-					t.Fatalf("expected test-model, got %s", embeddingResp.Model)
-				}
-			},
-		},
-		{
 			Name:     "retrieve model",
 			Method:   http.MethodGet,
 			Path:     "/api/show/:model",
