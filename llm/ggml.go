@@ -476,3 +476,11 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 
 	return
 }
+
+type TensorWriter struct {
+	io.Reader
+}
+
+func (tw TensorWriter) WriteTo(w io.Writer) (int64, error) {
+	return io.Copy(w, tw.Reader)
+}

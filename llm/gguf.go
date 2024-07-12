@@ -723,7 +723,7 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 		return 0, err
 	}
 
-	if err := binary.Write(w, binary.LittleEndian, uint64(len(gguf.T))); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, uint64(len(gguf.Tensors))); err != nil {
 		return 0, err
 	}
 
@@ -736,7 +736,7 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 
 	for _, key := range keys {
 		if err := ggufWriteKV(w, key, gguf.KV[key]); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -762,9 +762,13 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 }
 
 func ggufWriteTensor(io.Writer, *Tensor, int64) error {
-
+	return nil
 }
 
 func ggufWriteTensorInfo(io.Writer, *Tensor) error {
+	return nil
+}
 
+func ggufWriteKV(io.Writer, string, any) error {
+	return nil
 }

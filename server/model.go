@@ -245,11 +245,24 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		var reader io.Reader = io.NewSectionReader(file, offset, n)
 		if !sort.IsSorted(ggml.Tensors()) {
 			// create a new Tensors containing Tensors that have a writeTo
+			var tensors llm.Tensors
+
+			for _, tensor := range ggml.Tensors() {
+				tensors = append(tensors, &llm.Tensor{
+					Name:  tensor.Name,
+					Kind:  tensor.Kind,
+					Shape: tensor.Shape,
+
+					WriterTo: &llm.TensorWriter{
+						Reader: io.NewSectionReader(file, int64(tensor.Offset), int64(tensor.Size())),
+					},
+				})
+			}
 
 			reader = &llm.GGUFWriter{
 				KV: ggml.KV(),
 				// Update .Tensors
-				Tensors: ggml.Tensors(),
+				Tensors: tensors,
 			}
 		}
 
