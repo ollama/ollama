@@ -126,14 +126,14 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			spinner.Stop()
 
 			bar, ok := bars[resp.Digest]
-			if ok {
-				bar.Set(resp.Completed)
+			if !ok {
+				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)				
 				return nil
 			}
 
-			bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
-			bars[resp.Digest] = bar
-			p.Add(resp.Digest, bar)
+			bar.Set(resp.Completed)
 			return nil
 		}
 
