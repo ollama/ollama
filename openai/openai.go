@@ -292,16 +292,13 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					}
 					message.Content = text
 				case "image_url":
-					urlMap, ok := data["image_url"].(map[string]any)
 					var url string
-					if ok {
-						url, ok = urlMap["url"].(string)
-						if !ok {
+					if urlMap, ok := data["image_url"].(map[string]any); ok {
+						if url, ok = urlMap["url"].(string); !ok {
 							return nil, fmt.Errorf("invalid message format")
 						}
 					} else {
-						url, ok = data["image_url"].(string)
-						if !ok {
+						if url, ok = data["image_url"].(string); !ok {
 							return nil, fmt.Errorf("invalid message format")
 						}
 					}
