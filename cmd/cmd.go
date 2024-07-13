@@ -1283,9 +1283,10 @@ func NewCLI() *cobra.Command {
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 
 	listCmd := &cobra.Command{
-		Use:     "list",
+		Use:     "list [filter]",
 		Aliases: []string{"ls"},
 		Short:   "List models",
+		Example: "  ollama list\n  ollama list llama",
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
