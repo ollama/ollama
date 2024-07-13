@@ -336,6 +336,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
 - [LangChainRust](https://github.com/Abraxas-365/langchain-rust) with [example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
+- [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 - [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
