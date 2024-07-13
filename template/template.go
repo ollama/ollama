@@ -178,19 +178,19 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 
 		switch m.Role {
 		case "system":
-			system = m.Content
 			if prompt != "" || response != "" {
 				if err := execute(); err != nil {
 					return err
 				}
 			}
+			system = m.Content
 		case "user":
-			prompt = m.Content
 			if response != "" {
 				if err := execute(); err != nil {
 					return err
 				}
 			}
+			prompt = m.Content
 		case "assistant":
 			response = m.Content
 		}
