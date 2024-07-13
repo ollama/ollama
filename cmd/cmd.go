@@ -1309,7 +1309,7 @@ func NewCLI() *cobra.Command {
 		Use:     "list [filter]",
 		Aliases: []string{"ls"},
 		Short:   "List models",
-		Example: "  ollama list\n  ollama list llama",
+		Example: "  ollama list\n  ollama list llama\n  ollama list --sort size",
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
