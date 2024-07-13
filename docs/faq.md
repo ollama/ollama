@@ -287,5 +287,5 @@ export OLLAMA_DOWNLOAD_CONN=2
 ````
 or when needed by running the server manually
 ```bash
-OLLAMA_DOWNLOAD_CONN=2 ollama server
+OLLAMA_DOWNLOAD_CONN=2 ollama serve
 ````
