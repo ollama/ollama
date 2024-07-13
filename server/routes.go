@@ -194,6 +194,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
+		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
