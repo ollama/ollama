@@ -149,29 +149,19 @@ type Values struct {
 }
 
 func (t *Template) Execute(w io.Writer, v Values) error {
-	system, collated := collate(v.Messages)
+	system, messages := collate(v.Messages)
 	if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
 		return t.Template.Execute(w, map[string]any{
 			"System":   system,
-			"Messages": collated,
+			"Messages": messages,
 		})
 	}
 
 	system = ""
-
 	var b bytes.Buffer
 	var prompt, response string
-	for i, m := range collated {
-		switch m.Role {
-		case "system":
-			system = m.Content
-		case "user":
-			prompt = m.Content
-		case "assistant":
-			response = m.Content
-		}
-
-		if i != len(collated)-1 && prompt != "" && response != "" {
+	for _, m := range messages {
+		execute := func () error {
 			if err := t.Template.Execute(&b, map[string]any{
 				"System":   system,
 				"Prompt":   prompt,
@@ -183,6 +173,26 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			system = ""
 			prompt = ""
 			response = ""
+			return nil
+		}
+
+		switch m.Role {
+		case "system":
+			system = m.Content
+			if prompt != "" || response != "" {
+				if err := execute(); err != nil {
+					return err
+				}
+			}
+		case "user":
+			prompt = m.Content
+			if response != "" {
+				if err := execute(); err != nil {
+					return err
+				}
+			}
+		case "assistant":
+			response = m.Content
 		}
 	}
 
