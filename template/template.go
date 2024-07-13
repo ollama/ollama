@@ -157,6 +157,8 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		})
 	}
 
+	system = ""
+
 	var b bytes.Buffer
 	var prompt, response string
 	for i, m := range collated {
@@ -199,7 +201,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 
 	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
 	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
-		"System": "",
+		"System": system,
 		"Prompt": prompt,
 	}); err != nil {
 		return err

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
 )
@@ -164,6 +165,19 @@ func TestChatPrompt(t *testing.T) {
 				prompt: "You are the Test Who Lived. You're a test, Harry! I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
 			},
 		},
+		{
+			name:  "out of order system",
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "system", Content: "You are the Test Who Lived."},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
+			},
+			expect: expect{
+				prompt: "You're a test, Harry! I-I'm a what? You are the Test Who Lived. A test. And a thumping good one at that, I'd wager. ",
+			},
+		},
 	}
 
 	tmpl, err := template.Parse(`
@@ -185,6 +199,10 @@ func TestChatPrompt(t *testing.T) {
 
 			if tt.prompt != prompt {
 				t.Errorf("expected %q, got %q", tt.prompt, prompt)
+			}
+
+			if diff := cmp.Diff(prompt, tt.prompt); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
 			}
 
 			if len(images) != len(tt.images) {

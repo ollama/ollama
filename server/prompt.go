@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
-	"slices"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
@@ -17,26 +16,18 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message) (prompt string, images []llm.ImageData, _ error) {
-	// pull out any system messages which should always be included in the prompt
 	var system []api.Message
-	msgs = slices.DeleteFunc(msgs, func(m api.Message) bool {
-		if m.Role == "system" {
-			system = append(system, m)
-			return true
-		}
-
-		return false
-	})
-
-	if len(system) == 0 && m.System != "" {
-		// add model system prompt since it wasn't provided
-		system = append(system, api.Message{Role: "system", Content: m.System})
-	}
-
 	// always include the last message
 	n := len(msgs) - 1
 	// in reverse, find all messages that fit into context window
 	for i := n - 1; i >= 0; i-- {
+		system = make([]api.Message, 0)
+		for j := range i {
+			if msgs[j].Role == "system" {
+				system = append(system, msgs[j])
+			}
+		}
+
 		var b bytes.Buffer
 		if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[i:]...)}); err != nil {
 			return "", nil, err
