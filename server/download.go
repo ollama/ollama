@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
@@ -29,6 +30,7 @@ const maxRetries = 6
 
 var errMaxRetriesExceeded = errors.New("max retries exceeded")
 var errPartStalled = errors.New("part stalled")
+var numDownloadParts = envconfig.DownloadConnections
 
 var blobDownloadManager sync.Map
 
@@ -59,7 +61,6 @@ type blobDownloadPart struct {
 }
 
 const (
-	numDownloadParts          = 64
 	minDownloadPartSize int64 = 100 * format.MegaByte
 	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
@@ -111,7 +112,7 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 
 		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
-		size := b.Total / numDownloadParts
+		size := b.Total / int64(numDownloadParts)
 		switch {
 		case size < minDownloadPartSize:
 			size = minDownloadPartSize
@@ -211,6 +212,9 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 }
 
 func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *registryOptions) error {
+	slog.Debug(fmt.Sprintf("Download chunk part %d, range: %s - %s to file: %s",
+		part.N, format.HumanBytes(part.StartsAt()), format.HumanBytes(part.StopsAt()), part.Name()))
+
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		headers := make(http.Header)

@@ -273,3 +273,19 @@ The following server settings may be used to adjust how Ollama handles concurren
 - `OLLAMA_MAX_QUEUE` - The maximum number of requests Ollama will queue when busy before rejecting additional requests. The default is 512
 
 Note: Windows with Radeon GPUs currently default to 1 model maximum due to limitations in ROCm v5.7 for available VRAM reporting.  Once ROCm v6.2 is available, Windows Radeon will follow the defaults above.  You may enable concurrent model loads on Radeon on Windows, but ensure you don't load more models than will fit into your GPUs VRAM.
+
+## How do I select the amount of concurrent connections during model downloads?
+
+The Ollama server can download models using multiple concurrent connections. If the default setting doesn't achieve the desired bandwidth utilization, you can increase the environment variable `OLLAMA_DOWNLOAD_CONN` up to a maximum of 64. The default value is 1, ensuring each Ollama download is given the same priority as other network activities.
+
+- For home and office use, the default value of 1 is ideal to prevent network disruptions on the computer running the Ollama server or its local network. A value of 2 is also reasonable in order to increase network utilization if needed.
+- When running the Ollama server on a host that downloads models each time it is initialized, it may be beneficial to increase the `OLLAMA_DOWNLOAD_CONN` variable. The optimal value is one that maximizes utilization up to the link bandwidth during model downloads without significantly increasing overall network latency, which could negatively impact the API request latency for content generation.
+
+The setting can be set either as environement variable:
+```bash
+export OLLAMA_DOWNLOAD_CONN=2
+````
+or when needed by running the server manually
+```bash
+OLLAMA_DOWNLOAD_CONN=2 ollama server
+````

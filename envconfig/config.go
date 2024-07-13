@@ -53,6 +53,8 @@ var (
 	NoPrune bool
 	// Set via OLLAMA_NUM_PARALLEL in the environment
 	NumParallel int
+	// Set via OLLAMA_DOWNLOAD_CONN in the environment
+	DownloadConnections int
 	// Set via OLLAMA_RUNNERS_DIR in the environment
 	RunnersDir string
 	// Set via OLLAMA_SCHED_SPREAD in the environment
@@ -94,6 +96,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests"},
+		"OLLAMA_DOWNLOAD_CONN":     {"OLLAMA_DOWNLOAD_CONN", DownloadConnections, "Maximum number of concurrent download connections"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowOrigins, "A comma separated list of allowed origins"},
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir, "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread, "Always schedule model across all GPUs"},
@@ -135,6 +138,7 @@ func init() {
 	MaxRunners = 0  // Autoselect
 	MaxQueuedRequests = 512
 	KeepAlive = 5 * time.Minute
+	DownloadConnections = 1
 
 	LoadConfig()
 }
@@ -212,6 +216,23 @@ func LoadConfig() {
 			slog.Error("invalid setting, ignoring", "OLLAMA_NUM_PARALLEL", onp, "error", err)
 		} else {
 			NumParallel = val
+		}
+	}
+
+	if dlp := clean("OLLAMA_DOWNLOAD_CONN"); dlp != "" {
+		const minDownloadConnections = 1
+		const maxDownloadConnections = 64
+
+		val, err := strconv.Atoi(dlp)
+		if err != nil {
+			slog.Error("invalid setting, ignoring", "OLLAMA_DOWNLOAD_CONN", dlp, "error", err)
+		} else if val < minDownloadConnections {
+			slog.Error("invalid setting, ignoring", "OLLAMA_DOWNLOAD_CONN", dlp, "minimum", minDownloadConnections)
+		} else if val > maxDownloadConnections {
+			slog.Error("invalid setting, correcting", "OLLAMA_DOWNLOAD_CONN", dlp, "maximum", maxDownloadConnections)
+			DownloadConnections = maxDownloadConnections
+		} else {
+			DownloadConnections = val
 		}
 	}
 
