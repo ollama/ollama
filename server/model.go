@@ -129,38 +129,24 @@ func extractFromZipFile(p string, file *os.File, fn func(api.ProgressResponse)) 
 }
 
 func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
+	layerType := "application/vnd.ollama.image.model"
+	convertAdapter, err := convert.DetectNPZ(file.Name())
+	if err != nil {
+		return nil, err
+	}
+
 	tempDir, err := os.MkdirTemp(filepath.Dir(file.Name()), "")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tempDir)
 
-	if err := extractFromZipFile(tempDir, file, fn); err != nil {
-		return nil, err
-	}
-
-	mf, err := convert.GetModelFormat(tempDir)
-	if err != nil {
-		return nil, err
-	}
-
-	params, err := mf.GetParams(tempDir)
-	if err != nil {
-		return nil, err
-	}
-
-	mArch, err := mf.GetModelArch("", tempDir, params)
-	if err != nil {
-		return nil, err
-	}
-
-	fn(api.ProgressResponse{Status: "processing tensors"})
-	if err := mArch.GetTensors(); err != nil {
-		return nil, err
-	}
-
-	if err := mArch.LoadVocab(); err != nil {
-		return nil, err
+	if !convertAdapter {
+		if err := extractFromZipFile(tempDir, file, fn); err != nil {
+			return nil, err
+		}
+	} else {
+		layerType = "application/vnd.ollama.image.adapter"
 	}
 
 	fn(api.ProgressResponse{Status: "converting model"})
@@ -174,15 +160,22 @@ func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(a
 	defer temp.Close()
 	defer os.Remove(temp.Name())
 
-	if err = mArch.WriteGGUF(temp); err != nil {
-		return nil, err
+	if convertAdapter {
+		slog.Info("convert adapter")
+		if err := convert.ConvertAdapter(file.Name(), temp); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := convert.Convert(tempDir, temp); err != nil {
+			return nil, err
+		}
 	}
 
 	if _, err := temp.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 
-	layer, err := NewLayer(temp, "application/vnd.ollama.image.model")
+	layer, err := NewLayer(temp, layerType)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +194,11 @@ func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(a
 	layers = append(layers, &layerGGML{layer, ggml})
 
 	intermediateBlobs[digest] = layer.Digest
-	return detectChatTemplate(layers)
+	if !convertAdapter {
+		return detectChatTemplate(layers)
+	}
+
+	return layers, nil
 }
 
 func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {

@@ -1,0 +1,78 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4f6cd687..b8c6896b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -189,3 +189,4 @@ if (LLAMA_BUILD_EXAMPLES)
+     add_subdirectory(examples)
+     add_subdirectory(pocs)
+ endif()
++add_subdirectory(../ext_server ext_server) # ollama
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 2b9ace28..b0151571 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -18609,6 +18609,20 @@ static int llama_apply_lora_from_file_internal(
+             return 1;
+         }
+ 
++        // show tensor data
++        auto show_tensor = [](std::string name, ggml_tensor *t) {
++            LLAMA_LOG_INFO("%s\n", name.c_str());
++
++            for(int i=0; i<3; i++) {
++                for(int j=0; j<3; j++) {
++                    float v = ggml_get_f32_nd(t, i, j, 0, 0);
++                    LLAMA_LOG_INFO("%.8f ", v);
++                }
++                LLAMA_LOG_INFO(" ...\n");
++            }
++            LLAMA_LOG_INFO(" ...\n");
++        };
++
+         // load tensor data
+         auto load_tensor = [&read_buf, &fin](const tensor_meta & tensor_meta, ggml_tensor * tensor) {
+             read_buf.resize(ggml_nbytes(tensor));
+@@ -18619,6 +18633,9 @@ static int llama_apply_lora_from_file_internal(
+         load_tensor(metaA, loraA);
+         load_tensor(metaB, loraB);
+ 
++        show_tensor(base_name + ".loraA", loraA);
++        show_tensor(base_name + ".loraB", loraB);
++
+         // load base model tensor data
+         if (ml) {
+             ml->load_data_for(base_t);
+@@ -18633,8 +18650,10 @@ static int llama_apply_lora_from_file_internal(
+         }
+ 
+         if (base_t->ne[0] != loraA->ne[1] || base_t->ne[1] != loraB->ne[1]) {
+-            LLAMA_LOG_ERROR("%s: incompatible tensor dimensions (%" PRId64 " and %" PRId64 ");"
+-                            " are you sure that this adapter is for this model?\n", __func__, base_t->ne[0], loraA->ne[1]);
++            LLAMA_LOG_ERROR("%s: incompatible tensors: base [%lld, %lld] loraA [%lld, %lld] loraB [%lld, %lld]\n", __func__,
++                            base_t->ne[0], base_t->ne[1],
++                            loraA->ne[0], loraA->ne[1],
++                            loraB->ne[0], loraB->ne[1]);
+             ggml_free(lora_ctx);
+             ggml_backend_buffer_free(lora_buf);
+             ggml_backend_free(backend_cpu);
+@@ -18643,14 +18662,18 @@ static int llama_apply_lora_from_file_internal(
+ 
+         auto build_lora_graph = [&]() {
+             // w = w + BA*s
+-            ggml_tensor * BA = ggml_mul_mat(lora_ctx, loraA, loraB);
++            ggml_tensor * BA = ggml_mul_mat(lora_ctx, loraB, loraA);
+             ggml_set_name(BA, "BA");
+ 
+             if (scaling != 1.0f) {
+-                BA = ggml_scale(lora_ctx, BA, scaling);
++                //BA = ggml_scale(lora_ctx, BA, scaling);
++                BA = ggml_scale(lora_ctx, BA, 20.0);
+                 ggml_set_name(BA, "BA_scaled");
+             }
+ 
++            // transpose matrix before we add
++            BA = ggml_cont(lora_ctx, ggml_transpose(lora_ctx, BA));
++
+             ggml_tensor * r;
+             r = ggml_add_inplace(lora_ctx, base_t, BA);
+             ggml_set_name(r, "r_add");
