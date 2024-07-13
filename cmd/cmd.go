@@ -129,8 +129,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			if !ok {
 				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
-				p.Add(resp.Digest, bar)				
-				return nil
+				p.Add(resp.Digest, bar)
 			}
 
 			bar.Set(resp.Completed)
