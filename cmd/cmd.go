@@ -85,9 +85,8 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			path := modelfile.Commands[i].Args
 			if path == "~" {
 				path = home
-			} else if strings.HasPrefix(path, "~/") {
-				path = filepath.Join(home, path[2:])
 			}
+			path = strings.TrimPrefix(path, "~/")
 
 			if !filepath.IsAbs(path) {
 				path = filepath.Join(filepath.Dir(filename), path)
@@ -127,14 +126,18 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			spinner.Stop()
 
 			bar, ok := bars[resp.Digest]
-			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
-				bars[resp.Digest] = bar
-				p.Add(resp.Digest, bar)
+			if ok {
+				bar.Set(resp.Completed)
+				return nil
 			}
 
-			bar.Set(resp.Completed)
-		} else if status != resp.Status {
+			bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+			bars[resp.Digest] = bar
+			p.Add(resp.Digest, bar)
+			return nil
+		}
+
+		if status != resp.Status {
 			spinner.Stop()
 
 			status = resp.Status
@@ -376,39 +379,38 @@ func errFromUnknownKey(unknownKeyErr error) error {
 	re := regexp.MustCompile(sshKeyPattern)
 	matches := re.FindStringSubmatch(unknownKeyErr.Error())
 
-	if len(matches) > 0 {
-		serverPubKey := matches[0]
+	if len(matches) == 0 {
+		return unknownKeyErr
+	}
 
-		localPubKey, err := auth.GetPublicKey()
+	localPubKey, err := auth.GetPublicKey()
+	if err != nil {
+		return unknownKeyErr
+	}
+
+	serverPubKey := matches[0]
+	if runtime.GOOS == "linux" && serverPubKey != localPubKey {
+		// try the ollama service public key
+		svcPubKey, err := os.ReadFile("/usr/share/ollama/.ollama/id_ed25519.pub")
 		if err != nil {
 			return unknownKeyErr
 		}
-
-		if runtime.GOOS == "linux" && serverPubKey != localPubKey {
-			// try the ollama service public key
-			svcPubKey, err := os.ReadFile("/usr/share/ollama/.ollama/id_ed25519.pub")
-			if err != nil {
-				return unknownKeyErr
-			}
-			localPubKey = strings.TrimSpace(string(svcPubKey))
-		}
-
-		// check if the returned public key matches the local public key, this prevents adding a remote key to the user's account
-		if serverPubKey != localPubKey {
-			return unknownKeyErr
-		}
-
-		var msg strings.Builder
-		msg.WriteString(unknownKeyErr.Error())
-		msg.WriteString("\n\nYour ollama key is:\n")
-		msg.WriteString(localPubKey)
-		msg.WriteString("\nAdd your key at:\n")
-		msg.WriteString("https://ollama.com/settings/keys")
-
-		return errors.New(msg.String())
+		localPubKey = strings.TrimSpace(string(svcPubKey))
 	}
 
-	return unknownKeyErr
+	// check if the returned public key matches the local public key, this prevents adding a remote key to the user's account
+	if serverPubKey != localPubKey {
+		return unknownKeyErr
+	}
+
+	var msg strings.Builder
+	msg.WriteString(unknownKeyErr.Error())
+	msg.WriteString("\n\nYour ollama key is:\n")
+	msg.WriteString(localPubKey)
+	msg.WriteString("\nAdd your key at:\n")
+	msg.WriteString("https://ollama.com/settings/keys")
+
+	return errors.New(msg.String())
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -741,13 +743,11 @@ func twoLines(s string) [][]string {
 	lines := strings.Split(s, "\n")
 	res := [][]string{}
 
-	count := 0
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
-			count++
 			res = append(res, []string{line})
-			if count == 2 {
+			if len(res) == 2 {
 				return res
 			}
 		}
