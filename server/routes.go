@@ -265,11 +265,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		truncate = false
 	}
 
-	if req.Truncate == nil {
-		truncate := true
-		req.Truncate = &truncate
-	}
-
 	var input []string
 
 	switch i := req.Input.(type) {
@@ -307,7 +302,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	reqEmbedArray := make([]string, len(input))
 	for i, s := range input {
 		tokens, err := r.Tokenize(c.Request.Context(), s)
 		if err != nil {
@@ -330,9 +324,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			}
 		}
 
-		reqEmbedArray[i] = s
+		input[i] = s
 	}
-	embeddings, err := r.Embed(c.Request.Context(), reqEmbedArray)
+	embeddings, err := r.Embed(c.Request.Context(), input)
 
 	if err != nil {
 		slog.Error("embedding generation failed", "error", err)
