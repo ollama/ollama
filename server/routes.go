@@ -1181,6 +1181,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if req.Messages[0].Role != "system" {
+		req.Messages = append([]api.Message{{Role: "system", Content: m.System}}, req.Messages...)
+	}
+
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, req.Messages)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
