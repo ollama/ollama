@@ -537,6 +537,7 @@ var ggufKVOrder = map[string][]string{
 		"tokenizer.ggml.add_bos_token",
 		"tokenizer.ggml.add_eos_token",
 		"tokenizer.chat_template",
+		"bert.pooling_type",
 	},
 }
 
