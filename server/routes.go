@@ -574,13 +574,6 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		m.System = req.System
 	}
 
-	if req.Template != "" {
-		m.Template, err = template.Parse(req.Template)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	msgs := make([]api.Message, len(m.Messages))
 	for i, msg := range m.Messages {
 		msgs[i] = api.Message{Role: msg.Role, Content: msg.Content}
