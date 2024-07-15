@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"text/template/parse"
 
 	"github.com/agnivade/levenshtein"
+	"github.com/ollama/ollama/api"
 	"golang.org/x/exp/maps"
 )
 
@@ -74,30 +76,59 @@ func Named(s string) (*named, error) {
 	return nil, errors.New("no matching template found")
 }
 
+var DefaultTemplate, _ = Parse("{{ .Prompt }}")
+
 type Template struct {
 	*template.Template
 	raw string
+}
+
+// response is a template node that can be added to templates that don't already have one
+var response = parse.ActionNode{
+	NodeType: parse.NodeAction,
+	Pipe: &parse.PipeNode{
+		NodeType: parse.NodePipe,
+		Cmds: []*parse.CommandNode{
+			{
+				NodeType: parse.NodeCommand,
+				Args: []parse.Node{
+					&parse.FieldNode{
+						NodeType: parse.NodeField,
+						Ident:    []string{"Response"},
+					},
+				},
+			},
+		},
+	},
+}
+
+func Parse(s string) (*Template, error) {
+	tmpl := template.New("").Option("missingkey=zero")
+
+	tmpl, err := tmpl.Parse(s)
+	if err != nil {
+		return nil, err
+	}
+
+	t := Template{Template: tmpl, raw: s}
+	if vars := t.Vars(); !slices.Contains(vars, "messages") && !slices.Contains(vars, "response") {
+		// touch up the template and append {{ .Response }}
+		tmpl.Tree.Root.Nodes = append(tmpl.Tree.Root.Nodes, &response)
+	}
+
+	return &t, nil
 }
 
 func (t *Template) String() string {
 	return t.raw
 }
 
-var DefaultTemplate, _ = Parse("{{ .Prompt }}")
-
-func Parse(s string) (*Template, error) {
-	t, err := template.New("").Option("missingkey=zero").Parse(s)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Template{Template: t, raw: s}, nil
-}
-
 func (t *Template) Vars() []string {
 	var vars []string
-	for _, n := range t.Tree.Root.Nodes {
-		vars = append(vars, parseNode(n)...)
+	for _, tt := range t.Templates() {
+		for _, n := range tt.Root.Nodes {
+			vars = append(vars, parseNode(n)...)
+		}
 	}
 
 	set := make(map[string]struct{})
@@ -108,6 +139,120 @@ func (t *Template) Vars() []string {
 	vars = maps.Keys(set)
 	slices.Sort(vars)
 	return vars
+}
+
+type Values struct {
+	Messages []api.Message
+
+	// forceLegacy is a flag used to test compatibility with legacy templates
+	forceLegacy bool
+}
+
+func (t *Template) Execute(w io.Writer, v Values) error {
+	system, messages := collate(v.Messages)
+	if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
+		return t.Template.Execute(w, map[string]any{
+			"System":   system,
+			"Messages": messages,
+		})
+	}
+
+	system = ""
+	var b bytes.Buffer
+	var prompt, response string
+	for _, m := range messages {
+		execute := func () error {
+			if err := t.Template.Execute(&b, map[string]any{
+				"System":   system,
+				"Prompt":   prompt,
+				"Response": response,
+			}); err != nil {
+				return err
+			}
+
+			system = ""
+			prompt = ""
+			response = ""
+			return nil
+		}
+
+		switch m.Role {
+		case "system":
+			if prompt != "" || response != "" {
+				if err := execute(); err != nil {
+					return err
+				}
+			}
+			system = m.Content
+		case "user":
+			if response != "" {
+				if err := execute(); err != nil {
+					return err
+				}
+			}
+			prompt = m.Content
+		case "assistant":
+			response = m.Content
+		}
+	}
+
+	var cut bool
+	nodes := deleteNode(t.Template.Root.Copy(), func(n parse.Node) bool {
+		switch t := n.(type) {
+		case *parse.ActionNode:
+		case *parse.FieldNode:
+			if slices.Contains(t.Ident, "Response") {
+				cut = true
+			}
+		}
+
+		return cut
+	})
+
+	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
+	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
+		"System": system,
+		"Prompt": prompt,
+	}); err != nil {
+		return err
+	}
+
+	_, err := io.Copy(w, &b)
+	return err
+}
+
+// collate messages based on role. consecutive messages of the same role are merged
+// into a single message. collate also collects and returns all system messages.
+// collate mutates message content adding image tags ([img-%d]) as needed
+func collate(msgs []api.Message) (string, []*api.Message) {
+	var n int
+
+	var system []string
+	var collated []*api.Message
+	for i := range msgs {
+		msg := msgs[i]
+		for range msg.Images {
+			imageTag := fmt.Sprintf("[img-%d]", n)
+			if !strings.Contains(msg.Content, "[img]") {
+				msg.Content = strings.TrimSpace("[img] " + msg.Content)
+			}
+
+			msg.Content = strings.Replace(msg.Content, "[img]", imageTag, 1)
+			n++
+		}
+
+		if msg.Role == "system" {
+			system = append(system, msg.Content)
+		}
+
+		if len(collated) > 0 && collated[len(collated)-1].Role == msg.Role {
+			collated[len(collated)-1].Content += "\n\n" + msg.Content
+		} else {
+			collated = append(collated, &msg)
+		}
+	}
+
+	return strings.Join(system, "\n\n"), collated
 }
 
 func parseNode(n parse.Node) []string {
@@ -152,7 +297,78 @@ func parseNode(n parse.Node) []string {
 		return names
 	case *parse.FieldNode:
 		return n.Ident
+	case *parse.TemplateNode:
+		return parseNode(n.Pipe)
 	}
 
 	return nil
+}
+
+// deleteNode walks the node list and deletes nodes that match the predicate
+// this is currently to remove the {{ .Response }} node from templates
+func deleteNode(n parse.Node, fn func(parse.Node) bool) parse.Node {
+	var walk func(n parse.Node) parse.Node
+	walk = func(n parse.Node) parse.Node {
+		if fn(n) {
+			return nil
+		}
+
+		switch t := n.(type) {
+		case *parse.ListNode:
+			var nodes []parse.Node
+			for _, c := range t.Nodes {
+				if n := walk(c); n != nil {
+					nodes = append(nodes, n)
+				}
+			}
+
+			t.Nodes = nodes
+			return t
+		case *parse.IfNode:
+			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+		case *parse.WithNode:
+			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+		case *parse.RangeNode:
+			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+		case *parse.BranchNode:
+			t.List = walk(t.List).(*parse.ListNode)
+			if t.ElseList != nil {
+				t.ElseList = walk(t.ElseList).(*parse.ListNode)
+			}
+		case *parse.ActionNode:
+			n := walk(t.Pipe)
+			if n == nil {
+				return nil
+			}
+
+			t.Pipe = n.(*parse.PipeNode)
+		case *parse.PipeNode:
+			var commands []*parse.CommandNode
+			for _, c := range t.Cmds {
+				var args []parse.Node
+				for _, a := range c.Args {
+					if n := walk(a); n != nil {
+						args = append(args, n)
+					}
+				}
+
+				if len(args) == 0 {
+					return nil
+				}
+
+				c.Args = args
+				commands = append(commands, c)
+			}
+
+			if len(commands) == 0 {
+				return nil
+			}
+
+			t.Cmds = commands
+		}
+
+		return n
+	}
+
+	return walk(n)
 }
