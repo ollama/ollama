@@ -909,5 +909,5 @@ func ggufWriteKV(ws io.Writer, k string, v any) error {
 }
 
 func ggufPadding(offset, align int64) int64 {
-	return (align - offset%align) % align
+	return align - offset%align
 }
