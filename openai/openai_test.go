@@ -165,7 +165,7 @@ func TestMiddlewareRequests(t *testing.T) {
 			Name:    "embed handler single input",
 			Method:  http.MethodPost,
 			Path:    "/api/embed",
-			Handler: EmbedMiddleware,
+			Handler: EmbeddingsMiddleware,
 			Setup: func(t *testing.T, req *http.Request) {
 				body := EmbedRequest{
 					Input: "Hello",
@@ -196,7 +196,7 @@ func TestMiddlewareRequests(t *testing.T) {
 			Name:    "embed handler batch input",
 			Method:  http.MethodPost,
 			Path:    "/api/embed",
-			Handler: EmbedMiddleware,
+			Handler: EmbeddingsMiddleware,
 			Setup: func(t *testing.T, req *http.Request) {
 				body := EmbedRequest{
 					Input: []string{"Hello", "World"},

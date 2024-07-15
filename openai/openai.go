@@ -279,7 +279,7 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 	}
 }
 
-func toEmbedCompletion(model string, r api.EmbedResponse) EmbeddingList {
+func toEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
 	if r.Embeddings != nil {
 		var data []Embedding
 		for i, e := range r.Embeddings {
@@ -682,7 +682,7 @@ func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(toEmbedCompletion(w.model, embedResponse))
+	err = json.NewEncoder(w.ResponseWriter).Encode(toEmbeddingList(w.model, embedResponse))
 
 	if err != nil {
 		return 0, err
@@ -768,7 +768,7 @@ func CompletionsMiddleware() gin.HandlerFunc {
 	}
 }
 
-func EmbedMiddleware() gin.HandlerFunc {
+func EmbeddingsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req EmbedRequest
 		err := c.ShouldBindJSON(&req)
