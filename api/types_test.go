@@ -227,7 +227,7 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 		}
 
 		if msg.Role != test.expected {
-			t.Errorf("Role was not lowercased properly. Got %v, expected %v", msg.Role, test.expected)
+			t.Errorf("role not lowercased: got %v, expected %v", msg.Role, test.expected)
 		}
 	}
 }
