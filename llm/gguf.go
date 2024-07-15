@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"slices"
-	"sort"
 	"strings"
 
 	"golang.org/x/exp/maps"
@@ -141,13 +140,11 @@ func (llm *gguf) numKV() uint64 {
 
 func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	// decode key-values
-	fmt.Println(llm.numKV())
 	for i := 0; uint64(i) < llm.numKV(); i++ {
 		k, err := readGGUFString(llm, rs)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("k: %#v\n", k)
 
 		t, err := readGGUF[uint32](llm, rs)
 		if err != nil {
@@ -214,7 +211,6 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			}
 			shape = append(shape, shapeVal)
 		}
-		fmt.Println("tensor ", name, " shape ", shape)
 
 		kind, err := readGGUF[uint32](llm, rs)
 		if err != nil {
@@ -226,6 +222,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			return fmt.Errorf("failed to read tensor offset: %w", err)
 		}
 
+		fmt.Println("tensor", name, shape, kind, offset)
 		tensor := Tensor{
 			Name:   name,
 			Kind:   kind,
@@ -764,8 +761,7 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 			}
 		}
 	}
-
-	sort.Sort(gguf.Tensors)
+	//sort.Sort(gguf.Tensors)
 
 	var s uint64
 	for _, t := range gguf.Tensors {
@@ -775,6 +771,7 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 		}
 		s += t.Size()
 	}
+	tensorOffset := wo.offset
 
 	for _, t := range gguf.Tensors {
 		if err := ggufWriteTensor(wo, t, wo.offset); err != nil {
@@ -782,7 +779,7 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 		}
 	}
 
-	return 0, nil
+	return int64(tensorOffset), nil
 }
 
 func ggufWriteTensorInfo(ws io.Writer, t *Tensor) error {
@@ -797,7 +794,6 @@ func ggufWriteTensorInfo(ws io.Writer, t *Tensor) error {
 	if err := binary.Write(ws, binary.LittleEndian, uint32(len(t.Shape))); err != nil {
 		return err
 	}
-	fmt.Println("tensor ", t.Name, " shape ", t.Shape)
 
 	for i := range len(t.Shape) {
 		if err := binary.Write(ws, binary.LittleEndian, t.Shape[len(t.Shape)-i-1]); err != nil {

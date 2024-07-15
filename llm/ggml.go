@@ -312,10 +312,12 @@ func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 		maxArraySize = 1024
 	}
 
+	fmt.Println("errored 1")
 	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
 
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
+		fmt.Println("errored 2")
 		return nil, 0, err
 	}
 
@@ -330,19 +332,24 @@ func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	case FILE_MAGIC_GGUF_BE:
 		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
 	default:
+		fmt.Println("errored 3")
 		return nil, 0, errors.New("invalid file magic")
 	}
 
+	fmt.Println("valid magic")
 	model, err := c.Decode(rs)
 	if err != nil {
 		return nil, 0, err
 	}
 
+	fmt.Println("valid decode")
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
+		fmt.Println("invalid seek")
 		return nil, 0, err
 	}
 
+	fmt.Println("valid seek")
 	// final model type
 	return &GGML{
 		container: c,
