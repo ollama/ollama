@@ -41,6 +41,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <errhandlingapi.h>
 #endif
 
 #include <cstddef>
@@ -2737,6 +2738,9 @@ int wmain(int argc, wchar_t **wargv) {
     for (int i = 0; i < argc; ++i) {
         argv[i] = wchar_to_char(wargv[i]);
     }
+
+    // Adjust error mode to avoid error dialog after we start.
+    SetErrorMode(SEM_FAILCRITICALERRORS);
 #else
 int main(int argc, char **argv) {
 #endif
