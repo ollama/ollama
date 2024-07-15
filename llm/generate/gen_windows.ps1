@@ -6,18 +6,9 @@ function amdGPUs {
     if ($env:AMDGPU_TARGETS) {
         return $env:AMDGPU_TARGETS
     }
-    # TODO - load from some common data file for linux + windows build consistency
+    # Current supported rocblas list from ROCm v6.1.2 on windows
     $GPU_LIST = @(
-        "gfx900"
         "gfx906:xnack-"
-        "gfx908:xnack-"
-        "gfx90a:xnack+"
-        "gfx90a:xnack-"
-        "gfx940"
-        "gfx941"
-        "gfx942"
-        "gfx1010"
-        "gfx1012"
         "gfx1030"
         "gfx1100"
         "gfx1101"
@@ -366,6 +357,7 @@ function build_rocm() {
             "-DCMAKE_C_COMPILER=clang.exe",
             "-DCMAKE_CXX_COMPILER=clang++.exe",
             "-DGGML_HIPBLAS=on",
+            "-DLLAMA_CUDA_NO_PEER_COPY=on",
             "-DHIP_PLATFORM=amd",
             "-DGGML_AVX=on",
             "-DGGML_AVX2=off",
@@ -394,7 +386,6 @@ function build_rocm() {
         sign
         install
 
-        # Assumes v5.7, may need adjustments for v6
         rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
         md "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\" -ea 0 > $null
         cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
