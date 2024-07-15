@@ -305,8 +305,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	reqEmbedArray := make([]string, len(reqEmbed))
-	errCh := make(chan error, len(reqEmbed))
-	sem := make(chan struct{}, 5)
+	errCh := make(chan error, 1)
+	successCh := make(chan bool, 1)
+	sem := make(chan struct{}, 2)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	for i, s := range reqEmbed {
@@ -342,11 +343,17 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 	go func() {
 		wg.Wait()
+		successCh <- true
 		close(errCh)
 	}()
-	for err := range errCh {
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
+	select {
+	case err := <-errCh:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	case success := <-successCh:
+		if !success {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process all embeddings"})
 			return
 		}
 	}
