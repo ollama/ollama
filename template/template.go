@@ -13,7 +13,6 @@ import (
 	"sync"
 	"text/template"
 	"text/template/parse"
-	"time"
 
 	"github.com/agnivade/levenshtein"
 	"github.com/ollama/ollama/api"
@@ -107,9 +106,6 @@ var funcs = template.FuncMap{
 	"json": func(v any) string {
 		b, _ := json.Marshal(v)
 		return string(b)
-	},
-	"now": func() string {
-		return time.Now().Format("2006-01-02 15:04:05")
 	},
 }
 
