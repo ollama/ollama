@@ -262,13 +262,13 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	params = append(params, "--parallel", fmt.Sprintf("%d", numParallel))
 
-    if opts.Runner.TensorSplit == "" {
-        if estimate.TensorSplit != "" {
-            params = append(params, "--tensor-split", estimate.TensorSplit)
-        }
-    } else {
-        params = append(params, "--tensor-split", opts.Runner.TensorSplit)
-    }
+	if opts.Runner.TensorSplit == "" {
+		if estimate.TensorSplit != "" {
+			params = append(params, "--tensor-split", estimate.TensorSplit)
+		}
+	} else {
+		params = append(params, "--tensor-split", opts.Runner.TensorSplit)
+	}
 
 	for i := range len(servers) {
 		dir := availableServers[servers[i]]
