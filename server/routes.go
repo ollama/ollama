@@ -384,7 +384,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := r.Embed(c.Request.Context(), []string{req.Prompt})
+	embeddings, err := r.Embed(c.Request.Context(), []string{req.Prompt})
 
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
@@ -392,14 +392,14 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding64 := make([]float64, len(embedding[0]))
+	embedding := make([]float64, len(embeddings[0]))
 
-	for i, v := range embedding[0] {
-		embedding64[i] = float64(v)
+	for i, v := range embeddings[0] {
+		embedding[i] = float64(v)
 	}
 
 	resp := api.EmbeddingResponse{
-		Embedding: embedding64,
+		Embedding: embedding,
 	}
 	c.JSON(http.StatusOK, resp)
 }
