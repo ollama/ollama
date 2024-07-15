@@ -2,7 +2,7 @@ ARG GOLANG_VERSION=1.22.1
 ARG CMAKE_VERSION=3.22.1
 # this CUDA_VERSION corresponds with the one specified in docs/gpu.md
 ARG CUDA_VERSION=11.3.1
-ARG ROCM_VERSION=6.1.1
+ARG ROCM_VERSION=6.1.2
 
 # Copy the minimal context we need to run the generate scripts
 FROM scratch AS llm-code

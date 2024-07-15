@@ -126,7 +126,7 @@ jobs:
     strategy:
       matrix:
         rocm-version:
-          - '6.1.1'
+          - '6.1.2'
     runs-on: linux
     container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
     steps:
