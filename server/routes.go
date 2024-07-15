@@ -370,13 +370,16 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	for i, e := range embeddings {
-		embeddings[i] = normalize(e)
+	for i, e := range embeddings.Embedding {
+		embeddings.Embedding[i] = normalize(e)
 	}
 
+	slog.Info("prompt n", "n", embeddings.PromptN)
+
 	resp := api.EmbedResponse{
-		Model:      req.Model,
-		Embeddings: embeddings,
+		Model:           req.Model,
+		Embeddings:      embeddings.Embedding,
+		PromptEvalCount: embeddings.PromptN,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -428,9 +431,9 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding := make([]float64, len(embeddings[0]))
+	embedding := make([]float64, len(embeddings.Embedding[0]))
 
-	for i, v := range embeddings[0] {
+	for i, v := range embeddings.Embedding[0] {
 		embedding[i] = float64(v)
 	}
 

@@ -1212,6 +1212,7 @@ struct llama_server_context
                         res.result_json = json
                         {
                             {"embedding", std::vector<float>(n_embd, 0.0f)},
+                            {"prompt_n", slot.n_prompt_tokens_processed},
                         };
                         continue;
                     }
@@ -1220,6 +1221,7 @@ struct llama_server_context
                 res.result_json = json
                 {
                     {"embedding", std::vector<float>(embd, embd + n_embd)},
+                    {"prompt_n", slot.n_prompt_tokens_processed},
                 };
             }
         }
@@ -3211,8 +3213,12 @@ int main(int argc, char **argv) {
                     for (auto & elem : responses) {
                         embeddings.push_back(elem.at("embedding"));
                     }
+                    int total_n_prompt = 0;
+                    for (const auto & elem : responses) {
+                        total_n_prompt += elem.at("prompt_n").get<int>();
+                    }
                     // send the result
-                    json embedding_res = json{{"embedding", embeddings}};
+                    json embedding_res = json{{"embedding", embeddings}, {"prompt_n", total_n_prompt}};
                     return res.set_content(embedding_res.dump(), "application/json; charset=utf-8");
                 }
             });
