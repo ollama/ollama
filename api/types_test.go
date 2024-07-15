@@ -208,3 +208,26 @@ func TestUseMmapFormatParams(t *testing.T) {
 		})
 	}
 }
+
+func TestMessage_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`{"role": "USER", "content": "Hello!"}`, "user"},
+		{`{"role": "System", "content": "Initialization complete."}`, "system"},
+		{`{"role": "assistant", "content": "How can I help you?"}`, "assistant"},
+		{`{"role": "TOOl", "content": "Access granted."}`, "tool"},
+	}
+
+	for _, test := range tests {
+		var msg Message
+		if err := json.Unmarshal([]byte(test.input), &msg); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		if msg.Role != test.expected {
+			t.Errorf("role not lowercased: got %v, expected %v", msg.Role, test.expected)
+		}
+	}
+}

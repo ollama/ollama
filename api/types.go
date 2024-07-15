@@ -110,6 +110,18 @@ type Message struct {
 	Images  []ImageData `json:"images,omitempty"`
 }
 
+func (m *Message) UnmarshalJSON(b []byte) error {
+	type Alias Message
+	var a Alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+
+	*m = Message(a)
+	m.Role = strings.ToLower(m.Role)
+	return nil
+}
+
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
@@ -243,8 +255,8 @@ type DeleteRequest struct {
 
 // ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
-	Model    string `json:"model"`
-	System   string `json:"system"`
+	Model  string `json:"model"`
+	System string `json:"system"`
 
 	// Template is deprecated
 	Template string `json:"template"`
