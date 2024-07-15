@@ -3192,12 +3192,22 @@ int main(int argc, char **argv) {
                     prompt = prompt[0];
                 }
 
+                json image_data;
+                if (body.count("image_data") != 0)
+                {
+                    image_data = body["image_data"];
+                }
+                else {
+                    image_data = "";
+                }
+                // TODO: prompt needs to represent the image data
+
                 // create and queue the task
                 json responses;
                 {
                     const int id_task = llama.queue_tasks.get_new_id();
                     llama.queue_results.add_waiting_task_id(id_task);
-                    llama.request_completion(id_task, {{"prompt", prompt}}, true, -1);
+                    llama.request_completion(id_task, { {"prompt", prompt}, {"image_data", image_data} }, true, -1);
 
                     // get the result
                     task_result result = llama.queue_results.recv(id_task);

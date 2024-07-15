@@ -187,6 +187,10 @@ type EmbedRequest struct {
 
 	Truncate *bool `json:"truncate,omitempty"`
 
+	// Images is an optional list of base64-encoded images accompanying this
+	// request, for multimodal models.
+	Images []ImageData `json:"images,omitempty"`
+
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
 }
