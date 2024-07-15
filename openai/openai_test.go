@@ -214,12 +214,18 @@ func TestMiddlewareRequests(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if embedReq.Input[0] != "Hello" {
-					t.Fatalf("expected 'Hello', got %s", embedReq.Input[0])
+				input, ok := embedReq.Input.([]any)
+
+				if !ok {
+					t.Fatalf("expected input to be a list")
 				}
 
-				if embedReq.Input[1] != "World" {
-					t.Fatalf("expected 'World', got %s", embedReq.Input[1])
+				if input[0].(string) != "Hello" {
+					t.Fatalf("expected 'Hello', got %s", input[0])
+				}
+
+				if input[1].(string) != "World" {
+					t.Fatalf("expected 'World', got %s", input[1])
 				}
 
 				if embedReq.Model != "test-model" {
