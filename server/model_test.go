@@ -136,11 +136,16 @@ func TestExecuteWithTools(t *testing.T) {
 	cases := []struct {
 		model  string
 		output string
+		ok     bool
 	}{
-		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`},
+		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
 		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]
 
-The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`},
+The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`, true},
+		{"mistral", `I'm not aware of that information. However, I can suggest searching for the weather using the "get_current_weather" function:
+
+		[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
+		{"mistral", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
 		{"command-r-plus", "Action: ```json" + `
 [
     {
@@ -158,8 +163,10 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`}
         }
     }
 ]
-` + "```"},
-		{"firefunction", ` functools[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`},
+` + "```", true},
+		{"command-r-plus", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
+		{"firefunction", ` functools[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
+		{"firefunction", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
 	}
 
 	var tools []api.Tool
@@ -216,17 +223,19 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`}
 			t.Run("parse", func(t *testing.T) {
 				m := &Model{Template: tmpl}
 				actual, ok := m.parseToolCalls(tt.output)
-				if !ok {
-					t.Fatal("failed to parse tool calls")
+				if ok != tt.ok {
+					t.Fatalf("expected %t, got %t", tt.ok, ok)
 				}
 
-				for i := range actual {
-					// ID is randomly generated so clear it for comparison
-					actual[i].ID = ""
-				}
+				if tt.ok {
+					for i := range actual {
+						// ID is randomly generated so clear it for comparison
+						actual[i].ID = ""
+					}
 
-				if diff := cmp.Diff(actual, calls); diff != "" {
-					t.Errorf("mismatch (-got +want):\n%s", diff)
+					if diff := cmp.Diff(actual, calls); diff != "" {
+						t.Errorf("mismatch (-got +want):\n%s", diff)
+					}
 				}
 			})
 		})

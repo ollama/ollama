@@ -327,7 +327,8 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 
 	var kv map[string]string
 	// execute the subtree with placeholders to identify the keys
-	if err := json.Unmarshal(b.Bytes(), &kv); err != nil {
+	// trim any commands that might exist in the template
+	if err := json.Unmarshal(bytes.TrimSuffix(b.Bytes(), []byte(",")), &kv); err != nil {
 		return nil, false
 	}
 
@@ -342,35 +343,26 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		}
 	}
 
-	var sm []map[string]any
-	decoder := json.NewDecoder(strings.NewReader(s))
-	for {
-		// incrementally decode the JSON into a list of JSON objects
-		// skipping over any invalid tokens
-		if err := decoder.Decode(&sm); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-
-			if errors.As(err, new(*json.SyntaxError)) {
-				r := decoder.Buffered()
-				if _, err := r.Read(make([]byte, decoder.InputOffset()+1)); err != nil {
-					break
-				}
-
-				decoder = json.NewDecoder(r)
-				continue
-			}
-
+	var objs []map[string]any
+	for offset := 0; offset < len(s); {
+		if err := json.NewDecoder(strings.NewReader(s[offset:])).Decode(&objs); errors.Is(err, io.EOF) {
+			break
+		} else if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
+			// skip over any syntax errors
+			offset += int(syntax.Offset)
+		} else if unmarshalType := &(json.UnmarshalTypeError{}); errors.As(err, &unmarshalType) {
+			// skip over any unmarshalable types
+			offset += int(unmarshalType.Offset)
+		} else if err != nil {
 			return nil, false
+		} else {
+			// break when an object is decoded
+			break
 		}
-
-		// break as soon as a valid object is decoded
-		break
 	}
 
 	var toolCalls []api.ToolCall
-	for _, kv := range sm {
+	for _, kv := range objs {
 		call := api.ToolCall{
 			ID:   uuid.New().String(),
 			Type: "function",
@@ -388,9 +380,5 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		toolCalls = append(toolCalls, call)
 	}
 
-	if len(toolCalls) > 0 {
-		return toolCalls, true
-	}
-
-	return nil, false
+	return toolCalls, len(toolCalls) > 0
 }
