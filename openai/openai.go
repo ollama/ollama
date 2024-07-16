@@ -3,11 +3,13 @@ package openai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,7 +30,7 @@ type ErrorResponse struct {
 
 type Message struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
 }
 
 type Choice struct {
@@ -57,6 +59,11 @@ type Usage struct {
 
 type ResponseFormat struct {
 	Type string `json:"type"`
+}
+
+type EmbedRequest struct {
+	Input any    `json:"input"`
+	Model string `json:"model"`
 }
 
 type ChatCompletionRequest struct {
@@ -132,9 +139,21 @@ type Model struct {
 	OwnedBy string `json:"owned_by"`
 }
 
+type Embedding struct {
+	Object    string    `json:"object"`
+	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
 type ListCompletion struct {
 	Object string  `json:"object"`
 	Data   []Model `json:"data"`
+}
+
+type EmbeddingList struct {
+	Object string      `json:"object"`
+	Data   []Embedding `json:"data"`
+	Model  string      `json:"model"`
 }
 
 func NewError(code int, message string) ErrorResponse {
@@ -260,6 +279,27 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 	}
 }
 
+func toEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
+	if r.Embeddings != nil {
+		var data []Embedding
+		for i, e := range r.Embeddings {
+			data = append(data, Embedding{
+				Object:    "embedding",
+				Embedding: e,
+				Index:     i,
+			})
+		}
+
+		return EmbeddingList{
+			Object: "list",
+			Data:   data,
+			Model:  model,
+		}
+	}
+
+	return EmbeddingList{}
+}
+
 func toModel(r api.ShowResponse, m string) Model {
 	return Model{
 		Id:      m,
@@ -269,10 +309,66 @@ func toModel(r api.ShowResponse, m string) Model {
 	}
 }
 
-func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
+func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
-		messages = append(messages, api.Message{Role: msg.Role, Content: msg.Content})
+		switch content := msg.Content.(type) {
+		case string:
+			messages = append(messages, api.Message{Role: msg.Role, Content: content})
+		case []any:
+			message := api.Message{Role: msg.Role}
+			for _, c := range content {
+				data, ok := c.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("invalid message format")
+				}
+				switch data["type"] {
+				case "text":
+					text, ok := data["text"].(string)
+					if !ok {
+						return nil, fmt.Errorf("invalid message format")
+					}
+					message.Content = text
+				case "image_url":
+					var url string
+					if urlMap, ok := data["image_url"].(map[string]any); ok {
+						if url, ok = urlMap["url"].(string); !ok {
+							return nil, fmt.Errorf("invalid message format")
+						}
+					} else {
+						if url, ok = data["image_url"].(string); !ok {
+							return nil, fmt.Errorf("invalid message format")
+						}
+					}
+
+					types := []string{"jpeg", "jpg", "png"}
+					valid := false
+					for _, t := range types {
+						prefix := "data:image/" + t + ";base64,"
+						if strings.HasPrefix(url, prefix) {
+							url = strings.TrimPrefix(url, prefix)
+							valid = true
+							break
+						}
+					}
+
+					if !valid {
+						return nil, fmt.Errorf("invalid image input")
+					}
+
+					img, err := base64.StdEncoding.DecodeString(url)
+					if err != nil {
+						return nil, fmt.Errorf("invalid message format")
+					}
+					message.Images = append(message.Images, img)
+				default:
+					return nil, fmt.Errorf("invalid message format")
+				}
+			}
+			messages = append(messages, message)
+		default:
+			return nil, fmt.Errorf("invalid message content type: %T", content)
+		}
 	}
 
 	options := make(map[string]interface{})
@@ -323,13 +419,13 @@ func fromChatRequest(r ChatCompletionRequest) api.ChatRequest {
 		format = "json"
 	}
 
-	return api.ChatRequest{
+	return &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
 		Format:   format,
 		Options:  options,
 		Stream:   &r.Stream,
-	}
+	}, nil
 }
 
 func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
@@ -403,6 +499,11 @@ type ListWriter struct {
 }
 
 type RetrieveWriter struct {
+	BaseWriter
+	model string
+}
+
+type EmbedWriter struct {
 	BaseWriter
 	model string
 }
@@ -572,6 +673,33 @@ func (w *RetrieveWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
+func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
+	var embedResponse api.EmbedResponse
+	err := json.Unmarshal(data, &embedResponse)
+
+	if err != nil {
+		return 0, err
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(toEmbeddingList(w.model, embedResponse))
+
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *EmbedWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(code, data)
+	}
+
+	return w.writeResponse(data)
+}
+
 func ListMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		w := &ListWriter{
@@ -636,6 +764,47 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		}
 
 		c.Writer = w
+		c.Next()
+	}
+}
+
+func EmbeddingsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req EmbedRequest
+		err := c.ShouldBindJSON(&req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if req.Input == "" {
+			req.Input = []string{""}
+		}
+
+		if req.Input == nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "invalid input"))
+			return
+		}
+
+		if v, ok := req.Input.([]any); ok && len(v) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "invalid input"))
+			return
+		}
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input}); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+			return
+		}
+
+		c.Request.Body = io.NopCloser(&b)
+
+		w := &EmbedWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			model:      req.Model,
+		}
+
+		c.Writer = w
 
 		c.Next()
 	}
@@ -656,7 +825,13 @@ func ChatMiddleware() gin.HandlerFunc {
 		}
 
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(fromChatRequest(req)); err != nil {
+
+		chatReq, err := fromChatRequest(req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+		}
+
+		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}

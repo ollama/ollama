@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,6 +15,10 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/assert"
 )
+
+const prefix = `data:image/jpeg;base64,`
+const image = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+const imageURL = prefix + image
 
 func TestMiddlewareRequests(t *testing.T) {
 	type testCase struct {
@@ -109,6 +114,122 @@ func TestMiddlewareRequests(t *testing.T) {
 
 				if stopTokens[0] != "\n" || stopTokens[1] != "stop" {
 					t.Fatalf("expected ['\\n', 'stop'], got %v", stopTokens)
+				}
+			},
+		},
+		{
+			Name:    "chat handler with image content",
+			Method:  http.MethodPost,
+			Path:    "/api/chat",
+			Handler: ChatMiddleware,
+			Setup: func(t *testing.T, req *http.Request) {
+				body := ChatCompletionRequest{
+					Model: "test-model",
+					Messages: []Message{
+						{
+							Role: "user", Content: []map[string]any{
+								{"type": "text", "text": "Hello"},
+								{"type": "image_url", "image_url": map[string]string{"url": imageURL}},
+							},
+						},
+					},
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, req *http.Request) {
+				var chatReq api.ChatRequest
+				if err := json.NewDecoder(req.Body).Decode(&chatReq); err != nil {
+					t.Fatal(err)
+				}
+
+				if chatReq.Messages[0].Role != "user" {
+					t.Fatalf("expected 'user', got %s", chatReq.Messages[0].Role)
+				}
+
+				if chatReq.Messages[0].Content != "Hello" {
+					t.Fatalf("expected 'Hello', got %s", chatReq.Messages[0].Content)
+				}
+
+				img, _ := base64.StdEncoding.DecodeString(imageURL[len(prefix):])
+
+				if !bytes.Equal(chatReq.Messages[0].Images[0], img) {
+					t.Fatalf("expected image encoding, got %s", chatReq.Messages[0].Images[0])
+				}
+			},
+		},
+		{
+			Name:    "embed handler single input",
+			Method:  http.MethodPost,
+			Path:    "/api/embed",
+			Handler: EmbeddingsMiddleware,
+			Setup: func(t *testing.T, req *http.Request) {
+				body := EmbedRequest{
+					Input: "Hello",
+					Model: "test-model",
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, req *http.Request) {
+				var embedReq api.EmbedRequest
+				if err := json.NewDecoder(req.Body).Decode(&embedReq); err != nil {
+					t.Fatal(err)
+				}
+
+				if embedReq.Input != "Hello" {
+					t.Fatalf("expected 'Hello', got %s", embedReq.Input)
+				}
+
+				if embedReq.Model != "test-model" {
+					t.Fatalf("expected 'test-model', got %s", embedReq.Model)
+				}
+			},
+		},
+		{
+			Name:    "embed handler batch input",
+			Method:  http.MethodPost,
+			Path:    "/api/embed",
+			Handler: EmbeddingsMiddleware,
+			Setup: func(t *testing.T, req *http.Request) {
+				body := EmbedRequest{
+					Input: []string{"Hello", "World"},
+					Model: "test-model",
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, req *http.Request) {
+				var embedReq api.EmbedRequest
+				if err := json.NewDecoder(req.Body).Decode(&embedReq); err != nil {
+					t.Fatal(err)
+				}
+
+				input, ok := embedReq.Input.([]any)
+
+				if !ok {
+					t.Fatalf("expected input to be a list")
+				}
+
+				if input[0].(string) != "Hello" {
+					t.Fatalf("expected 'Hello', got %s", input[0])
+				}
+
+				if input[1].(string) != "World" {
+					t.Fatalf("expected 'World', got %s", input[1])
+				}
+
+				if embedReq.Model != "test-model" {
+					t.Fatalf("expected 'test-model', got %s", embedReq.Model)
 				}
 			},
 		},

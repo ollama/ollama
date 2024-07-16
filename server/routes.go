@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -102,6 +103,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
+	checkpointStart := time.Now()
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -120,6 +122,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	caps := []Capability{CapabilityCompletion}
+	if req.Suffix != "" {
+		caps = append(caps, CapabilityInsert)
+	}
+
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
@@ -128,6 +134,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+
+	checkpointLoaded := time.Now()
 
 	if req.Prompt == "" {
 		c.JSON(http.StatusOK, api.GenerateResponse{
@@ -146,19 +154,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	prompt := req.Prompt
 	if !req.Raw {
-		var msgs []api.Message
-		if req.System != "" {
-			msgs = append(msgs, api.Message{Role: "system", Content: req.System})
-		} else if m.System != "" {
-			msgs = append(msgs, api.Message{Role: "system", Content: m.System})
-		}
-
-		for _, i := range images {
-			msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]", i.ID)})
-		}
-
-		msgs = append(msgs, api.Message{Role: "user", Content: req.Prompt})
-
 		tmpl := m.Template
 		if req.Template != "" {
 			tmpl, err = template.Parse(req.Template)
@@ -179,7 +174,26 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			b.WriteString(s)
 		}
 
-		if err := tmpl.Execute(&b, template.Values{Messages: msgs}); err != nil {
+		var values template.Values
+		if req.Suffix != "" {
+			values.Prompt = prompt
+			values.Suffix = req.Suffix
+		} else {
+			var msgs []api.Message
+			if req.System != "" {
+				msgs = append(msgs, api.Message{Role: "system", Content: req.System})
+			} else if m.System != "" {
+				msgs = append(msgs, api.Message{Role: "system", Content: m.System})
+			}
+
+			for _, i := range images {
+				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]", i.ID)})
+			}
+
+			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
+		}
+
+		if err := tmpl.Execute(&b, values); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -191,26 +205,48 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
+		// TODO (jmorganca): avoid building the response twice both here and below
+		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
 			Format:  req.Format,
 			Options: opts,
-		}, func(r llm.CompletionResponse) {
-			ch <- api.GenerateResponse{
+		}, func(cr llm.CompletionResponse) {
+			res := api.GenerateResponse{
 				Model:      req.Model,
 				CreatedAt:  time.Now().UTC(),
-				Response:   r.Content,
-				Done:       r.Done,
-				DoneReason: r.DoneReason,
+				Response:   cr.Content,
+				Done:       cr.Done,
+				DoneReason: cr.DoneReason,
 				Metrics: api.Metrics{
-					PromptEvalCount:    r.PromptEvalCount,
-					PromptEvalDuration: r.PromptEvalDuration,
-					EvalCount:          r.EvalCount,
-					EvalDuration:       r.EvalDuration,
+					PromptEvalCount:    cr.PromptEvalCount,
+					PromptEvalDuration: cr.PromptEvalDuration,
+					EvalCount:          cr.EvalCount,
+					EvalDuration:       cr.EvalDuration,
 				},
 			}
+
+			if _, err := sb.WriteString(cr.Content); err != nil {
+				ch <- gin.H{"error": err.Error()}
+			}
+
+			if cr.Done {
+				res.TotalDuration = time.Since(checkpointStart)
+				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+				if !req.Raw {
+					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
+					if err != nil {
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
+					res.Context = append(req.Context, tokens...)
+				}
+			}
+
+			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
@@ -239,11 +275,131 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		r.Response = sb.String()
+		if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+			r.ToolCalls = toolCalls
+			r.Response = ""
+		}
+
 		c.JSON(http.StatusOK, r)
 		return
 	}
 
 	streamResponse(c, ch)
+}
+
+func (s *Server) EmbedHandler(c *gin.Context) {
+	var req api.EmbedRequest
+	err := c.ShouldBindJSON(&req)
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	truncate := true
+
+	if req.Truncate != nil && !*req.Truncate {
+		truncate = false
+	}
+
+	var input []string
+
+	switch i := req.Input.(type) {
+	case string:
+		if len(i) > 0 {
+			input = append(input, i)
+		}
+	case []any:
+		for _, v := range i {
+			if _, ok := v.(string); !ok {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+				return
+			}
+			input = append(input, v.(string))
+		}
+	default:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+		return
+	}
+
+	if len(input) == 0 {
+		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
+		return
+	}
+
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	kvData, err := getKVData(m.ModelPath, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	for i, s := range input {
+		tokens, err := r.Tokenize(c.Request.Context(), s)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
+		if len(tokens) > ctxLen {
+			if !truncate {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "input length exceeds maximum context length"})
+				return
+			}
+
+			tokens = tokens[:ctxLen]
+			s, err = r.Detokenize(c.Request.Context(), tokens)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+
+		input[i] = s
+	}
+	embeddings, err := r.Embed(c.Request.Context(), input)
+
+	if err != nil {
+		slog.Error("embedding generation failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
+		return
+	}
+
+	for i, e := range embeddings {
+		embeddings[i] = normalize(e)
+	}
+
+	resp := api.EmbedResponse{
+		Model:      req.Model,
+		Embeddings: embeddings,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func normalize(vec []float32) []float32 {
+	var sum float32
+	for _, v := range vec {
+		sum += v * v
+	}
+
+	norm := float32(0.0)
+	if sum > 0 {
+		norm = float32(1.0 / math.Sqrt(float64(sum)))
+	}
+
+	for i := range vec {
+		vec[i] *= norm
+	}
+	return vec
 }
 
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
@@ -268,14 +424,24 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
+	embeddings, err := r.Embed(c.Request.Context(), []string{req.Prompt})
+
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
 	}
 
-	c.JSON(http.StatusOK, api.EmbeddingResponse{Embedding: embedding})
+	embedding := make([]float64, len(embeddings[0]))
+
+	for i, v := range embeddings[0] {
+		embedding[i] = float64(v)
+	}
+
+	resp := api.EmbeddingResponse{
+		Embedding: embedding,
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (s *Server) PullModelHandler(c *gin.Context) {
@@ -547,13 +713,6 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	if req.System != "" {
 		m.System = req.System
-	}
-
-	if req.Template != "" {
-		m.Template, err = template.Parse(req.Template)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	msgs := make([]api.Message, len(m.Messages))
@@ -901,6 +1060,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/pull", s.PullModelHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
+	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 	r.POST("/api/create", s.CreateModelHandler)
 	r.POST("/api/push", s.PushModelHandler)
@@ -914,6 +1074,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
 	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
+	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListModelsHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowModelHandler)
 
@@ -1122,6 +1283,8 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
+	checkpointStart := time.Now()
+
 	var req api.ChatRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -1132,6 +1295,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	caps := []Capability{CapabilityCompletion}
+	if req.Tools != nil {
+		caps = append(caps, CapabilityTools)
+	}
+
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
@@ -1140,6 +1307,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+
+	checkpointLoaded := time.Now()
 
 	if len(req.Messages) == 0 {
 		c.JSON(http.StatusOK, api.ChatResponse{
@@ -1152,7 +1321,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, req.Messages)
+	if req.Messages[0].Role != "system" && m.System != "" {
+		req.Messages = append([]api.Message{{Role: "system", Content: m.System}}, req.Messages...)
+	}
+
+	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, req.Messages, req.Tools)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1169,7 +1342,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Format:  req.Format,
 			Options: opts,
 		}, func(r llm.CompletionResponse) {
-			ch <- api.ChatResponse{
+			res := api.ChatResponse{
 				Model:      req.Model,
 				CreatedAt:  time.Now().UTC(),
 				Message:    api.Message{Role: "assistant", Content: r.Content},
@@ -1182,19 +1355,26 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					EvalDuration:       r.EvalDuration,
 				},
 			}
+
+			if r.Done {
+				res.TotalDuration = time.Since(checkpointStart)
+				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			}
+
+			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
 
 	if req.Stream != nil && !*req.Stream {
-		var r api.ChatResponse
+		var resp api.ChatResponse
 		var sb strings.Builder
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
 				sb.WriteString(t.Message.Content)
-				r = t
+				resp = t
 			case gin.H:
 				msg, ok := t["error"].(string)
 				if !ok {
@@ -1209,8 +1389,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
-		r.Message.Content = sb.String()
-		c.JSON(http.StatusOK, r)
+		resp.Message.Content = sb.String()
+		if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+			resp.Message.ToolCalls = toolCalls
+			resp.Message.Content = ""
+		}
+
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 
@@ -1219,7 +1404,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 func handleScheduleError(c *gin.Context, name string, err error) {
 	switch {
-	case errors.Is(err, errRequired):
+	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, context.Canceled):
 		c.JSON(499, gin.H{"error": "request canceled"})

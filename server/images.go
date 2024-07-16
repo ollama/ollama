@@ -34,11 +34,20 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-var errCapabilityCompletion = errors.New("completion")
+var (
+	errCapabilities         = errors.New("does not support")
+	errCapabilityCompletion = errors.New("completion")
+	errCapabilityTools      = errors.New("tools")
+	errCapabilityInsert     = errors.New("insert")
+)
 
 type Capability string
 
-const CapabilityCompletion = Capability("completion")
+const (
+	CapabilityCompletion = Capability("completion")
+	CapabilityTools      = Capability("tools")
+	CapabilityInsert     = Capability("insert")
+)
 
 type registryOptions struct {
 	Insecure bool
@@ -88,6 +97,15 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
 				errs = append(errs, errCapabilityCompletion)
 			}
+		case CapabilityTools:
+			if !slices.Contains(m.Template.Vars(), "tools") {
+				errs = append(errs, errCapabilityTools)
+			}
+		case CapabilityInsert:
+			vars := m.Template.Vars()
+			if !slices.Contains(vars, "suffix") {
+				errs = append(errs, errCapabilityInsert)
+			}
 		default:
 			slog.Error("unknown capability", "capability", cap)
 			return fmt.Errorf("unknown capability: %s", cap)
@@ -95,7 +113,7 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 	}
 
 	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("missing capabilities: %w", errors.Join(errs...))
+		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
 	return nil
