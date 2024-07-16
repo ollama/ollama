@@ -181,7 +181,6 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 
 	calls := []api.ToolCall{
 		{
-			Type: "function",
 			Function: function{
 				Name: "get_current_weather",
 				Arguments: map[string]any{
@@ -191,7 +190,6 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 			},
 		},
 		{
-			Type: "function",
 			Function: function{
 				Name: "get_current_weather",
 				Arguments: map[string]any{
@@ -228,11 +226,6 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 				}
 
 				if tt.ok {
-					for i := range actual {
-						// ID is randomly generated so clear it for comparison
-						actual[i].ID = ""
-					}
-
 					if diff := cmp.Diff(actual, calls); diff != "" {
 						t.Errorf("mismatch (-got +want):\n%s", diff)
 					}

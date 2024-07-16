@@ -16,7 +16,6 @@ import (
 	"strings"
 	"text/template/parse"
 
-	"github.com/google/uuid"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/llm"
@@ -363,11 +362,7 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 
 	var toolCalls []api.ToolCall
 	for _, kv := range objs {
-		call := api.ToolCall{
-			ID:   uuid.New().String(),
-			Type: "function",
-		}
-
+		var call api.ToolCall
 		for k, v := range kv {
 			switch k {
 			case name:
