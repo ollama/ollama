@@ -29,8 +29,9 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content any    `json:"content"`
+	Role      string         `json:"role"`
+	Content   any            `json:"content"`
+	ToolCalls []api.ToolCall `json:"tool_calls,omitempty"`
 }
 
 type Choice struct {
@@ -180,7 +181,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 		SystemFingerprint: "fp_ollama",
 		Choices: []Choice{{
 			Index:   0,
-			Message: Message{Role: r.Message.Role, Content: r.Message.Content},
+			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: r.Message.ToolCalls},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					return &reason
@@ -206,7 +207,7 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content},
+			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: r.Message.ToolCalls},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					return &reason
@@ -315,7 +316,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	for _, msg := range r.Messages {
 		switch content := msg.Content.(type) {
 		case string:
-			messages = append(messages, api.Message{Role: msg.Role, Content: content})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, ToolCalls: msg.ToolCalls})
 		case []any:
 			message := api.Message{Role: msg.Role}
 			for _, c := range content {
@@ -368,6 +369,10 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			}
 			messages = append(messages, message)
 		default:
+			if msg.Role == "assistant" && msg.ToolCalls != nil {
+				messages = append(messages, api.Message{Role: msg.Role, ToolCalls: msg.ToolCalls})
+				continue
+			}
 			return nil, fmt.Errorf("invalid message content type: %T", content)
 		}
 	}
@@ -426,6 +431,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Format:   format,
 		Options:  options,
 		Stream:   &r.Stream,
+		Tools:    r.Tools,
 	}, nil
 }
 
