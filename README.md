@@ -246,6 +246,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
+- [AI Studio](https://github.com/MindWorkAI/AI-Studio)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Hollama](https://github.com/fmaclen/hollama)
