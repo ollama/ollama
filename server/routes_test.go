@@ -306,8 +306,12 @@ func Test_Routes(t *testing.T) {
 					t.Fatalf("expected model t-bone, got %s", embedResp.Model)
 				}
 
-				if embedResp.Embeddings != nil {
-					t.Fatalf("expected embeddings to be nil, got %v", embedResp.Embeddings)
+				if embedResp.Embeddings == nil {
+					t.Fatalf("expected embeddings to not be nil, got %v", embedResp.Embeddings)
+				}
+
+				if len(embedResp.Embeddings) != 0 {
+					t.Fatalf("expected embeddings to be empty, got %v", embedResp.Embeddings)
 				}
 			},
 		},
