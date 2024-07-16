@@ -192,7 +192,7 @@ func TestChatPrompt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			model := Model{Template: tmpl, ProjectorPaths: []string{"vision"}}
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
-			prompt, images, err := chatPrompt(context.TODO(), &model, tokenize, &opts, tt.msgs)
+			prompt, images, err := chatPrompt(context.TODO(), &model, tokenize, &opts, tt.msgs, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
