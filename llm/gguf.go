@@ -911,7 +911,6 @@ func ggufWriteKV(ws io.Writer, k string, v any) error {
 		}
 
 	default:
-		fmt.Println("type is", v)
 		return fmt.Errorf("improper type for '%s'", k)
 	}
 
@@ -919,5 +918,6 @@ func ggufWriteKV(ws io.Writer, k string, v any) error {
 }
 
 func ggufPadding(offset, align int64) int64 {
+	// we mod twice in the case offset%align = 0
 	return (align - offset%align) % align
 }
