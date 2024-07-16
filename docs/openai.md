@@ -103,10 +103,6 @@ curl http://localhost:11434/v1/chat/completions \
 - [ ] `user`
 - [ ] `n`
 
-#### Notes
-
-- `usage.prompt_tokens` will be 0 for completions where prompt evaluation is cached
-
 ## Models
 
 Before using a model, pull it locally `ollama pull`:
