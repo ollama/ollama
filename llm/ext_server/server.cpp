@@ -1402,7 +1402,12 @@ struct llama_server_context
                 std::string s_prompt = s.prompt.get<std::string>();
                 std::string prefix = common_prefix(s_prompt, prompt_str);
 
-                if (prefix.size() > longest) {
+                if (prefix.size() > longest && prefix.size() > (s_prompt.size()*0.6)) {
+                    LOG_DEBUG("Slot with longest prefix found with atlest 60\% match", {{
+                        "slot_id", s.id,
+                        "Prefix length", prefix.size(),
+                        "Slot prompt lenght", s_prompt.size()
+                    }});
                     slot = &s;
                     longest = prefix.size();
                 }
@@ -1413,7 +1418,7 @@ struct llama_server_context
             return get_slot(-1);
         }
 
-        LOG_DEBUG("slot with common prefix found", {{
+        LOG_DEBUG("slot with common prefix selected", {{
             "slot_id", slot->id,
             "characters", longest
         }});
