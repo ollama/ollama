@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"slices"
+	"sort"
 	"strings"
 	"text/template/parse"
 
