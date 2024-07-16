@@ -9,19 +9,26 @@ linters:
     - contextcheck
     - exportloopref
     - gocheckcompilerdirectives
-    # FIXME: for some reason this errors on windows
+    # conditionally enable this on linux/macos
     # - gofmt
     # - goimports
+    - intrange
     - misspell
     - nilerr
+    - nolintlint
+    - nosprintfhostport
+    - testifylint
+    - unconvert
     - unused
-linters-settings:
-  errcheck:
-    # exclude the following functions since we don't generally
-    # need to be concerned with the returned errors
-    exclude-functions:
-      - encoding/binary.Read
-      - (*os.File).Seek
-      - (*bufio.Writer).WriteString
-      - (*github.com/spf13/pflag.FlagSet).Set
-      - (*github.com/jmorganca/ollama/llm.readSeekOffset).Seek
+    - wastedassign
+    - whitespace
+    - usestdlibvars
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - gofmt
+        - goimports
+        - intrange
+        - usestdlibvars
+      severity: info

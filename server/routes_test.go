@@ -3,9 +3,11 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,17 +16,37 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/llm"
-	"github.com/jmorganca/ollama/parser"
-	"github.com/jmorganca/ollama/version"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/version"
 )
 
-func setupServer(t *testing.T) (*Server, error) {
+func createTestFile(t *testing.T, name string) string {
 	t.Helper()
 
-	return NewServer()
+	f, err := os.CreateTemp(t.TempDir(), name)
+	require.NoError(t, err)
+	defer f.Close()
+
+	err = binary.Write(f, binary.LittleEndian, []byte("GGUF"))
+	require.NoError(t, err)
+
+	err = binary.Write(f, binary.LittleEndian, uint32(3))
+	require.NoError(t, err)
+
+	err = binary.Write(f, binary.LittleEndian, uint64(0))
+	require.NoError(t, err)
+
+	err = binary.Write(f, binary.LittleEndian, uint64(0))
+	require.NoError(t, err)
+
+	return f.Name()
 }
 
 func Test_Routes(t *testing.T) {
@@ -36,30 +58,19 @@ func Test_Routes(t *testing.T) {
 		Expected func(t *testing.T, resp *http.Response)
 	}
 
-	createTestFile := func(t *testing.T, name string) string {
-		f, err := os.CreateTemp(t.TempDir(), name)
-		assert.Nil(t, err)
-		defer f.Close()
-
-		_, err = f.Write([]byte("GGUF"))
-		assert.Nil(t, err)
-		_, err = f.Write([]byte{0x2, 0})
-		assert.Nil(t, err)
-
-		return f.Name()
-	}
-
 	createTestModel := func(t *testing.T, name string) {
+		t.Helper()
+
 		fname := createTestFile(t, "ollama-model")
 
-		modelfile := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
-		commands, err := parser.Parse(modelfile)
-		assert.Nil(t, err)
+		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
+		modelfile, err := parser.ParseFile(r)
+		require.NoError(t, err)
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
 		}
-		err = CreateModel(context.TODO(), name, "", commands, fn)
-		assert.Nil(t, err)
+		err = CreateModel(context.TODO(), model.ParseName(name), "", "", modelfile, fn)
+		require.NoError(t, err)
 	}
 
 	testCases := []testCase{
@@ -71,9 +82,9 @@ func Test_Routes(t *testing.T) {
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
 				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, contentType, "application/json; charset=utf-8")
+				assert.Equal(t, "application/json; charset=utf-8", contentType)
 				body, err := io.ReadAll(resp.Body)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, fmt.Sprintf(`{"version":"%s"}`, version.Version), string(body))
 			},
 		},
@@ -83,16 +94,35 @@ func Test_Routes(t *testing.T) {
 			Path:   "/api/tags",
 			Expected: func(t *testing.T, resp *http.Response) {
 				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, contentType, "application/json; charset=utf-8")
+				assert.Equal(t, "application/json; charset=utf-8", contentType)
 				body, err := io.ReadAll(resp.Body)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 
 				var modelList api.ListResponse
 
 				err = json.Unmarshal(body, &modelList)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 
-				assert.Equal(t, 0, len(modelList.Models))
+				assert.NotNil(t, modelList.Models)
+				assert.Empty(t, len(modelList.Models))
+			},
+		},
+		{
+			Name:   "openai empty list",
+			Method: http.MethodGet,
+			Path:   "/v1/models",
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var modelList openai.ListCompletion
+				err = json.Unmarshal(body, &modelList)
+				require.NoError(t, err)
+
+				assert.Equal(t, "list", modelList.Object)
+				assert.Empty(t, modelList.Data)
 			},
 		},
 		{
@@ -104,16 +134,37 @@ func Test_Routes(t *testing.T) {
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
 				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, contentType, "application/json; charset=utf-8")
+				assert.Equal(t, "application/json; charset=utf-8", contentType)
 				body, err := io.ReadAll(resp.Body)
-				assert.Nil(t, err)
+				require.NoError(t, err)
+
+				assert.NotContains(t, string(body), "expires_at")
 
 				var modelList api.ListResponse
 				err = json.Unmarshal(body, &modelList)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 
-				assert.Equal(t, 1, len(modelList.Models))
-				assert.Equal(t, modelList.Models[0].Name, "test-model:latest")
+				assert.Len(t, modelList.Models, 1)
+				assert.Equal(t, "test-model:latest", modelList.Models[0].Name)
+			},
+		},
+		{
+			Name:   "openai list models with tags",
+			Method: http.MethodGet,
+			Path:   "/v1/models",
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var modelList openai.ListCompletion
+				err = json.Unmarshal(body, &modelList)
+				require.NoError(t, err)
+
+				assert.Len(t, modelList.Data, 1)
+				assert.Equal(t, "test-model:latest", modelList.Data[0].Id)
+				assert.Equal(t, "library", modelList.Data[0].OwnedBy)
 			},
 		},
 		{
@@ -121,18 +172,16 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodPost,
 			Path:   "/api/create",
 			Setup: func(t *testing.T, req *http.Request) {
-				f, err := os.CreateTemp(t.TempDir(), "ollama-model")
-				assert.Nil(t, err)
-				defer f.Close()
+				fname := createTestFile(t, "ollama-model")
 
 				stream := false
 				createReq := api.CreateRequest{
 					Name:      "t-bone",
-					Modelfile: fmt.Sprintf("FROM %s", f.Name()),
+					Modelfile: fmt.Sprintf("FROM %s", fname),
 					Stream:    &stream,
 				}
 				jsonData, err := json.Marshal(createReq)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
 			},
@@ -140,11 +189,11 @@ func Test_Routes(t *testing.T) {
 				contentType := resp.Header.Get("Content-Type")
 				assert.Equal(t, "application/json", contentType)
 				_, err := io.ReadAll(resp.Body)
-				assert.Nil(t, err)
-				assert.Equal(t, resp.StatusCode, 200)
+				require.NoError(t, err)
+				assert.Equal(t, 200, resp.StatusCode)
 
 				model, err := GetModel("t-bone")
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, "t-bone:latest", model.ShortName)
 			},
 		},
@@ -159,13 +208,13 @@ func Test_Routes(t *testing.T) {
 					Destination: "beefsteak",
 				}
 				jsonData, err := json.Marshal(copyReq)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
 				model, err := GetModel("beefsteak")
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, "beefsteak:latest", model.ShortName)
 			},
 		},
@@ -177,18 +226,18 @@ func Test_Routes(t *testing.T) {
 				createTestModel(t, "show-model")
 				showReq := api.ShowRequest{Model: "show-model"}
 				jsonData, err := json.Marshal(showReq)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
 				contentType := resp.Header.Get("Content-Type")
-				assert.Equal(t, contentType, "application/json; charset=utf-8")
+				assert.Equal(t, "application/json; charset=utf-8", contentType)
 				body, err := io.ReadAll(resp.Body)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 
 				var showResp api.ShowResponse
 				err = json.Unmarshal(body, &showResp)
-				assert.Nil(t, err)
+				require.NoError(t, err)
 
 				var params []string
 				paramsSplit := strings.Split(showResp.Parameters, "\n")
@@ -203,64 +252,278 @@ func Test_Routes(t *testing.T) {
 					"top_p 0.9",
 				}
 				assert.Equal(t, expectedParams, params)
+				assert.InDelta(t, 0, showResp.ModelInfo["general.parameter_count"], 1e-9, "Parameter count should be 0")
+			},
+		},
+		{
+			Name:   "openai retrieve model handler",
+			Method: http.MethodGet,
+			Path:   "/v1/models/show-model",
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, "application/json", contentType)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var retrieveResp api.RetrieveModelResponse
+				err = json.Unmarshal(body, &retrieveResp)
+				require.NoError(t, err)
+
+				assert.Equal(t, "show-model", retrieveResp.Id)
+				assert.Equal(t, "library", retrieveResp.OwnedBy)
+			},
+		},
+		{
+			Name:   "Embed Handler Empty Input",
+			Method: http.MethodPost,
+			Path:   "/api/embed",
+			Setup: func(t *testing.T, req *http.Request) {
+				embedReq := api.EmbedRequest{
+					Model: "t-bone",
+					Input: "",
+				}
+				jsonData, err := json.Marshal(embedReq)
+				require.NoError(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				if contentType != "application/json; charset=utf-8" {
+					t.Fatalf("expected content type application/json; charset=utf-8, got %s", contentType)
+				}
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				var embedResp api.EmbedResponse
+				err = json.Unmarshal(body, &embedResp)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if embedResp.Model != "t-bone" {
+					t.Fatalf("expected model t-bone, got %s", embedResp.Model)
+				}
+
+				if embedResp.Embeddings == nil {
+					t.Fatalf("expected embeddings to not be nil, got %v", embedResp.Embeddings)
+				}
+
+				if len(embedResp.Embeddings) != 0 {
+					t.Fatalf("expected embeddings to be empty, got %v", embedResp.Embeddings)
+				}
+			},
+		},
+		{
+			Name:   "Embed Handler Invalid Input",
+			Method: http.MethodPost,
+			Path:   "/api/embed",
+			Setup: func(t *testing.T, req *http.Request) {
+				embedReq := api.EmbedRequest{
+					Model: "t-bone",
+					Input: 2,
+				}
+				jsonData, err := json.Marshal(embedReq)
+				require.NoError(t, err)
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				if contentType != "application/json; charset=utf-8" {
+					t.Fatalf("expected content type application/json; charset=utf-8, got %s", contentType)
+				}
+				_, err := io.ReadAll(resp.Body)
+
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if resp.StatusCode != http.StatusBadRequest {
+					t.Fatalf("expected status code 400, got %d", resp.StatusCode)
+				}
 			},
 		},
 	}
 
-	s, err := setupServer(t)
-	assert.Nil(t, err)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	envconfig.LoadConfig()
 
+	s := &Server{}
 	router := s.GenerateRoutes()
 
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)
 
-	workDir, err := os.MkdirTemp("", "ollama-test")
-	assert.Nil(t, err)
-	defer os.RemoveAll(workDir)
-	os.Setenv("OLLAMA_MODELS", workDir)
-
 	for _, tc := range testCases {
-		t.Logf("Running Test: [%s]", tc.Name)
-		u := httpSrv.URL + tc.Path
-		req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
-		assert.Nil(t, err)
+		t.Run(tc.Name, func(t *testing.T) {
+			u := httpSrv.URL + tc.Path
+			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			require.NoError(t, err)
 
-		if tc.Setup != nil {
-			tc.Setup(t, req)
-		}
+			if tc.Setup != nil {
+				tc.Setup(t, req)
+			}
 
-		resp, err := httpSrv.Client().Do(req)
-		assert.Nil(t, err)
-		defer resp.Body.Close()
+			resp, err := httpSrv.Client().Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
 
-		if tc.Expected != nil {
-			tc.Expected(t, resp)
-		}
-
+			if tc.Expected != nil {
+				tc.Expected(t, resp)
+			}
+		})
 	}
 }
 
-type MockLLM struct {
-	encoding []int
+func TestCase(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	envconfig.LoadConfig()
+
+	cases := []string{
+		"mistral",
+		"llama3:latest",
+		"library/phi3:q4_0",
+		"registry.ollama.ai/library/gemma:q5_K_M",
+		// TODO: host:port currently fails on windows (#4107)
+		// "localhost:5000/alice/bob:latest",
+	}
+
+	var s Server
+	for _, tt := range cases {
+		t.Run(tt, func(t *testing.T) {
+			w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+				Name:      tt,
+				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+				Stream:    &stream,
+			})
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200 got %d", w.Code)
+			}
+
+			expect, err := json.Marshal(map[string]string{"error": "a model with that name already exists"})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			t.Run("create", func(t *testing.T) {
+				w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+					Name:      strings.ToUpper(tt),
+					Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+					Stream:    &stream,
+				})
+
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("expected status 500 got %d", w.Code)
+				}
+
+				if !bytes.Equal(w.Body.Bytes(), expect) {
+					t.Fatalf("expected error %s got %s", expect, w.Body.String())
+				}
+			})
+
+			t.Run("pull", func(t *testing.T) {
+				w := createRequest(t, s.PullModelHandler, api.PullRequest{
+					Name:   strings.ToUpper(tt),
+					Stream: &stream,
+				})
+
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("expected status 500 got %d", w.Code)
+				}
+
+				if !bytes.Equal(w.Body.Bytes(), expect) {
+					t.Fatalf("expected error %s got %s", expect, w.Body.String())
+				}
+			})
+
+			t.Run("copy", func(t *testing.T) {
+				w := createRequest(t, s.CopyModelHandler, api.CopyRequest{
+					Source:      tt,
+					Destination: strings.ToUpper(tt),
+				})
+
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("expected status 500 got %d", w.Code)
+				}
+
+				if !bytes.Equal(w.Body.Bytes(), expect) {
+					t.Fatalf("expected error %s got %s", expect, w.Body.String())
+				}
+			})
+		})
+	}
 }
 
-func (llm *MockLLM) Predict(ctx context.Context, pred llm.PredictOpts, fn func(llm.PredictResult)) error {
-	return nil
+func TestShow(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	envconfig.LoadConfig()
+
+	var s Server
+
+	createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		Name: "show-model",
+		Modelfile: fmt.Sprintf(
+			"FROM %s\nFROM %s",
+			createBinFile(t, llm.KV{"general.architecture": "test"}, nil),
+			createBinFile(t, llm.KV{"general.architecture": "clip"}, nil),
+		),
+	})
+
+	w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
+		Name: "show-model",
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.ModelInfo["general.architecture"] != "test" {
+		t.Fatal("Expected model architecture to be 'test', but got", resp.ModelInfo["general.architecture"])
+	}
+
+	if resp.ProjectorInfo["general.architecture"] != "clip" {
+		t.Fatal("Expected projector architecture to be 'clip', but got", resp.ProjectorInfo["general.architecture"])
+	}
 }
 
-func (llm *MockLLM) Encode(ctx context.Context, prompt string) ([]int, error) {
-	return llm.encoding, nil
-}
+func TestNormalize(t *testing.T) {
+	type testCase struct {
+		input []float32
+	}
 
-func (llm *MockLLM) Decode(ctx context.Context, tokens []int) (string, error) {
-	return "", nil
-}
+	testCases := []testCase{
+		{input: []float32{1}},
+		{input: []float32{0, 1, 2, 3}},
+		{input: []float32{0.1, 0.2, 0.3}},
+		{input: []float32{-0.1, 0.2, 0.3, -0.4}},
+		{input: []float32{0, 0, 0}},
+	}
 
-func (llm *MockLLM) Embedding(ctx context.Context, input string) ([]float64, error) {
-	return []float64{}, nil
-}
+	isNormalized := func(vec []float32) (res bool) {
+		sum := 0.0
+		for _, v := range vec {
+			sum += float64(v * v)
+		}
+		if math.Abs(sum-1) > 1e-6 {
+			return sum == 0
+		} else {
+			return true
+		}
+	}
 
-func (llm *MockLLM) Close() {
-	// do nothing
+	for _, tc := range testCases {
+		t.Run("", func(t *testing.T) {
+			normalized := normalize(tc.input)
+			if !isNormalized(normalized) {
+				t.Errorf("Vector %v is not normalized", tc.input)
+			}
+		})
+	}
 }

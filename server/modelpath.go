@@ -6,8 +6,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
+	"regexp"
 	"strings"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 type ModelPath struct {
@@ -26,9 +28,10 @@ const (
 )
 
 var (
-	ErrInvalidImageFormat = errors.New("invalid image format")
-	ErrInvalidProtocol    = errors.New("invalid protocol scheme")
-	ErrInsecureProtocol   = errors.New("insecure protocol http")
+	ErrInvalidImageFormat  = errors.New("invalid image format")
+	ErrInvalidProtocol     = errors.New("invalid protocol scheme")
+	ErrInsecureProtocol    = errors.New("insecure protocol http")
+	ErrInvalidDigestFormat = errors.New("invalid digest format")
 )
 
 func ParseModelPath(name string) ModelPath {
@@ -100,25 +103,9 @@ func (mp ModelPath) GetShortTagname() string {
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
-// modelsDir returns the value of the OLLAMA_MODELS environment variable or the user's home directory if OLLAMA_MODELS is not set.
-// The models directory is where Ollama stores its model files and manifests.
-func modelsDir() (string, error) {
-	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
-		return models, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ollama", "models"), nil
-}
-
 // GetManifestPath returns the path to the manifest file for the given model path, it is up to the caller to create the directory if it does not exist.
 func (mp ModelPath) GetManifestPath() (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
-	}
+	dir := envconfig.ModelsDir
 
 	return filepath.Join(dir, "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag), nil
 }
@@ -131,10 +118,7 @@ func (mp ModelPath) BaseURL() *url.URL {
 }
 
 func GetManifestPath() (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
-	}
+	dir := envconfig.ModelsDir
 
 	path := filepath.Join(dir, "manifests")
 	if err := os.MkdirAll(path, 0o755); err != nil {
@@ -145,15 +129,17 @@ func GetManifestPath() (string, error) {
 }
 
 func GetBlobsPath(digest string) (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
+	dir := envconfig.ModelsDir
+
+	// only accept actual sha256 digests
+	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
+	re := regexp.MustCompile(pattern)
+
+	if digest != "" && !re.MatchString(digest) {
+		return "", ErrInvalidDigestFormat
 	}
 
-	if runtime.GOOS == "windows" {
-		digest = strings.ReplaceAll(digest, ":", "-")
-	}
-
+	digest = strings.ReplaceAll(digest, ":", "-")
 	path := filepath.Join(dir, "blobs", digest)
 	dirPath := filepath.Dir(path)
 	if digest == "" {

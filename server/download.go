@@ -21,8 +21,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/format"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/format"
 )
 
 const maxRetries = 6
@@ -221,7 +221,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 		}
 		defer resp.Body.Close()
 
-		n, err := io.Copy(w, io.TeeReader(resp.Body, part))
+		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			// rollback progress
 			b.Completed.Add(-n)
@@ -247,7 +247,8 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 				}
 
 				if !part.lastUpdated.IsZero() && time.Since(part.lastUpdated) > 5*time.Second {
-					slog.Info(fmt.Sprintf("%s part %d stalled; retrying", b.Digest[7:19], part.N))
+					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
+					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
 					// reset last updated
 					part.lastUpdated = time.Time{}
 					return errPartStalled
@@ -339,17 +340,17 @@ type downloadOpts struct {
 }
 
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
-func downloadBlob(ctx context.Context, opts downloadOpts) error {
+func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
 	fp, err := GetBlobsPath(opts.digest)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	fi, err := os.Stat(fp)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
-		return err
+		return false, err
 	default:
 		opts.fn(api.ProgressResponse{
 			Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
@@ -358,7 +359,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 			Completed: fi.Size(),
 		})
 
-		return nil
+		return true, nil
 	}
 
 	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
@@ -368,12 +369,12 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 		requestURL = requestURL.JoinPath("v2", opts.mp.GetNamespaceRepository(), "blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
 			blobDownloadManager.Delete(opts.digest)
-			return err
+			return false, err
 		}
 
-		// nolint: contextcheck
+		//nolint:contextcheck
 		go download.Run(context.Background(), requestURL, opts.regOpts)
 	}
 
-	return download.Wait(ctx, opts.fn)
+	return false, download.Wait(ctx, opts.fn)
 }

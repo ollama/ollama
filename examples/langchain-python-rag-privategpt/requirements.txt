@@ -12,3 +12,4 @@ pandoc==2.3
 pypandoc==1.11
 tqdm==4.66.1
 sentence_transformers==2.2.2
+numpy>=1.22.2 # not directly required, pinned by Snyk to avoid a vulnerability

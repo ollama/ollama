@@ -1,6 +1,7 @@
 //go:build darwin
 
 package gpu
+
 /*
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework Foundation -framework CoreGraphics -framework Metal
@@ -9,37 +10,58 @@ package gpu
 import "C"
 import (
 	"runtime"
+
+	"github.com/ollama/ollama/format"
 )
 
-// CheckVRAM returns the free VRAM in bytes on Linux machines with NVIDIA GPUs
-func CheckVRAM() (int64, error) {
-	if runtime.GOARCH == "amd64" {
-		// gpu not supported, this may not be metal
-		return 0, nil
-	}
-	recommendedMaxVRAM := int64(C.getRecommendedMaxVRAM())
-	return recommendedMaxVRAM, nil
-}
+const (
+	metalMinimumMemory = 512 * format.MebiByte
+)
 
-func GetGPUInfo() GpuInfo {
-	mem, _ := getCPUMem()
+func GetGPUInfo() GpuInfoList {
+	mem, _ := GetCPUMem()
 	if runtime.GOARCH == "amd64" {
-		return GpuInfo{
-			Library: "cpu",
-			Variant: GetCPUVariant(),
-			memInfo: mem,
+		return []GpuInfo{
+			{
+				Library: "cpu",
+				Variant: GetCPUCapability(),
+				memInfo: mem,
+			},
 		}
 	}
-	return GpuInfo{
+	info := GpuInfo{
 		Library: "metal",
-		memInfo: mem,
+		ID:      "0",
+	}
+	info.TotalMemory = uint64(C.getRecommendedMaxVRAM())
+
+	// TODO is there a way to gather actual allocated video memory? (currentAllocatedSize doesn't work)
+	info.FreeMemory = info.TotalMemory
+
+	info.MinimumMemory = metalMinimumMemory
+	return []GpuInfo{info}
+}
+
+func GetCPUInfo() GpuInfoList {
+	mem, _ := GetCPUMem()
+	return []GpuInfo{
+		{
+			Library: "cpu",
+			Variant: GetCPUCapability(),
+			memInfo: mem,
+		},
 	}
 }
 
-func getCPUMem() (memInfo, error) {
+func GetCPUMem() (memInfo, error) {
 	return memInfo{
-		TotalMemory: 0,
-		FreeMemory:  0,
-		DeviceCount: 0,
+		TotalMemory: uint64(C.getPhysicalMemory()),
+		FreeMemory:  uint64(C.getFreeMemory()),
+		// FreeSwap omitted as Darwin uses dynamic paging
 	}, nil
+}
+
+func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
+	// No-op on darwin
+	return "", ""
 }

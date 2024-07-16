@@ -1,6 +1,10 @@
 package api
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ollama/ollama/envconfig"
+)
 
 func TestClientFromEnvironment(t *testing.T) {
 	type testCase struct {
@@ -29,6 +33,7 @@ func TestClientFromEnvironment(t *testing.T) {
 	for k, v := range testCases {
 		t.Run(k, func(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", v.value)
+			envconfig.LoadConfig()
 
 			client, err := ClientFromEnvironment()
 			if err != v.err {

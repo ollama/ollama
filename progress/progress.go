@@ -59,7 +59,7 @@ func (p *Progress) StopAndClear() bool {
 	stopped := p.stop()
 	if stopped {
 		// clear all progress lines
-		for i := 0; i < p.pos; i++ {
+		for i := range p.pos {
 			if i > 0 {
 				fmt.Fprint(p.w, "\033[A")
 			}
@@ -85,7 +85,7 @@ func (p *Progress) render() {
 	defer fmt.Fprint(p.w, "\033[?25h")
 
 	// clear already rendered progress lines
-	for i := 0; i < p.pos; i++ {
+	for i := range p.pos {
 		if i > 0 {
 			fmt.Fprint(p.w, "\033[A")
 		}

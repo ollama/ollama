@@ -1,15 +1,15 @@
 # JSON Output Example
 
-![llmjson 2023-11-10 15_31_31](https://github.com/jmorganca/ollama/assets/633681/e599d986-9b4a-4118-81a4-4cfe7e22da25)
+![llmjson 2023-11-10 15_31_31](https://github.com/ollama/ollama/assets/633681/e599d986-9b4a-4118-81a4-4cfe7e22da25)
 
 There are two python scripts in this example. `randomaddresses.py` generates random addresses from different countries. `predefinedschema.py` sets a template for the model to fill in.
 
 ## Running the Example
 
-1. Ensure you have the `llama2` model installed:
+1. Ensure you have the `llama3` model installed:
 
    ```bash
-   ollama pull llama2
+   ollama pull llama3
    ```
 
 2. Install the Python Requirements.

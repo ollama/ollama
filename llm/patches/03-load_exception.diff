@@ -1,0 +1,45 @@
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 73f52435..58a00fb1 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -7241,7 +7241,7 @@ static int llama_model_load(const std::string & fname, llama_model & model, llam
+         }
+     } catch (const std::exception & err) {
+         LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
+-        return -1;
++        throw;
+     }
+ 
+     return 0;
+@@ -17564,16 +17564,23 @@ struct llama_model * llama_load_model_from_file(
+         }
+         model->rpc_servers.push_back(servers);
+     }
+-    int status = llama_model_load(path_model, *model, params);
+-    GGML_ASSERT(status <= 0);
+-    if (status < 0) {
+-        if (status == -1) {
+-            LLAMA_LOG_ERROR("%s: failed to load model\n", __func__);
+-        } else if (status == -2) {
+-            LLAMA_LOG_INFO("%s: cancelled model load\n", __func__);
++
++    try {
++        int status = llama_model_load(path_model, *model, params);
++        GGML_ASSERT(status <= 0);
++        if (status < 0) {
++            if (status == -1) {
++                LLAMA_LOG_ERROR("%s: failed to load model\n", __func__);
++            } else if (status == -2) {
++                LLAMA_LOG_INFO("%s: cancelled model load\n", __func__);
++            }
++            delete model;
++            return nullptr;
+         }
++    } catch (...) {
++        LLAMA_LOG_ERROR("%s: exception loading model\n", __func__);
+         delete model;
+-        return nullptr;
++        throw;
+     }
+ 
+     return model;
