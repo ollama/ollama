@@ -118,7 +118,7 @@ func TestMiddlewareRequests(t *testing.T) {
 				}
 
 				if genReq.Suffix != "suffix" {
-					t.Fatalf("expected 'suffix', got %s", genReq.Options["suffix"])
+					t.Fatalf("expected 'suffix', got %s", genReq.Suffix)
 				}
 			},
 		},
