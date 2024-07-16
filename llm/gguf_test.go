@@ -132,7 +132,6 @@ func compareGGML(t *testing.T, gotGGML, wantGGML *GGML, f *os.File, f2 *os.File)
 }
 
 func decodeGGML(t *testing.T, f *os.File) (int64, *GGML, error) {
-
 	ggml, n, err := DecodeGGML(f, math.MaxInt)
 	if err != nil {
 		t.Fatal(err)
