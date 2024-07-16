@@ -777,6 +777,20 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		if req.Input == "" {
+			req.Input = []string{""}
+		}
+
+		if req.Input == nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "invalid input"))
+			return
+		}
+
+		if v, ok := req.Input.([]any); ok && len(v) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "invalid input"))
+			return
+		}
+
 		var b bytes.Buffer
 		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input}); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
