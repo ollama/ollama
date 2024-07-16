@@ -207,7 +207,7 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: r.Message.ToolCalls},
+			Delta: Message{Role: "assistant", Content: r.Message.Content},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					return &reason
