@@ -22,7 +22,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	// in reverse, find all messages that fit into context window
 	for i := n - 1; i >= 0; i-- {
 		system = make([]api.Message, 0)
-		for j := range i {
+		for j := 0; j < i; j++ {
 			if msgs[j].Role == "system" {
 				system = append(system, msgs[j])
 			}
