@@ -3,21 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
 )
-
-func tokenize(_ context.Context, s string) (tokens []int, err error) {
-	for range strings.Fields(s) {
-		tokens = append(tokens, len(tokens))
-	}
-
-	return
-}
 
 func TestChatPrompt(t *testing.T) {
 	type expect struct {
@@ -192,13 +183,9 @@ func TestChatPrompt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			model := Model{Template: tmpl, ProjectorPaths: []string{"vision"}}
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
-			prompt, images, err := chatPrompt(context.TODO(), &model, tokenize, &opts, tt.msgs, nil)
+			prompt, images, err := chatPrompt(context.TODO(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil)
 			if err != nil {
 				t.Fatal(err)
-			}
-
-			if tt.prompt != prompt {
-				t.Errorf("expected %q, got %q", tt.prompt, prompt)
 			}
 
 			if diff := cmp.Diff(prompt, tt.prompt); diff != "" {
