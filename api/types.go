@@ -405,9 +405,6 @@ type GenerateResponse struct {
 	// Response is the textual response itself.
 	Response string `json:"response"`
 
-	// ToolCalls is the list of tools the model wants to call
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-
 	// Done specifies if the response is complete.
 	Done bool `json:"done"`
 

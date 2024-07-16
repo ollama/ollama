@@ -275,11 +275,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		r.Response = sb.String()
-		if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-			r.ToolCalls = toolCalls
-			r.Response = ""
-		}
-
 		c.JSON(http.StatusOK, r)
 		return
 	}
