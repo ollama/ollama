@@ -1855,6 +1855,8 @@ struct llama_server_context
 
         if (batch.n_tokens == 0)
         {
+            // HANGING HERE
+            LOG_INFO("no tokens to process", {});
             all_slots_are_idle = true;
             return true;
         }
@@ -3200,7 +3202,6 @@ int main(int argc, char **argv) {
                 else {
                     image_data = "";
                 }
-                // TODO: prompt needs to represent the image data
 
                 // create and queue the task
                 json responses;

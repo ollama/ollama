@@ -265,38 +265,42 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		truncate = false
 	}
 
-	inputCheck := true
-
-	if req.Images != nil {
-		inputCheck = false
-	}
-
 	var input []string
 
-	if inputCheck {
+	images := make([]llm.ImageData, len(req.Images))
+	for i := range req.Images {
+		images[i] = llm.ImageData{ID: 0, Data: req.Images[i]}
+	}
 
-		switch i := req.Input.(type) {
-		case string:
-			if len(i) > 0 {
-				input = append(input, i)
-			}
-		case []any:
-			for _, v := range i {
-				if _, ok := v.(string); !ok {
-					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
-					return
-				}
-				input = append(input, v.(string))
-			}
-		default:
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
-			return
-		}
+	if req.Images != nil {
+		// for _, _ := range images {
+		// input = append(input, fmt.Sprintf("[img-%d]", i.ID))
+		input = append(input, "[img-0]")
+		// }
+		req.Input = ""
+	}
 
-		if len(input) == 0 {
-			c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
-			return
+	switch i := req.Input.(type) {
+	case string:
+		if len(i) > 0 {
+			input = append(input, i)
 		}
+	case []any:
+		for _, v := range i {
+			if _, ok := v.(string); !ok {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+				return
+			}
+			input = append(input, v.(string))
+		}
+	default:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+		return
+	}
+
+	if len(input) == 0 {
+		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
+		return
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
@@ -334,11 +338,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 
 		input[i] = s
-	}
-
-	images := make([]llm.ImageData, len(req.Images))
-	for i := range req.Images {
-		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
 	}
 
 	embeddings, err := r.Embed(c.Request.Context(), input, images)
