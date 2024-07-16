@@ -117,7 +117,7 @@ func TestMiddlewareRequests(t *testing.T) {
 					t.Fatalf("expected ['\\n', 'stop'], got %v", stopTokens)
 				}
 
-				if genReq.Options["suffix"] != "suffix" {
+				if genReq.Suffix != "suffix" {
 					t.Fatalf("expected 'suffix', got %s", genReq.Options["suffix"])
 				}
 			},
