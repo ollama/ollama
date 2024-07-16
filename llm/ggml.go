@@ -113,32 +113,37 @@ func (kv KV) ChatTemplate() string {
 }
 
 // Tensors type as a slice of pointers to Tensor
-type Tensors []*Tensor
+// type Tensors []*Tensor
+
+type Tensors struct {
+	Items  []*Tensor
+	Offset int64
+}
 
 // Implement the Len method
 func (ts Tensors) Len() int {
-	return len(ts)
+	return len(ts.Items)
 }
 
 // Implement the Swap method
 func (ts Tensors) Swap(i, j int) {
-	ts[i], ts[j] = ts[j], ts[i]
+	ts.Items[i], ts.Items[j] = ts.Items[j], ts.Items[i]
 }
 
 // Implement the Less method
 func (ts Tensors) Less(i, j int) bool {
 	var x, y int
-	if n, err := fmt.Sscanf(ts[i].Name, "blk.%d", &x); err != nil || n != 1 {
-		return ts[i].Name < ts[j].Name
-	} else if n, err := fmt.Sscanf(ts[j].Name, "blk.%d", &y); err != nil || n != 1 {
-		return ts[i].Name < ts[j].Name
+	if n, err := fmt.Sscanf(ts.Items[i].Name, "blk.%d", &x); err != nil || n != 1 {
+		return ts.Items[i].Name < ts.Items[j].Name
+	} else if n, err := fmt.Sscanf(ts.Items[j].Name, "blk.%d", &y); err != nil || n != 1 {
+		return ts.Items[i].Name < ts.Items[j].Name
 	}
 	return x < y
 }
 
 func (ts Tensors) Layers() map[string]Layer {
 	layers := make(map[string]Layer)
-	for _, t := range ts {
+	for _, t := range ts.Items {
 		parts := strings.Split(t.Name, ".")
 		if parts[0] == "blk" {
 			// join first and second part, e.g. blk.%d

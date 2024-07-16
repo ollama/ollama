@@ -245,9 +245,10 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		var reader io.Reader = io.NewSectionReader(file, offset, n)
 		if !sort.IsSorted(ggml.Tensors()) {
 			// create a new Tensors containing Tensors that have a writeTo
-			var tensors llm.Tensors
+			var tensors []*llm.Tensor
+			ggmlTensors := ggml.Tensors()
 
-			for _, tensor := range ggml.Tensors() {
+			for _, tensor := range ggmlTensors.Items {
 				shape := make([]uint64, len(tensor.Shape))
 				for i := range len(tensor.Shape) {
 					shape[i] = tensor.Shape[len(tensor.Shape)-i-1]
@@ -260,7 +261,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 
 					WriterTo: &llm.TensorWriter{
 						// This needs offset + tensors.Offset int64(tensor.Offset) to be correct
-						Reader: io.NewSectionReader(file, offset + int64(tensor.Offset), int64(tensor.Size())),
+						Reader: io.NewSectionReader(file, offset+ggmlTensors.Offset+int64(tensor.Offset), int64(tensor.Size())),
 					},
 				})
 			}
@@ -268,7 +269,10 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 			reader = &llm.GGUFWriter{
 				KV: ggml.KV(),
 				// Update .Tensors
-				Tensors: tensors,
+				Tensors: llm.Tensors{
+					Items:  tensors,
+					Offset: ggml.Tensors().Offset,
+				},
 			}
 		}
 

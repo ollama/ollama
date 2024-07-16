@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"sort"
 	"strings"
 
 	"golang.org/x/exp/maps"
@@ -91,6 +92,7 @@ type gguf struct {
 
 	kv      KV
 	tensors []*Tensor
+	offset  int64
 
 	parameters uint64
 
@@ -113,7 +115,10 @@ func (llm *gguf) KV() KV {
 }
 
 func (llm *gguf) Tensors() Tensors {
-	return llm.tensors
+	return Tensors{
+		Items:  llm.tensors,
+		Offset: llm.offset,
+	}
 }
 
 func (llm *gguf) numTensor() uint64 {
@@ -241,6 +246,15 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	if !ok {
 		alignment = 32
 	}
+
+	offset, err := rs.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("failed to get current offset: %w", err)
+	}
+
+	// ADD PADDING
+
+	llm.offset = offset + llm.padding(offset, int64(alignment))
 
 	for _, tensor := range llm.tensors {
 		offset, err := rs.Seek(0, io.SeekCurrent)
@@ -703,7 +717,7 @@ func (gguf) padding(offset, align int64) int64 {
 	return (align - offset%align) % align
 }
 
-// Reader and WriterTo
+// Reader and WriterTof
 type GGUFWriter struct {
 	KV
 	Tensors
@@ -739,7 +753,7 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 		return 0, err
 	}
 
-	if err := binary.Write(wo, binary.LittleEndian, uint64(len(gguf.Tensors))); err != nil {
+	if err := binary.Write(wo, binary.LittleEndian, uint64(len(gguf.Tensors.Items))); err != nil {
 		return 0, err
 	}
 
@@ -761,10 +775,10 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 			}
 		}
 	}
-	//sort.Sort(gguf.Tensors)
+	sort.Sort(gguf.Tensors)
 
 	var s uint64
-	for _, t := range gguf.Tensors {
+	for _, t := range gguf.Tensors.Items {
 		t.Offset = s
 		if err := ggufWriteTensorInfo(wo, t); err != nil {
 			return 0, err
@@ -773,7 +787,7 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 	}
 	tensorOffset := wo.offset
 
-	for _, t := range gguf.Tensors {
+	for _, t := range gguf.Tensors.Items {
 		if err := ggufWriteTensor(wo, t, wo.offset); err != nil {
 			return 0, err
 		}
@@ -810,10 +824,9 @@ func ggufWriteTensorInfo(ws io.Writer, t *Tensor) error {
 
 func ggufWriteTensor(ws io.Writer, t *Tensor, offset int) error {
 	slog.Debug(t.Name, "kind", t.Kind, "shape", t.Shape, "offset", t.Offset)
-	fmt.Println(int(ggufPadding(int64(offset), 32)))
-	/* if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(int64(offset), 32)))); err != nil {
+	if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(int64(offset), 32)))); err != nil {
 		return err
-	} */
+	}
 
 	_, err := t.WriteTo(ws)
 	return err
@@ -906,5 +919,5 @@ func ggufWriteKV(ws io.Writer, k string, v any) error {
 }
 
 func ggufPadding(offset, align int64) int64 {
-	return align - offset%align
+	return (align - offset%align) % align
 }

@@ -16,6 +16,7 @@ import (
 func TestGGUFRewrite(t *testing.T) {
 	tests := []string{
 		"phi3.gguf",
+		"nutiny.gguf",
 	}
 
 	for i := range tests {
@@ -112,13 +113,13 @@ func compareGGML(n int64, ggml1, ggml2 *GGML, f *os.File, f2 *os.File) (map[stri
 	t1 := ggml1.Tensors()
 	t2 := ggml2.Tensors()
 
-	if len(t1) != len(t2) {
-		diff["lenTensors"] = fmt.Sprintf("t1: %d, t2: %d", len(t1), len(t2))
+	if len(t1.Items) != len(t2.Items) {
+		diff["lenTensors"] = fmt.Sprintf("t1: %d, t2: %d", len(t1.Items), len(t2.Items))
 	}
 
-	for _, tensor := range t1 {
+	for _, tensor := range t1.Items {
 		sha256sum := sha256.New()
-		sr := io.NewSectionReader(f, n+int64(tensor.Offset), int64(tensor.Size()))
+		sr := io.NewSectionReader(f, t1.Offset+int64(tensor.Offset), int64(tensor.Size()))
 		var s int64
 		s, err := io.Copy(sha256sum, sr)
 		if err != nil {
@@ -147,10 +148,10 @@ func compareGGML(n int64, ggml1, ggml2 *GGML, f *os.File, f2 *os.File) (map[stri
 	diff["sha"] = fmt.Sprintf("%d", s1)
 	diff2["sha"] = fmt.Sprintf("%d", s2) */
 
-	for _, tensor := range t2 {
+	for _, tensor := range t2.Items {
 		sha256sum := sha256.New()
 		var s int64
-		sr := io.NewSectionReader(f2, n+int64(tensor.Offset), int64(tensor.Size()))
+		sr := io.NewSectionReader(f2, t1.Offset+int64(tensor.Offset), int64(tensor.Size()))
 		s, err := io.Copy(sha256sum, sr)
 		if err != nil {
 			fmt.Println(err)
@@ -173,23 +174,24 @@ func decodeGGML(t *testing.T, f *os.File) (*GGML, int64, error) {
 }
 
 func rewriteGGML(t *testing.T, ggml *GGML, temp *os.File, f *os.File) (int64, *GGML, error) {
-	var tensors Tensors
+	var tensors []*Tensor
 
 	fmt.Println("11111111111111111111111111111111111111111")
-	for _, tensor := range ggml.Tensors() {
+	for _, tensor := range ggml.Tensors().Items {
 		shape := make([]uint64, len(tensor.Shape))
 		for i := range len(tensor.Shape) {
 			shape[i] = tensor.Shape[len(tensor.Shape)-i-1]
 		}
 
-		fmt.Println("tensors", tensor.Name, shape, tensor.Kind, 737414+int64(tensor.Offset))
+		fmt.Println("tensors", tensor.Name, shape, tensor.Kind, tensor.Offset)
+		fmt.Println(ggml.Tensors().Offset)
 		tensors = append(tensors, &Tensor{
 			Name:  tensor.Name,
 			Kind:  tensor.Kind,
 			Shape: shape,
 
 			WriterTo: TensorWriter{
-				Reader: io.NewSectionReader(f, 737414+int64(tensor.Offset), int64(tensor.Size())),
+				Reader: io.NewSectionReader(f, ggml.Tensors().Offset+int64(tensor.Offset), int64(tensor.Size())),
 			},
 		})
 	}
@@ -197,7 +199,10 @@ func rewriteGGML(t *testing.T, ggml *GGML, temp *os.File, f *os.File) (int64, *G
 	reader := &GGUFWriter{
 		KV: ggml.KV(),
 		// Update .Tensors
-		Tensors: tensors,
+		Tensors: Tensors{
+			Items:  tensors,
+			Offset: ggml.Tensors().Offset,
+		},
 	}
 
 	n, err := io.Copy(temp, reader)
