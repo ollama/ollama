@@ -140,7 +140,7 @@ curl http://localhost:11434/v1/embeddings \
 
 ## Notes
 
-- TODO: update with usage choice
+- `Usage` is currently not included in the response
 
 ## Models
 
