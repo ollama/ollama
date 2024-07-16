@@ -34,13 +34,19 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-var errCapabilityCompletion = errors.New("completion")
+var (
+	errCapabilities         = errors.New("does not support")
+	errCapabilityCompletion = errors.New("completion")
+	errCapabilityTools      = errors.New("tools")
+	errCapabilityInsert     = errors.New("insert")
+)
 
 type Capability string
 
 const (
 	CapabilityCompletion = Capability("completion")
 	CapabilityTools      = Capability("tools")
+	CapabilityInsert     = Capability("insert")
 )
 
 type registryOptions struct {
@@ -93,7 +99,12 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 			}
 		case CapabilityTools:
 			if !slices.Contains(m.Template.Vars(), "tools") {
-				errs = append(errs, errors.New("tools"))
+				errs = append(errs, errCapabilityTools)
+			}
+		case CapabilityInsert:
+			vars := m.Template.Vars()
+			if !slices.Contains(vars, "suffix") {
+				errs = append(errs, errCapabilityInsert)
 			}
 		default:
 			slog.Error("unknown capability", "capability", cap)
@@ -102,7 +113,7 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 	}
 
 	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("does not support %w", errors.Join(errs...))
+		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
 	return nil
