@@ -810,9 +810,10 @@ func ggufWriteTensorInfo(ws io.Writer, t *Tensor) error {
 
 func ggufWriteTensor(ws io.Writer, t *Tensor, offset int) error {
 	slog.Debug(t.Name, "kind", t.Kind, "shape", t.Shape, "offset", t.Offset)
-	if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(int64(offset), 32)))); err != nil {
+	fmt.Println(int(ggufPadding(int64(offset), 32)))
+	/* if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(int64(offset), 32)))); err != nil {
 		return err
-	}
+	} */
 
 	_, err := t.WriteTo(ws)
 	return err

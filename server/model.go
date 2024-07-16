@@ -260,7 +260,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 
 					WriterTo: &llm.TensorWriter{
 						// This needs offset + tensors.Offset int64(tensor.Offset) to be correct
-						Reader: io.NewSectionReader(file, int64(tensor.Offset), int64(tensor.Size())),
+						Reader: io.NewSectionReader(file, offset + int64(tensor.Offset), int64(tensor.Size())),
 					},
 				})
 			}

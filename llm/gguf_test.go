@@ -54,6 +54,7 @@ func TestGGUFRewrite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			//t.Fatal("FULL SIZE JFAKFJJEFJAJFLAEJJAFAJKLFJ", n)
 
 			if diff, diff2, ok := compareGGML(n, ggml2, ggml, temp, f); !ok {
 				if cmp.Diff(diff, diff2) != "" {
