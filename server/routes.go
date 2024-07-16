@@ -1310,7 +1310,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Messages[0].Role != "system" {
+	if req.Messages[0].Role != "system" && m.System != "" {
 		req.Messages = append([]api.Message{{Role: "system", Content: m.System}}, req.Messages...)
 	}
 
