@@ -260,7 +260,6 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 					Shape: shape,
 
 					WriterTo: &llm.TensorWriter{
-						// This needs offset + tensors.Offset int64(tensor.Offset) to be correct
 						Reader: io.NewSectionReader(file, offset+ggmlTensors.Offset+int64(tensor.Offset), int64(tensor.Size())),
 					},
 				})
@@ -268,10 +267,9 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 
 			reader = &llm.GGUFWriter{
 				KV: ggml.KV(),
-				// Update .Tensors
 				Tensors: llm.Tensors{
 					Items:  tensors,
-					Offset: ggml.Tensors().Offset,
+					Offset: ggmlTensors.Offset,
 				},
 			}
 		}

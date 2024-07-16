@@ -252,8 +252,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 		return fmt.Errorf("failed to get current offset: %w", err)
 	}
 
-	// ADD PADDING
-
+	// align to next 32-byte boundary
 	llm.offset = offset + llm.padding(offset, int64(alignment))
 
 	for _, tensor := range llm.tensors {
