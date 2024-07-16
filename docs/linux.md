@@ -144,5 +144,5 @@ sudo groupdel ollama
 
 Remove the config
 ```bash
-sudo rm -f /etc/ollama
+sudo rm -rf /etc/ollama
 ```
