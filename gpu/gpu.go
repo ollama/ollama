@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -188,10 +187,8 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 		return
 	}
 	result := strings.TrimSpace(string(output))
-	re := regexp.MustCompile("[0-9]+")
-	match := re.FindString(result)
-	if match != "" {
-		usedVRAM, _ := strconv.ParseUint(match, 10, 64)
+	if result != "" {
+		usedVRAM, _ := strconv.ParseUint(result, 10, 64)
 		gpuInfo.FreeMemory = gpuInfo.TotalMemory - usedVRAM
 	} else {
 		gpuInfo.GpuInfo.UnreliableFreeMemory = true
