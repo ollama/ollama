@@ -494,7 +494,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		case "license", "template", "system":
 			if c.Name == "template" {
 				if _, err := template.Parse(c.Args); err != nil {
-					return err
+					return fmt.Errorf("%w: %s", errBadTemplate, err)
 				}
 			}
 

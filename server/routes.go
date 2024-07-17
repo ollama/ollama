@@ -56,6 +56,7 @@ func init() {
 }
 
 var errRequired = errors.New("is required")
+var errBadTemplate = errors.New("template error")
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
@@ -614,7 +615,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 
 		quantization := cmp.Or(r.Quantize, r.Quantization)
 		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
-			if strings.HasPrefix(err.Error(), "template: ") {
+			if errors.Is(err, errBadTemplate) {
 				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			} else {
 				ch <- gin.H{"error": err.Error()}
