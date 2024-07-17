@@ -285,36 +285,6 @@ func TestMiddlewareResponses(t *testing.T) {
 
 	testCases := []testCase{
 		{
-			Name:     "completions handler error forwarding",
-			Method:   http.MethodPost,
-			Path:     "/api/generate",
-			TestPath: "/api/generate",
-			Handler:  CompletionsMiddleware,
-			Endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-			},
-			Setup: func(t *testing.T, req *http.Request) {
-				body := CompletionRequest{
-					Model:  "test-model",
-					Prompt: "Hello",
-				}
-
-				bodyBytes, _ := json.Marshal(body)
-
-				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				req.Header.Set("Content-Type", "application/json")
-			},
-			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				if resp.Code != http.StatusBadRequest {
-					t.Fatalf("expected 400, got %d", resp.Code)
-				}
-
-				if !strings.Contains(resp.Body.String(), `"invalid request"`) {
-					t.Fatalf("error was not forwarded")
-				}
-			},
-		},
-		{
 			Name:     "list handler",
 			Method:   http.MethodGet,
 			Path:     "/api/tags",
@@ -330,8 +300,6 @@ func TestMiddlewareResponses(t *testing.T) {
 				})
 			},
 			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				assert.Equal(t, http.StatusOK, resp.Code)
-
 				var listResp ListCompletion
 				if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 					t.Fatal(err)
@@ -373,6 +341,75 @@ func TestMiddlewareResponses(t *testing.T) {
 
 				if retrieveResp.Id != "test-model" {
 					t.Fatalf("Expected id to be test-model, got %s", retrieveResp.Id)
+				}
+			},
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			router = gin.New()
+			router.Use(tc.Handler())
+			router.Handle(tc.Method, tc.Path, tc.Endpoint)
+			req, _ := http.NewRequest(tc.Method, tc.TestPath, nil)
+
+			if tc.Setup != nil {
+				tc.Setup(t, req)
+			}
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			assert.Equal(t, http.StatusOK, resp.Code)
+
+			tc.Expected(t, resp)
+		})
+	}
+}
+
+func TestMiddlewareErrors(t *testing.T) {
+	type testCase struct {
+		Name     string
+		Method   string
+		Path     string
+		TestPath string
+		Handler  func() gin.HandlerFunc
+		Endpoint func(c *gin.Context)
+		Setup    func(t *testing.T, req *http.Request)
+		Expected func(t *testing.T, resp *httptest.ResponseRecorder)
+	}
+
+	testCases := []testCase{
+		{
+			Name:     "completions handler error forwarding",
+			Method:   http.MethodPost,
+			Path:     "/api/generate",
+			TestPath: "/api/generate",
+			Handler:  CompletionsMiddleware,
+			Endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			},
+			Setup: func(t *testing.T, req *http.Request) {
+				body := CompletionRequest{
+					Model:  "test-model",
+					Prompt: "Hello",
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				if resp.Code != http.StatusBadRequest {
+					t.Fatalf("expected 400, got %d", resp.Code)
+				}
+
+				if !strings.Contains(resp.Body.String(), `"invalid request"`) {
+					t.Fatalf("error was not forwarded")
 				}
 			},
 		},
