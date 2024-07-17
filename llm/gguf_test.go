@@ -14,11 +14,12 @@ import (
 
 // TestGGUFDecode tests the decoding and rewriting of (unsorted) GGUF files
 // To run, add GGUF files to /llm/testdata and add the name of the file to the tests slice
-// Should comment //sort.Sort(tensors) in gguf.go
 // This creates a temporary file in /llm/testdata that will deleted only if the test passes
+// Note: map[Tensor.Name + " offset"] is commented since sorting will reorder the tensors
+// Comment out sort.Sort(gguf.Tensors) in gguf.go to test offsets
 func TestGGUFRewrite(t *testing.T) {
 	tests := []string{
-		"nutiny.gguf",
+		"phi3.gguf",
 	}
 
 	for i := range tests {
@@ -112,7 +113,7 @@ func compareGGML(t *testing.T, gotGGML, wantGGML *GGML, f *os.File, f2 *os.File)
 
 		got[tensor.Name] = fmt.Sprintf("%x", sha256sum.Sum(nil))
 		got[tensor.Name+" size"] = fmt.Sprintf("%d", s)
-		got[tensor.Name+" offset"] = fmt.Sprintf("%v", tensor.Offset)
+		// got[tensor.Name+" offset"] = fmt.Sprintf("%v", tensor.Offset)
 	}
 
 	for _, tensor := range wantTensors {
@@ -126,7 +127,7 @@ func compareGGML(t *testing.T, gotGGML, wantGGML *GGML, f *os.File, f2 *os.File)
 
 		want[tensor.Name] = fmt.Sprintf("%x", sha256sum.Sum(nil))
 		want[tensor.Name+" size"] = fmt.Sprintf("%d", s)
-		want[tensor.Name+" offset"] = fmt.Sprintf("%v", tensor.Offset)
+		// want[tensor.Name+" offset"] = fmt.Sprintf("%v", tensor.Offset)
 	}
 	return got, want
 }

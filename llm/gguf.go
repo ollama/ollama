@@ -227,7 +227,6 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			return fmt.Errorf("failed to read tensor offset: %w", err)
 		}
 
-		fmt.Println("tensor", name, shape, kind, offset)
 		tensor := Tensor{
 			Name:   name,
 			Kind:   kind,
@@ -765,9 +764,9 @@ func (gguf GGUFWriter) WriteTo(w io.Writer) (int64, error) {
 	slices.Sort(keys)
 
 	for _, key := range keys {
-		fmt.Println(key)
 		switch key {
 		case "general.parameter_count":
+			// don't write general param count as its added in by us
 			continue
 		default:
 			if err := ggufWriteKV(wo, key, gguf.KV[key]); err != nil {
