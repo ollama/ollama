@@ -175,28 +175,30 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 	var totalram uint64 = uint64(C.check_total_host_mem())
 	// there will be half of total ram can be handle as iGPU vram
 	gpuInfo.TotalMemory = totalram / 2
+	cmd := "sed 's/^.*, \\([0-9]\\+\\) bytes$/\\1/' /sys/kernel/debug/dri/0/i915_gem_objects | awk '{print $1; exit}'"
+	terminal := "bash"
 	if runtime.GOOS == "windows" {
-	} else {
-		cmd := "sed 's/^.*, \\([0-9]\\+\\) bytes$/\\1/' /sys/kernel/debug/dri/0/i915_gem_objects | awk '{print $1, \"bytes VRAM be used\"; exit}'"
-		output, err := exec.Command("bash", "-c", cmd).Output()
-
-		if err != nil {
-			fmt.Println("Error executing get Intel iGPUs vram command:", err)
-			return
-		}
-
-		result := strings.TrimSpace(string(output))
-		if strings.Contains(result, "bytes VRAM be used") {
-			re := regexp.MustCompile("[0-9]+")
-			match := re.FindString(result)
-			usedVRAM, _ := strconv.ParseUint(match, 10, 64)
-			gpuInfo.FreeMemory = gpuInfo.TotalMemory - usedVRAM
-		} else {
-			gpuInfo.GpuInfo.UnreliableFreeMemory = true
-			slog.Warn("can't get Intel iGPU allocated VRAM so there may exist OOM risk during inference, please try to run ollama with sudo privilege. turn UnreliableFreeMemory flag On")
-			gpuInfo.FreeMemory = gpuInfo.TotalMemory - 1024*1024*1024 //leave 1G VRAM for graphic-related task besides ollama.
-		}
+		cmd = `(((Get-Counter "\GPU Process Memory(*)\Local Usage").CounterSamples | where CookedValue).CookedValue | measure -sum).sum`
+		terminal = "powershell"
 	}
+	output, err := exec.Command(terminal, "-c", cmd).Output()
+
+	if err != nil {
+		fmt.Println("Error executing get Intel iGPUs vram command:", err)
+		return
+	}
+	result := strings.TrimSpace(string(output))
+	re := regexp.MustCompile("[0-9]+")
+	match := re.FindString(result)
+	if match != "" {
+		usedVRAM, _ := strconv.ParseUint(match, 10, 64)
+		gpuInfo.FreeMemory = gpuInfo.TotalMemory - usedVRAM
+	} else {
+		gpuInfo.GpuInfo.UnreliableFreeMemory = true
+		slog.Warn("can't get Intel iGPU allocated VRAM so there may exist OOM risk during inference, please try to run ollama with sudo privilege. turn UnreliableFreeMemory flag On")
+		gpuInfo.FreeMemory = gpuInfo.TotalMemory - 1024*1024*1024 //leave 1G VRAM for graphic-related task besides ollama.
+	}
+
 }
 
 func GetGPUInfo() GpuInfoList {
