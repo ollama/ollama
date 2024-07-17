@@ -997,6 +997,16 @@ func (s *Server) IsServerKeyPublicKey(c *gin.Context) bool {
 		serverPublicKey, err := auth.GetPublicKey()
 		if err != nil {
 			slog.Error(fmt.Sprintf("failed to get server public key: %v", err))
+			return false
+		}
+
+		timestamp, err := time.Parse(time.RFC3339, c.GetHeader("Timestamp"))
+		if err != nil {
+			return false
+		}
+
+		if time.Since(timestamp) > time.Minute {
+			return false
 		}
 
 		if bytes.Equal(serverPublicKey.Marshal(), clientPublicKey.Marshal()) {
