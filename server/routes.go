@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"math"
 	"net"
@@ -943,7 +942,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-	if c.GetHeader("X-Redirect-Create") == "1" && s.IsLocal(c) {
+	if c.GetHeader("X-Redirect-Create") == "1" && s.IsServerKeyPublicKey(c) {
 		c.Header("LocalLocation", path)
 		c.Status(http.StatusTemporaryRedirect)
 		return
@@ -963,7 +962,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 	c.Status(http.StatusCreated)
 }
 
-func (s *Server) IsLocal(c *gin.Context) bool {
+func (s *Server) IsServerKeyPublicKey(c *gin.Context) bool {
 	if authz := c.GetHeader("Authorization"); authz != "" {
 		parts := strings.Split(authz, ":")
 		if len(parts) != 3 {
@@ -997,14 +996,13 @@ func (s *Server) IsLocal(c *gin.Context) bool {
 
 		serverPublicKey, err := auth.GetPublicKey()
 		if err != nil {
-			log.Fatal(err)
+			slog.Error(fmt.Sprintf("failed to get server public key: %v", err))
 		}
 
 		if bytes.Equal(serverPublicKey.Marshal(), clientPublicKey.Marshal()) {
 			return true
 		}
 
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return false
 	}
 
