@@ -115,11 +115,6 @@ func TestExtractFromZipFile(t *testing.T) {
 	}
 }
 
-type function struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
-}
-
 func readFile(t *testing.T, base, name string) *bytes.Buffer {
 	t.Helper()
 
@@ -185,18 +180,18 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 
 	calls := []api.ToolCall{
 		{
-			Function: function{
+			Function: api.ToolCallFunction{
 				Name: "get_current_weather",
-				Arguments: map[string]any{
+				Arguments: api.ToolCallFunctionArguments{
 					"format":   "fahrenheit",
 					"location": "San Francisco, CA",
 				},
 			},
 		},
 		{
-			Function: function{
+			Function: api.ToolCallFunction{
 				Name: "get_current_weather",
-				Arguments: map[string]any{
+				Arguments: api.ToolCallFunctionArguments{
 					"format":   "celsius",
 					"location": "Toronto, Canada",
 				},

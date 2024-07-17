@@ -150,9 +150,9 @@ func (t *Template) Vars() []string {
 
 type Values struct {
 	Messages []api.Message
-	Tools    []api.Tool
-	Prompt   string
-	Suffix   string
+	api.Tools
+	Prompt string
+	Suffix string
 
 	// forceLegacy is a flag used to test compatibility with legacy templates
 	forceLegacy bool

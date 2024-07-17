@@ -9,7 +9,7 @@
 
 Here are the available tools:
 <tools>
-{{- range .Tools }} {{ json .Function }}
+{{- range .Tools }} {{ .Function }}
 {{- end }} </tools>
 {{- end }}
 {{- end }}<|eot_id|>
@@ -20,7 +20,7 @@ Here are the available tools:
 {{- else if eq .Role "assistant" }}
 {{- if .Content }}{{ .Content }}
 {{- else if .ToolCalls }}<tool_call>
-{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ json .Function.Arguments }}}
+{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
 {{- end }}
 </tool_call>
 {{- end }}
