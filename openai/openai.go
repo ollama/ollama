@@ -403,19 +403,19 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			}
 			messages = append(messages, message)
 		default:
-			if msg.Role == "assistant" && msg.ToolCalls != nil {
-				toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
-				for i, tc := range msg.ToolCalls {
-					toolCalls[i].Function.Name = tc.Function.Name
-					err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
-					if err != nil {
-						return nil, fmt.Errorf("invalid tool call arguments")
-					}
-				}
-				messages = append(messages, api.Message{Role: msg.Role, ToolCalls: toolCalls})
-				continue
+			if msg.ToolCalls == nil {
+				return nil, fmt.Errorf("invalid message content type: %T", content)
 			}
-			return nil, fmt.Errorf("invalid message content type: %T", content)
+
+			toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
+			for i, tc := range msg.ToolCalls {
+				toolCalls[i].Function.Name = tc.Function.Name
+				err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
+				if err != nil {
+					return nil, fmt.Errorf("invalid tool call arguments")
+				}
+			}
+			messages = append(messages, api.Message{Role: msg.Role, ToolCalls: toolCalls})
 		}
 	}
 
