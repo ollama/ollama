@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
@@ -50,7 +51,9 @@ var OneapiMgmtName = "libze_intel_gpu.so"
 
 func GetCPUMem() (memInfo, error) {
 	var mem memInfo
-	var total, available, free, buffers, cached uint64
+	var total, available, free, buffers, cached, freeswap, totalswap uint64
+	useSwap := envconfig.LinuxSwap
+
 	f, err := os.Open("/proc/meminfo")
 	if err != nil {
 		return mem, err
@@ -70,6 +73,10 @@ func GetCPUMem() (memInfo, error) {
 			_, err = fmt.Sscanf(line, "Buffers:%d", &buffers)
 		case strings.HasPrefix(line, "Cached:"):
 			_, err = fmt.Sscanf(line, "Cached:%d", &cached)
+		case useSwap && strings.HasPrefix(line, "SwapFree:"):
+			_, err = fmt.Sscanf(line, "SwapFree:%d", &freeswap)
+		case useSwap && strings.HasPrefix(line, "SwapTotal:"):
+			_, err = fmt.Sscanf(line, "SwapTotal:%d", &totalswap)
 		default:
 			continue
 		}
@@ -77,13 +84,17 @@ func GetCPUMem() (memInfo, error) {
 			return mem, err
 		}
 
-		if total > 0 && available > 0 {
+		if total > 0 && available > 0 && useSwap && totalswap > 0 {
+			mem.TotalMemory = (total + totalswap) * format.KibiByte
+			mem.FreeMemory = (available + freeswap) * format.KibiByte
+			return mem, nil
+		} else if total > 0 && available > 0 && !useSwap {
 			mem.TotalMemory = total * format.KibiByte
 			mem.FreeMemory = available * format.KibiByte
 			return mem, nil
 		}
 	}
-	mem.TotalMemory = total * format.KibiByte
-	mem.FreeMemory = (free + buffers + cached) * format.KibiByte
+	mem.TotalMemory = (total + totalswap) * format.KibiByte
+	mem.FreeMemory = (free + buffers + cached + freeswap) * format.KibiByte
 	return mem, nil
 }

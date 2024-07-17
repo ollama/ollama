@@ -72,6 +72,9 @@ var (
 	GpuDeviceOrdinal string
 	// Set via HSA_OVERRIDE_GFX_VERSION in the environment
 	HsaOverrideGfxVersion string
+
+	// Set via OLLAMA_LINUX_SWAP in the environment
+	LinuxSwap bool
 )
 
 type EnvVar struct {
@@ -107,6 +110,9 @@ func AsMap() map[string]EnvVar {
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion, "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGpu, "Enable experimental Intel GPU detection"}
 	}
+	if runtime.GOOS == "linux" {
+		ret["OLLAMA_LINUX_SWAP"] = EnvVar{"OLLAMA_LINUX_SWAP", LinuxSwap, "Enable swap support for Linux"}
+	}
 	return ret
 }
 
@@ -131,10 +137,11 @@ func clean(key string) string {
 
 func init() {
 	// default values
-	NumParallel = 0 // Autoselect
+	NumParallel = 8 // Autoselect
 	MaxRunners = 0  // Autoselect
 	MaxQueuedRequests = 512
 	KeepAlive = 5 * time.Minute
+	LinuxSwap = true
 
 	LoadConfig()
 }
@@ -294,6 +301,10 @@ func LoadConfig() {
 	RocrVisibleDevices = clean("ROCR_VISIBLE_DEVICES")
 	GpuDeviceOrdinal = clean("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = clean("HSA_OVERRIDE_GFX_VERSION")
+
+	if set, err := strconv.ParseBool(clean("OLLAMA_LINUX_SWAP")); err == nil {
+		LinuxSwap = set
+	}
 }
 
 func getModelsDir() (string, error) {
