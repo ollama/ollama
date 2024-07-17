@@ -17,7 +17,7 @@ If you decide to call functions:
 
 Available functions as JSON spec:
 {{- if .Tools }}
-{{ json .Tools }}
+{{ .Tools }}
 {{- end }}<|eot_id|>
 {{- end }}
 {{- range .Messages }}<|start_header_id|>
@@ -25,7 +25,7 @@ Available functions as JSON spec:
 {{- end }}<|end_header_id|>
 {{- if .Content }}{{ .Content }}
 {{- else if .ToolCalls }} functools[
-{{- range .ToolCalls }}{{ "{" }}"name": "{{ .Function.Name }}", "arguments": {{ json .Function.Arguments }}{{ "}" }}
+{{- range .ToolCalls }}{{ "{" }}"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}{{ "}" }}
 {{- end }}]
 {{- end }}<|eot_id|>
 {{- end }}<|start_header_id|>assistant<|end_header_id|>

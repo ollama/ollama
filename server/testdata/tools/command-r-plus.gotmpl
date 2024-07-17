@@ -46,7 +46,7 @@ Action: ```json
 {{- range .ToolCalls }}
     {
         "tool_name": "{{ .Function.Name }}",
-        "parameters": {{ json .Function.Arguments }}
+        "parameters": {{ .Function.Arguments }}
     }
 {{- end }}
 ]```

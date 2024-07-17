@@ -101,10 +101,17 @@ type ChatRequest struct {
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Tools is an optional list of tools the model has access to.
-	Tools []Tool `json:"tools,omitempty"`
+	Tools `json:"tools,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+}
+
+type Tools []Tool
+
+func (t Tools) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // Message is a single message in a chat sequence. The message contains the
@@ -117,30 +124,6 @@ type Message struct {
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
 }
 
-type ToolCall struct {
-	Function struct {
-		Name      string         `json:"name"`
-		Arguments map[string]any `json:"arguments"`
-	} `json:"function"`
-}
-
-type Tool struct {
-	Type     string `json:"type"`
-	Function struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Parameters  struct {
-			Type       string   `json:"type"`
-			Required   []string `json:"required"`
-			Properties map[string]struct {
-				Type        string   `json:"type"`
-				Description string   `json:"description"`
-				Enum        []string `json:"enum,omitempty"`
-			} `json:"properties"`
-		} `json:"parameters"`
-	} `json:"function"`
-}
-
 func (m *Message) UnmarshalJSON(b []byte) error {
 	type Alias Message
 	var a Alias
@@ -151,6 +134,46 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	*m = Message(a)
 	m.Role = strings.ToLower(m.Role)
 	return nil
+}
+
+type ToolCall struct {
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string                    `json:"name"`
+	Arguments ToolCallFunctionArguments `json:"arguments"`
+}
+
+type ToolCallFunctionArguments map[string]any
+
+func (t *ToolCallFunctionArguments) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  struct {
+		Type       string   `json:"type"`
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Type        string   `json:"type"`
+			Description string   `json:"description"`
+			Enum        []string `json:"enum,omitempty"`
+		} `json:"properties"`
+	} `json:"parameters"`
+}
+
+func (t *ToolFunction) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
