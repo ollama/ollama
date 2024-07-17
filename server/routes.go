@@ -614,7 +614,11 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 
 		quantization := cmp.Or(r.Quantize, r.Quantization)
 		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			if strings.HasPrefix(err.Error(), "template: ") {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			} else {
+				ch <- gin.H{"error": err.Error()}
+			}
 		}
 	}()
 
