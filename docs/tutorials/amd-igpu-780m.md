@@ -1,5 +1,6 @@
+# Running Ollama on AMD iGPU 780M
 
-Ollama could run the iGPU 780M of AMD Ryzen CPU at Linux base on ROCm. There only has a little extra settings than Radeon dGPU like RX7000 series.
+Ollama could run on the iGPU 780M of AMD Ryzen CPU at Linux bases on ROCm. There only has a little extra settings than Radeon dGPU like RX7000 series.
 
 ## Keys for usage
 - Ryzen 7000s/8000s CPU with iGPU 780M
