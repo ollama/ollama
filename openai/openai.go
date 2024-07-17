@@ -29,9 +29,9 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role      string         `json:"role"`
-	Content   any            `json:"content"`
-	ToolCalls []api.ToolCall `json:"tool_calls,omitempty"`
+	Role      string     `json:"role"`
+	Content   any        `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type Choice struct {
@@ -134,6 +134,15 @@ type CompletionChunk struct {
 	SystemFingerprint string                `json:"system_fingerprint"`
 }
 
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	} `json:"function"`
+}
+
 type Model struct {
 	Id      string `json:"id"`
 	Object  string `json:"object"`
@@ -173,6 +182,12 @@ func NewError(code int, message string) ErrorResponse {
 }
 
 func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
+	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
+	for i, tc := range r.Message.ToolCalls {
+		toolCalls[i].ID = fmt.Sprintf("tool-call-id-%d", i)
+		toolCalls[i].Type = "function"
+		toolCalls[i].Function = tc.Function
+	}
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -181,7 +196,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 		SystemFingerprint: "fp_ollama",
 		Choices: []Choice{{
 			Index:   0,
-			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: r.Message.ToolCalls},
+			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					return &reason
@@ -314,9 +329,14 @@ func toModel(r api.ShowResponse, m string) Model {
 func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
+		toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
+		for i, tc := range msg.ToolCalls {
+			toolCalls[i].Function = tc.Function
+		}
+
 		switch content := msg.Content.(type) {
 		case string:
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, ToolCalls: msg.ToolCalls})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, ToolCalls: toolCalls})
 		case []any:
 			message := api.Message{Role: msg.Role}
 			for _, c := range content {
@@ -370,7 +390,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			messages = append(messages, message)
 		default:
 			if msg.Role == "assistant" && msg.ToolCalls != nil {
-				messages = append(messages, api.Message{Role: msg.Role, ToolCalls: msg.ToolCalls})
+				messages = append(messages, api.Message{Role: msg.Role, ToolCalls: toolCalls})
 				continue
 			}
 			return nil, fmt.Errorf("invalid message content type: %T", content)
