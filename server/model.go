@@ -344,7 +344,9 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 
 	var objs []map[string]any
 	for offset := 0; offset < len(s); {
-		if err := json.NewDecoder(strings.NewReader(s[offset:])).Decode(&objs); errors.Is(err, io.EOF) {
+		var obj map[string]any
+		decoder := json.NewDecoder(strings.NewReader(s[offset:]))
+		if err := decoder.Decode(&obj); errors.Is(err, io.EOF) {
 			break
 		} else if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
 			// skip over any syntax errors
@@ -355,8 +357,8 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		} else if err != nil {
 			return nil, false
 		} else {
-			// break when an object is decoded
-			break
+			offset += int(decoder.InputOffset())
+			objs = append(objs, obj)
 		}
 	}
 
