@@ -85,6 +85,8 @@ func checkFileExists(t *testing.T, p string, expect []string) {
 }
 
 func TestCreateFromBin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()
@@ -111,6 +113,8 @@ func TestCreateFromBin(t *testing.T) {
 }
 
 func TestCreateFromModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()
@@ -152,6 +156,8 @@ func TestCreateFromModel(t *testing.T) {
 }
 
 func TestCreateRemovesLayers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()
@@ -199,6 +205,8 @@ func TestCreateRemovesLayers(t *testing.T) {
 }
 
 func TestCreateUnsetsSystem(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()
@@ -255,6 +263,8 @@ func TestCreateUnsetsSystem(t *testing.T) {
 }
 
 func TestCreateMergeParameters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()
@@ -358,6 +368,8 @@ func TestCreateMergeParameters(t *testing.T) {
 }
 
 func TestCreateReplacesMessages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()
@@ -434,6 +446,8 @@ func TestCreateReplacesMessages(t *testing.T) {
 }
 
 func TestCreateTemplateSystem(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()
@@ -480,6 +494,8 @@ func TestCreateTemplateSystem(t *testing.T) {
 }
 
 func TestCreateLicenses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()
@@ -526,6 +542,8 @@ func TestCreateLicenses(t *testing.T) {
 }
 
 func TestCreateDetectTemplate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	envconfig.LoadConfig()

@@ -85,6 +85,7 @@ func TestMiddlewareRequests(t *testing.T) {
 					Prompt:      "Hello",
 					Temperature: &temp,
 					Stop:        []string{"\n", "stop"},
+					Suffix:      "suffix",
 				}
 
 				bodyBytes, _ := json.Marshal(body)
@@ -114,6 +115,10 @@ func TestMiddlewareRequests(t *testing.T) {
 
 				if stopTokens[0] != "\n" || stopTokens[1] != "stop" {
 					t.Fatalf("expected ['\\n', 'stop'], got %v", stopTokens)
+				}
+
+				if genReq.Suffix != "suffix" {
+					t.Fatalf("expected 'suffix', got %s", genReq.Suffix)
 				}
 			},
 		},
@@ -158,6 +163,78 @@ func TestMiddlewareRequests(t *testing.T) {
 
 				if !bytes.Equal(chatReq.Messages[0].Images[0], img) {
 					t.Fatalf("expected image encoding, got %s", chatReq.Messages[0].Images[0])
+				}
+			},
+		},
+		{
+			Name:    "embed handler single input",
+			Method:  http.MethodPost,
+			Path:    "/api/embed",
+			Handler: EmbeddingsMiddleware,
+			Setup: func(t *testing.T, req *http.Request) {
+				body := EmbedRequest{
+					Input: "Hello",
+					Model: "test-model",
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, req *http.Request) {
+				var embedReq api.EmbedRequest
+				if err := json.NewDecoder(req.Body).Decode(&embedReq); err != nil {
+					t.Fatal(err)
+				}
+
+				if embedReq.Input != "Hello" {
+					t.Fatalf("expected 'Hello', got %s", embedReq.Input)
+				}
+
+				if embedReq.Model != "test-model" {
+					t.Fatalf("expected 'test-model', got %s", embedReq.Model)
+				}
+			},
+		},
+		{
+			Name:    "embed handler batch input",
+			Method:  http.MethodPost,
+			Path:    "/api/embed",
+			Handler: EmbeddingsMiddleware,
+			Setup: func(t *testing.T, req *http.Request) {
+				body := EmbedRequest{
+					Input: []string{"Hello", "World"},
+					Model: "test-model",
+				}
+
+				bodyBytes, _ := json.Marshal(body)
+
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				req.Header.Set("Content-Type", "application/json")
+			},
+			Expected: func(t *testing.T, req *http.Request) {
+				var embedReq api.EmbedRequest
+				if err := json.NewDecoder(req.Body).Decode(&embedReq); err != nil {
+					t.Fatal(err)
+				}
+
+				input, ok := embedReq.Input.([]any)
+
+				if !ok {
+					t.Fatalf("expected input to be a list")
+				}
+
+				if input[0].(string) != "Hello" {
+					t.Fatalf("expected 'Hello', got %s", input[0])
+				}
+
+				if input[1].(string) != "World" {
+					t.Fatalf("expected 'World', got %s", input[1])
+				}
+
+				if embedReq.Model != "test-model" {
+					t.Fatalf("expected 'test-model', got %s", embedReq.Model)
 				}
 			},
 		},

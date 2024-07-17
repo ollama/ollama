@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"text/template/parse"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
@@ -288,4 +292,88 @@ func detectContentType(r io.Reader) (string, error) {
 	}
 
 	return "unknown", nil
+}
+
+// parseToolCalls attempts to parse a JSON string into a slice of ToolCalls.
+// mxyng: this only really works if the input contains tool calls in some JSON format
+func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
+	// create a subtree from the node that ranges over .ToolCalls
+	tmpl := m.Template.Subtree(func(n parse.Node) bool {
+		if t, ok := n.(*parse.RangeNode); ok {
+			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
+		}
+
+		return false
+	})
+
+	if tmpl == nil {
+		return nil, false
+	}
+
+	var b bytes.Buffer
+	if err := tmpl.Execute(&b, map[string][]map[string]any{
+		"ToolCalls": {
+			{
+				"Function": map[string]any{
+					"Name":      "@@name@@",
+					"Arguments": "@@arguments@@",
+				},
+			},
+		},
+	}); err != nil {
+		return nil, false
+	}
+
+	var kv map[string]string
+	// execute the subtree with placeholders to identify the keys
+	// trim any commands that might exist in the template
+	if err := json.Unmarshal(bytes.TrimSuffix(b.Bytes(), []byte(",")), &kv); err != nil {
+		return nil, false
+	}
+
+	// find the keys that correspond to the name and arguments fields
+	var name, arguments string
+	for k, v := range kv {
+		switch v {
+		case "@@name@@":
+			name = k
+		case "@@arguments@@":
+			arguments = k
+		}
+	}
+
+	var objs []map[string]any
+	for offset := 0; offset < len(s); {
+		if err := json.NewDecoder(strings.NewReader(s[offset:])).Decode(&objs); errors.Is(err, io.EOF) {
+			break
+		} else if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
+			// skip over any syntax errors
+			offset += int(syntax.Offset)
+		} else if unmarshalType := &(json.UnmarshalTypeError{}); errors.As(err, &unmarshalType) {
+			// skip over any unmarshalable types
+			offset += int(unmarshalType.Offset)
+		} else if err != nil {
+			return nil, false
+		} else {
+			// break when an object is decoded
+			break
+		}
+	}
+
+	var toolCalls []api.ToolCall
+	for _, kv := range objs {
+		var call api.ToolCall
+		for k, v := range kv {
+			switch k {
+			case name:
+				call.Function.Name = v.(string)
+			case arguments:
+				call.Function.Arguments = v.(map[string]any)
+			}
+		}
+
+		toolCalls = append(toolCalls, call)
+	}
+
+	return toolCalls, len(toolCalls) > 0
 }

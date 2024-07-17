@@ -294,7 +294,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
 - [Ollama with Google Mesop](https://github.com/rapidarchitect/ollama_mesop/) (Mesop Chat Client implementation with Ollama)
 - [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
-- [sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
+- [AI Studio](https://github.com/MindWorkAI/AI-Studio)
+- [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
 
 ### Terminal
 
