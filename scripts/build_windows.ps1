@@ -7,12 +7,12 @@
 $ErrorActionPreference = "Stop"
 
 function checkEnv() {
-    $script:ARCH = $Env:PROCESSOR_ARCHITECTURE.ToLower()
-    $script:TARGET_ARCH=$Env:PROCESSOR_ARCHITECTURE.ToLower()
+    $script:ARCH = (([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture).ToString().ToLower()).Replace("x64", "amd64")
+    $script:TARGET_ARCH=$script:ARCH
     Write-host "Building for ${script:TARGET_ARCH}"
     write-host "Locating required tools and paths"
     $script:SRC_DIR=$PWD
-    if (!$env:VCToolsRedistDir) {
+    if ($null -eq $env:VCToolsRedistDir) {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
@@ -143,7 +143,11 @@ function buildApp() {
 }
 
 function gatherDependencies() {
-    write-host "Gathering runtime dependencies"
+    if ($null -eq $env:VCToolsRedistDir) {
+        write-error "Unable to locate VC Install location - please use a Developer shell"
+        exit 1
+    }
+    write-host "Gathering runtime dependencies from $env:VCToolsRedistDir"
     cd "${script:SRC_DIR}"
     md "${script:DIST_DIR}\lib\ollama" -ea 0 > $null
 
@@ -154,17 +158,18 @@ function gatherDependencies() {
     } else {
         $depArch=$script:TARGET_ARCH
     }
-    cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\msvcp140*.dll" "${script:DIST_DIR}\lib\ollama\"
-    cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DIST_DIR}\lib\ollama\"
-    cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DIST_DIR}\lib\ollama\"
-    $llvmCrtDir="$env:VCToolsRedistDir\..\..\..\Tools\Llvm\${depArch}\bin"
-    if ($depArch -eq "arm64") {
-        $llvmCrtDir="$env:VCToolsRedistDir\..\..\..\Tools\Llvm\bin"
-    }
-    write-host "Copying files from $llvmCrtDir"
-    foreach ($part in $("runtime", "stdio", "filesystem", "math", "convert", "heap", "string", "time", "locale", "environment")) {
-        write-host "cp ${llvmCrtDir}\api-ms-win-crt-${part}*.dll ${script:DIST_DIR}\lib\ollama\"
-        cp "${llvmCrtDir}\api-ms-win-crt-${part}*.dll" "${script:DIST_DIR}\lib\ollama\"
+    if ($depArch -eq "amd64") {
+        cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\msvcp140*.dll" "${script:DIST_DIR}\lib\ollama\"
+        cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DIST_DIR}\lib\ollama\"
+        cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DIST_DIR}\lib\ollama\"
+        $llvmCrtDir="$env:VCToolsRedistDir\..\..\..\Tools\Llvm\${depArch}\bin"
+        foreach ($part in $("runtime", "stdio", "filesystem", "math", "convert", "heap", "string", "time", "locale", "environment")) {
+            write-host "cp ${llvmCrtDir}\api-ms-win-crt-${part}*.dll ${script:DIST_DIR}\lib\ollama\"
+            cp "${llvmCrtDir}\api-ms-win-crt-${part}*.dll" "${script:DIST_DIR}\lib\ollama\"
+        }
+    } else {
+        # Carying the dll's doesn't seem to work, so use the redist installer
+        copy-item -path "${env:VCToolsRedistDir}\vc_redist.arm64.exe" -destination "${script:DIST_DIR}" -verbose
     }
 
 
