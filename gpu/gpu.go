@@ -14,8 +14,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -172,7 +175,28 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 	var totalram uint64 = uint64(C.check_total_host_mem())
 	// there will be half of total ram can be handle as iGPU vram
 	gpuInfo.TotalMemory = totalram / 2
-	gpuInfo.FreeMemory = (totalram / 2) - envconfig.IntelUsedSystemVRAM
+	if runtime.GOOS == "windows" {
+	} else {
+		cmd := "sed 's/^.*, \\([0-9]\\+\\) bytes$/\\1/' /sys/kernel/debug/dri/0/i915_gem_objects | awk '{print $1, \"bytes VRAM be used\"; exit}'"
+		output, err := exec.Command("bash", "-c", cmd).Output()
+
+		if err != nil {
+			fmt.Println("Error executing get Intel iGPUs vram command:", err)
+			return
+		}
+
+		result := strings.TrimSpace(string(output))
+		if strings.Contains(result, "bytes VRAM be used") {
+			re := regexp.MustCompile("[0-9]+")
+			match := re.FindString(result)
+			usedVRAM, _ := strconv.ParseUint(match, 10, 64)
+			gpuInfo.FreeMemory = gpuInfo.TotalMemory - usedVRAM
+		} else {
+			gpuInfo.GpuInfo.UnreliableFreeMemory = true
+			slog.Warn("can't get Intel iGPU allocated VRAM so there may exist OOM risk during inference, please try to run ollama with sudo privilege. turn UnreliableFreeMemory flag On")
+			gpuInfo.FreeMemory = gpuInfo.TotalMemory - 1024*1024*1024 //leave 1G VRAM for graphic-related task besides ollama.
+		}
+	}
 }
 
 func GetGPUInfo() GpuInfoList {
@@ -343,7 +367,8 @@ func GetGPUInfo() GpuInfoList {
 					gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 					// now level-zero dosen't support iGPU mem status detection, 0 byte vram is a sign of iGPU
 					gpuInfo.isiGPU = gpuInfo.TotalMemory == 0
-					if envconfig.InteliGpu && gpuInfo.isiGPU {
+					// enable Core Ultra Xe igpus.
+					if IsIntelCoreUltraCpus() && gpuInfo.isiGPU {
 						DetectInteliGpuMemStatus(&gpuInfo)
 					}
 					gpuInfo.DependencyPath = depPath
@@ -449,7 +474,7 @@ func GetGPUInfo() GpuInfoList {
 			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
 			memInfo.free = C.uint64_t(totalFreeMem)
 			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
-			if envconfig.InteliGpu && gpu.isiGPU {
+			if IsIntelCoreUltraCpus() && gpu.isiGPU {
 				DetectInteliGpuMemStatus(&oneapiGPUs[i])
 			}
 		}
