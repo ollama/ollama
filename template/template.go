@@ -93,8 +93,8 @@ func Named(s string) (*named, error) {
 var DefaultTemplate, _ = Parse("{{ .Prompt }}")
 
 type Template struct {
-	*template.Template
-	raw string
+	tree *parse.Tree
+	raw  string
 }
 
 // response is a template node that can be added to templates that don't already have one
@@ -124,17 +124,18 @@ var funcs = template.FuncMap{
 }
 
 func Parse(s string) (*Template, error) {
-	tmpl := template.New("").Option("missingkey=zero").Funcs(funcs)
+	tree := parse.New("")
+	tree.Mode = tree.Mode | parse.SkipFuncCheck
 
-	tmpl, err := tmpl.Parse(s)
+	tree, err := tree.Parse(s, "", "", map[string]*parse.Tree{})
 	if err != nil {
 		return nil, err
 	}
 
-	t := Template{Template: tmpl, raw: s}
+	t := Template{tree, s}
 	if vars := t.Vars(); !slices.Contains(vars, "messages") && !slices.Contains(vars, "response") {
 		// touch up the template and append {{ .Response }}
-		tmpl.Tree.Root.Nodes = append(tmpl.Tree.Root.Nodes, &response)
+		t.tree.Root.Nodes = append(t.tree.Root.Nodes, &response)
 	}
 
 	return &t, nil
@@ -146,10 +147,8 @@ func (t *Template) String() string {
 
 func (t *Template) Vars() []string {
 	var vars []string
-	for _, tt := range t.Templates() {
-		for _, n := range tt.Root.Nodes {
-			vars = append(vars, Identifiers(n)...)
-		}
+	for _, n := range t.tree.Root.Nodes {
+		vars = append(vars, Identifiers(n)...)
 	}
 
 	set := make(map[string]struct{})
@@ -172,7 +171,8 @@ type Values struct {
 	forceLegacy bool
 }
 
-func (t *Template) Subtree(fn func(parse.Node) bool) *template.Template {
+// Sub returns a new template with the subtree that matches the predicate
+func (t *Template) Sub(fn func(parse.Node) bool) *Template {
 	var walk func(parse.Node) parse.Node
 	walk = func(n parse.Node) parse.Node {
 		if fn(n) {
@@ -205,29 +205,34 @@ func (t *Template) Subtree(fn func(parse.Node) bool) *template.Template {
 		return nil
 	}
 
-	if n := walk(t.Tree.Root); n != nil {
-		return (&template.Template{
-			Tree: &parse.Tree{
+	if n := walk(t.tree.Root); n != nil {
+		return &Template{
+			tree: &parse.Tree{
 				Root: &parse.ListNode{
 					Nodes: []parse.Node{n},
 				},
 			},
-		}).Funcs(funcs)
+		}
 	}
 
 	return nil
 }
 
+func (t *Template) Template() *template.Template {
+	return template.Must(template.New("").Option("missingkey=zero").Funcs(funcs).AddParseTree("", t.tree))
+}
+
 func (t *Template) Execute(w io.Writer, v Values) error {
+	tmpl := t.Template()
 	system, messages := collate(v.Messages)
 	if v.Prompt != "" && v.Suffix != "" {
-		return t.Template.Execute(w, map[string]any{
+		return tmpl.Execute(w, map[string]any{
 			"Prompt":   v.Prompt,
 			"Suffix":   v.Suffix,
 			"Response": "",
 		})
 	} else if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
-		return t.Template.Execute(w, map[string]any{
+		return tmpl.Execute(w, map[string]any{
 			"System":   system,
 			"Messages": messages,
 			"Tools":    v.Tools,
@@ -240,7 +245,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	var prompt, response string
 	for _, m := range messages {
 		execute := func() error {
-			if err := t.Template.Execute(&b, map[string]any{
+			if err := tmpl.Execute(&b, map[string]any{
 				"System":   system,
 				"Prompt":   prompt,
 				"Response": response,
@@ -275,7 +280,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	}
 
 	var cut bool
-	nodes := deleteNode(t.Template.Root.Copy(), func(n parse.Node) bool {
+	nodes := deleteNode(t.tree.Root.Copy(), func(n parse.Node) bool {
 		if field, ok := n.(*parse.FieldNode); ok && slices.Contains(field.Ident, "Response") {
 			cut = true
 			return false
@@ -285,7 +290,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	})
 
 	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
-	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
+	if err := template.Must(tmpl.AddParseTree("", &tree)).Execute(&b, map[string]any{
 		"System":   system,
 		"Prompt":   prompt,
 		"Response": response,
