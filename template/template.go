@@ -217,6 +217,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"System":   system,
 			"Messages": messages,
 			"Tools":    v.Tools,
+			"Response": "",
 		})
 	}
 
@@ -270,8 +271,9 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 
 	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
 	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
-		"System": system,
-		"Prompt": prompt,
+		"System":   system,
+		"Prompt":   prompt,
+		"Response": "",
 	}); err != nil {
 		return err
 	}
