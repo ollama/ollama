@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -138,8 +139,8 @@ type ToolCall struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Function struct {
-		Name      string         `json:"name"`
-		Arguments map[string]any `json:"arguments"`
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
 	} `json:"function"`
 }
 
@@ -181,13 +182,31 @@ func NewError(code int, message string) ErrorResponse {
 	return ErrorResponse{Error{Type: etype, Message: message}}
 }
 
+func toolCallId() string {
+	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 8)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return "call_" + strings.ToLower(string(b))
+}
+
 func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
 	for i, tc := range r.Message.ToolCalls {
-		toolCalls[i].ID = fmt.Sprintf("tool-call-id-%d", i)
+		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
-		toolCalls[i].Function = tc.Function
+		toolCalls[i].Function.Name = tc.Function.Name
+
+		args, err := json.Marshal(tc.Function.Arguments)
+		if err != nil {
+			slog.Error("could not marshall function arguments to json", "error", err)
+			continue
+		}
+
+		toolCalls[i].Function.Arguments = string(args)
 	}
+
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -331,7 +350,11 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	for _, msg := range r.Messages {
 		toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
 		for i, tc := range msg.ToolCalls {
-			toolCalls[i].Function = tc.Function
+			toolCalls[i].Function.Name = tc.Function.Name
+			err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
+			if err != nil {
+				return nil, fmt.Errorf("invalid tool call arguments")
+			}
 		}
 
 		switch content := msg.Content.(type) {
