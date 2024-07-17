@@ -85,6 +85,7 @@ func TestMiddlewareRequests(t *testing.T) {
 					Prompt:      "Hello",
 					Temperature: &temp,
 					Stop:        []string{"\n", "stop"},
+					Suffix:      "suffix",
 				}
 
 				bodyBytes, _ := json.Marshal(body)
@@ -114,6 +115,10 @@ func TestMiddlewareRequests(t *testing.T) {
 
 				if stopTokens[0] != "\n" || stopTokens[1] != "stop" {
 					t.Fatalf("expected ['\\n', 'stop'], got %v", stopTokens)
+				}
+
+				if genReq.Suffix != "suffix" {
+					t.Fatalf("expected 'suffix', got %s", genReq.Suffix)
 				}
 			},
 		},
