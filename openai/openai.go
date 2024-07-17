@@ -348,18 +348,9 @@ func toModel(r api.ShowResponse, m string) Model {
 func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
-		toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
-		for i, tc := range msg.ToolCalls {
-			toolCalls[i].Function.Name = tc.Function.Name
-			err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
-			if err != nil {
-				return nil, fmt.Errorf("invalid tool call arguments")
-			}
-		}
-
 		switch content := msg.Content.(type) {
 		case string:
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, ToolCalls: toolCalls})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content})
 		case []any:
 			message := api.Message{Role: msg.Role}
 			for _, c := range content {
@@ -413,6 +404,14 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			messages = append(messages, message)
 		default:
 			if msg.Role == "assistant" && msg.ToolCalls != nil {
+				toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
+				for i, tc := range msg.ToolCalls {
+					toolCalls[i].Function.Name = tc.Function.Name
+					err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
+					if err != nil {
+						return nil, fmt.Errorf("invalid tool call arguments")
+					}
+				}
 				messages = append(messages, api.Message{Role: msg.Role, ToolCalls: toolCalls})
 				continue
 			}
