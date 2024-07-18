@@ -733,8 +733,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"penalize_nl":       req.Options.PenalizeNewline,
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
+		"cache_prompt":      req.Options.CachePrompt,
 		"image_data":        req.Images,
-		"cache_prompt":      true,
 	}
 
 	// Make sure the server is ready
