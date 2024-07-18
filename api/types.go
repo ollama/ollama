@@ -119,7 +119,7 @@ func (t Tools) String() string {
 // of images.
 type Message struct {
 	Role      string      `json:"role"`
-	Content   string      `json:"content,omitempty"`
+	Content   string      `json:"content"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
 }
