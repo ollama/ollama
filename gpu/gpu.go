@@ -174,7 +174,7 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 	var totalram uint64 = uint64(C.check_total_host_mem())
 	// there will be half of total ram can be handle as iGPU vram
 	gpuInfo.TotalMemory = totalram / 2
-	cmd := "sed 's/^.*, \\([0-9]\\+\\) bytes$/\\1/' /sys/kernel/debug/dri/0/i915_gem_objects | awk '{print $1; exit}'"
+	cmd := "find /sys/kernel/debug/dri/ -name i915_gem_objects | xargs awk '{n=NF-1; print $n; exit}' | sort -nr | head -1"
 	terminal := "bash"
 	if runtime.GOOS == "windows" {
 		cmd = `(((Get-Counter "\GPU Process Memory(*)\Local Usage").CounterSamples | where CookedValue).CookedValue | measure -sum).sum`
@@ -183,7 +183,7 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 	output, err := exec.Command(terminal, "-c", cmd).Output()
 
 	if err != nil {
-		fmt.Println("Error executing command for getting Intel iGPUs system RAM usage:", err)
+		slog.Warn(fmt.Sprintf("Error executing command for getting Intel iGPUs system RAM usage:", err))
 		return
 	}
 	result := strings.TrimSpace(string(output))
@@ -371,8 +371,9 @@ func GetGPUInfo() GpuInfoList {
 						DetectInteliGpuMemStatus(&gpuInfo)
 					}
 					gpuInfo.DependencyPath = depPath
-					oneapiGPUs = append(oneapiGPUs, gpuInfo)
-					}	
+					if gpuInfo.TotalMemory > 0 {
+						oneapiGPUs = append(oneapiGPUs, gpuInfo)
+					}
 				}
 			}
 		}
