@@ -1290,7 +1290,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	caps := []Capability{CapabilityCompletion}
-	if req.Tools != nil {
+	if len(req.Tools) > 0 {
 		caps = append(caps, CapabilityTools)
 	}
 
