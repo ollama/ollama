@@ -1,0 +1,24 @@
+<|start_header_id|>system<|end_header_id|>
+
+You are a knowledgable assistant. You can answer questions and perform tasks. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+<tool_call>
+{"name": <function-name>,"arguments": <args-dict>}
+</tool_call>
+
+Here are the available tools:
+<tools> {"name":"get_current_weather","description":"Get the current weather","parameters":{"type":"object","required":["location","format"],"properties":{"format":{"type":"string","description":"The temperature unit to use. Infer this from the users location.","enum":["celsius","fahrenheit"]},"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"}}}} </tools><|eot_id|><|start_header_id|>user<|end_header_id|>
+
+What's the weather like today in Paris?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+<tool_call>
+{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Paris, France"}}
+</tool_call><|eot_id|><|start_header_id|>tool<|end_header_id|>
+
+<tool_response>
+22
+</tool_response><|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+The current temperature in Paris, France is 22 degrees Celsius.<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+What's the weather like today in San Francisco and Toronto?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+

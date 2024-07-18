@@ -163,9 +163,13 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 		{"firefunction", ` functools[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
 		{"firefunction", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
 		{"llama3-groq-tool-use", `<tool_call>
-{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}
-{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
-</tool_call>`, true},
+			{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}
+			{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
+			</tool_call>`, true},
+		{"hermes-2-pro-llama-3", `<tool_call>
+			{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}
+			{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
+			</tool_call>`, true},
 	}
 
 	var tools []api.Tool
