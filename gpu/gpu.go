@@ -183,17 +183,17 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 	output, err := exec.Command(terminal, "-c", cmd).Output()
 
 	if err != nil {
-		fmt.Println("Error executing get Intel iGPUs vram command:", err)
+		fmt.Println("Error executing command for getting Intel iGPUs system RAM usage:", err)
 		return
 	}
 	result := strings.TrimSpace(string(output))
 	if result != "" {
-		usedVRAM, _ := strconv.ParseUint(result, 10, 64)
-		gpuInfo.FreeMemory = gpuInfo.TotalMemory - usedVRAM
+		usedRAM, _ := strconv.ParseUint(result, 10, 64)
+		gpuInfo.FreeMemory = gpuInfo.TotalMemory - usedRAM
 	} else {
 		gpuInfo.GpuInfo.UnreliableFreeMemory = true
-		slog.Warn("can't get Intel iGPU allocated VRAM so there may exist OOM risk during inference, please try to run ollama with sudo privilege. turn UnreliableFreeMemory flag On")
-		gpuInfo.FreeMemory = gpuInfo.TotalMemory - 1024*1024*1024 //leave 1G VRAM for graphic-related task besides ollama.
+		slog.Warn("failed to get amount of system RAM allocated to Intel iGPU, so there exists OOM risk during inference.  As debugfs can be accessed only as root, please try to run ollama with sudo privilege. Turn UnreliableFreeMemory flag On")
+		gpuInfo.FreeMemory = gpuInfo.TotalMemory - 1024*1024*1024 //leave 1G system RAM for other (CPU and iGPU) tasks.
 	}
 
 }
