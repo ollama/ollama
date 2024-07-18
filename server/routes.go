@@ -1384,10 +1384,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
-		resp.Message.Content = sb.String()
-		if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-			resp.Message.ToolCalls = toolCalls
-			resp.Message.Content = ""
+		if len(req.Tools) > 0 {
+			resp.Message.Content = sb.String()
+			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+				resp.Message.ToolCalls = toolCalls
+				resp.Message.Content = ""
+			}
 		}
 
 		c.JSON(http.StatusOK, resp)
