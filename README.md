@@ -296,6 +296,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio)
 - [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
+- [Verbis](https://github.com/verbis-ai/verbis) (Privacy-first local assistant connected to your SaaS applications)
 
 ### Terminal
 
