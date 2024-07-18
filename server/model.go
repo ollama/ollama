@@ -348,7 +348,7 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 	for offset := 0; offset < len(s); {
 		var obj map[string]any
 		decoder := json.NewDecoder(strings.NewReader(s[offset:]))
-		if err := decoder.Decode(&obj); errors.Is(err, io.EOF) {
+		if err := decoder.Decode(&obj); errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			break
 		} else if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
 			// skip over any syntax errors
@@ -357,6 +357,7 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 			// skip over any unmarshalable types
 			offset += int(unmarshalType.Offset)
 		} else if err != nil {
+			slog.Error("parseToolCalls", "error", err)
 			return nil, false
 		} else {
 			offset += int(decoder.InputOffset())
