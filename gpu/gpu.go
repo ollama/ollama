@@ -183,7 +183,7 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 	output, err := exec.Command(terminal, "-c", cmd).Output()
 
 	if err != nil {
-		slog.Warn(fmt.Sprintf("Error executing command for getting Intel iGPUs system RAM usage:", err))
+		slog.Warn(fmt.Sprintf("Error executing command for getting Intel iGPUs system RAM usage: %s", err))
 		return
 	}
 	result := strings.TrimSpace(string(output))
