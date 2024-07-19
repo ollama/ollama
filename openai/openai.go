@@ -877,6 +877,7 @@ func ChatMiddleware() gin.HandlerFunc {
 		chatReq, err := fromChatRequest(req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+			return
 		}
 
 		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
