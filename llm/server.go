@@ -385,8 +385,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			filteredEnv := []string{}
 			for _, ev := range s.cmd.Env {
 				if strings.HasPrefix(ev, "CUDA_") ||
+					strings.HasPrefix(ev, "ROCR_") ||
 					strings.HasPrefix(ev, "ROCM_") ||
 					strings.HasPrefix(ev, "HIP_") ||
+					strings.HasPrefix(ev, "GPU_") ||
 					strings.HasPrefix(ev, "HSA_") ||
 					strings.HasPrefix(ev, "GGML_") ||
 					strings.HasPrefix(ev, "PATH=") ||
