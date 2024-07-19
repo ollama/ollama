@@ -16,7 +16,6 @@ import (
 	"strings"
 	"text/template/parse"
 
-	"github.com/google/uuid"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/llm"
@@ -312,12 +311,14 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 	}
 
 	var b bytes.Buffer
-	if err := tmpl.Execute(&b, map[string][]map[string]any{
+	if err := tmpl.Execute(&b, map[string][]api.ToolCall{
 		"ToolCalls": {
 			{
-				"Function": map[string]any{
-					"Name":      "@@name@@",
-					"Arguments": "@@arguments@@",
+				Function: api.ToolCallFunction{
+					Name: "@@name@@",
+					Arguments: api.ToolCallFunctionArguments{
+						"@@argument@@": 1,
+					},
 				},
 			},
 		},
@@ -325,57 +326,48 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	var kv map[string]string
+	var kv map[string]any
 	// execute the subtree with placeholders to identify the keys
-	if err := json.Unmarshal(b.Bytes(), &kv); err != nil {
+	// trim any commands that might exist in the template
+	if err := json.Unmarshal(bytes.TrimSuffix(b.Bytes(), []byte(",")), &kv); err != nil {
 		return nil, false
 	}
 
 	// find the keys that correspond to the name and arguments fields
 	var name, arguments string
 	for k, v := range kv {
-		switch v {
-		case "@@name@@":
+		switch v.(type) {
+		case string:
 			name = k
-		case "@@arguments@@":
+		case map[string]any:
 			arguments = k
 		}
 	}
 
-	var sm []map[string]any
-	decoder := json.NewDecoder(strings.NewReader(s))
-	for {
-		// incrementally decode the JSON into a list of JSON objects
-		// skipping over any invalid tokens
-		if err := decoder.Decode(&sm); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-
-			if errors.As(err, new(*json.SyntaxError)) {
-				r := decoder.Buffered()
-				if _, err := r.Read(make([]byte, decoder.InputOffset()+1)); err != nil {
-					break
-				}
-
-				decoder = json.NewDecoder(r)
-				continue
-			}
-
+	var objs []map[string]any
+	for offset := 0; offset < len(s); {
+		var obj map[string]any
+		decoder := json.NewDecoder(strings.NewReader(s[offset:]))
+		if err := decoder.Decode(&obj); errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			break
+		} else if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
+			// skip over any syntax errors
+			offset += int(syntax.Offset)
+		} else if unmarshalType := &(json.UnmarshalTypeError{}); errors.As(err, &unmarshalType) {
+			// skip over any unmarshalable types
+			offset += int(unmarshalType.Offset)
+		} else if err != nil {
+			slog.Error("parseToolCalls", "error", err)
 			return nil, false
+		} else {
+			offset += int(decoder.InputOffset())
+			objs = append(objs, obj)
 		}
-
-		// break as soon as a valid object is decoded
-		break
 	}
 
 	var toolCalls []api.ToolCall
-	for _, kv := range sm {
-		call := api.ToolCall{
-			ID:   uuid.New().String(),
-			Type: "function",
-		}
-
+	for _, kv := range objs {
+		var call api.ToolCall
 		for k, v := range kv {
 			switch k {
 			case name:
@@ -388,9 +380,5 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		toolCalls = append(toolCalls, call)
 	}
 
-	if len(toolCalls) > 0 {
-		return toolCalls, true
-	}
-
-	return nil, false
+	return toolCalls, len(toolCalls) > 0
 }

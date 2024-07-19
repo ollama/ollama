@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -29,8 +30,9 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content any    `json:"content"`
+	Role      string     `json:"role"`
+	Content   any        `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type Choice struct {
@@ -61,6 +63,11 @@ type ResponseFormat struct {
 	Type string `json:"type"`
 }
 
+type EmbedRequest struct {
+	Input any    `json:"input"`
+	Model string `json:"model"`
+}
+
 type ChatCompletionRequest struct {
 	Model            string          `json:"model"`
 	Messages         []Message       `json:"messages"`
@@ -73,6 +80,7 @@ type ChatCompletionRequest struct {
 	PresencePenalty  *float64        `json:"presence_penalty_penalty"`
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
+	Tools            []api.Tool      `json:"tools"`
 }
 
 type ChatCompletion struct {
@@ -106,6 +114,7 @@ type CompletionRequest struct {
 	Stream           bool     `json:"stream"`
 	Temperature      *float32 `json:"temperature"`
 	TopP             float32  `json:"top_p"`
+	Suffix           string   `json:"suffix"`
 }
 
 type Completion struct {
@@ -127,6 +136,15 @@ type CompletionChunk struct {
 	SystemFingerprint string                `json:"system_fingerprint"`
 }
 
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 type Model struct {
 	Id      string `json:"id"`
 	Object  string `json:"object"`
@@ -134,9 +152,21 @@ type Model struct {
 	OwnedBy string `json:"owned_by"`
 }
 
+type Embedding struct {
+	Object    string    `json:"object"`
+	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
 type ListCompletion struct {
 	Object string  `json:"object"`
 	Data   []Model `json:"data"`
+}
+
+type EmbeddingList struct {
+	Object string      `json:"object"`
+	Data   []Embedding `json:"data"`
+	Model  string      `json:"model"`
 }
 
 func NewError(code int, message string) ErrorResponse {
@@ -153,7 +183,31 @@ func NewError(code int, message string) ErrorResponse {
 	return ErrorResponse{Error{Type: etype, Message: message}}
 }
 
+func toolCallId() string {
+	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 8)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return "call_" + strings.ToLower(string(b))
+}
+
 func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
+	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
+	for i, tc := range r.Message.ToolCalls {
+		toolCalls[i].ID = toolCallId()
+		toolCalls[i].Type = "function"
+		toolCalls[i].Function.Name = tc.Function.Name
+
+		args, err := json.Marshal(tc.Function.Arguments)
+		if err != nil {
+			slog.Error("could not marshall function arguments to json", "error", err)
+			continue
+		}
+
+		toolCalls[i].Function.Arguments = string(args)
+	}
+
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -162,7 +216,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 		SystemFingerprint: "fp_ollama",
 		Choices: []Choice{{
 			Index:   0,
-			Message: Message{Role: r.Message.Role, Content: r.Message.Content},
+			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					return &reason
@@ -171,7 +225,6 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			}(r.DoneReason),
 		}},
 		Usage: Usage{
-			// TODO: ollama returns 0 for prompt eval if the prompt was cached, but openai returns the actual count
 			PromptTokens:     r.PromptEvalCount,
 			CompletionTokens: r.EvalCount,
 			TotalTokens:      r.PromptEvalCount + r.EvalCount,
@@ -217,7 +270,6 @@ func toCompletion(id string, r api.GenerateResponse) Completion {
 			}(r.DoneReason),
 		}},
 		Usage: Usage{
-			// TODO: ollama returns 0 for prompt eval if the prompt was cached, but openai returns the actual count
 			PromptTokens:     r.PromptEvalCount,
 			CompletionTokens: r.EvalCount,
 			TotalTokens:      r.PromptEvalCount + r.EvalCount,
@@ -260,6 +312,27 @@ func toListCompletion(r api.ListResponse) ListCompletion {
 		Object: "list",
 		Data:   data,
 	}
+}
+
+func toEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
+	if r.Embeddings != nil {
+		var data []Embedding
+		for i, e := range r.Embeddings {
+			data = append(data, Embedding{
+				Object:    "embedding",
+				Embedding: e,
+				Index:     i,
+			})
+		}
+
+		return EmbeddingList{
+			Object: "list",
+			Data:   data,
+			Model:  model,
+		}
+	}
+
+	return EmbeddingList{}
 }
 
 func toModel(r api.ShowResponse, m string) Model {
@@ -329,7 +402,19 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			}
 			messages = append(messages, message)
 		default:
-			return nil, fmt.Errorf("invalid message content type: %T", content)
+			if msg.ToolCalls == nil {
+				return nil, fmt.Errorf("invalid message content type: %T", content)
+			}
+
+			toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
+			for i, tc := range msg.ToolCalls {
+				toolCalls[i].Function.Name = tc.Function.Name
+				err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
+				if err != nil {
+					return nil, fmt.Errorf("invalid tool call arguments")
+				}
+			}
+			messages = append(messages, api.Message{Role: msg.Role, ToolCalls: toolCalls})
 		}
 	}
 
@@ -387,6 +472,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Format:   format,
 		Options:  options,
 		Stream:   &r.Stream,
+		Tools:    r.Tools,
 	}, nil
 }
 
@@ -437,6 +523,7 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		Prompt:  r.Prompt,
 		Options: options,
 		Stream:  &r.Stream,
+		Suffix:  r.Suffix,
 	}, nil
 }
 
@@ -461,6 +548,11 @@ type ListWriter struct {
 }
 
 type RetrieveWriter struct {
+	BaseWriter
+	model string
+}
+
+type EmbedWriter struct {
 	BaseWriter
 	model string
 }
@@ -630,6 +722,33 @@ func (w *RetrieveWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
+func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
+	var embedResponse api.EmbedResponse
+	err := json.Unmarshal(data, &embedResponse)
+
+	if err != nil {
+		return 0, err
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w.ResponseWriter).Encode(toEmbeddingList(w.model, embedResponse))
+
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func (w *EmbedWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(code, data)
+	}
+
+	return w.writeResponse(data)
+}
+
 func ListMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		w := &ListWriter{
@@ -691,6 +810,47 @@ func CompletionsMiddleware() gin.HandlerFunc {
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
 			stream:     req.Stream,
 			id:         fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+		}
+
+		c.Writer = w
+		c.Next()
+	}
+}
+
+func EmbeddingsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req EmbedRequest
+		err := c.ShouldBindJSON(&req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if req.Input == "" {
+			req.Input = []string{""}
+		}
+
+		if req.Input == nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "invalid input"))
+			return
+		}
+
+		if v, ok := req.Input.([]any); ok && len(v) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "invalid input"))
+			return
+		}
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input}); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+			return
+		}
+
+		c.Request.Body = io.NopCloser(&b)
+
+		w := &EmbedWriter{
+			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+			model:      req.Model,
 		}
 
 		c.Writer = w

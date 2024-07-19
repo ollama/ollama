@@ -47,6 +47,9 @@ type GenerateRequest struct {
 	// Prompt is the textual prompt to send to the model.
 	Prompt string `json:"prompt"`
 
+	// Suffix is the text that comes after the inserted text.
+	Suffix string `json:"suffix"`
+
 	// System overrides the model's default system message/prompt.
 	System string `json:"system"`
 
@@ -98,10 +101,17 @@ type ChatRequest struct {
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Tools is an optional list of tools the model has access to.
-	Tools []Tool `json:"tools,omitempty"`
+	Tools `json:"tools,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+}
+
+type Tools []Tool
+
+func (t Tools) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // Message is a single message in a chat sequence. The message contains the
@@ -109,35 +119,9 @@ type ChatRequest struct {
 // of images.
 type Message struct {
 	Role      string      `json:"role"`
-	Content   string      `json:"content,omitempty"`
+	Content   string      `json:"content"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
-}
-
-type ToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string         `json:"name"`
-		Arguments map[string]any `json:"arguments"`
-	} `json:"function"`
-}
-
-type Tool struct {
-	Type     string `json:"type"`
-	Function struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Parameters  struct {
-			Type       string   `json:"type"`
-			Required   []string `json:"required"`
-			Properties map[string]struct {
-				Type        string   `json:"type"`
-				Description string   `json:"description"`
-				Enum        []string `json:"enum,omitempty"`
-			} `json:"properties"`
-		} `json:"parameters"`
-	} `json:"function"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -150,6 +134,46 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	*m = Message(a)
 	m.Role = strings.ToLower(m.Role)
 	return nil
+}
+
+type ToolCall struct {
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string                    `json:"name"`
+	Arguments ToolCallFunctionArguments `json:"arguments"`
+}
+
+type ToolCallFunctionArguments map[string]any
+
+func (t *ToolCallFunctionArguments) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  struct {
+		Type       string   `json:"type"`
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Type        string   `json:"type"`
+			Description string   `json:"description"`
+			Enum        []string `json:"enum,omitempty"`
+		} `json:"properties"`
+	} `json:"parameters"`
+}
+
+func (t *ToolFunction) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
@@ -403,9 +427,6 @@ type GenerateResponse struct {
 
 	// Response is the textual response itself.
 	Response string `json:"response"`
-
-	// ToolCalls is the list of tools the model wants to call
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 
 	// Done specifies if the response is complete.
 	Done bool `json:"done"`
