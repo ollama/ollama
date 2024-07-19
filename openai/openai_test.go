@@ -161,8 +161,12 @@ func TestMiddlewareRequests(t *testing.T) {
 
 				img, _ := base64.StdEncoding.DecodeString(imageURL[len(prefix):])
 
-				if !bytes.Equal(chatReq.Messages[0].Images[0], img) {
-					t.Fatalf("expected image encoding, got %s", chatReq.Messages[0].Images[0])
+				if chatReq.Messages[1].Role != "user" {
+					t.Fatalf("expected 'user', got %s", chatReq.Messages[1].Role)
+				}
+
+				if !bytes.Equal(chatReq.Messages[1].Images[0], img) {
+					t.Fatalf("expected image encoding, got %s", chatReq.Messages[1].Images[0])
 				}
 			},
 		},

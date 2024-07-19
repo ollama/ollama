@@ -351,7 +351,6 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		case string:
 			messages = append(messages, api.Message{Role: msg.Role, Content: content})
 		case []any:
-			message := api.Message{Role: msg.Role}
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
@@ -363,7 +362,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					if !ok {
 						return nil, fmt.Errorf("invalid message format")
 					}
-					message.Content = text
+					messages = append(messages, api.Message{Role: msg.Role, Content: text})
 				case "image_url":
 					var url string
 					if urlMap, ok := data["image_url"].(map[string]any); ok {
@@ -395,12 +394,12 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					if err != nil {
 						return nil, fmt.Errorf("invalid message format")
 					}
-					message.Images = append(message.Images, img)
+
+					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
 				default:
 					return nil, fmt.Errorf("invalid message format")
 				}
 			}
-			messages = append(messages, message)
 		default:
 			if msg.ToolCalls == nil {
 				return nil, fmt.Errorf("invalid message content type: %T", content)
