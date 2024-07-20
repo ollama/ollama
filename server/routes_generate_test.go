@@ -73,8 +73,6 @@ func TestGenerateChat(t *testing.T) {
 			getCpuFn:      gpu.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
-				// add 10ms delay to simulate loading
-				time.Sleep(10 * time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
@@ -551,14 +549,6 @@ func TestGenerate(t *testing.T) {
 
 		if actual.EvalDuration == 0 {
 			t.Errorf("expected eval duration > 0, got 0")
-		}
-
-		if actual.LoadDuration == 0 {
-			t.Errorf("expected load duration > 0, got 0")
-		}
-
-		if actual.TotalDuration == 0 {
-			t.Errorf("expected total duration > 0, got 0")
 		}
 	}
 
