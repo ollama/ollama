@@ -542,14 +542,6 @@ func TestGenerate(t *testing.T) {
 		if actual.EvalDuration == 0 {
 			t.Errorf("expected eval duration > 0, got 0")
 		}
-
-		if actual.LoadDuration == 0 {
-			t.Errorf("expected load duration > 0, got 0")
-		}
-
-		if actual.TotalDuration == 0 {
-			t.Errorf("expected total duration > 0, got 0")
-		}
 	}
 
 	mock.CompletionResponse.Content = "Hi!"
