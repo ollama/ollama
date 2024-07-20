@@ -3,6 +3,7 @@ package gpu
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -26,10 +27,12 @@ var (
 	RocmStandardLocations = []string{"C:\\Program Files\\AMD\\ROCm\\6.1\\bin"} // TODO glob?
 )
 
+// Only called once during bootstrap
 func AMDGetGPUInfo() []RocmGPUInfo {
 	resp := []RocmGPUInfo{}
 	hl, err := NewHipLib()
 	if err != nil {
+		rocmError += err.Error() + "\n"
 		slog.Debug(err.Error())
 		return nil
 	}
@@ -44,11 +47,14 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	// Note: the HIP library automatically handles subsetting to any HIP_VISIBLE_DEVICES the user specified
 	count := hl.HipGetDeviceCount()
 	if count == 0 {
+		rocmError += "no compatible amdgpu devices detected\n"
 		return nil
 	}
 	libDir, err := AMDValidateLibDir()
 	if err != nil {
-		slog.Warn("unable to verify rocm library, will use cpu", "error", err)
+		reason := fmt.Sprintf("unable to verify rocm library, will use cpu: %s", err)
+		rocmError += reason + "\n"
+		slog.Warn(reason)
 		return nil
 	}
 
@@ -57,7 +63,9 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	if gfxOverride == "" {
 		supported, err = GetSupportedGFX(libDir)
 		if err != nil {
-			slog.Warn("failed to lookup supported GFX types, falling back to CPU mode", "error", err)
+			reason := fmt.Sprintf("failed to lookup supported GFX types, falling back to CPU mode: %s", err)
+			slog.Warn(reason)
+			rocmError += reason + "\n"
 			return nil
 		}
 	} else {
@@ -87,21 +95,6 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 		slog.Debug("hip device", "id", i, "name", name, "gfx", gfx)
 		// slog.Info(fmt.Sprintf("[%d] Integrated: %d", i, props.iGPU)) // DOESN'T REPORT CORRECTLY!  Always 0
 		// TODO  Why isn't props.iGPU accurate!?
-		if strings.EqualFold(name, iGPUName) {
-			slog.Info("unsupported Radeon iGPU detected skipping", "id", i, "name", name, "gfx", gfx)
-			continue
-		}
-		if gfxOverride == "" {
-			// Strip off Target Features when comparing
-			if !slices.Contains[[]string, string](supported, strings.Split(gfx, ":")[0]) {
-				slog.Warn("amdgpu is not supported", "gpu", i, "gpu_type", gfx, "library", libDir, "supported_types", supported)
-				// TODO - consider discrete markdown just for ROCM troubleshooting?
-				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
-				continue
-			} else {
-				slog.Debug("amdgpu is supported", "gpu", i, "gpu_type", gfx)
-			}
-		}
 
 		freeMemory, totalMemory, err := hl.HipMemGetInfo()
 		if err != nil {
@@ -109,14 +102,6 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			continue
 		}
 
-		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
-		if totalMemory < IGPUMemLimit {
-			slog.Info("amdgpu appears to be an iGPU, skipping", "gpu", i, "total", format.HumanBytes2(totalMemory))
-			continue
-		}
-
-		slog.Debug("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
-		slog.Debug("amdgpu memory", "gpu", i, "available", format.HumanBytes2(freeMemory))
 		gpuInfo := RocmGPUInfo{
 			GpuInfo: GpuInfo{
 				Library: "rocm",
@@ -137,6 +122,34 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			},
 			index: i,
 		}
+
+		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
+		if strings.EqualFold(name, iGPUName) || totalMemory < IGPUMemLimit {
+			reason := "unsupported Radeon iGPU detected skipping"
+			slog.Info(reason, "id", gpuInfo.ID, "total", format.HumanBytes2(totalMemory))
+			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
+				GpuInfo: gpuInfo.GpuInfo,
+				Reason:  reason,
+			})
+			continue
+		}
+
+		// Strip off Target Features when comparing
+		if !slices.Contains[[]string, string](supported, strings.Split(gfx, ":")[0]) {
+			reason := fmt.Sprintf("amdgpu is not supported (supported types:%s)", supported)
+			slog.Warn(reason, "gpu_type", gfx, "gpu", gpuInfo.ID, "library", libDir)
+			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
+				GpuInfo: gpuInfo.GpuInfo,
+				Reason:  reason,
+			})
+			// HSA_OVERRIDE_GFX_VERSION not supported on windows
+			continue
+		} else {
+			slog.Debug("amdgpu is supported", "gpu", i, "gpu_type", gfx)
+		}
+
+		slog.Debug("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
+		slog.Debug("amdgpu memory", "gpu", i, "available", format.HumanBytes2(freeMemory))
 
 		resp = append(resp, gpuInfo)
 	}
