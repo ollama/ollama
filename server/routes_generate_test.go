@@ -73,8 +73,8 @@ func TestGenerateChat(t *testing.T) {
 			getCpuFn:      gpu.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
-				// add 10ms delay to simulate loading
-				time.Sleep(10 * time.Millisecond)
+				// add small delay to simulate loading
+				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
@@ -371,6 +371,8 @@ func TestGenerate(t *testing.T) {
 			getCpuFn:      gpu.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
+				// add small delay to simulate loading
+				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
