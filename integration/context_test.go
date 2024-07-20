@@ -12,7 +12,7 @@ import (
 
 func TestContextExhaustion(t *testing.T) {
 	// Longer needed for small footprint GPUs
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	// Set up the test data
 	req := api.GenerateRequest{
@@ -25,5 +25,10 @@ func TestContextExhaustion(t *testing.T) {
 			"num_ctx":     128,
 		},
 	}
-	GenerateTestHelper(ctx, t, req, []string{"once", "upon", "lived"})
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	if err := PullIfMissing(ctx, client, req.Model); err != nil {
+		t.Fatalf("PullIfMissing failed: %v", err)
+	}
+	DoGenerate(ctx, t, client, req, []string{"once", "upon", "lived"}, 120*time.Second, 10*time.Second)
 }
