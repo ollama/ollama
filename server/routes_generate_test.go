@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +73,8 @@ func TestGenerateChat(t *testing.T) {
 			getCpuFn:      gpu.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
+				// add small delay to simulate loading
+				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
@@ -239,15 +240,12 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected eval duration > 0, got 0")
 		}
 
-		// timing tests are flaky on windows
-		if runtime.GOOS != "windows" {
-			if actual.LoadDuration == 0 {
-				t.Errorf("expected load duration > 0, got 0")
-			}
+		if actual.LoadDuration == 0 {
+			t.Errorf("expected load duration > 0, got 0")
+		}
 
-			if actual.TotalDuration == 0 {
-				t.Errorf("expected total duration > 0, got 0")
-			}
+		if actual.TotalDuration == 0 {
+			t.Errorf("expected total duration > 0, got 0")
 		}
 	}
 
@@ -557,15 +555,12 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected eval duration > 0, got 0")
 		}
 
-		// timing tests are flaky on windows
-		if runtime.GOOS != "windows" {
-			if actual.LoadDuration == 0 {
-				t.Errorf("expected load duration > 0, got 0")
-			}
+		if actual.LoadDuration == 0 {
+			t.Errorf("expected load duration > 0, got 0")
+		}
 
-			if actual.TotalDuration == 0 {
-				t.Errorf("expected total duration > 0, got 0")
-			}
+		if actual.TotalDuration == 0 {
+			t.Errorf("expected total duration > 0, got 0")
 		}
 	}
 
