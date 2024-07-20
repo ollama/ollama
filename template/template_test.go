@@ -210,17 +210,11 @@ func TestExecuteWithMessages(t *testing.T) {
 		{
 			"mistral",
 			[]template{
-				{"no response", `[INST] {{ if .System }}{{ .System }}
-
-{{ end }}{{ .Prompt }}[/INST] `},
-				{"response", `[INST] {{ if .System }}{{ .System }}
-
-{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
-				{"messages", `[INST] {{ if .System }}{{ .System }}
-
-{{ end }}
+				{"no response", `[INST] {{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `
 {{- range .Messages }}
-{{- if eq .Role "user" }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}[INST] {{ end }}
+{{- if eq .Role "user" }}[INST] {{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
 {{- end }}`},
 			},
 			Values{
@@ -241,11 +235,11 @@ func TestExecuteWithMessages(t *testing.T) {
 				{"response", `[INST] {{ if .System }}{{ .System }}
 
 {{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
-				{"messages", `[INST] {{ if .System }}{{ .System }}
+				{"messages", `
+{{- range $i, $m := .Messages }}
+{{- if eq .Role "user" }}[INST] {{ if and $.System (eq $i 1) }}{{ $.System }}
 
-{{ end }}
-{{- range .Messages }}
-{{- if eq .Role "user" }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}[INST] {{ end }}
+{{ end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
 {{- end }}`},
 			},
 			Values{
@@ -259,6 +253,32 @@ func TestExecuteWithMessages(t *testing.T) {
 			`[INST] You are a helpful assistant!
 
 Hello friend![/INST] Hello human![INST] What is your name?[/INST] `,
+		},
+		{
+			"mistral assistant",
+			[]template{
+				{"no response", `[INST] {{ if .System }}{{ .System }}
+
+{{ end }}{{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ if .System }}{{ .System }}
+
+{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `
+{{- range $i, $m := .Messages }}
+{{- if eq .Role "user" }}[INST] {{ if and $.System (eq $i 1) }}{{ $.System }}
+
+{{ end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
+{{- end }}`},
+			},
+			Values{
+				Messages: []api.Message{
+					{Role: "user", Content: "Hello friend!"},
+					{Role: "assistant", Content: "Hello human!"},
+					{Role: "user", Content: "What is your name?"},
+					{Role: "assistant", Content: "My name is Ollama and I"},
+				},
+			},
+			`[INST] Hello friend![/INST] Hello human![INST] What is your name?[/INST] My name is Ollama and I`,
 		},
 		{
 			"chatml",
