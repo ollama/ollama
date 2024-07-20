@@ -235,11 +235,11 @@ func TestExecuteWithMessages(t *testing.T) {
 				{"response", `[INST] {{ if .System }}{{ .System }}
 
 {{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
-				{"messages", `
-{{- range $i, $m := .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if and $.System (eq $i 1) }}{{ $.System }}
+				{"messages", `[INST] {{ if .System }}{{ .System }}
 
-{{ end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
+{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}[INST] {{ end }}
 {{- end }}`},
 			},
 			Values{
