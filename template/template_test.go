@@ -210,11 +210,14 @@ func TestExecuteWithMessages(t *testing.T) {
 		{
 			"mistral",
 			[]template{
-				{"no response", `[INST] {{ .Prompt }}[/INST] `},
-				{"response", `[INST] {{ .Prompt }}[/INST] {{ .Response }}`},
-				{"messages", `
+				{"no response", `[INST] {{ if .System }}{{ .System }}
+{{ end }}{{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ if .System }}{{ .System }}
+{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `[INST] {{ if .System }}{{ .System }}
+{{ end }}
 {{- range .Messages }}
-{{- if eq .Role "user" }}[INST] {{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
+{{- if eq .Role "user" }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}[INST] {{ end }}
 {{- end }}`},
 			},
 			Values{
