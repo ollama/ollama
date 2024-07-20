@@ -1,11 +1,12 @@
 {{- range $index, $_ := .Messages }}
 {{- if eq .Role "user" }}
-{{- if and (eq (len (slice $.Messages $index)) 1) $.Tools }}[AVAILABLE_TOOLS] {{ $.Tools }}[/AVAILABLE_TOOLS]
-{{- end }}[INST] {{ if and (eq (len (slice $.Messages $index)) 1) $.System }}{{ $.System }}
+{{- $last := (or (eq (len (slice $.Messages $index)) 1) (eq (len (slice $.Messages $index)) 2)) }}
+{{- if and $last $.Tools }}[AVAILABLE_TOOLS] {{ $.Tools }}[/AVAILABLE_TOOLS]
+{{- end }}[INST] {{ if and $last $.System }}{{ $.System }}
 
 {{ end }}{{ .Content }}[/INST]
 {{- else if eq .Role "assistant" }}
-{{- if .Content }} {{ .Content }}</s>
+{{- if .Content }} {{ .Content }}{{ if not (eq (len (slice $.Messages $index)) 1) }}</s>{{ end }}
 {{- else if .ToolCalls }}[TOOL_CALLS] [
 {{- range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
 {{- end }}]</s>
