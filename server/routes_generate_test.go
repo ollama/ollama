@@ -239,6 +239,7 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected eval duration > 0, got 0")
 		}
 
+		// timing tests are flaky on windows
 		if runtime.GOOS != "windows" {
 			if actual.LoadDuration == 0 {
 				t.Errorf("expected load duration > 0, got 0")
@@ -556,6 +557,7 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected eval duration > 0, got 0")
 		}
 
+		// timing tests are flaky on windows
 		if runtime.GOOS != "windows" {
 			if actual.LoadDuration == 0 {
 				t.Errorf("expected load duration > 0, got 0")
