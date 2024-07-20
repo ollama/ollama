@@ -74,6 +74,11 @@ type OneapiGPUInfoList []OneapiGPUInfo
 
 type GpuInfoList []GpuInfo
 
+type UnsupportedGPUInfo struct {
+	GpuInfo
+	Reason string `json:"reason"`
+}
+
 // Split up the set of gpu info's by Library and variant
 func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	resp := []GpuInfoList{}
@@ -142,4 +147,11 @@ func (c CPUCapability) String() string {
 	default:
 		return "no vector extensions"
 	}
+}
+
+type SystemInfo struct {
+	System          CPUInfo              `json:"system"`
+	GPUs            []GpuInfo            `json:"gpus"`
+	UnsupportedGPUs []UnsupportedGPUInfo `json:"unsupported_gpus"`
+	DiscoveryErrors []string             `json:"discovery_errors"`
 }

@@ -611,10 +611,10 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		quantization := cmp.Or(r.Quantize, r.Quantization)
 		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
 			if errors.Is(err, errBadTemplate) {
-			  ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 			}
 			ch <- gin.H{"error": err.Error()}
-		  }
+		}
 	}()
 
 	if r.Stream != nil && !*r.Stream {
@@ -1069,6 +1069,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.ProcessHandler)
+	r.GET("/api/gpus", s.GpusHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
@@ -1283,6 +1284,10 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
+}
+
+func (s *Server) GpusHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gpu.GetSystemInfo())
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {

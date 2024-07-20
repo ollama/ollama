@@ -65,3 +65,15 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 	// No-op on darwin
 	return "", ""
 }
+
+func GetSystemInfo() SystemInfo {
+	mem, _ := GetCPUMem()
+	return SystemInfo{
+		System: CPUInfo{
+			GpuInfo: GpuInfo{
+				memInfo: mem,
+			},
+		},
+		GPUs: GetGPUInfo(),
+	}
+}
