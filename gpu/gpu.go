@@ -54,6 +54,13 @@ var (
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
+
+	// If any discovered GPUs are incompatible, report why
+	unsupportedGPUs []UnsupportedGPUInfo
+
+	// Keep track of errors during bootstrapping so that if GPUs are missing
+	// they expected to be present this may explain why
+	bootstrapErrors []error
 )
 
 // With our current CUDA compile flags, older than 5.0 will not work properly
@@ -70,16 +77,17 @@ func initCudaHandles() *cudaHandles {
 
 	cHandles := &cudaHandles{}
 	// Short Circuit if we already know which library to use
+	// ignore bootstrap errors in this case since we already recorded them
 	if nvmlLibPath != "" {
-		cHandles.nvml, _ = LoadNVMLMgmt([]string{nvmlLibPath})
+		cHandles.nvml, _, _ = loadNVMLMgmt([]string{nvmlLibPath})
 		return cHandles
 	}
 	if nvcudaLibPath != "" {
-		cHandles.deviceCount, cHandles.nvcuda, _ = LoadNVCUDAMgmt([]string{nvcudaLibPath})
+		cHandles.deviceCount, cHandles.nvcuda, _, _ = loadNVCUDAMgmt([]string{nvcudaLibPath})
 		return cHandles
 	}
 	if cudartLibPath != "" {
-		cHandles.deviceCount, cHandles.cudart, _ = LoadCUDARTMgmt([]string{cudartLibPath})
+		cHandles.deviceCount, cHandles.cudart, _, _ = loadCUDARTMgmt([]string{cudartLibPath})
 		return cHandles
 	}
 
@@ -102,18 +110,21 @@ func initCudaHandles() *cudaHandles {
 	if len(NvmlGlobs) > 0 {
 		nvmlLibPaths := FindGPULibs(NvmlMgmtName, NvmlGlobs)
 		if len(nvmlLibPaths) > 0 {
-			nvml, libPath := LoadNVMLMgmt(nvmlLibPaths)
+			nvml, libPath, err := loadNVMLMgmt(nvmlLibPaths)
 			if nvml != nil {
 				slog.Debug("nvidia-ml loaded", "library", libPath)
 				cHandles.nvml = nvml
 				nvmlLibPath = libPath
+			}
+			if err != nil {
+				bootstrapErrors = append(bootstrapErrors, err)
 			}
 		}
 	}
 
 	nvcudaLibPaths := FindGPULibs(NvcudaMgmtName, nvcudaMgmtPatterns)
 	if len(nvcudaLibPaths) > 0 {
-		deviceCount, nvcuda, libPath := LoadNVCUDAMgmt(nvcudaLibPaths)
+		deviceCount, nvcuda, libPath, err := loadNVCUDAMgmt(nvcudaLibPaths)
 		if nvcuda != nil {
 			slog.Debug("detected GPUs", "count", deviceCount, "library", libPath)
 			cHandles.nvcuda = nvcuda
@@ -121,17 +132,23 @@ func initCudaHandles() *cudaHandles {
 			nvcudaLibPath = libPath
 			return cHandles
 		}
+		if err != nil {
+			bootstrapErrors = append(bootstrapErrors, err)
+		}
 	}
 
 	cudartLibPaths := FindGPULibs(CudartMgmtName, cudartMgmtPatterns)
 	if len(cudartLibPaths) > 0 {
-		deviceCount, cudart, libPath := LoadCUDARTMgmt(cudartLibPaths)
+		deviceCount, cudart, libPath, err := loadCUDARTMgmt(cudartLibPaths)
 		if cudart != nil {
 			slog.Debug("detected GPUs", "library", libPath, "count", deviceCount)
 			cHandles.cudart = cudart
 			cHandles.deviceCount = deviceCount
 			cudartLibPath = libPath
 			return cHandles
+		}
+		if err != nil {
+			bootstrapErrors = append(bootstrapErrors, err)
 		}
 	}
 
@@ -143,14 +160,19 @@ func initOneAPIHandles() *oneapiHandles {
 	oHandles := &oneapiHandles{}
 
 	// Short Circuit if we already know which library to use
+	// ignore bootstrap errors in this case since we already recorded them
 	if oneapiLibPath != "" {
-		oHandles.deviceCount, oHandles.oneapi, _ = LoadOneapiMgmt([]string{oneapiLibPath})
+		oHandles.deviceCount, oHandles.oneapi, _, _ = loadOneapiMgmt([]string{oneapiLibPath})
 		return oHandles
 	}
 
 	oneapiLibPaths := FindGPULibs(OneapiMgmtName, OneapiGlobs)
 	if len(oneapiLibPaths) > 0 {
-		oHandles.deviceCount, oHandles.oneapi, oneapiLibPath = LoadOneapiMgmt(oneapiLibPaths)
+		var err error
+		oHandles.deviceCount, oHandles.oneapi, oneapiLibPath, err = loadOneapiMgmt(oneapiLibPaths)
+		if err != nil {
+			bootstrapErrors = append(bootstrapErrors, err)
+		}
 	}
 
 	return oHandles
@@ -197,6 +219,7 @@ func GetGPUInfo() GpuInfoList {
 
 	if !bootstrapped {
 		slog.Info("looking for compatible GPUs")
+		bootstrapErrors = []error{}
 		needRefresh = false
 		cpuCapability = GetCPUCapability()
 		var memInfo C.mem_info_t
@@ -221,7 +244,9 @@ func GetGPUInfo() GpuInfoList {
 
 		// Fallback to CPU mode if we're lacking required vector extensions on x86
 		if cpuCapability < GPURunnerCPUCapability && runtime.GOARCH == "amd64" {
-			slog.Warn("CPU does not have minimum vector extensions, GPU inference disabled", "required", GPURunnerCPUCapability, "detected", cpuCapability)
+			err := fmt.Errorf("CPU does not have minimum vector extensions, GPU inference disabled.  Required:%s  Detected:%s", GPURunnerCPUCapability, cpuCapability)
+			slog.Warn(err.Error())
+			bootstrapErrors = append(bootstrapErrors, err)
 			bootstrapped = true
 			// No need to do any GPU discovery, since we can't run on them
 			return GpuInfoList{cpus[0].GpuInfo}
@@ -253,10 +278,6 @@ func GetGPUInfo() GpuInfoList {
 					C.free(unsafe.Pointer(memInfo.err))
 					continue
 				}
-				if memInfo.major < CudaComputeMin[0] || (memInfo.major == CudaComputeMin[0] && memInfo.minor < CudaComputeMin[1]) {
-					slog.Info(fmt.Sprintf("[%d] CUDA GPU is too old. Compute Capability detected: %d.%d", i, memInfo.major, memInfo.minor))
-					continue
-				}
 				gpuInfo.TotalMemory = uint64(memInfo.total)
 				gpuInfo.FreeMemory = uint64(memInfo.free)
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
@@ -278,6 +299,15 @@ func GetGPUInfo() GpuInfoList {
 				}
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 				gpuInfo.Variant = variant
+
+				if memInfo.major < CudaComputeMin[0] || (memInfo.major == CudaComputeMin[0] && memInfo.minor < CudaComputeMin[1]) {
+					unsupportedGPUs = append(unsupportedGPUs,
+						UnsupportedGPUInfo{
+							GpuInfo: gpuInfo.GpuInfo,
+						})
+					slog.Info(fmt.Sprintf("[%d] CUDA GPU is too old. Compute Capability detected: %d.%d", i, memInfo.major, memInfo.minor))
+					continue
+				}
 
 				// query the management library as well so we can record any skew between the two
 				// which represents overhead on the GPU we must set aside on subsequent updates
@@ -341,7 +371,10 @@ func GetGPUInfo() GpuInfoList {
 			}
 		}
 
-		rocmGPUs = AMDGetGPUInfo()
+		rocmGPUs, err = AMDGetGPUInfo()
+		if err != nil {
+			bootstrapErrors = append(bootstrapErrors, err)
+		}
 		bootstrapped = true
 		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 {
 			slog.Info("no compatible GPUs were discovered")
@@ -526,92 +559,114 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 	return gpuLibPaths
 }
 
-func LoadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string) {
+// Bootstrap the runtime library
+// Returns: num devices, handle, libPath, error
+func loadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string, error) {
 	var resp C.cudart_init_resp_t
 	resp.ch.verbose = getVerboseState()
+	var err error
 	for _, libPath := range cudartLibPaths {
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
 		C.cudart_init(lib, &resp)
 		if resp.err != nil {
-			slog.Debug("Unable to load cudart", "library", libPath, "error", C.GoString(resp.err))
+			err = fmt.Errorf("Unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
+			slog.Debug(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			return int(resp.num_devices), &resp.ch, libPath
+			err = nil
+			return int(resp.num_devices), &resp.ch, libPath, err
 		}
 	}
-	return 0, nil, ""
+	return 0, nil, "", err
 }
 
-func LoadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string) {
+// Bootstrap the driver library
+// Returns: num devices, handle, libPath, error
+func loadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string, error) {
 	var resp C.nvcuda_init_resp_t
 	resp.ch.verbose = getVerboseState()
+	var err error
 	for _, libPath := range nvcudaLibPaths {
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
 		C.nvcuda_init(lib, &resp)
 		if resp.err != nil {
 			// Decide what log level based on the type of error message to help users understand why
-			msg := C.GoString(resp.err)
 			switch resp.cudaErr {
 			case C.CUDA_ERROR_INSUFFICIENT_DRIVER, C.CUDA_ERROR_SYSTEM_DRIVER_MISMATCH:
-				slog.Warn("version mismatch between driver and cuda driver library - reboot or upgrade may be required", "library", libPath, "error", msg)
+				err = fmt.Errorf("version mismatch between driver and cuda driver library - reboot or upgrade may be required: library %s", libPath)
+				slog.Warn(err.Error())
 			case C.CUDA_ERROR_NO_DEVICE:
-				slog.Info("no nvidia devices detected", "library", libPath)
+				err = fmt.Errorf("no nvidia devices detected by library %s", libPath)
+				slog.Info(err.Error())
 			case C.CUDA_ERROR_UNKNOWN:
-				slog.Warn("unknown error initializing cuda driver library", "library", libPath, "error", msg)
-				slog.Warn("see https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for more information")
+				err = fmt.Errorf("unknown error initializing cuda driver library %s: %s. see https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for more information", libPath, C.GoString(resp.err))
+				slog.Warn(err.Error())
 			default:
+				msg := C.GoString(resp.err)
 				if strings.Contains(msg, "wrong ELF class") {
 					slog.Debug("skipping 32bit library", "library", libPath)
 				} else {
-					slog.Info("unable to load cuda driver library", "library", libPath, "error", msg)
+					err = fmt.Errorf("Unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
+					slog.Info(err.Error())
 				}
 			}
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			return int(resp.num_devices), &resp.ch, libPath
+			err = nil
+			return int(resp.num_devices), &resp.ch, libPath, err
 		}
 	}
-	return 0, nil, ""
+	return 0, nil, "", err
 }
 
-func LoadNVMLMgmt(nvmlLibPaths []string) (*C.nvml_handle_t, string) {
+// Bootstrap the management library
+// Returns: handle, libPath, error
+func loadNVMLMgmt(nvmlLibPaths []string) (*C.nvml_handle_t, string, error) {
 	var resp C.nvml_init_resp_t
 	resp.ch.verbose = getVerboseState()
+	var err error
 	for _, libPath := range nvmlLibPaths {
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
 		C.nvml_init(lib, &resp)
 		if resp.err != nil {
-			slog.Info(fmt.Sprintf("Unable to load NVML management library %s: %s", libPath, C.GoString(resp.err)))
+			err = fmt.Errorf("Unable to load NVML management library %s: %s", libPath, C.GoString(resp.err))
+			slog.Info(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			return &resp.ch, libPath
+			err = nil
+			return &resp.ch, libPath, err
 		}
 	}
-	return nil, ""
+	return nil, "", err
 }
 
-func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
+// bootstrap the Intel GPU library
+// Returns: num devices, handle, libPath, error
+func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, error) {
 	var resp C.oneapi_init_resp_t
 	num_devices := 0
 	resp.oh.verbose = getVerboseState()
+	var err error
 	for _, libPath := range oneapiLibPaths {
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
 		C.oneapi_init(lib, &resp)
 		if resp.err != nil {
-			slog.Debug("Unable to load oneAPI management library", "library", libPath, "error", C.GoString(resp.err))
+			err = fmt.Errorf("Unable to load oneAPI management library %s: %s", libPath, C.GoString(resp.err))
+			slog.Debug(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
+			err = nil
 			for i := range resp.oh.num_drivers {
 				num_devices += int(C.oneapi_get_device_count(resp.oh, C.int(i)))
 			}
-			return num_devices, &resp.oh, libPath
+			return num_devices, &resp.oh, libPath, err
 		}
 	}
-	return 0, nil, ""
+	return 0, nil, "", err
 }
 
 func getVerboseState() C.uint16_t {
@@ -668,4 +723,24 @@ func LibraryDir() string {
 	}
 	slog.Warn("unable to locate gpu dependency libraries")
 	return ""
+}
+
+func GetSystemInfo() SystemInfo {
+	gpus := GetGPUInfo()
+	gpuMutex.Lock()
+	defer gpuMutex.Unlock()
+	discoveryErrors := []string{}
+	for _, err := range bootstrapErrors {
+		discoveryErrors = append(discoveryErrors, err.Error())
+	}
+	if len(gpus) == 1 && gpus[0].Library == "cpu" {
+		gpus = []GpuInfo{}
+	}
+
+	return SystemInfo{
+		System:          cpus[0],
+		GPUs:            gpus,
+		UnsupportedGPUs: unsupportedGPUs,
+		DiscoveryErrors: discoveryErrors,
+	}
 }
