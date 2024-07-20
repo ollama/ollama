@@ -257,17 +257,11 @@ Hello friend![/INST] Hello human![INST] What is your name?[/INST] `,
 		{
 			"mistral assistant",
 			[]template{
-				{"no response", `[INST] {{ if .System }}{{ .System }}
-
-{{ end }}{{ .Prompt }}[/INST] `},
-				{"response", `[INST] {{ if .System }}{{ .System }}
-
-{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
+				{"no response", `[INST] {{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ .Prompt }}[/INST] {{ .Response }}`},
 				{"messages", `
 {{- range $i, $m := .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if and $.System (eq $i 1) }}{{ $.System }}
-
-{{ end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
+{{- if eq .Role "user" }}[INST] {{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
 {{- end }}`},
 			},
 			Values{
