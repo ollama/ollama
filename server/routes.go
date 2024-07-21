@@ -611,10 +611,10 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		quantization := cmp.Or(r.Quantize, r.Quantization)
 		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
 			if errors.Is(err, errBadTemplate) {
-			  ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 			}
 			ch <- gin.H{"error": err.Error()}
-		  }
+		}
 	}()
 
 	if r.Stream != nil && !*r.Stream {
@@ -1393,9 +1393,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		resp.Message.Content = sb.String()
+		slog.Debug("chat response", "content", resp.Message.Content)
 
 		if len(req.Tools) > 0 {
 			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+				slog.Debug("parsed tool", "calls", toolCalls)
 				resp.Message.ToolCalls = toolCalls
 				resp.Message.Content = ""
 			}
