@@ -219,7 +219,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
 				if len(toolCalls) > 0 {
-					return "tool_calls"
+					reason = "tool_calls"
 				}
 				if len(reason) > 0 {
 					return &reason
