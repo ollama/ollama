@@ -43,7 +43,5 @@ The example format is as follows. Please make sure the parameter type is correct
 {{ else if eq .Role "assistant" }}### Response:
 {{ .Content }}
 <|EOT|>
-{{ else if eq .Role "tool" }}### Instruct:
-The tool response was: {{ .Content }}
 {{ end }}
 {{- end }}### Response:

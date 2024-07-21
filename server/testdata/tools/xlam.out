@@ -4,8 +4,6 @@ What's the weather like today in Paris?
 ### Response:
 {"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Paris, France"}}]}
 <|EOT|>
-### Instruct:
-The tool response was: 22
 ### Response:
 The current temperature in Paris, France is 22 degrees Celsius.
 <|EOT|>
