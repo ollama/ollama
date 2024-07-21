@@ -357,14 +357,15 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 }
 
 func TestRequestsModelTooBigForSystem(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("skipping, too large errors are only on linux")
+	}
+
 	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	s.getGpuFn = func() gpu.GpuInfoList {
-		g := gpu.GpuInfo{Library: "metal"}
-		g.TotalMemory = 4 * format.MebiByte
-		g.FreeMemory = 3 * format.MebiByte
-		return []gpu.GpuInfo{g}
+		return []gpu.GpuInfo{}
 	}
 
 	s.getCpuFn = func() gpu.GpuInfoList {
@@ -373,7 +374,7 @@ func TestRequestsModelTooBigForSystem(t *testing.T) {
 		g.FreeMemory = 2 * format.MebiByte
 		return []gpu.GpuInfo{g}
 	}
-	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
+	a := newScenarioRequest(t, ctx, "ollama-model-1", 10*format.MebiByte, &api.Duration{Duration: 5 * time.Millisecond})
 
 	s.newServerFn = a.newServer
 	slog.Info("a")
@@ -382,10 +383,7 @@ func TestRequestsModelTooBigForSystem(t *testing.T) {
 	s.Run(ctx)
 	select {
 	case <-a.req.successCh:
-		if runtime.GOOS == "linux" {
-			t.Fatal("request should have been rejected with out of space")
-		}
-		// else - Darwin and Windows don't reject right now
+		t.Fatal("request should have been rejected with out of space")
 	case err := <-a.req.errCh:
 		require.Contains(t, err.Error(), "too large")
 	case <-ctx.Done():
