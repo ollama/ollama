@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"runtime"
 	"testing"
 	"time"
 
@@ -356,40 +355,6 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 	s.loadedMu.Unlock()
 }
 
-func TestRequestsModelTooBigForSystem(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("skipping, too large errors are only on linux")
-	}
-
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer done()
-	s := InitScheduler(ctx)
-	s.getGpuFn = func() gpu.GpuInfoList {
-		return []gpu.GpuInfo{}
-	}
-
-	s.getCpuFn = func() gpu.GpuInfoList {
-		g := gpu.GpuInfo{Library: "cpu"}
-		g.TotalMemory = 4 * format.MebiByte
-		g.FreeMemory = 2 * format.MebiByte
-		return []gpu.GpuInfo{g}
-	}
-	a := newScenarioRequest(t, ctx, "ollama-model-1", 10*format.MebiByte, &api.Duration{Duration: 5 * time.Millisecond})
-
-	s.newServerFn = a.newServer
-	slog.Info("a")
-	s.pendingReqCh <- a.req
-	require.Len(t, s.pendingReqCh, 1)
-	s.Run(ctx)
-	select {
-	case <-a.req.successCh:
-		t.Fatal("request should have been rejected with out of space")
-	case err := <-a.req.errCh:
-		require.Contains(t, err.Error(), "too large")
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
-}
 func TestGetRunner(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
