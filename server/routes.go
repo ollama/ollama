@@ -942,7 +942,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-	if c.GetHeader("X-Redirect-Create") == "1" && s.IsServerKeyPublicKey(c) {
+	if c.GetHeader("X-Redirect-Create") == "1" && s.isLocal(c) {
 		c.Header("LocalLocation", path)
 		c.Status(http.StatusTemporaryRedirect)
 		return
@@ -962,7 +962,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 	c.Status(http.StatusCreated)
 }
 
-func (s *Server) IsServerKeyPublicKey(c *gin.Context) bool {
+func (s *Server) isLocal(c *gin.Context) bool {
 	if authz := c.GetHeader("Authorization"); authz != "" {
 		parts := strings.Split(authz, ":")
 		if len(parts) != 3 {
@@ -999,16 +999,7 @@ func (s *Server) IsServerKeyPublicKey(c *gin.Context) bool {
 			slog.Error(fmt.Sprintf("failed to get server public key: %v", err))
 			return false
 		}
-
-		timestamp, err := time.Parse(time.RFC3339, c.GetHeader("Timestamp"))
-		if err != nil {
-			return false
-		}
-
-		if time.Since(timestamp) > time.Minute {
-			return false
-		}
-
+		
 		if bytes.Equal(serverPublicKey.Marshal(), clientPublicKey.Marshal()) {
 			return true
 		}

@@ -26,7 +26,6 @@ func privateKey() (ssh.Signer, error) {
 	}
 
 	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
-	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if errors.Is(err, os.ErrNotExist) {
 		err := initializeKeypair()
