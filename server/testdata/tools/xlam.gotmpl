@@ -1,8 +1,7 @@
 {{- if .System }}{{ .System }}
 {{ end }}
 {{- range $i, $_ := .Messages }}
-{{- if eq .Role "user" -}}
-### Instruction:
+{{- if eq .Role "user" }}### Instruction:
 {{- if and $.Tools (le (len (slice $.Messages $i)) 2) }}
 [BEGIN OF TASK INSTRUCTION]
 You are an expert in composing functions. You are given a question and a set of possible functions. 
