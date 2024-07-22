@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,8 @@ import (
 const prefix = `data:image/jpeg;base64,`
 const image = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 const imageURL = prefix + image
+
+var False = false
 
 func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -34,43 +37,41 @@ func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
 
 func TestChatMiddleware(t *testing.T) {
 	type testCase struct {
-		Name     string
-		Input    string
-		Expected func(t *testing.T, req *api.ChatRequest, err *ErrorResponse)
+		name string
+		body string
+		req  api.ChatRequest
+		err  *ErrorResponse
 	}
 
 	var capturedRequest *api.ChatRequest
 
 	testCases := []testCase{
 		{
-			Name: "chat handler",
-			Input: `{
+			name: "chat handler",
+			body: `{
 				"model": "test-model",
 				"messages": [
 					{"role": "user", "content": "Hello"}
 				]
 			}`,
-			Expected: func(t *testing.T, req *api.ChatRequest, err *ErrorResponse) {
-				if err != nil {
-					t.Fatalf("expected no error, got %s", err.Error.Message)
-				}
-
-				if req.Model != "test-model" {
-					t.Fatalf("expected 'test-model', got %s", req.Model)
-				}
-
-				if req.Messages[0].Role != "user" {
-					t.Fatalf("expected 'user', got %s", req.Messages[0].Role)
-				}
-
-				if req.Messages[0].Content != "Hello" {
-					t.Fatalf("expected 'Hello', got %s", req.Messages[0].Content)
-				}
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
 			},
 		},
 		{
-			Name: "chat handler with image content",
-			Input: `{
+			name: "chat handler with image content",
+			body: `{
 				"model": "test-model",
 				"messages": [
 					{
@@ -90,73 +91,82 @@ func TestChatMiddleware(t *testing.T) {
 					}
 				]
 			}`,
-			Expected: func(t *testing.T, req *api.ChatRequest, err *ErrorResponse) {
-				if err != nil {
-					t.Fatalf("expected no error, got %s", err.Error.Message)
-				}
-
-				if req.Messages[0].Role != "user" {
-					t.Fatalf("expected 'user', got %s", req.Messages[0].Role)
-				}
-
-				if req.Messages[0].Content != "Hello" {
-					t.Fatalf("expected 'Hello', got %s", req.Messages[0].Content)
-				}
-
-				img, _ := base64.StdEncoding.DecodeString(imageURL[len(prefix):])
-
-				if req.Messages[1].Role != "user" {
-					t.Fatalf("expected 'user', got %s", req.Messages[1].Role)
-				}
-
-				if !bytes.Equal(req.Messages[1].Images[0], img) {
-					t.Fatalf("expected image encoding, got %s", req.Messages[1].Images[0])
-				}
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+					{
+						Role: "user",
+						Images: []api.ImageData{
+							func() []byte {
+								img, _ := base64.StdEncoding.DecodeString(image)
+								return img
+							}(),
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
 			},
 		},
 		{
-			Name: "chat handler with tools",
-			Input: `{
+			name: "chat handler with tools",
+			body: `{
 				"model": "test-model",
 				"messages": [
 					{"role": "user", "content": "What's the weather like in Paris Today?"},
 					{"role": "assistant", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
 				]
 			}`,
-			Expected: func(t *testing.T, req *api.ChatRequest, err *ErrorResponse) {
-				if err != nil {
-					t.Fatalf("expected no error, got %s", err.Error.Message)
-				}
-
-				if req.Messages[0].Content != "What's the weather like in Paris Today?" {
-					t.Fatalf("expected What's the weather like in Paris Today?, got %s", req.Messages[0].Content)
-				}
-
-				if req.Messages[1].ToolCalls[0].Function.Arguments["location"] != "Paris, France" {
-					t.Fatalf("expected 'Paris, France', got %v", req.Messages[1].ToolCalls[0].Function.Arguments["location"])
-				}
-
-				if req.Messages[1].ToolCalls[0].Function.Arguments["format"] != "celsius" {
-					t.Fatalf("expected celsius, got %v", req.Messages[1].ToolCalls[0].Function.Arguments["format"])
-				}
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]interface{}{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
 			},
 		},
+
 		{
-			Name: "chat handler error forwarding",
-			Input: `{
+			name: "chat handler error forwarding",
+			body: `{
 				"model": "test-model",
 				"messages": [
 					{"role": "user", "content": 2}
 				]
 			}`,
-			Expected: func(t *testing.T, req *api.ChatRequest, err *ErrorResponse) {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-
-				if !strings.Contains(err.Error.Message, "invalid message content type") {
-					t.Fatal("error was not forwarded")
-				}
+			err: &ErrorResponse{
+				Error: Error{
+					Message: "invalid message content type: float64",
+					Type:    "invalid_request_error",
+				},
 			},
 		},
 	}
@@ -171,8 +181,8 @@ func TestChatMiddleware(t *testing.T) {
 	router.Handle(http.MethodPost, "/api/chat", endpoint)
 
 	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tc.Input))
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 
 			resp := httptest.NewRecorder()
@@ -184,8 +194,13 @@ func TestChatMiddleware(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Fatal("requests did not match")
+			}
 
-			tc.Expected(t, capturedRequest, errResp)
+			if errResp != nil && !reflect.DeepEqual(*tc.err, *errResp) {
+				t.Fatal("errors did not match")
+			}
 			capturedRequest = nil
 		})
 	}
@@ -193,64 +208,52 @@ func TestChatMiddleware(t *testing.T) {
 
 func TestCompletionsMiddleware(t *testing.T) {
 	type testCase struct {
-		Name     string
-		Input    string
-		Expected func(t *testing.T, req *api.GenerateRequest, err *ErrorResponse)
+		name string
+		body string
+		req  api.GenerateRequest
+		err  *ErrorResponse
 	}
 
 	var capturedRequest *api.GenerateRequest
 
 	testCases := []testCase{
 		{
-			Name: "completions handler",
-			Input: `{
+			name: "completions handler",
+			body: `{
 				"model": "test-model",
 				"prompt": "Hello",
 				"temperature": 0.8,
 				"stop": ["\n", "stop"],
 				"suffix": "suffix"
 			}`,
-			Expected: func(t *testing.T, req *api.GenerateRequest, err *ErrorResponse) {
-				if err != nil {
-					t.Fatalf("expected no error, got %s", err.Error.Message)
-				}
-
-				if req.Options["temperature"] != 1.6 {
-					t.Fatalf("expected 1.6, got %f", req.Options["temperature"])
-				}
-
-				stopTokens, ok := req.Options["stop"].([]any)
-
-				if !ok {
-					t.Fatalf("expected stop tokens to be a list")
-				}
-
-				if stopTokens[0] != "\n" || stopTokens[1] != "stop" {
-					t.Fatalf("expected ['\\n', 'stop'], got %v", stopTokens)
-				}
-
-				if req.Suffix != "suffix" {
-					t.Fatalf("expected 'suffix', got %s", req.Suffix)
-				}
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       1.6,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &False,
 			},
 		},
 		{
-			Name: "completions handler error forwarding",
-			Input: `{
+			name: "completions handler error forwarding",
+			body: `{
 				"model": "test-model",
 				"prompt": "Hello",
 				"temperature": null,
 				"stop": [1, 2],
 				"suffix": "suffix"
 			}`,
-			Expected: func(t *testing.T, req *api.GenerateRequest, err *ErrorResponse) {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-
-				if !strings.Contains(err.Error.Message, "invalid type for 'stop' field") {
-					t.Fatalf("error was not forwarded")
-				}
+			err: &ErrorResponse{
+				Error: Error{
+					Message: "invalid type for 'stop' field: float64",
+					Type:    "invalid_request_error",
+				},
 			},
 		},
 	}
@@ -265,8 +268,8 @@ func TestCompletionsMiddleware(t *testing.T) {
 	router.Handle(http.MethodPost, "/api/generate", endpoint)
 
 	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.Input))
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 
 			resp := httptest.NewRecorder()
@@ -279,7 +282,14 @@ func TestCompletionsMiddleware(t *testing.T) {
 				}
 			}
 
-			tc.Expected(t, capturedRequest, errResp)
+			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Fatal("requests did not match")
+			}
+
+			if errResp != nil && !reflect.DeepEqual(*tc.err, *errResp) {
+				t.Fatal("errors did not match")
+			}
+
 			capturedRequest = nil
 		})
 	}
@@ -287,77 +297,47 @@ func TestCompletionsMiddleware(t *testing.T) {
 
 func TestEmbeddingsMiddleware(t *testing.T) {
 	type testCase struct {
-		Name     string
-		Input    string
-		Expected func(t *testing.T, req *api.EmbedRequest, err *ErrorResponse)
+		name string
+		body string
+		req  api.EmbedRequest
+		err  *ErrorResponse
 	}
 
 	var capturedRequest *api.EmbedRequest
 
 	testCases := []testCase{
 		{
-			Name: "embed handler single input",
-			Input: `{
+			name: "embed handler single input",
+			body: `{
 				"input": "Hello",
 				"model": "test-model"
 			}`,
-			Expected: func(t *testing.T, req *api.EmbedRequest, err *ErrorResponse) {
-				if err != nil {
-					t.Fatalf("expected no error, got %s", err.Error.Message)
-				}
-
-				if req.Input != "Hello" {
-					t.Fatalf("expected 'Hello', got %s", req.Input)
-				}
-
-				if req.Model != "test-model" {
-					t.Fatalf("expected 'test-model', got %s", req.Model)
-				}
+			req: api.EmbedRequest{
+				Input: "Hello",
+				Model: "test-model",
 			},
 		},
 		{
-			Name: "embed handler batch input",
-			Input: `{
+			name: "embed handler batch input",
+			body: `{
 				"input": ["Hello", "World"],
 				"model": "test-model"
 			}`,
-			Expected: func(t *testing.T, req *api.EmbedRequest, err *ErrorResponse) {
-				if err != nil {
-					t.Fatalf("expected no error, got %s", err.Error.Message)
-				}
-
-				input, ok := req.Input.([]any)
-
-				if !ok {
-					t.Fatalf("expected input to be a list")
-				}
-
-				if input[0].(string) != "Hello" {
-					t.Fatalf("expected 'Hello', got %s", input[0])
-				}
-
-				if input[1].(string) != "World" {
-					t.Fatalf("expected 'World', got %s", input[1])
-				}
-
-				if req.Model != "test-model" {
-					t.Fatalf("expected 'test-model', got %s", req.Model)
-				}
+			req: api.EmbedRequest{
+				Input: []any{"Hello", "World"},
+				Model: "test-model",
 			},
 		},
 		{
-			Name: "embed handler error forwarding",
-			Input: `{
+			name: "embed handler error forwarding",
+			body: `{
 				"model": "test-model"
 			}`,
-			Expected: func(t *testing.T, req *api.EmbedRequest, err *ErrorResponse) {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-
-				if !strings.Contains(err.Error.Message, "invalid input") {
-					t.Fatalf("error was not forwarded")
-				}
+			err: &ErrorResponse{
+				Error: Error{
+					Message: "invalid input",
+					Type:    "invalid_request_error",
+				},
 			},
 		},
 	}
@@ -372,8 +352,8 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 	router.Handle(http.MethodPost, "/api/embed", endpoint)
 
 	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(tc.Input))
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 
 			resp := httptest.NewRecorder()
@@ -386,7 +366,14 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 				}
 			}
 
-			tc.Expected(t, capturedRequest, errResp)
+			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Fatal("requests did not match")
+			}
+
+			if errResp != nil && !reflect.DeepEqual(*tc.err, *errResp) {
+				t.Fatal("errors did not match")
+			}
+
 			capturedRequest = nil
 		})
 	}
