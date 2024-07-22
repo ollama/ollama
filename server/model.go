@@ -389,9 +389,9 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 
 	var toolCalls []api.ToolCall
 	for _, kv := range objs {
-		n, nameOk := kv[name].(string)
-		a, argumentsOk := kv[arguments].(map[string]any)
-		if nameOk && argumentsOk {
+		n, nok := kv[name].(string)
+		a, aok := kv[arguments].(map[string]any)
+		if nok && aok {
 			toolCalls = append(toolCalls, api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name:      n,
