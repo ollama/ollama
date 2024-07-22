@@ -1170,6 +1170,7 @@ func Serve(ln net.Listener) error {
 	http.Handle("/", s.GenerateRoutes())
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
+	tlsConfig := envconfig.ServerTlsConfig()
 	srvr := &http.Server{
 		// Use http.DefaultServeMux so we get net/http/pprof for
 		// free.
@@ -1180,6 +1181,8 @@ func Serve(ln net.Listener) error {
 		// and easy way to get pprof, but it may not be the best
 		// way.
 		Handler: nil,
+		// Add the (m)TLS config
+		TLSConfig: tlsConfig,
 	}
 
 	// listen for a ctrl+c and stop any loaded llm
@@ -1205,7 +1208,12 @@ func Serve(ln net.Listener) error {
 	gpus := gpu.GetGPUInfo()
 	gpus.LogDetails()
 
-	err = srvr.Serve(ln)
+	if tlsConfig != nil {
+		slog.Info("Serving with TLS")
+		err = srvr.ServeTLS(ln, "", "")
+	} else {
+		err = srvr.Serve(ln)
+	}
 	// If server is closed from the signal handler, wait for the ctx to be done
 	// otherwise error out quickly
 	if !errors.Is(err, http.ErrServerClosed) {
