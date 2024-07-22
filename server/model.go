@@ -348,23 +348,6 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	var collect func(any) []map[string]any
-	collect = func(obj any) (all []map[string]any) {
-		switch o := obj.(type) {
-		case map[string]any:
-			all = append(all, o)
-			for _, v := range o {
-				all = append(all, collect(v)...)
-			}
-		case []any:
-			for _, v := range o {
-				all = append(all, collect(v)...)
-			}
-		}
-
-		return all
-	}
-
 	var objs []map[string]any
 	for offset := 0; offset < len(s); {
 		var obj map[string]any
@@ -382,6 +365,24 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 			return nil, false
 		} else {
 			offset += int(decoder.InputOffset())
+
+			// collect all nested-objects
+			var collect func(any) []map[string]any
+			collect = func(obj any) (all []map[string]any) {
+				switch o := obj.(type) {
+				case map[string]any:
+					all = append(all, o)
+					for _, v := range o {
+						all = append(all, collect(v)...)
+					}
+				case []any:
+					for _, v := range o {
+						all = append(all, collect(v)...)
+					}
+				}
+
+				return all
+			}
 			objs = append(objs, collect(obj)...)
 		}
 	}
