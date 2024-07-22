@@ -572,7 +572,7 @@ func TestIsLocalReal(t *testing.T) {
 	t.Run("different server pubkey", func(t *testing.T) {
 		serverPubLoc := t.TempDir()
 		t.Setenv("HOME", serverPubLoc)
-		_, err := auth.GetPublicKey ()
+		_, err := auth.GetPublicKey()
 		if err != nil {
 			t.Fatal(err)
 		}
