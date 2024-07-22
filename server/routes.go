@@ -609,10 +609,9 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		defer cancel()
 
 		quantization := cmp.Or(r.Quantize, r.Quantization)
-		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
-			if errors.Is(err, errBadTemplate) {
-				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
-			}
+		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); errors.Is(err, errBadTemplate) {
+			ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+		} else if err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
