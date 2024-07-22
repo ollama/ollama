@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,7 +27,7 @@ func privateKey() (ssh.Signer, error) {
 
 	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		err := initializeKeypair()
 		if err != nil {
 			return nil, err
@@ -50,7 +51,7 @@ func GetPublicKey() (ssh.PublicKey, error) {
 
 	pubkeyPath := filepath.Join(home, ".ollama", defaultPrivateKey+".pub")
 	pubKeyFile, err := os.ReadFile(pubkeyPath)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		// try from privateKey
 		privateKey, err := privateKey()
 		if err != nil {
@@ -113,7 +114,7 @@ func initializeKeypair() error {
 	pubKeyPath := filepath.Join(home, ".ollama", "id_ed25519.pub")
 
 	_, err = os.Stat(privKeyPath)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
 		cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
