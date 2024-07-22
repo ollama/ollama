@@ -366,7 +366,7 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		} else {
 			offset += int(decoder.InputOffset())
 
-			// collect all nested-objects
+			// collect all nested objects
 			var collect func(any) []map[string]any
 			collect = func(obj any) (all []map[string]any) {
 				switch o := obj.(type) {
