@@ -367,7 +367,7 @@ func GetGPUInfo() GpuInfoList {
 					// now level-zero dosen't support iGPU mem status detection, 0 byte vram is a sign of iGPU
 					gpuInfo.isiGPU = gpuInfo.TotalMemory == 0
 					// enable Core Ultra Xe igpus.
-					if IsIntelCoreUltraCpus() && gpuInfo.isiGPU {
+					if envconfig.ForceEnableIntelIGPU || (IsIntelCoreUltraCpus() && gpuInfo.isiGPU) {
 						DetectInteliGpuMemStatus(&gpuInfo)
 					}
 					gpuInfo.DependencyPath = depPath
@@ -474,7 +474,7 @@ func GetGPUInfo() GpuInfoList {
 			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
 			memInfo.free = C.uint64_t(totalFreeMem)
 			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
-			if IsIntelCoreUltraCpus() && gpu.isiGPU {
+			if envconfig.ForceEnableIntelIGPU || (IsIntelCoreUltraCpus() && gpu.isiGPU) {
 				DetectInteliGpuMemStatus(&oneapiGPUs[i])
 			}
 		}
