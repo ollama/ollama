@@ -611,10 +611,10 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		quantization := cmp.Or(r.Quantize, r.Quantization)
 		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
 			if errors.Is(err, errBadTemplate) {
-			  ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 			}
 			ch <- gin.H{"error": err.Error()}
-		  }
+		}
 	}()
 
 	if r.Stream != nil && !*r.Stream {
