@@ -1152,6 +1152,15 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Make sure host scheme matches TLS config
+	host := envconfig.Host()
+	serverTlsConfig := envconfig.ServerTlsConfig()
+	if host.Scheme == "https" && serverTlsConfig == nil {
+		return fmt.Errorf("cannot use https as the server's host scheme without a TLS configuration")
+	} else if host.Scheme == "http" && serverTlsConfig != nil {
+		return fmt.Errorf("cannot use http as the server's host scheme with a TLS configuration")
+	}
+
 	ln, err := net.Listen("tcp", envconfig.Host().Host)
 	if err != nil {
 		return err
