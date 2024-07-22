@@ -40,6 +40,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
+- `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
 
 Advanced parameters (optional):
@@ -57,7 +58,8 @@ Advanced parameters (optional):
 
 Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#request-json-mode) below.
 
-> Note: it's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
+> [!IMPORTANT]
+> It's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
 
 ### Examples
 
@@ -148,8 +150,44 @@ If `stream` is set to `false`, the response will be a single JSON object:
 }
 ```
 
+#### Request (with suffix)
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "codellama:code",
+  "prompt": "def compute_gcd(a, b):",
+  "suffix": "    return result",
+  "options": {
+    "temperature": 0
+  },
+  "stream": false
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "codellama:code",
+  "created_at": "2024-07-22T20:47:51.147561Z",
+  "response": "\n  if a == 0:\n    return b\n  else:\n    return compute_gcd(b % a, a)\n\ndef compute_lcm(a, b):\n  result = (a * b) / compute_gcd(a, b)\n",
+  "done": true,
+  "done_reason": "stop",
+  "context": [...],
+  "total_duration": 1162761250,
+  "load_duration": 6683708,
+  "prompt_eval_count": 17,
+  "prompt_eval_duration": 201222000,
+  "eval_count": 63,
+  "eval_duration": 953997000
+}
+```
+
 #### Request (JSON mode)
 
+> [!IMPORTANT]
 > When `format` is set to `json`, the output will always be a well-formed JSON object. It's important to also instruct the model to respond in JSON.
 
 ##### Request
@@ -383,9 +421,10 @@ Generate the next message in a chat with a provided model. This is a streaming e
 
 The `message` object has the following fields:
 
-- `role`: the role of the message, either `system`, `user` or `assistant`
+- `role`: the role of the message, either `system`, `user`, `assistant`, or `tool`
 - `content`: the content of the message
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
+- `tool_calls` (optional): a list of tools the model wants to use
 
 Advanced parameters (optional):
 
@@ -393,6 +432,7 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `tools`: external tools the model can use. Not all models support this feature.
 
 ### Examples
 
@@ -619,6 +659,79 @@ curl http://localhost:11434/api/chat -d '{
   "prompt_eval_duration": 383809000,
   "eval_count": 298,
   "eval_duration": 4799921000
+}
+```
+
+#### Chat request (with tools)
+
+##### Request
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "mistral",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the weather today in Paris?"
+    }
+  ],
+  "stream": false,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_weather",
+        "description": "Get the current weather for a location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The location to get the weather for, e.g. San Francisco, CA"
+            },
+            "format": {
+              "type": "string",
+              "description": "The format to return the weather in, e.g. 'celsius' or 'fahrenheit'",
+              "enum": ["celsius", "fahrenheit"]
+            }
+          },
+          "required": ["location", "format"]
+        }
+      }
+    }
+  ]
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "mistral:7b-instruct-v0.3-q4_K_M",
+  "created_at": "2024-07-22T20:33:28.123648Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_current_weather",
+          "arguments": {
+            "format": "celsius",
+            "location": "Paris, FR"
+          }
+        }
+      }
+    ]
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 885095291,
+  "load_duration": 3753500,
+  "prompt_eval_count": 122,
+  "prompt_eval_duration": 328493000,
+  "eval_count": 33,
+  "eval_duration": 552222000
 }
 ```
 
