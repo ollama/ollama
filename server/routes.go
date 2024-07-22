@@ -1393,11 +1393,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		resp.Message.Content = sb.String()
-		slog.Debug("chat response", "content", resp.Message.Content)
 
 		if len(req.Tools) > 0 {
 			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-				slog.Debug("parsed tool", "calls", toolCalls)
 				resp.Message.ToolCalls = toolCalls
 				resp.Message.Content = ""
 			}
