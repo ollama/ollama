@@ -1,10 +1,9 @@
-{{ if .System }}{{ .System }}
+{{- if .System }}{{ .System }}
 {{ end }}
-{{- range $i, $m := .Messages }}
+{{- range $i, $_ := .Messages }}
 {{- if eq .Role "user" }}
-{{- $last := (or (eq (len (slice $.Messages $i)) 1) (eq (len (slice $.Messages $i)) 2)) -}}
 ### Instruction:
-{{- if and $.Tools $last }}
+{{ if and $.Tools (le (len (slice $.Messages $i)) 2) }}
 [BEGIN OF TASK INSTRUCTION]
 You are an expert in composing functions. You are given a question and a set of possible functions. 
 Based on the question, you will need to make one or more function/tool calls to achieve the purpose. 

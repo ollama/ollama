@@ -294,24 +294,6 @@ func detectContentType(r io.Reader) (string, error) {
 	return "unknown", nil
 }
 
-func collect(obj any) []map[string]any {
-	var result []map[string]any
-
-	switch o := obj.(type) {
-	case map[string]any:
-		result = append(result, o)
-		for _, v := range o {
-			result = append(result, collect(v)...)
-		}
-	case []any:
-		for _, v := range o {
-			result = append(result, collect(v)...)
-		}
-	}
-
-	return result
-}
-
 // parseToolCalls attempts to parse a JSON string into a slice of ToolCalls.
 // mxyng: this only really works if the input contains tool calls in some JSON format
 func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
@@ -366,6 +348,23 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
+	var collect func(any) []map[string]any
+	collect = func(obj any) (all []map[string]any) {
+		switch o := obj.(type) {
+		case map[string]any:
+			all = append(all, o)
+			for _, v := range o {
+				all = append(all, collect(v)...)
+			}
+		case []any:
+			for _, v := range o {
+				all = append(all, collect(v)...)
+			}
+		}
+
+		return all
+	}
+
 	var objs []map[string]any
 	for offset := 0; offset < len(s); {
 		var obj map[string]any
@@ -392,13 +391,12 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		n, nameOk := kv[name].(string)
 		a, argumentsOk := kv[arguments].(map[string]any)
 		if nameOk && argumentsOk {
-			call := api.ToolCall{
+			toolCalls = append(toolCalls, api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name:      n,
 					Arguments: a,
 				},
-			}
-			toolCalls = append(toolCalls, call)
+			})
 		}
 	}
 
