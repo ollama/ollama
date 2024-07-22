@@ -3,11 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"math"
@@ -15,7 +12,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -23,9 +19,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
@@ -540,7 +536,7 @@ func TestIsLocalReal(t *testing.T) {
 	clientPubLoc := t.TempDir()
 	t.Setenv("HOME", clientPubLoc)
 
-	err := initializeKeypair()
+	err := auth.InitializeKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +572,7 @@ func TestIsLocalReal(t *testing.T) {
 	t.Run("different server pubkey", func(t *testing.T) {
 		serverPubLoc := t.TempDir()
 		t.Setenv("HOME", serverPubLoc)
-		err := initializeKeypair()
+		err := auth.InitializeKeypair()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -592,50 +588,4 @@ func TestIsLocalReal(t *testing.T) {
 			t.Fatal("Expected isLocal to return false")
 		}
 	})
-}
-
-func initializeKeypair() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	privKeyPath := filepath.Join(home, ".ollama", "id_ed25519")
-	pubKeyPath := filepath.Join(home, ".ollama", "id_ed25519.pub")
-
-	_, err = os.Stat(privKeyPath)
-	if os.IsNotExist(err) {
-		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
-		cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return err
-		}
-
-		privateKeyBytes, err := ssh.MarshalPrivateKey(cryptoPrivateKey, "")
-		if err != nil {
-			return err
-		}
-
-		if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
-			return fmt.Errorf("could not create directory %w", err)
-		}
-
-		if err := os.WriteFile(privKeyPath, pem.EncodeToMemory(privateKeyBytes), 0o600); err != nil {
-			return err
-		}
-
-		sshPublicKey, err := ssh.NewPublicKey(cryptoPublicKey)
-		if err != nil {
-			return err
-		}
-
-		publicKeyBytes := ssh.MarshalAuthorizedKey(sshPublicKey)
-
-		if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o644); err != nil {
-			return err
-		}
-
-		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
-	}
-	return nil
 }
