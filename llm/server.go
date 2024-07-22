@@ -417,7 +417,17 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 		// reap subprocess when it exits
 		go func() {
-			s.done <- s.cmd.Wait()
+			err := s.cmd.Wait()
+			// Favor a more detailed message over the process exit status
+			if err != nil && s.status != nil && s.status.LastErrMsg != "" {
+				slog.Debug("llama runner terminated", "error", err)
+				if strings.Contains(s.status.LastErrMsg, "unknown model") {
+					s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
+				}
+				s.done <- fmt.Errorf(s.status.LastErrMsg)
+			} else {
+				s.done <- err
+			}
 		}()
 
 		return s, nil
@@ -580,14 +590,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			slog.Warn("client connection closed before server finished loading, aborting load")
 			return fmt.Errorf("timed out waiting for llama runner to start: %w", ctx.Err())
 		case err := <-s.done:
-			msg := ""
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
-			}
-			if strings.Contains(msg, "unknown model") {
-				return fmt.Errorf("this model is not supported by your version of Ollama. You may need to upgrade")
-			}
-			return fmt.Errorf("llama runner process has terminated: %v %s", err, msg)
+			return fmt.Errorf("llama runner process has terminated: %w", err)
 		default:
 		}
 		if time.Now().After(stallTimer) {
