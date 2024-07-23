@@ -535,6 +535,7 @@ func TestIsLocalReal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	clientPubLoc := t.TempDir()
 	t.Setenv("HOME", clientPubLoc)
+	t.Setenv("USERPROFILE", clientPubLoc)
 
 	_, err := auth.GetPublicKey()
 	if err != nil {
@@ -572,6 +573,7 @@ func TestIsLocalReal(t *testing.T) {
 	t.Run("different server pubkey", func(t *testing.T) {
 		serverPubLoc := t.TempDir()
 		t.Setenv("HOME", serverPubLoc)
+		t.Setenv("USERPROFILE", serverPubLoc)
 		_, err := auth.GetPublicKey()
 		if err != nil {
 			t.Fatal(err)
