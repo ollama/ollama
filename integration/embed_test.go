@@ -74,7 +74,7 @@ func TestAllMiniLMBatchEmbed(t *testing.T) {
 	}
 }
 
-func TestAllMiniLmEmbedTruncate(t *testing.T) {
+func TestAllMiniLMEmbedTruncate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
