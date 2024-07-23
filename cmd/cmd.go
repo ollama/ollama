@@ -282,12 +282,11 @@ func createBlob(cmd *cobra.Command, path string) (string, error) {
 
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 
-	// We check if we can find the models directory locally
-	// If we can, we return the path to the directory
-	// If we can't, we return an error
-	// If the blob exists already, we return the digest
+	// Use our new CreateBlob request which will include the file path
+	// The server checks for that file and if the server is local, it will copy the file over
+	// If the local copy fails, the server will continue to the default local copy
+	// If that fails, it will continue with the server POST
 	err = CreateBlob(cmd.Context(), path, digest)
-
 	if errors.Is(err, ErrBlobExists) {
 		return digest, nil
 	}
