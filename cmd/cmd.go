@@ -339,41 +339,6 @@ func CreateBlob(ctx context.Context, src, digest string, r *os.File) (error) {
 	return err
 }
 
-func DefaultCopy(path string, dest string) error {
-	// This function should be called if the server is local
-	// It should find the model directory, copy the blob over, and return the digest
-	dirPath := filepath.Dir(dest)
-
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
-		return err
-	}
-
-	// Copy blob over
-	sourceFile, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("could not open source file: %v", err)
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(dest)
-	if err != nil {
-		return fmt.Errorf("could not create destination file: %v", err)
-	}
-	defer destFile.Close()
-
-	_, err = io.CopyBuffer(destFile, sourceFile, make([]byte, 4*1024*1024))
-	if err != nil {
-		return fmt.Errorf("error copying file: %v", err)
-	}
-
-	err = destFile.Sync()
-	if err != nil {
-		return fmt.Errorf("error flushing file: %v", err)
-	}
-
-	return nil
-}
-
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
