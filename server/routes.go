@@ -942,10 +942,13 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-	if c.GetHeader("X-Redirect-Create") == "1" && s.isLocal(c) {
-		c.Header("LocalLocation", path)
-		c.Status(http.StatusTemporaryRedirect)
-		return
+
+	if c.GetHeader("X-Ollama-File") != "" && s.isLocal(c) {
+		err = localBlobCopy(c.GetHeader("X-Ollama-File"), path)
+		if err == nil {
+			c.Status(http.StatusCreated)
+			return
+		}
 	}
 
 	layer, err := NewLayer(c.Request.Body, "")
@@ -960,6 +963,29 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 	}
 
 	c.Status(http.StatusCreated)
+}
+
+func localBlobCopy (src, dest string) error {
+	_, err := os.Stat(src)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return err
+	case err != nil:
+		return err
+	default:
+	}
+
+	err = localCopy(src, dest)
+	if err == nil {
+		return nil
+	} 
+
+	err = defaultCopy(src, dest)
+	if err == nil {
+		return nil
+	}
+
+	return err
 }
 
 func (s *Server) isLocal(c *gin.Context) bool {
@@ -1008,6 +1034,41 @@ func (s *Server) isLocal(c *gin.Context) bool {
 	}
 
 	return false
+}
+
+func defaultCopy(path string, dest string) error {
+	// This function should be called if the server is local
+	// It should find the model directory, copy the blob over, and return the digest
+	dirPath := filepath.Dir(dest)
+
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		return err
+	}
+
+	// Copy blob over
+	sourceFile, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("could not open source file: %v", err)
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dest)
+	if err != nil {
+		return fmt.Errorf("could not create destination file: %v", err)
+	}
+	defer destFile.Close()
+
+	_, err = io.CopyBuffer(destFile, sourceFile, make([]byte, 4*1024*1024))
+	if err != nil {
+		return fmt.Errorf("error copying file: %v", err)
+	}
+
+	err = destFile.Sync()
+	if err != nil {
+		return fmt.Errorf("error flushing file: %v", err)
+	}
+
+	return nil
 }
 
 func isLocalIP(ip netip.Addr) bool {
