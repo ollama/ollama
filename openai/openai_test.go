@@ -19,7 +19,6 @@ import (
 
 const prefix = `data:image/jpeg;base64,`
 const image = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
-const imageURL = prefix + image
 
 var False = false
 
@@ -84,7 +83,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								"type": "image_url",
 								"image_url": {
-									"url": "` + imageURL + `"
+									"url": "` + prefix + image + `"
 								}
 							}
 						]
