@@ -874,17 +874,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 type embedding struct {
 	Embedding [][]float32 `json:"embedding"`
-	// PredictedN int         `json:"predicted_n"`
-	PredictedMS float64 `json:"predicted_ms"`
-	PromptN     int     `json:"total_n_prompt"`
-	PromptMS    float64 `json:"prompt_ms"`
-
-	// Timings struct {
-	// 	PredictedN  int     `json:"predicted_n"`
-	// 	PredictedMS float64 `json:"predicted_ms"`
-	// 	PromptN     int     `json:"prompt_n"`
-	// 	PromptMS    float64 `json:"prompt_ms"`
-	// }
+	PromptN   int         `json:"prompt_n"`
 }
 
 type EmbedRequest struct {
@@ -947,10 +937,8 @@ func (s *llmServer) Embed(ctx context.Context, input []string) (*EmbedResponse, 
 	}
 
 	return &EmbedResponse{
-		Embedding:          e.Embedding,
-		PromptEvalCount:    e.PromptN,
-		PromptEvalDuration: parseDurationMs(e.PromptMS),
-		EvalDuration:       parseDurationMs(e.PredictedMS),
+		Embedding:       e.Embedding,
+		PromptEvalCount: e.PromptN,
 	}, nil
 }
 
