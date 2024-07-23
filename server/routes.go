@@ -943,13 +943,13 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		return
 	}
 
-	if c.GetHeader("X-Ollama-File") != "" && s.isLocal(c) {
+	/* if c.GetHeader("X-Ollama-File") != "" && s.isLocal(c) {
 		err = localBlobCopy(c.GetHeader("X-Ollama-File"), path)
 		if err == nil {
 			c.Status(http.StatusCreated)
 			return
 		}
-	}
+	} */
 
 	layer, err := NewLayer(c.Request.Body, "")
 	if err != nil {
@@ -967,25 +967,21 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 
 func localBlobCopy (src, dest string) error {
 	_, err := os.Stat(src)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
+	if err != nil {
 		return err
-	case err != nil:
-		return err
-	default:
 	}
 
-	err = localCopy(src, dest)
+	/* err = localCopy(src, dest)
 	if err == nil {
 		return nil
-	} 
+	}  */
 
-	err = defaultCopy(src, dest)
+	/* err = defaultCopy(src, dest)
 	if err == nil {
 		return nil
-	}
+	} */
 
-	return err
+	return fmt.Errorf("failed to copy blob")
 }
 
 func (s *Server) isLocal(c *gin.Context) bool {
