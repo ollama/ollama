@@ -27,7 +27,6 @@ const (
 	MultilineNone MultilineState = iota
 	MultilinePrompt
 	MultilineSystem
-	MultilineTemplate
 )
 
 func loadModel(cmd *cobra.Command, opts *runOptions) error {
@@ -94,7 +93,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set parameter ...     Set a parameter")
 		fmt.Fprintln(os.Stderr, "  /set system <string>   Set system message")
-		fmt.Fprintln(os.Stderr, "  /set template <string> Set prompt template")
 		fmt.Fprintln(os.Stderr, "  /set history           Enable history")
 		fmt.Fprintln(os.Stderr, "  /set nohistory         Disable history")
 		fmt.Fprintln(os.Stderr, "  /set wordwrap          Enable wordwrap")
@@ -203,10 +201,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				opts.System = sb.String()
 				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
 				fmt.Println("Set system message.")
-				sb.Reset()
-			case MultilineTemplate:
-				opts.Template = sb.String()
-				fmt.Println("Set prompt template.")
 				sb.Reset()
 			}
 
@@ -326,17 +320,13 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
 					opts.Options[args[2]] = fp[args[2]]
-				case "system", "template":
+				case "system":
 					if len(args) < 3 {
 						usageSet()
 						continue
 					}
 
-					if args[1] == "system" {
-						multiline = MultilineSystem
-					} else if args[1] == "template" {
-						multiline = MultilineTemplate
-					}
+					multiline = MultilineSystem
 
 					line := strings.Join(args[2:], " ")
 					line, ok := strings.CutPrefix(line, `"""`)
@@ -356,23 +346,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						continue
 					}
 
-					if args[1] == "system" {
-						opts.System = sb.String() // for display in modelfile
-						newMessage := api.Message{Role: "system", Content: sb.String()}
-						// Check if the slice is not empty and the last message is from 'system'
-						if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
-							// Replace the last message
-							opts.Messages[len(opts.Messages)-1] = newMessage
-						} else {
-							opts.Messages = append(opts.Messages, newMessage)
-						}
-						fmt.Println("Set system message.")
-						sb.Reset()
-					} else if args[1] == "template" {
-						opts.Template = sb.String()
-						fmt.Println("Set prompt template.")
-						sb.Reset()
+					opts.System = sb.String() // for display in modelfile
+					newMessage := api.Message{Role: "system", Content: sb.String()}
+					// Check if the slice is not empty and the last message is from 'system'
+					if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
+						// Replace the last message
+						opts.Messages[len(opts.Messages)-1] = newMessage
+					} else {
+						opts.Messages = append(opts.Messages, newMessage)
 					}
+					fmt.Println("Set system message.")
+					sb.Reset()
 
 					sb.Reset()
 					continue
@@ -393,7 +377,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				req := &api.ShowRequest{
 					Name:     opts.Model,
 					System:   opts.System,
-					Template: opts.Template,
 					Options:  opts.Options,
 				}
 				resp, err := client.Show(cmd.Context(), req)
@@ -437,12 +420,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						fmt.Println("No system message was specified for this model.")
 					}
 				case "template":
-					switch {
-					case opts.Template != "":
-						fmt.Println(opts.Template + "\n")
-					case resp.Template != "":
+					if resp.Template != "" {
 						fmt.Println(resp.Template)
-					default:
+					} else {
 						fmt.Println("No prompt template was specified for this model.")
 					}
 				default:
@@ -534,10 +514,6 @@ func buildModelfile(opts runOptions) string {
 	fmt.Fprintf(&mf, "FROM %s\n", model)
 	if opts.System != "" {
 		fmt.Fprintf(&mf, "SYSTEM \"\"\"%s\"\"\"\n", opts.System)
-	}
-
-	if opts.Template != "" {
-		fmt.Fprintf(&mf, "TEMPLATE \"\"\"%s\"\"\"\n", opts.Template)
 	}
 
 	keys := make([]string, 0)

@@ -10,6 +10,7 @@ import (
 type memInfo struct {
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 	FreeMemory  uint64 `json:"free_memory,omitempty"`
+	FreeSwap    uint64 `json:"free_swap,omitempty"`
 }
 
 // Beginning of an `ollama info` command
@@ -29,6 +30,11 @@ type GpuInfo struct {
 	// Extra environment variables specific to the GPU as list of [key,value]
 	EnvWorkarounds [][2]string `json:"envs,omitempty"`
 
+	// Set to true if we can NOT reliably discover FreeMemory.  A value of true indicates
+	// the FreeMemory is best effort, and may over or under report actual memory usage
+	// False indicates FreeMemory can generally be trusted on this GPU
+	UnreliableFreeMemory bool
+
 	// GPU information
 	ID      string `json:"gpu_id"`  // string to use for selection of this specific GPU
 	Name    string `json:"name"`    // user friendly name if available
@@ -47,7 +53,8 @@ type CPUInfo struct {
 
 type CudaGPUInfo struct {
 	GpuInfo
-	index int //nolint:unused,nolintlint
+	OSOverhead uint64 // Memory overhead between the driver library and management library
+	index      int    //nolint:unused,nolintlint
 }
 type CudaGPUInfoList []CudaGPUInfo
 

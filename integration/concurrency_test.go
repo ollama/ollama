@@ -69,7 +69,7 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 	reqLimit := len(req)
 	iterLimit := 5
 
-	vram := os.Getenv("OLLAMA_MAX_VRAM")
+	vram := os.Getenv("OLLAMA_MAX_VRAM") // TODO - discover actual VRAM
 	if vram != "" {
 		max, err := strconv.ParseUint(vram, 10, 64)
 		require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 
 // Stress the system if we know how much VRAM it has, and attempt to load more models than will fit
 func TestMultiModelStress(t *testing.T) {
-	vram := os.Getenv("OLLAMA_MAX_VRAM")
+	vram := os.Getenv("OLLAMA_MAX_VRAM") // TODO - discover actual VRAM
 	if vram == "" {
 		t.Skip("OLLAMA_MAX_VRAM not specified, can't pick the right models for the stress test")
 	}

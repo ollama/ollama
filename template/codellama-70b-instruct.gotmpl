@@ -1,0 +1,10 @@
+{{ if .System }}Source: system
+
+ {{ .System }} <step> {{ end }}Source: user
+
+ {{ .Prompt }} <step> Source: assistant
+{{- if not .Response }}
+Destination: user
+{{- end }}
+
+ {{ .Response }} <step> 
