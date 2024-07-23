@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -307,15 +306,9 @@ func CreateBlob(ctx context.Context, src, digest string, r *os.File) (error) {
 		Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
 	}
 
-	data, err := json.Marshal(digest)
-	if err != nil {
-		return err
-	}
-
-	reqBody := bytes.NewReader(data)
 	path := fmt.Sprintf("/api/blobs/%s", digest)
 	requestURL := base.JoinPath(path)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), reqBody)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), r)
 	if err != nil {
 		return err
 	}
