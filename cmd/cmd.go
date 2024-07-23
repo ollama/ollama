@@ -286,7 +286,7 @@ func createBlob(cmd *cobra.Command, path string) (string, error) {
 	// The server checks for that file and if the server is local, it will copy the file over
 	// If the local copy fails, the server will continue to the default local copy
 	// If that fails, it will continue with the server POST
-	err = CreateBlob(cmd.Context(), path, digest)
+	err = CreateBlob(cmd.Context(), path, digest, bin)
 	if errors.Is(err, ErrBlobExists) {
 		return digest, nil
 	}
@@ -298,7 +298,7 @@ func createBlob(cmd *cobra.Command, path string) (string, error) {
 	return digest, nil
 }
 
-func CreateBlob(ctx context.Context, src, digest string) (error) {
+func CreateBlob(ctx context.Context, src, digest string, r *os.File) (error) {
 	ollamaHost := envconfig.Host
 
 	client := http.DefaultClient
