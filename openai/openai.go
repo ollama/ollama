@@ -55,7 +55,7 @@ type CompleteChunkChoice struct {
 
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
 	TotalTokens      int `json:"total_tokens"`
 }
 
@@ -167,6 +167,7 @@ type EmbeddingList struct {
 	Object string      `json:"object"`
 	Data   []Embedding `json:"data"`
 	Model  string      `json:"model"`
+	Usage  Usage       `json:"usage,omitempty"`
 }
 
 func NewError(code int, message string) ErrorResponse {
@@ -329,6 +330,10 @@ func toEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
 			Object: "list",
 			Data:   data,
 			Model:  model,
+			Usage: Usage{
+				PromptTokens: r.PromptEvalCount,
+				TotalTokens:  r.PromptEvalCount,
+			},
 		}
 	}
 
