@@ -1212,7 +1212,6 @@ struct llama_server_context
                         res.result_json = json
                         {
                             {"embedding", std::vector<float>(n_embd, 0.0f)},
-                            {"prompt_n", slot.n_prompt_tokens_processed},
                         };
                         continue;
                     }
@@ -1221,7 +1220,7 @@ struct llama_server_context
                 res.result_json = json
                 {
                     {"embedding", std::vector<float>(embd, embd + n_embd)},
-                    {"prompt_n", slot.n_prompt_tokens_processed},
+                    {"timings",             slot.get_formated_timings()},
                 };
             }
         }
@@ -3210,15 +3209,24 @@ int main(int argc, char **argv) {
 
                     responses = result.result_json.value("results", std::vector<json>{result.result_json});
                     json embeddings = json::array();
+
+                    int total_n_prompt = 0;
+                    float predicted_ms = 0.0;
+                    float prompt_ms = 0.0;
                     for (auto & elem : responses) {
                         embeddings.push_back(elem.at("embedding"));
+                        total_n_prompt += elem.at("timings").at("prompt_n").get<int>();
+                        predicted_ms += elem.at("timings").at("predicted_ms").get<float>();
+                        prompt_ms += elem.at("timings").at("prompt_ms").get<float>();
                     }
-                    int total_n_prompt = 0;
-                    for (const auto & elem : responses) {
-                        total_n_prompt += elem.at("prompt_n").get<int>();
-                    }
+
                     // send the result
-                    json embedding_res = json{{"embedding", embeddings}, {"prompt_n", total_n_prompt}};
+                    LOG_INFO("timing", {
+                        {"\nprompt_ms", prompt_ms},
+                        {"\ntotal_n_prompt", total_n_prompt},
+                        {"\npredicted_ms", predicted_ms}
+                    });
+                    json embedding_res = json{{"embedding", embeddings}, {"prompt_ms", prompt_ms}, {"predicted_ms", predicted_ms}, {"total_n_prompt", total_n_prompt}};
                     return res.set_content(embedding_res.dump(), "application/json; charset=utf-8");
                 }
             });

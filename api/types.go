@@ -259,9 +259,11 @@ type EmbedRequest struct {
 
 // EmbedResponse is the response from [Client.Embed].
 type EmbedResponse struct {
-	Model           string      `json:"model"`
-	Embeddings      [][]float32 `json:"embeddings"`
-	PromptEvalCount int         `json:"prompt_eval_count,omitempty"`
+	Model      string      `json:"model"`
+	Embeddings [][]float32 `json:"embeddings"`
+	// PromptEvalCount int         `json:"prompt_eval_count,omitempty"`
+
+	Metrics
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].

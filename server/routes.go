@@ -284,6 +284,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {
+	checkpointStart := time.Now()
 	var req api.EmbedRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -332,6 +333,8 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	checkpointLoaded := time.Now()
+
 	kvData, err := getKVData(m.ModelPath, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -375,10 +378,20 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	resp := api.EmbedResponse{
-		Model:           req.Model,
-		Embeddings:      embeddings.Embedding,
-		PromptEvalCount: embeddings.PromptN,
+		Model:      req.Model,
+		Embeddings: embeddings.Embedding,
+		Metrics: api.Metrics{
+			PromptEvalCount:    embeddings.PromptEvalCount,
+			PromptEvalDuration: embeddings.PromptEvalDuration,
+			EvalDuration:       embeddings.EvalDuration,
+			TotalDuration:      time.Since(checkpointStart),
+			LoadDuration:       checkpointLoaded.Sub(checkpointStart),
+		},
 	}
+	slog.Info("total duration", "duration", resp.TotalDuration)
+	slog.Info("load duration", "duration", resp.LoadDuration)
+	slog.Info("prompt eval duration", "duration", resp.PromptEvalDuration)
+	slog.Info("eval duration", "duration", resp.EvalDuration)
 	c.JSON(http.StatusOK, resp)
 }
 
