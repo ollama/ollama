@@ -261,7 +261,6 @@ type EmbedRequest struct {
 type EmbedResponse struct {
 	Model      string      `json:"model"`
 	Embeddings [][]float32 `json:"embeddings"`
-	// PromptEvalCount int         `json:"prompt_eval_count,omitempty"`
 
 	Metrics
 }

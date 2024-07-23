@@ -872,21 +872,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	return nil
 }
 
-type embedding struct {
-	Embedding [][]float32 `json:"embedding"`
-	PromptN   int         `json:"prompt_n"`
-}
-
 type EmbedRequest struct {
 	Content []string `json:"content"`
 }
 
 type EmbedResponse struct {
-	Embedding [][]float32 `json:"embedding"`
-
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalDuration       time.Duration
+	Embedding       [][]float32 `json:"embedding"`
+	PromptEvalCount int         `json:"prompt_n"`
 }
 
 func (s *llmServer) Embed(ctx context.Context, input []string) (*EmbedResponse, error) {
@@ -931,15 +923,12 @@ func (s *llmServer) Embed(ctx context.Context, input []string) (*EmbedResponse, 
 		return nil, fmt.Errorf("%s", body)
 	}
 
-	var e embedding
+	var e EmbedResponse
 	if err := json.Unmarshal(body, &e); err != nil {
 		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
 	}
 
-	return &EmbedResponse{
-		Embedding:       e.Embedding,
-		PromptEvalCount: e.PromptN,
-	}, nil
+	return &e, nil
 }
 
 type TokenizeRequest struct {
