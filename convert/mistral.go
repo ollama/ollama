@@ -71,6 +71,11 @@ func (m *MistralModel) WriteGGUF(ws io.WriteSeeker) error {
 		"tokenizer.ggml.unknown_token_id": uint32(0),
 	}
 
+	if m.Params.HeadDimension > 0 {
+		kv["llama.attention.key_length"] = uint32(m.Params.HeadDimension)
+		kv["llama.attention.value_length"] = uint32(m.Params.HeadDimension)
+	}
+
 	return llm.NewGGUFV3(m.Params.ByteOrder).Encode(ws, kv, m.Tensors)
 }
 
