@@ -1362,9 +1362,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			sb.WriteString(r.Content)
 
 			if r.Done {
-				fmt.Println("!!!!!!!!!!!!!!!")
-				fmt.Println(sb.String())
-
 				if len(req.Tools) > 0 {
 					if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
 						fmt.Println(len(toolCalls))
