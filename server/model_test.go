@@ -164,15 +164,19 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to encode gguf: %v", err)
 	}
 
+	_, err = file.Seek(0, io.SeekStart)
+	if err != nil {
+		t.Fatalf("failed to seek to start: %v", err)
+	}
+
 	layers, err := parseFromFile(context.Background(), file, digest, func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatalf("failed to parse from file: %v", err)
 	}
 
-	fmt.Println(layers)
-
-	// figure out assert
-	// make GGUF valid to decode
+	if len(layers) != 1 {
+		t.Fatalf("got %d != want 1", len(layers))
+	}
 
 	t.Run("2x gguf", func(t *testing.T) {
 		digest := "sha256-fb9d435dc2c4fe681ce63917c062c91022524e9ce57474c9b10ef5169495d903"
@@ -188,12 +192,15 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		}
 		defer file2.Close()
 
-		if err := sGGUF.Encode(file2, kv, tensors); err != nil {
-			t.Fatalf("failed to encode gguf1: %v", err)
+		for i := range(5) {
+			if err := sGGUF.Encode(file2, kv, tensors); err != nil {
+				t.Fatalf("failed to encode gguf%d: %v", i, err)
+			}
 		}
 
-		if err := sGGUF.Encode(file2, kv, tensors); err != nil {
-			t.Fatalf("failed to encode gguf2: %v", err)
+		_, err = file2.Seek(0, io.SeekStart)
+		if err != nil {
+			t.Fatalf("failed to seek to start: %v", err)
 		}
 
 		layers, err := parseFromFile(context.Background(), file2, digest, func(api.ProgressResponse) {})
@@ -201,8 +208,8 @@ func TestParseFromFileFromLayer(t *testing.T) {
 			t.Fatalf("failed to parse from file: %v", err)
 		}
 
-		fmt.Println(layers)
-
-		// assert on layers
+		if len(layers) != 5 {
+			t.Fatalf("got %d != want 5", len(layers))
+		}
 	})
 }
