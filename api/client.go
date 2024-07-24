@@ -67,7 +67,7 @@ func ClientFromEnvironment() (*Client, error) {
 	ollamaHost := envconfig.Host()
 	var httpClient *http.Client
 	if clientTlsConfig := envconfig.ClientTlsConfig(); clientTlsConfig != nil {
-		slog.Info("Using TLS configuration for client")
+		slog.Debug("Using TLS configuration for client")
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: clientTlsConfig,
