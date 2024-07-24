@@ -245,12 +245,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 			mediatype = "application/vnd.ollama.image.projector"
 		}
 
-		var layer *Layer 
-		if digest != "" && n == stat.Size() {
-			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
-		} else {
-			layer, err = NewLayer(io.NewSectionReader(file, offset, n), mediatype)
-		}
+		layer, err := NewLayer(io.NewSectionReader(file, offset, n), mediatype)
 		if err != nil {
 			return nil, err
 		}
