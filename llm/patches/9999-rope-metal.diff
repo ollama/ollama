@@ -1,0 +1,25 @@
+From 55b89d69c934e7087b2c99e429c58de23601f2b0 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Wed, 24 Jul 2024 14:07:18 -0700
+Subject: [PATCH] rope: metal
+
+---
+ ggml/src/ggml-metal.metal | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-metal.metal b/ggml/src/ggml-metal.metal
+index 3bb37d32..f0519a6c 100644
+--- a/ggml/src/ggml-metal.metal
++++ b/ggml/src/ggml-metal.metal
+@@ -1564,7 +1564,7 @@ kernel void kernel_rope_norm(
+         if (i0 < n_dims) {
+             const int64_t ic = i0/2;
+ 
+-            const float theta = theta_base * pow(freq_base, inv_ndims*i0);
++            const float theta = theta_base * (src2 != src0 ? 1.0f : pow(freq_base, inv_ndims*i0));
+ 
+             const float freq_factor = src2 != src0 ? src2[ic] : 1.0f;
+ 
+-- 
+2.45.2
+

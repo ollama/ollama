@@ -1,0 +1,27 @@
+From a261cd118a0e754535cb40a2a12e1e7d4aeb8bed Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Wed, 24 Jul 2024 14:54:02 -0700
+Subject: [PATCH] rope: cpu
+
+---
+ ggml/src/ggml.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index dbb3a3eb..4014ca7e 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -13930,7 +13930,9 @@ static void ggml_rope_cache_init(
+         );
+         cache[i0 + 1] *= sin_sign;
+ 
+-        theta *= theta_scale;
++        if (!freq_factors) {
++            theta *= theta_scale;
++        }
+     }
+ }
+ 
+-- 
+2.45.2
+

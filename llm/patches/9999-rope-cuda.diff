@@ -1,0 +1,25 @@
+From d9489a09774a72a891d2dad868c0bfa625ae4c8a Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Wed, 24 Jul 2024 14:23:38 -0700
+Subject: [PATCH] rope: cuda
+
+---
+ ggml/src/ggml-cuda/rope.cu | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cuda/rope.cu b/ggml/src/ggml-cuda/rope.cu
+index 596fb7c1..1d760c3c 100644
+--- a/ggml/src/ggml-cuda/rope.cu
++++ b/ggml/src/ggml-cuda/rope.cu
+@@ -52,7 +52,7 @@ static __global__ void rope_norm(
+     const int i  = row*ne0 + i0;
+     const int i2 = row/p_delta_rows;
+ 
+-    const float theta_base = pos[i2]*powf(theta_scale, i0/2.0f);
++    const float theta_base = pos[i2] * (has_ff ? 1.0f : powf(theta_scale, i0/2.0f));
+ 
+     const float freq_factor = has_ff ? freq_factors[i0/2] : 1.0f;
+ 
+-- 
+2.45.2
+
