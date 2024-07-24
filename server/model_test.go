@@ -157,6 +157,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 
 	sGGUF := llm.NewGGUFV3(binary.LittleEndian)
 	kv := make(llm.KV)
+	kv["general.architecture"] = "gemma"
 	tensors := []llm.Tensor{}
 
 	if err := sGGUF.Encode(file, kv, tensors); err != nil {
@@ -169,7 +170,9 @@ func TestParseFromFileFromLayer(t *testing.T) {
 	}
 
 	fmt.Println(layers)
-	// assert something here i don't know yet
+
+	// figure out assert
+	// make GGUF valid to decode
 
 	t.Run("2x gguf", func(t *testing.T) {
 		digest := "sha256-fb9d435dc2c4fe681ce63917c062c91022524e9ce57474c9b10ef5169495d903"
@@ -198,7 +201,8 @@ func TestParseFromFileFromLayer(t *testing.T) {
 			t.Fatalf("failed to parse from file: %v", err)
 		}
 
-		// assert on layers
 		fmt.Println(layers)
+
+		// assert on layers
 	})
 }

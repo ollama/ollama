@@ -177,7 +177,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		}
 
 		var layer *Layer
-		if digest != "" && n == stat.Size() {
+		if digest != "" && n == stat.Size() && offset == 0 {
 			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
 		}
 
