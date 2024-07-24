@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +13,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/template"
 )
 
@@ -132,4 +136,74 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 			})
 		})
 	}
+}
+
+func TestParseFromFileFromLayer(t *testing.T) {
+	tempModels := t.TempDir()
+	t.Setenv("OLLAMA_MODELS",tempModels)
+	envconfig.LoadConfig()
+	digest := "sha256-fb9d435dc2c4fe681ce63917c062c91022524e9ce57474c9b10ef5169495d902"
+
+	_, err := GetBlobsPath(digest)
+	if err != nil {
+		t.Fatalf("failed to get blobs path: %v", err)
+	}
+
+	file, err := os.CreateTemp(tempModels+"/blobs", digest)
+	if err != nil {
+		t.Fatalf("failed to open file: %v", err)
+	}
+	defer file.Close()
+
+	sGGUF := llm.NewGGUFV3(binary.LittleEndian)
+	kv := make(llm.KV)
+	tensors := []llm.Tensor{}
+
+	if err := sGGUF.Encode(file, kv, tensors); err != nil {
+		t.Fatalf("failed to encode gguf: %v", err)
+	}
+
+	layers, err := parseFromFile(context.Background(), file, digest, func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatalf("failed to parse from file: %v", err)
+	}
+	
+	fmt.Println(layers)
+	// assert something here i don't know yet
+
+	t.Run("2x gguf", func(t *testing.T) {
+		digest := "sha256-fb9d435dc2c4fe681ce63917c062c91022524e9ce57474c9b10ef5169495d903"
+
+		_, err := GetBlobsPath(digest)
+		if err != nil {
+			t.Fatalf("failed to get blobs path: %v", err)
+		}
+
+		file2, err := os.CreateTemp(tempModels+"/blobs", digest)
+		if err != nil {
+			t.Fatalf("failed to open file: %v", err)
+		}
+		defer file2.Close()
+
+		num1GGUF := llm.NewGGUFV3(binary.LittleEndian)
+		num2GGUF := llm.NewGGUFV3(binary.LittleEndian)
+		kv := make(llm.KV)
+		tensors := []llm.Tensor{}
+
+		if err := num1GGUF.Encode(file2, kv, tensors); err != nil {
+			t.Fatalf("failed to encode gguf1: %v", err)
+		}
+
+		if err := num2GGUF.Encode(file2, kv, tensors); err != nil {
+			t.Fatalf("failed to encode gguf2: %v", err)
+		}
+
+		layers, err := parseFromFile(context.Background(), file2, digest, func(api.ProgressResponse) {})
+		if err != nil {
+			t.Fatalf("failed to parse from file: %v", err)
+		}
+
+		// assert on layers
+		fmt.Println(layers)
+	})
 }

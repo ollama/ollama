@@ -179,7 +179,10 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		var layer *Layer
 		if digest != "" && n == stat.Size() {
 			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
-		} else {
+		}
+
+		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
+		if layer == nil {
 			layer, err = NewLayer(io.NewSectionReader(file, offset, n), mediatype)
 		}
 		if err != nil {
