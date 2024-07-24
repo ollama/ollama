@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,8 +24,10 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
@@ -928,7 +931,6 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	_, err = os.Stat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -939,6 +941,14 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 	default:
 		c.Status(http.StatusOK)
 		return
+	}
+
+	if c.GetHeader("X-Ollama-File") != "" && s.isLocal(c) {
+		err = localBlobCopy(c.GetHeader("X-Ollama-File"), path)
+		if err == nil {
+			c.Status(http.StatusCreated)
+			return
+		}
 	}
 
 	layer, err := NewLayer(c.Request.Body, "")
@@ -953,6 +963,108 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 	}
 
 	c.Status(http.StatusCreated)
+}
+
+func localBlobCopy (src, dest string) error {
+	_, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	err = localCopy(src, dest)
+	if err == nil {
+		return nil
+	}
+
+	err = defaultCopy(src, dest)
+	if err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("failed to copy blob")
+}
+
+func (s *Server) isLocal(c *gin.Context) bool {
+	if authz := c.GetHeader("Authorization"); authz != "" {
+		parts := strings.Split(authz, ":")
+		if len(parts) != 3 {
+			return false
+		}
+
+		clientPublicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(fmt.Sprintf("ssh-ed25519 %s", parts[0])))
+		if err != nil {
+			return false
+		}
+
+		// partialRequestData is formatted as http.Method,http.requestURI,timestamp,nonce
+		requestData, err := base64.StdEncoding.DecodeString(parts[1])
+		if err != nil {
+			return false
+		}
+
+		partialRequestDataParts := strings.Split(string(requestData), ",")
+		if len(partialRequestDataParts) != 3 {
+			return false
+		}
+
+		signature, err := base64.StdEncoding.DecodeString(parts[2])
+		if err != nil {
+			return false
+		}
+
+		if err := clientPublicKey.Verify(requestData, &ssh.Signature{Format: clientPublicKey.Type(), Blob: signature}); err != nil {
+			return false
+		}
+
+		serverPublicKey, err := auth.GetPublicKey()
+		if err != nil {
+			slog.Error(fmt.Sprintf("failed to get server public key: %v", err))
+			return false
+		}
+		
+		if bytes.Equal(serverPublicKey.Marshal(), clientPublicKey.Marshal()) {
+			return true
+		}
+
+		return false
+	}
+
+	return false
+}
+
+func defaultCopy(path string, dest string) error {
+	// This function should be called if the server is local
+	// It should find the model directory, copy the blob over, and return the digest
+	dirPath := filepath.Dir(dest)
+
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		return err
+	}
+
+	// Copy blob over
+	sourceFile, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("could not open source file: %v", err)
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dest)
+	if err != nil {
+		return fmt.Errorf("could not create destination file: %v", err)
+	}
+	defer destFile.Close()
+
+	_, err = io.CopyBuffer(destFile, sourceFile, make([]byte, 4*1024*1024))
+	if err != nil {
+		return fmt.Errorf("error copying file: %v", err)
+	}
+
+	err = destFile.Sync()
+	if err != nil {
+		return fmt.Errorf("error flushing file: %v", err)
+	}
+
+	return nil
 }
 
 func isLocalIP(ip netip.Addr) bool {

@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,7 +25,10 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strings"
+	"time"
 
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/version"
@@ -382,4 +386,17 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	}
 
 	return version.Version, nil
+}
+
+func Authorization(ctx context.Context, request *http.Request) (string, error) {
+	data := []byte(fmt.Sprintf("%s,%s,%d", request.Method, request.URL.RequestURI(), time.Now().Unix()))
+
+	token, err := auth.Sign(ctx, data)
+	if err != nil {
+		return "", err
+	}
+
+	// interleave request data into the token
+	key, sig, _ := strings.Cut(token, ":")
+	return fmt.Sprintf("%s:%s:%s", key, base64.StdEncoding.EncodeToString(data), sig), nil
 }

@@ -10,15 +10,18 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
@@ -526,4 +529,65 @@ func TestNormalize(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsLocalReal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	clientPubLoc := t.TempDir()
+	t.Setenv("HOME", clientPubLoc)
+	t.Setenv("USERPROFILE", clientPubLoc)
+
+	_, err := auth.GetPublicKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+    ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = &http.Request{
+		Header: make(http.Header),
+	}
+
+	requestURL := url.URL{
+		Scheme: "http",
+		Host:   "localhost:8080",
+		Path:   "/api/blobs",
+	}
+	request := &http.Request{
+		Method: http.MethodPost,
+		URL:    &requestURL,
+	}
+	s := &Server{}
+	
+	authz, err := api.Authorization(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set client authorization header
+	ctx.Request.Header.Set("Authorization", authz)
+	if !s.isLocal(ctx) {
+		t.Fatal("Expected isLocal to return true")
+	}
+
+	t.Run("different server pubkey", func(t *testing.T) {
+		serverPubLoc := t.TempDir()
+		t.Setenv("HOME", serverPubLoc)
+		t.Setenv("USERPROFILE", serverPubLoc)
+		_, err := auth.GetPublicKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if s.isLocal(ctx) {
+			t.Fatal("Expected isLocal to return false")
+		}
+	})
+
+	t.Run("invalid pubkey", func(t *testing.T) {
+		ctx.Request.Header.Set("Authorization", "sha-25616:invalid")
+		if s.isLocal(ctx) {
+			t.Fatal("Expected isLocal to return false")
+		}
+	})
 }

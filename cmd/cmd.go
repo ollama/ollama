@@ -12,6 +12,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -109,7 +110,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = tempfile
 			}
 
-			digest, err := createBlob(cmd, client, path)
+			digest, err := createBlob(cmd, path)
 			if err != nil {
 				return err
 			}
@@ -260,7 +261,9 @@ func tempZipFiles(path string) (string, error) {
 	return tempfile.Name(), nil
 }
 
-func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, error) {
+var ErrBlobExists = errors.New("blob exists")
+
+func createBlob(cmd *cobra.Command, path string) (string, error) {
 	bin, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -277,10 +280,63 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 	}
 
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
-	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
+
+	// Use our new CreateBlob request which will include the file path
+	// The server checks for that file and if the server is local, it will copy the file over
+	// If the local copy fails, the server will continue to the default local copy
+	// If that fails, it will continue with the server POST
+	err = CreateBlob(cmd.Context(), path, digest, bin)
+	if errors.Is(err, ErrBlobExists) {
+		return digest, nil
+	}
+
+	if err != nil {
 		return "", err
 	}
+
 	return digest, nil
+}
+
+func CreateBlob(ctx context.Context, src, digest string, r *os.File) (error) {
+	ollamaHost := envconfig.Host
+
+	client := http.DefaultClient
+	base := &url.URL{
+		Scheme: ollamaHost.Scheme,
+		Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
+	}
+
+	path := fmt.Sprintf("/api/blobs/%s", digest)
+	requestURL := base.JoinPath(path)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), r)
+	if err != nil {
+		return err
+	}
+
+	authz, err := api.Authorization(ctx, request)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Authorization", authz)
+	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+	request.Header.Set("X-Ollama-File", src)
+
+	resp, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		return ErrBlobExists
+	}
+
+	return err
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
