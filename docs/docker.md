@@ -27,7 +27,7 @@ There is an example `docker-compose.yaml` file in `examples/docker-compose`.
 Here's how to use it:
 
 ```bash
-git clone git@github.com:jmorganca/ollama.git
+git clone git@github.com:ollama/ollama.git
 cd ollama/examples/docker-compose
 docker compose up --wait --detach
 ```
