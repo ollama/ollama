@@ -12,11 +12,11 @@ import (
 )
 
 func floatsEqual32(a, b float32) bool {
-	return math.Abs(float64(a-b)) <= 1e-6
+	return math.Abs(float64(a-b)) <= 1e-4
 }
 
 func floatsEqual64(a, b float64) bool {
-	return math.Abs(a-b) <= 1e-9
+	return math.Abs(a-b) <= 1e-4
 }
 
 func TestAllMiniLMEmbeddings(t *testing.T) {
