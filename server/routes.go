@@ -1337,6 +1337,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
+		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
@@ -1358,7 +1359,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				},
 			}
 
+			sb.WriteString(r.Content)
+
 			if r.Done {
+				fmt.Println("!!!!!!!!!!!!!!!")
+				fmt.Println(sb.String())
+
+				if len(req.Tools) > 0 {
+					if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+						fmt.Println(len(toolCalls))
+						res.Message.ToolCalls = toolCalls
+						res.DoneReason = "tool_calls"
+					}
+				}
+
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
