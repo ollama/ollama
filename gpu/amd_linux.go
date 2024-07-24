@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -82,6 +83,20 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	// The amdgpu driver always exposes the host CPU(s) first, but we have to skip them and subtract
 	// from the other IDs to get alignment with the HIP libraries expectations (zero is the first GPU, not the CPU)
 	matches, _ := filepath.Glob(GPUPropertiesFileGlob)
+	sort.Slice(matches, func(i, j int) bool {
+		// /sys/class/kfd/kfd/topology/nodes/<number>/properties
+		a, err := strconv.ParseInt(filepath.Base(filepath.Dir(matches[i])), 10, 64)
+		if err != nil {
+			slog.Debug("parse err", "error", err, "match", matches[i])
+			return false
+		}
+		b, err := strconv.ParseInt(filepath.Base(filepath.Dir(matches[j])), 10, 64)
+		if err != nil {
+			slog.Debug("parse err", "error", err, "match", matches[i])
+			return false
+		}
+		return a < b
+	})
 	cpuCount := 0
 	for _, match := range matches {
 		slog.Debug("evaluating amdgpu node " + match)
