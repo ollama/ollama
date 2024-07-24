@@ -66,6 +66,10 @@ Here are some example models that can be downloaded:
 
 > Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
+## Suggest new models
+
+To suggest a new model, please open an issue on github and us as label "model request".
+
 ## Customize a model
 
 ### Import from GGUF
