@@ -210,7 +210,9 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, nil, nil, newOpts)
 			if err != nil {
 				slog.Warn("failed to get direct URL; backing off and retrying", "err", err)
-				backoff(ctx)
+				if err := backoff(ctx); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			defer resp.Body.Close()
