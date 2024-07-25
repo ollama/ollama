@@ -78,8 +78,8 @@ curl http://localhost:11434/v1/chat/completions \
 - [x] Streaming
 - [x] JSON mode
 - [x] Reproducible outputs
-- [ ] Vision
 - [x] Tools
+- [ ] Vision
 - [ ] Logprobs
 
 #### Supported request fields
