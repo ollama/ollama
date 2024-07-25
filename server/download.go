@@ -181,6 +181,9 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	_ = file.Truncate(b.Total)
 
 	directURL, err := func() (*url.URL, error) {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
 		backoff := newBackoff(10 * time.Second)
 		for {
 			// shallow close opts to be used in the closure
