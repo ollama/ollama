@@ -186,7 +186,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 		backoff := newBackoff(10 * time.Second)
 		for {
-			// shallow close opts to be used in the closure
+			// shallow clone opts to be used in the closure
 			// without affecting the outer opts.
 			newOpts := new(registryOptions)
 			*newOpts = *opts
