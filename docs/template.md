@@ -24,7 +24,7 @@ In this example, we have:
 * Three variables: `Messages`, `Role`, and `Content` (variables)
 * A custom function (action) that iterates over an array of items (`range .Messages`) and displays each item
 
-## Adding Templates to Your Model
+## Adding templates to your model
 
 By default, models imported into Ollama have a default template of `{{ .Prompt }}`, i.e. user inputs are sent verbatim to the LLM. This is appropriate for text or code completion models but lacks essential markers for chat or instruction models.
 
