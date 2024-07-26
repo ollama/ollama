@@ -238,7 +238,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			var err error
 			for try := 0; try < maxRetries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
-				err = b.downloadChunk(inner, directURL, w, part, opts)
+				err = b.downloadChunk(inner, directURL, w, part)
 				switch {
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
 					// return immediately if the context is canceled or the device is out of space
@@ -283,12 +283,15 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	return nil
 }
 
-func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, opts *registryOptions) error {
+func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart) error {
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		headers := make(http.Header)
-		headers.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
-		resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, opts)
+		req, err := http.NewRequestWithContext(ctx, "GET", requestURL.String(), nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
 		}
