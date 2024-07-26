@@ -132,6 +132,8 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			if len(pending.model.ProjectorPaths) > 0 && numParallel != 1 {
 				numParallel = 1
 				slog.Warn("multimodal models don't support parallel requests yet")
+			} else if strings.Contains(pending.model.Config.ModelFamily, "bert") {
+				numParallel = runtime.NumCPU()
 			}
 
 			for {
