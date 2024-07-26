@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -9,13 +10,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/exp/maps"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
@@ -375,9 +377,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					return err
 				}
 				req := &api.ShowRequest{
-					Name:     opts.Model,
-					System:   opts.System,
-					Options:  opts.Options,
+					Name:    opts.Model,
+					System:  opts.System,
+					Options: opts.Options,
 				}
 				resp, err := client.Show(cmd.Context(), req)
 				if err != nil {
@@ -506,31 +508,35 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 }
 
 func buildModelfile(opts runOptions) string {
-	var mf strings.Builder
-	model := opts.ParentModel
-	if model == "" {
-		model = opts.Model
-	}
-	fmt.Fprintf(&mf, "FROM %s\n", model)
+	var f parser.File
+	f.Commands = append(f.Commands, parser.Command{Name: "model", Args: cmp.Or(opts.ParentModel, opts.Model)})
+
 	if opts.System != "" {
-		fmt.Fprintf(&mf, "SYSTEM \"\"\"%s\"\"\"\n", opts.System)
+		f.Commands = append(f.Commands, parser.Command{Name: "system", Args: opts.System})
 	}
 
-	keys := make([]string, 0)
-	for k := range opts.Options {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := maps.Keys(opts.Options)
+	slices.Sort(keys)
 	for _, k := range keys {
-		fmt.Fprintf(&mf, "PARAMETER %s %v\n", k, opts.Options[k])
+		v := opts.Options[k]
+		var cmds []parser.Command
+		switch t := v.(type) {
+		case []string:
+			for _, s := range t {
+				cmds = append(cmds, parser.Command{Name: k, Args: s})
+			}
+		default:
+			cmds = append(cmds, parser.Command{Name: k, Args: fmt.Sprintf("%v", t)})
+		}
+
+		f.Commands = append(f.Commands, cmds...)
 	}
-	fmt.Fprintln(&mf)
 
 	for _, msg := range opts.Messages {
-		fmt.Fprintf(&mf, "MESSAGE %s \"\"\"%s\"\"\"\n", msg.Role, msg.Content)
+		f.Commands = append(f.Commands, parser.Command{Name: "message", Args: fmt.Sprintf("%s: %s", msg.Role, msg.Content)})
 	}
 
-	return mf.String()
+	return f.String()
 }
 
 func normalizeFilePath(fp string) string {
