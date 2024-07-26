@@ -192,9 +192,9 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
-func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
-	for i, tc := range r.Message.ToolCalls {
+func parseToolCalls(respToolCalls []api.ToolCall) []ToolCall {
+	toolCalls := make([]ToolCall, len(respToolCalls))
+	for i, tc := range respToolCalls {
 		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
@@ -208,6 +208,11 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 		toolCalls[i].Function.Arguments = string(args)
 	}
 
+	return toolCalls
+}
+
+func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
+	toolCalls := parseToolCalls(r.Message.ToolCalls)
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -218,6 +223,9 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			Index:   0,
 			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
+				if len(toolCalls) > 0 {
+					reason = "tool_calls"
+				}
 				if len(reason) > 0 {
 					return &reason
 				}
@@ -233,6 +241,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
+	toolCalls := parseToolCalls(r.Message.ToolCalls)
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -241,8 +250,11 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content},
+			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
+				if len(toolCalls) > 0 {
+					reason = "tool_calls"
+				}
 				if len(reason) > 0 {
 					return &reason
 				}
@@ -465,12 +477,17 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		format = "json"
 	}
 
+	stream := r.Stream
+	if len(r.Tools) > 0 {
+		stream = false
+	}
+
 	return &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
 		Format:   format,
 		Options:  options,
-		Stream:   &r.Stream,
+		Stream:   &stream,
 		Tools:    r.Tools,
 	}, nil
 }
