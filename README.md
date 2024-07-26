@@ -64,7 +64,8 @@ Here are some example models that can be downloaded:
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 | Solar              | 10.7B      | 6.1GB | `ollama run solar`             |
 
-> Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
+> [!NOTE]
+> You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
 ## Customize a model
 
@@ -296,7 +297,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio)
 - [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
-- [BoltAI for Mac](https://boltai.com) (AI Chat Client for freelancers & digital agencies)
+- [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
+- [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 
 ### Terminal
 

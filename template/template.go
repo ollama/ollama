@@ -264,6 +264,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	nodes := deleteNode(t.Template.Root.Copy(), func(n parse.Node) bool {
 		if field, ok := n.(*parse.FieldNode); ok && slices.Contains(field.Ident, "Response") {
 			cut = true
+			return false
 		}
 
 		return cut
@@ -273,7 +274,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
 		"System":   system,
 		"Prompt":   prompt,
-		"Response": "",
+		"Response": response,
 	}); err != nil {
 		return err
 	}

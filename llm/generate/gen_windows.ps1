@@ -7,8 +7,8 @@ function amdGPUs {
         return $env:AMDGPU_TARGETS
     }
     # Current supported rocblas list from ROCm v6.1.2 on windows
+    # https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html#windows-supported-gpus
     $GPU_LIST = @(
-        "gfx906:xnack-"
         "gfx1030"
         "gfx1100"
         "gfx1101"

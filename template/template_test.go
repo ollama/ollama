@@ -261,6 +261,26 @@ func TestExecuteWithMessages(t *testing.T) {
 Hello friend![/INST] Hello human![INST] What is your name?[/INST] `,
 		},
 		{
+			"mistral assistant",
+			[]template{
+				{"no response", `[INST] {{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `
+{{- range $i, $m := .Messages }}
+{{- if eq .Role "user" }}[INST] {{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
+{{- end }}`},
+			},
+			Values{
+				Messages: []api.Message{
+					{Role: "user", Content: "Hello friend!"},
+					{Role: "assistant", Content: "Hello human!"},
+					{Role: "user", Content: "What is your name?"},
+					{Role: "assistant", Content: "My name is Ollama and I"},
+				},
+			},
+			`[INST] Hello friend![/INST] Hello human![INST] What is your name?[/INST] My name is Ollama and I`,
+		},
+		{
 			"chatml",
 			[]template{
 				// this does not have a "no response" test because it's impossible to render the same output

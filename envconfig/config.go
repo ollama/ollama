@@ -43,8 +43,6 @@ var (
 	MaxRunners int
 	// Set via OLLAMA_MAX_QUEUE in the environment
 	MaxQueuedRequests int
-	// Set via OLLAMA_MAX_VRAM in the environment
-	MaxVRAM uint64
 	// Set via OLLAMA_MODELS in the environment
 	ModelsDir string
 	// Set via OLLAMA_NOHISTORY in the environment
@@ -89,7 +87,6 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
-		"OLLAMA_MAX_VRAM":          {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", ModelsDir, "The path to the models directory"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
@@ -193,16 +190,6 @@ func LoadConfig() {
 	}
 
 	TmpDir = clean("OLLAMA_TMPDIR")
-
-	userLimit := clean("OLLAMA_MAX_VRAM")
-	if userLimit != "" {
-		avail, err := strconv.ParseUint(userLimit, 10, 64)
-		if err != nil {
-			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_VRAM", userLimit, "error", err)
-		} else {
-			MaxVRAM = avail
-		}
-	}
 
 	LLMLibrary = clean("OLLAMA_LLM_LIBRARY")
 

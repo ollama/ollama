@@ -56,6 +56,7 @@ func init() {
 }
 
 var errRequired = errors.New("is required")
+var errBadTemplate = errors.New("template error")
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
@@ -608,7 +609,9 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		defer cancel()
 
 		quantization := cmp.Or(r.Quantize, r.Quantization)
-		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
+		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); errors.Is(err, errBadTemplate) {
+			ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+		} else if err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -1196,11 +1199,15 @@ func waitForStream(c *gin.Context, ch chan interface{}) {
 				return
 			}
 		case gin.H:
+			status, ok := r["status"].(int)
+			if !ok {
+				status = http.StatusInternalServerError
+			}
 			if errorMsg, ok := r["error"].(string); ok {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+				c.JSON(status, gin.H{"error": errorMsg})
 				return
 			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in progress response"})
+				c.JSON(status, gin.H{"error": "unexpected error format in progress response"})
 				return
 			}
 		default:

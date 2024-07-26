@@ -78,8 +78,8 @@ curl http://localhost:11434/v1/chat/completions \
 - [x] Streaming
 - [x] JSON mode
 - [x] Reproducible outputs
+- [x] Tools (streaming support coming soon)
 - [ ] Vision
-- [ ] Function calling
 - [ ] Logprobs
 
 #### Supported request fields
@@ -97,9 +97,9 @@ curl http://localhost:11434/v1/chat/completions \
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
-- [ ] `logit_bias`
-- [ ] `tools`
+- [x] `tools`
 - [ ] `tool_choice`
+- [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
 

@@ -54,6 +54,8 @@ type registryOptions struct {
 	Username string
 	Password string
 	Token    string
+
+	CheckRedirect func(req *http.Request, via []*http.Request) error
 }
 
 type Model struct {
@@ -492,6 +494,12 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				layers = append(layers, baseLayer.Layer)
 			}
 		case "license", "template", "system":
+			if c.Name == "template" {
+				if _, err := template.Parse(c.Args); err != nil {
+					return fmt.Errorf("%w: %s", errBadTemplate, err)
+				}
+			}
+
 			if c.Name != "license" {
 				// replace
 				layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
@@ -1125,7 +1133,9 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{
+		CheckRedirect: regOpts.CheckRedirect,
+	}).Do(req)
 	if err != nil {
 		return nil, err
 	}

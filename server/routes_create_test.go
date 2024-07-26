@@ -491,6 +491,42 @@ func TestCreateTemplateSystem(t *testing.T) {
 	if string(system) != "Say bye!" {
 		t.Errorf("expected \"Say bye!\", actual %s", system)
 	}
+
+	t.Run("incomplete template", func(t *testing.T) {
+		w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+			Name:      "test",
+			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt", createBinFile(t, nil, nil)),
+			Stream:    &stream,
+		})
+	
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
+
+	t.Run("template with unclosed if", func(t *testing.T) {
+		w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+			Name:      "test",
+			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ if .Prompt }}", createBinFile(t, nil, nil)),
+			Stream:    &stream,
+		})
+	
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
+
+	t.Run("template with undefined function", func(t *testing.T) {
+		w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+			Name:      "test",
+			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{  Prompt }}", createBinFile(t, nil, nil)),
+			Stream:    &stream,
+		})
+	
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
 }
 
 func TestCreateLicenses(t *testing.T) {
