@@ -105,7 +105,7 @@ configure_systemd() {
         status "Creating ollama serve config file..."
         $SUDO mkdir -p /etc/ollama/
         cat <<EOF | $SUDO tee /etc/ollama/serve.conf >/dev/null
-# The list of supported env variables https://github.com/ollama/ollama/blob/main/envconfig/config.go
+# The list of supported env variables could be found by running: ollama serve --help
 #OLLAMA_DEBUG=1
 #OLLAMA_HOST=0.0.0.0:11434
 EOF
