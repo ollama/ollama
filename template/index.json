@@ -92,6 +92,10 @@
     "name": "llama3-instruct"
   },
   {
+    "template": "{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '' + message['role'] + '\n\n'+ message['content'] | trim + '' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ 'assistant\n\n' }}{% endif %}",
+    "name": "llama3.1-instruct"
+  },
+  {
     "template": "{% for message in messages %}\n{% if message['role'] == 'user' %}\n{{ 'Question:\n' + message['content'] + '\n\n' }}{% elif message['role'] == 'system' %}\n{{ 'System:\n' + message['content'] + '\n\n' }}{% elif message['role'] == 'assistant' %}{{ 'Answer:\n'  + message['content'] + '\n\n' }}{% endif %}\n{% if loop.last and add_generation_prompt %}\n{{ 'Answer:\n' }}{% endif %}{% endfor %}",
     "name": "granite-instruct"
   },
