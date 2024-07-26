@@ -418,6 +418,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
+- `tools`: tools for the model to use if supported. Requires `stream` to be set to `false`
 
 The `message` object has the following fields:
 
@@ -432,7 +433,6 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
-- `tools`: external tools the model can use. Not all models support this feature.
 
 ### Examples
 
