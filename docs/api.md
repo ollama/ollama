@@ -668,7 +668,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3.1:8b",
+  "model": "llama3.1",
   "messages": [
     {
       "role": "user",
@@ -707,7 +707,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```json
 {
-  "model": "llama3.1:8b",
+  "model": "llama3.1",
   "created_at": "2024-07-22T20:33:28.123648Z",
   "message": {
     "role": "assistant",
