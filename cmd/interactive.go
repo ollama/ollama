@@ -46,29 +46,10 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 		KeepAlive: opts.KeepAlive,
 	}
 
-	return client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
-		p.StopAndClear()
-		for _, msg := range opts.Messages {
-			switch msg.Role {
-			case "user":
-				fmt.Printf(">>> %s\n", msg.Content)
-			case "assistant":
-				state := &displayResponseState{}
-				displayResponse(msg.Content, opts.WordWrap, state)
-				fmt.Println()
-				fmt.Println()
-			}
-		}
-		return nil
-	})
+	return client.Chat(cmd.Context(), chatReq, func(api.ChatResponse) error { return nil })
 }
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
-	err := loadModel(cmd, &opts)
-	if err != nil {
-		return err
-	}
-
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
@@ -375,9 +356,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					return err
 				}
 				req := &api.ShowRequest{
-					Name:     opts.Model,
-					System:   opts.System,
-					Options:  opts.Options,
+					Name:    opts.Model,
+					System:  opts.System,
+					Options: opts.Options,
 				}
 				resp, err := client.Show(cmd.Context(), req)
 				if err != nil {
