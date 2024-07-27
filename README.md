@@ -367,6 +367,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
+- [Emu](https://github.com/Calvicii/Emu)
 
 ### Extensions & Plugins
 
