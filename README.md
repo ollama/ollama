@@ -35,10 +35,10 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 ## Quickstart
 
-To run and chat with [Llama 3](https://ollama.com/library/llama3):
+To run and chat with [Llama 3.1](https://ollama.com/library/llama3.1):
 
 ```
-ollama run llama3
+ollama run llama3.1
 ```
 
 ## Model library
@@ -49,8 +49,9 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
-| Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
-| Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
+| Llama 3.1          | 8B         | 4.7GB | `ollama run llama3.1`          |
+| Llama 3.1          | 70B        | 40GB  | `ollama run llama3.1:70b`      |
+| Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`     |
 | Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`              |
 | Phi 3 Medium       | 14B        | 7.9GB | `ollama run phi3:medium`       |
 | Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`            |
@@ -97,16 +98,16 @@ See the [guide](docs/import.md) on importing models for more information.
 
 ### Customize a prompt
 
-Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3` model:
+Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.1` model:
 
 ```
-ollama pull llama3
+ollama pull llama3.1
 ```
 
 Create a `Modelfile`:
 
 ```
-FROM llama3
+FROM llama3.1
 
 # set the temperature to 1 [higher is more creative, lower is more coherent]
 PARAMETER temperature 1
@@ -141,7 +142,7 @@ ollama create mymodel -f ./Modelfile
 ### Pull a model
 
 ```
-ollama pull llama3
+ollama pull llama3.1
 ```
 
 > This command can also be used to update a local model. Only the diff will be pulled.
@@ -149,13 +150,13 @@ ollama pull llama3
 ### Remove a model
 
 ```
-ollama rm llama3
+ollama rm llama3.1
 ```
 
 ### Copy a model
 
 ```
-ollama cp llama3 my-model
+ollama cp llama3.1 my-model
 ```
 
 ### Multiline input
@@ -179,14 +180,14 @@ The image features a yellow smiley face, which is likely the central focus of th
 ### Pass the prompt as an argument
 
 ```
-$ ollama run llama3 "Summarize this file: $(cat README.md)"
+$ ollama run llama3.1 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
 ### Show model information
 
 ```
-ollama show llama3
+ollama show llama3.1
 ```
 
 ### List models on your computer
@@ -214,7 +215,7 @@ Next, start the server:
 Finally, in a separate shell, run a model:
 
 ```
-./ollama run llama3
+./ollama run llama3.1
 ```
 
 ## REST API
@@ -225,7 +226,7 @@ Ollama has a REST API for running and managing models.
 
 ```
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "prompt":"Why is the sky blue?"
 }'
 ```
@@ -234,7 +235,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ```
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "messages": [
     { "role": "user", "content": "why is the sky blue?" }
   ]
