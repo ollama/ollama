@@ -227,7 +227,7 @@ curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
 
 To preload a model using the CLI, use the command:
 ```shell
-ollama run llama3 ""
+ollama run llama3.1 ""
 ```
 
 ## How do I keep a model loaded in memory or make it unload immediately?
