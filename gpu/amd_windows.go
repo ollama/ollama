@@ -63,6 +63,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	} else {
 		slog.Info("skipping rocm gfx compatibility check", "HSA_OVERRIDE_GFX_VERSION", gfxOverride)
 	}
+	slog.Debug("rocm rocblas compatible list", "supported_types", supported)
 
 	slog.Debug("detected hip devices", "count", count)
 	// TODO how to determine the underlying device ID when visible devices is causing this to subset?

@@ -171,7 +171,6 @@ jobs:
           md "dist\deps\bin\rocblas\library"
           cp "${HIP_PATH}\bin\hipblas.dll" "dist\deps\bin\"
           cp "${HIP_PATH}\bin\rocblas.dll" "dist\deps\bin\"
-          cp "${HIP_PATH}\bin\rocblas\library\*" "dist\deps\bin\rocblas\library\"
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
@@ -265,6 +264,19 @@ jobs:
           name: windows-cuda-deps
           path: dist/deps/*
 
+  rocm-rocblas-deps:
+    runs-on: linux
+    steps:
+      - name: gather rocblas tensile data files
+        run: |
+          docker create --name rocm-builder rocm/dev-centos-7:6.1.2-complete
+          docker cp cp rocm-builder:/opt/rocm/lib/rocblas/library/ ./dist/windows-amd64/rocblas/
+          docker rm rocm-builder
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rocm-rocblas-deps
+          path: ./dist/windows-amd64/rocblas/library/*
+
   # Import the prior generation steps and build the final windows assets
   build-windows:
     environment: release
@@ -273,6 +285,7 @@ jobs:
       - generate-windows-cuda
       - generate-windows-rocm
       - generate-windows-cpu
+      - rocm-rocblas-deps
     env:
       KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
     steps:
@@ -324,6 +337,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
+      - uses: actions/download-artifact@v4
+        with:
+          name: rocm-rocblas-deps
       - run: dir llm/build
       - run: |
           $gopath=(get-command go).source | split-path -parent

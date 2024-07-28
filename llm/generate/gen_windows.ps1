@@ -2,13 +2,23 @@
 
 $ErrorActionPreference = "Stop"
 
+# Used for rocblas container
+${ROCM_ROCBLAS_VERSION}="6.1.2"
 function amdGPUs {
     if ($env:AMDGPU_TARGETS) {
         return $env:AMDGPU_TARGETS
     }
-    # Current supported rocblas list from ROCm v6.1.2 on windows
-    # https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html#windows-supported-gpus
     $GPU_LIST = @(
+        "gfx900"
+        "gfx906:xnack-"
+        "gfx908:xnack-"
+        "gfx90a:xnack+"
+        "gfx90a:xnack-"
+        "gfx940"
+        "gfx941"
+        "gfx942"
+        "gfx1010"
+        "gfx1012"
         "gfx1030"
         "gfx1100"
         "gfx1101"
@@ -391,7 +401,20 @@ function build_rocm() {
         cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
         cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
         # amdhip64.dll dependency comes from the driver and must be installed on the host to use AMD GPUs
-        cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\"
+        # Favor the Linux roclib tensile files as it has broader GPU support
+        $script:DOCKER=(get-command -ea 'silentlycontinue' docker).path
+        if ($null -ne $script:DOCKER) {
+            write-host "Copying rocblas tensile library from Linux container"
+            & $script:DOCKER create --name rocm-builder rocm/dev-centos-7:${ROCM_ROCBLAS_VERSION}-complete
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & $script:DOCKER cp rocm-builder:/opt/rocm/lib/rocblas/library "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\"
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & $script:DOCKER rm rocm-builder
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        } else {
+            write-host "Copying rocblas tensile library from local windows HIP install"
+            cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\"
+        }
     } else {
         write-host "Skipping ROCm generation step"
     }
