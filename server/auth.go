@@ -20,9 +20,10 @@ import (
 )
 
 type registryChallenge struct {
-	Realm   string
-	Service string
-	Scope   string
+	Realm     string
+	Service   string
+	Scope     string
+	Timestamp time.Time
 }
 
 func (r registryChallenge) URL() (*url.URL, error) {
@@ -37,7 +38,7 @@ func (r registryChallenge) URL() (*url.URL, error) {
 		values.Add("scope", s)
 	}
 
-	values.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
+	values.Add("ts", strconv.FormatInt(r.Timestamp.Unix(), 10))
 
 	nonce, err := auth.NewNonce(rand.Reader, 16)
 	if err != nil {
