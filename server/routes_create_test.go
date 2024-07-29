@@ -682,6 +682,7 @@ func TestCreateVersion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer f.Close()
 
 		bts := json.NewDecoder(f)
 		var m Manifest
@@ -725,6 +726,7 @@ func TestCreateVersion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer f.Close()
 		bts := json.NewDecoder(f)
 
 		var m Manifest
