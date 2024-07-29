@@ -661,6 +661,34 @@ func TestCreateVersion(t *testing.T) {
 		t.Errorf("got %s != want 0.2.3", m.Ollama)
 	}
 
+	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		Name:      "fromvalid",
+		Modelfile: "FROM test",
+		Stream:    &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "fromvalid", "*"), []string{
+		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "fromvalid", "latest"),
+	})
+
+	f, err = os.Open(filepath.Join(p, "manifests", "registry.ollama.ai", "library", "fromvalid", "latest"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bts = json.NewDecoder(f)
+
+	if err := bts.Decode(&m); err != nil {
+		t.Fatal(err)
+	}
+
+	if m.Ollama != "0.2.3" {
+		t.Errorf("got %s != want 0.2.3", m.Ollama)
+	}
+
 	t.Run("no version", func(t *testing.T) {
 		w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
 			Name:      "noversion",
@@ -701,37 +729,6 @@ func TestCreateVersion(t *testing.T) {
 
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected status code 400, actual %d", w.Code)
-		}
-	})
-
-	t.Run("from valid version", func(t *testing.T) {
-		w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
-			Name:      "fromvalid",
-			Modelfile: "FROM test",
-			Stream:    &stream,
-		})
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status code 200, actual %d", w.Code)
-		}
-
-		checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "fromvalid", "*"), []string{
-			filepath.Join(p, "manifests", "registry.ollama.ai", "library", "fromvalid", "latest"),
-		})
-
-		f, err := os.Open(filepath.Join(p, "manifests", "registry.ollama.ai", "library", "fromvalid", "latest"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		bts := json.NewDecoder(f)
-
-		var m Manifest
-		if err := bts.Decode(&m); err != nil {
-			t.Fatal(err)
-		}
-
-		if m.Ollama != "0.2.3" {
-			t.Errorf("got %s != want 0.2.3", m.Ollama)
 		}
 	})
 }
