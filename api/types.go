@@ -262,7 +262,9 @@ type EmbedResponse struct {
 	Model      string      `json:"model"`
 	Embeddings [][]float32 `json:"embeddings"`
 
-	Metrics
+	TotalDuration   time.Duration `json:"total_duration,omitempty"`
+	LoadDuration    time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].

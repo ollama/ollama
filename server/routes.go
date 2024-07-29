@@ -378,13 +378,11 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	resp := api.EmbedResponse{
-		Model:      req.Model,
-		Embeddings: embeddings.Embedding,
-		Metrics: api.Metrics{
-			PromptEvalCount: embeddings.PromptEvalCount,
-			TotalDuration:   time.Since(checkpointStart),
-			LoadDuration:    checkpointLoaded.Sub(checkpointStart),
-		},
+		Model:           req.Model,
+		Embeddings:      embeddings.Embedding,
+		TotalDuration:   time.Since(checkpointStart),
+		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
+		PromptEvalCount: embeddings.PromptEvalCount,
 	}
 	c.JSON(http.StatusOK, resp)
 }
