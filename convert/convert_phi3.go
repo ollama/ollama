@@ -40,7 +40,6 @@ var _ Converter = (*phi3)(nil)
 func (p *phi3) KV(t *Tokenizer) llm.KV {
 	kv := p.Parameters.KV(t)
 	kv["general.architecture"] = "phi3"
-	kv["general.name"] = "phi3"
 	kv["phi3.context_length"] = p.MaxPositionEmbeddings
 	kv["phi3.embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
 	kv["phi3.feed_forward_length"] = p.IntermediateSize
