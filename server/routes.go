@@ -1397,7 +1397,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
 				resp.Message.ToolCalls = toolCalls
 				resp.Message.Content = ""
-				resp.DoneReason = "tool_calls"
 			}
 		}
 
