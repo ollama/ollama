@@ -260,6 +260,7 @@ func (m *Model) TokenToPiece(token int) string {
 		C.int32_t(token),
 		(*C.char)(unsafe.Pointer(&buf[0])),
 		C.int32_t(12),
+		C.int32_t(0),
 		C.bool(true),
 	)
 	return strings.TrimRight(string(buf), "\x00")
