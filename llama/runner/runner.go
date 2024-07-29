@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
@@ -49,6 +50,12 @@ type Sequence struct {
 	embeddingOnly bool
 
 	doneReason string
+
+	// Metrics
+	t_start_process_prompt time.Time
+	t_start_genereration   time.Time
+	n_decoded              int
+	n_prompt_tokens        int
 }
 
 // prompt returns true if the prompt is still being processed
@@ -79,12 +86,13 @@ func (s *Server) NewSequence(prompt string, numPredict int, stop []string, param
 	}
 
 	return &Sequence{
-		tokens:        tokens,
-		responses:     make(chan string, 1),
-		embedding:     make(chan []float32, 1),
-		samplingCtx:   sc,
-		embeddingOnly: embedding,
-		stop:          stop,
+		tokens:          tokens,
+		n_prompt_tokens: len(tokens),
+		responses:       make(chan string, 1),
+		embedding:       make(chan []float32, 1),
+		samplingCtx:     sc,
+		embeddingOnly:   embedding,
+		stop:            stop,
 	}
 }
 
@@ -161,6 +169,10 @@ func (s *Server) run(ctx context.Context) {
 					continue
 				}
 
+				if seq.t_start_process_prompt.IsZero() {
+					seq.t_start_process_prompt = time.Now()
+				}
+
 				for j, t := range seq.tokens {
 					// todo: make this n_batch
 					if j > s.batchSize {
@@ -218,6 +230,10 @@ func (s *Server) run(ctx context.Context) {
 				token := seq.samplingCtx.Sample(s.lc, nil, ibatch[i])
 
 				seq.samplingCtx.Accept(s.lc, token, true)
+				seq.n_decoded += 1
+				if seq.n_decoded == 1 {
+					seq.t_start_genereration = time.Now()
+				}
 				piece := s.model.TokenToPiece(token)
 
 				seq.numPredicted++
@@ -290,6 +306,13 @@ type CompletionRequest struct {
 	api.Options
 }
 
+type Timings struct {
+	PredictedN  int     `json:"predicted_n"`
+	PredictedMS float64 `json:"predicted_ms"`
+	PromptN     int     `json:"prompt_n"`
+	PromptMS    float64 `json:"prompt_ms"`
+}
+
 type CompletionResponse struct {
 	Content string `json:"content"`
 	Stop    bool   `json:"stop"`
@@ -302,24 +325,8 @@ type CompletionResponse struct {
 	PromptN      int     `json:"prompt_n,omitempty"`
 	PromptMS     float64 `json:"prompt_ms,omitempty"`
 
-	// c++ server responses
-	// data: {\"content\":\"?\",\"multimodal\":false,\"slot_id\":0,\"stop\":false}"
-	// data: {\"content\":\"\",\"model\":\"/home/daniel/.ollama/models/blobs/sha256-66002b78c70a22ab25e16cc9a1736c6cc6335398c7312e3eb33db202350afe66\",\"slot_id\":0,\"stop\":true,\"stopped_eos\":true,\"stopped_limit\":false,\"stopped_word\":false,\"stopping_word\":\"\",\"timings\":{\"predicted_ms\":234.37,\"predicted_n\":11,\"predicted_per_second\":46.93433459913811,\"predicted_per_token_ms\":21.30636363636364,\"prompt_ms\":78.899,\"prompt_n\":42,\"prompt_per_second\":532.3261384808426,\"prompt_per_token_ms\":1.8785476190476191},\"tokens_cached\":52,\"tokens_evaluated\":42,\"tokens_predicted\":11,\"truncated\":false}"
+	Timings Timings `json:"timings"`
 }
-
-/* TODO - implement timing information
-Timing information from server.cpp
-            {"prompt_n",               n_prompt_tokens_processed},
-            {"prompt_ms",              t_prompt_processing},
-            {"prompt_per_token_ms",    t_prompt_processing / n_prompt_tokens_processed},
-            {"prompt_per_second",      1e3 / t_prompt_processing * n_prompt_tokens_processed},
-
-            {"predicted_n",            n_decoded},
-            {"predicted_ms",           t_token_generation},
-            {"predicted_per_token_ms", t_token_generation / n_decoded},
-            {"predicted_per_second",   1e3 / t_token_generation * n_decoded},
-
-*/
 
 func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var req CompletionRequest
@@ -387,6 +394,12 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	// Send the stop
 	if err := json.NewEncoder(w).Encode(&CompletionResponse{
 		Stop: true,
+		Timings: Timings{
+			PromptN:     seq.n_prompt_tokens,
+			PromptMS:    float64(seq.t_start_genereration.Sub(seq.t_start_process_prompt).Milliseconds()),
+			PredictedN:  seq.n_decoded,
+			PredictedMS: float64(time.Since(seq.t_start_genereration).Milliseconds()),
+		},
 	}); err != nil {
 		log.Println("Failed to encode result:", err)
 		return
