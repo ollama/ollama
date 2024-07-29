@@ -1,9 +1,12 @@
 #!/bin/bash
 
+# Run in the llama directory
+
 set -e
 
 # Set the source directory
-src_dir=$1
+# TODO in the future: src_dir=$1
+src_dir=../llm/llama.cpp
 
 if [ -z "$src_dir" ]; then
   echo "Usage: $0 LLAMA_CPP_DIR"
@@ -11,41 +14,63 @@ if [ -z "$src_dir" ]; then
 fi
 
 # Set the destination directory
-dst_dir=.
+dst_dir=$(pwd)
+
+# TODO remove once we no longer use the submodule
+if [ -z "${OLLAMA_SKIP_PATCHING}" ]; then
+  (cd ../ && git submodule init && git submodule update --force ./llm/llama.cpp)
+
+  # apply patches
+  for patch in $dst_dir/patches/*.diff; do
+    echo "Applying $patch"
+    git -C $src_dir apply "$patch"
+  done
+else 
+  echo "Skipping patching"
+fi
 
 # llama.cpp
-cp $src_dir/unicode.cpp $dst_dir/unicode.cpp
-cp $src_dir/unicode.h $dst_dir/unicode.h
-cp $src_dir/unicode-data.cpp $dst_dir/unicode-data.cpp
-cp $src_dir/unicode-data.h $dst_dir/unicode-data.h
-cp $src_dir/llama.cpp $dst_dir/llama.cpp
-cp $src_dir/llama.h $dst_dir/llama.h
-cp $src_dir/sgemm.cpp $dst_dir/sgemm.cpp
-cp $src_dir/sgemm.h $dst_dir/sgemm.h
+cp $src_dir/src/unicode.cpp $dst_dir/unicode.cpp
+cp $src_dir/src/unicode.h $dst_dir/unicode.h
+cp $src_dir/src/unicode-data.cpp $dst_dir/unicode-data.cpp
+cp $src_dir/src/unicode-data.h $dst_dir/unicode-data.h
+cp $src_dir/src/llama.cpp $dst_dir/llama.cpp
+cp $src_dir/src/llama-impl.h $dst_dir/llama-impl.h
+cp $src_dir/src/llama-vocab.cpp $dst_dir/llama-vocab.cpp
+cp $src_dir/src/llama-vocab.h $dst_dir/llama-vocab.h
+cp $src_dir/src/llama-grammar.cpp $dst_dir/llama-grammar.cpp
+cp $src_dir/src/llama-grammar.h $dst_dir/llama-grammar.h
+cp $src_dir/src/llama-sampling.cpp $dst_dir/llama-sampling.cpp
+cp $src_dir/src/llama-sampling.h $dst_dir/llama-sampling.h
+cp $src_dir/include/llama.h $dst_dir/llama.h
+cp $src_dir/ggml/src/llamafile/sgemm.cpp $dst_dir/sgemm.cpp
+cp $src_dir/ggml/src/llamafile/sgemm.h $dst_dir/sgemm.h
 
 # ggml
-cp $src_dir/ggml.c $dst_dir/ggml.c
-cp $src_dir/ggml.h $dst_dir/ggml.h
-cp $src_dir/ggml-quants.c $dst_dir/ggml-quants.c
-cp $src_dir/ggml-quants.h $dst_dir/ggml-quants.h
-cp $src_dir/ggml-metal.metal $dst_dir/ggml-metal.metal
-cp $src_dir/ggml-metal.h $dst_dir/ggml-metal.h
-cp $src_dir/ggml-metal.m $dst_dir/ggml-metal-darwin_arm64.m
-cp $src_dir/ggml-impl.h $dst_dir/ggml-impl.h
-cp $src_dir/ggml-cuda.h $dst_dir/ggml-cuda.h
-cp $src_dir/ggml-cuda.cu $dst_dir/ggml-cuda.cu
-cp $src_dir/ggml-common.h $dst_dir/ggml-common.h
-cp $src_dir/ggml-backend.h $dst_dir/ggml-backend.h
-cp $src_dir/ggml-backend.c $dst_dir/ggml-backend.c
-cp $src_dir/ggml-backend-impl.h $dst_dir/ggml-backend-impl.h
-cp $src_dir/ggml-alloc.h $dst_dir/ggml-alloc.h
-cp $src_dir/ggml-alloc.c $dst_dir/ggml-alloc.c
+cp $src_dir/ggml/src/ggml.c $dst_dir/ggml.c
+cp $src_dir/ggml/include/ggml.h $dst_dir/ggml.h
+cp $src_dir/ggml/src/ggml-quants.c $dst_dir/ggml-quants.c
+cp $src_dir/ggml/src/ggml-quants.h $dst_dir/ggml-quants.h
+cp $src_dir/ggml/src/ggml-metal.metal $dst_dir/ggml-metal.metal
+cp $src_dir/ggml/include/ggml-metal.h $dst_dir/ggml-metal.h
+cp $src_dir/ggml/src/ggml-metal.m $dst_dir/ggml-metal-darwin_arm64.m
+cp $src_dir/ggml/src/ggml-impl.h $dst_dir/ggml-impl.h
+cp $src_dir/ggml/include/ggml-cuda.h $dst_dir/ggml-cuda.h
+cp $src_dir/ggml/src/ggml-cuda.cu $dst_dir/ggml-cuda.cu
+cp $src_dir/ggml/src/ggml-common.h $dst_dir/ggml-common.h
+cp $src_dir/ggml/include/ggml-backend.h $dst_dir/ggml-backend.h
+cp $src_dir/ggml/src/ggml-backend.c $dst_dir/ggml-backend.c
+cp $src_dir/ggml/src/ggml-backend-impl.h $dst_dir/ggml-backend-impl.h
+cp $src_dir/ggml/include/ggml-alloc.h $dst_dir/ggml-alloc.h
+cp $src_dir/ggml/src/ggml-alloc.c $dst_dir/ggml-alloc.c
+cp $src_dir/ggml/src/ggml-aarch64.h $dst_dir/ggml-aarch64.h
+cp $src_dir/ggml/src/ggml-aarch64.c $dst_dir/ggml-aarch64.c
 
 # ggml-cuda
 mkdir -p $dst_dir/ggml-cuda/template-instances
-cp $src_dir/ggml-cuda/*.cu $dst_dir/ggml-cuda/
-cp $src_dir/ggml-cuda/*.cuh $dst_dir/ggml-cuda/
-cp $src_dir/ggml-cuda/template-instances/*.cu $dst_dir/ggml-cuda/template-instances/
+cp $src_dir/ggml/src/ggml-cuda/*.cu $dst_dir/ggml-cuda/
+cp $src_dir/ggml/src/ggml-cuda/*.cuh $dst_dir/ggml-cuda/
+cp $src_dir/ggml/src/ggml-cuda/template-instances/*.cu $dst_dir/ggml-cuda/template-instances/
 
 # llava
 cp $src_dir/examples/llava/clip.cpp $dst_dir/clip.cpp
@@ -73,11 +98,6 @@ char const *LLAMA_COMMIT = "$sha1";
 char const *LLAMA_COMPILER = "";
 char const *LLAMA_BUILD_TARGET = "";
 EOF
-
-# apply patches
-for patch in $dst_dir/patches/*.diff; do
-  git apply "$patch"
-done
 
 # add licenses
 sha1=$(git -C $src_dir rev-parse @)
