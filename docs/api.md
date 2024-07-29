@@ -587,7 +587,7 @@ Final response:
 
 ##### Request
 
-Send a chat message with a conversation history.
+Send a chat message with images. The images should be provided as an array, with the individual images encoded in Base64.
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
