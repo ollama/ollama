@@ -275,7 +275,7 @@ func parseRuneForState(r rune, cs state) (state, rune, error) {
 		switch {
 		case isNewline(r), isSpace(r):
 			return stateNil, 0, nil
-		case isAlpha(r), isNumber(r), r == '.':
+		case isAlpha(r), isNumber(r), r == '.', r == '+', r == '-':
 			return stateVersion, r, nil
 		default:
 			return stateNil, r, nil
