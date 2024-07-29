@@ -42,8 +42,8 @@ func TestDelete(t *testing.T) {
 	}
 
 	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
+		filepath.Join(p, "manifests", "ollama.com", "library", "test", "latest"),
+		filepath.Join(p, "manifests", "ollama.com", "library", "test2", "latest"),
 	})
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
@@ -60,7 +60,7 @@ func TestDelete(t *testing.T) {
 	}
 
 	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
+		filepath.Join(p, "manifests", "ollama.com", "library", "test2", "latest"),
 	})
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
@@ -75,8 +75,8 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
-	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{})
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), nil)
+	checkFileExists(t, filepath.Join(p, "blobs", "*"), nil)
 }
 
 func TestDeleteDuplicateLayers(t *testing.T) {
@@ -84,6 +84,7 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
 	var s Server
 
 	n := model.ParseName("test")
@@ -108,5 +109,5 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 		t.Errorf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), nil)
 }
