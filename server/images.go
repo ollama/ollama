@@ -550,7 +550,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				}
 			}
 		}
-	}		
+	}
 
 	var err2 error
 	layers = slices.DeleteFunc(layers, func(layer *Layer) bool {

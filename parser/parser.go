@@ -139,7 +139,7 @@ func ParseFile(r io.Reader) (*File, error) {
 					}
 
 					continue
-				} else if isSpace(r){
+				} else if isSpace(r) {
 					return nil, errInvalidVersion
 				} else if _, err := semver.NewVersion(s); err != nil {
 					return nil, errInvalidVersion

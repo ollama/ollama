@@ -498,7 +498,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt", createBinFile(t, nil, nil)),
 			Stream:    &stream,
 		})
-	
+
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected status code 400, actual %d", w.Code)
 		}
@@ -510,7 +510,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ if .Prompt }}", createBinFile(t, nil, nil)),
 			Stream:    &stream,
 		})
-	
+
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected status code 400, actual %d", w.Code)
 		}
@@ -522,7 +522,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{  Prompt }}", createBinFile(t, nil, nil)),
 			Stream:    &stream,
 		})
-	
+
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected status code 400, actual %d", w.Code)
 		}
@@ -624,7 +624,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 	})
 }
 
-func TestCreateVersion(t *testing.T){
+func TestCreateVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	p := t.TempDir()
@@ -640,12 +640,12 @@ func TestCreateVersion(t *testing.T){
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
-	} 
+	}
 
 	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
 		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
 	})
-	
+
 	f, err := os.Open(filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"))
 	if err != nil {
 		t.Fatal(err)
@@ -667,11 +667,11 @@ func TestCreateVersion(t *testing.T){
 			Modelfile: fmt.Sprintf("FROM %s\nLICENSE MIT\nLICENSE Apache-2.0", createBinFile(t, nil, nil)),
 			Stream:    &stream,
 		})
-		
+
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected status code 200, actual %d", w.Code)
 		}
-		
+
 		checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "noversion", "*"), []string{
 			filepath.Join(p, "manifests", "registry.ollama.ai", "library", "noversion", "latest"),
 		})
@@ -686,7 +686,7 @@ func TestCreateVersion(t *testing.T){
 		if err := bts.Decode(&m); err != nil {
 			t.Fatal(err)
 		}
-		
+
 		if m.Ollama != "" {
 			t.Errorf("got %s != want \"\"", m.Ollama)
 		}
@@ -713,23 +713,23 @@ func TestCreateVersion(t *testing.T){
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected status code 200, actual %d", w.Code)
-		} 
-	
+		}
+
 		checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "fromvalid", "*"), []string{
 			filepath.Join(p, "manifests", "registry.ollama.ai", "library", "fromvalid", "latest"),
 		})
-		
+
 		f, err := os.Open(filepath.Join(p, "manifests", "registry.ollama.ai", "library", "fromvalid", "latest"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		bts := json.NewDecoder(f)
-	
+
 		var m Manifest
 		if err := bts.Decode(&m); err != nil {
 			t.Fatal(err)
 		}
-	
+
 		if m.Ollama != "0.2.3" {
 			t.Errorf("got %s != want 0.2.3", m.Ollama)
 		}

@@ -18,7 +18,7 @@ type Manifest struct {
 	MediaType     string   `json:"mediaType"`
 	Config        *Layer   `json:"config"`
 	Layers        []*Layer `json:"layers"`
-	Ollama		  string   `json:"ollama"`
+	Ollama        string   `json:"ollama"`
 
 	filepath string
 	fi       os.FileInfo
@@ -116,7 +116,7 @@ func WriteManifest(name model.Name, config *Layer, layers []*Layer, ollama strin
 		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
 		Config:        config,
 		Layers:        layers,
-		Ollama:		   ollama,
+		Ollama:        ollama,
 	}
 
 	return json.NewEncoder(f).Encode(m)
