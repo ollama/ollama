@@ -114,6 +114,11 @@ func (t Tools) String() string {
 	return string(bts)
 }
 
+func (t Tool) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
 // Message is a single message in a chat sequence. The message contains the
 // role ("system", "user", or "assistant"), the content and an optional list
 // of images.
