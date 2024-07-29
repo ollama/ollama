@@ -192,9 +192,9 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
-func parseToolCalls(respToolCalls []api.ToolCall) []ToolCall {
-	toolCalls := make([]ToolCall, len(respToolCalls))
-	for i, tc := range respToolCalls {
+func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
+	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
+	for i, tc := range r.Message.ToolCalls {
 		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
@@ -208,11 +208,6 @@ func parseToolCalls(respToolCalls []api.ToolCall) []ToolCall {
 		toolCalls[i].Function.Arguments = string(args)
 	}
 
-	return toolCalls
-}
-
-func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	toolCalls := parseToolCalls(r.Message.ToolCalls)
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -238,7 +233,6 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
-	toolCalls := parseToolCalls(r.Message.ToolCalls)
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -247,7 +241,7 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
+			Delta: Message{Role: "assistant", Content: r.Message.Content},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					return &reason

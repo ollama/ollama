@@ -1299,8 +1299,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	caps := []Capability{CapabilityCompletion}
 	if len(req.Tools) > 0 {
 		caps = append(caps, CapabilityTools)
-		stream := false
-		req.Stream = &stream
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
