@@ -1369,7 +1369,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}()
 
-	if req.Stream != nil && !*req.Stream {
+	if (req.Stream != nil && !*req.Stream) || ((req.Stream == nil || *req.Stream) && len(req.Tools) > 0) {
 		var resp api.ChatResponse
 		var sb strings.Builder
 		for rr := range ch {
@@ -1398,6 +1398,27 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				resp.Message.ToolCalls = toolCalls
 				resp.Message.Content = ""
 			}
+		}
+
+		if (req.Stream == nil || *req.Stream) && len(resp.Message.ToolCalls) > 0 {
+			toolCh := make(chan any)
+			go func() {
+				toolCalls := resp.Message.ToolCalls
+				for _, toolCall := range toolCalls[:len(toolCalls)-1] {
+					chunk := api.ChatResponse{
+						Model:      resp.Model,
+						CreatedAt:  resp.CreatedAt,
+						Message:    api.Message{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}},
+						DoneReason: "tool_calls",
+					}
+					toolCh <- chunk
+				}
+				resp.Message.ToolCalls = []api.ToolCall{toolCalls[len(toolCalls)-1]}
+				toolCh <- resp
+				close(toolCh)
+			}()
+			streamResponse(c, toolCh)
+			return
 		}
 
 		c.JSON(http.StatusOK, resp)

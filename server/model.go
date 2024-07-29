@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"text/template/parse"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
@@ -312,6 +313,7 @@ func detectContentType(r io.Reader) (string, error) {
 // mxyng: this only really works if the input contains tool calls in some JSON format
 func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 	// create a subtree from the node that ranges over .ToolCalls
+	start := time.Now()
 	tmpl := m.Template.Subtree(func(n parse.Node) bool {
 		if t, ok := n.(*parse.RangeNode); ok {
 			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
@@ -415,5 +417,7 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		}
 	}
 
+	end := time.Now()
+	slog.Debug("parseToolCalls", "duration", end.Sub(start).String())
 	return toolCalls, len(toolCalls) > 0
 }
