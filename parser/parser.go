@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
@@ -41,6 +42,8 @@ func (c Command) String() string {
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
 		fmt.Fprintf(&sb, "MESSAGE %s %s", role, quote(message))
+	case "ollama":
+		fmt.Fprintf(&sb, "OLLAMA %s", quote(c.Args))
 	default:
 		fmt.Fprintf(&sb, "PARAMETER %s %s", c.Name, quote(c.Args))
 	}
@@ -57,12 +60,14 @@ const (
 	stateParameter
 	stateMessage
 	stateComment
+	stateVersion
 )
 
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
 	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
+	errInvalidVersion     = errors.New("invalid version")
 )
 
 func ParseFile(r io.Reader) (*File, error) {
@@ -109,6 +114,9 @@ func ParseFile(r io.Reader) (*File, error) {
 				case "message":
 					// transition to stateMessage which validates the message role
 					next = stateMessage
+					cmd.Name = s
+				case "ollama":
+					next = stateVersion
 					fallthrough
 				default:
 					cmd.Name = s
@@ -123,6 +131,23 @@ func ParseFile(r io.Reader) (*File, error) {
 				role = b.String()
 			case stateComment, stateNil:
 				// pass
+			case stateVersion:
+				s, ok := unquote(strings.TrimSpace(b.String()))
+				if !ok {
+					if _, err := b.WriteRune(r); err != nil {
+						return nil, err
+					}
+
+					continue
+				} else if isSpace(r){
+					return nil, errInvalidVersion
+				} else if _, err := semver.NewVersion(s); err != nil {
+					return nil, errInvalidVersion
+				}
+
+				cmd.Args = s
+				f.Commands = append(f.Commands, cmd)
+
 			case stateValue:
 				s, ok := unquote(strings.TrimSpace(b.String()))
 				if !ok || isSpace(r) {
@@ -157,6 +182,16 @@ func ParseFile(r io.Reader) (*File, error) {
 	switch curr {
 	case stateComment, stateNil:
 		// pass; nothing to flush
+	case stateVersion:
+		s, ok := unquote(strings.TrimSpace(b.String()))
+		if !ok {
+			return nil, io.ErrUnexpectedEOF
+		} else if _, err := semver.NewVersion(s); err != nil {
+			return nil, errInvalidVersion
+		}
+
+		cmd.Args = s
+		f.Commands = append(f.Commands, cmd)
 	case stateValue:
 		s, ok := unquote(strings.TrimSpace(b.String()))
 		if !ok {
@@ -236,6 +271,15 @@ func parseRuneForState(r rune, cs state) (state, rune, error) {
 		default:
 			return stateComment, 0, nil
 		}
+	case stateVersion:
+		switch {
+		case isNewline(r), isSpace(r):
+			return stateNil, 0, nil
+		case isAlpha(r), isNumber(r), r == '.':
+			return stateVersion, r, nil
+		default:
+			return stateNil, r, nil
+		}
 	default:
 		return stateNil, 0, errors.New("")
 	}
@@ -296,7 +340,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "parameter", "message":
+	case "from", "license", "template", "system", "adapter", "parameter", "message", "ollama":
 		return true
 	default:
 		return false

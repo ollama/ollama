@@ -18,6 +18,7 @@ type Manifest struct {
 	MediaType     string   `json:"mediaType"`
 	Config        *Layer   `json:"config"`
 	Layers        []*Layer `json:"layers"`
+	Ollama		  string   `json:"ollama"`
 
 	filepath string
 	fi       os.FileInfo
@@ -93,7 +94,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 	return &m, nil
 }
 
-func WriteManifest(name model.Name, config *Layer, layers []*Layer) error {
+func WriteManifest(name model.Name, config *Layer, layers []*Layer, ollama string) error {
 	manifests, err := GetManifestPath()
 	if err != nil {
 		return err
@@ -115,6 +116,7 @@ func WriteManifest(name model.Name, config *Layer, layers []*Layer) error {
 		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
 		Config:        config,
 		Layers:        layers,
+		Ollama:		   ollama,
 	}
 
 	return json.NewEncoder(f).Encode(m)

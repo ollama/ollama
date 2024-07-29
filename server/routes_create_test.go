@@ -623,3 +623,34 @@ func TestCreateDetectTemplate(t *testing.T) {
 		})
 	})
 }
+
+func TestCreateVersion(t *testing.T){
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	envconfig.LoadConfig()
+	var s Server
+
+	 w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		Name:      "test",
+		Modelfile: fmt.Sprintf("FROM %s\nOLLAMA 0.2.3\nLICENSE MIT\nLICENSE Apache-2.0", createBinFile(t, nil, nil)),
+		Stream:    &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	} 
+
+	t.Run("invalid version", func(t *testing.T) {
+		w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+			Name:      "test",
+			Modelfile: fmt.Sprintf("FROM %s\nOLLAMA 0..400", createBinFile(t, nil, nil)),
+			Stream:    &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status code 400, actual %d", w.Code)
+		}
+	})
+}

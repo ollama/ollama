@@ -374,6 +374,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	}
 
 	var messages []*api.Message
+	var version string
 	parameters := make(map[string]any)
 
 	var layers []*Layer
@@ -529,6 +530,8 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 			}
 
 			messages = append(messages, &api.Message{Role: role, Content: content})
+		case "ollama":
+			version = c.Args
 		default:
 			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
 			if err != nil {
@@ -545,7 +548,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				}
 			}
 		}
-	}
+	}		
 
 	var err2 error
 	layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
@@ -642,7 +645,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	old, _ := ParseNamedManifest(name)
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, layer, layers); err != nil {
+	if err := WriteManifest(name, layer, layers, version); err != nil {
 		return err
 	}
 
