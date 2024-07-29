@@ -647,10 +647,11 @@ func TestCreateVersion(t *testing.T) {
 	})
 
 	f, err := os.Open(filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"))
-	defer f.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close()
+
 	bts := json.NewDecoder(f)
 
 	var m Manifest
