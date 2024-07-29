@@ -67,7 +67,7 @@ var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
 	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
-	errInvalidVersion     = errors.New("invalid version")
+	errInvalidVersion     = errors.New("invalid OLLAMA version")
 )
 
 func ParseFile(r io.Reader) (*File, error) {
