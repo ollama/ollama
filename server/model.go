@@ -30,26 +30,27 @@ type layerGGML struct {
 	*llm.GGML
 }
 
-func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
+func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, version string, err error) {
 	m, err := ParseNamedManifest(name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := PullModel(ctx, name.String(), &registryOptions{}, fn); err != nil {
-			return nil, err
+			return nil, version, err
 		}
 
 		m, err = ParseNamedManifest(name)
 		if err != nil {
-			return nil, err
+			return nil, version, err
 		}
 	case err != nil:
-		return nil, err
+		return nil, version, err
 	}
 
+	version = m.Ollama
 	for _, layer := range m.Layers {
 		layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, name.DisplayShortest())
 		if err != nil {
-			return nil, err
+			return nil, version, err
 		}
 
 		switch layer.MediaType {
@@ -58,18 +59,18 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 			"application/vnd.ollama.image.adapter":
 			blobpath, err := GetBlobsPath(layer.Digest)
 			if err != nil {
-				return nil, err
+				return nil, version, err
 			}
 
 			blob, err := os.Open(blobpath)
 			if err != nil {
-				return nil, err
+				return nil, version, err
 			}
 			defer blob.Close()
 
 			ggml, _, err := llm.DecodeGGML(blob, 0)
 			if err != nil {
-				return nil, err
+				return nil, version, err
 			}
 
 			layers = append(layers, &layerGGML{layer, ggml})
@@ -78,7 +79,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		}
 	}
 
-	return layers, nil
+	return layers, version, nil
 }
 
 func extractFromZipFile(p string, file *os.File, fn func(api.ProgressResponse)) error {

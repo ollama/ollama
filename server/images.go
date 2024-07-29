@@ -385,7 +385,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		case "model", "adapter":
 			var baseLayers []*layerGGML
 			if name := model.ParseName(c.Args); name.IsValid() {
-				baseLayers, err = parseFromModel(ctx, name, fn)
+				baseLayers, version, err = parseFromModel(ctx, name, fn)
 				if err != nil {
 					return err
 				}
@@ -531,7 +531,9 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 			messages = append(messages, &api.Message{Role: role, Content: content})
 		case "ollama":
-			version = c.Args
+			if version == "" {
+				version = c.Args
+			}
 		default:
 			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
 			if err != nil {
