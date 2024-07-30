@@ -690,8 +690,8 @@ func TestCreateVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if m.Ollama.String() != "" {
-			t.Errorf("got %s != want \"\"", m.Ollama)
+		if m.Ollama != nil {
+			t.Errorf("got %s != want nil", m.Ollama)
 		}
 	})
 
