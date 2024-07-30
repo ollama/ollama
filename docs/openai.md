@@ -134,10 +134,6 @@ curl http://localhost:11434/v1/embeddings \
 - [ ] `dimensions`
 - [ ] `user`
 
-## Notes
-
-- `Usage` is currently not included in the response
-
 ## Models
 
 Before using a model, pull it locally `ollama pull`:
