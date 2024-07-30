@@ -346,6 +346,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		s.cmd.Env = os.Environ()
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
+		s.cmd.SysProcAttr = LlamaServerSysProcAttr
 
 		envWorkarounds := [][2]string{}
 		for _, gpu := range gpus {
@@ -726,6 +727,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"temperature":       req.Options.Temperature,
 		"top_k":             req.Options.TopK,
 		"top_p":             req.Options.TopP,
+		"min_p":             req.Options.MinP,
 		"tfs_z":             req.Options.TFSZ,
 		"typical_p":         req.Options.TypicalP,
 		"repeat_last_n":     req.Options.RepeatLastN,

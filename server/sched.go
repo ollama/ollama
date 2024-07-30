@@ -212,9 +212,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else if loadedCount == 0 {
 						// No models loaded. Load the model but prefer the best fit.
 						slog.Debug("loading first model", "model", pending.model.ModelPath)
-						g := pickBestFitGPUs(pending, ggml, gpus, &numParallel)
+						g := pickBestFullFitByLibrary(pending, ggml, gpus, &numParallel)
 						if g != nil {
 							gpus = g
+						} else {
+							// Only allow partial loads when this is the first model
+							gpus = pickBestPartialFitByLibrary(pending, ggml, gpus, &numParallel)
 						}
 						s.loadFn(pending, ggml, gpus, numParallel)
 						break
@@ -231,7 +234,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 						// Update free memory from currently loaded models
 						s.updateFreeSpace(availGpus)
-						fitGpus := pickBestFitGPUs(pending, ggml, availGpus, &numParallel)
+						fitGpus := pickBestFullFitByLibrary(pending, ggml, availGpus, &numParallel)
 						if fitGpus != nil {
 							slog.Debug("new model fits with existing models, loading")
 							s.loadFn(pending, ggml, fitGpus, numParallel)
@@ -668,11 +671,12 @@ func (a ByDuration) Less(i, j int) bool {
 // func (a BySize) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 // func (a BySize) Less(i, j int) bool { return a[i].estimatedVRAM < a[j].estimatedVRAM }
 
-// pickBestFitGPUs will try to find the optimal placement of the model in the available GPUs where the model fully fits
+// pickBestFullFitByLibrary will try to find the optimal placement of the model in the available GPUs where the model fully fits
+// The list of GPUs returned will always be the same brand (library)
 // If the model can not be fit fully within the available GPU(s) nil is returned
 // If numParallel is <= 0, this will attempt try to optimize parallism based on available VRAM, and adjust
 // opts.NumCtx accordingly
-func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel *int) gpu.GpuInfoList {
+func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel *int) gpu.GpuInfoList {
 	var estimatedVRAM uint64
 
 	var numParallelToTry []int
@@ -721,6 +725,25 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numP
 		}
 	}
 	return nil
+}
+
+// If multiple Libraries are detected, pick the Library which loads the most layers for the model
+func pickBestPartialFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel *int) gpu.GpuInfoList {
+	*numParallel = 1
+	byLibrary := gpus.ByLibrary()
+	if len(byLibrary) <= 1 {
+		return gpus
+	}
+	var bestEstimate uint64
+	var bestFit int
+	for i, gl := range byLibrary {
+		_, estimatedVRAM := llm.PredictServerFit(gl, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts)
+		if estimatedVRAM > bestEstimate {
+			bestEstimate = estimatedVRAM
+			bestFit = i
+		}
+	}
+	return byLibrary[bestFit]
 }
 
 // findRunnerToUnload finds a runner to unload to make room for a new model
