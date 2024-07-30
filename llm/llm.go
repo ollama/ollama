@@ -93,10 +93,10 @@ func detokenize(model *loadedModel, tokens []int) string {
 	var resp string
 	for _, token := range tokens {
 		buf := make([]C.char, 8)
-		nTokens := C.llama_token_to_piece(model.model, C.int(token), &buf[0], 8, true)
+		nTokens := C.llama_token_to_piece(model.model, C.int(token), &buf[0], 8, 0, true)
 		if nTokens < 0 {
 			buf = make([]C.char, -nTokens)
-			nTokens = C.llama_token_to_piece(model.model, C.int(token), &buf[0], -nTokens, true)
+			nTokens = C.llama_token_to_piece(model.model, C.int(token), &buf[0], -nTokens, 0, true)
 		}
 		tokString := C.GoStringN(&buf[0], nTokens)
 		resp += tokString
