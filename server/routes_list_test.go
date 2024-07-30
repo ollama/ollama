@@ -7,11 +7,14 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 )
 
 func TestList(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	envconfig.LoadConfig()
 

@@ -83,8 +83,8 @@ curl https://api.openai.com/v1/models/llama3
 - [x] Streaming
 - [x] JSON mode
 - [x] Reproducible outputs
+- [x] Tools (streaming support coming soon)
 - [ ] Vision
-- [ ] Function calling
 - [ ] Logprobs
 
 #### Supported request fields
@@ -102,15 +102,11 @@ curl https://api.openai.com/v1/models/llama3
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
-- [ ] `logit_bias`
-- [ ] `tools`
+- [x] `tools`
 - [ ] `tool_choice`
+- [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
-
-#### Notes
-
-- `usage.prompt_tokens` will be 0 for completions where prompt evaluation is cached
 
 ### `/v1/models/{model}`
 

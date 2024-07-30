@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type OllamaHost struct {
@@ -34,7 +36,7 @@ var (
 	// Set via OLLAMA_HOST in the environment
 	Host *OllamaHost
 	// Set via OLLAMA_KEEP_ALIVE in the environment
-	KeepAlive string
+	KeepAlive time.Duration
 	// Set via OLLAMA_LLM_LIBRARY in the environment
 	LLMLibrary string
 	// Set via OLLAMA_MAX_LOADED_MODELS in the environment
@@ -43,8 +45,6 @@ var (
 	MaxQueuedRequests int
 	// Set via OLLAMA_MODELS in the environment
 	ModelsDir string
-	// Set via OLLAMA_MAX_VRAM in the environment
-	MaxVRAM uint64
 	// Set via OLLAMA_NOHISTORY in the environment
 	NoHistory bool
 	// Set via OLLAMA_NOPRUNE in the environment
@@ -87,7 +87,6 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary, "Set LLM library to bypass autodetection"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
-		"OLLAMA_MAX_VRAM":          {"OLLAMA_MAX_VRAM", MaxVRAM, "Maximum VRAM"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", ModelsDir, "The path to the models directory"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
@@ -132,6 +131,7 @@ func init() {
 	NumParallel = 0 // Autoselect
 	MaxRunners = 0  // Autoselect
 	MaxQueuedRequests = 512
+	KeepAlive = 5 * time.Minute
 
 	LoadConfig()
 }
@@ -190,16 +190,6 @@ func LoadConfig() {
 	}
 
 	TmpDir = clean("OLLAMA_TMPDIR")
-
-	userLimit := clean("OLLAMA_MAX_VRAM")
-	if userLimit != "" {
-		avail, err := strconv.ParseUint(userLimit, 10, 64)
-		if err != nil {
-			slog.Error("invalid setting, ignoring", "OLLAMA_MAX_VRAM", userLimit, "error", err)
-		} else {
-			MaxVRAM = avail
-		}
-	}
 
 	LLMLibrary = clean("OLLAMA_LLM_LIBRARY")
 
@@ -266,7 +256,10 @@ func LoadConfig() {
 		}
 	}
 
-	KeepAlive = clean("OLLAMA_KEEP_ALIVE")
+	ka := clean("OLLAMA_KEEP_ALIVE")
+	if ka != "" {
+		loadKeepAlive(ka)
+	}
 
 	var err error
 	ModelsDir, err = getModelsDir()
@@ -343,4 +336,25 @@ func getOllamaHost() (*OllamaHost, error) {
 		Host:   host,
 		Port:   port,
 	}, nil
+}
+
+func loadKeepAlive(ka string) {
+	v, err := strconv.Atoi(ka)
+	if err != nil {
+		d, err := time.ParseDuration(ka)
+		if err == nil {
+			if d < 0 {
+				KeepAlive = time.Duration(math.MaxInt64)
+			} else {
+				KeepAlive = d
+			}
+		}
+	} else {
+		d := time.Duration(v) * time.Second
+		if d < 0 {
+			KeepAlive = time.Duration(math.MaxInt64)
+		} else {
+			KeepAlive = d
+		}
+	}
 }

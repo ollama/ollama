@@ -103,18 +103,9 @@ func (mp ModelPath) GetShortTagname() string {
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
-// modelsDir returns the value of the OLLAMA_MODELS environment variable or the user's home directory if OLLAMA_MODELS is not set.
-// The models directory is where Ollama stores its model files and manifests.
-func modelsDir() (string, error) {
-	return envconfig.ModelsDir, nil
-}
-
 // GetManifestPath returns the path to the manifest file for the given model path, it is up to the caller to create the directory if it does not exist.
 func (mp ModelPath) GetManifestPath() (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
-	}
+	dir := envconfig.ModelsDir
 
 	return filepath.Join(dir, "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag), nil
 }
@@ -127,10 +118,7 @@ func (mp ModelPath) BaseURL() *url.URL {
 }
 
 func GetManifestPath() (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
-	}
+	dir := envconfig.ModelsDir
 
 	path := filepath.Join(dir, "manifests")
 	if err := os.MkdirAll(path, 0o755); err != nil {
@@ -141,10 +129,7 @@ func GetManifestPath() (string, error) {
 }
 
 func GetBlobsPath(digest string) (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
-	}
+	dir := envconfig.ModelsDir
 
 	// only accept actual sha256 digests
 	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
