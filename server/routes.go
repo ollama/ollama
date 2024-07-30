@@ -1403,19 +1403,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if (req.Stream == nil || *req.Stream) && len(resp.Message.ToolCalls) > 0 {
 			toolCh := make(chan any)
 			go func() {
+				defer close(toolCh)
 				toolCalls := resp.Message.ToolCalls
-				for _, toolCall := range toolCalls[:len(toolCalls)-1] {
-					chunk := api.ChatResponse{
-						Model:      resp.Model,
-						CreatedAt:  resp.CreatedAt,
-						Message:    api.Message{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}},
-						DoneReason: "tool_calls",
+				for _, toolCall := range toolCalls {
+					toolCh <- api.ChatResponse{
+						Model:     resp.Model,
+						CreatedAt: resp.CreatedAt,
+						Message:   api.Message{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}},
 					}
-					toolCh <- chunk
 				}
-				resp.Message.ToolCalls = []api.ToolCall{toolCalls[len(toolCalls)-1]}
+				resp.Message.ToolCalls = nil
+				resp.DoneReason = "tool_calls"
 				toolCh <- resp
-				close(toolCh)
 			}()
 			streamResponse(c, toolCh)
 			return
