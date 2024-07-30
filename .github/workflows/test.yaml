@@ -58,11 +58,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "stable"
           cache: true
       - run: go get ./...
       - run: |
@@ -79,6 +80,7 @@ jobs:
       - run: go generate -x ./...
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
         name: 'Unix Go Generate'
+      - run: go build .
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
@@ -124,7 +126,7 @@ jobs:
     strategy:
       matrix:
         rocm-version:
-          - '6.1.1'
+          - '6.1.2'
     runs-on: linux
     container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
     steps:
@@ -161,13 +163,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "stable"
           cache: true
       - name: 'Install ROCm'
         run: |
           $ErrorActionPreference = "Stop"
           write-host "downloading AMD HIP Installer"
-          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q4-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
+          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
           write-host "Installing AMD HIP"
           Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
           write-host "Completed AMD HIP"
@@ -198,7 +200,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "stable"
           cache: true
       - name: 'Install CUDA'
         run: |
@@ -253,7 +255,7 @@ jobs:
           submodules: recursive
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "stable"
           cache: false
       - run: |
           case ${{ matrix.arch }} in
@@ -295,7 +297,7 @@ jobs:
           submodules: recursive
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "stable"
           cache: true
       - run: |
           case ${{ matrix.arch }} in
