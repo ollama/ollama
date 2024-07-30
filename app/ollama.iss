@@ -127,6 +127,10 @@ Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\models"
 Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
 ; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
+[InstallDelete]
+Type: filesandordirs; Name: "{%TEMP}\ollama*"
+Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
+
 [Messages]
 WizardReady=Ollama Windows Preview
 ReadyLabel1=%nLet's get you up and running with your own large language models.
@@ -134,7 +138,7 @@ SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or fi
 
 
 ;FinishedHeadingLabel=Run your first model
-;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3
+;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.1
 ;ClickFinish=%n
 
 [Registry]

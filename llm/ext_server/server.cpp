@@ -41,6 +41,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <errhandlingapi.h>
 #endif
 
 #include <cstddef>
@@ -1220,6 +1221,7 @@ struct llama_server_context
                 res.result_json = json
                 {
                     {"embedding", std::vector<float>(embd, embd + n_embd)},
+                    {"timings",             slot.get_formated_timings()},
                 };
             }
         }
@@ -1382,12 +1384,50 @@ struct llama_server_context
         }
     }
 
+    std::string common_prefix(const std::string& str1, const std::string& str2) {
+        auto mismatch_pair = std::mismatch(str1.begin(), str1.end(), str2.begin());
+        return std::string(str1.begin(), mismatch_pair.first);
+    }
+
+    // Find the slot that has the greatest common prefix
+    server_slot *prefix_slot(const json &prompt) {
+        if (!prompt.is_string()) {
+            return nullptr;
+        }
+
+        std::string prompt_str = prompt.get<std::string>();
+        server_slot *slot = nullptr;
+        size_t longest = 0;
+
+        for (server_slot &s : slots) {
+            if (s.available() && s.prompt.is_string()) {
+                std::string s_prompt = s.prompt.get<std::string>();
+                std::string prefix = common_prefix(s_prompt, prompt_str);
+
+                if (prefix.size() > longest) {
+                    slot = &s;
+                    longest = prefix.size();
+                }
+            }
+        }
+
+        if (!slot) {
+            return get_slot(-1);
+        }
+
+        LOG_DEBUG("slot with common prefix found", {{
+            "slot_id", slot->id,
+            "characters", longest
+        }});
+        return slot;
+    }
+
     void process_single_task(task_server& task)
     {
         switch (task.type)
         {
             case TASK_TYPE_COMPLETION: {
-                server_slot *slot = get_slot(json_value(task.data, "slot_id", -1));
+                server_slot *slot = prefix_slot(task.data["prompt"]);
                 if (slot == nullptr)
                 {
                     // if no slot is available, we defer this task for processing later
@@ -1650,22 +1690,8 @@ struct llama_server_context
                     }
                     slot.params.n_keep = std::min(slot.n_ctx - 4, slot.params.n_keep);
 
-                    char buf[256];
-                    llama_model_meta_val_str(model, "general.architecture", buf, 256);
-                    bool gemma2 = strcmp(buf, "gemma2") == 0;
-
-                    int32_t truncate_at = slot.n_ctx;
-
-                    // truncate at 2/3 of the context length for gemma2 models
-                    // as they do not support context shifts (from the sliding window implementation).
-                    // this way, prompts that almost fit the context length can still generate a full
-                    // response without a sudden stop from hitting the context limit
-                    if (gemma2) {
-                        truncate_at = 2 * slot.n_ctx / 3;
-                    }
-
                     // if input prompt is too big, truncate it, if group attention self-extend is disabled
-                    if (slot.ga_n == 1 && slot.n_prompt_tokens >= truncate_at)
+                    if (slot.ga_n == 1 && slot.n_prompt_tokens >= slot.n_ctx)
                     {
                         const int n_left = slot.n_ctx - slot.params.n_keep;
                         const int n_shift = n_left / 2;
@@ -1691,19 +1717,6 @@ struct llama_server_context
 
                         slot.n_prompt_tokens = prompt_tokens.size();
                         GGML_ASSERT(slot.n_prompt_tokens < slot.n_ctx);
-                    }
-
-                    // Models with sliding window attention do not work with context shifts, so
-                    // limit their prediction to the context length
-                    if (gemma2) {
-                        int32_t limit = slot.n_ctx - slot.n_prompt_tokens;
-                        slot.n_predict = limit;
-                        slot.params.n_predict = limit;
-                        LOG_INFO("model does not support sliding window, limiting generation", {
-                            {"n_ctx", slot.n_ctx},
-                            {"n_prompt_tokens", slot.n_prompt_tokens},
-                            {"n_predict", slot.n_predict}
-                        });
                     }
 
                     if (!slot.params.cache_prompt)
@@ -2426,15 +2439,6 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
             params.lora_adapter.emplace_back(lora_adapter, std::stof(argv[i]));
             params.use_mmap = false;
         }
-        else if (arg == "--lora-base")
-        {
-            if (++i >= argc)
-            {
-                invalid_param = true;
-                break;
-            }
-            params.lora_base = argv[i];
-        }
         else if (arg == "-v" || arg == "--verbose")
         {
             server_verbose = true;
@@ -2726,6 +2730,9 @@ int wmain(int argc, wchar_t **wargv) {
     for (int i = 0; i < argc; ++i) {
         argv[i] = wchar_to_char(wargv[i]);
     }
+
+    // Adjust error mode to avoid error dialog after we start.
+    SetErrorMode(SEM_FAILCRITICALERRORS);
 #else
 int main(int argc, char **argv) {
 #endif
@@ -3177,26 +3184,37 @@ int main(int argc, char **argv) {
                     prompt = "";
                 }
 
-                json image_data;
-                if (body.count("image_data") != 0) {
-                    image_data = body["image_data"];
-                }
-                else
-                {
-                    image_data = "";
+                if (prompt.size() == 1) {
+                    prompt = prompt[0];
                 }
 
                 // create and queue the task
-                const int task_id = llama.queue_tasks.get_new_id();
-                llama.queue_results.add_waiting_task_id(task_id);
-                llama.request_completion(task_id, { {"prompt", prompt}, { "n_predict", 0}, {"image_data", image_data} }, true, -1);
+                json responses;
+                {
+                    const int id_task = llama.queue_tasks.get_new_id();
+                    llama.queue_results.add_waiting_task_id(id_task);
+                    llama.request_completion(id_task, {{"prompt", prompt}}, true, -1);
 
-                // get the result
-                task_result result = llama.queue_results.recv(task_id);
-                llama.queue_results.remove_waiting_task_id(task_id);
+                    // get the result
+                    task_result result = llama.queue_results.recv(id_task);
+                    llama.queue_results.remove_waiting_task_id(id_task);
+                    if (result.error) {
+                        return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
+                    }
 
-                // send the result
-                return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
+                    responses = result.result_json.value("results", std::vector<json>{result.result_json});
+                    json embeddings = json::array();
+
+                    int prompt_n = 0;
+                    for (auto & elem : responses) {
+                        embeddings.push_back(elem.at("embedding"));
+                        prompt_n += elem.at("timings").at("prompt_n").get<int>();
+                    }
+
+                    // send the result
+                    json embedding_res = json{{"embedding", embeddings}, {"prompt_n", prompt_n}};
+                    return res.set_content(embedding_res.dump(), "application/json; charset=utf-8");
+                }
             });
 
     // GG: if I put the main loop inside a thread, it crashes on the first request when build in Debug!?

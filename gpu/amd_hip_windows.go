@@ -33,9 +33,10 @@ type HipLib struct {
 }
 
 func NewHipLib() (*HipLib, error) {
-	h, err := windows.LoadLibrary("amdhip64.dll")
+	// At runtime we depend on v6, so discover GPUs with the same library for a consistent set of GPUs
+	h, err := windows.LoadLibrary("amdhip64_6.dll")
 	if err != nil {
-		return nil, fmt.Errorf("unable to load amdhip64.dll: %w", err)
+		return nil, fmt.Errorf("unable to load amdhip64_6.dll, please make sure to upgrade to the latest amd driver: %w", err)
 	}
 	hl := &HipLib{}
 	hl.dll = h
@@ -84,9 +85,8 @@ func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	}
 
 	slog.Debug("hipDriverGetVersion", "version", version)
-	// TODO - this isn't actually right, but the docs claim hipDriverGetVersion isn't accurate anyway...
-	driverMajor = version / 1000
-	driverMinor = (version - (driverMajor * 1000)) / 10
+	driverMajor = version / 10000000
+	driverMinor = (version - (driverMajor * 10000000)) / 100000
 
 	return driverMajor, driverMinor, nil
 }
