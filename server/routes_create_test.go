@@ -659,8 +659,8 @@ func TestCreateVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if m.Ollama.String() != "0.2.3" {
-		t.Errorf("got %s != want 0.2.3", m.Ollama)
+	if m.Ollama != "v0.2.3" {
+		t.Errorf("got %s != want v0.2.3", m.Ollama)
 	}
 
 	t.Run("no version", func(t *testing.T) {
@@ -690,8 +690,8 @@ func TestCreateVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if m.Ollama != nil {
-			t.Errorf("got %s != want nil", m.Ollama)
+		if m.Ollama != "" {
+			t.Errorf("got %s != want empty", m.Ollama)
 		}
 	})
 
@@ -734,8 +734,8 @@ func TestCreateVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if m.Ollama.String() != "0.2.3" {
-			t.Errorf("got %s != want 0.2.3", m.Ollama)
+		if m.Ollama != "v0.2.3" {
+			t.Errorf("got %s != want v0.2.3", m.Ollama)
 		}
 	})
 }

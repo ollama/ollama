@@ -16,7 +16,6 @@ import (
 	"strings"
 	"text/template/parse"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/llm"
@@ -31,7 +30,7 @@ type layerGGML struct {
 	*llm.GGML
 }
 
-func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, version *semver.Version, err error) {
+func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, version string, err error) {
 	m, err := ParseNamedManifest(name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):

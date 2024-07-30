@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -100,7 +99,7 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 	}
 
 	// create a manifest with duplicate layers
-	if err := WriteManifest(n, &semver.Version{}, config, []*Layer{config}); err != nil {
+	if err := WriteManifest(n, "", config, []*Layer{config}); err != nil {
 		t.Fatal(err)
 	}
 

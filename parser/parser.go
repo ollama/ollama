@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Masterminds/semver/v3"
+	"golang.org/x/mod/semver"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
@@ -141,11 +141,17 @@ func ParseFile(r io.Reader) (*File, error) {
 					continue
 				} else if isSpace(r) {
 					return nil, errInvalidVersion
-				} else if _, err := semver.NewVersion(s); err != nil {
+				}
+
+				if s[0] != 'v' {
+					s = "v" + s
+				}
+
+				if !semver.IsValid(s) {
 					return nil, errInvalidVersion
 				}
 
-				cmd.Args = s
+				cmd.Args = semver.Canonical(s)
 				f.Commands = append(f.Commands, cmd)
 
 			case stateValue:
@@ -186,11 +192,17 @@ func ParseFile(r io.Reader) (*File, error) {
 		s, ok := unquote(strings.TrimSpace(b.String()))
 		if !ok {
 			return nil, io.ErrUnexpectedEOF
-		} else if _, err := semver.NewVersion(s); err != nil {
+		}
+
+		if s[0] != 'v' {
+			s = "v" + s
+		}
+
+		if !semver.IsValid(s) {
 			return nil, errInvalidVersion
 		}
 
-		cmd.Args = s
+		cmd.Args = semver.Canonical(s)
 		f.Commands = append(f.Commands, cmd)
 	case stateValue:
 		s, ok := unquote(strings.TrimSpace(b.String()))
