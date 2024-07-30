@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
@@ -374,7 +375,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	}
 
 	var messages []*api.Message
-	var version string
+	var version *semver.Version
 	parameters := make(map[string]any)
 
 	var layers []*Layer
@@ -531,8 +532,11 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 			messages = append(messages, &api.Message{Role: role, Content: content})
 		case "ollama":
-			if version == "" {
-				version = c.Args
+			if version == nil {
+				version, err = semver.NewVersion(c.Args)
+				if err != nil {
+					return err
+				}
 			}
 		default:
 			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
@@ -647,7 +651,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	old, _ := ParseNamedManifest(name)
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, layer, layers, version); err != nil {
+	if err := WriteManifest(name, version, layer, layers); err != nil {
 		return err
 	}
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -18,7 +19,7 @@ type Manifest struct {
 	MediaType     string   `json:"mediaType"`
 	Config        *Layer   `json:"config"`
 	Layers        []*Layer `json:"layers"`
-	Ollama        string   `json:"ollama"`
+	Ollama        *semver.Version   `json:"ollama,omitempty"`
 
 	filepath string
 	fi       os.FileInfo
@@ -94,7 +95,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 	return &m, nil
 }
 
-func WriteManifest(name model.Name, config *Layer, layers []*Layer, ollama string) error {
+func WriteManifest(name model.Name, ollama *semver.Version, config *Layer, layers []*Layer) error {
 	manifests, err := GetManifestPath()
 	if err != nil {
 		return err

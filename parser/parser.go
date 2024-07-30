@@ -43,7 +43,7 @@ func (c Command) String() string {
 		role, message, _ := strings.Cut(c.Args, ": ")
 		fmt.Fprintf(&sb, "MESSAGE %s %s", role, quote(message))
 	case "ollama":
-		fmt.Fprintf(&sb, "OLLAMA %s", quote(c.Args))
+		fmt.Fprintf(&sb, "OLLAMA %s", c.Args)
 	default:
 		fmt.Fprintf(&sb, "PARAMETER %s %s", c.Name, quote(c.Args))
 	}
