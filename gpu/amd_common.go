@@ -49,9 +49,17 @@ func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
 }
 
 func commonAMDValidateLibDir() (string, error) {
-	// We try to favor system paths first, so that we can wire up the subprocess to use
-	// the system version.  Only use our bundled version if the system version doesn't work
-	// This gives users a more recovery options if versions have subtle problems at runtime
+	// Favor our bundled version
+
+	// Installer payload location if we're running the installed binary
+	exe, err := os.Executable()
+	if err == nil {
+		rocmTargetDir := filepath.Join(filepath.Dir(exe), "rocm")
+		if rocmLibUsable(rocmTargetDir) {
+			slog.Debug("detected ROCM next to ollama executable " + rocmTargetDir)
+			return rocmTargetDir, nil
+		}
+	}
 
 	// Prefer explicit HIP env var
 	hipPath := os.Getenv("HIP_PATH")
@@ -87,14 +95,5 @@ func commonAMDValidateLibDir() (string, error) {
 		}
 	}
 
-	// Installer payload location if we're running the installed binary
-	exe, err := os.Executable()
-	if err == nil {
-		rocmTargetDir := filepath.Join(filepath.Dir(exe), "rocm")
-		if rocmLibUsable(rocmTargetDir) {
-			slog.Debug("detected ROCM next to ollama executable " + rocmTargetDir)
-			return rocmTargetDir, nil
-		}
-	}
 	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
 }

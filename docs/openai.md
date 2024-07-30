@@ -135,7 +135,8 @@ curl http://localhost:11434/v1/chat/completions \
 - [x] JSON mode
 - [x] Reproducible outputs
 - [x] Vision
-- [ ] Function calling
+- [x] Tools (streaming support coming soon)
+- [ ] Vision
 - [ ] Logprobs
 
 #### Supported request fields
@@ -156,15 +157,11 @@ curl http://localhost:11434/v1/chat/completions \
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
-- [ ] `logit_bias`
-- [ ] `tools`
+- [x] `tools`
 - [ ] `tool_choice`
+- [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
-
-#### Notes
-
-- `usage.prompt_tokens` will be 0 for completions where prompt evaluation is cached
 
 ## Models
 
