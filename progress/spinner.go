@@ -31,6 +31,10 @@ func NewSpinner(message string) *Spinner {
 	return s
 }
 
+func (s *Spinner) SetMessage(message string) {
+	s.message = message
+}
+
 func (s *Spinner) String() string {
 	var sb strings.Builder
 	if len(s.message) > 0 {
