@@ -15,7 +15,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -89,7 +88,6 @@ func TestCreateFromBin(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 
 	var s Server
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -117,7 +115,6 @@ func TestCreateFromModel(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -160,7 +157,6 @@ func TestCreateRemovesLayers(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -209,7 +205,6 @@ func TestCreateUnsetsSystem(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -267,7 +262,6 @@ func TestCreateMergeParameters(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -372,7 +366,6 @@ func TestCreateReplacesMessages(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -450,7 +443,6 @@ func TestCreateTemplateSystem(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -534,7 +526,6 @@ func TestCreateLicenses(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -582,7 +573,6 @@ func TestCreateDetectTemplate(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	t.Run("matched", func(t *testing.T) {

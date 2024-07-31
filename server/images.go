@@ -646,7 +646,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		return err
 	}
 
-	if !envconfig.NoPrune && old != nil {
+	if !envconfig.NoPrune() && old != nil {
 		if err := old.RemoveLayers(); err != nil {
 			return err
 		}
@@ -885,7 +885,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
 
-	if !envconfig.NoPrune {
+	if !envconfig.NoPrune() {
 		manifest, _, err = GetManifest(mp)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

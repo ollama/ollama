@@ -160,7 +160,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		return err
 	}
 
-	if envconfig.NoHistory {
+	if envconfig.NoHistory() {
 		scanner.HistoryDisable()
 	}
 

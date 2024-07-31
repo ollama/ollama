@@ -10,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -19,7 +18,6 @@ func TestDelete(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 
 	var s Server
 

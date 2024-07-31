@@ -1076,7 +1076,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(envconfig.Host.Host, envconfig.Host.Port))
+	ln, err := net.Listen("tcp", envconfig.Host().Host)
 	if err != nil {
 		return err
 	}
