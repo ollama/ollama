@@ -666,11 +666,50 @@ func TestAlreadyCanceled(t *testing.T) {
 	require.Empty(t, scenario1a.req.successCh)
 }
 
+func TestHomogeneousGPUs(t *testing.T) {
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+
+	s.getGpuFn = func() gpu.GpuInfoList {
+		// Set memory values to require the model to be spread
+		gpus := []gpu.GpuInfo{
+			{Library: "cuda"},
+			{Library: "rocm"},
+		}
+		gpus[0].TotalMemory = 1 * format.GibiByte
+		gpus[0].FreeMemory = 256 * format.MebiByte
+		gpus[1].TotalMemory = 1 * format.GibiByte
+		gpus[1].FreeMemory = 256 * format.MebiByte
+		return gpus
+	}
+	s.getCpuFn = getCpuFn
+	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
+	s.newServerFn = func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		require.Len(t, gpus, 1)
+		return a.newServer(gpus, model, ggml, adapters, projectors, opts, numParallel)
+	}
+	slog.Info("a")
+	s.pendingReqCh <- a.req
+	require.Len(t, s.pendingReqCh, 1)
+	s.Run(ctx)
+	select {
+	case resp := <-a.req.successCh:
+		require.Equal(t, resp.llama, a.srv)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, a.req.errCh)
+	case err := <-a.req.errCh:
+		t.Fatal(err.Error())
+	case <-ctx.Done():
+		t.Fatal("timeout")
+	}
+}
+
 type mockLlm struct {
 	pingResp           error
 	waitResp           error
 	completionResp     error
-	embedResp          [][]float32
+	embedResp          *llm.EmbedResponse
 	embedRespErr       error
 	tokenizeResp       []int
 	tokenizeRespErr    error
@@ -688,7 +727,7 @@ func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitRes
 func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	return s.completionResp
 }
-func (s *mockLlm) Embed(ctx context.Context, input []string) ([][]float32, error) {
+func (s *mockLlm) Embed(ctx context.Context, input []string) (*llm.EmbedResponse, error) {
 	return s.embedResp, s.embedRespErr
 }
 func (s *mockLlm) Tokenize(ctx context.Context, content string) ([]int, error) {

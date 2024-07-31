@@ -451,6 +451,7 @@ func TestParseFileParameters(t *testing.T) {
 		"num_predict 1":                {"num_predict", "1"},
 		"top_k 1":                      {"top_k", "1"},
 		"top_p 1.0":                    {"top_p", "1.0"},
+		"min_p 0.05":                   {"min_p", "0.05"},
 		"tfs_z 1.0":                    {"tfs_z", "1.0"},
 		"typical_p 1.0":                {"typical_p", "1.0"},
 		"repeat_last_n 1":              {"repeat_last_n", "1"},

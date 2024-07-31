@@ -336,6 +336,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_predict": 100,
     "top_k": 20,
     "top_p": 0.9,
+    "min_p": 0.0,
     "tfs_z": 0.5,
     "typical_p": 0.7,
     "repeat_last_n": 33,
@@ -418,6 +419,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
+- `tools`: tools for the model to use if supported. Requires `stream` to be set to `false`
 
 The `message` object has the following fields:
 
@@ -432,7 +434,6 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
-- `tools`: external tools the model can use. Not all models support this feature.
 
 ### Examples
 
@@ -586,7 +587,7 @@ Final response:
 
 ##### Request
 
-Send a chat message with a conversation history.
+Send a chat message with images. The images should be provided as an array, with the individual images encoded in Base64.
 
 ```shell
 curl http://localhost:11434/api/chat -d '{

@@ -41,6 +41,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <errhandlingapi.h>
 #endif
 
 #include <cstddef>
@@ -1220,6 +1221,7 @@ struct llama_server_context
                 res.result_json = json
                 {
                     {"embedding", std::vector<float>(embd, embd + n_embd)},
+                    {"timings",             slot.get_formated_timings()},
                 };
             }
         }
@@ -2437,15 +2439,6 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
             params.lora_adapter.emplace_back(lora_adapter, std::stof(argv[i]));
             params.use_mmap = false;
         }
-        else if (arg == "--lora-base")
-        {
-            if (++i >= argc)
-            {
-                invalid_param = true;
-                break;
-            }
-            params.lora_base = argv[i];
-        }
         else if (arg == "-v" || arg == "--verbose")
         {
             server_verbose = true;
@@ -2737,6 +2730,9 @@ int wmain(int argc, wchar_t **wargv) {
     for (int i = 0; i < argc; ++i) {
         argv[i] = wchar_to_char(wargv[i]);
     }
+
+    // Adjust error mode to avoid error dialog after we start.
+    SetErrorMode(SEM_FAILCRITICALERRORS);
 #else
 int main(int argc, char **argv) {
 #endif
@@ -3208,11 +3204,15 @@ int main(int argc, char **argv) {
 
                     responses = result.result_json.value("results", std::vector<json>{result.result_json});
                     json embeddings = json::array();
+
+                    int prompt_n = 0;
                     for (auto & elem : responses) {
                         embeddings.push_back(elem.at("embedding"));
+                        prompt_n += elem.at("timings").at("prompt_n").get<int>();
                     }
+
                     // send the result
-                    json embedding_res = json{{"embedding", embeddings}};
+                    json embedding_res = json{{"embedding", embeddings}, {"prompt_n", prompt_n}};
                     return res.set_content(embedding_res.dump(), "application/json; charset=utf-8");
                 }
             });

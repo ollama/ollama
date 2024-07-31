@@ -2,7 +2,7 @@ diff --git a/common/common.cpp b/common/common.cpp
 index dbb724fb..c26fe6ee 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -2087,14 +2087,29 @@ std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_par
+@@ -2087,14 +2087,27 @@ std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_par
      for (unsigned int i = 0; i < params.lora_adapter.size(); ++i) {
          const std::string & lora_adapter = std::get<0>(params.lora_adapter[i]);
          float lora_scale = std::get<1>(params.lora_adapter[i]);
@@ -20,9 +20,7 @@ index dbb724fb..c26fe6ee 100644
 +            int err = llama_model_apply_lora_from_file(model,
 +                                                    lora_adapter.c_str(),
 +                                                    lora_scale,
-+                                                    ((i > 0) || params.lora_base.empty())
-+                                                        ? NULL
-+                                                        : params.lora_base.c_str(),
++                                                    nullptr,
 +                                                    params.n_threads);
 +            if (err != 0) {
 +                fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);

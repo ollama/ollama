@@ -284,6 +284,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {
+	checkpointStart := time.Now()
 	var req api.EmbedRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -332,6 +333,8 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	checkpointLoaded := time.Now()
+
 	kvData, err := getKVData(m.ModelPath, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -370,13 +373,16 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	for i, e := range embeddings {
-		embeddings[i] = normalize(e)
+	for i, e := range embeddings.Embedding {
+		embeddings.Embedding[i] = normalize(e)
 	}
 
 	resp := api.EmbedResponse{
-		Model:      req.Model,
-		Embeddings: embeddings,
+		Model:           req.Model,
+		Embeddings:      embeddings.Embedding,
+		TotalDuration:   time.Since(checkpointStart),
+		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
+		PromptEvalCount: embeddings.PromptEvalCount,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -428,9 +434,9 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding := make([]float64, len(embeddings[0]))
+	embedding := make([]float64, len(embeddings.Embedding[0]))
 
-	for i, v := range embeddings[0] {
+	for i, v := range embeddings.Embedding[0] {
 		embedding[i] = float64(v)
 	}
 
