@@ -1,0 +1,43 @@
+From 6eedae4cf2fcc8015dac79cb3f28f61fcabacab2 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Wed, 31 Jul 2024 14:57:04 -0700
+Subject: [PATCH] phi3 sliding window
+
+---
+ src/llama.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/llama.cpp b/src/llama.cpp
+index a207451f..f2872d4e 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -4893,7 +4893,7 @@ static void llm_load_hparams(
+             } break;
+         case LLM_ARCH_PHI3:
+             {
+-                ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa);
++                ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false);
+                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+ 
+                 switch (hparams.n_layer) {
+@@ -10762,7 +10762,7 @@ struct llm_build_context {
+         struct ggml_tensor * inp_pos = build_inp_pos();
+ 
+         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
+-        struct ggml_tensor * KQ_mask_swa = build_inp_KQ_mask_swa();
++        struct ggml_tensor * KQ_mask = hparams.n_swa > 0 ? build_inp_KQ_mask_swa() : build_inp_KQ_mask();
+ 
+         for (int il = 0; il < n_layer; ++il) {
+             auto residual = inpL;
+@@ -10820,7 +10820,7 @@ struct llm_build_context {
+ 
+                 cur = llm_build_kv(ctx0, lctx, kv_self, gf,
+                         model.layers[il].wo, model.layers[il].bo,
+-                        Kcur, Vcur, Qcur, KQ_mask_swa, n_tokens, kv_head, n_kv, 1.0f, cb, il);
++                        Kcur, Vcur, Qcur, KQ_mask, n_tokens, kv_head, n_kv, 1.0f, cb, il);
+             }
+ 
+             if (il == n_layer - 1) {
+-- 
+2.45.2
+
