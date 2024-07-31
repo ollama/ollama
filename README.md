@@ -173,7 +173,7 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ### Multimodal models
 
 ```
->>> What's in this image? /Users/jmorgan/Desktop/smile.png
+ollama run llava "What's in this image? /Users/jmorgan/Desktop/smile.png"
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
