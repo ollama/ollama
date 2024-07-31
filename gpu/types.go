@@ -19,7 +19,7 @@ type GpuInfo struct {
 	Library string `json:"library,omitempty"`
 
 	// Optional variant to select (e.g. versions, cpu feature flags)
-	Variant CPUCapability `json:"variant"`
+	Variant string `json:"variant"`
 
 	// MinimumMemory represents the minimum memory required to use the GPU
 	MinimumMemory uint64 `json:"-"`
@@ -53,8 +53,10 @@ type CPUInfo struct {
 
 type CudaGPUInfo struct {
 	GpuInfo
-	OSOverhead uint64 // Memory overhead between the driver library and management library
-	index      int    //nolint:unused,nolintlint
+	OSOverhead   uint64 // Memory overhead between the driver library and management library
+	index        int    //nolint:unused,nolintlint
+	computeMajor int    //nolint:unused,nolintlint
+	computeMinor int    //nolint:unused,nolintlint
 }
 type CudaGPUInfoList []CudaGPUInfo
 
@@ -81,8 +83,8 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	for _, info := range l {
 		found := false
 		requested := info.Library
-		if info.Variant != CPUCapabilityNone {
-			requested += "_" + info.Variant.String()
+		if info.Variant != CPUCapabilityNone.String() {
+			requested += "_" + info.Variant
 		}
 		for i, lib := range libs {
 			if lib == requested {
@@ -105,6 +107,7 @@ func (l GpuInfoList) LogDetails() {
 		slog.Info("inference compute",
 			"id", g.ID,
 			"library", g.Library,
+			"variant", g.Variant,
 			"compute", g.Compute,
 			"driver", fmt.Sprintf("%d.%d", g.DriverMajor, g.DriverMinor),
 			"name", g.Name,

@@ -39,9 +39,12 @@ case "${GOARCH}" in
         init_vars
         CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_ACCELERATE=off -DGGML_BLAS=off -DGGML_AVX=off -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off ${CMAKE_DEFS}"
         BUILD_DIR="../build/darwin/${ARCH}/cpu"
+        DIST_DIR=${RUNNER_BASE}/cpu
+        DEPS_DIR=${DIST_BASE}/cpu
         echo "Building LCD CPU"
         build
         sign ${BUILD_DIR}/bin/ollama_llama_server
+        install
         compress
 
         #
@@ -51,9 +54,12 @@ case "${GOARCH}" in
         init_vars
         CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_ACCELERATE=off -DGGML_BLAS=off -DGGML_AVX=on -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off ${CMAKE_DEFS}"
         BUILD_DIR="../build/darwin/${ARCH}/cpu_avx"
+        DIST_DIR=${RUNNER_BASE}/cpu_avx
+        DEPS_DIR=${DIST_BASE}/cpu_avx
         echo "Building AVX CPU"
         build
         sign ${BUILD_DIR}/bin/ollama_llama_server
+        install
         compress
 
         #
@@ -63,10 +69,13 @@ case "${GOARCH}" in
         init_vars
         CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_ACCELERATE=on -DGGML_BLAS=off -DGGML_AVX=on -DGGML_AVX2=on -DGGML_AVX512=off -DGGML_FMA=on -DGGML_F16C=on ${CMAKE_DEFS}"
         BUILD_DIR="../build/darwin/${ARCH}/cpu_avx2"
+        DIST_DIR=${RUNNER_BASE}/cpu_avx2
+        DEPS_DIR=${DIST_BASE}/cpu_avx2
         echo "Building AVX2 CPU"
         EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation"
         build
         sign ${BUILD_DIR}/bin/ollama_llama_server
+        install
         compress
     fi
     ;;
@@ -84,9 +93,12 @@ case "${GOARCH}" in
         init_vars
         CMAKE_DEFS="${COMMON_DARWIN_DEFS} -DCMAKE_SYSTEM_PROCESSOR=${ARCH} -DCMAKE_OSX_ARCHITECTURES=${ARCH} ${CMAKE_DEFS}"
         BUILD_DIR="../build/darwin/${ARCH}/metal"
+        DIST_DIR=${RUNNER_BASE}/metal
+        DEPS_DIR=${DIST_BASE}/metal
         EXTRA_LIBS="${EXTRA_LIBS} -framework Accelerate -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders"
         build
         sign ${BUILD_DIR}/bin/ollama_llama_server
+        install
         compress
     fi
     ;;

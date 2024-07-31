@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 )
 
@@ -26,7 +27,7 @@ func Init() error {
 		return err
 	}
 
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != "windows" && envconfig.RunnersDir == "" {
 		slog.Info("extracting embedded files", "dir", payloadsDir)
 		binGlob := "build/*/*/*/bin/*"
 
@@ -35,6 +36,8 @@ func Init() error {
 		if err != nil {
 			return fmt.Errorf("extract binaries: %v", err)
 		}
+	} else if runtime.GOOS != "windows" && envconfig.RunnersDir != "" {
+		slog.Debug("user defined runners dir provided, skipping extraction of runners")
 	}
 
 	var variants []string
@@ -82,8 +85,8 @@ func serversForGpu(info gpu.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
 	availableServers := getAvailableServers()
 	requested := info.Library
-	if info.Variant != gpu.CPUCapabilityNone {
-		requested += "_" + info.Variant.String()
+	if info.Variant != gpu.CPUCapabilityNone.String() {
+		requested += "_" + info.Variant
 	}
 
 	servers := []string{}

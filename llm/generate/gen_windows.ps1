@@ -200,6 +200,7 @@ function build_static() {
             "-DLLAMA_AVX2=off",
             "-DLLAMA_AVX512=off",
             "-DLLAMA_F16C=off",
+            "-DLLAMA_OPENMP=off",
             "-DLLAMA_FMA=off")
         $script:buildDir="../build/windows/${script:ARCH}_static"
         write-host "Building static library"
@@ -260,8 +261,11 @@ function build_cuda() {
     if ((-not "${env:OLLAMA_SKIP_CUDA_GENERATE}") -and ("${script:CUDA_LIB_DIR}")) {
         # Then build cuda as a dynamically loaded library
         $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
+        if ($null -ne $env:CUDA_VARIANT) {
+            $script:CUDA_VARIANT = $env:CUDA_VARIANT
+        }
         $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
-        if ($null -ne $script:CUDA_VERSION) {
+        if (($null -eq $script:CUDA_VARIANT) -and ($null -ne $script:CUDA_VERSION)) {
             $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
         }
         init_vars
@@ -285,7 +289,6 @@ function build_cuda() {
         sign
         install
 
-        rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
         md "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\" -ea 0 > $null
         write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
         cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"

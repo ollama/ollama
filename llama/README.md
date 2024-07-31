@@ -100,3 +100,15 @@ To update this package to the latest llama.cpp code, use the `sync.sh` script:
 ```
 ./sync.sh ../../llama.cpp
 ```
+
+## Testing
+
+This is still a work in progress, but the current build sets up runners and GPU libraries that can live side-by-side.  After doing the `make -j` above
+also run `go generate ./...` at the top of the tree, and `go build .` then you can
+
+```
+OLLAMA_RUNNERS_DIR=/Users/daniel/code/ollama/dist/darwin-arm64/ollama_runners OLLAMA_DEBUG=1 OLLAMA_NEW_RUNNERS=1 ./ollama serve
+```
+
+You can switch back-and-forth between the old and new runners by setting OLLAMA_NEW_RUNNERS to 0 or 1.
+ 
