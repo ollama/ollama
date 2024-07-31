@@ -67,8 +67,8 @@ func parseSafetensors(ps ...string) ([]Tensor, error) {
 }
 
 // safetensorsPad returns the padded size of the safetensors file given a length n and offset s
-func safetensorsPad(n, s int64) int64 {
-	return 8 + n + s
+func safetensorsPad(n, offset int64) int64 {
+	return 8 + n + offset
 }
 
 type safetensor struct {
