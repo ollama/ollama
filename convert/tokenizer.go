@@ -220,19 +220,22 @@ func parseVocabularyFromTokenizer(fsys fs.FS) (*Vocabulary, error) {
 }
 
 func parseVocabulary(fsys fs.FS) (*Vocabulary, error) {
-	patterns := map[string]func(fs.FS) (*Vocabulary, error){
-		"tokenizer.model": parseSentencePiece,
-		"tokenizer.json":  parseVocabularyFromTokenizer,
+	patterns := []struct {
+		Pattern string
+		Func    func(fs.FS) (*Vocabulary, error)
+	}{
+		{"tokenizer.model", parseSentencePiece},
+		{"tokenizer.json", parseVocabularyFromTokenizer},
 	}
 
-	for pattern, parseFn := range patterns {
-		if _, err := fs.Stat(fsys, pattern); errors.Is(err, os.ErrNotExist) {
+	for _, pattern := range patterns {
+		if _, err := fs.Stat(fsys, pattern.Pattern); errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
 			return nil, err
 		}
 
-		return parseFn(fsys)
+		return pattern.Func(fsys)
 	}
 
 	return nil, errors.New("unknown tensor format")
