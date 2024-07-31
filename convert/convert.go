@@ -53,11 +53,13 @@ func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error
 	return llm.WriteGGUF(ws, kv, ts)
 }
 
+type NameFunc func(string) string
+
 type Converter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) llm.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
-	Tensors([]Tensor) []llm.Tensor
+	Tensors([]Tensor, NameFunc) []llm.Tensor
 
 	// tensorName returns the LLM tensor name for a specific input name
 	tensorName(string) string
@@ -97,6 +99,8 @@ func Convert(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &mixtral{}
 	case "GemmaForCausalLM":
 		conv = &gemma{}
+	case "Gemma2ForCausalLM":
+		conv = &gemma2{}
 	case "Phi3ForCausalLM":
 		conv = &phi3{}
 	case "BertModel":
@@ -136,5 +140,5 @@ func Convert(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts))
+	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts, conv.tensorName))
 }

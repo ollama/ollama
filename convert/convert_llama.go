@@ -92,10 +92,10 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
+func (p *llama) Tensors(ts []Tensor, nameFunc NameFunc) []llm.Tensor {
 	var out []llm.Tensor
 	for _, t := range ts {
-		name := p.tensorName(t.Name())
+		name := nameFunc(t.Name())
 		if strings.HasSuffix(name, "attn_q.weight") ||
 			strings.HasSuffix(name, "attn_k.weight") {
 			t.SetRepacker(p.repack)
@@ -127,8 +127,6 @@ func (p *llama) tensorName(n string) string {
 		"mlp.down_proj", "ffn_down",
 		"mlp.up_proj", "ffn_up",
 		"post_attention_layernorm", "ffn_norm",
-		// mixtral
-		"block_sparse_moe.gate", "ffn_gate_inp",
 	).Replace(n)
 }
 
