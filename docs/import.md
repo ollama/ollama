@@ -75,7 +75,7 @@ Ollama supports importing models for several different architectures including:
 This includes importing foundation models as well as any fine tuned models which which have been _fused_ with a foundation model.
 
 
-## From a GGUF based model
+## Importing a GGUF based model
 
 If you have a GGUF based model or adapter it is possible to import it into Ollama. You can obtain a GGUF model or adapter by:
 
