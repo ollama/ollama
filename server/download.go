@@ -61,6 +61,36 @@ type blobDownloadPart struct {
 	*blobDownload `json:"-"`
 }
 
+type jsonBlobDownloadPart struct {
+	N         int
+	Offset    int64
+	Size      int64
+	Completed int64
+}
+
+func (p *blobDownloadPart) MarshalJSON() ([]byte, error) {
+	return json.Marshal(jsonBlobDownloadPart{
+		N:         p.N,
+		Offset:    p.Offset,
+		Size:      p.Size,
+		Completed: p.Completed.Load(),
+	})
+}
+
+func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
+	var j jsonBlobDownloadPart
+	if err := json.Unmarshal(b, &j); err != nil {
+		return err
+	}
+	*p = blobDownloadPart{
+		N:      j.N,
+		Offset: j.Offset,
+		Size:   j.Size,
+	}
+	p.Completed.Store(j.Completed)
+	return nil
+}
+
 const (
 	numDownloadParts          = 64
 	minDownloadPartSize int64 = 100 * format.MegaByte
