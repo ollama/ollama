@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {
   "name": "ollama",
   "productName": "Ollama",
@@ -82,3 +83,89 @@
     "winston-daily-rotate-file": "^4.7.1"
   }
 }
+=======
+{
+  "name": "ollama",
+  "productName": "Ollama",
+  "version": "0.0.0",
+  "description": "ollama",
+  "main": ".webpack/main",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package --arch universal",
+    "package:sign": "SIGN=1 electron-forge package --arch universal",
+    "make": "electron-forge make --arch universal",
+    "make:sign": "SIGN=1 electron-forge make --arch universal",
+    "publish": "SIGN=1 electron-forge publish",
+    "lint": "eslint --ext .ts,.tsx .",
+    "format": "prettier --check . --ignore-path .gitignore",
+    "format:fix": "prettier --write . --ignore-path .gitignore"
+  },
+  "keywords": [],
+  "author": {
+    "name": "Jeffrey Morgan",
+    "email": "jmorganca@gmail.com"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@babel/core": "^7.24.7",
+    "@babel/preset-react": "^7.24.7",
+    "@electron-forge/cli": "^6.4.2",
+    "@electron-forge/maker-deb": "^6.4.2",
+    "@electron-forge/maker-rpm": "^6.4.2",
+    "@electron-forge/maker-squirrel": "^6.4.2",
+    "@electron-forge/maker-zip": "^6.4.2",
+    "@electron-forge/plugin-auto-unpack-natives": "^6.4.2",
+    "@electron-forge/plugin-webpack": "^6.4.2",
+    "@electron-forge/publisher-github": "^6.4.2",
+    "@electron/universal": "^1.5.1",
+    "@svgr/webpack": "^8.1.0",
+    "@types/chmodr": "^1.0.3",
+    "@types/node": "^20.14.9",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/uuid": "^9.0.8",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0",
+    "@vercel/webpack-asset-relocator-loader": "^1.7.4",
+    "babel-loader": "^9.1.3",
+    "chmodr": "^1.2.0",
+    "copy-webpack-plugin": "^11.0.0",
+    "css-loader": "^6.11.0",
+    "electron": "25.9.2",
+    "eslint": "^8.57.0",
+    "eslint-plugin-import": "^2.29.1",
+    "fork-ts-checker-webpack-plugin": "^7.3.0",
+    "node-loader": "^2.0.0",
+    "postcss": "^8.4.38",
+    "postcss-import": "^15.1.0",
+    "postcss-loader": "^7.3.4",
+    "postcss-preset-env": "^8.5.1",
+    "prettier": "^2.8.8",
+    "prettier-plugin-tailwindcss": "^0.3.0",
+    "style-loader": "^3.3.4",
+    "svg-inline-loader": "^0.8.2",
+    "tailwindcss": "^3.4.4",
+    "ts-loader": "^9.5.1",
+    "ts-node": "^10.9.2",
+    "typescript": "~4.5.4",
+    "url-loader": "^4.1.1",
+    "webpack": "^5.92.1",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^4.15.2"
+  },
+  "dependencies": {
+    "@electron/remote": "^2.1.2",
+    "@heroicons/react": "^2.1.4",
+    "@segment/analytics-node": "^1.3.0",
+    "copy-to-clipboard": "^3.3.3",
+    "electron-squirrel-startup": "^1.0.1",
+    "electron-store": "^8.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "uuid": "^9.0.1",
+    "winston": "^3.13.0",
+    "winston-daily-rotate-file": "^4.7.1"
+  }
+}
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289

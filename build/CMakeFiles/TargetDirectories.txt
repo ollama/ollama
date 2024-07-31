@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 /workspaces/ollama/build/CMakeFiles/install/strip.dir
 /workspaces/ollama/build/CMakeFiles/install/local.dir
 /workspaces/ollama/build/CMakeFiles/install.dir
@@ -5,3 +6,19 @@
 /workspaces/ollama/build/CMakeFiles/rebuild_cache.dir
 /workspaces/ollama/build/CMakeFiles/edit_cache.dir
 /workspaces/ollama/build/CMakeFiles/ollama_llama_server.dir
+=======
+<<<<<<< HEAD
+B:/New/ollama/build/CMakeFiles/ollama_llama_server.dir
+B:/New/ollama/build/CMakeFiles/INSTALL.dir
+B:/New/ollama/build/CMakeFiles/ALL_BUILD.dir
+B:/New/ollama/build/CMakeFiles/ZERO_CHECK.dir
+=======
+/workspaces/ollama/build/CMakeFiles/install/strip.dir
+/workspaces/ollama/build/CMakeFiles/install/local.dir
+/workspaces/ollama/build/CMakeFiles/install.dir
+/workspaces/ollama/build/CMakeFiles/list_install_components.dir
+/workspaces/ollama/build/CMakeFiles/rebuild_cache.dir
+/workspaces/ollama/build/CMakeFiles/edit_cache.dir
+/workspaces/ollama/build/CMakeFiles/ollama_llama_server.dir
+>>>>>>> 0b01490f7a487eae06890c5eabcd2270e32605a5
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289

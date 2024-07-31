@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 .vscode
 ollama
 app
@@ -7,3 +8,32 @@ llm/llama.cpp
 .env
 .cache
 test_data
+=======
+**/__pycache__
+**/.venv
+**/.classpath
+**/.dockerignore
+**/.env
+**/.git
+**/.gitignore
+**/.project
+**/.settings
+**/.toolstarget
+**/.vs
+**/.vscode
+**/*.*proj.user
+**/*.dbmdl
+**/*.jfm
+**/bin
+**/charts
+**/docker-compose*
+**/compose*
+**/Dockerfile*
+**/node_modules
+**/npm-debug.log
+**/obj
+**/secrets.dev.yaml
+**/values.dev.yaml
+LICENSE
+README.md
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289

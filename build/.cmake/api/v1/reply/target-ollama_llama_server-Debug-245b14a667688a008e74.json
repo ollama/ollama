@@ -1,3 +1,270 @@
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD:build/.cmake/api/v1/reply/target-ollama_llama_server-Release-98e42029c3dcf9ac253e.json
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+{
+	"artifacts" : 
+	[
+		{
+<<<<<<< HEAD
+			"path" : "ollama_llama_server"
+=======
+			"path" : "Release/ollama_llama_server.exe"
+		},
+		{
+			"path" : "Release/ollama_llama_server.pdb"
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+		}
+	],
+	"backtrace" : 1,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_executable",
+			"install",
+<<<<<<< HEAD
+=======
+			"target_link_libraries",
+			"TARGET_LINK_LIBRARIES",
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+			"target_compile_definitions",
+			"include_directories"
+		],
+		"files" : 
+		[
+			"CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 5,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 6,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+<<<<<<< HEAD
+				"line" : 7,
+=======
+				"line" : 10,
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+				"parent" : 0
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+<<<<<<< HEAD
+=======
+				"line" : 12,
+				"parent" : 0
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 7,
+				"parent" : 0
+			},
+			{
+				"command" : 5,
+				"file" : 0,
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+				"line" : 4,
+				"parent" : 0
+			}
+		]
+	},
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+<<<<<<< HEAD
+					"fragment" : "-g  "
+=======
+					"fragment" : "/DWIN32 /D_WINDOWS /W3 /GR /EHsc /MD /O2 /Ob2 /DNDEBUG"
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+				}
+			],
+			"defines" : 
+			[
+				{
+<<<<<<< HEAD
+					"backtrace" : 3,
+=======
+					"backtrace" : 5,
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+					"define" : "SERVER_VERBOSE=1"
+				}
+			],
+			"includes" : 
+			[
+				{
+<<<<<<< HEAD
+					"backtrace" : 4,
+					"path" : "/workspaces/ollama/llm/ext_server"
+=======
+					"backtrace" : 6,
+					"path" : "B:/New/ollama/llm/ext_server"
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+				}
+			],
+			"language" : "CXX",
+			"sourceIndexes" : 
+			[
+				0
+			]
+		}
+	],
+<<<<<<< HEAD
+=======
+	"dependencies" : 
+	[
+		{
+			"id" : "ZERO_CHECK::@6890427a1f51a3e7e1df"
+		}
+	],
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+	"id" : "ollama_llama_server::@6890427a1f51a3e7e1df",
+	"install" : 
+	{
+		"destinations" : 
+		[
+			{
+				"backtrace" : 2,
+				"path" : "bin"
+			}
+		],
+		"prefix" : 
+		{
+<<<<<<< HEAD
+			"path" : "/usr/local"
+=======
+			"path" : "C:/Program Files (x86)/Project"
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+		}
+	},
+	"link" : 
+	{
+		"commandFragments" : 
+		[
+			{
+<<<<<<< HEAD
+				"fragment" : "-g",
+				"role" : "flags"
+			},
+			{
+				"fragment" : "-rdynamic",
+				"role" : "flags"
+			},
+			{
+				"fragment" : "-lcommon",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "-lllava",
+=======
+				"fragment" : "/DWIN32 /D_WINDOWS /W3 /GR /EHsc /MD /O2 /Ob2 /DNDEBUG",
+				"role" : "flags"
+			},
+			{
+				"fragment" : "/machine:X86 /INCREMENTAL:NO /subsystem:console",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "common.lib",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "llava.lib",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 4,
+				"fragment" : "ws2_32.lib",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib",
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+				"role" : "libraries"
+			}
+		],
+		"language" : "CXX"
+	},
+	"name" : "ollama_llama_server",
+<<<<<<< HEAD
+	"nameOnDisk" : "ollama_llama_server",
+=======
+	"nameOnDisk" : "ollama_llama_server.exe",
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
+	"paths" : 
+	{
+		"build" : ".",
+		"source" : "."
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "Source Files",
+			"sourceIndexes" : 
+			[
+				0
+			]
+		},
+		{
+			"name" : "Header Files",
+			"sourceIndexes" : 
+			[
+				1,
+				2,
+				3
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "server.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"path" : "utils.hpp",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"path" : "json.hpp",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"path" : "httplib.h",
+			"sourceGroupIndex" : 1
+		}
+	],
+	"type" : "EXECUTABLE"
+}
+<<<<<<< HEAD
+=======
+=======
 {
 	"artifacts" : 
 	[
@@ -170,3 +437,5 @@
 	],
 	"type" : "EXECUTABLE"
 }
+>>>>>>> 0b01490f7a487eae06890c5eabcd2270e32605a5:build/.cmake/api/v1/reply/target-ollama_llama_server-Debug-245b14a667688a008e74.json
+>>>>>>> 73e3b128c2a287e5cf76ba2f9fcda3086476a289
