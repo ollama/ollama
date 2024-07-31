@@ -261,6 +261,26 @@ func TestExecuteWithMessages(t *testing.T) {
 Hello friend![/INST] Hello human![INST] What is your name?[/INST] `,
 		},
 		{
+			"mistral assistant",
+			[]template{
+				{"no response", `[INST] {{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `
+{{- range $i, $m := .Messages }}
+{{- if eq .Role "user" }}[INST] {{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}{{ end }}
+{{- end }}`},
+			},
+			Values{
+				Messages: []api.Message{
+					{Role: "user", Content: "Hello friend!"},
+					{Role: "assistant", Content: "Hello human!"},
+					{Role: "user", Content: "What is your name?"},
+					{Role: "assistant", Content: "My name is Ollama and I"},
+				},
+			},
+			`[INST] Hello friend![/INST] Hello human![INST] What is your name?[/INST] My name is Ollama and I`,
+		},
+		{
 			"chatml",
 			[]template{
 				// this does not have a "no response" test because it's impossible to render the same output
@@ -355,6 +375,41 @@ Answer: `,
 						t.Errorf("mismatch (-got +want):\n%s", diff)
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestExecuteWithSuffix(t *testing.T) {
+	tmpl, err := Parse(`{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
+{{- else }}{{ .Prompt }}
+{{- end }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		values Values
+		expect string
+	}{
+		{
+			"message", Values{Messages: []api.Message{{Role: "user", Content: "hello"}}}, "hello",
+		},
+		{
+			"prompt suffix", Values{Prompt: "def add(", Suffix: "return x"}, "<PRE> def add( <SUF>return x <MID>",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			var b bytes.Buffer
+			if err := tmpl.Execute(&b, tt.values); err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(b.String(), tt.expect); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
 			}
 		})
 	}

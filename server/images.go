@@ -34,17 +34,28 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-var errCapabilityCompletion = errors.New("completion")
+var (
+	errCapabilities         = errors.New("does not support")
+	errCapabilityCompletion = errors.New("completion")
+	errCapabilityTools      = errors.New("tools")
+	errCapabilityInsert     = errors.New("insert")
+)
 
 type Capability string
 
-const CapabilityCompletion = Capability("completion")
+const (
+	CapabilityCompletion = Capability("completion")
+	CapabilityTools      = Capability("tools")
+	CapabilityInsert     = Capability("insert")
+)
 
 type registryOptions struct {
 	Insecure bool
 	Username string
 	Password string
 	Token    string
+
+	CheckRedirect func(req *http.Request, via []*http.Request) error
 }
 
 type Model struct {
@@ -88,6 +99,15 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
 				errs = append(errs, errCapabilityCompletion)
 			}
+		case CapabilityTools:
+			if !slices.Contains(m.Template.Vars(), "tools") {
+				errs = append(errs, errCapabilityTools)
+			}
+		case CapabilityInsert:
+			vars := m.Template.Vars()
+			if !slices.Contains(vars, "suffix") {
+				errs = append(errs, errCapabilityInsert)
+			}
 		default:
 			slog.Error("unknown capability", "capability", cap)
 			return fmt.Errorf("unknown capability: %s", cap)
@@ -95,7 +115,7 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 	}
 
 	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("missing capabilities: %w", errors.Join(errs...))
+		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
 	return nil
@@ -474,6 +494,12 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				layers = append(layers, baseLayer.Layer)
 			}
 		case "license", "template", "system":
+			if c.Name == "template" {
+				if _, err := template.Parse(c.Args); err != nil {
+					return fmt.Errorf("%w: %s", errBadTemplate, err)
+				}
+			}
+
 			if c.Name != "license" {
 				// replace
 				layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
@@ -1107,7 +1133,9 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{
+		CheckRedirect: regOpts.CheckRedirect,
+	}).Do(req)
 	if err != nil {
 		return nil, err
 	}
