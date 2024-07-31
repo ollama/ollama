@@ -362,9 +362,24 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	opts.MultiModal = slices.Contains(info.Details.Families, "clip")
 	opts.ParentModel = info.Details.ParentModel
-	opts.Messages = append(opts.Messages, info.Messages...)
 
 	if interactive {
+		if err := loadModel(cmd, &opts); err != nil {
+			return err
+		}
+
+		for _, msg := range info.Messages {
+			switch msg.Role {
+			case "user":
+				fmt.Printf(">>> %s\n", msg.Content)
+			case "assistant":
+				state := &displayResponseState{}
+				displayResponse(msg.Content, opts.WordWrap, state)
+				fmt.Println()
+				fmt.Println()
+			}
+		}
+
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
