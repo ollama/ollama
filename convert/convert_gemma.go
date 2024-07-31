@@ -26,7 +26,6 @@ var _ Converter = (*gemma)(nil)
 func (p *gemma) KV(t *Tokenizer) llm.KV {
 	kv := p.Parameters.KV(t)
 	kv["general.architecture"] = "gemma"
-	kv["general.name"] = "gemma"
 	kv["gemma.context_length"] = p.MaxPositionEmbeddings
 	kv["gemma.embedding_length"] = p.HiddenSize
 	kv["gemma.block_count"] = p.HiddenLayers
