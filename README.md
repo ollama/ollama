@@ -299,6 +299,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio)
 - [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
 - [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
+- [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 
 ### Terminal
 
