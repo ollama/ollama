@@ -28,7 +28,7 @@ TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 
 {{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
 
-{{ .Response }}<|eot_id|>"""    
+{{ .Response }}<|eot_id|>"""
 `
 
 	reader := strings.NewReader(input)
@@ -61,7 +61,7 @@ TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
 
 {{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
 
-{{ .Response }}<|eot_id|>   """    
+{{ .Response }}<|eot_id|>   """
 `
 
 	reader := strings.NewReader(input)
@@ -440,7 +440,8 @@ func TestParseFileParameters(t *testing.T) {
 		"num_gpu 1":                    {"num_gpu", "1"},
 		"main_gpu 1":                   {"main_gpu", "1"},
 		"low_vram true":                {"low_vram", "true"},
-		"f16_kv true":                  {"f16_kv", "true"},
+		"cache_type_k f16":             {"cache_type_k", "f16"},
+		"cache_type_v f16":             {"cache_type_v", "f16"},
 		"logits_all true":              {"logits_all", "true"},
 		"vocab_only true":              {"vocab_only", "true"},
 		"use_mmap true":                {"use_mmap", "true"},
