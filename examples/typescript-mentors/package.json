@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {
   "scripts": {
     "charactergen": "tsx character-generator.ts", 
@@ -13,3 +14,20 @@
     "typescript": "^5.3.3"
   }
 }
+=======
+{
+  "scripts": {
+    "charactergen": "tsx character-generator.ts",
+    "start": "tsx mentors.ts"
+  },
+  "dependencies": {
+    "fs": "^0.0.1-security",
+    "ollama-node": "^0.0.3",
+    "path": "^0.12.7"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.0",
+    "typescript": "^5.6.0-dev.20240702"
+  }
+}
+>>>>>>> 0b01490f7a487eae06890c5eabcd2270e32605a5

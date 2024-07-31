@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 package gpu
 
 import (
@@ -19,3 +20,21 @@ func GetCPUVariant() string {
 	// else LCD
 	return ""
 }
+=======
+package gpu
+
+import (
+	"golang.org/x/sys/cpu"
+)
+
+func GetCPUCapability() CPUCapability {
+	if cpu.X86.HasAVX2 {
+		return CPUCapabilityAVX2
+	}
+	if cpu.X86.HasAVX {
+		return CPUCapabilityAVX
+	}
+	// else LCD
+	return CPUCapabilityNone
+}
+>>>>>>> 0b01490f7a487eae06890c5eabcd2270e32605a5

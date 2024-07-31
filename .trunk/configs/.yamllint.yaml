@@ -1,0 +1,7 @@
+rules:
+  quoted-strings:
+    required: only-when-needed
+    extra-allowed: ['{|}']
+  key-duplicates: {}
+  octal-values:
+    forbid-implicit-octal: true

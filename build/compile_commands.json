@@ -1,0 +1,7 @@
+[
+{
+  "directory": "/workspaces/ollama/build",
+  "command": "/usr/bin/clang++  -DSERVER_VERBOSE=1 -I/workspaces/ollama/llm/ext_server  -g   -o CMakeFiles/ollama_llama_server.dir/server.o -c /workspaces/ollama/llm/ext_server/server.cpp",
+  "file": "/workspaces/ollama/llm/ext_server/server.cpp"
+}
+]
