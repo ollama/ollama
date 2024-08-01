@@ -1360,6 +1360,9 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_LLM_LIBRARY"],
+				envVars["OLLAMA_TLS_SERVER_KEY"],
+				envVars["OLLAMA_TLS_SERVER_CERT"],
+				envVars["OLLAMA_TLS_CLIENT_CA"],
 			})
 		default:
 			appendEnvDocs(cmd, envs)
