@@ -58,7 +58,7 @@ var defaultModelsPerGPU = 3
 // we'll back off down to 1 to try to get it to fit
 var defaultParallel = 4
 
-var ErrMaxQueue = fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
+var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 
 func InitScheduler(ctx context.Context) *Scheduler {
 	maxQueue := envconfig.MaxQueue()

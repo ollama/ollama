@@ -273,7 +273,7 @@ jobs:
         if: ${{ startsWith(matrix.os, 'macos-') }}
       - uses: golangci/golangci-lint-action@v6
         with:
-          args: --timeout 8m0s -v ${{ startsWith(matrix.os, 'windows-') && '' || '--disable gofmt --disable goimports' }}
+          args: --timeout 8m0s -v
   test:
     strategy:
       matrix:

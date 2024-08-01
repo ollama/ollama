@@ -2,9 +2,9 @@ package server
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -88,7 +88,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 
 	m.filepath = p
 	m.fi = fi
-	m.digest = fmt.Sprintf("%x", sha256sum.Sum(nil))
+	m.digest = hex.EncodeToString(sha256sum.Sum(nil))
 
 	return &m, nil
 }

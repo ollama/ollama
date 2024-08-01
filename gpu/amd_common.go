@@ -3,7 +3,7 @@
 package gpu
 
 import (
-	"fmt"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -95,5 +95,5 @@ func commonAMDValidateLibDir() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
+	return "", errors.New("no suitable rocm found, falling back to CPU")
 }

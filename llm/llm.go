@@ -11,8 +11,9 @@ package llm
 // #include <stdlib.h>
 // #include "llama.h"
 import "C"
+
 import (
-	"fmt"
+	"errors"
 	"unsafe"
 )
 
@@ -33,7 +34,7 @@ func Quantize(infile, outfile string, ftype fileType) error {
 	params.ftype = ftype.Value()
 
 	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
-		return fmt.Errorf("failed to quantize model. This model architecture may not be supported, or you may need to upgrade Ollama to the latest version")
+		return errors.New("failed to quantize model. This model architecture may not be supported, or you may need to upgrade Ollama to the latest version")
 	}
 
 	return nil

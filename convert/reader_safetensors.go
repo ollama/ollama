@@ -111,8 +111,9 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 			return 0, err
 		}
 
-		for _, b := range u16s {
-			f32s = append(f32s, float16.Frombits(b).Float32())
+		f32s = make([]float32, len(u16s))
+		for i := range u16s {
+			f32s[i] = float16.Frombits(u16s[i]).Float32()
 		}
 
 	case "BF16":

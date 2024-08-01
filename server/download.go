@@ -28,8 +28,10 @@ import (
 
 const maxRetries = 6
 
-var errMaxRetriesExceeded = errors.New("max retries exceeded")
-var errPartStalled = errors.New("part stalled")
+var (
+	errMaxRetriesExceeded = errors.New("max retries exceeded")
+	errPartStalled        = errors.New("part stalled")
+)
 
 var blobDownloadManager sync.Map
 

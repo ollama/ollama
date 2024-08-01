@@ -162,7 +162,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	fn := func(resp api.ProgressResponse) error {
 		// fmt.Print(".")
 		if !stallTimer.Reset(stallDuration) {
-			return fmt.Errorf("stall was detected, aborting status reporting")
+			return errors.New("stall was detected, aborting status reporting")
 		}
 		return nil
 	}
@@ -180,7 +180,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 	select {
 	case <-stallTimer.C:
-		return fmt.Errorf("download stalled")
+		return errors.New("download stalled")
 	case <-done:
 		return pullError
 	}
@@ -243,7 +243,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 		// fmt.Print(".")
 		buf.Write([]byte(response.Response))
 		if !stallTimer.Reset(streamTimeout) {
-			return fmt.Errorf("stall was detected while streaming response, aborting")
+			return errors.New("stall was detected while streaming response, aborting")
 		}
 		return nil
 	}

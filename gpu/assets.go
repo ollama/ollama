@@ -42,7 +42,7 @@ func PayloadsDir() (string, error) {
 				return "", fmt.Errorf("failed to generate tmp dir: %w", err)
 			}
 		} else {
-			err = os.MkdirAll(tmpDir, 0755)
+			err = os.MkdirAll(tmpDir, 0o755)
 			if err != nil {
 				return "", fmt.Errorf("failed to generate tmp dir %s: %w", tmpDir, err)
 			}
@@ -54,7 +54,7 @@ func PayloadsDir() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if _, err := pidFile.Write([]byte(fmt.Sprint(os.Getpid()))); err != nil {
+		if _, err := pidFile.Write([]byte(strconv.Itoa(os.Getpid()))); err != nil {
 			return "", err
 		}
 

@@ -333,7 +333,6 @@ func Test_Routes(t *testing.T) {
 					t.Fatalf("expected content type application/json; charset=utf-8, got %s", contentType)
 				}
 				_, err := io.ReadAll(resp.Body)
-
 				if err != nil {
 					t.Fatal(err)
 				}

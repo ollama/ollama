@@ -7,9 +7,9 @@ package gpu
 #cgo windows LDFLAGS: -lpthread
 
 #include "gpu_info.h"
-
 */
 import "C"
+
 import (
 	"fmt"
 	"log/slog"
@@ -70,7 +70,6 @@ var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
 // Note: gpuMutex must already be held
 func initCudaHandles() *cudaHandles {
-
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
 
 	cHandles := &cudaHandles{}
@@ -211,14 +210,16 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			slog.Warn("error looking up system memory", "error", err)
 		}
-		cpus = []CPUInfo{CPUInfo{
-			GpuInfo: GpuInfo{
-				memInfo: mem,
-				Library: "cpu",
-				Variant: cpuCapability,
-				ID:      "0",
+		cpus = []CPUInfo{
+			{
+				GpuInfo: GpuInfo{
+					memInfo: mem,
+					Library: "cpu",
+					Variant: cpuCapability,
+					ID:      "0",
+				},
 			},
-		}}
+		}
 
 		// Fallback to CPU mode if we're lacking required vector extensions on x86
 		if cpuCapability < GPURunnerCPUCapability && runtime.GOARCH == "amd64" {

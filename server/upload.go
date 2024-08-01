@@ -12,13 +12,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
-	"golang.org/x/sync/errgroup"
 )
 
 var blobUploadManager sync.Map
@@ -212,7 +214,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *registryOptions) error {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/octet-stream")
-	headers.Set("Content-Length", fmt.Sprintf("%d", part.Size))
+	headers.Set("Content-Length", strconv.FormatInt(part.Size, 10))
 
 	if method == http.MethodPatch {
 		headers.Set("X-Redirect-Uploads", "1")

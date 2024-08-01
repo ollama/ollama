@@ -1160,7 +1160,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if err := startApp(cmd.Context(), client); err != nil {
-			return fmt.Errorf("could not connect to ollama app, is it running?")
+			return errors.New("could not connect to ollama app, is it running?")
 		}
 	}
 	return nil

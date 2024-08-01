@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -192,7 +192,7 @@ func TestUseMmapFormatParams(t *testing.T) {
 				"use_mmap": {"foo"},
 			},
 			exp: nil,
-			err: fmt.Errorf("invalid bool value [foo]"),
+			err: errors.New("invalid bool value [foo]"),
 		},
 	}
 
