@@ -61,9 +61,9 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 
 	// Determine if the user has already pre-selected which GPUs to look at, then ignore the others
 	var visibleDevices []string
-	hipVD := envconfig.HipVisibleDevices   // zero based index only
-	rocrVD := envconfig.RocrVisibleDevices // zero based index or UUID, but consumer cards seem to not support UUID
-	gpuDO := envconfig.GpuDeviceOrdinal    // zero based index
+	hipVD := envconfig.HipVisibleDevices()   // zero based index only
+	rocrVD := envconfig.RocrVisibleDevices() // zero based index or UUID, but consumer cards seem to not support UUID
+	gpuDO := envconfig.GpuDeviceOrdinal()    // zero based index
 	switch {
 	// TODO is this priorty order right?
 	case hipVD != "":
@@ -76,7 +76,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 		visibleDevices = strings.Split(gpuDO, ",")
 	}
 
-	gfxOverride := envconfig.HsaOverrideGfxVersion
+	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	var supported []string
 	libDir := ""
 

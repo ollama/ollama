@@ -164,9 +164,15 @@ type ListCompletion struct {
 }
 
 type EmbeddingList struct {
-	Object string      `json:"object"`
-	Data   []Embedding `json:"data"`
-	Model  string      `json:"model"`
+	Object string         `json:"object"`
+	Data   []Embedding    `json:"data"`
+	Model  string         `json:"model"`
+	Usage  EmbeddingUsage `json:"usage,omitempty"`
+}
+
+type EmbeddingUsage struct {
+	PromptTokens int `json:"prompt_tokens"`
+	TotalTokens  int `json:"total_tokens"`
 }
 
 func NewError(code int, message string) ErrorResponse {
@@ -332,6 +338,10 @@ func toEmbeddingList(model string, r api.EmbedResponse) EmbeddingList {
 			Object: "list",
 			Data:   data,
 			Model:  model,
+			Usage: EmbeddingUsage{
+				PromptTokens: r.PromptEvalCount,
+				TotalTokens:  r.PromptEvalCount,
+			},
 		}
 	}
 
