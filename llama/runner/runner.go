@@ -68,7 +68,7 @@ func (s *Sequence) prompt() bool {
 }
 
 func (s *Server) NewSequence(prompt string, numPredict int, stop []string, params *llama.SamplingParams, embedding bool) *Sequence {
-	tokens, err := s.lc.Model().Tokenize(prompt, embedding, true)
+	tokens, err := s.lc.Model().Tokenize(prompt, true, true)
 	if err != nil {
 		panic(err)
 	}
