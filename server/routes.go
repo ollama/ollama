@@ -188,21 +188,22 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		var b bytes.Buffer
-		if err := tmpl.Execute(&b, values); err != nil {
+		var t bytes.Buffer
+		if err := tmpl.Execute(&t, values); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
 		if req.Context != nil {
-			s, err := r.Detokenize(c.Request.Context(), req.Context)
+			prev, err := r.Detokenize(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-
-			b.WriteString(s)
+			b.WriteString(prev)
 		}
 
+		b.WriteString(t.String());
 		prompt = b.String()
 	}
 
@@ -242,12 +243,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
 				if !req.Raw {
-					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
+					tokens, err := r.Tokenize(c.Request.Context(), prompt + sb.String())
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
-					res.Context = tokens
+					res.Context = tokens[:]
 				}
 			}
 
