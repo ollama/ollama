@@ -98,6 +98,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 		return a < b
 	})
 	cpuCount := 0
+	gpuID := -1
 	for _, match := range matches {
 		slog.Debug("evaluating amdgpu node " + match)
 		fp, err := os.Open(match)
@@ -194,12 +195,12 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			continue
 		}
 
-		// CPUs are always first in the list
-		gpuID := nodeID - cpuCount
+		// Found an accessible GPU, increment GPU counter (assuming that non-accessible GPUs are cgroup-ed out of ROCr views)
+		gpuID++
 
 		// Shouldn't happen, but just in case...
-		if gpuID < 0 {
-			slog.Error("unexpected amdgpu sysfs data resulted in negative GPU ID, please set OLLAMA_DEBUG=1 and report an issue")
+		if gpuID > nodeID - cpuCount {
+			slog.Error("unexpected amdgpu sysfs data resulted in too large GPU ID, please set OLLAMA_DEBUG=1 and report an issue")
 			return nil
 		}
 
