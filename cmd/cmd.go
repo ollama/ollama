@@ -124,6 +124,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	bars := make(map[string]*progress.Bar)
+	var quantizeSpin *progress.Spinner
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
 			spinner.Stop()
@@ -136,6 +137,15 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			bar.Set(resp.Completed)
+		} else if resp.Type == "quantize" {
+			spinner.Stop()
+	
+			if quantizeSpin != nil {
+				quantizeSpin.SetMessage(resp.Status)
+			} else {
+				quantizeSpin = progress.NewSpinner(resp.Status)
+				p.Add("quantize", quantizeSpin)
+			}	
 		} else if status != resp.Status {
 			spinner.Stop()
 
