@@ -714,8 +714,7 @@ func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{})
 		// save (i.e. delete from the deleteMap) any files used in other manifests
 		manifest, _, err := GetManifest(fmp)
 		if err != nil {
-			//nolint:nilerr
-			return nil
+			return err
 		}
 
 		for _, layer := range manifest.Layers {
@@ -782,7 +781,8 @@ func PruneLayers() error {
 
 	err = deleteUnusedLayers(nil, deleteMap)
 	if err != nil {
-		return err
+		slog.Info(fmt.Sprintf("couldn't remove unused layers: %v", err))
+		return nil
 	}
 
 	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
@@ -971,7 +971,8 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		fn(api.ProgressResponse{Status: "removing any unused layers"})
 		err = deleteUnusedLayers(nil, deleteMap)
 		if err != nil {
-			return err
+			slog.Info(fmt.Sprintf("couldn't remove unused layers: %v", err))
+			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
 
