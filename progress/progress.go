@@ -59,7 +59,7 @@ func (p *Progress) StopAndClear() bool {
 	stopped := p.stop()
 	if stopped {
 		// clear all progress lines
-		for i := 0; i < p.pos; i++ {
+		for i := range p.pos {
 			if i > 0 {
 				fmt.Fprint(p.w, "\033[A")
 			}
@@ -77,7 +77,7 @@ func (p *Progress) Add(key string, state State) {
 	p.states = append(p.states, state)
 }
 
-func (p *Progress) render() error {
+func (p *Progress) render() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -85,7 +85,7 @@ func (p *Progress) render() error {
 	defer fmt.Fprint(p.w, "\033[?25h")
 
 	// clear already rendered progress lines
-	for i := 0; i < p.pos; i++ {
+	for i := range p.pos {
 		if i > 0 {
 			fmt.Fprint(p.w, "\033[A")
 		}
@@ -101,8 +101,6 @@ func (p *Progress) render() error {
 	}
 
 	p.pos = len(p.states)
-
-	return nil
 }
 
 func (p *Progress) start() {

@@ -12,15 +12,17 @@ So let's figure out how we can use **LangChain** with Ollama to ask our question
 
 Let's start by asking a simple question that we can get an answer to from the **Llama2** model using **Ollama**. First, we need to install the **LangChain** package:
 
-`pip install langchain`
+`pip install langchain_community`
 
 Then we can create a model and ask the question:
 
 ```python
-from langchain.llms import Ollama
-ollama = Ollama(base_url='http://localhost:11434',
-model="llama2")
-print(ollama("why is the sky blue"))
+from langchain_community.llms import Ollama
+ollama = Ollama(
+    base_url='http://localhost:11434',
+    model="llama3"
+)
+print(ollama.invoke("why is the sky blue"))
 ```
 
 Notice that we are defining the model and the base URL for Ollama.
@@ -42,12 +44,13 @@ text_splitter=RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
 all_splits = text_splitter.split_documents(data)
 ```
 
-It's split up, but we have to find the relevant splits and then submit those to the model. We can do this by creating embeddings and storing them in a vector database. For now, we don't have embeddings built in to Ollama, though we will be adding that soon, so for now, we can use the GPT4All library for that. We will use ChromaDB in this example for a vector database. `pip install GPT4All chromadb`
-
+It's split up, but we have to find the relevant splits and then submit those to the model. We can do this by creating embeddings and storing them in a vector database. We can use Ollama directly to instantiate an embedding model. We will use ChromaDB in this example for a vector database. `pip install chromadb`
+We also need to pull embedding model: `ollama pull nomic-embed-text`
 ```python
-from langchain.embeddings import GPT4AllEmbeddings
+from langchain.embeddings import OllamaEmbeddings
 from langchain.vectorstores import Chroma
-vectorstore = Chroma.from_documents(documents=all_splits, embedding=GPT4AllEmbeddings())
+oembed = OllamaEmbeddings(base_url="http://localhost:11434", model="nomic-embed-text")
+vectorstore = Chroma.from_documents(documents=all_splits, embedding=oembed)
 ```
 
 Now let's ask a question from the document. **Who was Neleus, and who is in his family?** Neleus is a character in the Odyssey, and the answer can be found in our text.
@@ -65,7 +68,8 @@ The next thing is to send the question and the relevant parts of the docs to the
 ```python
 from langchain.chains import RetrievalQA
 qachain=RetrievalQA.from_chain_type(ollama, retriever=vectorstore.as_retriever())
-qachain({"query": question})
+res = qachain.invoke({"query": question})
+print(res['result'])
 ```
 
 The answer received from this chain was:

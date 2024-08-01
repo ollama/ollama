@@ -2,16 +2,16 @@ import requests
 import json
 import random
 
-model = "llama2"
+model = "llama3.1"
 template = {
-  "firstName": "", 
-  "lastName": "", 
+  "firstName": "",
+  "lastName": "",
   "address": {
-    "street": "", 
-    "city": "", 
-    "state": "", 
+    "street": "",
+    "city": "",
+    "state": "",
     "zipCode": ""
-  }, 
+  },
   "phoneNumber": ""
 }
 

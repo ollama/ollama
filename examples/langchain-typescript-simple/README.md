@@ -2,20 +2,22 @@
 
 This example is a basic "hello world" of using LangChain with Ollama using Node.js and Typescript.
 
-## Setup
+## Running the Example
 
-```shell
-npm install
-```
+1. Install the prerequisites:
 
-## Run
+   ```bash
+   npm install
+   ```
 
-```shell
-ts-node main.ts
-```
+2. Ensure the `mistral` model is available:
 
-Running this example will print the response for "hello":
+   ```bash
+   ollama pull mistral
+   ```
 
-```plaintext
-Hello! It's nice to meet you. hopefully you are having a great day! Is there something I can help you with or would you like to chat?
-```
+3. Run the example:
+
+   ```bash
+   npm start
+   ```

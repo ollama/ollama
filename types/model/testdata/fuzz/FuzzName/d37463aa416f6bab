@@ -1,0 +1,2 @@
+go test fuzz v1
+string("00@")

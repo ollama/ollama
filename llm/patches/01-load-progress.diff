@@ -1,0 +1,31 @@
+diff --git a/common/common.cpp b/common/common.cpp
+index 2c05a4d4..927f0e3d 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -2093,6 +2093,8 @@ struct llama_model_params llama_model_params_from_gpt_params(const gpt_params &
+     mparams.use_mmap        = params.use_mmap;
+     mparams.use_mlock       = params.use_mlock;
+     mparams.check_tensors   = params.check_tensors;
++    mparams.progress_callback = params.progress_callback;
++    mparams.progress_callback_user_data = params.progress_callback_user_data;
+     if (params.kv_overrides.empty()) {
+         mparams.kv_overrides = NULL;
+     } else {
+diff --git a/common/common.h b/common/common.h
+index 65c0ef81..ebca2c77 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -184,6 +184,13 @@ struct gpt_params {
+     std::string mmproj = "";        // path to multimodal projector
+     std::vector<std::string> image; // path to image file(s)
+ 
++    // Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
++    // If the provided progress_callback returns true, model loading continues.
++    // If it returns false, model loading is immediately aborted.
++    llama_progress_callback progress_callback = NULL;
++    // context pointer passed to the progress callback
++    void * progress_callback_user_data;
++
+     // embedding
+     bool embedding         = false; // get only sentence embedding
+     int32_t embd_normalize = 2;     // normalisation for embendings (-1=none, 0=max absolute int16, 1=taxicab, 2=euclidean, >2=p-norm)

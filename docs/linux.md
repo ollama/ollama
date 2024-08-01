@@ -3,10 +3,20 @@
 ## Install
 
 Install Ollama running this one-liner:
+
 >
+
 ```bash
-curl https://ollama.ai/install.sh | sh
+curl -fsSL https://ollama.com/install.sh | sh
 ```
+
+## AMD Radeon GPU support
+
+While AMD has contributed the `amdgpu` driver upstream to the official linux
+kernel source, the version is older and may not support all ROCm features. We
+recommend you install the latest driver from
+https://www.amd.com/en/support/linux-drivers for best support of your Radeon
+GPU.
 
 ## Manual install
 
@@ -15,7 +25,7 @@ curl https://ollama.ai/install.sh | sh
 Ollama is distributed as a self-contained binary. Download it to a directory in your PATH:
 
 ```bash
-sudo curl -L https://ollama.ai/download/ollama-linux-amd64 -o /usr/bin/ollama
+sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
 sudo chmod +x /usr/bin/ollama
 ```
 
@@ -62,6 +72,11 @@ Verify that the drivers are installed by running the following command, which sh
 nvidia-smi
 ```
 
+### Install ROCm (optional - for Radeon GPUs)
+[Download and Install](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/tutorial/quick-start.html)
+
+Make sure to install ROCm v6
+
 ### Start Ollama
 
 Start Ollama using `systemd`:
@@ -75,14 +90,24 @@ sudo systemctl start ollama
 Update ollama by running the install script again:
 
 ```bash
-curl https://ollama.ai/install.sh | sh
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
 Or by downloading the ollama binary:
 
 ```bash
-sudo curl -L https://ollama.ai/download/ollama-linux-amd64 -o /usr/bin/ollama
+sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
 sudo chmod +x /usr/bin/ollama
+```
+
+## Installing specific versions
+
+Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases). 
+
+For example:
+
+```
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.1.32 sh
 ```
 
 ## Viewing logs
@@ -90,7 +115,7 @@ sudo chmod +x /usr/bin/ollama
 To view logs of Ollama running as a startup service, run:
 
 ```bash
-journalctl -u ollama
+journalctl -e -u ollama
 ```
 
 ## Uninstall
@@ -109,8 +134,10 @@ Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr
 sudo rm $(which ollama)
 ```
 
-Remove the downloaded models and Ollama service user:
+Remove the downloaded models and Ollama service user and group:
+
 ```bash
 sudo rm -r /usr/share/ollama
 sudo userdel ollama
+sudo groupdel ollama
 ```

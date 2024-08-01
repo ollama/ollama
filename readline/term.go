@@ -8,7 +8,7 @@ import (
 
 type Termios syscall.Termios
 
-func SetRawMode(fd int) (*Termios, error) {
+func SetRawMode(fd uintptr) (*Termios, error) {
 	termios, err := getTermios(fd)
 	if err != nil {
 		return nil, err
@@ -25,12 +25,13 @@ func SetRawMode(fd int) (*Termios, error) {
 	return termios, setTermios(fd, &newTermios)
 }
 
-func UnsetRawMode(fd int, termios *Termios) error {
-	return setTermios(fd, termios)
+func UnsetRawMode(fd uintptr, termios any) error {
+	t := termios.(*Termios)
+	return setTermios(fd, t)
 }
 
 // IsTerminal returns true if the given file descriptor is a terminal.
-func IsTerminal(fd int) bool {
+func IsTerminal(fd uintptr) bool {
 	_, err := getTermios(fd)
 	return err == nil
 }

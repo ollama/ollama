@@ -32,4 +32,14 @@ func TestHumanTime(t *testing.T) {
 		v := now.Add(800 * time.Millisecond)
 		assertEqual(t, HumanTime(v, ""), "Less than a second from now")
 	})
+
+	t.Run("time way in the future", func(t *testing.T) {
+		v := now.Add(24 * time.Hour * 365 * 200)
+		assertEqual(t, HumanTime(v, ""), "Forever")
+	})
+
+	t.Run("time way in the future lowercase", func(t *testing.T) {
+		v := now.Add(24 * time.Hour * 365 * 200)
+		assertEqual(t, HumanTimeLower(v, ""), "forever")
+	})
 }
