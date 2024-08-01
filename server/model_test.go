@@ -149,7 +149,6 @@ func TestParseFromFileFromLayer(t *testing.T) {
 
 	file, err := os.CreateTemp(tempModels+"/blobs", digest)
 	if err != nil {
-		fmt.Printf("failed to open file: %v", err)
 		t.Fatalf("failed to open file: %v", err)
 	}
 	defer file.Close()
