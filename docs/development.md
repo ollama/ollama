@@ -150,6 +150,11 @@ In addition to the common Windows development tools described above, follow thes
 
 - **Enable OneAPI development environment:** Type "oneAPI" in the search bar, then open the `Intel oneAPI command prompt for Intel 64 for Visual Studio 2022` App.
 
+- **Switch to powershell:** Using following command
+  ```powershell
+  powershell
+  ```
+
 - Verify available GPUs using ```sycl-ls``` command.
 ```
 Output example:
