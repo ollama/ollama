@@ -139,55 +139,27 @@ In addition to the common Windows development tools described above, install CUD
 
 - [NVIDIA CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
 
-#### Windows OneAPI (INTEL) - EXPERIMENTAL
-1. Install GPU driver
+#### Windows OneAPI (INTEL) - Experimental
+In addition to the common Windows development tools described above, follow these steps for OneAPI build on Windows.
 
-    - Intel GPU drivers instructions guide and download page can be found here: [Get intel GPU Drivers](https://www.intel.com/content/www/us/en/products/docs/discrete-gpus/arc/software/drivers.html).
+- **GPU Drivers:** Intel GPU drivers instructions guide and download page can be found here: [Get intel GPU Drivers](https://www.intel.com/content/www/us/en/products/docs/discrete-gpus/arc/software/drivers.html).
 
-2. Install Visual Studio
+- **Visual Studio / Visual Studio Build Tools:** If you already have a recent version of Microsoft Visual Studio or Visual Studio Build Tools, you can skip this step. Otherwise, please refer to the official download page for [Microsoft Visual Studio](https://visualstudio.microsoft.com/). For OneAPI, only the Visual Studio Build Tool installation is required.
 
-    - If you already have a recent version of Microsoft Visual Studio, you can skip this step. Otherwise, please refer to the official download page for [Microsoft Visual Studio](https://visualstudio.microsoft.com/).
+- **Intel® oneAPI Base toolkit:** The base toolkit can be obtained from the official [Intel® oneAPI Base Toolkit 2024.1](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit.html) page. Keep the default installation values unchanged, notably the installation path *(`C:\Program Files (x86)\Intel\oneAPI` by default)*.
 
-3. Install Intel® oneAPI Base toolkit
+- **Enable OneAPI development environment:** Type "oneAPI" in the search bar, then open the `Intel oneAPI command prompt for Intel 64 for Visual Studio 2022` App.
 
-    - The base toolkit can be obtained from the official [Intel® oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit.html) page.
-
-    - Please follow the instructions for downloading and installing the Toolkit for Windows, and preferably keep the default installation values unchanged, notably the installation path *(`C:\Program Files (x86)\Intel\oneAPI` by default)*.
-
-    - Following guidelines/code snippets assume the default installation values. Otherwise, please make sure the necessary changes are reflected where applicable.
-
-4. Enable oneAPI running environment:
-
-    - Type "oneAPI" in the search bar, then open the `Intel oneAPI command prompt for Intel 64 for Visual Studio 2022` App.
-
-    - On the command prompt, enable the runtime environment with the following:
+- Verify available GPUs using ```sycl-ls``` command.
 ```
-"C:\Program Files (x86)\Intel\oneAPI\setvars.bat" intel64
-```
-
-5. Verify installation
-
-    - In the oneAPI command line, run the following to print the available SYCL devices:
-
-```
-sycl-ls
-```
-
-    - There should be one or more *level-zero* GPU devices displayed as **[ext_oneapi_level_zero:gpu]**. Below is example of such output detecting an *intel Iris Xe* GPU as a Level-zero SYCL device:
-
-    - Output (example):
-```
+Output example:
 [opencl:acc:0] Intel(R) FPGA Emulation Platform for OpenCL(TM), Intel(R) FPGA Emulation Device OpenCL 1.2  [2023.16.10.0.17_160000]
 [opencl:cpu:1] Intel(R) OpenCL, 11th Gen Intel(R) Core(TM) i7-1185G7 @ 3.00GHz OpenCL 3.0 (Build 0) [2023.16.10.0.17_160000]
 [opencl:gpu:2] Intel(R) OpenCL Graphics, Intel(R) Iris(R) Xe Graphics OpenCL 3.0 NEO  [31.0.101.5186]
 [ext_oneapi_level_zero:gpu:0] Intel(R) Level-Zero, Intel(R) Iris(R) Xe Graphics 1.3 [1.3.28044]
 ```
-6. Then, install the required tools:
 
-    - Go version 1.22 or higher
-    - The `ThreadJob` Powershell module: `Install-Module -Name ThreadJob -Scope CurrentUser`
-
-7. Finally, build the `ollama` binary:
+- Finally, build the `ollama` binary using:
 
 ```powershell
 $env:CGO_ENABLED="1"
