@@ -86,7 +86,7 @@ curl http://localhost:11434/v1/chat/completions \
 
 curl http://localhost:11434/v1/models
 
-curl https://api.openai.com/v1/models/llama3
+curl http://localhost:11434/v1/models/llama3
 
 curl http://localhost:11434/v1/embeddings \
     -H "Content-Type: application/json" \
