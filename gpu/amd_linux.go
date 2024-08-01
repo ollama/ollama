@@ -179,6 +179,12 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			// Other metrics that may help us understand relative performance between multiple GPUs
 		}
 
+		err = scanner.Err()
+		if err != nil {
+			slog.Debug("failed to read sysfs node", "file", match, "error", err)
+			continue
+		}
+
 		// Note: while ./mem_banks/*/used_memory exists, it doesn't appear to take other VRAM consumers
 		// into consideration, so we instead map the device over to the DRM driver sysfs nodes which
 		// do reliably report VRAM usage.
