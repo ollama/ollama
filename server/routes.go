@@ -187,9 +187,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
 		}
 
+		var s string
 		var b bytes.Buffer
-		var t bytes.Buffer
-		if err := tmpl.Execute(&t, values); err != nil {
+		if err := tmpl.Execute(&b, values); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -200,11 +200,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			b.WriteString(prev)
+			s += prev
 		}
 
-		b.WriteString(t.String());
-		prompt = b.String()
+		s += b.String();
+		prompt = s
 	}
 
 	slog.Debug("generate request", "prompt", prompt, "images", images)
