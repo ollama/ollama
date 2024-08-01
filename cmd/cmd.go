@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -291,16 +292,16 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 	status := "transferring model data 0%"
 	spinner.SetMessage(status)
 
-	ticker := time.NewTicker(60 * time.Millisecond)
 	done := make(chan struct{})
 	defer close(done)
 
 	go func() {
+		ticker := time.NewTicker(60 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", int(100*pw.n/fileSize)))
+				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", int(100*pw.n.Load()/fileSize)))
 			case <-done:
 				spinner.SetMessage("transferring model data 100%")
 				return
@@ -316,11 +317,11 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 }
 
 type progressWriter struct {
-	n int64
+	n atomic.Int64	
 }
 
 func (w *progressWriter) Write(p []byte) (n int, err error) {
-	w.n += int64(len(p))
+	w.n.Add(int64(len(p)))
 	return len(p), nil
 }
 
