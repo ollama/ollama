@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"os"
@@ -114,8 +113,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	require.NoError(t, err)
 	defer f.Close()
 
-	gguf := llm.NewGGUFV3(binary.LittleEndian)
-	err = gguf.Encode(f, llm.KV{
+	require.NoError(t, llm.WriteGGUF(f, llm.KV{
 		"general.architecture":          "llama",
 		"general.name":                  "name",
 		"llama.context_length":          uint32(32),
@@ -129,7 +127,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	}, []llm.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-	})
+	}))
 	require.NoError(t, err)
 
 	fname := f.Name()
