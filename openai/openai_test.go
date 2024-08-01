@@ -14,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/assert"
 )
 
 const prefix = `data:image/jpeg;base64,`
@@ -378,96 +377,140 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 	}
 }
 
-func TestMiddlewareResponses(t *testing.T) {
+func TestListMiddleware(t *testing.T) {
 	type testCase struct {
-		Name     string
-		Method   string
-		Path     string
-		TestPath string
-		Handler  func() gin.HandlerFunc
-		Endpoint func(c *gin.Context)
-		Expected func(t *testing.T, resp *httptest.ResponseRecorder)
+		name     string
+		endpoint func(c *gin.Context)
+		resp     string
 	}
 
 	testCases := []testCase{
 		{
-			Name:     "list handler",
-			Method:   http.MethodGet,
-			Path:     "/api/tags",
-			TestPath: "/api/tags",
-			Handler:  ListMiddleware,
-			Endpoint: func(c *gin.Context) {
+			name: "list handler",
+			endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.ListResponse{
 					Models: []api.ListModelResponse{
 						{
-							Name: "Test Model",
+							Name:       "test-model",
+							ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
 						},
 					},
 				})
 			},
-			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				var listResp ListCompletion
-				if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-					t.Fatal(err)
-				}
-
-				if listResp.Object != "list" {
-					t.Fatalf("expected list, got %s", listResp.Object)
-				}
-
-				if len(listResp.Data) != 1 {
-					t.Fatalf("expected 1, got %d", len(listResp.Data))
-				}
-
-				if listResp.Data[0].Id != "Test Model" {
-					t.Fatalf("expected Test Model, got %s", listResp.Data[0].Id)
-				}
-			},
+			resp: `{
+				"object": "list",
+				"data": [
+					{
+						"id": "test-model",
+						"object": "model",
+						"created": 1686935002,
+						"owned_by": "library"
+					}
+				]
+			}`,
 		},
 		{
-			Name:     "retrieve model",
-			Method:   http.MethodGet,
-			Path:     "/api/show/:model",
-			TestPath: "/api/show/test-model",
-			Handler:  RetrieveMiddleware,
-			Endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ShowResponse{
-					ModifiedAt: time.Date(2024, 6, 17, 13, 45, 0, 0, time.UTC),
-				})
+			name: "list handler empty output",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ListResponse{})
 			},
-			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				var retrieveResp Model
-				if err := json.NewDecoder(resp.Body).Decode(&retrieveResp); err != nil {
-					t.Fatal(err)
-				}
-
-				if retrieveResp.Object != "model" {
-					t.Fatalf("Expected object to be model, got %s", retrieveResp.Object)
-				}
-
-				if retrieveResp.Id != "test-model" {
-					t.Fatalf("Expected id to be test-model, got %s", retrieveResp.Id)
-				}
-			},
+			resp: `{
+				"object": "list",
+				"data": null
+			}`,
 		},
 	}
 
 	gin.SetMode(gin.TestMode)
-	router := gin.New()
 
 	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			router = gin.New()
-			router.Use(tc.Handler())
-			router.Handle(tc.Method, tc.Path, tc.Endpoint)
-			req, _ := http.NewRequest(tc.Method, tc.TestPath, nil)
+		router := gin.New()
+		router.Use(ListMiddleware())
+		router.Handle(http.MethodGet, "/api/tags", tc.endpoint)
+		req, _ := http.NewRequest(http.MethodGet, "/api/tags", nil)
 
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
 
-			assert.Equal(t, http.StatusOK, resp.Code)
+		var expected, actual map[string]any
+		err := json.Unmarshal([]byte(tc.resp), &expected)
+		if err != nil {
+			t.Fatalf("failed to unmarshal expected response: %v", err)
+		}
 
-			tc.Expected(t, resp)
-		})
+		err = json.Unmarshal(resp.Body.Bytes(), &actual)
+		if err != nil {
+			t.Fatalf("failed to unmarshal actual response: %v", err)
+		}
+
+		if !reflect.DeepEqual(expected, actual) {
+			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
+		}
+	}
+}
+
+func TestRetrieveMiddleware(t *testing.T) {
+	type testCase struct {
+		name     string
+		endpoint func(c *gin.Context)
+		resp     string
+	}
+
+	testCases := []testCase{
+		{
+			name: "retrieve handler",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ShowResponse{
+					ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
+				})
+			},
+			resp: `{
+				"id":"test-model",
+				"object":"model",
+				"created":1686935002,
+				"owned_by":"library"}
+			`,
+		},
+		{
+			name: "retrieve handler error forwarding",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "model not found"})
+			},
+			resp: `{
+				"error": {
+				  "code": null,
+				  "message": "model not found",
+				  "param": null,
+				  "type": "api_error"
+				}
+			}`,
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range testCases {
+		router := gin.New()
+		router.Use(RetrieveMiddleware())
+		router.Handle(http.MethodGet, "/api/show/:model", tc.endpoint)
+		req, _ := http.NewRequest(http.MethodGet, "/api/show/test-model", nil)
+
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		var expected, actual map[string]any
+		err := json.Unmarshal([]byte(tc.resp), &expected)
+		if err != nil {
+			t.Fatalf("failed to unmarshal expected response: %v", err)
+		}
+
+		err = json.Unmarshal(resp.Body.Bytes(), &actual)
+		if err != nil {
+			t.Fatalf("failed to unmarshal actual response: %v", err)
+		}
+
+		if !reflect.DeepEqual(expected, actual) {
+			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
+		}
 	}
 }
