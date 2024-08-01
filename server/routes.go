@@ -247,7 +247,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
-					res.Context = append(req.Context, tokens...)
+					res.Context = tokens
 				}
 			}
 
