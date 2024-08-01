@@ -41,7 +41,7 @@ func TestEstimateGPULayers(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{" "},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, tensors)
+	}, tensors,  func(api.ProgressResponse){})
 	require.NoError(t, err)
 
 	ggml, err := LoadModel(f.Name(), 0)

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -49,8 +50,8 @@ func (Parameters) specialTokenTypes() []string {
 	}
 }
 
-func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
-	return llm.WriteGGUF(ws, kv, ts)
+func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor, fn func(api.ProgressResponse)) error {
+	return llm.WriteGGUF(ws, kv, ts, fn)
 }
 
 type NameFunc func(string) string
@@ -65,7 +66,7 @@ type Converter interface {
 	tensorName(string) string
 	// specialTokenTypes returns any special token types the model uses
 	specialTokenTypes() []string
-	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
+	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor, func(api.ProgressResponse)) error
 }
 
 type moreParser interface {
@@ -76,7 +77,7 @@ type moreParser interface {
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func Convert(fsys fs.FS, ws io.WriteSeeker) error {
+func Convert(fsys fs.FS, ws io.WriteSeeker, fn func(api.ProgressResponse)) error {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
 		return err
@@ -140,5 +141,11 @@ func Convert(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts, conv.tensorName))
+	tensors := conv.Tensors(ts, conv.tensorName)
+	fn(api.ProgressResponse{
+		Status: fmt.Sprintf("converting model 0/%d",len(tensors)),
+		Type:"convert",
+	})
+	return conv.writeFile(ws, conv.KV(t), tensors, fn)
 }
+

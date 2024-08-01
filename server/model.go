@@ -98,7 +98,11 @@ func parseFromZipFile(_ context.Context, f *os.File, digest string, fn func(api.
 	}
 	defer os.RemoveAll(p)
 
-	fn(api.ProgressResponse{Status: "converting model"})
+	fn(api.ProgressResponse{
+		Status: "converting model",
+		Type: "convert",
+	})
+
 	// TODO(mxyng): this should write directly into a layer
 	// e.g. NewLayer(arch.Reader(), "application/vnd.ollama.image.model")
 	t, err := os.CreateTemp(p, "fp16")
@@ -108,8 +112,7 @@ func parseFromZipFile(_ context.Context, f *os.File, digest string, fn func(api.
 	defer t.Close()
 	defer os.Remove(t.Name())
 
-	fn(api.ProgressResponse{Status: "converting model"})
-	if err := convert.Convert(convert.NewZipReader(r, p, 32<<20), t); err != nil {
+	if err := convert.Convert(convert.NewZipReader(r, p, 32<<20), t, fn); err != nil {
 		return nil, err
 	}
 
@@ -138,6 +141,7 @@ func parseFromZipFile(_ context.Context, f *os.File, digest string, fn func(api.
 	intermediateBlobs[digest] = layer.Digest
 	return detectChatTemplate(layers)
 }
+
 
 func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
 	sr := io.NewSectionReader(file, 0, 512)

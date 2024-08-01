@@ -56,6 +56,10 @@ func (s *Spinner) String() string {
 	return sb.String()
 }
 
+func (s *Spinner) SetMessage(message string) {
+	s.message = message
+}
+
 func (s *Spinner) start() {
 	s.ticker = time.NewTicker(100 * time.Millisecond)
 	for range s.ticker.C {

@@ -371,6 +371,7 @@ type ProgressResponse struct {
 	Digest    string `json:"digest,omitempty"`
 	Total     int64  `json:"total,omitempty"`
 	Completed int64  `json:"completed,omitempty"`
+	Type 	  string `json:"type,omitempty"`
 }
 
 // PushRequest is the request passed to [Client.Push].

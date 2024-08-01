@@ -14,6 +14,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"golang.org/x/exp/maps"
 )
@@ -27,7 +28,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, llm.Tensors) {
 	}
 	defer f.Close()
 
-	if err := Convert(fsys, f); err != nil {
+	if err := Convert(fsys, f,  func(api.ProgressResponse){}); err != nil {
 		t.Fatal(err)
 	}
 
