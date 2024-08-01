@@ -188,19 +188,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		var b bytes.Buffer
-		if err := tmpl.Execute(&b, values); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
 		if req.Context != nil {
 			s, err := r.Detokenize(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-
 			b.WriteString(s)
+		}
+
+		if err := tmpl.Execute(&b, values); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
 
 		prompt = b.String()
@@ -247,7 +246,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
-					res.Context = append(req.Context, tokens...)
+					res.Context = tokens
 				}
 			}
 
