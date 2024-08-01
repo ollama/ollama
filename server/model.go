@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"text/template/parse"
 
@@ -231,7 +232,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 
 	var offset int64
 	for offset < stat.Size() {
-		ggml, n, err := llm.DecodeGGML(file, 0)
+		ggml, n, err := llm.DecodeGGML(file, -1)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
@@ -245,7 +246,39 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 			mediatype = "application/vnd.ollama.image.projector"
 		}
 
-		layer, err := NewLayer(io.NewSectionReader(file, offset, n), mediatype)
+		var reader io.Reader = io.NewSectionReader(file, offset, n)
+		if !sort.IsSorted(ggml.Tensors()) {
+			// create a new Tensors containing Tensors that have a writeTo
+			var tensors []*llm.Tensor
+			ggmlTensors := ggml.Tensors()
+
+			for _, tensor := range ggmlTensors.Items {
+				shape := make([]uint64, len(tensor.Shape))
+				for i := range len(tensor.Shape) {
+					shape[i] = tensor.Shape[len(tensor.Shape)-i-1]
+				}
+
+				tensors = append(tensors, &llm.Tensor{
+					Name:  tensor.Name,
+					Kind:  tensor.Kind,
+					Shape: shape,
+
+					WriterTo: &llm.TensorWriter{
+						Reader: io.NewSectionReader(file, offset+ggmlTensors.Offset+int64(tensor.Offset), int64(tensor.Size())),
+					},
+				})
+			}
+
+			reader = &llm.GGUFWriter{
+				KV: ggml.KV(),
+				Tensors: llm.Tensors{
+					Items:  tensors,
+					Offset: ggmlTensors.Offset,
+				},
+			}
+		}
+
+		layer, err := NewLayer(reader, mediatype)
 		if err != nil {
 			return nil, err
 		}

@@ -36,6 +36,7 @@ type ggla struct {
 
 	kv      KV
 	tensors []*Tensor
+	offset  int64
 }
 
 func newGGLA(container *containerGGLA) *ggla {
@@ -50,7 +51,10 @@ func (llm *ggla) KV() KV {
 }
 
 func (llm *ggla) Tensors() Tensors {
-	return llm.tensors
+	return Tensors{
+		Items:  llm.tensors,
+		Offset: llm.offset,
+	}
 }
 
 func (llm *ggla) decode(rs io.ReadSeeker) (retErr error) {
