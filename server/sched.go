@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,11 +61,12 @@ var defaultParallel = 4
 var ErrMaxQueue = fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
 
 func InitScheduler(ctx context.Context) *Scheduler {
+	maxQueue := envconfig.MaxQueue()
 	sched := &Scheduler{
-		pendingReqCh:  make(chan *LlmRequest, envconfig.MaxQueuedRequests),
-		finishedReqCh: make(chan *LlmRequest, envconfig.MaxQueuedRequests),
-		expiredCh:     make(chan *runnerRef, envconfig.MaxQueuedRequests),
-		unloadedCh:    make(chan interface{}, envconfig.MaxQueuedRequests),
+		pendingReqCh:  make(chan *LlmRequest, maxQueue),
+		finishedReqCh: make(chan *LlmRequest, maxQueue),
+		expiredCh:     make(chan *runnerRef, maxQueue),
+		unloadedCh:    make(chan interface{}, maxQueue),
 		loaded:        make(map[string]*runnerRef),
 		newServerFn:   llm.NewLlamaServer,
 		getGpuFn:      gpu.GetGPUInfo,
@@ -126,7 +129,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
-			numParallel := envconfig.NumParallel
+			numParallel := int(envconfig.NumParallel())
 			// TODO (jmorganca): multimodal models don't support parallel yet
 			// see https://github.com/ollama/ollama/issues/4165
 			if len(pending.model.ProjectorPaths) > 0 && numParallel != 1 {
@@ -148,7 +151,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
-				} else if envconfig.MaxRunners > 0 && loadedCount >= envconfig.MaxRunners {
+				} else if envconfig.MaxRunners() > 0 && loadedCount >= int(envconfig.MaxRunners()) {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
 					runnerToExpire = s.findRunnerToUnload()
 				} else {
@@ -161,7 +164,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						gpus = s.getGpuFn()
 					}
 
-					if envconfig.MaxRunners <= 0 {
+					if envconfig.MaxRunners() <= 0 {
 						// No user specified MaxRunners, so figure out what automatic setting to use
 						// If all GPUs have reliable free memory reporting, defaultModelsPerGPU * the number of GPUs
 						// if any GPU has unreliable free memory reporting, 1x the number of GPUs
@@ -173,11 +176,13 @@ func (s *Scheduler) processPending(ctx context.Context) {
 							}
 						}
 						if allReliable {
-							envconfig.MaxRunners = defaultModelsPerGPU * len(gpus)
+							// HACK
+							os.Setenv("OLLAMA_MAX_LOADED_MODELS", strconv.Itoa(defaultModelsPerGPU*len(gpus)))
 							slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", envconfig.MaxRunners, "gpu_count", len(gpus))
 						} else {
+							// HACK
+							os.Setenv("OLLAMA_MAX_LOADED_MODELS", strconv.Itoa(len(gpus)))
 							slog.Info("one or more GPUs detected that are unable to accurately report free memory - disabling default concurrency")
-							envconfig.MaxRunners = len(gpus)
 						}
 					}
 
@@ -404,7 +409,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, 
 	if numParallel < 1 {
 		numParallel = 1
 	}
-	sessionDuration := envconfig.KeepAlive
+	sessionDuration := envconfig.KeepAlive()
 	if req.sessionDuration != nil {
 		sessionDuration = req.sessionDuration.Duration
 	}
@@ -699,7 +704,7 @@ func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoL
 		// First attempt to fit the model into a single GPU
 		for _, p := range numParallelToTry {
 			req.opts.NumCtx = req.origNumCtx * p
-			if !envconfig.SchedSpread {
+			if !envconfig.SchedSpread() {
 				for _, g := range sgl {
 					if ok, estimatedVRAM = llm.PredictServerFit([]gpu.GpuInfo{g}, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
 						slog.Info("new model will fit in available VRAM in single GPU, loading", "model", req.model.ModelPath, "gpu", g.ID, "parallel", p, "available", g.FreeMemory, "required", format.HumanBytes2(estimatedVRAM))

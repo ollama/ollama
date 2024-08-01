@@ -81,112 +81,43 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 	return layers, nil
 }
 
-func extractFromZipFile(p string, file *os.File, fn func(api.ProgressResponse)) error {
-	stat, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	r, err := zip.NewReader(file, stat.Size())
-	if err != nil {
-		return err
-	}
-
-	fn(api.ProgressResponse{Status: "unpacking model metadata"})
-	for _, f := range r.File {
-		if !filepath.IsLocal(f.Name) {
-			return fmt.Errorf("%w: %s", zip.ErrInsecurePath, f.Name)
-		}
-
-		n := filepath.Join(p, f.Name)
-		if err := os.MkdirAll(filepath.Dir(n), 0o750); err != nil {
-			return err
-		}
-
-		// TODO(mxyng): this should not write out all files to disk
-		outfile, err := os.Create(n)
-		if err != nil {
-			return err
-		}
-		defer outfile.Close()
-
-		infile, err := f.Open()
-		if err != nil {
-			return err
-		}
-		defer infile.Close()
-
-		if _, err = io.Copy(outfile, infile); err != nil {
-			return err
-		}
-
-		if err := outfile.Close(); err != nil {
-			return err
-		}
-
-		if err := infile.Close(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func parseFromZipFile(_ context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
-	tempDir, err := os.MkdirTemp(filepath.Dir(file.Name()), "")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(tempDir)
-
-	if err := extractFromZipFile(tempDir, file, fn); err != nil {
-		return nil, err
-	}
-
-	mf, err := convert.GetModelFormat(tempDir)
+func parseFromZipFile(_ context.Context, f *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
+	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 
-	params, err := mf.GetParams(tempDir)
+	r, err := zip.NewReader(f, fi.Size())
 	if err != nil {
 		return nil, err
 	}
 
-	mArch, err := mf.GetModelArch("", tempDir, params)
+	p, err := os.MkdirTemp(filepath.Dir(f.Name()), "")
 	if err != nil {
 		return nil, err
 	}
-
-	fn(api.ProgressResponse{Status: "processing tensors"})
-	if err := mArch.GetTensors(); err != nil {
-		return nil, err
-	}
-
-	if err := mArch.LoadVocab(); err != nil {
-		return nil, err
-	}
+	defer os.RemoveAll(p)
 
 	fn(api.ProgressResponse{Status: "converting model"})
-
 	// TODO(mxyng): this should write directly into a layer
 	// e.g. NewLayer(arch.Reader(), "application/vnd.ollama.image.model")
-	temp, err := os.CreateTemp(tempDir, "fp16")
+	t, err := os.CreateTemp(p, "fp16")
 	if err != nil {
 		return nil, err
 	}
-	defer temp.Close()
-	defer os.Remove(temp.Name())
+	defer t.Close()
+	defer os.Remove(t.Name())
 
-	if err = mArch.WriteGGUF(temp); err != nil {
+	fn(api.ProgressResponse{Status: "converting model"})
+	if err := convert.Convert(convert.NewZipReader(r, p, 32<<20), t); err != nil {
 		return nil, err
 	}
 
-	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+	if _, err := t.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 
-	layer, err := NewLayer(temp, "application/vnd.ollama.image.model")
+	layer, err := NewLayer(t, "application/vnd.ollama.image.model")
 	if err != nil {
 		return nil, err
 	}

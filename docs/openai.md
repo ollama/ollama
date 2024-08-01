@@ -28,6 +28,8 @@ chat_completion = client.chat.completions.create(
     model='llama3',
 )
 
+list_completion = client.models.list()
+
 model = client.models.retrieve("llama3")
 ```
 
@@ -47,6 +49,8 @@ const chatCompletion = await openai.chat.completions.create({
   messages: [{ role: 'user', content: 'Say this is a test' }],
   model: 'llama3',
 })
+
+const listCompletion = await openai.models.list()
 
 const model = await openai.models.retrieve("llama3");
 ```
@@ -69,6 +73,8 @@ curl http://localhost:11434/v1/chat/completions \
             }
         ]
     }'
+
+curl http://localhost:11434/v1/models
 
 curl https://api.openai.com/v1/models/llama3
 ```
@@ -107,6 +113,13 @@ curl https://api.openai.com/v1/models/llama3
 - [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
+
+### `/v1/models`
+
+#### Notes
+
+- `created` corresponds to when the model was last modified
+- `owned_by` corresponds to the ollama username, defaulting to `"library"`
 
 ### `/v1/models/{model}`
 
