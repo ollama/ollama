@@ -10,10 +10,13 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
@@ -50,6 +53,12 @@ type Sequence struct {
 	embeddingOnly bool
 
 	doneReason string
+
+	// Metrics
+	t_start_process_prompt time.Time
+	t_start_genereration   time.Time
+	n_decoded              int
+	n_prompt_tokens        int
 }
 
 // prompt returns true if the prompt is still being processed
@@ -59,7 +68,7 @@ func (s *Sequence) prompt() bool {
 }
 
 func (s *Server) NewSequence(prompt string, numPredict int, stop []string, params *llama.SamplingParams, embedding bool) *Sequence {
-	tokens, err := s.lc.Model().Tokenize(prompt, embedding, true)
+	tokens, err := s.lc.Model().Tokenize(prompt, true, true)
 	if err != nil {
 		panic(err)
 	}
@@ -80,12 +89,13 @@ func (s *Server) NewSequence(prompt string, numPredict int, stop []string, param
 	}
 
 	return &Sequence{
-		tokens:        tokens,
-		responses:     make(chan string, 1),
-		embedding:     make(chan []float32, 1),
-		samplingCtx:   sc,
-		embeddingOnly: embedding,
-		stop:          stop,
+		tokens:          tokens,
+		n_prompt_tokens: len(tokens),
+		responses:       make(chan string, 1),
+		embedding:       make(chan []float32, 1),
+		samplingCtx:     sc,
+		embeddingOnly:   embedding,
+		stop:            stop,
 	}
 }
 
@@ -138,7 +148,7 @@ func (s *Server) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			slog.Info("Processing batch", "seqs", len(s.seqs))
+			slog.Debug("Processing batch", "seqs", len(s.seqs))
 			s.mu.Lock()
 			for s.allNil() {
 				s.cond.Wait() // Wait until an item is added
@@ -161,6 +171,10 @@ func (s *Server) run(ctx context.Context) {
 					continue
 				}
 
+				if seq.t_start_process_prompt.IsZero() {
+					seq.t_start_process_prompt = time.Now()
+				}
+
 				for j, t := range seq.tokens {
 					// todo: make this n_batch
 					if j > s.batchSize {
@@ -174,6 +188,7 @@ func (s *Server) run(ctx context.Context) {
 
 			err := s.lc.Decode(batch)
 			if err != nil {
+				slog.Error("failed to decode batch", "error", err)
 				panic("Failed to decode")
 			}
 
@@ -207,11 +222,15 @@ func (s *Server) run(ctx context.Context) {
 				token := seq.samplingCtx.Sample(s.lc, nil, seq.iBatch)
 
 				seq.samplingCtx.Accept(s.lc, token, true)
+				seq.n_decoded += 1
+				if seq.n_decoded == 1 {
+					seq.t_start_genereration = time.Now()
+				}
 				piece := s.model.TokenToPiece(token)
 
 				seq.numPredicted++
 
-				slog.Info("sampled", "piece", piece)
+				slog.Debug("sampled", "piece", piece)
 
 				// if it's an end of sequence token, break
 				// TODO: just end this sequence
@@ -278,8 +297,26 @@ type CompletionRequest struct {
 	api.Options
 }
 
+type Timings struct {
+	PredictedN  int     `json:"predicted_n"`
+	PredictedMS float64 `json:"predicted_ms"`
+	PromptN     int     `json:"prompt_n"`
+	PromptMS    float64 `json:"prompt_ms"`
+}
+
 type CompletionResponse struct {
-	Token string `json:"token"`
+	Content string `json:"content"`
+	Stop    bool   `json:"stop"`
+
+	Model        string  `json:"model,omitempty"`
+	Prompt       string  `json:"prompt,omitempty"`
+	StoppedLimit bool    `json:"stopped_limit,omitempty"`
+	PredictedN   int     `json:"predicted_n,omitempty"`
+	PredictedMS  float64 `json:"predicted_ms,omitempty"`
+	PromptN      int     `json:"prompt_n,omitempty"`
+	PromptMS     float64 `json:"prompt_ms,omitempty"`
+
+	Timings Timings `json:"timings"`
 }
 
 func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
@@ -326,9 +363,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	// stream the response
-	for token := range seq.responses {
+	for content := range seq.responses {
 		if err := json.NewEncoder(w).Encode(&CompletionResponse{
-			Token: token,
+			Content: content,
 		}); err != nil {
 			log.Println("Failed to encode result:", err)
 			return
@@ -342,6 +379,28 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 		flusher.Flush()
 	}
+
+	// Send the stop
+	if err := json.NewEncoder(w).Encode(&CompletionResponse{
+		Stop: true,
+		Timings: Timings{
+			PromptN:     seq.n_prompt_tokens,
+			PromptMS:    float64(seq.t_start_genereration.Sub(seq.t_start_process_prompt).Milliseconds()),
+			PredictedN:  seq.n_decoded,
+			PredictedMS: float64(time.Since(seq.t_start_genereration).Milliseconds()),
+		},
+	}); err != nil {
+		log.Println("Failed to encode result:", err)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	flusher.Flush()
 }
 
 type EmbeddingRequest struct {
@@ -407,7 +466,6 @@ type HealthResponse struct {
 // TODO (jmorganca): is it safe to do this concurrently with decoding?
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
 	if err := json.NewEncoder(w).Encode(&HealthResponse{
 		Status:   s.status,
 		Progress: s.progress,
@@ -419,17 +477,63 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	mpath := flag.String("model", "", "Path to model binary file")
-	ppath := flag.String("projector", "", "Path to projector binary file")
+	ppath := flag.String("mmproj", "", "Path to projector binary file")
 	parallel := flag.Int("parallel", 1, "Number of sequences to handle simultaneously")
 	batchSize := flag.Int("batch-size", 512, "Batch size")
-	nGpuLayers := flag.Int("num-gpu", 0, "Number of layers to offload to GPU")
+	nGpuLayers := flag.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
 	mainGpu := flag.Int("main-gpu", 0, "Main GPU")
-	flashAttention := flag.Bool("flash-attention", false, "Enable flash attention")
-	numCtx := flag.Int("num-ctx", 2048, "Context (or KV cache) size")
+	flashAttention := flag.Bool("flash-attn", false, "Enable flash attention")
+	numCtx := flag.Int("ctx-size", 2048, "Context (or KV cache) size")
 	lpath := flag.String("lora", "", "Path to lora layer file")
 	port := flag.Int("port", 8080, "Port to expose the server on")
 	threads := flag.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
+
+	// TODO not yet implemented but wired to keep the parsing aligned
+	embedding := flag.Bool("embedding", false, "enable embedding vector output (default: disabled)")
+	logDisable := flag.Bool("log-disable", false, "disables logging to a file")
+	verbose := flag.Bool("verbose", false, "verbose output (default: disabled)")
+	f32 := flag.Bool("memory-f32", false, "use f32 instead of f16 for memory key+value (default: disabled) not recommended: doubles context memory required and no measurable increase in quality")
+	noMmap := flag.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
+	mlock := flag.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
+	tensorSplit := flag.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
+
 	flag.Parse()
+	level := slog.LevelInfo
+	if *verbose {
+		level = slog.LevelDebug
+	}
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level:     level,
+		AddSource: true,
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.SourceKey {
+				source := attr.Value.Any().(*slog.Source)
+				source.File = filepath.Base(source.File)
+			}
+			return attr
+		},
+	})
+	slog.SetDefault(slog.New(handler))
+
+	// TODO actually implement...
+	if *embedding {
+		slog.Warn("embeddings not yet support")
+	}
+	if *logDisable {
+		slog.Info("ignoring --log-disable")
+	}
+	if *f32 {
+		slog.Warn("memory-f32 not yet supported")
+	}
+	if *noMmap {
+		slog.Warn("no-mmap not yet supported")
+	}
+	if *mlock {
+		slog.Warn("mlock not yet supported")
+	}
+	if *tensorSplit != "" {
+		slog.Warn("tensor-split not yet implemented")
+	}
 
 	server := &Server{
 		numCtx:    *numCtx,
@@ -442,7 +546,7 @@ func main() {
 	// load the model
 	llama.BackendInit()
 	params := llama.NewModelParams(*nGpuLayers, *mainGpu, func(progress float32) {
-		slog.Info("Loading model", "progress %", math.Round(float64(progress*100)))
+		slog.Debug("Loading model", "progress %", math.Round(float64(progress*100)))
 		server.progress = progress
 	})
 	server.model = llama.LoadModelFromFile(*mpath, params)
@@ -475,7 +579,7 @@ func main() {
 	defer listener.Close()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/embeddings", server.embeddings)
+	mux.HandleFunc("/embedding", server.embeddings)
 	mux.HandleFunc("/completion", server.completion)
 	mux.HandleFunc("/health", server.health)
 
@@ -483,7 +587,7 @@ func main() {
 		Handler: mux,
 	}
 
-	server.status = "ready"
+	server.status = "ok"
 
 	log.Println("Server listening on", addr)
 	if err := httpServer.Serve(listener); err != nil {

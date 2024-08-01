@@ -45,6 +45,8 @@ var (
 	MaxQueuedRequests int
 	// Set via OLLAMA_MODELS in the environment
 	ModelsDir string
+	// Set via OLLAMA_NEW_RUNNERS in the environment
+	NewRunners bool
 	// Set via OLLAMA_NOHISTORY in the environment
 	NoHistory bool
 	// Set via OLLAMA_NOPRUNE in the environment
@@ -88,6 +90,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners, "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueuedRequests, "Maximum number of queued requests"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", ModelsDir, "The path to the models directory"},
+		"OLLAMA_NEW_RUNNERS":       {"OLLAMA_NEW_RUNNERS", NewRunners, "Enable new experimental runners"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory, "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune, "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel, "Maximum number of parallel requests"},
@@ -170,8 +173,8 @@ func LoadConfig() {
 		for _, root := range []string{filepath.Dir(appExe), cwd} {
 			paths = append(paths,
 				root,
-				filepath.Join(root, "windows-"+runtime.GOARCH),
-				filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
+				filepath.Join(root, runtime.GOOS+"-"+runtime.GOARCH),
+				filepath.Join(root, "dist", runtime.GOOS+"-"+runtime.GOARCH),
 			)
 		}
 
@@ -281,6 +284,13 @@ func LoadConfig() {
 	RocrVisibleDevices = clean("ROCR_VISIBLE_DEVICES")
 	GpuDeviceOrdinal = clean("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = clean("HSA_OVERRIDE_GFX_VERSION")
+
+	if nr := clean("OLLAMA_NEW_RUNNERS"); nr != "" {
+		d, err := strconv.ParseBool(nr)
+		if err == nil {
+			NewRunners = d
+		}
+	}
 }
 
 func getModelsDir() (string, error) {

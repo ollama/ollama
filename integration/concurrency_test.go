@@ -40,7 +40,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 		}
 		resp = [2][]string{
 			[]string{"sunlight"},
-			[]string{"england", "english", "massachusetts", "pilgrims", "british"},
+			[]string{"england", "english", "massachusetts", "pilgrims", "british", "festival"},
 		}
 	)
 	var wg sync.WaitGroup
