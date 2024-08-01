@@ -295,6 +295,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		Options:  map[string]interface{}{},
 	}
 
+	quiet, err := cmd.Flags().GetBool("quiet")
+	if err != nil {
+		return err
+	}
+	opts.Spinner = !quiet
+
 	format, err := cmd.Flags().GetString("format")
 	if err != nil {
 		return err
@@ -862,6 +868,7 @@ type runOptions struct {
 	Options     map[string]interface{}
 	MultiModal  bool
 	KeepAlive   *api.Duration
+	Spinner     bool
 }
 
 type displayResponseState struct {
@@ -1000,11 +1007,12 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		return err
 	}
 
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
+	var p *progress.Progress
+	if opts.Spinner {
+		p = progress.NewProgress(os.Stderr)
+		defer p.StopAndClear()
+		p.Add("", progress.NewSpinner(""))
+	}
 
 	var latest api.GenerateResponse
 
@@ -1027,7 +1035,9 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	var state *displayResponseState = &displayResponseState{}
 
 	fn := func(response api.GenerateResponse) error {
-		p.StopAndClear()
+		if p != nil {
+			p.StopAndClear()
+		}
 
 		latest = response
 		content := response.Response
@@ -1267,6 +1277,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().Bool("quiet", false, "Only render the response text without any progress")
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
