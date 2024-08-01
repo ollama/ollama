@@ -184,7 +184,7 @@ func (m *Model) String() string {
 	for _, msg := range m.Messages {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "message",
-			Args: fmt.Sprintf("%s %s", msg.Role, msg.Content),
+			Args: fmt.Sprintf("%s: %s", msg.Role, msg.Content),
 		})
 	}
 
