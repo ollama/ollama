@@ -39,7 +39,7 @@ func TestChatMiddleware(t *testing.T) {
 		name string
 		body string
 		req  api.ChatRequest
-		err  *ErrorResponse
+		err  ErrorResponse
 	}
 
 	var capturedRequest *api.ChatRequest
@@ -161,7 +161,7 @@ func TestChatMiddleware(t *testing.T) {
 					{"role": "user", "content": 2}
 				]
 			}`,
-			err: &ErrorResponse{
+			err: ErrorResponse{
 				Error: Error{
 					Message: "invalid message content type: float64",
 					Type:    "invalid_request_error",
@@ -187,7 +187,7 @@ func TestChatMiddleware(t *testing.T) {
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
 
-			var errResp *ErrorResponse
+			var errResp ErrorResponse
 			if resp.Code != http.StatusOK {
 				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
 					t.Fatal(err)
@@ -197,7 +197,7 @@ func TestChatMiddleware(t *testing.T) {
 				t.Fatal("requests did not match")
 			}
 
-			if errResp != nil && !reflect.DeepEqual(*tc.err, *errResp) {
+			if !reflect.DeepEqual(tc.err, errResp) {
 				t.Fatal("errors did not match")
 			}
 			capturedRequest = nil
@@ -210,7 +210,7 @@ func TestCompletionsMiddleware(t *testing.T) {
 		name string
 		body string
 		req  api.GenerateRequest
-		err  *ErrorResponse
+		err  ErrorResponse
 	}
 
 	var capturedRequest *api.GenerateRequest
@@ -248,7 +248,7 @@ func TestCompletionsMiddleware(t *testing.T) {
 				"stop": [1, 2],
 				"suffix": "suffix"
 			}`,
-			err: &ErrorResponse{
+			err: ErrorResponse{
 				Error: Error{
 					Message: "invalid type for 'stop' field: float64",
 					Type:    "invalid_request_error",
@@ -274,7 +274,7 @@ func TestCompletionsMiddleware(t *testing.T) {
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
 
-			var errResp *ErrorResponse
+			var errResp ErrorResponse
 			if resp.Code != http.StatusOK {
 				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
 					t.Fatal(err)
@@ -285,7 +285,7 @@ func TestCompletionsMiddleware(t *testing.T) {
 				t.Fatal("requests did not match")
 			}
 
-			if errResp != nil && !reflect.DeepEqual(*tc.err, *errResp) {
+			if !reflect.DeepEqual(tc.err, errResp) {
 				t.Fatal("errors did not match")
 			}
 
@@ -299,7 +299,7 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 		name string
 		body string
 		req  api.EmbedRequest
-		err  *ErrorResponse
+		err  ErrorResponse
 	}
 
 	var capturedRequest *api.EmbedRequest
@@ -332,7 +332,7 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 			body: `{
 				"model": "test-model"
 			}`,
-			err: &ErrorResponse{
+			err: ErrorResponse{
 				Error: Error{
 					Message: "invalid input",
 					Type:    "invalid_request_error",
@@ -358,7 +358,7 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
 
-			var errResp *ErrorResponse
+			var errResp ErrorResponse
 			if resp.Code != http.StatusOK {
 				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
 					t.Fatal(err)
@@ -369,7 +369,7 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 				t.Fatal("requests did not match")
 			}
 
-			if errResp != nil && !reflect.DeepEqual(*tc.err, *errResp) {
+			if !reflect.DeepEqual(tc.err, errResp) {
 				t.Fatal("errors did not match")
 			}
 
