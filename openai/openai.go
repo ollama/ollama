@@ -74,6 +74,7 @@ type ChatCompletionRequest struct {
 	Stream           bool            `json:"stream"`
 	MaxTokens        *int            `json:"max_tokens"`
 	Seed             *int            `json:"seed"`
+	NumCtx           *int            `json:"num_ctx"`
 	Stop             any             `json:"stop"`
 	Temperature      *float64        `json:"temperature"`
 	FrequencyPenalty *float64        `json:"frequency_penalty"`
@@ -471,6 +472,10 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["top_p"] = *r.TopP
 	} else {
 		options["top_p"] = 1.0
+	}
+
+	if r.NumCtx != nil {
+		options["num_ctx"] = *r.NumCtx
 	}
 
 	var format string
