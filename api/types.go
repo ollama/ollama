@@ -80,6 +80,8 @@ type GenerateRequest struct {
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
+
+	Audio string `json:"audio,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -448,6 +450,10 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
+}
+
+type WhisperCompletion struct {
+	Text string `json:"text"`
 }
 
 // ModelDetails provides details about a model.
