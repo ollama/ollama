@@ -43,6 +43,12 @@ response = client.chat.completions.create(
         }
     ],
     max_tokens=300,
+)
+
+completion = client.completions.create(
+    model="llama3",
+    prompt="Say this is a test",
+)
 
 list_completion = client.models.list()
 
@@ -50,7 +56,7 @@ model = client.models.retrieve("llama3")
 
 embeddings = client.embeddings.create(
     model="all-minilm",
-    input=["why is the sky blue?", "why is the grass green?"]
+    input=["why is the sky blue?", "why is the grass green?"],
 )
 ```
 
@@ -87,14 +93,19 @@ const response = await openai.chat.completions.create({
     ],
 })
 
+const completion = await openai.completions.create({
+    model: "llama3",
+    prompt: "Say this is a test.",
+})
+
 const listCompletion = await openai.models.list()
 
-const model = await openai.models.retrieve("llama3");
+const model = await openai.models.retrieve("llama3")
 
 const embedding = await openai.embeddings.create({
   model: "all-minilm",
   input: ["why is the sky blue?", "why is the grass green?"],
-});
+})
 ```
 
 ### `curl`
@@ -139,6 +150,13 @@ curl http://localhost:11434/v1/chat/completions \
     ],
     "max_tokens": 300
   }'
+
+curl http://localhost:11434/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "llama3",
+        "prompt": "Say this is a test"
+    }'
 
 curl http://localhost:11434/v1/models
 
@@ -190,6 +208,39 @@ curl http://localhost:11434/v1/embeddings \
 - [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
+
+### `/v1/completions`
+
+#### Supported features
+
+- [x] Completions
+- [x] Streaming
+- [x] JSON mode
+- [x] Reproducible outputs
+- [ ] Logprobs
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `prompt`
+- [x] `frequency_penalty`
+- [x] `presence_penalty`
+- [x] `seed`
+- [x] `stop`
+- [x] `stream`
+- [x] `temperature`
+- [x] `top_p`
+- [x] `max_tokens`
+- [x] `suffix`
+- [ ] `best_of`
+- [ ] `echo`
+- [ ] `logit_bias`
+- [ ] `user`
+- [ ] `n`
+
+#### Notes
+
+- `prompt` currently only accepts a string
 
 ### `/v1/models`
 
