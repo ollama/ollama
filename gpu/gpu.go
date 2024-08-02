@@ -230,8 +230,8 @@ func GetGPUInfo() GpuInfoList {
 
 		// On windows we bundle the nvidia library one level above the runner dir
 		depPath := ""
-		if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
-			depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "cuda")
+		if runtime.GOOS == "windows" && envconfig.RunnersDir() != "" {
+			depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir()), "cuda")
 		}
 
 		// Load ALL libraries
@@ -302,12 +302,12 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		// Intel
-		if envconfig.IntelGpu {
+		if envconfig.IntelGPU() {
 			oHandles = initOneAPIHandles()
 			// On windows we bundle the oneapi library one level above the runner dir
 			depPath = ""
-			if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
-				depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "oneapi")
+			if runtime.GOOS == "windows" && envconfig.RunnersDir() != "" {
+				depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir()), "oneapi")
 			}
 
 			for d := range oHandles.oneapi.num_drivers {
@@ -611,7 +611,7 @@ func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
 }
 
 func getVerboseState() C.uint16_t {
-	if envconfig.Debug {
+	if envconfig.Debug() {
 		return C.uint16_t(1)
 	}
 	return C.uint16_t(0)

@@ -43,6 +43,14 @@ response = client.chat.completions.create(
         }
     ],
     max_tokens=300,
+
+list_completion = client.models.list()
+
+model = client.models.retrieve("llama3")
+
+embeddings = client.embeddings.create(
+    model="all-minilm",
+    input=["why is the sky blue?", "why is the grass green?"]
 )
 ```
 
@@ -78,6 +86,15 @@ const response = await openai.chat.completions.create({
         },
     ],
 })
+
+const listCompletion = await openai.models.list()
+
+const model = await openai.models.retrieve("llama3");
+
+const embedding = await openai.embeddings.create({
+  model: "all-minilm",
+  input: ["why is the sky blue?", "why is the grass green?"],
+});
 ```
 
 ### `curl`
@@ -122,6 +139,17 @@ curl http://localhost:11434/v1/chat/completions \
     ],
     "max_tokens": 300
   }'
+
+curl http://localhost:11434/v1/models
+
+curl http://localhost:11434/v1/models/llama3
+
+curl http://localhost:11434/v1/embeddings \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "all-minilm",
+        "input": ["why is the sky blue?", "why is the grass green?"]
+    }'
 ```
 
 ## Endpoints
@@ -162,6 +190,34 @@ curl http://localhost:11434/v1/chat/completions \
 - [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
+
+### `/v1/models`
+
+#### Notes
+
+- `created` corresponds to when the model was last modified
+- `owned_by` corresponds to the ollama username, defaulting to `"library"`
+
+### `/v1/models/{model}`
+
+#### Notes
+
+- `created` corresponds to when the model was last modified
+- `owned_by` corresponds to the ollama username, defaulting to `"library"`
+
+### `/v1/embeddings`
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `input`
+  - [x] string
+  - [x] array of strings
+  - [ ] array of tokens
+  - [ ] array of token arrays
+- [ ] `encoding format`
+- [ ] `dimensions`
+- [ ] `user`
 
 ## Models
 
