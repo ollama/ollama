@@ -5,32 +5,7 @@
 set -ex
 MACHINE=$(uname -m)
 
-if grep -i "centos" /etc/system-release >/dev/null; then
-    # As of 7/1/2024 mirrorlist.centos.org has been taken offline, so adjust accordingly
-    sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
-    sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
-    sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
-
-    # Centos 7 derivatives have too old of a git version to run our generate script
-    # uninstall and ignore failures
-    yum remove -y git
-    yum -y install epel-release centos-release-scl
-
-    # The release packages reinstate the mirrors, undo that again
-    sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
-    sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
-    sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
-
-    yum -y install dnf
-    if [ "${MACHINE}" = "x86_64" ]; then
-        yum -y install https://repo.ius.io/ius-release-el7.rpm
-        dnf install -y git236
-    else
-        dnf install -y rh-git227-git
-        ln -s /opt/rh/rh-git227/root/usr/bin/git /usr/local/bin/git
-    fi
-    dnf install -y devtoolset-10-gcc devtoolset-10-gcc-c++
-elif grep -i "rocky" /etc/system-release >/dev/null; then
+if grep -i "rocky" /etc/system-release >/dev/null; then
     # Temporary workaround until rocky 8 AppStream ships GCC 10.4 (10.3 is incompatible with NVCC)
     cat << EOF > /etc/yum.repos.d/Rocky-Vault.repo
 [vault]
@@ -41,15 +16,18 @@ enabled=1
 countme=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-rockyofficial
 EOF
-    dnf install -y git \
-        gcc-toolset-10-gcc-10.2.1-8.2.el8 \
-        gcc-toolset-10-gcc-c++-10.2.1-8.2.el8
+    if [ -z "${SKIP_COMPILER}" ]; then
+        dnf install -y git \
+            gcc-toolset-10-gcc-10.2.1-8.2.el8 \
+            gcc-toolset-10-gcc-c++-10.2.1-8.2.el8
+    fi
 else
     echo "ERROR Unexpected distro"
     exit 1
 fi
 
 if [ -n "${CMAKE_VERSION}" ]; then
+    dnf install -y curl
     curl -s -L https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar -zx -C /usr --strip-components 1
 fi
 
@@ -63,4 +41,22 @@ if [ -n "${GOLANG_VERSION}" ]; then
     curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-${GO_ARCH}.tar.gz | tar xz -C /usr/local
     ln -s /usr/local/go/bin/go /usr/local/bin/go
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+fi
+
+if [ -n "${ROCM_VERSION}" ] && grep -i "rocky" /etc/system-release >/dev/null && [ ! -f /etc/yum.repos.d/rocm.repo ]; then
+    cat << EOF > /etc/yum.repos.d/rocm.repo
+[ROCm]
+name=ROCm
+baseurl=https://repo.radeon.com/rocm/rhel8/${ROCM_VERSION}/main
+enabled=1
+priority=50
+gpgcheck=1
+gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
+EOF
+    dnf install -y curl 'dnf-command(config-manager)'
+    yum clean all
+    curl -s -L https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm > /tmp/epel-release-latest-8.noarch.rpm
+    rpm -ivh /tmp/epel-release-latest-8.noarch.rpm
+    crb enable
+    dnf install -y rocm
 fi

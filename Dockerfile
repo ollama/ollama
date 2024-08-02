@@ -10,7 +10,7 @@ COPY .git .git
 COPY .gitmodules .gitmodules
 COPY llm llm
 
-FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION-devel-centos7 AS cuda-build-amd64
+FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION-devel-rockylinux8 AS cuda-build-amd64
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
@@ -30,12 +30,17 @@ WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
-FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS rocm-build-amd64
-ARG CMAKE_VERSION
+# ROCm does not have a RH8 base container image available, so we have to install it
+FROM --platform=linux/amd64 rockylinux:8 AS rocm-base
+ARG ROCM_VERSION
 COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
-ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+RUN SKIP_COMPILER=1 ROCM_VERSION=${ROCM_VERSION} sh /rh_linux_deps.sh
 ENV LIBRARY_PATH /opt/amdgpu/lib64
+
+FROM --platform=linux/amd64 rocm-base AS rocm-build-amd64
+ARG CMAKE_VERSION
+RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
+ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
@@ -50,12 +55,12 @@ RUN mkdir /tmp/scratch && \
     (cd /tmp/scratch/ && tar czvf /go/src/github.com/ollama/ollama/dist/deps/ollama-linux-amd64-rocm.tgz . )
 
 
-FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
+FROM --platform=linux/amd64 rockylinux:8 AS cpu-builder-amd64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
-ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 ARG OLLAMA_CUSTOM_CPU_DEFS
 ARG CGO_CFLAGS
@@ -123,7 +128,7 @@ RUN apt-get update && apt-get install -y ca-certificates
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 
 # Radeon images are much larger so we keep it distinct from the CPU/CUDA image
-FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete as runtime-rocm
+FROM --platform=linux/amd64 rocm-base as runtime-rocm
 RUN update-pciids
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 EXPOSE 11434
