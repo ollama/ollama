@@ -362,9 +362,24 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	opts.MultiModal = slices.Contains(info.Details.Families, "clip")
 	opts.ParentModel = info.Details.ParentModel
-	opts.Messages = append(opts.Messages, info.Messages...)
 
 	if interactive {
+		if err := loadModel(cmd, &opts); err != nil {
+			return err
+		}
+
+		for _, msg := range info.Messages {
+			switch msg.Role {
+			case "user":
+				fmt.Printf(">>> %s\n", msg.Content)
+			case "assistant":
+				state := &displayResponseState{}
+				displayResponse(msg.Content, opts.WordWrap, state)
+				fmt.Println()
+				fmt.Println()
+			}
+		}
+
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
@@ -843,7 +858,6 @@ type runOptions struct {
 	WordWrap    bool
 	Format      string
 	System      string
-	Template    string
 	Images      []api.ImageData
 	Options     map[string]interface{}
 	MultiModal  bool
@@ -1037,7 +1051,6 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		Images:    opts.Images,
 		Format:    opts.Format,
 		System:    opts.System,
-		Template:  opts.Template,
 		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,
 	}
@@ -1078,7 +1091,7 @@ func RunServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(envconfig.Host.Host, envconfig.Host.Port))
+	ln, err := net.Listen("tcp", envconfig.Host().Host)
 	if err != nil {
 		return err
 	}
@@ -1343,10 +1356,10 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_NUM_PARALLEL"],
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
+				envVars["OLLAMA_SCHED_SPREAD"],
 				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_LLM_LIBRARY"],
-				envVars["OLLAMA_MAX_VRAM"],
 			})
 		default:
 			appendEnvDocs(cmd, envs)

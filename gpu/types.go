@@ -10,6 +10,7 @@ import (
 type memInfo struct {
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 	FreeMemory  uint64 `json:"free_memory,omitempty"`
+	FreeSwap    uint64 `json:"free_swap,omitempty"`
 }
 
 // Beginning of an `ollama info` command
@@ -52,7 +53,8 @@ type CPUInfo struct {
 
 type CudaGPUInfo struct {
 	GpuInfo
-	index int //nolint:unused,nolintlint
+	OSOverhead uint64 // Memory overhead between the driver library and management library
+	index      int    //nolint:unused,nolintlint
 }
 type CudaGPUInfoList []CudaGPUInfo
 

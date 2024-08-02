@@ -31,6 +31,14 @@ chat_completion = client.chat.completions.create(
 completion = client.completions.create(
     model="llama3",
     prompt="Say this is a test"
+
+list_completion = client.models.list()
+
+model = client.models.retrieve("llama3")
+
+embeddings = client.embeddings.create(
+    model="all-minilm",
+    input=["why is the sky blue?", "why is the grass green?"]
 )
 ```
 
@@ -55,6 +63,15 @@ const completion = await openai.completions.create({
     model: "llama3",
     prompt: "Say this is a test.",
 })
+
+const listCompletion = await openai.models.list()
+
+const model = await openai.models.retrieve("llama3");
+
+const embedding = await openai.embeddings.create({
+  model: "all-minilm",
+  input: ["why is the sky blue?", "why is the grass green?"],
+});
 ```
 
 ### `curl`
@@ -81,6 +98,16 @@ curl http://localhost:11434/v1/completions \
     -d '{
         "model": "llama3",
         "prompt": "Say this is a test"
+
+curl http://localhost:11434/v1/models
+
+curl http://localhost:11434/v1/models/llama3
+
+curl http://localhost:11434/v1/embeddings \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "all-minilm",
+        "input": ["why is the sky blue?", "why is the grass green?"]
     }'
 ```
 
@@ -94,8 +121,8 @@ curl http://localhost:11434/v1/completions \
 - [x] Streaming
 - [x] JSON mode
 - [x] Reproducible outputs
+- [x] Tools (streaming support coming soon)
 - [ ] Vision
-- [ ] Function calling
 - [ ] Logprobs
 
 #### Supported request fields
@@ -113,9 +140,9 @@ curl http://localhost:11434/v1/completions \
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
-- [ ] `logit_bias`
-- [ ] `tools`
+- [x] `tools`
 - [ ] `tool_choice`
+- [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
 
@@ -151,6 +178,34 @@ curl http://localhost:11434/v1/completions \
 #### Notes
 
 - `prompt` currently only accepts a string
+
+### `/v1/models`
+
+#### Notes
+
+- `created` corresponds to when the model was last modified
+- `owned_by` corresponds to the ollama username, defaulting to `"library"`
+
+### `/v1/models/{model}`
+
+#### Notes
+
+- `created` corresponds to when the model was last modified
+- `owned_by` corresponds to the ollama username, defaulting to `"library"`
+
+### `/v1/embeddings`
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `input`
+  - [x] string
+  - [x] array of strings
+  - [ ] array of tokens
+  - [ ] array of token arrays
+- [ ] `encoding format`
+- [ ] `dimensions`
+- [ ] `user`
 
 ## Models
 

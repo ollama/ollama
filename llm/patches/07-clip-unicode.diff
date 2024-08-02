@@ -1,0 +1,42 @@
+diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
+index 95fbe3d0..5a02a6ec 100644
+--- a/examples/llava/clip.cpp
++++ b/examples/llava/clip.cpp
+@@ -32,6 +33,14 @@
+ #include <cinttypes>
+ #include <limits>
+ 
++#if defined(_WIN32)
++#define WIN32_LEAN_AND_MEAN
++#ifndef NOMINMAX
++    #define NOMINMAX
++#endif
++#include <windows.h>
++#endif
++
+ //#define CLIP_DEBUG_FUNCTIONS
+ 
+ // RGB uint8 image
+@@ -1055,7 +1064,22 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+             return nullptr;
+         }
+ 
++#ifdef _WIN32
++        int wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, NULL, 0);
++        if (!wlen) {
++            return NULL;
++        }
++        wchar_t * wbuf = (wchar_t *) malloc(wlen * sizeof(wchar_t));
++        wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, wbuf, wlen);
++        if (!wlen) {
++            free(wbuf);
++            return NULL;
++        }
++        auto fin = std::ifstream(wbuf, std::ios::binary);
++        free(wbuf);
++#else
+         auto fin = std::ifstream(fname, std::ios::binary);
++#endif
+         if (!fin) {
+             LOG_TEE("cannot open model file for loading tensors\n");
+             clip_free(new_clip);

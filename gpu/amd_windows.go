@@ -22,8 +22,8 @@ const (
 
 var (
 	// Used to validate if the given ROCm lib is usable
-	ROCmLibGlobs          = []string{"hipblas.dll", "rocblas"}                 // TODO - probably include more coverage of files here...
-	RocmStandardLocations = []string{"C:\\Program Files\\AMD\\ROCm\\5.7\\bin"} // TODO glob?
+	ROCmLibGlobs          = []string{"hipblas.dll", "rocblas"}                 // This is not sufficient to discern v5 vs v6
+	RocmStandardLocations = []string{"C:\\Program Files\\AMD\\ROCm\\6.1\\bin"} // TODO glob?
 )
 
 func AMDGetGPUInfo() []RocmGPUInfo {
@@ -35,12 +35,11 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	}
 	defer hl.Release()
 
-	// TODO - this reports incorrect version information, so omitting for now
-	// driverMajor, driverMinor, err := hl.AMDDriverVersion()
-	// if err != nil {
-	// 	// For now this is benign, but we may eventually need to fail compatibility checks
-	// 	slog.Debug("error looking up amd driver version", "error", err)
-	// }
+	driverMajor, driverMinor, err := hl.AMDDriverVersion()
+	if err != nil {
+		// For now this is benign, but we may eventually need to fail compatibility checks
+		slog.Debug("error looking up amd driver version", "error", err)
+	}
 
 	// Note: the HIP library automatically handles subsetting to any HIP_VISIBLE_DEVICES the user specified
 	count := hl.HipGetDeviceCount()
@@ -54,7 +53,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	}
 
 	var supported []string
-	gfxOverride := envconfig.HsaOverrideGfxVersion
+	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	if gfxOverride == "" {
 		supported, err = GetSupportedGFX(libDir)
 		if err != nil {
@@ -93,7 +92,8 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			continue
 		}
 		if gfxOverride == "" {
-			if !slices.Contains[[]string, string](supported, gfx) {
+			// Strip off Target Features when comparing
+			if !slices.Contains[[]string, string](supported, strings.Split(gfx, ":")[0]) {
 				slog.Warn("amdgpu is not supported", "gpu", i, "gpu_type", gfx, "library", libDir, "supported_types", supported)
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
 				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
@@ -132,10 +132,8 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 				MinimumMemory:  rocmMinimumMemory,
 				Name:           name,
 				Compute:        gfx,
-
-				// TODO - this information isn't accurate on windows, so don't report it until we find the right way to retrieve
-				// DriverMajor:    driverMajor,
-				// DriverMinor:    driverMinor,
+				DriverMajor:    driverMajor,
+				DriverMinor:    driverMinor,
 			},
 			index: i,
 		}

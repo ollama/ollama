@@ -7,7 +7,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -108,7 +107,6 @@ func TestManifests(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			d := t.TempDir()
 			t.Setenv("OLLAMA_MODELS", d)
-			envconfig.LoadConfig()
 
 			for _, p := range wants.ps {
 				createManifest(t, d, p)

@@ -112,11 +112,14 @@ func (kv KV) ChatTemplate() string {
 	return s
 }
 
-type Tensors []*Tensor
+type Tensors struct {
+	Items  []*Tensor
+	Offset uint64
+}
 
 func (ts Tensors) Layers() map[string]Layer {
 	layers := make(map[string]Layer)
-	for _, t := range ts {
+	for _, t := range ts.Items {
 		parts := strings.Split(t.Name, ".")
 		if parts[0] == "blk" {
 			// join first and second part, e.g. blk.%d
@@ -424,6 +427,32 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 			4*batch*(3*embedding+vocab)+embedding*vocab*105/128,
 			4*batch*(2*embedding+1+2*embeddingHeadsK*headsKV+context+context*headsKV)+4*embeddingHeadsK*context*headsKV+embedding*embeddingHeadsK*headsKV*9/16,
 		)
+	case "chatglm":
+		fullOffload = 4 * batch * (embedding + vocab)
+		partialOffload = 4*batch*(embedding+vocab) + embedding*vocab*105/128
+		if qkvBias, ok := layers["blk.0"]["attn_qkv.bias"]; ok {
+			fullOffload = max(
+				fullOffload,
+				4*batch*(2+
+					2*embedding+
+					context+
+					context*heads+
+					embeddingHeadsK*heads+
+					qkvBias.Shape[0]),
+			)
+
+			partialOffload = max(
+				partialOffload,
+				4*batch*(1+
+					2*embedding+
+					embeddingHeadsK*heads+
+					context+
+					context*heads)+
+					4*embeddingHeadsK*context+
+					4*context*embeddingHeadsK+
+					4*qkvBias.Shape[0],
+			)
+		}
 	}
 
 	return
