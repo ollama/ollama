@@ -47,7 +47,7 @@ response = client.chat.completions.create(
 
 completion = client.completions.create(
     model="llama3",
-    prompt="Say this is a test"
+    prompt="Say this is a test",
 )
 
 list_completion = client.models.list()
@@ -56,7 +56,7 @@ model = client.models.retrieve("llama3")
 
 embeddings = client.embeddings.create(
     model="all-minilm",
-    input=["why is the sky blue?", "why is the grass green?"]
+    input=["why is the sky blue?", "why is the grass green?"],
 )
 ```
 
@@ -126,7 +126,7 @@ curl http://localhost:11434/v1/chat/completions \
             }
         ]
     }'
-    
+
 curl http://localhost:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
