@@ -227,7 +227,7 @@ curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
 
 To preload a model using the CLI, use the command:
 ```shell
-ollama run llama3 ""
+ollama run llama3.1 ""
 ```
 
 ## How do I keep a model loaded in memory or make it unload immediately?
@@ -273,3 +273,7 @@ The following server settings may be used to adjust how Ollama handles concurren
 - `OLLAMA_MAX_QUEUE` - The maximum number of requests Ollama will queue when busy before rejecting additional requests. The default is 512
 
 Note: Windows with Radeon GPUs currently default to 1 model maximum due to limitations in ROCm v5.7 for available VRAM reporting.  Once ROCm v6.2 is available, Windows Radeon will follow the defaults above.  You may enable concurrent model loads on Radeon on Windows, but ensure you don't load more models than will fit into your GPUs VRAM.
+
+## How does Ollama load models on multiple GPUs?
+
+Installing multiple GPUs of the same brand can be a great way to increase your available VRAM to load larger models.  When you load a new model, Ollama evaluates the required VRAM for the model against what is currently available.  If the model will entirely fit on any single GPU, Ollama will load the model on that GPU.  This typically provides the best performance as it reduces the amount of data transfering across the PCI bus during inference.  If the model does not fit entirely on one GPU, then it will be spread across all the available GPUs.

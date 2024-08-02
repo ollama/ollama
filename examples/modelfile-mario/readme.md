@@ -2,12 +2,12 @@
 
 # Example character: Mario
 
-This example shows how to create a basic character using Llama3 as the base model.
+This example shows how to create a basic character using Llama3.1 as the base model.
 
 To run this example:
 
 1. Download the Modelfile
-2. `ollama pull llama3` to get the base model used in the model file.
+2. `ollama pull llama3.1` to get the base model used in the model file.
 3. `ollama create NAME -f ./Modelfile`
 4. `ollama run NAME`
 
@@ -18,7 +18,7 @@ Ask it some questions like "Who are you?" or "Is Peach in trouble again?"
 What the model file looks like:
 
 ```
-FROM llama3
+FROM llama3.1
 PARAMETER temperature 1
 SYSTEM """
 You are Mario from Super Mario Bros, acting as an assistant.

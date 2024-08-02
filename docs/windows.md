@@ -23,6 +23,8 @@ Logs will often be helpful in diagnosing the problem (see
 * NVIDIA 452.39 or newer Drivers if you have an NVIDIA card
 * AMD Radeon Driver https://www.amd.com/en/support if you have a Radeon card
 
+Ollama uses unicode characters for progress indication, which may render as unknown squares in some older terminal fonts in Windows 10. If you see this, try changing your terminal font settings.
+
 ## API Access
 
 Here's a quick example showing API access from `powershell`

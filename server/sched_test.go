@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
@@ -115,8 +113,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	require.NoError(t, err)
 	defer f.Close()
 
-	gguf := llm.NewGGUFV3(binary.LittleEndian)
-	err = gguf.Encode(f, llm.KV{
+	require.NoError(t, llm.WriteGGUF(f, llm.KV{
 		"general.architecture":          "llama",
 		"general.name":                  "name",
 		"llama.context_length":          uint32(32),
@@ -130,7 +127,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	}, []llm.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-	})
+	}))
 	require.NoError(t, err)
 
 	fname := f.Name()
@@ -272,7 +269,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 	c.req.opts.NumGPU = 0                                       // CPU load, will be allowed
 	d := newScenarioRequest(t, ctx, "ollama-model-3c", 30, nil) // Needs prior unloaded
 
-	envconfig.MaxRunners = 1
+	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "1")
 	s.newServerFn = a.newServer
 	slog.Info("a")
 	s.pendingReqCh <- a.req
@@ -291,7 +288,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
 
-	envconfig.MaxRunners = 0
+	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "0")
 	s.newServerFn = b.newServer
 	slog.Info("b")
 	s.pendingReqCh <- b.req
@@ -362,7 +359,7 @@ func TestGetRunner(t *testing.T) {
 	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond})
 	b := newScenarioRequest(t, ctx, "ollama-model-1b", 10, &api.Duration{Duration: 2 * time.Millisecond})
 	c := newScenarioRequest(t, ctx, "ollama-model-1c", 10, &api.Duration{Duration: 2 * time.Millisecond})
-	envconfig.MaxQueuedRequests = 1
+	t.Setenv("OLLAMA_MAX_QUEUE", "1")
 	s := InitScheduler(ctx)
 	s.getGpuFn = getGpuFn
 	s.getCpuFn = getCpuFn
@@ -666,11 +663,50 @@ func TestAlreadyCanceled(t *testing.T) {
 	require.Empty(t, scenario1a.req.successCh)
 }
 
+func TestHomogeneousGPUs(t *testing.T) {
+	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+
+	s.getGpuFn = func() gpu.GpuInfoList {
+		// Set memory values to require the model to be spread
+		gpus := []gpu.GpuInfo{
+			{Library: "cuda"},
+			{Library: "rocm"},
+		}
+		gpus[0].TotalMemory = 1 * format.GibiByte
+		gpus[0].FreeMemory = 256 * format.MebiByte
+		gpus[1].TotalMemory = 1 * format.GibiByte
+		gpus[1].FreeMemory = 256 * format.MebiByte
+		return gpus
+	}
+	s.getCpuFn = getCpuFn
+	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
+	s.newServerFn = func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		require.Len(t, gpus, 1)
+		return a.newServer(gpus, model, ggml, adapters, projectors, opts, numParallel)
+	}
+	slog.Info("a")
+	s.pendingReqCh <- a.req
+	require.Len(t, s.pendingReqCh, 1)
+	s.Run(ctx)
+	select {
+	case resp := <-a.req.successCh:
+		require.Equal(t, resp.llama, a.srv)
+		require.Empty(t, s.pendingReqCh)
+		require.Empty(t, a.req.errCh)
+	case err := <-a.req.errCh:
+		t.Fatal(err.Error())
+	case <-ctx.Done():
+		t.Fatal("timeout")
+	}
+}
+
 type mockLlm struct {
 	pingResp           error
 	waitResp           error
 	completionResp     error
-	embedResp          [][]float32
+	embedResp          *llm.EmbedResponse
 	embedRespErr       error
 	tokenizeResp       []int
 	tokenizeRespErr    error
@@ -688,7 +724,7 @@ func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitRes
 func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	return s.completionResp
 }
-func (s *mockLlm) Embed(ctx context.Context, input []string) ([][]float32, error) {
+func (s *mockLlm) Embed(ctx context.Context, input []string) (*llm.EmbedResponse, error) {
 	return s.embedResp, s.embedRespErr
 }
 func (s *mockLlm) Tokenize(ctx context.Context, content string) ([]int, error) {

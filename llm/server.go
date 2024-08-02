@@ -33,7 +33,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embed(ctx context.Context, input []string) ([][]float32, error)
+	Embed(ctx context.Context, input []string) (*EmbedResponse, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -163,7 +163,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	} else {
 		servers = serversForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
 	}
-	demandLib := envconfig.LLMLibrary
+	demandLib := envconfig.LLMLibrary()
 	if demandLib != "" {
 		serverPath := availableServers[demandLib]
 		if serverPath == "" {
@@ -195,7 +195,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
 	}
 
-	if envconfig.Debug {
+	if envconfig.Debug() {
 		params = append(params, "--verbose")
 	}
 
@@ -221,7 +221,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--memory-f32")
 	}
 
-	flashAttnEnabled := envconfig.FlashAttention
+	flashAttnEnabled := envconfig.FlashAttention()
 
 	for _, g := range gpus {
 		// only cuda (compute capability 7+) and metal support flash attention
@@ -346,6 +346,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		s.cmd.Env = os.Environ()
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
+		s.cmd.SysProcAttr = LlamaServerSysProcAttr
 
 		envWorkarounds := [][2]string{}
 		for _, gpu := range gpus {
@@ -381,7 +382,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd.String())
-		if envconfig.Debug {
+		if envconfig.Debug() {
 			filteredEnv := []string{}
 			for _, ev := range s.cmd.Env {
 				if strings.HasPrefix(ev, "CUDA_") ||
@@ -417,7 +418,17 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 		// reap subprocess when it exits
 		go func() {
-			s.done <- s.cmd.Wait()
+			err := s.cmd.Wait()
+			// Favor a more detailed message over the process exit status
+			if err != nil && s.status != nil && s.status.LastErrMsg != "" {
+				slog.Debug("llama runner terminated", "error", err)
+				if strings.Contains(s.status.LastErrMsg, "unknown model") {
+					s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
+				}
+				s.done <- fmt.Errorf(s.status.LastErrMsg)
+			} else {
+				s.done <- err
+			}
 		}()
 
 		return s, nil
@@ -580,14 +591,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			slog.Warn("client connection closed before server finished loading, aborting load")
 			return fmt.Errorf("timed out waiting for llama runner to start: %w", ctx.Err())
 		case err := <-s.done:
-			msg := ""
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
-			}
-			if strings.Contains(msg, "unknown model") {
-				return fmt.Errorf("this model is not supported by your version of Ollama. You may need to upgrade")
-			}
-			return fmt.Errorf("llama runner process has terminated: %v %s", err, msg)
+			return fmt.Errorf("llama runner process has terminated: %w", err)
 		default:
 		}
 		if time.Now().After(stallTimer) {
@@ -723,6 +727,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"temperature":       req.Options.Temperature,
 		"top_k":             req.Options.TopK,
 		"top_p":             req.Options.TopP,
+		"min_p":             req.Options.MinP,
 		"tfs_z":             req.Options.TFSZ,
 		"typical_p":         req.Options.TypicalP,
 		"repeat_last_n":     req.Options.RepeatLastN,
@@ -874,10 +879,11 @@ type EmbedRequest struct {
 }
 
 type EmbedResponse struct {
-	Embedding [][]float32 `json:"embedding"`
+	Embedding       [][]float32 `json:"embedding"`
+	PromptEvalCount int         `json:"prompt_n"`
 }
 
-func (s *llmServer) Embed(ctx context.Context, input []string) ([][]float32, error) {
+func (s *llmServer) Embed(ctx context.Context, input []string) (*EmbedResponse, error) {
 	if err := s.sem.Acquire(ctx, 1); err != nil {
 		slog.Error("Failed to acquire semaphore", "error", err)
 		return nil, err
@@ -919,12 +925,12 @@ func (s *llmServer) Embed(ctx context.Context, input []string) ([][]float32, err
 		return nil, fmt.Errorf("%s", body)
 	}
 
-	var embedding EmbedResponse
-	if err := json.Unmarshal(body, &embedding); err != nil {
+	var e EmbedResponse
+	if err := json.Unmarshal(body, &e); err != nil {
 		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
 	}
 
-	return embedding.Embedding, nil
+	return &e, nil
 }
 
 type TokenizeRequest struct {

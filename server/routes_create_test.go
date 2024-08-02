@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -30,7 +28,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) string {
 	}
 	defer f.Close()
 
-	if err := llm.NewGGUFV3(binary.LittleEndian).Encode(f, kv, ti); err != nil {
+	if err := llm.WriteGGUF(f, kv, ti); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,7 +87,6 @@ func TestCreateFromBin(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 
 	var s Server
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -117,7 +114,6 @@ func TestCreateFromModel(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -160,7 +156,6 @@ func TestCreateRemovesLayers(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -209,7 +204,6 @@ func TestCreateUnsetsSystem(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -267,7 +261,6 @@ func TestCreateMergeParameters(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -372,7 +365,6 @@ func TestCreateReplacesMessages(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -450,7 +442,6 @@ func TestCreateTemplateSystem(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -534,7 +525,6 @@ func TestCreateLicenses(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
@@ -582,7 +572,6 @@ func TestCreateDetectTemplate(t *testing.T) {
 
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 	var s Server
 
 	t.Run("matched", func(t *testing.T) {
@@ -599,9 +588,10 @@ func TestCreateDetectTemplate(t *testing.T) {
 		}
 
 		checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
+			filepath.Join(p, "blobs", "sha256-0d79f567714c62c048378f2107fb332dabee0135d080c302d884317da9433cc5"),
 			filepath.Join(p, "blobs", "sha256-553c4a3f747b3d22a4946875f1cc8ed011c2930d83f864a0c7265f9ec0a20413"),
 			filepath.Join(p, "blobs", "sha256-c608dc615584cd20d9d830363dabf8a4783ae5d34245c3d8c115edb3bc7b28e4"),
-			filepath.Join(p, "blobs", "sha256-f836ee110db21567f826332e4cedd746c06d10664fd5a9ea3659e3683a944510"),
+			filepath.Join(p, "blobs", "sha256-ea34c57ba5b78b740aafe2aeb74dc6507fc3ad14170b64c26a04fb9e36c88d75"),
 		})
 	})
 

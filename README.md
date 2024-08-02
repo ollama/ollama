@@ -35,10 +35,10 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 ## Quickstart
 
-To run and chat with [Llama 3](https://ollama.com/library/llama3):
+To run and chat with [Llama 3.1](https://ollama.com/library/llama3.1):
 
 ```
-ollama run llama3
+ollama run llama3.1
 ```
 
 ## Model library
@@ -49,8 +49,9 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                       |
 | ------------------ | ---------- | ----- | ------------------------------ |
-| Llama 3            | 8B         | 4.7GB | `ollama run llama3`            |
-| Llama 3            | 70B        | 40GB  | `ollama run llama3:70b`        |
+| Llama 3.1          | 8B         | 4.7GB | `ollama run llama3.1`          |
+| Llama 3.1          | 70B        | 40GB  | `ollama run llama3.1:70b`      |
+| Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`     |
 | Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`              |
 | Phi 3 Medium       | 14B        | 7.9GB | `ollama run phi3:medium`       |
 | Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`            |
@@ -64,7 +65,8 @@ Here are some example models that can be downloaded:
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`             |
 | Solar              | 10.7B      | 6.1GB | `ollama run solar`             |
 
-> Note: You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
+> [!NOTE]
+> You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
 ## Customize a model
 
@@ -96,16 +98,16 @@ See the [guide](docs/import.md) on importing models for more information.
 
 ### Customize a prompt
 
-Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3` model:
+Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.1` model:
 
 ```
-ollama pull llama3
+ollama pull llama3.1
 ```
 
 Create a `Modelfile`:
 
 ```
-FROM llama3
+FROM llama3.1
 
 # set the temperature to 1 [higher is more creative, lower is more coherent]
 PARAMETER temperature 1
@@ -140,7 +142,7 @@ ollama create mymodel -f ./Modelfile
 ### Pull a model
 
 ```
-ollama pull llama3
+ollama pull llama3.1
 ```
 
 > This command can also be used to update a local model. Only the diff will be pulled.
@@ -148,13 +150,13 @@ ollama pull llama3
 ### Remove a model
 
 ```
-ollama rm llama3
+ollama rm llama3.1
 ```
 
 ### Copy a model
 
 ```
-ollama cp llama3 my-model
+ollama cp llama3.1 my-model
 ```
 
 ### Multiline input
@@ -171,21 +173,21 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ### Multimodal models
 
 ```
->>> What's in this image? /Users/jmorgan/Desktop/smile.png
+ollama run llava "What's in this image? /Users/jmorgan/Desktop/smile.png"
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
 ### Pass the prompt as an argument
 
 ```
-$ ollama run llama3 "Summarize this file: $(cat README.md)"
+$ ollama run llama3.1 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
 ### Show model information
 
 ```
-ollama show llama3
+ollama show llama3.1
 ```
 
 ### List models on your computer
@@ -213,7 +215,7 @@ Next, start the server:
 Finally, in a separate shell, run a model:
 
 ```
-./ollama run llama3
+./ollama run llama3.1
 ```
 
 ## REST API
@@ -224,7 +226,7 @@ Ollama has a REST API for running and managing models.
 
 ```
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "prompt":"Why is the sky blue?"
 }'
 ```
@@ -233,7 +235,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ```
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "messages": [
     { "role": "user", "content": "why is the sky blue?" }
   ]
@@ -296,6 +298,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio)
 - [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
+- [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
+- [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 
 ### Terminal
 
@@ -334,6 +338,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Libraries
 
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
+- [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
 - [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
 - [LangChainRust](https://github.com/Abraxas-365/langchain-rust) with [example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
@@ -387,7 +392,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Llama Coder](https://github.com/ex3ndr/llama-coder) (Copilot alternative using Ollama)
 - [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) (Proxy that allows you to use ollama as a copilot like Github copilot)
 - [twinny](https://github.com/rjmacarthy/twinny) (Copilot and Copilot chat alternative using Ollama)
-- [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and HuggingFace)
+- [Wingman-AI](https://github.com/RussellCanfield/wingman-ai) (Copilot code and chat alternative using Ollama and Hugging Face)
 - [Page Assist](https://github.com/n4ze3m/page-assist) (Chrome Extension)
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
