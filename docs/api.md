@@ -746,7 +746,7 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 
 ### Parameters
 
-- `name`: name of the model to create
+- `model`: name of the model to create
 - `modelfile` (optional): contents of the Modelfile
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 - `path` (optional): path to the Modelfile
@@ -761,7 +761,7 @@ Create a new model from a `Modelfile`.
 
 ```shell
 curl http://localhost:11434/api/create -d '{
-  "name": "mario",
+  "model": "mario",
   "modelfile": "FROM llama3\nSYSTEM You are mario from Super Mario Bros."
 }'
 ```
@@ -895,7 +895,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ### Parameters
 
-- `name`: name of the model to show
+- `model`: name of the model to show
 - `verbose`: (optional) if set to `true`, returns full data for verbose response fields
 
 ### Examples
@@ -904,7 +904,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ```shell
 curl http://localhost:11434/api/show -d '{
-  "name": "llama3"
+  "model": "llama3"
 }'
 ```
 
@@ -984,7 +984,7 @@ Delete a model and its data.
 
 ### Parameters
 
-- `name`: model name to delete
+- `model`: model name to delete
 
 ### Examples
 
@@ -992,7 +992,7 @@ Delete a model and its data.
 
 ```shell
 curl -X DELETE http://localhost:11434/api/delete -d '{
-  "name": "llama3:13b"
+  "model": "llama3:13b"
 }'
 ```
 
@@ -1010,7 +1010,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ### Parameters
 
-- `name`: name of the model to pull
+- `model`: name of the model to pull
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -1020,7 +1020,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ```shell
 curl http://localhost:11434/api/pull -d '{
-  "name": "llama3"
+  "model": "llama3"
 }'
 ```
 
@@ -1082,7 +1082,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ### Parameters
 
-- `name`: name of the model to push in the form of `<namespace>/<model>:<tag>`
+- `model`: name of the model to push in the form of `<namespace>/<model>:<tag>`
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pushing to your library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -1092,7 +1092,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ```shell
 curl http://localhost:11434/api/push -d '{
-  "name": "mattw/pygmalion:latest"
+  "model": "mattw/pygmalion:latest"
 }'
 ```
 
