@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
 )

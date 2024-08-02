@@ -13,7 +13,7 @@ type Buffer struct {
 	DisplayPos int
 	Pos        int
 	Buf        *arraylist.List
-	//LineHasSpace is an arraylist of bools to keep track of whether a line has a space at the end
+	// LineHasSpace is an arraylist of bools to keep track of whether a line has a space at the end
 	LineHasSpace *arraylist.List
 	Prompt       *Prompt
 	LineWidth    int
@@ -56,7 +56,7 @@ func (b *Buffer) GetLineSpacing(line int) bool {
 
 func (b *Buffer) MoveLeft() {
 	if b.Pos > 0 {
-		//asserts that we retrieve a rune
+		// asserts that we retrieve a rune
 		if e, ok := b.Buf.Get(b.Pos - 1); ok {
 			if r, ok := e.(rune); ok {
 				rLength := runewidth.RuneWidth(r)

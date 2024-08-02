@@ -82,7 +82,7 @@ TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
 }
 
 func TestParseFileFrom(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 		err      error
@@ -185,7 +185,7 @@ BADCOMMAND param1 value1
 }
 
 func TestParseFileMessages(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 		err      error
@@ -276,7 +276,7 @@ MESSAGE system`,
 }
 
 func TestParseFileQuoted(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		multiline string
 		expected  []Command
 		err       error
@@ -430,7 +430,7 @@ TEMPLATE """
 }
 
 func TestParseFileParameters(t *testing.T) {
-	var cases = map[string]struct {
+	cases := map[string]struct {
 		name, value string
 	}{
 		"numa true":                    {"numa", "true"},
@@ -491,7 +491,7 @@ func TestParseFileParameters(t *testing.T) {
 }
 
 func TestParseFileComments(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 	}{
@@ -516,7 +516,7 @@ FROM foo
 }
 
 func TestParseFileFormatParseFile(t *testing.T) {
-	var cases = []string{
+	cases := []string{
 		`
 FROM foo
 ADAPTER adapter1

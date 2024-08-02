@@ -184,15 +184,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	params := []string{
 		"--model", model,
-		"--ctx-size", fmt.Sprintf("%d", opts.NumCtx),
-		"--batch-size", fmt.Sprintf("%d", opts.NumBatch),
+		"--ctx-size", strconv.Itoa(opts.NumCtx),
+		"--batch-size", strconv.Itoa(opts.NumBatch),
 		"--embedding",
 	}
 
 	params = append(params, "--log-disable")
 
 	if opts.NumGPU >= 0 {
-		params = append(params, "--n-gpu-layers", fmt.Sprintf("%d", opts.NumGPU))
+		params = append(params, "--n-gpu-layers", strconv.Itoa(opts.NumGPU))
 	}
 
 	if envconfig.Debug() {
@@ -200,7 +200,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 
 	if opts.MainGPU > 0 {
-		params = append(params, "--main-gpu", fmt.Sprintf("%d", opts.MainGPU))
+		params = append(params, "--main-gpu", strconv.Itoa(opts.MainGPU))
 	}
 
 	if len(adapters) > 0 {
@@ -214,7 +214,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 
 	if opts.NumThread > 0 {
-		params = append(params, "--threads", fmt.Sprintf("%d", opts.NumThread))
+		params = append(params, "--threads", strconv.Itoa(opts.NumThread))
 	}
 
 	if !opts.F16KV {
@@ -260,7 +260,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--numa")
 	}
 
-	params = append(params, "--parallel", fmt.Sprintf("%d", numParallel))
+	params = append(params, "--parallel", strconv.Itoa(numParallel))
 
 	if estimate.TensorSplit != "" {
 		params = append(params, "--tensor-split", estimate.TensorSplit)
@@ -425,7 +425,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 				if strings.Contains(s.status.LastErrMsg, "unknown model") {
 					s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
 				}
-				s.done <- fmt.Errorf(s.status.LastErrMsg)
+				s.done <- errors.New(s.status.LastErrMsg)
 			} else {
 				s.done <- err
 			}

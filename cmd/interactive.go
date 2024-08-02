@@ -604,7 +604,7 @@ func getImageData(filePath string) ([]byte, error) {
 	// Check if the file size exceeds 100MB
 	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
 	if info.Size() > maxSize {
-		return nil, fmt.Errorf("file size exceeds maximum limit (100MB)")
+		return nil, errors.New("file size exceeds maximum limit (100MB)")
 	}
 
 	buf = make([]byte, info.Size())

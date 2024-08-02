@@ -34,7 +34,6 @@ func GetStarted() error {
 		Sys:   &syscall.SysProcAttr{CreationFlags: CREATE_NEW_CONSOLE, HideWindow: false},
 	}
 	proc, err := os.StartProcess(args[0], args, attrs)
-
 	if err != nil {
 		return fmt.Errorf("unable to start getting started shell %w", err)
 	}

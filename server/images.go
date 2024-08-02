@@ -828,7 +828,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
+		return errors.New("insecure protocol http")
 	}
 
 	manifest, _, err := GetManifest(mp)
@@ -895,7 +895,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
+		return errors.New("insecure protocol http")
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
@@ -1010,7 +1010,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-var errUnauthorized = fmt.Errorf("unauthorized: access denied")
+var errUnauthorized = errors.New("unauthorized: access denied")
 
 // getTokenSubject returns the subject of a JWT token, it does not validate the token
 func getTokenSubject(token string) string {
