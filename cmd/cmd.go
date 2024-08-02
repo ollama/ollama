@@ -672,7 +672,7 @@ func showInfo(resp *api.ShowResponse) {
 
 	modelData := [][]string{
 		{"arch", arch},
-		{"parameters", resp.Details.ParameterSize},
+		{"parameters", format.Parameters(uint64(resp.ModelInfo["general.parameter_count"].(float64)))},
 		{"quantization", resp.Details.QuantizationLevel},
 		{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
 		{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
@@ -686,7 +686,7 @@ func showInfo(resp *api.ShowResponse) {
 	if resp.ProjectorInfo != nil {
 		projectorData := [][]string{
 			{"arch", "clip"},
-			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
+			{"parameters", format.Parameters(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
 		}
 
 		if projectorType, ok := resp.ProjectorInfo["clip.projector_type"]; ok {
