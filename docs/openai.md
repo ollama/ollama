@@ -31,6 +31,7 @@ chat_completion = client.chat.completions.create(
 completion = client.completions.create(
     model="llama3",
     prompt="Say this is a test"
+)
 
 list_completion = client.models.list()
 
@@ -66,12 +67,12 @@ const completion = await openai.completions.create({
 
 const listCompletion = await openai.models.list()
 
-const model = await openai.models.retrieve("llama3");
+const model = await openai.models.retrieve("llama3")
 
 const embedding = await openai.embeddings.create({
   model: "all-minilm",
   input: ["why is the sky blue?", "why is the grass green?"],
-});
+})
 ```
 
 ### `curl`
@@ -98,6 +99,7 @@ curl http://localhost:11434/v1/completions \
     -d '{
         "model": "llama3",
         "prompt": "Say this is a test"
+    }'
 
 curl http://localhost:11434/v1/models
 
