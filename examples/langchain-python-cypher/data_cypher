@@ -1,0 +1,42 @@
+// Create nodes for Gamers
+LOAD CSV WITH HEADERS FROM 'file:///gamers.csv' AS row
+CREATE (g:Gamer {
+    Gamer_ID: row.Gamer_ID, 
+    First_Name: row.First_Name, 
+    Last_Name: row.Last_Name,
+    Email: row.Email, 
+    Phone: row.Phone, 
+    City: row.City, 
+    Country: row.Country
+});
+
+// Create nodes for Games
+LOAD CSV WITH HEADERS FROM 'file:///games.csv' AS row
+CREATE (ga:Game {
+    Game_ID: row.Game_ID, 
+    Game_Name: row.Game_Name, 
+    Category: row.Category, 
+    Price: row.Price
+});
+
+// Create nodes for Purchases
+LOAD CSV WITH HEADERS FROM 'file:///purchases.csv' AS row
+CREATE (p:Purchase {
+    Purchase_ID: row.Purchase_ID, 
+    Gamer_ID: row.Gamer_ID, 
+    Game_ID: row.Game_ID,
+    Quantity: row.Quantity, 
+    Purchase_Date: row.Purchase_Date
+});
+
+// Create relationships between Gamers and Purchases
+LOAD CSV WITH HEADERS FROM 'file:///purchases.csv' AS row
+MATCH (g:Gamer {Gamer_ID: row.Gamer_ID})
+MATCH (p:Purchase {Purchase_ID: row.Purchase_ID})
+MERGE (g)-[:PURCHASED]->(p);
+
+// Create relationships between Purchases and Games
+LOAD CSV WITH HEADERS FROM 'file:///purchases.csv' AS row
+MATCH (p:Purchase {Purchase_ID: row.Purchase_ID})
+MATCH (ga:Game {Game_ID: row.Game_ID})
+MERGE (p)-[:CONTAINS]->(ga);
