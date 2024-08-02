@@ -167,6 +167,17 @@ Ollama can be accessed using a range of tools for tunneling tools. For example w
 ngrok http 11434 --host-header="localhost:11434"
 ```
 
+In case you are using `yml` file to store your Ngrok configuration, it will look like this:
+```yml
+version: 2
+authtoken: YOUR_AUTH_TOKEN
+tunnels:
+  ollama_tunnel:
+    proto: http
+    addr: http://127.0.0.1:11434/
+    host_header: 127.0.0.1:11434
+```
+
 ## How can I use Ollama with Cloudflare Tunnel?
 
 To use Ollama with Cloudflare Tunnel, use the `--url` and `--http-host-header` flags:
