@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -235,47 +236,66 @@ var (
 	MaxVRAM = Uint("OLLAMA_MAX_VRAM", 0)
 )
 
-type EnvVar struct {
-	Name        string
-	Value       any
-	Description string
+type desc struct {
+	name         string
+	usage        string
+	value        any
+	defaultValue any
 }
 
-func AsMap() map[string]EnvVar {
-	ret := map[string]EnvVar{
-		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
-		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
-		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
-		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
-		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
-		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
-		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
-		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir(), "Location for runners"},
-		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
-		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir(), "Location for temporary files"},
+func (e desc) String() string {
+	return fmt.Sprintf("%s:%v", e.name, e.value)
+}
+
+func Vars() []desc {
+	s := []desc{
+		{"OLLAMA_DEBUG", "Enable debug", Debug(), false},
+		{"OLLAMA_FLASH_ATTENTION", "Enabled flash attention", FlashAttention(), false},
+		{"OLLAMA_HOST", "Listen address and port", Host(), "127.0.0.1:11434"},
+		{"OLLAMA_KEEP_ALIVE", "Duration of inactivity before models are unloaded", KeepAlive(), 5 * time.Minute},
+		{"OLLAMA_LLM_LIBRARY", "Set LLM library to bypass autodetection", LLMLibrary(), nil},
+		{"OLLAMA_MAX_LOADED_MODELS", "Maximum number of loaded models per GPU", MaxRunners(), nil},
+		{"OLLAMA_MAX_QUEUE", "Maximum number of queued requests", MaxQueue(), nil},
+		{"OLLAMA_MAX_VRAM", "Maximum VRAM to consider for model offloading", MaxVRAM(), nil},
+		{"OLLAMA_MODELS", "Path override for models directory", Models(), nil},
+		{"OLLAMA_NOHISTORY", "Disable readline history", NoHistory(), false},
+		{"OLLAMA_NOPRUNE", "Disable unused blob pruning", NoPrune(), false},
+		{"OLLAMA_NUM_PARALLEL", "Maximum number of parallel requests before requests are queued", NumParallel(), nil},
+		{"OLLAMA_ORIGINS", "Additional HTTP Origins to allow", Origins(), nil},
+		{"OLLAMA_RUNNERS_DIR", "Path override for runners directory", RunnersDir(), nil},
+		{"OLLAMA_SCHED_SPREAD", "Always schedule model across all GPUs", SchedSpread(), false},
+		{"OLLAMA_TMPDIR", "Path override for temporary directory", TmpDir(), nil},
 	}
+
 	if runtime.GOOS != "darwin" {
-		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}
-		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which AMD devices are visible"}
-		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices(), "Set which AMD devices are visible"}
-		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible"}
-		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
-		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
+		s = append(
+			s,
+			desc{"CUDA_VISIBLE_DEVICES", "Set which NVIDIA devices are visible", CudaVisibleDevices(), nil},
+			desc{"HIP_VISIBLE_DEVICES", "Set which AMD devices are visible", HipVisibleDevices(), nil},
+			desc{"ROCR_VISIBLE_DEVICES", "Set which AMD devices are visible", RocrVisibleDevices(), nil},
+			desc{"GPU_DEVICE_ORDINAL", "Set which AMD devices are visible", GpuDeviceOrdinal(), nil},
+			desc{"HSA_OVERRIDE_GFX_VERSION", "Override the gfx used for all detected AMD GPUs", HsaOverrideGfxVersion(), nil},
+			desc{"OLLAMA_INTEL_GPU", "Enable experimental Intel GPU detection", IntelGPU(), nil},
+		)
 	}
-	return ret
+
+	return s
 }
 
-func Values() map[string]string {
-	vals := make(map[string]string)
-	for k, v := range AsMap() {
-		vals[k] = fmt.Sprintf("%v", v.Value)
+func Describe(s ...string) map[string]string {
+	slices.Sort(s)
+	m := make(map[string]string)
+	vars := Vars()
+	for _, k := range s {
+		if i := slices.IndexFunc(vars, func(e desc) bool { return e.name == k }); i != -1 {
+			m[k] = vars[i].usage
+			if vars[i].defaultValue != nil {
+				m[k] = fmt.Sprintf("%s (default: %v)", vars[i].usage, vars[i].defaultValue)
+			}
+		}
 	}
-	return vals
+
+	return m
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
