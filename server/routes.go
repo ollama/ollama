@@ -153,7 +153,6 @@ func runWhisperServer(c *gin.Context, portCh chan int) {
 		err := cmd.Process.Kill()
 		if err != nil {
 			slog.Error("failed to kill whisper server", "error", err)
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to kill whisper server"})
 		}
 	}()
 }
