@@ -236,6 +236,8 @@ func LoadConfig() {
 		"file://*",
 		"tauri://*",
 		"chrome-extension://*",
+		"moz-extension://*",
+		"safari-web-extension://*",
 	)
 
 	maxRunners := clean("OLLAMA_MAX_LOADED_MODELS")
