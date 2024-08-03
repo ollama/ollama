@@ -28,8 +28,10 @@ import (
 
 const maxRetries = 6
 
-var errMaxRetriesExceeded = errors.New("max retries exceeded")
-var errPartStalled = errors.New("part stalled")
+var (
+	errMaxRetriesExceeded = errors.New("max retries exceeded")
+	errPartStalled        = errors.New("part stalled")
+)
 
 var blobDownloadManager sync.Map
 
@@ -59,6 +61,36 @@ type blobDownloadPart struct {
 	lastUpdated   time.Time
 
 	*blobDownload `json:"-"`
+}
+
+type jsonBlobDownloadPart struct {
+	N         int
+	Offset    int64
+	Size      int64
+	Completed int64
+}
+
+func (p *blobDownloadPart) MarshalJSON() ([]byte, error) {
+	return json.Marshal(jsonBlobDownloadPart{
+		N:         p.N,
+		Offset:    p.Offset,
+		Size:      p.Size,
+		Completed: p.Completed.Load(),
+	})
+}
+
+func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
+	var j jsonBlobDownloadPart
+	if err := json.Unmarshal(b, &j); err != nil {
+		return err
+	}
+	*p = blobDownloadPart{
+		N:      j.N,
+		Offset: j.Offset,
+		Size:   j.Size,
+	}
+	p.Completed.Store(j.Completed)
+	return nil
 }
 
 const (

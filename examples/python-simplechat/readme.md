@@ -4,10 +4,10 @@ The **chat** endpoint is one of two ways to generate text from an LLM with Ollam
 
 ## Running the Example
 
-1. Ensure you have the `llama3` model installed:
+1. Ensure you have the `llama3.1` model installed:
 
    ```bash
-   ollama pull llama3
+   ollama pull llama3.1
    ```
 
 2. Install the Python Requirements.

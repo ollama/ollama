@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
@@ -334,7 +333,6 @@ func Test_Routes(t *testing.T) {
 					t.Fatalf("expected content type application/json; charset=utf-8, got %s", contentType)
 				}
 				_, err := io.ReadAll(resp.Body)
-
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -347,7 +345,6 @@ func Test_Routes(t *testing.T) {
 	}
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	envconfig.LoadConfig()
 
 	s := &Server{}
 	router := s.GenerateRoutes()
@@ -378,7 +375,6 @@ func Test_Routes(t *testing.T) {
 
 func TestCase(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	envconfig.LoadConfig()
 
 	cases := []string{
 		"mistral",
@@ -458,7 +454,6 @@ func TestCase(t *testing.T) {
 
 func TestShow(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	envconfig.LoadConfig()
 
 	var s Server
 

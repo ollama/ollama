@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -14,8 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestMaxQueue(t *testing.T) {
@@ -27,13 +28,10 @@ func TestMaxQueue(t *testing.T) {
 	// Note: This test can be quite slow when running in CPU mode, so keep the threadCount low unless your on GPU
 	// Also note that by default Darwin can't sustain > ~128 connections without adjusting limits
 	threadCount := 32
-	mq := os.Getenv("OLLAMA_MAX_QUEUE")
-	if mq != "" {
-		var err error
-		threadCount, err = strconv.Atoi(mq)
-		require.NoError(t, err)
+	if maxQueue := envconfig.MaxQueue(); maxQueue != 0 {
+		threadCount = maxQueue
 	} else {
-		os.Setenv("OLLAMA_MAX_QUEUE", fmt.Sprintf("%d", threadCount))
+		t.Setenv("OLLAMA_MAX_QUEUE", strconv.Itoa(threadCount))
 	}
 
 	req := api.GenerateRequest{

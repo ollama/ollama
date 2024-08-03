@@ -45,14 +45,7 @@ func TestUnicodeModelDir(t *testing.T) {
 	defer os.RemoveAll(modelDir)
 	slog.Info("unicode", "OLLAMA_MODELS", modelDir)
 
-	oldModelsDir := os.Getenv("OLLAMA_MODELS")
-	if oldModelsDir == "" {
-		defer os.Unsetenv("OLLAMA_MODELS")
-	} else {
-		defer os.Setenv("OLLAMA_MODELS", oldModelsDir)
-	}
-	err = os.Setenv("OLLAMA_MODELS", modelDir)
-	require.NoError(t, err)
+	t.Setenv("OLLAMA_MODELS", modelDir)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

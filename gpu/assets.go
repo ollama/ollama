@@ -26,7 +26,7 @@ func PayloadsDir() (string, error) {
 	defer lock.Unlock()
 	var err error
 	if payloadsDir == "" {
-		runnersDir := envconfig.RunnersDir
+		runnersDir := envconfig.RunnersDir()
 
 		if runnersDir != "" {
 			payloadsDir = runnersDir
@@ -35,14 +35,14 @@ func PayloadsDir() (string, error) {
 
 		// The remainder only applies on non-windows where we still carry payloads in the main executable
 		cleanupTmpDirs()
-		tmpDir := envconfig.TmpDir
+		tmpDir := envconfig.TmpDir()
 		if tmpDir == "" {
 			tmpDir, err = os.MkdirTemp("", "ollama")
 			if err != nil {
 				return "", fmt.Errorf("failed to generate tmp dir: %w", err)
 			}
 		} else {
-			err = os.MkdirAll(tmpDir, 0755)
+			err = os.MkdirAll(tmpDir, 0o755)
 			if err != nil {
 				return "", fmt.Errorf("failed to generate tmp dir %s: %w", tmpDir, err)
 			}
@@ -54,7 +54,7 @@ func PayloadsDir() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if _, err := pidFile.Write([]byte(fmt.Sprint(os.Getpid()))); err != nil {
+		if _, err := pidFile.Write([]byte(strconv.Itoa(os.Getpid()))); err != nil {
 			return "", err
 		}
 
@@ -105,7 +105,7 @@ func cleanupTmpDirs() {
 func Cleanup() {
 	lock.Lock()
 	defer lock.Unlock()
-	runnersDir := envconfig.RunnersDir
+	runnersDir := envconfig.RunnersDir()
 	if payloadsDir != "" && runnersDir == "" && runtime.GOOS != "windows" {
 		// We want to fully clean up the tmpdir parent of the payloads dir
 		tmpDir := filepath.Clean(filepath.Join(payloadsDir, ".."))

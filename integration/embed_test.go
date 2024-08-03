@@ -69,6 +69,10 @@ func TestAllMiniLMEmbed(t *testing.T) {
 	if !floatsEqual32(res.Embeddings[0][0], 0.010071031) {
 		t.Fatalf("expected 0.010071031, got %.8f", res.Embeddings[0][0])
 	}
+
+	if res.PromptEvalCount != 8 {
+		t.Fatalf("expected 8 prompt tokens, got %d", res.PromptEvalCount)
+	}
 }
 
 func TestAllMiniLMBatchEmbed(t *testing.T) {
@@ -96,6 +100,10 @@ func TestAllMiniLMBatchEmbed(t *testing.T) {
 
 	if !floatsEqual32(res.Embeddings[0][0], 0.010071031) || !floatsEqual32(res.Embeddings[1][0], -0.009802706) {
 		t.Fatalf("expected 0.010071031 and -0.009802706, got %.8f and %.8f", res.Embeddings[0][0], res.Embeddings[1][0])
+	}
+
+	if res.PromptEvalCount != 16 {
+		t.Fatalf("expected 16 prompt tokens, got %d", res.PromptEvalCount)
 	}
 }
 
