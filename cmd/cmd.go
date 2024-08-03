@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -505,10 +506,31 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	sortBy, _ := cmd.Flags().GetString("sort")
+
 	var data [][]string
+	filter := ""
+	if len(args) > 0 {
+		filter = strings.ToLower(args[0])
+	}
+
+	switch strings.ToLower(sortBy) {
+	case "name":
+		sort.Slice(models.Models, func(i, j int) bool { return models.Models[i].Name < models.Models[j].Name })
+	case "id":
+		sort.Slice(models.Models, func(i, j int) bool { return models.Models[i].Digest < models.Models[j].Digest })
+	case "size":
+		sort.Slice(models.Models, func(i, j int) bool {
+			return models.Models[i].Size < models.Models[j].Size
+		})
+	case "modified":
+		sort.Slice(models.Models, func(i, j int) bool {
+			return models.Models[i].ModifiedAt.After(models.Models[j].ModifiedAt)
+		})
+	}
 
 	for _, m := range models.Models {
-		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
+		if filter == "" || strings.HasPrefix(strings.ToLower(m.Name), filter) {
 			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
@@ -1295,13 +1317,16 @@ func NewCLI() *cobra.Command {
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 
+	var listSortBy string
 	listCmd := &cobra.Command{
-		Use:     "list",
+		Use:     "list [filter]",
 		Aliases: []string{"ls"},
 		Short:   "List models",
+		Example: "  ollama list\n  ollama list llama\n  ollama list --sort size",
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
+	listCmd.Flags().StringVar(&listSortBy, "sort", "", "Sort the output by: name, id, size, or modified")
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
