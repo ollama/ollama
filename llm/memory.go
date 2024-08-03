@@ -314,24 +314,30 @@ func estimateKvCacheSize(cacheType string, numCtx, blockCount, embeddingHeadCoun
 	// fp16 k,v = sizeof(float16) * n_ctx * n_layer * (n_embd_head_k + n_embd_head_v) * n_head_kv
 	switch cacheType {
 	case "":
-		bytesPerElement = 2 // fp16
+		bytesPerElement = 2
+		// fp16
 	case "fp16":
 		bytesPerElement = 2
 	case "q4_0", "q4_1":
-		bytesPerElement = 0.5  // approx 1/4 of fp16
+		bytesPerElement = 0.5
+		// approx 1/4 of fp16
 	case "q5_0", "q5_1":
-		bytesPerElement = 0.625  // approx 5/8 of fp16
+		bytesPerElement = 0.625
+		// approx 5/8 of fp16
 	case "q8_0":
-		bytesPerElement = 1  // approx 1/2 of fp16
+		bytesPerElement = 1
+		// approx 1/2 of fp16
 	case "iq4_nl":
-		bytesPerElement = 0.5  // approx 1/4 of fp16
+		bytesPerElement = 0.5
+		// approx 1/4 of fp16
 	default:
 		// Default to fp16 if unknown
 		bytesPerElement = 2
 		slog.Warn("Unknown cache type, defaulting to fp16", "type", cacheType)
 	}
-
-	return uint64(float64(numCtx * blockCount * embeddingHeadCount * headCountKV) * bytesPerElement)
+	estimate := uint64(float64(numCtx*blockCount*embeddingHeadCount*headCountKV) * bytesPerElement)
+	// round up to the nearest multiple of 64 bytes
+	return estimate
 }
 
 func (m MemoryEstimate) log() {

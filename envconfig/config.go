@@ -137,9 +137,9 @@ var (
 	// FlashAttention enables the experimental flash attention feature.
 	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
 	// CacheTypeK is the quantization type for the K/V cache keys.
-	CacheTypeK		 = String("OLLAMA_CACHE_TYPE_K")
+	CacheTypeK = String("OLLAMA_CACHE_TYPE_K")
 	// CacheTypeV is the quantization type for the K/V cache values.
-	CacheTypeV		 = String("OLLAMA_CACHE_TYPE_V")
+	CacheTypeV = String("OLLAMA_CACHE_TYPE_V")
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
