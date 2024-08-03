@@ -8,6 +8,7 @@ package gpu
 #include "gpu_info_darwin.h"
 */
 import "C"
+
 import (
 	"runtime"
 

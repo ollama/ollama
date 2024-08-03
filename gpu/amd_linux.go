@@ -393,7 +393,7 @@ func AMDValidateLibDir() (string, error) {
 
 	// If we still haven't found a usable rocm, the user will have to install it on their own
 	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or follow manual install instructions at https://github.com/ollama/ollama/blob/main/docs/linux.md#manual-install")
-	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
+	return "", errors.New("no suitable rocm found, falling back to CPU")
 }
 
 func AMDDriverVersion() (driverMajor, driverMinor int, err error) {

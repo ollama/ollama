@@ -3,24 +3,25 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"fmt"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
-	"github.com/stretchr/testify/require"
 )
 
-func init() {
+func TestMain(m *testing.M) {
 	os.Setenv("OLLAMA_DEBUG", "1")
 	lifecycle.InitLogging()
+	os.Exit(m.Run())
 }
 
 func TestInitScheduler(t *testing.T) {
@@ -47,7 +48,7 @@ func TestLoad(t *testing.T) {
 	}
 	// Fail to load model first
 	s.newServerFn = func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
-		return nil, fmt.Errorf("something failed to load model blah")
+		return nil, errors.New("something failed to load model blah")
 	}
 	gpus := gpu.GpuInfoList{}
 	s.load(req, ggml, gpus, 0)
@@ -76,7 +77,7 @@ func TestLoad(t *testing.T) {
 	}
 
 	req.model.ModelPath = "dummy_model_path"
-	server.waitResp = fmt.Errorf("wait failure")
+	server.waitResp = errors.New("wait failure")
 	s.load(req, ggml, gpus, 0)
 	select {
 	case err := <-req.errCh:
@@ -114,8 +115,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	require.NoError(t, err)
 	defer f.Close()
 
-	gguf := llm.NewGGUFV3(binary.LittleEndian)
-	err = gguf.Encode(f, llm.KV{
+	require.NoError(t, llm.WriteGGUF(f, llm.KV{
 		"general.architecture":          "llama",
 		"general.name":                  "name",
 		"llama.context_length":          uint32(32),
@@ -129,7 +129,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	}, []llm.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-	})
+	}))
 	require.NoError(t, err)
 
 	fname := f.Name()
@@ -602,7 +602,7 @@ func TestNeedsReload(t *testing.T) {
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
 	req.opts.NumBatch = runner.Options.NumBatch
-	llm.pingResp = fmt.Errorf("foo")
+	llm.pingResp = errors.New("foo")
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
 	llm.pingResp = nil
@@ -726,15 +726,19 @@ func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitRes
 func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	return s.completionResp
 }
+
 func (s *mockLlm) Embed(ctx context.Context, input []string) (*llm.EmbedResponse, error) {
 	return s.embedResp, s.embedRespErr
 }
+
 func (s *mockLlm) Tokenize(ctx context.Context, content string) ([]int, error) {
 	return s.tokenizeResp, s.tokenizeRespErr
 }
+
 func (s *mockLlm) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	return s.detokenizeResp, s.detonekizeRespErr
 }
+
 func (s *mockLlm) Close() error {
 	s.closeCalled = true
 	return s.closeResp
