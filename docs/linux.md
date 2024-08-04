@@ -22,10 +22,18 @@ GPU.
 
 ### Download the `ollama` binary
 
-Ollama is distributed as a self-contained binary. Download it to a directory in your PATH:
+Ollama is distributed as a self-contained binary. Download it to a directory in your PATH according to your CPU architecture:
 
+For Intel x86 architecture:
 ```bash
 sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
+```
+For ARM architecure
+```bash
+sudo curl -L https://ollama.com/download/ollama-linux-arm64 -o /usr/bin/ollama
+```
+
+```bash
 sudo chmod +x /usr/bin/ollama
 ```
 
