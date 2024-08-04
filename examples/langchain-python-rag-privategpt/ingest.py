@@ -8,6 +8,7 @@ from tqdm import tqdm
 from langchain.document_loaders import (
     CSVLoader,
     EverNoteLoader,
+    JSONLoader,
     PyMuPDFLoader,
     TextLoader,
     UnstructuredEmailLoader,
@@ -66,6 +67,7 @@ LOADER_MAPPING = {
     ".eml": (MyElmLoader, {}),
     ".epub": (UnstructuredEPubLoader, {}),
     ".html": (UnstructuredHTMLLoader, {}),
+    ".json": (TextLoader, {"encoding": "utf8"}),
     ".md": (UnstructuredMarkdownLoader, {}),
     ".odt": (UnstructuredODTLoader, {}),
     ".pdf": (PyMuPDFLoader, {}),
@@ -142,26 +144,37 @@ def does_vectorstore_exist(persist_directory: str) -> bool:
                 return True
     return False
 
+def split_into_batches(lst, batch_size):
+    """Yield successive batches of `batch_size` from `lst`."""
+    for i in range(0, len(lst), batch_size):
+        yield lst[i:i + batch_size]
+
 def main():
     # Create embeddings
     embeddings = HuggingFaceEmbeddings(model_name=embeddings_model_name)
 
+    # Initialize db variable outside of the if-else scope
+    db = None
+
     if does_vectorstore_exist(persist_directory):
-        # Update and store locally vectorstore
         print(f"Appending to existing vectorstore at {persist_directory}")
         db = Chroma(persist_directory=persist_directory, embedding_function=embeddings, client_settings=CHROMA_SETTINGS)
         collection = db.get()
         texts = process_documents([metadata['source'] for metadata in collection['metadatas']])
-        print(f"Creating embeddings. May take some minutes...")
-        db.add_documents(texts)
     else:
-        # Create and store locally vectorstore
         print("Creating new vectorstore")
         texts = process_documents()
-        print(f"Creating embeddings. May take some minutes...")
-        db = Chroma.from_documents(texts, embeddings, persist_directory=persist_directory)
+
+    batch_size = 41666  # Maximum number of embeddings per batch
+    for batch_index, batch in enumerate(split_into_batches(texts, batch_size)):
+        print(f"Processing batch {batch_index + 1} of {len(batch)} texts...")
+        if db is None:  # This check is necessary only if db could still be None here
+            db = Chroma.from_documents(batch, embeddings, persist_directory=persist_directory)
+        else:
+            db.add_documents(batch)
+        print("Batch processed successfully.")
+
     db.persist()
-    db = None
 
     print(f"Ingestion complete! You can now run privateGPT.py to query your documents")
 
